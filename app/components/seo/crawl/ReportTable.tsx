@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useFetcher } from "react-router";
-import { BlockStack, Badge, Button, Text, Tooltip } from "@shopify/polaris";
+import { Box, BlockStack, InlineStack, Badge, Banner, Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
 import type { AuditType } from "../../../services/seo/audit.service";
 
@@ -84,6 +84,141 @@ export function ReportRow({ cells, spacedAbove }: { cells: ReactNode[]; spacedAb
         </div>
       ))}
     </>
+  );
+}
+
+/**
+ * A crawled URL, as a link.
+ *
+ * `target="_blank"` on purpose: this app runs INSIDE the Shopify admin iframe,
+ * so a same-tab navigation to the storefront would replace the whole admin —
+ * the merchant would lose the report they are working through. `rel` carries
+ * `noopener noreferrer` because the target is the merchant's storefront or, in
+ * the external-links tab, a page nobody here controls.
+ *
+ * Rendered as `bodySm` so a row reads the same whether or not the URL happens
+ * to be linkable, and `overflowWrap` is inherited from the grid's first cell.
+ */
+/**
+ * A value that may or may not be a linkable URL — a canonical as SERVED, for
+ * instance, which is often relative (`/products/x`) and, in the `crossHost`
+ * case, may not be a URL at all.
+ *
+ * Resolved against `base` when possible so a relative canonical opens the
+ * storefront rather than this app's own 404; rendered as plain text when it
+ * cannot be resolved, because a broken link is worse than no link.
+ */
+export function MaybeLink({ value, base }: { value: string; base?: string }) {
+  let href: string | null = null;
+  try {
+    const u = new URL(value, base);
+    if (u.protocol === "http:" || u.protocol === "https:") href = u.toString();
+  } catch {
+    href = null;
+  }
+  if (!href) {
+    return (
+      <Text as="span" variant="bodySm" tone="subdued">{value}</Text>
+    );
+  }
+  return <PageLink url={href} label={value} />;
+}
+
+export function PageLink({ url, label }: { url: string; label?: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: "var(--p-color-text-link)", textDecoration: "underline", overflowWrap: "anywhere" }}
+    >
+      <Text as="span" variant="bodySm">{label ?? url}</Text>
+    </a>
+  );
+}
+
+/**
+ * The heading of a sub-section inside a report tab ("Keine H1", "Mehrere H1", …).
+ *
+ * Set in a tinted box with a leading rule rather than left as plain text: these
+ * headings sit between long lists of URLs that are themselves `bodySm`, and a
+ * bare heading plus a subdued explanatory line read as just two more rows. The
+ * explanation belongs INSIDE the box for the same reason — it describes the
+ * section, not the first entry under it.
+ */
+export function SubsectionHeading({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <Box
+      background="bg-surface-secondary"
+      padding="300"
+      borderRadius="200"
+      borderInlineStartWidth="050"
+      borderColor="border-emphasis"
+    >
+      <BlockStack gap="100">
+        <Text as="h4" variant="headingSm" fontWeight="semibold">{title}</Text>
+        {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
+      </BlockStack>
+    </Box>
+  );
+}
+
+/**
+ * "Fix with AI" for a report category that HAS a fix path.
+ *
+ * Deliberately not offered on most of them. There is no AI fix for a `noindex`
+ * (removed in Shopify), a canonical (emitted by the theme), a missing H1 (theme
+ * again) or a dead external link — a button that looked like one would be a
+ * lie, which is why the dashboard's crawl buckets are all `deepLink`.
+ *
+ * Where it IS offered, it starts the EXISTING `seoBulkFix` task with an
+ * existing problem code, so the affected items are re-derived server-side from
+ * the audit rather than posted by the client. That also means it fixes what is
+ * missing in the DATABASE — `caveat` is where a category says what that does
+ * not cover, because this report measures what the storefront DELIVERS, and a
+ * stored value the theme fails to render is not something regeneration fixes.
+ */
+export function AiFixButton({
+  problemCode,
+  label,
+  caveat,
+  startedLabel,
+  errorLabel,
+}: {
+  problemCode: string;
+  label: string;
+  caveat: string;
+  startedLabel: string;
+  errorLabel: string;
+}) {
+  const fetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
+  const started = fetcher.state === "idle" && fetcher.data?.success;
+  const failed = fetcher.state === "idle" && fetcher.data && !fetcher.data.success;
+
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Button
+          size="slim"
+          loading={fetcher.state !== "idle"}
+          disabled={fetcher.state !== "idle" || started}
+          onClick={() => {
+            const formData = new FormData();
+            formData.append("action", "seoBulkFix");
+            // seoBulkFix spans every content type and re-derives its items
+            // server-side; "products" only satisfies /api/ai's generic gate.
+            formData.append("contentType", "products");
+            formData.append("problemCode", problemCode);
+            fetcher.submit(formData, { method: "post", action: "/api/ai" });
+          }}
+        >
+          {label}
+        </Button>
+        <Text as="span" variant="bodySm" tone="subdued">{caveat}</Text>
+      </InlineStack>
+      {started && <Banner tone="success">{startedLabel}</Banner>}
+      {failed && <Banner tone="critical">{fetcher.data?.error || errorLabel}</Banner>}
+    </BlockStack>
   );
 }
 
@@ -205,7 +340,7 @@ export function PageRowLine({
     <ReportRow
       cells={[
         <BlockStack gap="050">
-          <Text as="span" variant="bodySm">{page.url}</Text>
+          <PageLink url={page.url} />
           {page.title && <Text as="span" variant="bodySm" tone="subdued">{page.title}</Text>}
         </BlockStack>,
         page.responseMs > 0 ? (

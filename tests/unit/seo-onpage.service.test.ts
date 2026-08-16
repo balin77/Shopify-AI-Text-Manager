@@ -11,6 +11,7 @@ import {
   findThinPages,
   snapshotKnowsParseState,
   canonicalHostFromPages,
+  selfCanonicalPages,
   THIN_MIN_SAMPLE,
   type OnPageRow,
 } from "~/services/seo/onpage.service";
@@ -156,7 +157,7 @@ describe("analyzeIndexability", () => {
   it("reports a noindex product that is NOT in the sitemap exclusions", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/products/blue-shoe`, metaRobots: "noindex" })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(1);
     expect(report.problems[0].url).toContain("/products/blue-shoe");
@@ -166,7 +167,7 @@ describe("analyzeIndexability", () => {
   it("does NOT report it when an APPLIED sitemap exclusion explains it", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/products/blue-shoe`, metaRobots: "noindex" })],
-      new Set(["product:gid://shopify/Product/1"]),
+      new Map([["product:gid://shopify/Product/1", "sitemapExclusion"]]),
     );
     expect(report.problems).toHaveLength(0);
     expect(report.expected).toHaveLength(1);
@@ -176,7 +177,7 @@ describe("analyzeIndexability", () => {
   it("lists Shopify's own noindex paths neutrally, not as problems", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/search`, metaRobots: "noindex", resourceType: null, resourceId: null })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(0);
     expect(report.expected[0].expectedReason).toBe("search");
@@ -185,16 +186,28 @@ describe("analyzeIndexability", () => {
   it("marks a locale-prefixed page but does not judge it", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/fr/products/blue-shoe`, metaRobots: "noindex", locale: "fr" })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(1);
     expect(report.problems[0].localePrefixed).toBe(true);
   });
 
+  it("does not report an UNLISTED product — Shopify itself serves it noindex", () => {
+    // Documented by Shopify and measured on a live shop (sitemap.service.ts's
+    // header). Without this filter every unlisted product lands at the top of
+    // the report and of the SEO dashboard as a critical, unexplained exclusion.
+    const report = analyzeIndexability(
+      [row({ url: `${BASE}/products/staging-copy`, metaRobots: "noindex,nofollow" })],
+      new Map([["product:gid://shopify/Product/1", "unlistedProduct"]]),
+    );
+    expect(report.problems).toHaveLength(0);
+    expect(report.expected[0].expectedReason).toBe("unlistedProduct");
+  });
+
   it("counts unknowns instead of calling them indexable", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/a`, indexabilityKnown: false })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(0);
     expect(report.unknownCount).toBe(1);
@@ -338,6 +351,37 @@ describe("analyzeCanonicals", () => {
       HOST,
     );
     expect(findings.map((f) => f.issue)).toEqual(["missing"]);
+  });
+});
+
+describe("selfCanonicalPages", () => {
+  it("drops a page whose canonical points elsewhere — Google does not index it there", () => {
+    // Shopify answers 200 for a translated product under its PRIMARY handle
+    // behind every locale prefix, each canonicalising to the translated URL.
+    // Grouping those by title reported one product as five duplicates.
+    const rows = [
+      row({ url: `${BASE}/products/schreibtisch-organizer`, canonical: `${BASE}/products/schreibtisch-organizer` }),
+      row({ url: `${BASE}/es/products/schreibtisch-organizer`, canonical: `${BASE}/es/products/organizador` }),
+      row({ url: `${BASE}/fr/products/schreibtisch-organizer`, canonical: `${BASE}/fr/products/organiseur` }),
+    ];
+    expect(selfCanonicalPages(rows, HOST).map((p) => p.url)).toEqual([
+      `${BASE}/products/schreibtisch-organizer`,
+    ]);
+  });
+
+  it("KEEPS a page with no canonical — that is its own finding, not a reason to go quiet", () => {
+    const rows = [row({ url: `${BASE}/a`, canonical: null })];
+    expect(selfCanonicalPages(rows, HOST)).toHaveLength(1);
+  });
+
+  it("keeps a self-referencing canonical that differs only by a trailing slash", () => {
+    const rows = [row({ url: `${BASE}/a`, canonical: `${BASE}/a/` })];
+    expect(selfCanonicalPages(rows, HOST)).toHaveLength(1);
+  });
+
+  it("keeps a cross-host canonical — analyzeCanonicals reports that, it is not a duplicate", () => {
+    const rows = [row({ url: `${BASE}/a`, canonical: "https://other.example/a" })];
+    expect(selfCanonicalPages(rows, HOST)).toHaveLength(1);
   });
 });
 

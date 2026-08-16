@@ -49,6 +49,11 @@ function makeDb(capture?: { productArgs: any[] }) {
         return products.length;
       },
       findMany: async (args: any) => {
+        // `loadExpectedNoindexReasons` asks for UNLISTED products (Shopify
+        // serves those noindex itself). Not part of the audit's own scan, so it
+        // is neither captured nor answered with the ACTIVE fixtures — doing so
+        // would mark every fixture product as an expected exclusion.
+        if (args?.where?.status === "UNLISTED") return [];
         capture?.productArgs.push(args);
         return products;
       },

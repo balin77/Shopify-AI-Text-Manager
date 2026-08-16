@@ -1446,7 +1446,7 @@ export const es: Translation = {
       crawl: {
         label: "Rastreo del sitio",
         title: "Rastreo del sitio / auditoría del sitio",
-        description: "Rastreo en vivo de tu tienda: enlaces rotos, páginas huérfanas, títulos de página desincronizados y títulos duplicados.",
+        description: "Un rastreo en vivo de tu tienda, en dos pasos: primero la entrega (páginas y enlaces rotos, errores de servidor, tiempo de carga) y luego on-page e indexación (noindex, canonicals, H1, meta descripción, contenido escaso).",
       },
       onpage: {
         label: "On-page e indexación",
@@ -1731,6 +1731,7 @@ export const es: Translation = {
       expectedReason_taggedCollection: "Colección filtrada",
       expectedReason_constraint: "Variante de mercado/precio",
       expectedReason_sitemapExclusion: "Oculta desde la pestaña de sitemap",
+      expectedReason_unlistedProduct: "Producto «unlisted» (Shopify pone noindex)",
 
       nofollowTitle: "Los enlaces no se siguen (nofollow)",
       nofollowHint: "Estas páginas pueden indexarse, pero Google no sigue sus enlaces: las páginas enlazadas no reciben ninguna señal desde aquí.",
@@ -1769,6 +1770,8 @@ export const es: Translation = {
 
       imagesHint: "Cuenta las imágenes sin texto alternativo en el HTML entregado. Un alt=\"\" vacío es correcto para imágenes puramente decorativas: la cifra es un aviso, no una lista de errores.",
       imagesTileHint: "Incluye imágenes decorativas del tema.",
+      h1MultipleBadge: "{detail} H1",
+      imagesBadge: "{detail} imágenes sin texto alternativo",
       emptyImages: "Todas las imágenes encontradas tienen texto alternativo.",
 
       headDriftHint: "El título del HTML entregado difiere del título SEO guardado. Normalmente el tema u otra app sobrescribe el valor.",
@@ -1777,6 +1780,13 @@ export const es: Translation = {
       colDbTitle: "Título SEO guardado",
 
       duplicatesHint: "Varias páginas entregan el mismo título — a Google le cuesta más distinguirlas.",
+      aiFixMeta: "Generar las que faltan con IA",
+      aiFixMetaDuplicates: "Reescribir las duplicadas con IA",
+      aiFixDuplicateTitles: "Reescribir los títulos duplicados con IA",
+      aiFixMetaCaveat: "Genera meta descripciones para el contenido que no las tiene en la base de datos. Una descripción guardada que tu tema no entrega es un problema del tema y esto no lo arregla.",
+      aiFixTitleCaveat: "Reescribe los títulos SEO guardados. No cambia cómo tu tema compone el título.",
+      aiFixStarted: "Se ha iniciado la ejecución de IA. Síguela en la pestaña Tareas y luego lanza un nuevo rastreo para que el informe muestre los nuevos valores.",
+      aiFixError: "No se pudo iniciar la ejecución de IA.",
       emptyDuplicates: "No se encontraron títulos de página duplicados.",
     },
     crawlPage: {
@@ -1786,6 +1796,15 @@ export const es: Translation = {
       movedToOnPageLink: "Abrir On-page e indexación",
       redirectHopsBadge: "→ {count} redirecciones",
       scanNow: "Rastrear ahora",
+      // Los dos pasos de un rastreo (PLAN_SEO_CRAWL_EXPANSION §0)
+      stepDeliveryKicker: "Paso 1 · Entrega",
+      stepDeliveryTitle: "¿Se entrega tu tienda?",
+      stepDeliveryBody: "Accesibilidad, páginas y enlaces rotos, errores de servidor, tiempo de carga, páginas huérfanas y enlaces externos. Lo que falla aquí Google ni siquiera llega a evaluarlo.",
+      stepDeliveryBadge: "{count} problemas",
+      stepOnPageKicker: "Paso 2 · On-page e indexación",
+      stepOnPageTitle: "¿Sirve lo que se entrega?",
+      stepOnPageBody: "¿Puede Google indexarlo (noindex, canonicals) y es bueno el contenido (H1, meta descripción, contenido escaso, imágenes sin texto alternativo, títulos duplicados)?",
+      stepOnPageBadge: "{count} no indexables",
       // Enlaces externos (PLAN_SEO_CRAWL_EXPANSION §6)
       tileExternal: "Enlaces externos rotos",
       tileExternalHint: "de {total} destinos comprobados",

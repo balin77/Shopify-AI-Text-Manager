@@ -1444,7 +1444,7 @@ export const de = {
       crawl: {
         label: "Website-Crawl",
         title: "Website-Crawl / Site-Audit",
-        description: "Live-Crawl deiner Storefront: kaputte Links, Waisen-Seiten, abweichende Seitentitel und doppelte Titel.",
+        description: "Ein Live-Crawl deiner Storefront, in zwei Schritten: erst die Auslieferung (kaputte Seiten und Links, Serverfehler, Ladezeit), dann On-Page & Indexierung (noindex, Canonicals, H1, Meta-Description, dünner Inhalt).",
       },
       onpage: {
         label: "On-Page & Indexierung",
@@ -1731,6 +1731,7 @@ export const de = {
       expectedReason_taggedCollection: "Gefilterte Kollektion",
       expectedReason_constraint: "Markt-/Preisvariante",
       expectedReason_sitemapExclusion: "Im Sitemap-Tab ausgeblendet",
+      expectedReason_unlistedProduct: "Produkt ist „unlisted“ (Shopify setzt noindex)",
 
       nofollowTitle: "Links werden nicht verfolgt (nofollow)",
       nofollowHint: "Diese Seiten dürfen indexiert werden, aber Google folgt den Links darauf nicht — die verlinkten Seiten bekommen von hier kein Signal.",
@@ -1769,6 +1770,8 @@ export const de = {
 
       imagesHint: "Gezählt werden Bilder ohne Alt-Text im ausgelieferten HTML. Ein leeres alt=\"\" ist für rein dekorative Bilder korrekt — die Zahl ist ein Hinweis, keine Fehlerliste.",
       imagesTileHint: "Inklusive dekorativer Theme-Bilder.",
+      h1MultipleBadge: "{detail} H1",
+      imagesBadge: "{detail} Bilder ohne Alt-Text",
       emptyImages: "Alle gefundenen Bilder haben einen Alt-Text.",
 
       headDriftHint: "Der Titel im ausgelieferten HTML weicht vom gespeicherten SEO-Titel ab. Meistens überschreibt das Theme oder eine andere App den Wert.",
@@ -1777,6 +1780,13 @@ export const de = {
       colDbTitle: "Gespeicherter SEO-Titel",
 
       duplicatesHint: "Mehrere Seiten liefern denselben Seitentitel aus — Google kann sie dadurch schlechter auseinanderhalten.",
+      aiFixMeta: "Fehlende per KI erzeugen",
+      aiFixMetaDuplicates: "Doppelte per KI neu schreiben",
+      aiFixDuplicateTitles: "Doppelte Titel per KI neu schreiben",
+      aiFixMetaCaveat: "Erzeugt Meta-Descriptions für Inhalte, denen sie in der Datenbank fehlt. Eine gespeicherte Description, die dein Theme nicht ausliefert, ist ein Theme-Problem und wird dadurch nicht behoben.",
+      aiFixTitleCaveat: "Schreibt die gespeicherten SEO-Titel neu. Ändert nicht, wie dein Theme den Titel zusammensetzt.",
+      aiFixStarted: "Der KI-Lauf wurde gestartet. Den Fortschritt siehst du im Tab „Aufgaben“; danach einen neuen Crawl starten, damit der Bericht die neuen Werte zeigt.",
+      aiFixError: "Der KI-Lauf konnte nicht gestartet werden.",
       emptyDuplicates: "Keine doppelten Seitentitel gefunden.",
     },
     crawlPage: {
@@ -1786,6 +1796,15 @@ export const de = {
       movedToOnPageLink: "On-Page & Indexierung öffnen",
       redirectHopsBadge: "→ {count} Weiterleitungen",
       scanNow: "Jetzt scannen",
+      // Zwei Schritte eines Crawls (PLAN_SEO_CRAWL_EXPANSION §0)
+      stepDeliveryKicker: "Schritt 1 · Auslieferung",
+      stepDeliveryTitle: "Wird deine Seite ausgeliefert?",
+      stepDeliveryBody: "Erreichbarkeit, kaputte Seiten und Links, Serverfehler, Ladezeit, Waisen-Seiten und externe Links. Was hier scheitert, kann Google gar nicht erst bewerten.",
+      stepDeliveryBadge: "{count} Probleme",
+      stepOnPageKicker: "Schritt 2 · On-Page & Indexierung",
+      stepOnPageTitle: "Taugt das Ausgelieferte?",
+      stepOnPageBody: "Darf Google indexieren (noindex, Canonicals) und ist der Inhalt gut (H1, Meta-Description, dünner Inhalt, Bilder ohne Alt-Text, doppelte Titel)?",
+      stepOnPageBadge: "{count} nicht indexierbar",
       // Externe Links (PLAN_SEO_CRAWL_EXPANSION §6)
       tileExternal: "Tote externe Links",
       tileExternalHint: "von {total} geprüften Zielen",

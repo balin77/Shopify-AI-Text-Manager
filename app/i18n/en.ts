@@ -1447,7 +1447,7 @@ export const en: Translation = {
       crawl: {
         label: "Site crawl",
         title: "Site crawl / site audit",
-        description: "Live crawl of your storefront: broken links, orphan pages, drifted page titles, and duplicate titles.",
+        description: "One live crawl of your storefront, in two steps: first delivery (broken pages and links, server errors, load time), then on-page & indexing (noindex, canonicals, H1, meta description, thin content).",
       },
       onpage: {
         label: "On-page & indexing",
@@ -1732,6 +1732,7 @@ export const en: Translation = {
       expectedReason_taggedCollection: "Filtered collection",
       expectedReason_constraint: "Market/price variant",
       expectedReason_sitemapExclusion: "Hidden via the sitemap tab",
+      expectedReason_unlistedProduct: "Product is unlisted (Shopify sets noindex)",
 
       nofollowTitle: "Links are not followed (nofollow)",
       nofollowHint: "These pages may be indexed, but Google does not follow the links on them — the linked pages get no signal from here.",
@@ -1770,6 +1771,8 @@ export const en: Translation = {
 
       imagesHint: "Counts images without alt text in the delivered HTML. An empty alt=\"\" is correct for purely decorative images — the number is a hint, not an error list.",
       imagesTileHint: "Includes decorative theme images.",
+      h1MultipleBadge: "{detail} H1",
+      imagesBadge: "{detail} images without alt text",
       emptyImages: "Every image found has alt text.",
 
       headDriftHint: "The title in the delivered HTML differs from the stored SEO title. Usually the theme or another app overwrites the value.",
@@ -1778,6 +1781,13 @@ export const en: Translation = {
       colDbTitle: "Stored SEO title",
 
       duplicatesHint: "Several pages deliver the same page title — which makes it harder for Google to tell them apart.",
+      aiFixMeta: "Generate the missing ones with AI",
+      aiFixMetaDuplicates: "Rewrite the duplicates with AI",
+      aiFixDuplicateTitles: "Rewrite the duplicate titles with AI",
+      aiFixMetaCaveat: "Generates meta descriptions for content that has none in the database. A stored description your theme fails to deliver is a theme problem and is not fixed by this.",
+      aiFixTitleCaveat: "Rewrites the stored SEO titles. Does not change how your theme assembles the title.",
+      aiFixStarted: "The AI run has started. Follow it in the Tasks tab, then run a new crawl so the report shows the new values.",
+      aiFixError: "Could not start the AI run.",
       emptyDuplicates: "No duplicate page titles found.",
     },
     crawlPage: {
@@ -1787,6 +1797,15 @@ export const en: Translation = {
       movedToOnPageLink: "Open On-page & indexing",
       redirectHopsBadge: "→ {count} redirects",
       scanNow: "Scan now",
+      // The two steps of one crawl (PLAN_SEO_CRAWL_EXPANSION §0)
+      stepDeliveryKicker: "Step 1 · Delivery",
+      stepDeliveryTitle: "Is your shop being delivered?",
+      stepDeliveryBody: "Reachability, broken pages and links, server errors, load time, orphan pages and external links. What fails here Google never gets to judge at all.",
+      stepDeliveryBadge: "{count} problems",
+      stepOnPageKicker: "Step 2 · On-page & indexing",
+      stepOnPageTitle: "Is what gets delivered any good?",
+      stepOnPageBody: "May Google index it (noindex, canonicals), and is the content sound (H1, meta description, thin content, images without alt text, duplicate titles)?",
+      stepOnPageBadge: "{count} not indexable",
       // External links (PLAN_SEO_CRAWL_EXPANSION §6)
       tileExternal: "Dead external links",
       tileExternalHint: "of {total} checked targets",

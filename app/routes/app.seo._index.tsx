@@ -62,16 +62,17 @@ import type { Plan } from "../config/plans";
  * /app/seo/crawl would land the merchant on a tab that no longer has the
  * category at all.
  */
-const DEEP_LINK_FOR_PROBLEM: Record<string, { path: string; tab: string }> = {
+const DEEP_LINK_FOR_PROBLEM: Record<string, { path: string; tab: string; view?: string }> = {
   brokenLinks: { path: "/app/seo/crawl", tab: "broken" },
   serverErrors: { path: "/app/seo/crawl", tab: "serverErrors" },
   orphanPages: { path: "/app/seo/crawl", tab: "orphans" },
-  headDrift: { path: "/app/seo/onpage", tab: "headDrift" },
+  // The on-page half is step 2 of the crawl tab, reached with `?view=onpage`.
+  headDrift: { path: "/app/seo/crawl", tab: "headDrift", view: "onpage" },
   // §7.1 — the on-page buckets.
-  nonIndexable: { path: "/app/seo/onpage", tab: "indexability" },
-  canonicalIssue: { path: "/app/seo/onpage", tab: "canonicals" },
-  missingH1: { path: "/app/seo/onpage", tab: "h1" },
-  thinContent: { path: "/app/seo/onpage", tab: "thin" },
+  nonIndexable: { path: "/app/seo/crawl", tab: "indexability", view: "onpage" },
+  canonicalIssue: { path: "/app/seo/crawl", tab: "canonicals", view: "onpage" },
+  missingH1: { path: "/app/seo/crawl", tab: "h1", view: "onpage" },
+  thinContent: { path: "/app/seo/crawl", tab: "thin", view: "onpage" },
   externalBrokenLinks: { path: "/app/seo/crawl", tab: "external" },
 };
 const DEEP_LINK_FALLBACK = { path: "/app/seo/crawl", tab: "broken" };
@@ -747,9 +748,9 @@ export default function SeoDashboard() {
                               // path (§3.8) head drift would open a tab that no
                               // longer has the category.
                               const target = DEEP_LINK_FOR_PROBLEM[p.code] ?? DEEP_LINK_FALLBACK;
-                              handleNavigate(target.path, {
-                                searchParams: new URLSearchParams({ tab: target.tab }),
-                              });
+                              const params = new URLSearchParams({ tab: target.tab });
+                              if (target.view) params.set("view", target.view);
+                              handleNavigate(target.path, { searchParams: params });
                             }}
                           >
                             {d.viewInCrawlTab}
