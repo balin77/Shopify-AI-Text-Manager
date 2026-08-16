@@ -18,6 +18,7 @@ import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
 import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
+import { SettingsCollectionModelProbeTab } from "../components/SettingsCollectionModelProbeTab";
 import { SettingsPageSpeedProbeTab } from "../components/SettingsPageSpeedProbeTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
@@ -433,6 +434,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // dev-only gate as the Translation Probe tab (APP_ENV === "development").
     // Temporary.
     const showPageSpeedProbeTab = showTranslationProbeTab;
+    // PLAN_CONTENT_CREATION Phase 0 §5: collection-model probe — same dev-only
+    // gate. The route additionally refuses its WRITE test outside
+    // APP_ENV=development; a hidden tab is not a permission check.
+    const showCollectionProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -489,6 +494,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showImageManagerTab,
       showSkuTab,
       showTranslationProbeTab,
+      showCollectionProbeTab,
       showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
@@ -1090,7 +1096,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1103,7 +1109,7 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe" | "pagespeedprobe";
+  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe" | "pagespeedprobe" | "collectionprobe";
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
@@ -1123,7 +1129,8 @@ export default function SettingsPage() {
     ) return "other";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
     if (tabParam === "pagespeedprobe" && !showPageSpeedProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe", "pagespeedprobe"].includes(tabParam)) {
+    if (tabParam === "collectionprobe" && !showCollectionProbeTab) return "setup";
+    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe", "pagespeedprobe", "collectionprobe"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
@@ -1212,6 +1219,7 @@ export default function SettingsPage() {
       { id: "plan", title: t.settings.plan },
       ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
       ...(showPageSpeedProbeTab ? [{ id: "pagespeedprobe", title: "PageSpeed Probe" }] : []),
+      ...(showCollectionProbeTab ? [{ id: "collectionprobe", title: "Collection Probe" }] : []),
     ];
 
     registerItems({
@@ -1402,6 +1410,27 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
+              {showCollectionProbeTab && (
+              <button
+                onClick={() => handleSectionChange("collectionprobe")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "collectionprobe" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "collectionprobe" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "collectionprobe" ? "semibold" : "regular"}>
+                  Collection Probe
+                </Text>
+              </button>
+              )}
             </Card>
           </div>
 
@@ -1552,6 +1581,10 @@ export default function SettingsPage() {
               )}
               {selectedSection === "pagespeedprobe" && showPageSpeedProbeTab && (
                 <SettingsPageSpeedProbeTab />
+              )}
+              {/* Collection-Model Probe (PLAN_CONTENT_CREATION Phase 0 dev tool) */}
+              {selectedSection === "collectionprobe" && showCollectionProbeTab && (
+                <SettingsCollectionModelProbeTab />
               )}
             </BlockStack>
           </div>
