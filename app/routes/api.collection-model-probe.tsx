@@ -424,16 +424,31 @@ function deriveConditionPayload(byName: Map<string, TypeShape>): { payload: Reco
 
   const value: Record<string, unknown> = {};
   for (const field of inner.fields) {
+    // A LIST field must get a LIST. GraphQL happens to coerce a bare scalar
+    // into a single-element list, so the first successful run sent
+    // `values: "contentpilot-probe"` against `values: [String!]!` and still
+    // passed — a payload that works by leniency is not a payload this probe
+    // should be reporting as the correct shape.
+    const isList = field.type.includes("[");
+    const wrap = (v: unknown) => (isList ? [v] : v);
     const fieldType = byName.get(bare(field.type));
+
     if (fieldType?.enumValues?.length) {
-      // EQUALS where it exists, otherwise whatever the enum offers first.
-      value[field.name] = fieldType.enumValues.includes("EQUALS") ? "EQUALS" : fieldType.enumValues[0];
-    } else if (/String/.test(field.type)) {
-      value[field.name] = "contentpilot-probe";
-    } else if (/Int|Decimal|Float|Money/.test(field.type)) {
-      value[field.name] = 1;
+      // Enums here are NOT interchangeable between condition kinds — productTag
+      // has TAGGED_WITH where productTitle has EQUALS. Take what this one
+      // offers rather than assuming a common vocabulary.
+      const relation = fieldType.enumValues.includes("EQUALS") ? "EQUALS" : fieldType.enumValues[0];
+      value[field.name] = isList ? [relation] : relation;
+    } else if (fieldType?.kind === "INPUT_OBJECT") {
+      // e.g. MoneyInput / WeightInput / the category value object — needs its
+      // own synthesis, which is beyond what a diagnostic should guess at.
+      return { payload: null, note: `${inner.name}.${field.name} needs a nested ${bare(field.type)} — use the override field.` };
+    } else if (/String|ID/.test(field.type)) {
+      value[field.name] = wrap("contentpilot-probe");
+    } else if (/Int|Decimal|Float/.test(field.type)) {
+      value[field.name] = wrap(1);
     } else if (/Boolean/.test(field.type)) {
-      value[field.name] = true;
+      value[field.name] = wrap(true);
     } else if (field.type.endsWith("!")) {
       // A required field we cannot synthesise — better to say so than to send
       // something the API will reject for an unrelated reason.

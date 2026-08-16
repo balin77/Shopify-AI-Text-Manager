@@ -167,26 +167,70 @@ Konsequenzen:
 
 ### 1.2a Messergebnis 2026-07 (2026-08-16, Dev-Store `8c19f3-ce`)
 
-Introspektion über die Collection-Probe (Settings → Collection Probe). Alle zehn API-Versionen von 2024-10 bis `unstable` antworten auf dem Store, **2026-07 eingeschlossen** — Phase −1 hat kein Erreichbarkeitsproblem.
+Introspektion + Schreibtest über die Collection-Probe (Settings → Collection Probe). Alle zehn API-Versionen von 2024-10 bis `unstable` antworten auf dem Store, **2026-07 eingeschlossen** — Phase −1 hat kein Erreichbarkeitsproblem.
 
-**Bestätigt:** `CollectionCreateInput.sources: [CollectionCreateSourceTargetInput!]` existiert, ebenso `CollectionUpdateInput.sourcesToCreate` / `sourcesToUpdate` / `sourcesToDelete`. Das Modell aus §1.2 ist real, und der Zuschnitt aus §2.4 ist vollständig durch die API gedeckt: `CollectionCreateSourceTargetInput` hat genau die drei Zweige `source` / `subCollections` / `shareableSource`, `CollectionCreateConditionsSourceInput` trägt `title!`, `description`, `inclusion`, `exclusion`, `targetType`, und `inclusion`/`exclusion` haben je `matchType`, `conditions[]` **und** `selections[]`. `CollectionConditionMatchType` = `ANY | ALL`.
+Der Zuschnitt aus §2.4 ist vollständig durch die API gedeckt: `CollectionCreateSourceTargetInput` hat genau die drei Zweige `source` / `subCollections` / `shareableSource`, `CollectionCreateConditionsSourceInput` trägt `title!`, `description`, `inclusion`, `exclusion`, `targetType`, und `inclusion`/`exclusion` haben je `matchType`, `conditions[]` **und** `selections[]`. `CollectionConditionMatchType` = `ANY | ALL`, `CollectionSourceTargetType` = `PRODUCTS | VARIANTS`.
 
-> **⚠ Die wichtigste Korrektur am Plan: Bedingungen sind KEIN generisches `{column, relation, condition}`-Tripel mehr.**
+#### Messung B: ✅ Eine manuelle Collection LÄSST sich umwandeln
+
+`collectionUpdate` mit `sourcesToCreate` auf einer frisch als manuell angelegten Collection ging durch, und das Zurücklesen bestätigte die Regel. Die Help-Center-Aussage „der Typ ist nach dem Anlegen unveränderlich" gilt für die API **nicht**. §1.2 Punkt 3 ist damit zugunsten des Eingabefelds entschieden, und Phase 3 darf die Umwandlung anbieten.
+
+> **⚠ Dabei der wichtigste Fund des ganzen Laufs: `ruleSet` ist eine VERLUSTBEHAFTETE Rückprojektion des neuen Modells.**
 >
-> Das ist die alte `ruleSet`-Form — `CollectionRuleColumn` (15 Werte) und `CollectionRuleRelation` (10 Werte) existieren auf 2026-07 zwar weiter, gehören aber zu `CollectionInput.ruleSet`, nicht zum neuen Modell. `CollectionSourceInclusionConditionInput` ist stattdessen eine **Union mit einem Feld pro Attribut**, jedes mit eigenem Eingabetyp und **eigenem Relations-Enum**:
+> Gesendet wurde `productTag { relation: TAGGED_WITH, values: […], matchType: ANY }`. Zurückgelesen kam über `ruleSet`:
+> `{ appliedDisjunctively: false, rules: [{ column: "TAG", relation: "EQUALS", condition: "…" }] }`.
 >
-> `productTag`, `productTitle`, `productType`, `productVendor`, `productCategory`, `productStatus`, `variantPrice`, `variantCompareAtPrice`, `variantWeight`, `variantInventory`, `variantTitle` sowie sieben Metafeld-Varianten (`metafieldString`, `metafieldStringList`, `metafieldInteger`, `metafieldDecimal`, `metafieldBoolean`, `metafieldMetaobject`, `metafieldMetaobjectList`).
+> Also: `TAGGED_WITH` → `EQUALS`, und der **eigene `matchType` der Bedingung ist ersatzlos verschwunden**. Shopify projiziert das neue Modell in die alte Form, wo das überhaupt geht — und wo es nicht geht (Ausschlüsse, mehrere Quellen, Varianten-Targeting), kann es nur weglassen. Das erklärt die §1.0-Warnung, dass solche Collections aus Vor-2026-07-Ergebnissen *herausgefiltert* werden, und verschärft sie: was NICHT gefiltert wird, kommt möglicherweise **vereinfacht** zurück.
 >
-> Für **Ausschlüsse** ist die Liste bewusst kürzer: `CollectionSourceExclusionCondition*` gibt es nur für `collection`, `productCategory`, `productTag`, `productType`, `productVendor` — man kann also nicht nach jedem Kriterium ausschließen, nach dem man einschließen kann. Zusätzlich existiert dort ein `...ConditionUnknown` (ebenso bei den Einschlüssen): Shopify sieht selbst vor, dass eine Bedingung auftaucht, die der Client nicht kennt — die Read-only-Regel aus §2.4 ist damit nicht nur unsere Vorsicht, sondern die vorgesehene Behandlung.
->
-> **Folge für 1.4b:** `collection-rules.shared.ts` beschreibt eine **diskriminierte Union**, kein Feld/Operator/Wert-Formular. Jede Bedingungsart bringt ihr eigenes Relations-Enum und ihren eigenen Werttyp mit; das UI kann darüber generisch rendern, die Datenform darf es nicht flachklopfen. Die genauen Feldnamen der inneren Typen fehlen noch — der erste Probe-Lauf hat sein Introspektions-Budget alphabetisch an `*Connection`/`*Edge`/`*Payload` verbraucht und die Bedingungstypen nie erreicht (behoben: Input-Typen und Enums werden jetzt zuerst introspiziert).
+> **Regel daraus:** ab 2026-07 wird `sources` gelesen, **nie** `ruleSet`. Ein Editor, der `ruleSet` liest und zurückschreibt, würde die Mitgliedschaft einer Collection stillschweigend ändern — genau das, was die Read-only-Regel aus §2.4 verhindern soll, nur eine Ebene tiefer. Der `sourcesJson`-Umschlag aus Phase 0 hält das auseinander: eine `{shape: "ruleSet"}`-Zeile ist eine Projektion, keine Wahrheit.
 
-**Zwei Funde, die andere Planstellen korrigieren — beide gehören nicht zu §1.2:**
+#### Die Bedingungen — Grundlage für `collection-rules.shared.ts`
 
-1. **`CollectionUpdateInput.redirectNewHandle: Boolean` existiert** — und zwar auch auf dem alten `CollectionInput`, also schon unter dem heutigen Pin. §Phase 3.3 behauptet, der Shopify-Admin biete für den Redirect bei Handle-Wechsel eine Checkbox, „die API nicht". Für Collections stimmt das nicht: die Weiterleitung ist ein Flag an der Mutation und braucht **kein** `createRedirect`. Vor der Umsetzung von 3.3 ist dasselbe für Product/Page/Article zu prüfen — wo das Flag existiert, ist es der richtige Weg, weil Shopify die Weiterleitung dann selbst verwaltet.
-2. **`collectionDuplicate` existiert** (`CollectionDuplicateInput { collectionId, newTitle, copyPublications }`, asynchron über `job`). §2.5f nimmt an, nur Produkte hätten eine Duplicate-Mutation und alles andere brauche clientseitiges Vorbefüllen. Für Collections gilt das nicht — Phase 1.9 kann dort denselben serverseitigen Weg gehen wie bei Produkten.
+**Kein generisches `{column, relation, condition}`-Tripel mehr.** Das ist die alte `ruleSet`-Form (`CollectionRuleInput`), die auf 2026-07 nur noch am deprecateten `CollectionInput` hängt. `CollectionSourceInclusionConditionInput` ist eine **Union mit einem Feld pro Attribut** — 18 für Einschlüsse, 5 für Ausschlüsse:
 
-**Messung B bleibt offen.** Der erste Schreibtest schickte das alte `{column, relation, condition}`-Tripel; die API wies die **Anfrage-Form** zurück (`Field is not defined on CollectionSourceInclusionConditionInput`), ohne die Mutation je auszuführen. Das Probe-Verdikt hat daraus fälschlich „Typ ist unveränderlich" gemacht — genau der Fehler, gegen den die Probe gehärtet sein sollte. Behoben: eine abgewiesene Anfrage-Form meldet jetzt **INCONCLUSIVE**, und das Payload wird aus den introspizierten Typen abgeleitet statt geraten.
+| | Einschluss | Ausschluss |
+|---|---|---|
+| `productTag` | ✅ `TAGGED_WITH`, `NOT_TAGGED_WITH` | ✅ nur `TAGGED_WITH` |
+| `productTitle` | ✅ `EQUALS`, `NOT_EQUALS`, `STARTS_WITH`, `ENDS_WITH`, `CONTAINS`, `DOES_NOT_CONTAIN` | ❌ |
+| `productType` | ✅ wie productTitle | ✅ nur `EQUALS`, `CONTAINS` |
+| `productVendor` | ✅ wie productTitle | ✅ nur `EQUALS`, `CONTAINS` |
+| `productCategory` | ✅ `EQUALS`, `NOT_EQUALS` | ✅ nur `EQUALS` |
+| `productStatus` | ✅ `EQUALS`, `NOT_EQUALS` (Werte: `ProductStatus`) | ❌ |
+| `collection` | ❌ | ✅ (nur `values: [ID!]!`, ohne Relation) |
+| `variantTitle` | ✅ wie productTitle | ❌ |
+| `variantPrice` | ✅ `EQUALS`, `NOT_EQUALS`, `GREATER_THAN`, `LESS_THAN` (`MoneyInput`) | ❌ |
+| `variantCompareAtPrice` | ✅ dieselben + `IS_SET`, `IS_NOT_SET` | ❌ |
+| `variantInventory` | ✅ `EQUALS`, `GREATER_THAN`, `LESS_THAN` (`Int`) | ❌ |
+| `variantWeight` | ✅ `EQUALS`, `NOT_EQUALS`, `GREATER_THAN`, `LESS_THAN` (`WeightInput`) | ❌ |
+| `metafieldString` | ✅ nur `EQUALS` | ❌ |
+| `metafieldStringList` | ✅ nur `INCLUDES` | ❌ |
+| `metafieldInteger` / `metafieldDecimal` | ✅ `EQUALS`, `GREATER_THAN`, `LESS_THAN` | ❌ |
+| `metafieldBoolean` | ✅ nur `EQUALS` | ❌ |
+| `metafieldMetaobject` | ✅ nur `EQUALS` | ❌ |
+| `metafieldMetaobjectList` | ✅ nur `INCLUDES` | ❌ |
+
+**Drei Formen, nicht eine.** Das UI kann darüber generisch rendern, die Datenform darf es nicht flachklopfen:
+
+1. **Listenwertig** — `{ relation, values: [...], matchType }`. Die Bedingung hat also ihren **eigenen** `matchType` über ihre Werte, zusätzlich zum `matchType` der Quelle. Zwei Ebenen, und die untere ist genau die, die `ruleSet` verschluckt.
+2. **Skalarwertig** — `{ relation, value }`. Betrifft die Varianten- und die numerischen Metafeld-Bedingungen; `value` ist je nach Art `MoneyInput`, `WeightInput`, `Int`, `Decimal`, `Boolean` oder `ID`.
+3. **Metafeld-Bedingungen** tragen zusätzlich `definitionId: ID!`.
+
+**Ausschlüsse können weniger als Einschlüsse.** Das UI darf nicht annehmen, jede Einschlussbedingung ließe sich spiegeln — weder die Bedingungsart noch die Relationen decken sich.
+
+**Ein `...ConditionUnknown` existiert auf beiden Seiten.** Shopify sieht selbst vor, dass eine Bedingung auftaucht, die der Client nicht kennt. Die Read-only-Regel aus §2.4 ist damit nicht bloß unsere Vorsicht, sondern die vorgesehene Behandlung.
+
+#### Bearbeiten ist ein DIFF, kein Ersetzen
+
+`CollectionUpdateSourceInclusionInput` (und das Ausschluss-Pendant) hat `conditionsToCreate` / `conditionsToDelete` / `conditionsToUpdate` sowie `selectionsToAdd` / `selectionsToRemove`. Eine bestehende Quelle wird also **differenziell** geändert, und `CollectionUpdateConditionsSourceInput` verlangt `id: ID!` — der Editor braucht die Quellen- und Bedingungs-IDs aus dem Lesepfad, ein „ganze Liste neu schreiben" gibt es nicht. Das passt zur Read-only-Regel: was der Editor nicht rendert, fasst er auch nicht an, weil er es schlicht nicht in seine `*ToUpdate`-Liste aufnimmt.
+
+**`CollectionUpdateSourceTargetInput` hat nur `condition` und `subCollections` — kein `shareableSource`.** Eine geteilte Quelle lässt sich anlegen, aber nicht ändern. Bestätigt §2.4, sie draußen zu lassen.
+
+#### Drei Funde, die andere Planstellen korrigieren
+
+1. **`redirectNewHandle: Boolean` existiert** auf `CollectionUpdateInput` **und** auf dem alten `CollectionInput`, also schon unter dem heutigen Pin. §Phase 3.3 behauptet, der Shopify-Admin biete für den Redirect bei Handle-Wechsel eine Checkbox, „die API nicht". Für Collections stimmt das nicht: die Weiterleitung ist ein Flag an der Mutation und braucht **kein** `createRedirect`. Vor 3.3 ist dasselbe für Product/Page/Article zu prüfen — wo das Flag existiert, ist es der richtige Weg, weil Shopify die Weiterleitung dann selbst verwaltet.
+2. **`collectionDuplicate` existiert** (`CollectionDuplicateInput { collectionId, newTitle, copyPublications }`, asynchron über `job`). §2.5f nimmt an, nur Produkte hätten eine Duplicate-Mutation. Phase 1.9 kann für Collections denselben serverseitigen Weg gehen — inklusive `copyPublications`, was die §2.3-Sichtbarkeitsfalle gleich mit erledigt.
+3. **`CollectionIdentifierInput { id, customId, handle }` existiert.** §1.7 setzt für Idempotenz auf `productSet(identifier: { handle })` und nimmt an, für andere Typen brauche es eine Request-ID. Für Collections gibt es eine Handle-Identität — ob eine Create-or-Update-Mutation sie annimmt, ist die Anschlussfrage.
+4. **Metafeld-Bedingungen sind gegated:** `MetafieldCapabilitySmartCollectionConditionInput { enabled: Boolean! }`. Eine Metafeld-Definition muss für Smart-Collection-Bedingungen **freigeschaltet** sein, bevor sie in einer Regel benutzt werden kann. Der Regel-Editor muss die Auswahl auf freigeschaltete Definitionen beschränken oder die Freischaltung anbieten — sonst baut der Merchant eine Regel, die Shopify ablehnt.
 
 ---
 
@@ -402,7 +446,7 @@ Steht vor allem anderen und ist **auch ohne diesen Plan** bis **2026-10-16** zu 
    **✅ Entschieden (2026-08-16): kein `Blog`-Modell.** Die Primärfelder eines Blog-Containers holt der Loader von [app.blog.tsx](../../app/routes/app.blog.tsx) ohnehin bei **jedem** Besuch live — eine Cache-Zeile wäre eine zweite Wahrheit für Daten, die nie veralten. Nur die Übersetzungen brauchen einen Speicher, und den haben sie (`ContentTranslation`, `resourceType: "Blog"`). `syncSingleBlog` in [content-sync.service.ts](../../app/services/content-sync.service.ts) frischt genau die auf: delete + recreate, **skopiert auf die erfolgreich geholten Market-Layer**, wie im Artikel-Pfad. Nebenbei geschlossen: der Loader backfillt Blog-Übersetzungen nur, wenn ein Blog **gar keine** hat — eine geänderte Übersetzung war damit aus Shopify nie nachladbar. Existiert der Blog nicht, gibt der Case 404 zurück statt einen erfolgreichen No-Op zu melden.
 5. **Messungen** (Ergebnisse hier im Dokument festhalten):
    - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts` — **✅ gemessen 2026-08-16 gegen 2026-07 auf `8c19f3-ce`. Ergebnisse in §1.2a.**
-   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3) — **offen.** Der erste Schreibtest lief mit einem falsch geformten Payload und war damit ergebnislos, nicht negativ (§1.2a, letzter Absatz).
+   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3) — **✅ JA, gemessen.** Details und Konsequenzen in §1.2a.
    - ~~Zeigt Shopifys aktueller Admin bereits Ausschlüsse/Mehrfachquellen? (§2.4)~~ — **gestrichen (2026-08-16).** Die Messung sollte nur absichern, ob man „mehr als Shopify" behaupten darf. Wir behaupten es nicht: der Zuschnitt aus §2.4 wird gebaut, weil er nützlich ist, und wir gehen davon aus, dass Shopify es entweder schon kann oder bald können wird. Damit hängt keine Entscheidung mehr an der Antwort.
    - **Upsertet `syncSingleX` einen bisher UNBEKANNTEN GID?** — **✅ Ja, für alle fünf; am Code beantwortet, keine Shop-Verbindung nötig.** `syncSingleProduct`/`syncSingleCollection`/`syncSingleArticle`/`syncSinglePage` holen per ID und schreiben ein `upsert` **mit `create`-Zweig** — ein unbekannter GID wird angelegt, nicht verworfen. Metaobjects gehen über `syncMetaobjectsForType`, das den ganzen Typ neu holt, also einen neuen Eintrag ebenfalls findet. Die CLAUDE.md-Regel „Reload only refreshes known IDs" meint etwas anderes und bleibt richtig: die **Liste** entdeckt nichts Neues (nur `syncAll*` tut das) — aber ein gezielter Reload auf einen bekannten neuen GID, und genau den hat Phase 1.6 nach dem Create, funktioniert.
    - Reichen `write_inventory`/`write_publications` ohne ihre `read_`-Pendants? (§2.1) — **offen, erst in Phase 4 messbar.**
