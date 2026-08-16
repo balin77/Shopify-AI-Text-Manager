@@ -146,15 +146,6 @@ model AISettings {
   // crawl take longer.
   seoCrawlExternalLinks Boolean @default(true)
 
-  // The request spacing (ms between crawl requests) the LAST crawl of this
-  // shop settled on. The crawler ramps this down while the storefront answers
-  // cleanly and back up on a 429; remembering it means a shop that proved it
-  // takes 4 requests/second does not spend the first fifty requests of every
-  // crawl proving it again, and a shop that got throttled starts cautious
-  // instead of walking into the same shield. Null = never crawled; the value
-  // is clamped to [MIN_SPACING_MS, MAX_SPACING_MS] on read.
-  seoCrawlSpacingMs     Int?
-
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
   // character constraints to the translate prompt for SEO-critical fields

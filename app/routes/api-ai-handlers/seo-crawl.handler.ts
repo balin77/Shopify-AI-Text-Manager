@@ -128,7 +128,7 @@ async function runSeoCrawlTask(taskId: string, snapshotId: string, args: RunArgs
     // ON, matching the column default.
     const settings = await db.aISettings.findUnique({
       where: { shop },
-      select: { seoCrawlExternalLinks: true, seoCrawlSpacingMs: true },
+      select: { seoCrawlExternalLinks: true },
     });
     const checkExternalLinks = settings?.seoCrawlExternalLinks ?? true;
 
@@ -140,9 +140,6 @@ async function runSeoCrawlTask(taskId: string, snapshotId: string, args: RunArgs
       shopName,
       appUrl,
       checkExternalLinks,
-      // The pace the last run settled on. Null on a shop never crawled since
-      // this shipped, which is exactly the cautious default.
-      learnedSpacingMs: settings?.seoCrawlSpacingMs ?? null,
       // Heartbeat every 25 pages (§3.5) — the Task.progress write itself is
       // the heartbeat the stuck-task reaper watches (contract §8). Total is
       // unknown up front (a live crawl, not a fixed catalog scan), so the
@@ -161,20 +158,6 @@ async function runSeoCrawlTask(taskId: string, snapshotId: string, args: RunArgs
           .catch(() => {});
       },
     });
-
-    // Remember the pace for the next crawl. `upsert`, because a shop can crawl
-    // before it has ever opened the AI settings page; best-effort, because
-    // losing the memory costs one slow crawl and must never fail a run that
-    // already produced a snapshot.
-    if (summary.settledSpacingMs != null) {
-      await db.aISettings
-        .upsert({
-          where: { shop },
-          create: { shop, seoCrawlSpacingMs: summary.settledSpacingMs },
-          update: { seoCrawlSpacingMs: summary.settledSpacingMs },
-        })
-        .catch(() => {});
-    }
 
     await db.seoCrawlSnapshot.update({
       where: { id: snapshotId },
