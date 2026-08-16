@@ -165,6 +165,31 @@ Konsequenzen:
 3. **Die „Typ ist unveränderlich"-Regel ist zu messen, nicht anzunehmen.** Das Help Center sagt, der Collection-Typ lasse sich nach dem Anlegen nicht ändern; `CollectionUpdateInput` hat aber ein Feld `sourcesToCreate`. Beides zugleich kann nicht stimmen (Phase 0, Schritt 5).
 4. **Vorbedingung für Phase 3:** [content.mutations.ts:103](../../app/graphql/content.mutations.ts#L103) benutzt für `collectionUpdate` noch das deprecatete `input: CollectionInput` (während `articleUpdate` bereits die neue Form nutzt). `sourcesToCreate`/`sourcesToUpdate` erzwingt die Migration dieser Mutation.
 
+### 1.2a Messergebnis 2026-07 (2026-08-16, Dev-Store `8c19f3-ce`)
+
+Introspektion über die Collection-Probe (Settings → Collection Probe). Alle zehn API-Versionen von 2024-10 bis `unstable` antworten auf dem Store, **2026-07 eingeschlossen** — Phase −1 hat kein Erreichbarkeitsproblem.
+
+**Bestätigt:** `CollectionCreateInput.sources: [CollectionCreateSourceTargetInput!]` existiert, ebenso `CollectionUpdateInput.sourcesToCreate` / `sourcesToUpdate` / `sourcesToDelete`. Das Modell aus §1.2 ist real, und der Zuschnitt aus §2.4 ist vollständig durch die API gedeckt: `CollectionCreateSourceTargetInput` hat genau die drei Zweige `source` / `subCollections` / `shareableSource`, `CollectionCreateConditionsSourceInput` trägt `title!`, `description`, `inclusion`, `exclusion`, `targetType`, und `inclusion`/`exclusion` haben je `matchType`, `conditions[]` **und** `selections[]`. `CollectionConditionMatchType` = `ANY | ALL`.
+
+> **⚠ Die wichtigste Korrektur am Plan: Bedingungen sind KEIN generisches `{column, relation, condition}`-Tripel mehr.**
+>
+> Das ist die alte `ruleSet`-Form — `CollectionRuleColumn` (15 Werte) und `CollectionRuleRelation` (10 Werte) existieren auf 2026-07 zwar weiter, gehören aber zu `CollectionInput.ruleSet`, nicht zum neuen Modell. `CollectionSourceInclusionConditionInput` ist stattdessen eine **Union mit einem Feld pro Attribut**, jedes mit eigenem Eingabetyp und **eigenem Relations-Enum**:
+>
+> `productTag`, `productTitle`, `productType`, `productVendor`, `productCategory`, `productStatus`, `variantPrice`, `variantCompareAtPrice`, `variantWeight`, `variantInventory`, `variantTitle` sowie sieben Metafeld-Varianten (`metafieldString`, `metafieldStringList`, `metafieldInteger`, `metafieldDecimal`, `metafieldBoolean`, `metafieldMetaobject`, `metafieldMetaobjectList`).
+>
+> Für **Ausschlüsse** ist die Liste bewusst kürzer: `CollectionSourceExclusionCondition*` gibt es nur für `collection`, `productCategory`, `productTag`, `productType`, `productVendor` — man kann also nicht nach jedem Kriterium ausschließen, nach dem man einschließen kann. Zusätzlich existiert dort ein `...ConditionUnknown` (ebenso bei den Einschlüssen): Shopify sieht selbst vor, dass eine Bedingung auftaucht, die der Client nicht kennt — die Read-only-Regel aus §2.4 ist damit nicht nur unsere Vorsicht, sondern die vorgesehene Behandlung.
+>
+> **Folge für 1.4b:** `collection-rules.shared.ts` beschreibt eine **diskriminierte Union**, kein Feld/Operator/Wert-Formular. Jede Bedingungsart bringt ihr eigenes Relations-Enum und ihren eigenen Werttyp mit; das UI kann darüber generisch rendern, die Datenform darf es nicht flachklopfen. Die genauen Feldnamen der inneren Typen fehlen noch — der erste Probe-Lauf hat sein Introspektions-Budget alphabetisch an `*Connection`/`*Edge`/`*Payload` verbraucht und die Bedingungstypen nie erreicht (behoben: Input-Typen und Enums werden jetzt zuerst introspiziert).
+
+**Zwei Funde, die andere Planstellen korrigieren — beide gehören nicht zu §1.2:**
+
+1. **`CollectionUpdateInput.redirectNewHandle: Boolean` existiert** — und zwar auch auf dem alten `CollectionInput`, also schon unter dem heutigen Pin. §Phase 3.3 behauptet, der Shopify-Admin biete für den Redirect bei Handle-Wechsel eine Checkbox, „die API nicht". Für Collections stimmt das nicht: die Weiterleitung ist ein Flag an der Mutation und braucht **kein** `createRedirect`. Vor der Umsetzung von 3.3 ist dasselbe für Product/Page/Article zu prüfen — wo das Flag existiert, ist es der richtige Weg, weil Shopify die Weiterleitung dann selbst verwaltet.
+2. **`collectionDuplicate` existiert** (`CollectionDuplicateInput { collectionId, newTitle, copyPublications }`, asynchron über `job`). §2.5f nimmt an, nur Produkte hätten eine Duplicate-Mutation und alles andere brauche clientseitiges Vorbefüllen. Für Collections gilt das nicht — Phase 1.9 kann dort denselben serverseitigen Weg gehen wie bei Produkten.
+
+**Messung B bleibt offen.** Der erste Schreibtest schickte das alte `{column, relation, condition}`-Tripel; die API wies die **Anfrage-Form** zurück (`Field is not defined on CollectionSourceInclusionConditionInput`), ohne die Mutation je auszuführen. Das Probe-Verdikt hat daraus fälschlich „Typ ist unveränderlich" gemacht — genau der Fehler, gegen den die Probe gehärtet sein sollte. Behoben: eine abgewiesene Anfrage-Form meldet jetzt **INCONCLUSIVE**, und das Payload wird aus den introspizierten Typen abgeleitet statt geraten.
+
+---
+
 ### 1.3 Page
 
 `PageCreateInput`: `title` (Pflicht), `handle`, `body`, `isPublished` (bzw. geplantes Datum), `templateSuffix`. Scope: `write_content` **oder** `write_online_store_pages` — beides vorhanden.
@@ -376,8 +401,8 @@ Steht vor allem anderen und ist **auch ohne diesen Plan** bis **2026-10-16** zu 
 
    **✅ Entschieden (2026-08-16): kein `Blog`-Modell.** Die Primärfelder eines Blog-Containers holt der Loader von [app.blog.tsx](../../app/routes/app.blog.tsx) ohnehin bei **jedem** Besuch live — eine Cache-Zeile wäre eine zweite Wahrheit für Daten, die nie veralten. Nur die Übersetzungen brauchen einen Speicher, und den haben sie (`ContentTranslation`, `resourceType: "Blog"`). `syncSingleBlog` in [content-sync.service.ts](../../app/services/content-sync.service.ts) frischt genau die auf: delete + recreate, **skopiert auf die erfolgreich geholten Market-Layer**, wie im Artikel-Pfad. Nebenbei geschlossen: der Loader backfillt Blog-Übersetzungen nur, wenn ein Blog **gar keine** hat — eine geänderte Übersetzung war damit aus Shopify nie nachladbar. Existiert der Blog nicht, gibt der Case 404 zurück statt einen erfolgreichen No-Op zu melden.
 5. **Messungen** (Ergebnisse hier im Dokument festhalten):
-   - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts` — **offen, braucht 2026-07 (Phase −1) und eine Shop-Verbindung.**
-   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3) — **offen, dito.**
+   - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts` — **✅ gemessen 2026-08-16 gegen 2026-07 auf `8c19f3-ce`. Ergebnisse in §1.2a.**
+   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3) — **offen.** Der erste Schreibtest lief mit einem falsch geformten Payload und war damit ergebnislos, nicht negativ (§1.2a, letzter Absatz).
    - ~~Zeigt Shopifys aktueller Admin bereits Ausschlüsse/Mehrfachquellen? (§2.4)~~ — **gestrichen (2026-08-16).** Die Messung sollte nur absichern, ob man „mehr als Shopify" behaupten darf. Wir behaupten es nicht: der Zuschnitt aus §2.4 wird gebaut, weil er nützlich ist, und wir gehen davon aus, dass Shopify es entweder schon kann oder bald können wird. Damit hängt keine Entscheidung mehr an der Antwort.
    - **Upsertet `syncSingleX` einen bisher UNBEKANNTEN GID?** — **✅ Ja, für alle fünf; am Code beantwortet, keine Shop-Verbindung nötig.** `syncSingleProduct`/`syncSingleCollection`/`syncSingleArticle`/`syncSinglePage` holen per ID und schreiben ein `upsert` **mit `create`-Zweig** — ein unbekannter GID wird angelegt, nicht verworfen. Metaobjects gehen über `syncMetaobjectsForType`, das den ganzen Typ neu holt, also einen neuen Eintrag ebenfalls findet. Die CLAUDE.md-Regel „Reload only refreshes known IDs" meint etwas anderes und bleibt richtig: die **Liste** entdeckt nichts Neues (nur `syncAll*` tut das) — aber ein gezielter Reload auf einen bekannten neuen GID, und genau den hat Phase 1.6 nach dem Create, funktioniert.
    - Reichen `write_inventory`/`write_publications` ohne ihre `read_`-Pendants? (§2.1) — **offen, erst in Phase 4 messbar.**

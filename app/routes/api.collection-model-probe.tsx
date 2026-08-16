@@ -72,7 +72,16 @@ const PLAN_TYPES = [
 
 /** Cap on how many DISCOVERED types get introspected. Never silent — the
  *  report carries `typesTruncated` so a cut-off list cannot read as complete. */
-const MAX_INTROSPECTED_TYPES = 60;
+const MAX_INTROSPECTED_TYPES = 140;
+
+/**
+ * Wrapper types that never carry an answer. The first real run spent 50 of its
+ * 60 slots on Connection/Edge/Payload noise (alphabetical order put them first)
+ * and never reached `CollectionSourceInclusionConditionInput` — the ONE type
+ * the rule editor is built from. Dropping them is not a cap, it is a filter,
+ * and the report counts them separately from the truncation.
+ */
+const NOISE_TYPE_SUFFIX = /(Connection|Edge|Payload|UserError|UserErrorCode|SortKeys)$/;
 
 /** Types per introspection request. Aliases collapse ~60 round trips into two
  *  or three, which is the difference between a diagnostic and a rate-limit
@@ -110,6 +119,8 @@ export interface CollectionModelProbeReport {
   versionReachability: Array<{ version: string; reachable: boolean; detail: string }>;
   /** Every schema type whose name mentions Collection or Condition. */
   discoveredTypeNames: string[];
+  /** Wrapper types (Connection/Edge/Payload/…) deliberately not introspected. */
+  noiseTypesSkipped?: number;
   /** Set when the type sweep itself failed — "(none)" would otherwise read as
    *  "this schema has no collection types". */
   discoveryError?: string;
@@ -263,16 +274,23 @@ export async function action({ request }: ActionFunctionArgs) {
     report.verdicts.push(`⚠ The type sweep failed (${report.discoveryError}). Only the plan's named types were probed.`);
   }
   const allTypes: Array<{ name: string; kind: string }> = schemaRes.data?.__schema?.types ?? [];
-  const discovered = allTypes
-    .filter((t) => /collection|condition/i.test(t.name ?? ""))
-    .map((t) => t.name)
-    .sort();
-  report.discoveredTypeNames = discovered;
+  const matching = allTypes.filter((t) => /collection|condition/i.test(t.name ?? ""));
+  report.discoveredTypeNames = matching.map((t) => t.name).sort();
+
+  // Order by what actually answers questions: INPUT_OBJECT (the shapes we have
+  // to construct), then ENUM (the dropdown values), then everything else.
+  // Alphabetical order alone is what made the first run useless.
+  const kindRank = (kind: string) => (kind === "INPUT_OBJECT" ? 0 : kind === "ENUM" ? 1 : 2);
+  const ranked = matching
+    .filter((t) => !NOISE_TYPE_SUFFIX.test(t.name))
+    .sort((a, b) => kindRank(a.kind) - kindRank(b.kind) || a.name.localeCompare(b.name))
+    .map((t) => t.name);
+  report.noiseTypesSkipped = matching.length - ranked.length;
 
   // Plan types first (so a missing one is impossible to overlook), then the
-  // discovered rest up to the cap.
+  // ranked rest up to the cap.
   const toIntrospect = [...PLAN_TYPES];
-  for (const name of discovered) {
+  for (const name of ranked) {
     if (toIntrospect.length >= MAX_INTROSPECTED_TYPES) {
       report.typesTruncated = true;
       break;
@@ -355,7 +373,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // ── 4. Measurement B — the write test ────────────────────────────────────
   if (wantsWriteTest) {
-    report.writeTest = await runWriteTest(call, requestedVersion, sourcesOverride);
+    report.writeTest = await runWriteTest(call, requestedVersion, sourcesOverride, byName);
   } else {
     report.writeTest = { attempted: false, skippedReason: "Not requested (tick the write-test box to opt in)." };
   }
@@ -373,6 +391,63 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 /**
+ * Build ONE inclusion condition from the types this run actually introspected,
+ * instead of hardcoding a shape.
+ *
+ * The 2026-07 model does NOT use a generic {column, relation, condition} triple
+ * — that is the old `ruleSet` shape. `CollectionSourceInclusionConditionInput`
+ * is a one-field-per-attribute union (`productTag`, `productTitle`,
+ * `variantPrice`, …), each pointing at its own typed input with its own
+ * relation enum. Guessing that from a plan researched against `latest` is what
+ * wasted the first write-test run, so the probe now derives it from the schema
+ * it just read: measured, not assumed — the same rule the rest of this route
+ * follows.
+ */
+function deriveConditionPayload(byName: Map<string, TypeShape>): { payload: Record<string, unknown> | null; note: string } {
+  const bare = (t: string) => t.replace(/[[\]!]/g, "");
+  const conditionInput = byName.get("CollectionSourceInclusionConditionInput");
+  if (!conditionInput || conditionInput.missing || conditionInput.error || !conditionInput.fields?.length) {
+    return { payload: null, note: "CollectionSourceInclusionConditionInput was not introspected — cannot build a payload." };
+  }
+
+  // Prefer the product-tag condition: it needs no existing catalogue data, so a
+  // rejection cannot be blamed on the shop's contents.
+  const chosen =
+    conditionInput.fields.find((f) => /tag/i.test(f.name)) ??
+    conditionInput.fields.find((f) => /title/i.test(f.name)) ??
+    conditionInput.fields[0];
+
+  const inner = byName.get(bare(chosen.type));
+  if (!inner || !inner.fields?.length) {
+    return { payload: null, note: `Inner type ${bare(chosen.type)} for "${chosen.name}" was not introspected.` };
+  }
+
+  const value: Record<string, unknown> = {};
+  for (const field of inner.fields) {
+    const fieldType = byName.get(bare(field.type));
+    if (fieldType?.enumValues?.length) {
+      // EQUALS where it exists, otherwise whatever the enum offers first.
+      value[field.name] = fieldType.enumValues.includes("EQUALS") ? "EQUALS" : fieldType.enumValues[0];
+    } else if (/String/.test(field.type)) {
+      value[field.name] = "contentpilot-probe";
+    } else if (/Int|Decimal|Float|Money/.test(field.type)) {
+      value[field.name] = 1;
+    } else if (/Boolean/.test(field.type)) {
+      value[field.name] = true;
+    } else if (field.type.endsWith("!")) {
+      // A required field we cannot synthesise — better to say so than to send
+      // something the API will reject for an unrelated reason.
+      return { payload: null, note: `Cannot synthesise required field ${inner.name}.${field.name}: ${field.type}. Use the override field.` };
+    }
+  }
+
+  return {
+    payload: { [chosen.name]: value },
+    note: `Derived from ${conditionInput.name}.${chosen.name} → ${inner.name}: ${JSON.stringify({ [chosen.name]: value })}`,
+  };
+}
+
+/**
  * Measurement B: create a MANUAL collection, try to give it a rule source,
  * read back whether it converted, then clean up.
  *
@@ -385,6 +460,7 @@ async function runWriteTest(
   call: (version: string, query: string, variables?: Record<string, unknown>) => Promise<GraphQLCallResult>,
   version: string,
   sourcesOverride: string,
+  byName: Map<string, TypeShape>,
 ): Promise<CollectionModelProbeReport["writeTest"]> {
   const steps: Array<{ step: string; ok: boolean; detail: string }> = [];
   const title = `[ContentPilot probe] delete me ${new Date().toISOString()}`;
@@ -435,24 +511,24 @@ async function runWriteTest(
 
   // 2. Try to convert it.
   let sourcesToCreate: unknown;
-  try {
-    sourcesToCreate = sourcesOverride
-      ? JSON.parse(sourcesOverride)
-      : [
-          {
-            source: {
-              title: "Probe source",
-              inclusion: {
-                matchType: "ALL",
-                conditions: [{ column: "TAG", relation: "EQUALS", condition: "contentpilot-probe" }],
-              },
-            },
-          },
-        ];
-  } catch (e) {
-    steps.push({ step: "parse sourcesToCreate override", ok: false, detail: e instanceof Error ? e.message : String(e) });
-    await cleanup();
-    return finish("❌ The sourcesToCreate override is not valid JSON — nothing was measured.");
+  if (sourcesOverride) {
+    try {
+      sourcesToCreate = JSON.parse(sourcesOverride);
+    } catch (e) {
+      steps.push({ step: "parse sourcesToCreate override", ok: false, detail: e instanceof Error ? e.message : String(e) });
+      await cleanup();
+      return finish("❌ The sourcesToCreate override is not valid JSON — nothing was measured.");
+    }
+  } else {
+    const derived = deriveConditionPayload(byName);
+    steps.push({ step: "derive condition payload", ok: !!derived.payload, detail: derived.note });
+    if (!derived.payload) {
+      await cleanup();
+      return finish(
+        "⚠ INCONCLUSIVE: could not derive a valid condition payload from the introspected types. Paste one into the override field and re-run — nothing about convertibility was measured.",
+      );
+    }
+    sourcesToCreate = [{ source: { title: "Probe source", inclusion: { matchType: "ALL", conditions: [derived.payload] } } }];
   }
 
   const updated = await call(
@@ -467,6 +543,16 @@ async function runWriteTest(
   );
   const updateErrors = updated.data?.collectionUpdate?.userErrors ?? [];
   const updateAccepted = updated.ok && updateErrors.length === 0;
+  // A payload the SERVER never even ran — variable coercion / unknown field —
+  // says nothing about convertibility. The first real run reported exactly this
+  // as "❌ the type is immutable, Phase 3 must not offer conversion", off a
+  // payload that used the OLD {column, relation, condition} shape. A request
+  // that was never executed is not a negative answer.
+  const malformedRequest =
+    !updateAccepted &&
+    (updated.errors ?? []).some((e) =>
+      /provided invalid value|is not defined on|Variable \$|expects type|argument/i.test(e.message ?? ""),
+    );
   steps.push({
     step: "collectionUpdate (sourcesToCreate)",
     ok: updateAccepted,
@@ -510,9 +596,14 @@ async function runWriteTest(
       "✅ CONVERTED: a manual collection became rule-based via sourcesToCreate. The Help Center's \"type is immutable\" does not hold for the API — §1.2 point 3 resolves in favour of the input field, and Phase 3 may offer the conversion.",
     );
   }
+  if (malformedRequest) {
+    return finish(
+      "⚠ INCONCLUSIVE — the PAYLOAD was rejected, not the conversion. The API refused the request shape before running it, so this says NOTHING about whether a manual collection can be converted. Correct the payload from the introspected types (see the step detail for the exact complaint) and re-run.",
+    );
+  }
   if (!updateAccepted) {
     return finish(
-      "❌ REJECTED: the update did not go through and the collection stayed manual. The type appears immutable after creation — Phase 3 must NOT offer to convert a manual collection. See the step detail for the exact error.",
+      "❌ REJECTED: the mutation ran, refused the change, and the collection stayed manual. The type appears immutable after creation — Phase 3 must NOT offer to convert a manual collection. See the step detail for the exact error.",
     );
   }
   return finish(

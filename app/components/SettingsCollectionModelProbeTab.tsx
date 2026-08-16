@@ -38,6 +38,7 @@ interface ProbeReport {
   probedApiVersion: string;
   versionReachability: Array<{ version: string; reachable: boolean; detail: string }>;
   discoveredTypeNames: string[];
+  noiseTypesSkipped?: number;
   discoveryError?: string;
   typesTruncated: boolean;
   types: TypeShape[];
@@ -84,7 +85,7 @@ function formatMarkdown(r: ProbeReport): string {
   }
   if (r.typesTruncated) {
     lines.push("");
-    lines.push(`> ⚠ The discovered-type list was capped. ${r.discoveredTypeNames.length} names matched; not all were introspected.`);
+    lines.push(`> ⚠ The discovered-type list was capped. ${r.discoveredTypeNames.length} names matched; not all were introspected. Input types and enums are probed FIRST, so the cut tail is the least informative part.`);
   }
   lines.push("");
   for (const t of r.types) {
@@ -218,7 +219,7 @@ export function SettingsCollectionModelProbeTab() {
               onChange={setSourcesOverride}
               multiline={4}
               autoComplete="off"
-              helpText="Leave empty to use the shape PLAN §1.2 documents. If the API rejects it, correct the payload here from the introspected types above and re-run — the report shows exactly what was sent."
+              helpText="Leave empty to let the probe DERIVE the condition from the types it just introspected — the 2026-07 model uses one typed input per attribute, not a generic column/relation triple. Override only if that derivation fails; the report always shows what was sent."
             />
           )}
 
