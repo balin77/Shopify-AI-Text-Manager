@@ -117,13 +117,24 @@
     assign r_count = product.metafields.reviews.rating_count.value
     assign p_mpn = product.metafields.custom.mpn.value
     # priceValidUntil: merchant metafield only, never synthesized, expired
-    # dates dropped — invariant 3 above has the compliance reasoning. Epoch
-    # INTEGERS (`| plus: 0`), or Liquid compares the two timestamps as
-    # strings, i.e. lexicographically.
+    # dates dropped — invariant 3 above has the compliance reasoning.
+    #
+    # Both sides of the comparison run through the SAME `%Y-%m-%d | %s` chain,
+    # and that symmetry is the whole point of the detour:
+    #  - `| date: '%Y-%m-%d'` first reduces both to a calendar DAY, so a
+    #    date_time metafield stays valid for the rest of its last day, and a
+    #    date metafield (UTC midnight) is not compared against a shop-local
+    #    midnight — that mismatch dropped the final valid day west of UTC.
+    #  - `| plus: 0` then forces INTEGER comparison. Liquid would otherwise
+    #    compare the two as strings: `>=` on strings is lexicographic, and an
+    #    unparseable metafield ("soon") survives `date` unchanged and would
+    #    sort ABOVE any ISO date — publishing "soon" as priceValidUntil, i.e.
+    #    the very fabrication this code exists to prevent. As an integer it
+    #    coerces to 0 and is dropped.
     assign p_valid_until = ''
     assign pvu_raw = product.metafields.custom.price_valid_until.value
     if pvu_raw != blank
-      assign pvu_ts = pvu_raw | date: '%s' | plus: 0
+      assign pvu_ts = pvu_raw | date: '%Y-%m-%d' | date: '%s' | plus: 0
       assign pvu_today_ts = 'now' | date: '%Y-%m-%d' | date: '%s' | plus: 0
       if pvu_ts >= pvu_today_ts
         assign p_valid_until = pvu_raw | date: '%Y-%m-%d'

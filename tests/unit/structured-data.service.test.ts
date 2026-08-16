@@ -464,6 +464,18 @@ describe("storefront Liquid block: priceValidUntil parity with the service", () 
     }
   });
 
+  it("compares the metafield and today through the identical filter chain", () => {
+    // These tests can read the block but not render it, so the expiry check's
+    // correctness rests entirely on the two timestamps being derived the same
+    // way — asymmetry there is silent (it drops a valid date near midnight,
+    // or worse, lets a non-date value sort above an ISO date as a string).
+    const chain = String.raw`\| date: '%Y-%m-%d' \| date: '%s' \| plus: 0`;
+    expect(liquid).toMatch(new RegExp(`pvu_ts = pvu_raw ${chain}`));
+    expect(liquid).toMatch(new RegExp(`pvu_today_ts = 'now' ${chain}`));
+    // Integer comparison, not lexicographic string comparison.
+    expect(liquid).toContain("if pvu_ts >= pvu_today_ts");
+  });
+
   it("stays independent of ?variant= — the date comes off the PRODUCT", () => {
     // The block's own invariant 1: no offer input may be read from the
     // selected variant. (Only prose mentions that name; no `assign` may.)
