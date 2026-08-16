@@ -1446,7 +1446,7 @@ export const es: Translation = {
       crawl: {
         label: "Rastreo del sitio",
         title: "Rastreo del sitio / auditoría del sitio",
-        description: "Rastreo en vivo de tu tienda: enlaces rotos, páginas huérfanas, títulos de página desincronizados y títulos duplicados.",
+        description: "Un rastreo en vivo de tu tienda, en dos pasos: primero la entrega (páginas y enlaces rotos, errores de servidor, tiempo de carga) y luego on-page e indexación (noindex, canonicals, H1, meta descripción, contenido escaso).",
       },
       onpage: {
         label: "On-page e indexación",
@@ -1789,6 +1789,15 @@ export const es: Translation = {
       movedToOnPageLink: "Abrir On-page e indexación",
       redirectHopsBadge: "→ {count} redirecciones",
       scanNow: "Rastrear ahora",
+      // Los dos pasos de un rastreo (PLAN_SEO_CRAWL_EXPANSION §0)
+      stepDeliveryKicker: "Paso 1 · Entrega",
+      stepDeliveryTitle: "¿Se entrega tu tienda?",
+      stepDeliveryBody: "Accesibilidad, páginas y enlaces rotos, errores de servidor, tiempo de carga, páginas huérfanas y enlaces externos. Lo que falla aquí Google ni siquiera llega a evaluarlo.",
+      stepDeliveryBadge: "{count} problemas",
+      stepOnPageKicker: "Paso 2 · On-page e indexación",
+      stepOnPageTitle: "¿Sirve lo que se entrega?",
+      stepOnPageBody: "¿Puede Google indexarlo (noindex, canonicals) y es bueno el contenido (H1, meta descripción, contenido escaso, imágenes sin texto alternativo, títulos duplicados)?",
+      stepOnPageBadge: "{count} no indexables",
       // Enlaces externos (PLAN_SEO_CRAWL_EXPANSION §6)
       tileExternal: "Enlaces externos rotos",
       tileExternalHint: "de {total} destinos comprobados",

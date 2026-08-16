@@ -49,6 +49,17 @@ import {
   type CrawledPageRow,
 } from "../components/seo/crawl/ReportTable";
 import { Tile } from "../components/seo/crawl/Tile";
+import { StepTile } from "../components/seo/StepTile";
+import {
+  OnPageTiles,
+  OnPageSections,
+  ONPAGE_CATEGORY_IDS,
+  type OnPageCategoryId,
+} from "../components/seo/crawl/OnPageReportView";
+import {
+  EMPTY_ONPAGE_REPORT,
+  type OnPageReport,
+} from "../services/seo/onpage-report.server";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import type { AuditType } from "../services/seo/audit.service";
@@ -78,6 +89,18 @@ const TYPE_PATH: Record<AuditType, string> = {
 };
 
 const UI_ROW_CAP = 100;
+
+/**
+ * The two STEPS of one crawl (analogous to the AEO section's two steps): a page
+ * that is not delivered at all cannot be judged on its on-page quality, so the
+ * order is a dependency, not a preference.
+ *
+ * One route, one `?view=`, one loader that only pays for the half being looked
+ * at — the on-page half loads every snapshot row plus head drift plus the shop
+ * name, and a merchant reading the delivery report should not pay for that.
+ */
+const VIEWS = ["delivery", "onpage"] as const;
+type ViewId = (typeof VIEWS)[number];
 
 /** Broken-link EDGES are only used to explain *why* a broken page is reachable
  *  ("linked from …"), so the query needs more rows than the page list itself:
@@ -232,12 +255,14 @@ const EMPTY_LISTS = {
   externalChecksEnabled: true,
   /** §7.2 — null when there is no previous snapshot to compare against. */
   diff: null as (CrawlDiff & { previousAt: string }) | null,
+  /** Step 2's report — only built when `view === "onpage"` (see the loader). */
+  onPage: EMPTY_ONPAGE_REPORT as OnPageReport,
   /** Row counts before the UI_ROW_CAP slice, for the "showing N of M" hint. */
   totals: { allPages: 0, okPages: 0, brokenPages: 0 },
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
   const shop = session.shop;
 
@@ -248,9 +273,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const plan = (settings?.subscriptionPlan || "free") as Plan;
   // Absent row = the column default, which is ON (§6.5).
   const externalChecksEnabled = settings?.seoCrawlExternalLinks ?? true;
+
+  const requestedView = new URL(request.url).searchParams.get("view") as ViewId | null;
+  const view: ViewId = requestedView && VIEWS.includes(requestedView) ? requestedView : "delivery";
+
   if (!meetsPlan(plan, "pro")) {
     return json({
       gated: true,
+      view,
       running: false,
       snapshot: EXAMPLE_SNAPSHOT,
       ...EMPTY_LISTS,
@@ -266,10 +296,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!snapshotRow) {
     return json({
       gated: false,
+      view,
       running: latest.running,
       snapshot: null,
       ...EMPTY_LISTS,
       externalChecksEnabled,
+    });
+  }
+
+  // Step 2 only. The on-page half loads every snapshot row plus head drift plus
+  // the shop name; a merchant reading the delivery report must not pay for it.
+  if (view === "onpage") {
+    const { buildOnPageReport } = await import("../services/seo/onpage-report.server");
+    const onPage = await buildOnPageReport(db, admin, shop, snapshotRow.id);
+    return json({
+      gated: false,
+      view,
+      running: latest.running,
+      snapshot: {
+        id: snapshotRow.id,
+        startedAt: snapshotRow.startedAt.toISOString(),
+        finishedAt: snapshotRow.finishedAt ? snapshotRow.finishedAt.toISOString() : null,
+        status: snapshotRow.status,
+        errorCode: latest.errorCode,
+        blockedBy: latest.blockedBy,
+        pagesCrawled: snapshotRow.pagesCrawled,
+        totalDiscovered: snapshotRow.totalDiscovered,
+        pagesOk: snapshotRow.pagesOk,
+        pagesBroken: snapshotRow.pagesBroken,
+        pagesServerError: 0,
+        pagesBlocked: 0,
+        orphanCount: snapshotRow.orphanCount,
+      } satisfies SnapshotView,
+      ...EMPTY_LISTS,
+      externalChecksEnabled,
+      onPage,
     });
   }
 
@@ -478,6 +539,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   return json({
     gated: false,
+    view,
+    // Step 2 is not built on this path — the component only reads it when
+    // `view === "onpage"`, and the empty shape keeps the response type one.
+    onPage: EMPTY_ONPAGE_REPORT as OnPageReport,
     running: latest.running,
     snapshot,
     diff,
@@ -585,6 +650,7 @@ export default function SeoCrawl() {
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const c = (t.seo as any).crawlPage as Record<string, string>;
+  const o = (t.seo as any).onpagePage as Record<string, string>;
 
   const openInEditor = (type: AuditType, id: string) => {
     handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
@@ -602,6 +668,19 @@ export default function SeoCrawl() {
   // The tiles ARE the navigation — clicking one opens its section below, so a
   // separate tab bar would only repeat the same labels and counts.
   const [searchParams] = useSearchParams();
+  const view = data.view;
+  const [onPageTab, setOnPageTab] = useState<OnPageCategoryId>(() => {
+    const requestedOnPage = searchParams.get("tab") as OnPageCategoryId | null;
+    return requestedOnPage && ONPAGE_CATEGORY_IDS.includes(requestedOnPage)
+      ? requestedOnPage
+      : "indexability";
+  });
+  /** Switching step is a NAVIGATION, not local state: the loader only builds
+   *  the half being looked at, so the other one has to be fetched. */
+  const goToView = (next: ViewId) => {
+    if (next === view) return;
+    handleNavigate("/app/seo/crawl", { searchParams: new URLSearchParams({ view: next }) });
+  };
   const requested = searchParams.get("tab") as CategoryId | null;
   // Defaults to the first tile — the overview — not to a problem bucket. A
   // `?tab=` deep link from the SEO dashboard still wins.
@@ -638,19 +717,8 @@ export default function SeoCrawl() {
 
   const body = (
     <BlockStack gap="400">
-      <Banner tone="info" title={c.introTitle}>
-        <Text as="p" variant="bodyMd">{c.introBody}</Text>
-      </Banner>
-
-      {/* §3.8 — head drift and duplicate titles are one tab over now. A
-          pointer, not a redirect: /app/seo/crawl stays a valid, useful URL. */}
-      <Banner tone="info">
-        <InlineStack gap="100" blockAlign="center" wrap>
-          <Text as="span" variant="bodyMd">{c.movedToOnPage}</Text>
-          <Button variant="plain" onClick={() => handleNavigate("/app/seo/onpage")}>
-            {c.movedToOnPageLink}
-          </Button>
-        </InlineStack>
+      <Banner tone="info" title={view === "onpage" ? o.introTitle : c.introTitle}>
+        <Text as="p" variant="bodyMd">{view === "onpage" ? o.introBody : c.introBody}</Text>
       </Banner>
 
       {/* §7.2 — what CHANGED since the last crawl. Above the tiles, because a
@@ -723,6 +791,43 @@ export default function SeoCrawl() {
         </Card>
       )}
 
+      {/* The two steps of one crawl — same shape as the AEO section's, because
+          it is the same relationship: step 2 has nothing to judge until step 1
+          says the page was delivered at all. */}
+      <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+        <StepTile
+          selected={view === "delivery"}
+          onSelect={() => goToView("delivery")}
+          kicker={c.stepDeliveryKicker}
+          title={c.stepDeliveryTitle}
+          body={c.stepDeliveryBody}
+          badge={
+            snapshot ? (
+              <Badge tone={snapshot.pagesBroken + snapshot.pagesServerError > 0 ? "critical" : "success"}>
+                {c.stepDeliveryBadge.replace(
+                  "{count}",
+                  String(snapshot.pagesBroken + snapshot.pagesServerError),
+                )}
+              </Badge>
+            ) : null
+          }
+        />
+        <StepTile
+          selected={view === "onpage"}
+          onSelect={() => goToView("onpage")}
+          kicker={c.stepOnPageKicker}
+          title={c.stepOnPageTitle}
+          body={c.stepOnPageBody}
+          badge={
+            view === "onpage" && snapshot ? (
+              <Badge tone={data.onPage.totals.indexability > 0 ? "critical" : "success"}>
+                {c.stepOnPageBadge.replace("{count}", String(data.onPage.totals.indexability))}
+              </Badge>
+            ) : null
+          }
+        />
+      </InlineGrid>
+
       <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
         {/* §6.5 — visible where the crawl is started, because it changes what
             the crawl DOES, not just what it shows. */}
@@ -744,7 +849,11 @@ export default function SeoCrawl() {
           <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
         )}
 
-        {snapshot && (
+        {snapshot && view === "onpage" && (
+          <OnPageTiles data={data.onPage} activeTab={onPageTab} onSelect={setOnPageTab} />
+        )}
+
+        {snapshot && view === "delivery" && (
           <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
               <Tile
                 label={c.tilePages}
@@ -809,7 +918,9 @@ export default function SeoCrawl() {
         )}
       </CrawlSnapshotHeader>
 
-      {snapshot && (
+      {snapshot && view === "onpage" && <OnPageSections data={data.onPage} activeTab={onPageTab} />}
+
+      {snapshot && view === "delivery" && (
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center" gap="200">

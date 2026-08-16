@@ -1444,7 +1444,7 @@ export const de = {
       crawl: {
         label: "Website-Crawl",
         title: "Website-Crawl / Site-Audit",
-        description: "Live-Crawl deiner Storefront: kaputte Links, Waisen-Seiten, abweichende Seitentitel und doppelte Titel.",
+        description: "Ein Live-Crawl deiner Storefront, in zwei Schritten: erst die Auslieferung (kaputte Seiten und Links, Serverfehler, Ladezeit), dann On-Page & Indexierung (noindex, Canonicals, H1, Meta-Description, dünner Inhalt).",
       },
       onpage: {
         label: "On-Page & Indexierung",
@@ -1789,6 +1789,15 @@ export const de = {
       movedToOnPageLink: "On-Page & Indexierung öffnen",
       redirectHopsBadge: "→ {count} Weiterleitungen",
       scanNow: "Jetzt scannen",
+      // Zwei Schritte eines Crawls (PLAN_SEO_CRAWL_EXPANSION §0)
+      stepDeliveryKicker: "Schritt 1 · Auslieferung",
+      stepDeliveryTitle: "Wird deine Seite ausgeliefert?",
+      stepDeliveryBody: "Erreichbarkeit, kaputte Seiten und Links, Serverfehler, Ladezeit, Waisen-Seiten und externe Links. Was hier scheitert, kann Google gar nicht erst bewerten.",
+      stepDeliveryBadge: "{count} Probleme",
+      stepOnPageKicker: "Schritt 2 · On-Page & Indexierung",
+      stepOnPageTitle: "Taugt das Ausgelieferte?",
+      stepOnPageBody: "Darf Google indexieren (noindex, Canonicals) und ist der Inhalt gut (H1, Meta-Description, dünner Inhalt, Bilder ohne Alt-Text, doppelte Titel)?",
+      stepOnPageBadge: "{count} nicht indexierbar",
       // Externe Links (PLAN_SEO_CRAWL_EXPANSION §6)
       tileExternal: "Tote externe Links",
       tileExternalHint: "von {total} geprüften Zielen",

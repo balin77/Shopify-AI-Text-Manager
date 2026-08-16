@@ -1447,7 +1447,7 @@ export const en: Translation = {
       crawl: {
         label: "Site crawl",
         title: "Site crawl / site audit",
-        description: "Live crawl of your storefront: broken links, orphan pages, drifted page titles, and duplicate titles.",
+        description: "One live crawl of your storefront, in two steps: first delivery (broken pages and links, server errors, load time), then on-page & indexing (noindex, canonicals, H1, meta description, thin content).",
       },
       onpage: {
         label: "On-page & indexing",
@@ -1790,6 +1790,15 @@ export const en: Translation = {
       movedToOnPageLink: "Open On-page & indexing",
       redirectHopsBadge: "→ {count} redirects",
       scanNow: "Scan now",
+      // The two steps of one crawl (PLAN_SEO_CRAWL_EXPANSION §0)
+      stepDeliveryKicker: "Step 1 · Delivery",
+      stepDeliveryTitle: "Is your shop being delivered?",
+      stepDeliveryBody: "Reachability, broken pages and links, server errors, load time, orphan pages and external links. What fails here Google never gets to judge at all.",
+      stepDeliveryBadge: "{count} problems",
+      stepOnPageKicker: "Step 2 · On-page & indexing",
+      stepOnPageTitle: "Is what gets delivered any good?",
+      stepOnPageBody: "May Google index it (noindex, canonicals), and is the content sound (H1, meta description, thin content, images without alt text, duplicate titles)?",
+      stepOnPageBadge: "{count} not indexable",
       // External links (PLAN_SEO_CRAWL_EXPANSION §6)
       tileExternal: "Dead external links",
       tileExternalHint: "of {total} checked targets",
