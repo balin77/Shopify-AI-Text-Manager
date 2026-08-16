@@ -75,9 +75,31 @@ export function previousCreateResult(shop: string, requestId: string): unknown |
   return inFlight.get(keyFor(shop, requestId))?.result;
 }
 
-/** Release a claim whose create failed, so the merchant can genuinely retry. */
-export function releaseCreateRequest(shop: string, requestId: string): void {
-  if (!requestId) return;
+/**
+ * Is a create with this id RUNNING right now?
+ *
+ * A peek, deliberately not a claim: it is asked early, before the plan gates,
+ * so a retry that arrives mid-flight gets "already in progress" instead of a
+ * hard "limit reached" from a quantity check that is already counting the
+ * object the first attempt created.
+ */
+export function isCreateRequestInFlight(shop: string, requestId: string): boolean {
+  if (!requestId) return false;
+  const entry = inFlight.get(keyFor(shop, requestId));
+  return !!entry && Date.now() - entry.at <= EXPIRY_MS && entry.result === undefined;
+}
+
+/**
+ * Release a claim whose create failed, so the merchant can genuinely retry.
+ *
+ * Only the caller that TOOK the claim may release it. Without that check a
+ * concurrent request with the same id — one that fell over before claiming
+ * anything, on a transient DB error say — would delete the live claim of the
+ * request that is actually running: the first attempt's result would then be
+ * recorded against nothing, and the next click would create a real duplicate.
+ */
+export function releaseCreateRequest(shop: string, requestId: string, claimedHere = true): void {
+  if (!requestId || !claimedHere) return;
   inFlight.delete(keyFor(shop, requestId));
 }
 

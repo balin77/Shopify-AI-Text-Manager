@@ -64,6 +64,7 @@ import { resolveApiVersionString } from "~/utils/api-version";
 import { CREATE_COLLECTION_WITH_SOURCES } from "~/graphql/content.mutations";
 import {
   claimCreateRequest,
+  isCreateRequestInFlight,
   previousCreateResult,
   recordCreateResult,
   releaseCreateRequest,
@@ -137,6 +138,8 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
   // catch below can tell "nothing happened" from "it exists, a later step
   // stumbled".
   let createdSoFar: CreateOutcome | null = null;
+  /** Only the invocation that TOOK the claim may release it — see the helper. */
+  let claimedHere = false;
 
   // ── Idempotency (§1.7) ──────────────────────────────────────────────────
   // The FINISHED-first check comes before the plan gates on purpose: on a
@@ -156,6 +159,20 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
       requestId,
     });
     return json(finished as Record<string, unknown>);
+  }
+
+  // Still running — answered here, BEFORE the quantity gate. A retry that
+  // lands after the first attempt's sync bumped the count but before its
+  // result was recorded would otherwise be told "limit reached", which is both
+  // wrong and alarming: the object it is waiting for is the very thing being
+  // counted against it.
+  if (isCreateRequestInFlight(session.shop, requestId)) {
+    return json({
+      actionType: "createContent",
+      success: true,
+      pending: true,
+      message: "This create is already in progress.",
+    });
   }
 
   try {
@@ -264,6 +281,8 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
 
     // Everything that could reject this request has now run. Claim the id so a
     // second POST while this one is in flight waits instead of creating again.
+    // The peek above answers the common case; this closes the narrow race
+    // where a second request slipped past it while this one was validating.
     if (!claimCreateRequest(session.shop, requestId)) {
       return json({
         actionType: "createContent",
@@ -272,6 +291,7 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
         message: "This create is already in progress.",
       });
     }
+    claimedHere = true;
 
     // ── 3./4. Mutation + echo ─────────────────────────────────────────────
     const graphql = (query: string, variables: Record<string, unknown>) =>
@@ -388,7 +408,7 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
     // Nothing was created: release the claim so the merchant can genuinely
     // retry — a failed create that stays claimed would answer every retry
     // with "already in progress".
-    releaseCreateRequest(session.shop, requestId);
+    releaseCreateRequest(session.shop, requestId, claimedHere);
     logger.error("[CreateContent] Failed", { context: "CreateContent", shop: session.shop, resource, error: message });
     return json({ success: false, error: message }, { status: 500 });
   }
