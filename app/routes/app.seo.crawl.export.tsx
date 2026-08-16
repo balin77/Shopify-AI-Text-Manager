@@ -25,7 +25,15 @@ import type { Plan } from "../config/plans";
 import { toCsv, csvFilename, type CsvColumn } from "../services/seo/csv-export";
 import { classifyLinkStatus, isBotBlockStatus } from "../services/seo/crawl.service";
 
-const CATEGORIES = ["allPages", "broken", "serverErrors", "blocked", "orphans", "slowest"] as const;
+const CATEGORIES = [
+  "allPages",
+  "broken",
+  "serverErrors",
+  "blocked",
+  "orphans",
+  "slowest",
+  "external",
+] as const;
 type Category = (typeof CATEGORIES)[number];
 
 interface ExportPage {
@@ -58,6 +66,29 @@ const PAGE_COLUMNS: CsvColumn<ExportPage>[] = [
   { header: "outbound_links", value: (p) => p.outboundCount },
 ];
 
+interface ExportExternalLink {
+  url: string;
+  statusCode: number;
+  finalUrl: string | null;
+  sourceCount: number;
+  sampleSources: string;
+  anchor: string | null;
+}
+
+const EXTERNAL_COLUMNS: CsvColumn<ExportExternalLink>[] = [
+  { header: "url", value: (r) => r.url },
+  // 0 and -1 are the crawler's sentinels, not HTTP statuses.
+  {
+    header: "status",
+    value: (r) => (r.statusCode === -1 ? "redirect_loop" : r.statusCode === 0 ? "unreachable" : r.statusCode),
+  },
+  { header: "final_url", value: (r) => r.finalUrl },
+  { header: "linked_from_pages", value: (r) => r.sourceCount },
+  // Newlines survive inside a quoted cell; the sample list stays one column.
+  { header: "sample_sources", value: (r) => r.sampleSources },
+  { header: "anchor", value: (r) => r.anchor },
+];
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
@@ -80,6 +111,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
   if (!snapshot) {
     return json({ csv: "", filename: csvFilename(`crawl-${category}`, shop), rowCount: 0 });
+  }
+
+  // §6.4 — external links have their own column set; nothing about a foreign
+  // URL fits the crawled-page shape (no resource, no response time of ours).
+  if (category === "external") {
+    const rows = await db.seoCrawlExternalLink.findMany({
+      where: { shop, snapshotId: snapshot.id },
+      select: {
+        url: true,
+        statusCode: true,
+        finalUrl: true,
+        sourceCount: true,
+        sampleSources: true,
+        anchor: true,
+      },
+      orderBy: [{ statusCode: "asc" }, { sourceCount: "desc" }],
+    });
+    return json({
+      csv: toCsv(rows, EXTERNAL_COLUMNS),
+      filename: csvFilename("crawl-external", shop),
+      rowCount: rows.length,
+    });
   }
 
   const pages: ExportPage[] = await db.seoCrawlPage.findMany({

@@ -139,6 +139,13 @@ model AISettings {
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
 
+  // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
+  // after the storefront crawl. Default ON (the report is worth little
+  // without it), but switchable: it is the only part of this app that sends
+  // requests to servers neither the merchant nor we control, and it makes the
+  // crawl take longer.
+  seoCrawlExternalLinks Boolean @default(true)
+
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
   // character constraints to the translate prompt for SEO-critical fields

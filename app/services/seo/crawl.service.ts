@@ -28,6 +28,14 @@ import type { PrismaClient } from "@prisma/client";
 import { Semaphore } from "../../utils/semaphore";
 import { parseRobots, type RobotsGroup } from "./aeo.service";
 import { resolveGscPagePath, resolvePathsToResources } from "./url-resolver.server";
+import { isPrivateOrLoopbackHost } from "../../utils/private-host";
+import {
+  normalizeExternalUrl,
+  runExternalLinkPass,
+  MAX_EXTERNAL_TARGETS,
+  MAX_SAMPLE_SOURCES,
+  type ExternalTarget,
+} from "./external-links";
 import type { AuditType } from "./audit.service";
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -214,35 +222,10 @@ export function normalizeCrawlUrl(
   return u.toString();
 }
 
-/**
- * True when `hostname` is a literal IP in a private/loopback/link-local
- * range (§ redirect-SSRF defense-in-depth) — checked in ADDITION to the
- * same-origin host check, since a same-origin-looking redirect could in
- * theory still resolve to one of these via a bare IP Location header.
- * Deliberately conservative/pattern-based (no DNS resolution here — that
- * happens inside `fetch` itself, which this guard cannot see).
- */
-export function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === "localhost") return true;
-  // IPv6 loopback / unique-local.
-  if (h === "::1") return true;
-  const stripped = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
-  if (stripped === "::1") return true;
-  if (/^fc[0-9a-f]{2}:/.test(stripped) || /^fd[0-9a-f]{2}:/.test(stripped)) return true; // fc00::/7
-  if (/^fe80:/.test(stripped)) return true; // link-local
-
-  // IPv4 literal ranges.
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const [a, b] = [parseInt(m[1], 10), parseInt(m[2], 10)];
-  if (a === 127) return true; // 127.0.0.0/8
-  if (a === 10) return true; // 10.0.0.0/8
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16
-  if (a === 169 && b === 254) return true; // 169.254.0.0/16 (incl. cloud metadata)
-  return false;
-}
+// The private/loopback IP guard lives in app/utils/private-host.ts since the
+// external-link checker (§6.2) needed the same rule — re-exported here so every
+// existing import site (and its tests) keeps working unchanged.
+export { isPrivateOrLoopbackHost };
 
 /**
  * Same-origin check shared by link discovery (`normalizeCrawlUrl`) and
@@ -1103,6 +1086,16 @@ export interface RunCrawlDeps {
   onProgress?: (pagesCrawled: number, totalDiscovered: number) => void | Promise<void>;
   /** Heartbeat cadence in pages (§3.5: every 25). */
   heartbeatEvery?: number;
+  /**
+   * PLAN_SEO_CRAWL_EXPANSION §6.5 — run the external-link pass after the crawl.
+   * Default ON, but a merchant can turn it off: it is the only part of this app
+   * that sends requests to servers neither they nor we control, and it makes
+   * the crawl take longer.
+   */
+  checkExternalLinks?: boolean;
+  /** Overrides for the external pass, used by tests to keep it instant. */
+  externalBudgetMs?: number;
+  externalTimeoutMs?: number;
 }
 
 export interface CrawlSummary {
@@ -1126,6 +1119,13 @@ export interface CrawlSummary {
   blockedBy: BlockSource | null;
   orphanCount: number;
   headDriftCount: number;
+  /** §6 — external targets found, checked, and found dead. Reported in the
+   *  task result; the UI reads the persisted rows, never these (§1.3). */
+  externalFound: number;
+  externalChecked: number;
+  externalBroken: number;
+  /** MAX_EXTERNAL_TARGETS was hit — said out loud, never silently. */
+  externalTruncated: boolean;
 }
 
 /** Lowercase resourceType, matching `SeoCrawlPage.resourceType` / `AuditType`
@@ -1164,6 +1164,9 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     maxPages = DEFAULT_MAX_CRAWL_PAGES,
     onProgress,
     heartbeatEvery = 25,
+    checkExternalLinks = true,
+    externalBudgetMs,
+    externalTimeoutMs,
   } = deps;
 
   const userAgent = crawlUserAgent(appUrl);
@@ -1182,6 +1185,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       blockedBy: null,
       orphanCount: 0,
       headDriftCount: 0,
+      externalFound: 0,
+      externalChecked: 0,
+      externalBroken: 0,
+      externalTruncated: false,
     };
   }
 
@@ -1235,6 +1242,31 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   });
 
   const semaphore = new Semaphore(CRAWL_CONCURRENCY, baseSpacing);
+
+  /** §6.1 — one entry per UNIQUE target URL, not per edge: an Instagram link
+   *  in the footer appears on every page and would otherwise be 2000 rows. */
+  const externalTargets = new Map<string, ExternalTarget>();
+  let externalTruncated = false;
+
+  const trackExternalTarget = (rawHref: string, fromUrl: string, anchor: string | null) => {
+    const target = normalizeExternalUrl(rawHref, fromUrl, primaryDomain, [myshopifyDomain]);
+    if (!target) return;
+    const existing = externalTargets.get(target);
+    if (existing) {
+      existing.count += 1;
+      if (existing.sources.length < MAX_SAMPLE_SOURCES && !existing.sources.includes(fromUrl)) {
+        existing.sources.push(fromUrl);
+      }
+      return;
+    }
+    if (externalTargets.size >= MAX_EXTERNAL_TARGETS) {
+      // Past the bound we stop recording NEW urls. Flagged, logged and shown —
+      // a truncation nobody mentions reads as "we checked everything".
+      externalTruncated = true;
+      return;
+    }
+    externalTargets.set(target, { url: target, count: 1, sources: [fromUrl], anchor });
+  };
 
   const recordEdge = (from: string, to: string, anchor: string | null) => {
     if (from === to) return; // self-links don't count as inbound (§3.1)
@@ -1400,6 +1432,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
         if (!href) return;
         const anchor = $(el).text().replace(/\s+/g, " ").trim().slice(0, 200) || null;
         tryEnqueue(href, depth + 1, url, anchor);
+        // §6.1 — the same sweep, the other direction. `normalizeCrawlUrl`
+        // (inside tryEnqueue) keeps discarding foreign origins; this collects
+        // them instead of changing that rule.
+        if (checkExternalLinks) trackExternalTarget(href, url, anchor);
       });
     }
   };
@@ -1626,6 +1662,48 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   if (onProgress) await onProgress(pagesCompleted, discovered.size);
 
+  // ---- §6.2/§6.3: external-link pass -------------------------------------
+  // Runs only AFTER the crawl is persisted, and can therefore never cost the
+  // merchant the crawl itself. Skipped entirely on an abort: a run that was
+  // firewalled off its own storefront has no business hammering strangers.
+  let externalChecked = 0;
+  let externalBroken = 0;
+  if (checkExternalLinks && !abortedError && externalTargets.size > 0) {
+    try {
+      const pass = await runExternalLinkPass(Array.from(externalTargets.values()), {
+        userAgent,
+        fetchImpl,
+        budgetMs: externalBudgetMs,
+        timeoutMs: externalTimeoutMs,
+        // The crawl loop's heartbeat has stopped by now, so without this the
+        // merchant watches a frozen progress bar for up to two minutes.
+        onProgress: async () => {
+          if (onProgress) await onProgress(pagesCompleted, discovered.size);
+        },
+      });
+      externalChecked = pass.results.length;
+      externalBroken = pass.results.filter((r) => r.statusCode <= 0 || r.statusCode >= 400).length;
+      if (pass.results.length > 0) {
+        await db.seoCrawlExternalLink.createMany({
+          data: pass.results.map((r) => ({
+            shop,
+            snapshotId,
+            url: r.url,
+            statusCode: r.statusCode,
+            finalUrl: r.finalUrl,
+            sourceCount: r.sourceCount,
+            sampleSources: r.sampleSources,
+            anchor: r.anchor,
+          })),
+        });
+      }
+    } catch {
+      // Same rule as above: the crawl is already saved and must not be
+      // downgraded to "failed" because an external host misbehaved.
+      externalChecked = 0;
+    }
+  }
+
   const status: CrawlSummary["status"] = abortedError ? "failed" : capped ? "capped" : "completed";
 
   // Attribute the blocker. The DNS lookup only runs when a Cloudflare verdict
@@ -1652,6 +1730,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     blockedBy,
     orphanCount,
     headDriftCount: headDrift.count,
+    externalFound: externalTargets.size,
+    externalChecked,
+    externalBroken,
+    externalTruncated,
   };
 }
 

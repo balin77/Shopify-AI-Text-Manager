@@ -16,9 +16,9 @@
  * API call off this loader.
  */
 
-import { data as json, type LoaderFunctionArgs } from "react-router";
-import { useLoaderData, useSearchParams } from "react-router";
-import { useState, type CSSProperties } from "react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useSearchParams, useFetcher } from "react-router";
+import { useEffect, useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -28,6 +28,7 @@ import {
   Badge,
   Button,
   Banner,
+  Checkbox,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -87,6 +88,7 @@ const CATEGORY_IDS = [
   "blocked",
   "orphans",
   "slowest",
+  "external",
 ] as const;
 type CategoryId = (typeof CATEGORY_IDS)[number];
 
@@ -101,6 +103,7 @@ const EXPORT_CATEGORY: Record<CategoryId, string> = {
   blocked: "blocked",
   orphans: "orphans",
   slowest: "slowest",
+  external: "external",
 };
 
 /** The header half comes from the shared `SnapshotHeaderView`; this adds the
@@ -172,9 +175,14 @@ interface SlowRow {
   statusCode: number;
 }
 
-async function loadPlan(db: any, shop: string): Promise<Plan> {
-  const settings = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });
-  return (settings?.subscriptionPlan || "free") as Plan;
+/** §6.4 — one row per UNIQUE external target, with how many pages link there. */
+interface ExternalLinkRow {
+  url: string;
+  statusCode: number;
+  finalUrl: string | null;
+  sourceCount: number;
+  sampleSources: string[];
+  anchor: string | null;
 }
 
 // Static, non-shop-specific example shown to Free/Basic merchants alongside
@@ -206,6 +214,11 @@ const EMPTY_LISTS = {
   blocked: [] as BlockedRow[],
   orphans: [] as OrphanRow[],
   slowest: [] as SlowRow[],
+  external: [] as ExternalLinkRow[],
+  externalTotal: 0,
+  externalBrokenTotal: 0,
+  /** §6.5 — the opt-out switch's current state. */
+  externalChecksEnabled: true,
   /** §7.2 — null when there is no previous snapshot to compare against. */
   diff: null as (CrawlDiff & { previousAt: string }) | null,
   /** Row counts before the UI_ROW_CAP slice, for the "showing N of M" hint. */
@@ -217,7 +230,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { db } = await import("../db.server");
   const shop = session.shop;
 
-  const plan = await loadPlan(db, shop);
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true, seoCrawlExternalLinks: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  // Absent row = the column default, which is ON (§6.5).
+  const externalChecksEnabled = settings?.seoCrawlExternalLinks ?? true;
   if (!meetsPlan(plan, "pro")) {
     return json({
       gated: true,
@@ -239,6 +258,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       running: latest.running,
       snapshot: null,
       ...EMPTY_LISTS,
+      externalChecksEnabled,
     });
   }
 
@@ -405,6 +425,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .slice(0, 20)
     .map((p) => ({ url: p.url, responseMs: p.responseMs, statusCode: p.statusCode }));
 
+  // §6.4 — external targets. Broken first, then by how many pages link there:
+  // a dead link in the footer of 2000 pages is more urgent than one in a blog
+  // post, and the DB cannot express "broken first" in an orderBy.
+  const externalRows = await db.seoCrawlExternalLink.findMany({
+    where: { shop, snapshotId: snapshotRow.id },
+    select: {
+      url: true,
+      statusCode: true,
+      finalUrl: true,
+      sourceCount: true,
+      sampleSources: true,
+      anchor: true,
+    },
+  });
+  const externalBrokenTotal = externalRows.filter(
+    (r) => r.statusCode <= 0 || r.statusCode >= 400,
+  ).length;
+  const external: ExternalLinkRow[] = [...externalRows]
+    .sort((a, b) => {
+      const aBroken = a.statusCode <= 0 || a.statusCode >= 400 ? 0 : 1;
+      const bBroken = b.statusCode <= 0 || b.statusCode >= 400 ? 0 : 1;
+      return aBroken - bBroken || b.sourceCount - a.sourceCount || a.url.localeCompare(b.url);
+    })
+    .slice(0, UI_ROW_CAP)
+    .map((r) => ({
+      url: r.url,
+      statusCode: r.statusCode,
+      finalUrl: r.finalUrl,
+      sourceCount: r.sourceCount,
+      sampleSources: r.sampleSources ? r.sampleSources.split("\n").filter(Boolean) : [],
+      anchor: r.anchor,
+    }));
+
   // §7.2 — compare against the previous snapshot. Retention keeps 5, so there
   // usually is one; the whole card is hidden when there isn't.
   const diff = await buildCrawlDiff(db, shop, snapshotRow.id);
@@ -422,8 +475,44 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     blocked,
     orphans,
     slowest,
+    external,
+    externalTotal: externalRows.length,
+    externalBrokenTotal,
+    externalChecksEnabled,
     totals: { allPages: pages.length, okPages: okTotal, brokenPages: brokenTotal },
   });
+};
+
+/**
+ * §6.5 — the ONLY write this route makes: the external-link opt-out.
+ *
+ * Plan-gated like the loader. The switch is not a preference in the abstract —
+ * it decides whether the crawl sends requests to servers neither the merchant
+ * nor we control, so it lives next to the scan button rather than three clicks
+ * away in settings.
+ */
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const { db } = await import("../db.server");
+  const shop = session.shop;
+
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  if (!meetsPlan(plan, "pro")) return json({ ok: false }, { status: 403 });
+
+  const form = await request.formData();
+  if (form.get("actionType") !== "toggleExternalChecks") {
+    return json({ ok: false }, { status: 400 });
+  }
+  const enabled = form.get("enabled") === "true";
+  // `update`, not `upsert`: a shop reaching this route always has a settings
+  // row (the plan gate above read it), and an upsert would need every
+  // required default spelled out here.
+  await db.aISettings.updateMany({ where: { shop }, data: { seoCrawlExternalLinks: enabled } });
+  return json({ ok: true, enabled });
 };
 
 /**
@@ -503,9 +592,18 @@ export default function SeoCrawl() {
     blocked: c.tabBlocked,
     orphans: c.tabOrphans,
     slowest: c.tabSlowest,
+    external: c.tabExternal,
   };
 
   const [diffOpen, setDiffOpen] = useState(false);
+
+  // §6.5 — optimistic local state so the checkbox reacts immediately; the
+  // loader value re-syncs it after the revalidation.
+  const externalToggleFetcher = useFetcher<{ ok: boolean; enabled?: boolean }>();
+  const [externalChecksEnabled, setExternalChecksEnabled] = useState(data.externalChecksEnabled);
+  useEffect(() => {
+    setExternalChecksEnabled(data.externalChecksEnabled);
+  }, [data.externalChecksEnabled]);
 
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
@@ -600,6 +698,22 @@ export default function SeoCrawl() {
       )}
 
       <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
+        {/* §6.5 — visible where the crawl is started, because it changes what
+            the crawl DOES, not just what it shows. */}
+        <Checkbox
+          label={c.externalChecksLabel}
+          helpText={c.externalChecksHelp}
+          checked={externalChecksEnabled}
+          disabled={externalToggleFetcher.state !== "idle"}
+          onChange={(checked) => {
+            setExternalChecksEnabled(checked);
+            externalToggleFetcher.submit(
+              { actionType: "toggleExternalChecks", enabled: String(checked) },
+              { method: "post" },
+            );
+          }}
+        />
+
         {snapshot && snapshot.pagesBlocked > 0 && !data.running && (
           <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
         )}
@@ -651,6 +765,19 @@ export default function SeoCrawl() {
                 value={data.slowest.length}
                 onClick={() => setActiveTab("slowest")}
                 selected={activeTab === "slowest"}
+              />
+              <Tile
+                label={c.tileExternal}
+                // "—" rather than 0 when the check is off: zero would read as
+                // "no dead external links", which we did not measure (§6.5).
+                value={data.externalChecksEnabled ? data.externalBrokenTotal : "—"}
+                hint={
+                  data.externalChecksEnabled
+                    ? c.tileExternalHint.replace("{total}", String(data.externalTotal))
+                    : c.tileExternalDisabledHint
+                }
+                onClick={() => setActiveTab("external")}
+                selected={activeTab === "external"}
               />
           </InlineGrid>
         )}
@@ -953,6 +1080,77 @@ export default function SeoCrawl() {
                 )}
               </BlockStack>
             )}
+
+            {/* §6.4 — outbound links to OTHER domains. Broken first, then by
+                how many pages link there: a dead footer link on 2000 pages is
+                more urgent than one in a single blog post. */}
+            {activeTab === "external" && (
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">{c.externalHint}</Text>
+                {!data.externalChecksEnabled ? (
+                  <Banner tone="info">{c.externalDisabledBanner}</Banner>
+                ) : data.external.length === 0 ? (
+                  <Text as="p" tone="subdued">{c.emptyExternal}</Text>
+                ) : (
+                  <>
+                    <CapNotice
+                      shown={data.external.length}
+                      total={data.externalTotal}
+                      template={c.rowCapHint}
+                    />
+                    <ReportGrid columns={STATUS_COLUMNS}>
+                      {data.external.map((link) => [
+                        <ReportRow
+                          key={link.url}
+                          cells={[
+                            <BlockStack gap="050">
+                              <Text as="span" variant="bodySm">{link.url}</Text>
+                              {link.anchor && (
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {c.colAnchor}: {link.anchor}
+                                </Text>
+                              )}
+                              {/* Its own finding: a link that still points at
+                                  http:// or an old address costs a hop. */}
+                              {link.finalUrl && (
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {c.externalRedirectsTo}: {link.finalUrl}
+                                </Text>
+                              )}
+                            </BlockStack>,
+                            <BlockStack gap="050" inlineAlign="end">
+                              <Badge tone={externalTone(link.statusCode)}>
+                                {link.statusCode === -1
+                                  ? c.statusRedirectLoop
+                                  : link.statusCode === 0
+                                    ? c.externalUnreachable
+                                    : String(link.statusCode)}
+                              </Badge>
+                              <Badge>{c.externalSourceCount.replace("{count}", String(link.sourceCount))}</Badge>
+                            </BlockStack>,
+                            null,
+                          ]}
+                        />,
+                        ...link.sampleSources.map((source) => (
+                          <ReportRow
+                            key={`${link.url}:${source}`}
+                            cells={[
+                              <Indent>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {c.brokenLinkedFrom}: {source}
+                                </Text>
+                              </Indent>,
+                              null,
+                              null,
+                            ]}
+                          />
+                        )),
+                      ])}
+                    </ReportGrid>
+                  </>
+                )}
+              </BlockStack>
+            )}
           </BlockStack>
         </Card>
       )}
@@ -1034,4 +1232,12 @@ function DiffList({ title, rows }: { title: string; rows: string[] }) {
       )}
     </BlockStack>
   );
+}
+
+/** §6.4 — 0 is "unreachable" and -1 a redirect loop, both as bad as a 4xx. */
+function externalTone(statusCode: number): "critical" | "warning" | "success" {
+  if (statusCode <= 0) return "critical";
+  if (statusCode >= 400) return "critical";
+  if (statusCode >= 300) return "warning";
+  return "success";
 }

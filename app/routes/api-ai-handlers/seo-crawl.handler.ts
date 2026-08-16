@@ -124,6 +124,14 @@ async function runSeoCrawlTask(taskId: string, snapshotId: string, args: RunArgs
     const { name: shopName, primaryDomain } = await fetchShopContext(admin, shop);
     const appUrl = (process.env.SHOPIFY_APP_URL || "https://localhost:3000").replace(/\/+$/, "");
 
+    // §6.5 — opt-out for the external-link pass. Absent settings row = default
+    // ON, matching the column default.
+    const settings = await db.aISettings.findUnique({
+      where: { shop },
+      select: { seoCrawlExternalLinks: true },
+    });
+    const checkExternalLinks = settings?.seoCrawlExternalLinks ?? true;
+
     const summary = await runCrawl(snapshotId, {
       db,
       shop,
@@ -131,6 +139,7 @@ async function runSeoCrawlTask(taskId: string, snapshotId: string, args: RunArgs
       myshopifyDomain: shop,
       shopName,
       appUrl,
+      checkExternalLinks,
       // Heartbeat every 25 pages (§3.5) — the Task.progress write itself is
       // the heartbeat the stuck-task reaper watches (contract §8). Total is
       // unknown up front (a live crawl, not a fixed catalog scan), so the

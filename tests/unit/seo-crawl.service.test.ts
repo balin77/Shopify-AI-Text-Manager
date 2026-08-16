@@ -709,7 +709,11 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
 
   function makeDb(overrides: { products?: { id: string; handle: string }[] } = {}) {
     const products = overrides.products ?? [];
-    const created: { pages: any[]; brokenLinks: any[] } = { pages: [], brokenLinks: [] };
+    const created: { pages: any[]; brokenLinks: any[]; externalLinks: any[] } = {
+      pages: [],
+      brokenLinks: [],
+      externalLinks: [],
+    };
     return {
       __created: created,
       product: {
@@ -733,6 +737,13 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
       seoCrawlBrokenLink: {
         createMany: async ({ data }: any) => {
           created.brokenLinks.push(...data);
+          return { count: data.length };
+        },
+      },
+      // PLAN_SEO_CRAWL_EXPANSION §6 — written by the external-link pass.
+      seoCrawlExternalLink: {
+        createMany: async ({ data }: any) => {
+          created.externalLinks.push(...data);
           return { count: data.length };
         },
       },
@@ -1463,6 +1474,125 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     const gone = byUrl("/gone");
     expect(gone.indexabilityKnown).toBe(false);
     expect(gone.metaRobots).toBe("");
+  });
+});
+
+describe("runCrawl — external links (PLAN_SEO_CRAWL_EXPANSION §6)", () => {
+  const server = setupServer();
+  beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+  afterEach(() => server.resetHandlers());
+  afterAll(() => server.close());
+
+  function makeDb() {
+    const created: { pages: any[]; brokenLinks: any[]; externalLinks: any[] } = {
+      pages: [],
+      brokenLinks: [],
+      externalLinks: [],
+    };
+    return {
+      __created: created,
+      product: { findMany: async () => [] },
+      collection: { findMany: async () => [] },
+      page: { findMany: async () => [] },
+      article: { findMany: async () => [] },
+      seoCrawlPage: {
+        createMany: async ({ data }: any) => {
+          created.pages.push(...data);
+          return { count: data.length };
+        },
+      },
+      seoCrawlBrokenLink: {
+        createMany: async ({ data }: any) => {
+          created.brokenLinks.push(...data);
+          return { count: data.length };
+        },
+      },
+      seoCrawlExternalLink: {
+        createMany: async ({ data }: any) => {
+          created.externalLinks.push(...data);
+          return { count: data.length };
+        },
+      },
+    } as any;
+  }
+
+  const siteWithExternalLinks = () =>
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html(
+            "Home – Acme",
+            `<a href="https://partner.example/ok">Partner</a>
+             <a href="https://partner.example/gone">Dead partner</a>
+             <a href="mailto:hi@acme.test">Mail us</a>
+             <a href="https://cdn.shopify.com/s/files/1/x.png">Asset</a>
+             <a href="/page-2">Internal</a>`,
+          ),
+        ),
+      ),
+      // The footer link repeats on every page — it must stay ONE row.
+      http.get(`${BASE}/page-2`, () =>
+        HttpResponse.html(html("Page 2 – Acme", `<a href="https://partner.example/ok">Partner</a>`)),
+      ),
+      http.all("https://partner.example/ok", () => new HttpResponse(null, { status: 200 })),
+      http.all("https://partner.example/gone", () => new HttpResponse(null, { status: 404 })),
+    );
+
+  it("records one row per unique target, counts the pages linking there, and checks it", async () => {
+    siteWithExternalLinks();
+    const db = makeDb();
+
+    const summary = await runCrawl("snap-ext", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      externalTimeoutMs: 2000,
+    });
+
+    // mailto: and the Shopify CDN asset are not links to check.
+    expect(summary.externalFound).toBe(2);
+    expect(summary.externalChecked).toBe(2);
+    expect(summary.externalBroken).toBe(1);
+    expect(summary.externalTruncated).toBe(false);
+
+    const rows = db.__created.externalLinks;
+    expect(rows).toHaveLength(2);
+    const ok = rows.find((r: any) => r.url.endsWith("/ok"));
+    // Linked from both pages, but exactly one row.
+    expect(ok.statusCode).toBe(200);
+    expect(ok.sourceCount).toBe(2);
+    expect(ok.sampleSources.split("\n")).toHaveLength(2);
+    expect(rows.find((r: any) => r.url.endsWith("/gone")).statusCode).toBe(404);
+  });
+
+  it("collects and checks nothing when the merchant switched the pass off (§6.5)", async () => {
+    siteWithExternalLinks();
+    const db = makeDb();
+
+    const summary = await runCrawl("snap-ext-off", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: false,
+    });
+
+    expect(summary.externalFound).toBe(0);
+    expect(db.__created.externalLinks).toHaveLength(0);
+    // The crawl itself is unaffected.
+    expect(summary.status).toBe("completed");
+    expect(db.__created.pages.length).toBeGreaterThan(0);
   });
 });
 
