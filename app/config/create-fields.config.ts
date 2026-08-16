@@ -357,6 +357,36 @@ export function metaobjectFieldDefs(fieldDefinitions: MetaobjectFieldDefinition[
     });
 }
 
+/**
+ * The `fields` payload for `metaobjectCreate`, from the form's flat values.
+ *
+ * `MetaobjectFieldInput` has EXACTLY `key` and `value`. Any extra property
+ * makes GraphQL refuse the whole variable, and the failure surfaces as a
+ * generic "not confirmed by Shopify" that looks like a Shopify problem rather
+ * than a payload one — it once took every metaobject create with it. Building
+ * the payload here rather than inline in the action is what makes that
+ * testable.
+ */
+export function metaobjectFieldsPayload(
+  fields: CreateFieldDef[],
+  values: Record<string, string>,
+): Array<{ key: string; value: string }> {
+  const payload: Array<{ key: string; value: string }> = [];
+  for (const field of fields) {
+    const raw = (values[field.key] ?? "").trim();
+    if (field.listValue) {
+      // Stored as a JSON array; the form collects it comma-separated.
+      const items = raw.split(",").map((v) => v.trim()).filter(Boolean);
+      if (items.length === 0) continue;
+      payload.push({ key: field.key.replace(/^field\./, ""), value: JSON.stringify(items) });
+      continue;
+    }
+    if (raw.length === 0) continue;
+    payload.push({ key: field.key.replace(/^field\./, ""), value: raw });
+  }
+  return payload;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Validation — the SAME rules the modal enforces and the server re-applies
 // ────────────────────────────────────────────────────────────────────────────

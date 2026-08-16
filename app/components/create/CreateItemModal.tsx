@@ -62,6 +62,7 @@ export interface CreateItemModalTexts {
   fields?: Record<string, string>;
   /** Option labels, keyed like `"status.DRAFT"`. */
   options?: Record<string, string>;
+  shopifyDefault?: string;
   collectionTypeLabel?: string;
   collectionManual?: string;
   collectionAutomated?: string;
@@ -150,6 +151,17 @@ export function CreateItemModal({
   // §1.4b — empty means MANUAL, which is the default and stays the default.
   // A merchant who wants a hand-picked collection should not have to dismiss
   // a rule editor to get one.
+  /**
+   * §1.7 — ONE request id per opening of this dialog, not per click.
+   *
+   * Minting a fresh id on every submit is the same as having none: the server
+   * dedupes on the id, so a retry carrying a new one is simply a second
+   * create. Keeping it stable is what makes "already in progress" and the
+   * salvage path reachable at all — a merchant who clicks Create again after
+   * a timeout gets the FIRST result rather than a duplicate.
+   */
+  const [requestId, setRequestId] = useState(mintRequestId);
+
   const [ruleSources, setRuleSources] = useState<RuleSource[]>([]);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [rulesAdvanced, setRulesAdvanced] = useState(false);
@@ -171,7 +183,11 @@ export function CreateItemModal({
   // Seed once per opening. Not on every render: the merchant's edits would be
   // overwritten by the source's values on the next keystroke.
   useEffect(() => {
-    if (open) setValues(initialValues ?? {});
+    if (open) {
+      setValues(initialValues ?? {});
+      // A NEW dialog is a new create; only here does a fresh id belong.
+      setRequestId(mintRequestId());
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, resource]);
 
@@ -190,6 +206,13 @@ export function CreateItemModal({
       const filled = { ...raw };
       for (const field of allFields) {
         if (field.kind !== "select" || !field.options?.length) continue;
+        // ONLY the always-visible ones. "The form shows it, so send it" is the
+        // right rule for a control the merchant can see — it is the wrong rule
+        // for one collapsed behind "more fields", where sending option[0]
+        // would silently override Shopify's own default (pinning MANUAL sort
+        // order on a rule-based collection, closing comments on every blog).
+        // Advanced selects render an explicit "Shopify default" entry instead.
+        if (field.advanced) continue;
         if (!filled[field.key]) filled[field.key] = field.options[0].value;
       }
       return filled;
@@ -248,9 +271,9 @@ export function CreateItemModal({
       ruleSources: rulesOpen && ruleSources.length > 0 ? ruleSources : undefined,
       imageUrl: image?.url ?? "",
       imageAlt: image?.alt ?? "",
-      requestId: mintRequestId(),
+      requestId,
     });
-  }, [localErrors, onSubmit, resource, values, image, withSelectDefaults, rulesOpen, ruleSources]);
+  }, [localErrors, onSubmit, resource, values, image, withSelectDefaults, rulesOpen, ruleSources, requestId]);
 
   /**
    * The picker can return video and 3D as well. Swallowing those silently is
@@ -317,20 +340,28 @@ export function CreateItemModal({
           </BlockStack>
         );
 
-      case "select":
+      case "select": {
+        const options = (field.options ?? []).map((o) => ({
+          value: o.value,
+          label: t.options?.[o.labelKey] ?? o.value,
+        }));
+        // An advanced select is not auto-filled, so it needs a visible way to
+        // say "leave it to Shopify" — otherwise the first option would LOOK
+        // chosen while nothing is sent.
+        const withDefault = field.advanced
+          ? [{ value: "", label: t.shopifyDefault || "Shopify default" }, ...options]
+          : options;
         return (
           <Select
             key={field.key}
             label={label(field)}
-            options={(field.options ?? []).map((o) => ({
-              value: o.value,
-              label: t.options?.[o.labelKey] ?? o.value,
-            }))}
-            value={value || field.options?.[0]?.value || ""}
+            options={withDefault}
+            value={value || (field.advanced ? "" : field.options?.[0]?.value || "")}
             onChange={(v) => setValue(field.key, v)}
             error={errorText}
           />
         );
+      }
 
       case "blogPicker":
       case "metaobjectType": {

@@ -459,6 +459,7 @@ export const en: Translation = {
       fewerFields: "Fewer fields",
       required: "Required",
       handleHint: "Leave empty — Shopify derives the handle from the title. On a collision it appends a number.",
+      shopifyDefault: "Shopify default",
       discardConfirm: "Discard your input?",
       fields: {
         title: "Title", description: "Description", body: "Content", summary: "Summary",

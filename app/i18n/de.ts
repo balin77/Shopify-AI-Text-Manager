@@ -456,6 +456,7 @@ export const de = {
       fewerFields: "Weniger Felder",
       required: "Pflichtfeld",
       handleHint: "Leer lassen — Shopify leitet den Handle aus dem Titel ab. Bei einer Kollision hängt Shopify eine Zahl an.",
+      shopifyDefault: "Shopify-Standard",
       discardConfirm: "Eingaben verwerfen?",
       fields: {
         title: "Titel", description: "Beschreibung", body: "Inhalt", summary: "Zusammenfassung",

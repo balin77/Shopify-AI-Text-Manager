@@ -15,6 +15,7 @@ import {
   createSpecFor,
   metaobjectCreatability,
   metaobjectFieldDefs,
+  metaobjectFieldsPayload,
   suggestHandle,
   validateCreatePayload,
 } from "~/config/create-fields.config";
@@ -160,6 +161,41 @@ describe("metaobjectFieldDefs", () => {
     // overwrite the resource's handle.
     const defs = metaobjectFieldDefs([{ key: "handle", type: { name: "single_line_text_field" } }]);
     expect(defs[0].key).toBe("field.handle");
+  });
+});
+
+describe("metaobjectFieldsPayload", () => {
+  const defs = metaobjectFieldDefs([
+    { key: "headline", type: { name: "single_line_text_field" } },
+    { key: "sizes", type: { name: "list.single_line_text_field" } },
+  ]);
+
+  it("emits EXACTLY key and value, nothing else", () => {
+    // MetaobjectFieldInput has only those two. Any extra property makes
+    // GraphQL refuse the whole variable, and the failure reads as a generic
+    // "not confirmed by Shopify" — it once took every metaobject create with
+    // it, and no test noticed because none looked at the payload.
+    const payload = metaobjectFieldsPayload(defs, { "field.headline": "Sizes" });
+    expect(payload).toEqual([{ key: "headline", value: "Sizes" }]);
+    for (const entry of payload) {
+      expect(Object.keys(entry).sort()).toEqual(["key", "value"]);
+    }
+  });
+
+  it("serialises a list field as a JSON array", () => {
+    const payload = metaobjectFieldsPayload(defs, { "field.sizes": "S, M , L" });
+    expect(payload).toEqual([{ key: "sizes", value: '["S","M","L"]' }]);
+  });
+
+  it("strips the field. prefix the form uses to avoid key collisions", () => {
+    const payload = metaobjectFieldsPayload(defs, { "field.headline": "x" });
+    expect(payload[0].key).toBe("headline");
+  });
+
+  it("omits empty values instead of sending blanks", () => {
+    // A blank would be a value Shopify then stores as empty, which is not the
+    // same as leaving an optional field unset.
+    expect(metaobjectFieldsPayload(defs, { "field.headline": "   ", "field.sizes": " , , " })).toEqual([]);
   });
 });
 

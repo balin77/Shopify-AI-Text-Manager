@@ -45,6 +45,7 @@ import {
   createSpecFor,
   metaobjectCreatability,
   metaobjectFieldDefs,
+  metaobjectFieldsPayload,
   validateCreatePayload,
   type CreatableResource,
   type CreateFieldDef,
@@ -138,25 +139,23 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
   let createdSoFar: CreateOutcome | null = null;
 
   // ── Idempotency (§1.7) ──────────────────────────────────────────────────
-  // Checked BEFORE the plan gates so a retry cannot be turned into a
-  // limit-reached error by the object the FIRST attempt already created.
-  if (!claimCreateRequest(session.shop, requestId)) {
-    const previous = previousCreateResult(session.shop, requestId);
-    if (previous) {
-      logger.info("[CreateContent] Duplicate request, returning the first result", {
-        context: "CreateContent",
-        shop: session.shop,
-        requestId,
-      });
-      return json(previous as Record<string, unknown>);
-    }
-    // Still running. Reporting an error here would invite the third click.
-    return json({
-      actionType: "createContent",
-      success: true,
-      pending: true,
-      message: "This create is already in progress.",
+  // The FINISHED-first check comes before the plan gates on purpose: on a
+  // retry the object from the first attempt is already counted, so running the
+  // quantity gate first would answer "limit reached" instead of handing back
+  // the result the merchant is actually waiting for.
+  //
+  // The CLAIM, by contrast, is taken late — just before the mutation. Claiming
+  // up here would leave a claim behind on every validation failure, and the
+  // corrected retry (same request id, as it must be for any of this to work)
+  // would then be told "already in progress" forever.
+  const finished = previousCreateResult(session.shop, requestId);
+  if (finished) {
+    logger.info("[CreateContent] Duplicate request, returning the first result", {
+      context: "CreateContent",
+      shop: session.shop,
+      requestId,
     });
+    return json(finished as Record<string, unknown>);
   }
 
   try {
@@ -261,6 +260,17 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
     const errors = validateCreatePayload(resource as CreatableResource, values, extraFields);
     if (errors.length > 0) {
       return json({ success: false, errorCode: "validation", fieldErrors: errors, error: "Invalid payload." }, { status: 400 });
+    }
+
+    // Everything that could reject this request has now run. Claim the id so a
+    // second POST while this one is in flight waits instead of creating again.
+    if (!claimCreateRequest(session.shop, requestId)) {
+      return json({
+        actionType: "createContent",
+        success: true,
+        pending: true,
+        message: "This create is already in progress.",
+      });
     }
 
     // ── 3./4. Mutation + echo ─────────────────────────────────────────────
@@ -392,6 +402,11 @@ function assertEcho(condition: unknown, what: string, detail: string): asserts c
   if (!condition) throw new Error(`${what} was not confirmed by Shopify${detail ? `: ${detail}` : ""}`);
 }
 
+/** Shopify normalises and truncates titles. Worth saying, not worth failing. */
+function titleDriftNote(sent: string, got: string): string {
+  return `Shopify stored the title as “${got}” instead of “${sent}”.`;
+}
+
 async function createProduct(
   graphql: (q: string, v: Record<string, unknown>) => Promise<GraphQLResponse>,
   input: CreateInput,
@@ -455,10 +470,15 @@ async function createProduct(
   const errorText = userErrorText(payload?.userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
   const product = payload?.product;
 
+  // Only the MISSING ID is a failure: at that point nothing was created and a
+  // retry is safe. A title that came back different (Shopify normalises and
+  // truncates) is a NOTE — throwing there would take the "nothing was
+  // created" branch on an object that very much exists, release the
+  // idempotency claim, and hand the merchant a duplicate on their retry.
   assertEcho(product?.id, "Product create", errorText);
-  assertEcho(product.title === title, "Product title", `sent "${title}", got "${product.title}"`);
 
   const notes: string[] = [];
+  if (product.title !== title) notes.push(titleDriftNote(title, product.title));
   const variant = product.variants?.nodes?.[0];
   if (price && (!variant || variant.price == null)) {
     // Explicit rather than silent: the product exists but is not sellable.
@@ -508,10 +528,11 @@ async function createCollection(
   const errorText = userErrorText(payload?.userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
   const collection = payload?.collection;
 
+  // See createProduct: a missing id is a failure, a drifted title is a note.
   assertEcho(collection?.id, "Collection create", errorText);
-  assertEcho(collection.title === title, "Collection title", `sent "${title}", got "${collection.title}"`);
+  const titleNote = collection.title !== title ? [titleDriftNote(title, collection.title)] : [];
 
-  return { id: collection.id, handle: collection.handle, title: collection.title, notes: [] };
+  return { id: collection.id, handle: collection.handle, title: collection.title, notes: titleNote };
 }
 
 async function createPage(
@@ -532,14 +553,15 @@ async function createPage(
   const errorText = userErrorText(payload?.userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
   const page = payload?.page;
 
+  // See createProduct: a missing id is a failure, a drifted title is a note.
   assertEcho(page?.id, "Page create", errorText);
-  assertEcho(page.title === title, "Page title", `sent "${title}", got "${page.title}"`);
+  const titleNote = page.title !== title ? [titleDriftNote(title, page.title)] : [];
 
   return {
     id: page.id,
     handle: page.handle,
     title: page.title,
-    notes: ["The page is not published yet — publish it once the content is ready."],
+    notes: [...titleNote, "The page is not published yet — publish it once the content is ready."],
   };
 }
 
@@ -568,14 +590,15 @@ async function createArticle(
   const errorText = userErrorText(payload?.userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
   const article = payload?.article;
 
+  // See createProduct: a missing id is a failure, a drifted title is a note.
   assertEcho(article?.id, "Article create", errorText);
-  assertEcho(article.title === title, "Article title", `sent "${title}", got "${article.title}"`);
+  const titleNote = article.title !== title ? [titleDriftNote(title, article.title)] : [];
 
   return {
     id: article.id,
     handle: article.handle,
     title: article.title,
-    notes: ["The article is not published yet — publish it once the content is ready."],
+    notes: [...titleNote, "The article is not published yet — publish it once the content is ready."],
   };
 }
 
@@ -595,10 +618,11 @@ async function createBlog(
   const errorText = userErrorText(payload?.userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
   const blog = payload?.blog;
 
+  // See createProduct: a missing id is a failure, a drifted title is a note.
   assertEcho(blog?.id, "Blog create", errorText);
-  assertEcho(blog.title === title, "Blog title", `sent "${title}", got "${blog.title}"`);
+  const titleNote = blog.title !== title ? [titleDriftNote(title, blog.title)] : [];
 
-  return { id: blog.id, handle: blog.handle, title: blog.title, notes: [] };
+  return { id: blog.id, handle: blog.handle, title: blog.title, notes: titleNote };
 }
 
 async function createMetaobject(
@@ -609,21 +633,10 @@ async function createMetaobject(
 ): Promise<CreateOutcome> {
   // The definition's fields arrive prefixed so they cannot collide with the
   // spec's own keys (`handle`, `type`).
-  const fields = extraFields
-    .map((f) => {
-      const raw = str(input, f.key);
-      return {
-        key: f.key.replace(/^field\./, ""),
-        // `list.single_line_text_field` is stored as a JSON array. Sending the
-        // comma-separated string the form collected would be rejected every
-        // time, which would make such definitions "offered but impossible".
-        value: f.listValue
-          ? JSON.stringify(raw.split(",").map((v) => v.trim()).filter(Boolean))
-          : raw,
-        listValue: !!f.listValue,
-      };
-    })
-    .filter((f) => (f.listValue ? f.value !== "[]" : f.value.length > 0));
+  // Built by the shared config so the shape is covered by a test —
+  // MetaobjectFieldInput takes exactly `key` and `value`, and an extra
+  // property makes GraphQL refuse the whole variable.
+  const fields = metaobjectFieldsPayload(extraFields, input.values);
 
   const response = await graphql(CREATE_METAOBJECT, {
     metaobject: stripUndefined({
