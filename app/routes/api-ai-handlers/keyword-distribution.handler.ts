@@ -155,7 +155,7 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
 
   const group = await db.seoKeywordGroup.findFirst({
     where: { id: groupId, shop: session.shop },
-    select: { id: true, name: true },
+    select: { id: true, name: true, locale: true },
   });
   if (!group) {
     return json({ success: false, error: "Keyword group not found." }, { status: 404 });
@@ -166,9 +166,14 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
     return json({ success: false, error: "This group has no keywords to distribute." }, { status: 400 });
   }
 
+  // A group owns exactly one language (§3.1), so the whole run matches ONE
+  // language — and it must be the group's, not the primary one. Matching French
+  // keywords against German product copy is why automatic distribution "did not
+  // work" for secondary languages.
   const items = await loadTargetItems(db, session.shop, targetType, {
     productType: filterProductType,
     resourceIds,
+    locale: group.locale,
   });
   if (items.length === 0) {
     return json({ success: false, error: "No target items found for this distribution." }, { status: 400 });
@@ -362,6 +367,61 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
 }
 
 async function loadTargetItems(
+  db: PrismaClient,
+  shop: string,
+  targetType: KeywordResourceType,
+  filters: { productType?: string; resourceIds?: string[]; locale?: string },
+): Promise<DistributionItem[]> {
+  const items = await loadPrimaryItems(db, shop, targetType, filters);
+  const locale = filters.locale ?? "";
+  if (!locale || items.length === 0) return items;
+  return overlayTranslations(db, shop, locale, items);
+}
+
+/**
+ * Swap in the target language's title/body wherever a translation exists. The
+ * primary-language value stays as the fallback (unlike the on-page ANALYSIS in
+ * keywords.service.ts, which must report an untranslated field as missing):
+ * here the text is only there for the model to judge topical fit, and an empty
+ * snippet would make an untranslated item unmatchable rather than "worse
+ * matched".
+ */
+async function overlayTranslations(
+  db: PrismaClient,
+  shop: string,
+  locale: string,
+  items: DistributionItem[],
+): Promise<DistributionItem[]> {
+  const rows = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      locale,
+      resourceId: { in: items.map((i) => i.id) },
+      key: { in: ["title", "meta_title", "body_html"] },
+    },
+    select: { resourceId: true, key: true, value: true },
+  });
+  if (rows.length === 0) return items;
+  const byResource = new Map<string, Record<string, string>>();
+  for (const r of rows) {
+    const bucket = byResource.get(r.resourceId) ?? {};
+    if (r.value) bucket[r.key] = r.value;
+    byResource.set(r.resourceId, bucket);
+  }
+  return items.map((item) => {
+    const t = byResource.get(item.id);
+    if (!t) return item;
+    // Same title preference as the primary path: SEO title first, then title.
+    const title = t.meta_title || t.title;
+    return {
+      ...item,
+      title: title || item.title,
+      snippet: t.body_html ? buildItemSnippet(t.body_html) : item.snippet,
+    };
+  });
+}
+
+async function loadPrimaryItems(
   db: PrismaClient,
   shop: string,
   targetType: KeywordResourceType,
