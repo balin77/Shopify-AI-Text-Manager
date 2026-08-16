@@ -27,8 +27,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Banner, Button, Tooltip } from "@shopify/polaris";
+import { Banner, Icon, Tooltip } from "@shopify/polaris";
 import { QuestionCircleIcon } from "@shopify/polaris-icons";
+import "../../styles/HelpTooltip.css";
 import { useI18n } from "../../contexts/I18nContext";
 import { readSeoHelpHidden, writeSeoHelpHidden } from "../../utils/seo-help-visibility";
 
@@ -157,12 +158,20 @@ export function SeoHelpToggle() {
   const label = t.seo.sectionHelpShow;
   return (
     <Tooltip content={label}>
-      <Button
-        icon={QuestionCircleIcon}
-        variant="tertiary"
-        accessibilityLabel={label}
+      {/* Same trigger every other ❓ in the app uses (HelpTooltip, the image
+          manager's doc toggles): a bare button around an `interactive`-toned
+          icon, so this one is blue like the rest. A Polaris Button would render
+          it subdued and boxed. `marginLeft` is the stylesheet's, and the
+          surrounding InlineStack already provides the gap. */}
+      <button
+        className="help-tooltip-trigger"
+        type="button"
+        style={{ marginLeft: 0 }}
+        aria-label={label}
         onClick={() => hiddenIds.forEach((id) => ctx.setHidden(id, false))}
-      />
+      >
+        <Icon source={QuestionCircleIcon} tone="interactive" />
+      </button>
     </Tooltip>
   );
 }
