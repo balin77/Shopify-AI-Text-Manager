@@ -7,6 +7,7 @@
  * data (Phase 6) plugs into the same rows later.
  */
 
+import type { PrismaClient } from "@prisma/client";
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "react-router";
 import { useEffect, useRef, useState } from "react";
@@ -75,19 +76,17 @@ interface ItemContent {
   bodyHtml: string;
 }
 
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin, session } = await authenticate.admin(request);
-  const { db } = await import("../db.server");
-  const shop = session.shop;
-
-  // Shop locales (60s-cached) drive both the add-form's locale picker and the
-  // per-row translated-content analysis below. Primary locale is stored as ""
-  // in SeoKeyword (existing convention) — its real Shopify code is only used
-  // for display (the Locale column badge).
-  const shopLocales = await getCachedShopLocales(admin, shop);
-  const primaryLocale = shopLocales.find((l: any) => l.primary);
-  const secondaryLocales = shopLocales.filter((l: any) => !l.primary && l.published);
-
+/**
+ * The "Zuordnungen" half of the page's data: every tracked assignment, its
+ * item content resolved from the cache, the on-page analysis per row, the
+ * cannibalization conflicts and the intent backlog.
+ *
+ * Split out of the loader so it only runs for the tab that renders it — it
+ * reads four content tables plus the translation table and analyzes every row,
+ * and paying that on every Library-tab click (and on every mutation's
+ * revalidation) is what made the page feel like it reloaded wholesale.
+ */
+async function loadAssignmentsData(db: PrismaClient, shop: string, primaryLocaleCode: string) {
   // Rows are ASSIGNMENTS since the keywords expansion (one keyword can be
   // assigned to several items; an item carries 1 primary + N secondaries).
   const rows = await listAssignments(db, shop);
@@ -207,7 +206,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       priority: row.priority,
       // Display code for the Locale column badge: primary rows are stored as
       // "" so they show the shop's actual primary locale code, not a blank badge.
-      localeDisplay: row.locale || primaryLocale?.locale || "",
+      localeDisplay: row.locale || primaryLocaleCode,
       itemTitle: c?.title ?? "",
       itemMissing: !c,
       intent: row.intent, // threaded for the intent badge + filter (§7.2)
@@ -244,46 +243,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Intent classification backlog (§7.2) — drives the classify button label.
   const unclassifiedCount = await db.seoKeyword.count({ where: { shop, intent: null } });
 
-  // Locale options for the add-form's Select: primary first (value "" — the
-  // SeoKeyword convention), then published secondaries by their Shopify code.
-  const localeOptions = [
-    { locale: "", name: primaryLocale?.name ?? primaryLocale?.locale ?? "", primary: true },
-    ...secondaryLocales.map((l: any) => ({ locale: String(l.locale), name: String(l.name), primary: false })),
-  ];
+  return { keywords, conflicts, unclassifiedCount };
+}
 
-  // ── Groups + AI distribution (PLAN_KEYWORDS_EXPANSION.md §5) ──
+/** Shape of the Zuordnungen half — also the type of the empty stand-in the
+ *  loader returns while the Bibliothek tab is active. */
+type AssignmentsData = Awaited<ReturnType<typeof loadAssignmentsData>>;
 
-  // Plan flag for the distribution button (the handler gates server-side
-  // again; this only decides whether the button renders as available).
-  const settingsRow = await db.aISettings.findUnique({
-    where: { shop },
-    select: { subscriptionPlan: true },
-  });
-  const isPro = meetsPlan((settingsRow?.subscriptionPlan || "free") as Plan, "pro");
+const EMPTY_ASSIGNMENTS: AssignmentsData = { keywords: [], conflicts: [], unclassifiedCount: 0 };
 
-  const url = new URL(request.url);
-  const loc = url.searchParams.get("loc") ?? "";
-  const selectedGroupId = url.searchParams.get("group") || "";
-
-  // Pseudo-group sentinels (§2.1): "Alle" and "Ohne Gruppe" are not real rows —
-  // they are read-only views over the active locale's keywords. They are NOT
-  // groups, so the group-locale lookup below is skipped for them (they use loc).
-  const isPseudoGroup = selectedGroupId === "__all__" || selectedGroupId === "__ungrouped__";
-
-  // A ?group= deeplink implies the active language (§8.6): the group carries
-  // its own locale, and a bookmarked group must land in THAT language even if
-  // ?loc= says otherwise. Resolve the group's locale up front so the listGroups
-  // call below lists the right language's groups.
-  let groupLocale: string | null = null;
-  if (selectedGroupId && !isPseudoGroup) {
-    const g = await db.seoKeywordGroup.findFirst({
-      where: { id: selectedGroupId, shop },
-      select: { locale: true },
-    });
-    groupLocale = g ? g.locale : null;
-  }
-  const activeLocale = groupLocale ?? loc;
-
+/**
+ * The "Bibliothek" half: groups, the selected group's keywords, the sidebar
+ * counts and the AI-distribution task state. Counterpart to
+ * loadAssignmentsData — only the active tab's half is loaded per request.
+ */
+async function loadLibraryData(
+  db: PrismaClient,
+  shop: string,
+  activeLocale: string,
+  selectedGroupId: string,
+) {
   const groups = await listGroups(db, shop, activeLocale);
 
   // Every group of the shop, across ALL languages — the move dialog's target
@@ -389,8 +368,102 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .map((r) => r.productType)
     .filter((p): p is string => !!p);
 
+  return {
+    groups,
+    allGroups,
+    allCount,
+    ungroupedCount,
+    groupDetail,
+    runningDistribution,
+    distributionPreview,
+    suggestTaskId,
+    productTypes,
+  };
+}
+
+/** Shape of the Bibliothek half — also the type of the empty stand-in the
+ *  loader returns while the Zuordnungen tab is active. */
+type LibraryData = Awaited<ReturnType<typeof loadLibraryData>>;
+
+const EMPTY_LIBRARY: LibraryData = {
+  groups: [],
+  allGroups: [],
+  allCount: 0,
+  ungroupedCount: 0,
+  groupDetail: null,
+  runningDistribution: null,
+  distributionPreview: null,
+  suggestTaskId: null,
+  productTypes: [],
+};
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const { db } = await import("../db.server");
+  const shop = session.shop;
+
+  const url = new URL(request.url);
+  const loc = url.searchParams.get("loc") ?? "";
+  const selectedGroupId = url.searchParams.get("group") || "";
+  // Which half of the page's data this request actually needs. The two tabs
+  // render disjoint data sets and BOTH are expensive, so loading both on every
+  // request meant every group click, language switch and mutation paid for
+  // work nothing on screen was going to show. Keep the default in sync with
+  // the component's `tab` default ("library").
+  const tab = url.searchParams.get("tab") === "assignments" ? "assignments" : "library";
+
+  // Pseudo-group sentinels (§2.1): "Alle" and "Ohne Gruppe" are not real rows —
+  // they are read-only views over the active locale's keywords. They are NOT
+  // groups, so the group-locale lookup below is skipped for them (they use loc).
+  const isPseudoGroup = selectedGroupId === "__all__" || selectedGroupId === "__ungrouped__";
+
+  // The three preliminaries every request needs, in one round trip:
+  //  - shop locales (60s-cached) drive the Locale-Navbar and the per-row
+  //    translated-content analysis. The primary locale is stored as "" in
+  //    SeoKeyword (existing convention); its real Shopify code is display-only.
+  //  - the plan flag for the distribution/classify buttons (the handlers gate
+  //    server-side again; this only decides whether they render as available).
+  //  - a ?group= deeplink implies the active language (§8.6): the group carries
+  //    its own locale, and a bookmarked group must land in THAT language even
+  //    if ?loc= says otherwise, so the group's locale is resolved before the
+  //    half below lists that language's groups.
+  const [shopLocales, settingsRow, groupRow] = await Promise.all([
+    getCachedShopLocales(admin, shop),
+    db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } }),
+    selectedGroupId && !isPseudoGroup
+      ? db.seoKeywordGroup.findFirst({
+          where: { id: selectedGroupId, shop },
+          select: { locale: true },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  const primaryLocale = shopLocales.find((l: any) => l.primary);
+  const secondaryLocales = shopLocales.filter((l: any) => !l.primary && l.published);
+
+  // Locale options for the language pickers: primary first (value "" — the
+  // SeoKeyword convention), then published secondaries by their Shopify code.
+  const localeOptions = [
+    { locale: "", name: primaryLocale?.name ?? primaryLocale?.locale ?? "", primary: true },
+    ...secondaryLocales.map((l: any) => ({ locale: String(l.locale), name: String(l.name), primary: false })),
+  ];
+
+  const activeLocale = groupRow ? groupRow.locale : loc;
+  const isPro = meetsPlan((settingsRow?.subscriptionPlan || "free") as Plan, "pro");
+
+  const [assignments, library] = await Promise.all([
+    tab === "assignments"
+      ? loadAssignmentsData(db, shop, String(primaryLocale?.locale || ""))
+      : Promise.resolve(EMPTY_ASSIGNMENTS),
+    tab === "library"
+      ? loadLibraryData(db, shop, activeLocale, selectedGroupId)
+      : Promise.resolve(EMPTY_LIBRARY),
+  ]);
+
   return json({
-    keywords,
+    tab,
+    ...assignments,
+    ...library,
     localeOptions,
     // Active locale for the Locale-Navbar highlight: a ?group= deeplink forces
     // the group's own language, otherwise ?loc= (primary "" by default).
@@ -401,18 +474,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Never blocks — a stale verdict triggers a BACKGROUND probe whose
     // result lands in the server logs and in the next load.
     researchAvailability: getSuggestionsAvailability(),
-    conflicts,
-    unclassifiedCount,
-    productTypes,
     isPro,
-    groups,
-    allGroups,
-    allCount,
-    ungroupedCount,
-    groupDetail,
-    runningDistribution,
-    distributionPreview,
-    suggestTaskId,
   });
 };
 
@@ -421,17 +483,19 @@ type CsvErrorRow = { row: number; keyword: string; error: string };
 export type ActionResult =
   | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
   | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
-  // The keyword itself is gone, not just one of its assignments.
-  | { ok: true; kind: "keywordDeleted"; removedAssignments: number }
+  // The keywords themselves are gone, not just their assignments. Bulk since
+  // the library table's actions all act on the checkbox selection.
+  | { ok: true; kind: "keywordsDeleted"; deleted: number; removedAssignments: number }
   // Move to another group and/or language (§ "keyword is stuck in the language
   // it was first tracked in"). The counters report what happened to the
-  // keyword's item assignments on a language change.
+  // keywords' item assignments on a language change, summed over the selection.
   | {
       ok: true;
-      kind: "keywordMoved";
-      keywordId: string;
+      kind: "keywordsMoved";
       targetLocale: string;
       targetGroupId: string | null;
+      moved: number;
+      failed: number;
       movedAssignments: number;
       demoted: number;
       droppedAssignments: number;
@@ -469,6 +533,28 @@ async function lookupItemTitle(
 
 /** CSV import cap per request (plan §5.3) — anything bigger must be split. */
 const MAX_CSV_ROWS = 2000;
+
+/** Upper bound for one bulk selection — matches the assignMany caps. */
+const MAX_BULK_IDS = 500;
+
+/**
+ * Read a JSON array of keyword ids from the form. The library table's actions
+ * are all selection-driven now, so every one of them posts through this.
+ * Returns null for anything that isn't a sane, bounded list of strings.
+ */
+function parseKeywordIds(form: FormData): string[] | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(getFormString(form, "keywordIds"));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_BULK_IDS) return null;
+  if (!raw.every((id): id is string => typeof id === "string" && id.length > 0)) return null;
+  // A selection can legitimately carry a duplicate after a revalidation race;
+  // de-duplicate so the per-id loops below can't double-count.
+  return Array.from(new Set(raw as string[]));
+}
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
   const { admin, session } = await authenticate.admin(request);
@@ -669,24 +755,35 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     return json<ActionResult>({ ok: true, kind: "groupDeleted" });
   }
 
-  // Delete a keyword outright (assignments + memberships cascade). Distinct
-  // from `deleteKeyword` above, which drops ONE assignment.
-  if (actionType === "deleteKeywordCompletely") {
-    const keywordId = getFormString(form, "keywordId");
-    if (!keywordId) {
+  // Delete the selected keywords outright (assignments + memberships cascade).
+  // Distinct from `deleteKeyword` above, which drops ONE assignment.
+  if (actionType === "deleteKeywords") {
+    const keywordIds = parseKeywordIds(form);
+    if (!keywordIds) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    const { removedAssignments } = await deleteKeyword(db, session.shop, keywordId);
-    return json<ActionResult>({ ok: true, kind: "keywordDeleted", removedAssignments });
+    let deleted = 0;
+    let removedAssignments = 0;
+    // Sequential on purpose: deleteKeyword runs its own transaction and the
+    // selection is bounded by MAX_BULK_IDS, so a serial loop keeps the write
+    // pressure predictable instead of opening 500 concurrent transactions.
+    for (const keywordId of keywordIds) {
+      const result = await deleteKeyword(db, session.shop, keywordId);
+      if (result.ok) {
+        deleted += 1;
+        removedAssignments += result.removedAssignments;
+      }
+    }
+    return json<ActionResult>({ ok: true, kind: "keywordsDeleted", deleted, removedAssignments });
   }
 
-  // ── Move a keyword to another group and/or language ──
-  if (actionType === "moveKeyword") {
-    const keywordId = getFormString(form, "keywordId");
+  // ── Move the selected keywords to another group and/or language ──
+  if (actionType === "moveKeywords") {
+    const keywordIds = parseKeywordIds(form);
     const fromGroupId = getFormString(form, "fromGroupId");
     const targetGroupIdRaw = getFormString(form, "targetGroupId");
     const targetLocaleInput = getFormString(form, "targetLocale");
-    if (!keywordId) {
+    if (!keywordIds) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
     // Same locale rule as setKeyword/createGroup: "" (primary) is free, every
@@ -705,31 +802,52 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     // The pseudo groups ("Alle"/"Ohne Gruppe") are views, not memberships —
     // never pass their sentinel id to the service as a source group.
     const isPseudo = (id: string) => id === "__all__" || id === "__ungrouped__";
-    const result = await moveKeyword(db, session.shop, {
-      keywordId,
-      fromGroupId: fromGroupId && !isPseudo(fromGroupId) ? fromGroupId : null,
-      targetLocale,
-      targetGroupId: targetGroupIdRaw && !isPseudo(targetGroupIdRaw) ? targetGroupIdRaw : null,
-    });
-    if (!result.ok) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    const targetGroupId = targetGroupIdRaw && !isPseudo(targetGroupIdRaw) ? targetGroupIdRaw : null;
+    let moved = 0;
+    let failed = 0;
+    let movedAssignments = 0;
+    let demoted = 0;
+    let droppedAssignments = 0;
+    for (const keywordId of keywordIds) {
+      const result = await moveKeyword(db, session.shop, {
+        keywordId,
+        fromGroupId: fromGroupId && !isPseudo(fromGroupId) ? fromGroupId : null,
+        targetLocale,
+        targetGroupId,
+      });
+      // One unmovable keyword (stale id, group/locale mismatch) must not abort
+      // the rest of the selection — it is counted and reported instead.
+      if (!result.ok) {
+        failed += 1;
+        continue;
+      }
+      moved += 1;
+      movedAssignments += result.movedAssignments;
+      demoted += result.demoted;
+      droppedAssignments += result.droppedAssignments;
     }
     return json<ActionResult>({
       ok: true,
-      kind: "keywordMoved",
-      keywordId: result.keywordId,
+      kind: "keywordsMoved",
       targetLocale,
-      targetGroupId: targetGroupIdRaw && !isPseudo(targetGroupIdRaw) ? targetGroupIdRaw : null,
-      movedAssignments: result.movedAssignments,
-      demoted: result.demoted,
-      droppedAssignments: result.droppedAssignments,
+      targetGroupId,
+      moved,
+      failed,
+      movedAssignments,
+      demoted,
+      droppedAssignments,
     });
   }
 
-  if (actionType === "removeFromGroup") {
+  if (actionType === "removeKeywordsFromGroup") {
     const groupId = getFormString(form, "groupId");
-    const keywordId = getFormString(form, "keywordId");
-    if (groupId && keywordId) await removeKeywordFromGroup(db, session.shop, groupId, keywordId);
+    const keywordIds = parseKeywordIds(form);
+    if (!groupId || !keywordIds) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    for (const keywordId of keywordIds) {
+      await removeKeywordFromGroup(db, session.shop, groupId, keywordId);
+    }
     return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
@@ -787,6 +905,21 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
 
   return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 };
+
+/**
+ * A library-table row as the selection-driven actions need it. The library
+ * table's actions (zuordnen / verschieben / entfernen / löschen) live in the
+ * bar above the table and act on the checkbox selection, so every one of them
+ * is handed a list of these instead of a single row.
+ */
+export interface SelectedKeyword {
+  keywordId: string;
+  keyword: string;
+  locale: string;
+  assignmentCount: number;
+}
+
+export type KeywordSelection = SelectedKeyword[];
 
 /** Editor list route per resource type — target of the row's "open in editor" deep-link. */
 const KEYWORD_TYPE_PATH: Record<KeywordResourceType, string> = {
@@ -941,45 +1074,83 @@ export default function SeoKeywords() {
     setAssignPanelOpen(true);
   };
   const closeAssignPanel = () => setAssignPanelOpen(false);
-  // Move a keyword to another group and/or language. Lives in the Shell like
-  // every other stateful flow; LibraryTab only renders the dialog.
+  // Move the SELECTED keywords to another group and/or language. Lives in the
+  // Shell like every other stateful flow; LibraryTab only renders the dialog.
   const moveFetcher = useFetcher<ActionResult>();
-  const [moveModal, setMoveModal] = useState<{ keywordId: string; keyword: string; locale: string } | null>(null);
+  const [moveModal, setMoveModal] = useState<KeywordSelection | null>(null);
   const [moveTargetLocale, setMoveTargetLocale] = useState("");
   const [moveTargetGroupId, setMoveTargetGroupId] = useState("");
-  const openMoveModal = (row: { keywordId: string; keyword: string; locale: string }) => {
-    setMoveModal(row);
-    setMoveTargetLocale(row.locale);
-    // Pre-select the group the keyword is being viewed in (a pseudo group is a
-    // view, not a membership — it pre-selects "no group").
+  const openMoveModal = (rows: KeywordSelection) => {
+    if (rows.length === 0) return;
+    setMoveModal(rows);
+    // Every row in a group view shares the group's language, so the first
+    // row's locale is the selection's locale.
+    setMoveTargetLocale(rows[0].locale);
+    // Pre-select the group the keywords are being viewed in (a pseudo group is
+    // a view, not a membership — it pre-selects "no group").
     setMoveTargetGroupId(data.groupDetail && !data.groupDetail.pseudo ? data.groupDetail.id : "");
   };
   const closeMoveModal = () => setMoveModal(null);
 
-  // Delete a keyword for good. The confirm names the collateral damage —
-  // assignments and their ranking history cascade with it.
-  const handleDeleteKeywordRow = async (row: {
-    keywordId: string;
-    keyword: string;
-    assignmentCount: number;
-  }) => {
+  // Delete the selected keywords for good. The confirm names the collateral
+  // damage — assignments and their ranking history cascade with them.
+  const handleDeleteKeywords = async (rows: KeywordSelection) => {
+    if (rows.length === 0) return;
+    const assignments = rows.reduce((sum, r) => sum + r.assignmentCount, 0);
+    const single = rows.length === 1;
     const ok = await confirm({
-      title: k.keywordDeleteConfirmTitle,
-      message: (row.assignmentCount > 0 ? k.keywordDeleteConfirmBodyAssigned : k.keywordDeleteConfirmBody)
-        .replace("{keyword}", row.keyword)
-        .replace("{count}", String(row.assignmentCount)),
+      title: (single ? k.keywordDeleteConfirmTitle : k.keywordsDeleteConfirmTitle).replace(
+        "{count}",
+        String(rows.length),
+      ),
+      message: (single
+        ? assignments > 0
+          ? k.keywordDeleteConfirmBodyAssigned
+          : k.keywordDeleteConfirmBody
+        : assignments > 0
+          ? k.keywordsDeleteConfirmBodyAssigned
+          : k.keywordsDeleteConfirmBody
+      )
+        .replace("{keyword}", rows[0].keyword)
+        .replace("{count}", String(single ? assignments : rows.length))
+        .replace("{assignments}", String(assignments)),
       confirmLabel: k.delete,
       destructive: true,
     });
     if (!ok) return;
-    groupFetcher.submit({ actionType: "deleteKeywordCompletely", keywordId: row.keywordId }, { method: "post" });
+    groupFetcher.submit(
+      { actionType: "deleteKeywords", keywordIds: JSON.stringify(rows.map((r) => r.keywordId)) },
+      { method: "post" },
+    );
   };
+
+  // Drop the selected keywords out of THIS group. They survive as long as they
+  // are assigned to an item or sit in another group — an orphan is deleted by
+  // removeKeywordFromGroup, which is what the confirm warns about.
+  const handleRemoveKeywordsFromGroup = async (rows: KeywordSelection) => {
+    if (rows.length === 0 || !data.groupDetail || data.groupDetail.pseudo) return;
+    const ok = await confirm({
+      title: k.keywordsRemoveConfirmTitle.replace("{count}", String(rows.length)),
+      message: k.keywordsRemoveConfirmBody.replace("{count}", String(rows.length)),
+      confirmLabel: k.groupRemoveKeyword,
+    });
+    if (!ok) return;
+    groupFetcher.submit(
+      {
+        actionType: "removeKeywordsFromGroup",
+        groupId: data.groupDetail.id,
+        keywordIds: JSON.stringify(rows.map((r) => r.keywordId)),
+      },
+      { method: "post" },
+    );
+  };
+
   const submitMove = () => {
     if (!moveModal) return;
     moveFetcher.submit(
       {
-        actionType: "moveKeyword",
-        keywordId: moveModal.keywordId,
+        actionType: "moveKeywords",
+        keywordIds: JSON.stringify(moveModal.map((r) => r.keywordId)),
         fromGroupId: data.groupDetail?.id ?? "",
         targetLocale: moveTargetLocale,
         targetGroupId: moveTargetGroupId,
@@ -1041,36 +1212,28 @@ export default function SeoKeywords() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningDistId]);
 
-  // A successful suggest/apply start also needs polling to kick in — the
-  // loader only knows about the task after the next revalidate. Starting an AI
-  // distribution also closes the assign panel (its onClose already fires, but
-  // this covers the apply-stage path that has no panel).
+  // Starting an AI distribution closes the assign panel (its onClose already
+  // fires, but this covers the apply-stage path that has no panel). No
+  // revalidate here: the fetcher POST that started the task already
+  // revalidated this route's loader, so the running task is picked up by that
+  // load and the interval above takes over from there. Firing another one
+  // would just load the same data twice per click.
   useEffect(() => {
     if (distFetcher.state === "idle" && distFetcher.data?.success) {
       setAssignPanelOpen(false);
-      revalidator.revalidate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [distFetcher.state, distFetcher.data]);
 
-  // A real (non-dryRun) bulk assign closes the panel and refreshes counts;
-  // the panel itself shows the applied/skipped banner before the user closes.
-  useEffect(() => {
-    if (assignFetcher.state !== "idle" || !assignFetcher.data) return;
-    const d = assignFetcher.data;
-    if (d.ok && d.kind === "assigned" && !d.dryRun) {
-      revalidator.revalidate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assignFetcher.state, assignFetcher.data]);
-
-  // A successful move follows the keyword: the Locale-Navbar switches to the
+  // A successful move follows the keywords: the Locale-Navbar switches to the
   // target language and the target group is selected, so the merchant sees
-  // where it landed instead of watching it vanish from the current view.
+  // where they landed instead of watching them vanish from the current view.
+  // The search-param change already re-runs the loader for the new view — no
+  // extra revalidate on top of it.
   useEffect(() => {
     if (moveFetcher.state !== "idle" || !moveFetcher.data) return;
     const d = moveFetcher.data;
-    if (!d.ok || d.kind !== "keywordMoved") return;
+    if (!d.ok || d.kind !== "keywordsMoved") return;
     setMoveModal(null);
     setSearchParams(
       (prev) => {
@@ -1083,7 +1246,6 @@ export default function SeoKeywords() {
       },
       { preventScrollReset: true },
     );
-    revalidator.revalidate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [moveFetcher.state, moveFetcher.data]);
 
@@ -1199,14 +1361,9 @@ export default function SeoKeywords() {
   };
 
   // ── Intent classification + filter (plan §7.2) ──
+  // No revalidate effect: the classify POST is a fetcher submission, which
+  // already revalidates this route's loader once it resolves.
   const intentFetcher = useFetcher<{ success: boolean; classified?: number; remaining?: number; error?: string }>();
-
-  useEffect(() => {
-    if (intentFetcher.state === "idle" && intentFetcher.data?.success) {
-      revalidator.revalidate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intentFetcher.state, intentFetcher.data]);
 
   const intentLabel = (intent: string | null | undefined): string | null =>
     intent ? (k.intents as Record<string, string> | undefined)?.[intent] ?? intent : null;
@@ -1250,7 +1407,11 @@ export default function SeoKeywords() {
   };
 
   // ── Navbars (Phase 1): Locale-Navbar (top) + tab SubNavBar ──
-  const tab = searchParams.get("tab") ?? "library";
+  // Read from the loader, not from the search params: the loader only fetches
+  // the active tab's data, so the rendered tab must be the one the data was
+  // loaded for. (A navigation resolves before the new params are visible here,
+  // so the two never disagree — this just makes that guarantee explicit.)
+  const tab = data.tab;
 
   // Locale-Navbar: primary ("" locale) gets a stable sentinel id; the URL param
   // value for primary is "" (i.e. no ?loc=).
@@ -1425,7 +1586,8 @@ export default function SeoKeywords() {
             setMoveTargetGroupId={setMoveTargetGroupId}
             submitMove={submitMove}
             moveFetcher={moveFetcher}
-            handleDeleteKeywordRow={handleDeleteKeywordRow}
+            handleDeleteKeywords={handleDeleteKeywords}
+            handleRemoveKeywordsFromGroup={handleRemoveKeywordsFromGroup}
           />
         )}
       </BlockStack>

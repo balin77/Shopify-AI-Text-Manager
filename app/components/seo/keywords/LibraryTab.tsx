@@ -8,16 +8,21 @@
  * collapses to a single column (sidebar above editor).
  *
  * The editor shows, for a REAL group: rename/delete, the ONE bulk-paste box
- * (KeywordPaste), the editable keyword table, bulk priority and the
- * distribution entry + preview. For a PSEUDO group ("all"/"ungrouped"): just
- * the read-only keyword table. Nothing selected → a friendly prompt.
+ * (KeywordPaste), the keyword table, bulk priority and the distribution entry
+ * + preview. For a PSEUDO group ("all"/"ungrouped"): the keyword table with
+ * its group-membership actions dropped. Nothing selected → a friendly prompt.
  *
- * PURE PRESENTATION. All state, fetchers, refs, effects and confirm-dialog
- * flows live in the Shell (SeoKeywords); this component only renders JSX and
- * calls the callbacks / fetchers it is handed.
+ * Keyword actions are SELECTION-driven: the rows carry a checkbox and
+ * "Zuordnen" / "Verschieben" / "Entfernen" / "Löschen" sit in one bar above
+ * the table, so a merchant can act on many keywords at once instead of
+ * repeating the same click per row.
+ *
+ * PURE PRESENTATION apart from that selection. All other state, fetchers,
+ * refs, effects and confirm-dialog flows live in the Shell (SeoKeywords); this
+ * component only renders JSX and calls the callbacks / fetchers it is handed.
  */
 
-import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import {
   Card,
   BlockStack,
@@ -39,7 +44,7 @@ import type { FetcherWithComponents } from "react-router";
 import type { KeywordResourceType } from "../../../services/seo/keywords.service";
 import { HelpTooltip } from "../../HelpTooltip";
 import type { Translation } from "../../../i18n/de";
-import type { loader, ActionResult } from "../../../routes/app.seo.keywords";
+import type { loader, ActionResult, KeywordSelection } from "../../../routes/app.seo.keywords";
 import { GroupSidebar } from "./GroupSidebar";
 import { KeywordPaste } from "./KeywordPaste";
 import { ResearchPanel } from "./ResearchPanel";
@@ -126,9 +131,9 @@ export interface LibraryTabProps {
     maxSecondaries: string;
   }) => void;
 
-  // Move a keyword to another group and/or language.
-  moveModal: { keywordId: string; keyword: string; locale: string } | null;
-  openMoveModal: (row: { keywordId: string; keyword: string; locale: string }) => void;
+  // Move the selected keywords to another group and/or language.
+  moveModal: KeywordSelection | null;
+  openMoveModal: (rows: KeywordSelection) => void;
   closeMoveModal: () => void;
   moveTargetLocale: string;
   setMoveTargetLocale: (v: string) => void;
@@ -136,8 +141,10 @@ export interface LibraryTabProps {
   setMoveTargetGroupId: (v: string) => void;
   submitMove: () => void;
   moveFetcher: FetcherWithComponents<ActionResult>;
-  /** Delete the keyword itself (not just its group membership). */
-  handleDeleteKeywordRow: (row: { keywordId: string; keyword: string; assignmentCount: number }) => void;
+  /** Delete the keywords themselves (not just their group membership). */
+  handleDeleteKeywords: (rows: KeywordSelection) => void;
+  /** Drop the keywords out of the selected (real) group only. */
+  handleRemoveKeywordsFromGroup: (rows: KeywordSelection) => void;
 }
 
 export function LibraryTab({
@@ -199,7 +206,8 @@ export function LibraryTab({
   setMoveTargetGroupId,
   submitMove,
   moveFetcher,
-  handleDeleteKeywordRow,
+  handleDeleteKeywords,
+  handleRemoveKeywordsFromGroup,
 }: LibraryTabProps) {
   const isPseudo = !!groupDetail?.pseudo;
 
@@ -215,27 +223,60 @@ export function LibraryTab({
   ];
   const moveIsNoop =
     !!moveModal &&
-    moveTargetLocale === moveModal.locale &&
+    moveTargetLocale === (moveModal[0]?.locale ?? "") &&
     moveTargetGroupId === (groupDetail && !groupDetail.pseudo ? groupDetail.id : "");
 
-  // Group-keyword table selection (real groups only) drives the "Auswahl
-  // zuordnen" bulk action. Transient view state — the selected ids map back to
-  // the group's keyword rows when the assign panel opens.
+  // Keyword-table selection — the single input every keyword action in the bar
+  // above the table reads. Available in the pseudo views too: assigning,
+  // moving and deleting are keyword-level operations that make just as much
+  // sense from "Alle" / "Ohne Gruppe" as from a real group.
   const keywordRows = groupDetail?.keywords ?? [];
-  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(
-    keywordRows as unknown as { [key: string]: unknown }[],
-    { resourceIDResolver: (r) => (r as unknown as { keywordId: string }).keywordId },
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } =
+    useIndexResourceState(keywordRows as unknown as { [key: string]: unknown }[], {
+      resourceIDResolver: (r) => (r as unknown as { keywordId: string }).keywordId,
+    });
+
+  // Switching group/language swaps the whole row set, and a completed write
+  // (delete, remove-from-group, import, …) rewrites it — either way a
+  // carried-over selection would keep ticks and an "Alle"-header for rows that
+  // are no longer there.
+  const groupKey = `${groupDetail?.id ?? ""}::${groupDetail?.locale ?? ""}`;
+  const groupWriteResult = groupFetcher.state === "idle" ? groupFetcher.data : undefined;
+  useEffect(() => {
+    clearSelection();
+    // clearSelection is stable for a given row set; listing it would wipe the
+    // selection on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupKey, groupWriteResult]);
+
+  // The selected rows, resolved back against the rows actually on screen: a
+  // bulk action revalidates the loader, and until the fresh rows arrive the
+  // selection can still name keywords that were just deleted or moved away.
+  const selectedRows: KeywordSelection = useMemo(
+    () =>
+      keywordRows
+        .filter((r) => selectedResources.includes(r.keywordId))
+        .map((r) => ({
+          keywordId: r.keywordId,
+          keyword: r.keyword,
+          locale: r.locale,
+          assignmentCount: r.assignmentCount,
+        })),
+    [keywordRows, selectedResources],
   );
+  const selectedCount = selectedRows.length;
+  const moveCount = moveModal?.length ?? 0;
+  // One in-flight write at a time — group actions and the move share the
+  // selection, and a second submit would race the first one's revalidation.
+  const bulkBusy = groupFetcher.state !== "idle" || moveFetcher.state !== "idle";
 
   // Keywords in this group not yet assigned to any item — the "redistribute"
   // (§3.3) entry offers exactly these; disabled when none remain.
   const unassignedKeywords = keywordRows.filter((r) => r.assignmentCount === 0);
 
   const openAssignForSelection = () => {
-    const subset = keywordRows
-      .filter((r) => selectedResources.includes(r.keywordId))
-      .map((r) => ({ keywordId: r.keywordId, keyword: r.keyword }));
-    if (subset.length > 0) openAssignPanel(subset);
+    if (selectedCount === 0) return;
+    openAssignPanel(selectedRows.map((r) => ({ keywordId: r.keywordId, keyword: r.keyword })));
   };
   const pseudoTitle =
     groupDetail?.pseudo === "all"
@@ -244,8 +285,63 @@ export function LibraryTab({
         ? k.groupUngrouped || "Ungrouped"
         : "";
 
-  // The keyword table — editable for a real group (priority Select + remove),
-  // read-only for the pseudo groups (priority badge, no actions).
+  /**
+   * The bar that replaced the per-row action buttons: everything a merchant
+   * can do to keywords, applied to the checkbox selection in one go. Rendered
+   * directly above the table in both the real-group and pseudo views —
+   * "Entfernen" is the only entry a pseudo view drops, since a view has no
+   * membership to remove the keyword from.
+   */
+  const renderSelectionBar = (readOnly: boolean) => (
+    <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Text as="span" variant="bodySm" tone="subdued">
+          {selectedCount > 0
+            ? k.selectionCount.replace("{count}", String(selectedCount))
+            : k.selectionHint}
+        </Text>
+        {selectedCount > 0 && (
+          <Button variant="plain" onClick={clearSelection}>
+            {k.selectionClear}
+          </Button>
+        )}
+      </InlineStack>
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Button variant="primary" disabled={selectedCount === 0} onClick={openAssignForSelection}>
+          {k.assign.assignSelection}
+        </Button>
+        {/* From a pseudo view there is no source group to leave, so a
+            same-language move only ADDS the keywords to the chosen group —
+            the dialog spells that out. */}
+        <Button disabled={selectedCount === 0 || bulkBusy} onClick={() => openMoveModal(selectedRows)}>
+          {k.moveKeyword || "Move"}
+        </Button>
+        {/* Only out of THIS group — a keyword survives as long as it is
+            assigned to an item or belongs to another group. */}
+        {!readOnly && (
+          <Button
+            disabled={selectedCount === 0 || bulkBusy}
+            onClick={() => handleRemoveKeywordsFromGroup(selectedRows)}
+          >
+            {k.groupRemoveKeyword || "Remove"}
+          </Button>
+        )}
+        {/* Gone for good, including every item assignment. */}
+        <Button
+          tone="critical"
+          disabled={selectedCount === 0 || bulkBusy}
+          onClick={() => handleDeleteKeywords(selectedRows)}
+        >
+          {k.delete}
+        </Button>
+      </InlineStack>
+    </InlineStack>
+  );
+
+  // The keyword table. `readOnly` is about GROUP MEMBERSHIP, not about the
+  // keywords: a pseudo view has no membership to edit (no priority Select, no
+  // "Entfernen"), but its rows are still selectable and still support every
+  // keyword-level action in the bar above.
   const renderKeywordTable = (readOnly: boolean) => {
     if (!groupDetail) return null;
     if (groupDetail.keywords.length === 0) {
@@ -262,19 +358,15 @@ export function LibraryTab({
       { title: k.colLocale },
       { title: k.colPriority || "Priority" },
       { title: k.colAssignments || "Assignments" },
-      // Move is offered in the pseudo views too — "Ohne Gruppe" is exactly
-      // where a keyword tracked under the wrong language tends to sit.
-      { title: "" },
     ];
     return (
       <IndexTable
         itemCount={groupDetail.keywords.length}
-        selectable={!readOnly}
-        selectedItemsCount={readOnly ? undefined : allResourcesSelected ? "All" : selectedResources.length}
-        onSelectionChange={readOnly ? undefined : handleSelectionChange}
-        promotedBulkActions={
-          readOnly ? undefined : [{ content: k.assign.assignSelection, onAction: openAssignForSelection }]
-        }
+        selectable
+        // selectedCount, not selectedResources.length: a write can retire rows
+        // the selection still names, and the header must count what is on screen.
+        selectedItemsCount={allResourcesSelected ? "All" : selectedCount}
+        onSelectionChange={handleSelectionChange}
         headings={headings as [{ title: string }, ...{ title: string }[]]}
       >
         {groupDetail.keywords.map((gk, index) => (
@@ -282,7 +374,7 @@ export function LibraryTab({
             id={gk.keywordId}
             key={gk.keywordId}
             position={index}
-            selected={!readOnly && selectedResources.includes(gk.keywordId)}
+            selected={selectedResources.includes(gk.keywordId)}
           >
             <IndexTable.Cell>
               <InlineStack gap="100" blockAlign="center" wrap={false}>
@@ -323,58 +415,6 @@ export function LibraryTab({
                 {gk.assignmentCount}
               </Text>
             </IndexTable.Cell>
-            <IndexTable.Cell>
-              <InlineStack gap="200" blockAlign="center" wrap={false}>
-                <Button
-                  variant="plain"
-                  disabled={moveFetcher.state !== "idle"}
-                  onClick={() =>
-                    openMoveModal({ keywordId: gk.keywordId, keyword: gk.keyword, locale: gk.locale })
-                  }
-                >
-                  {/* From a pseudo view there is no source group to leave, so
-                      the same-language case ADDS the keyword to a group — the
-                      label says so rather than promising a move. */}
-                  {readOnly ? k.assignToGroup || "Assign" : k.moveKeyword || "Move"}
-                </Button>
-                {/* Only out of THIS group — the keyword itself survives if it
-                    is assigned to items or belongs to another group. */}
-                {!readOnly && (
-                  <Button
-                    variant="plain"
-                    disabled={groupFetcher.state !== "idle"}
-                    onClick={() =>
-                      groupDetail &&
-                      groupFetcher.submit(
-                        {
-                          actionType: "removeFromGroup",
-                          groupId: groupDetail.id,
-                          keywordId: gk.keywordId,
-                        },
-                        { method: "post" },
-                      )
-                    }
-                  >
-                    {k.groupRemoveKeyword || "Remove"}
-                  </Button>
-                )}
-                {/* Gone for good, including every item assignment. */}
-                <Button
-                  variant="plain"
-                  tone="critical"
-                  disabled={groupFetcher.state !== "idle"}
-                  onClick={() =>
-                    handleDeleteKeywordRow({
-                      keywordId: gk.keywordId,
-                      keyword: gk.keyword,
-                      assignmentCount: gk.assignmentCount,
-                    })
-                  }
-                >
-                  {k.delete}
-                </Button>
-              </InlineStack>
-            </IndexTable.Cell>
           </IndexTable.Row>
         ))}
       </IndexTable>
@@ -391,9 +431,13 @@ export function LibraryTab({
   ) : isPseudo ? (
     <Card>
       <BlockStack gap="300">
-        <Text as="h3" variant="headingMd">
-          {`${pseudoTitle} (${groupDetail.keywords.length})`}
-        </Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h3" variant="headingMd">
+            {`${pseudoTitle} (${groupDetail.keywords.length})`}
+          </Text>
+          <HelpTooltip helpKey="keywordsDistribute" position="below" />
+        </InlineStack>
+        {groupDetail.keywords.length > 0 && renderSelectionBar(true)}
         {renderKeywordTable(true)}
       </BlockStack>
     </Card>
@@ -447,9 +491,12 @@ export function LibraryTab({
               </Button>
             </InlineStack>
           )}
+          {/* Group-WIDE shortcuts: "all keywords" and "the unassigned ones",
+              neither of which needs a selection. The primary action now lives
+              in the selection bar above the table (k.assign.assignSelection),
+              so these stay secondary. */}
           <InlineStack gap="200">
             <Button
-              variant="primary"
               disabled={!!runningDistribution || groupDetail.keywords.length === 0}
               onClick={() =>
                 openAssignPanel(
@@ -506,7 +553,9 @@ export function LibraryTab({
         {/* ONE bulk-paste box — replaces the old CSV field + single-add field */}
         <KeywordPaste k={k} groupId={groupDetail.id} groupFetcher={groupFetcher} priorityOptions={priorityOptions} />
 
-        {/* Group keywords */}
+        {/* Group keywords: the selection bar owns every keyword action, the
+            table below is just the checkboxes and the row data. */}
+        {groupDetail.keywords.length > 0 && renderSelectionBar(false)}
         {renderKeywordTable(false)}
 
         {/* Bulk priority (plan §5.1 group bulk actions) */}
@@ -683,19 +732,27 @@ export function LibraryTab({
         activeLocale={activeLocale}
         productTypes={productTypes.map((p) => ({ label: p, value: p }))}
         isPro={isPro}
+        // The AI distribution runs against a real group row (the handler looks
+        // it up by id). "Alle" / "Ohne Gruppe" are views with sentinel ids, so
+        // only manual assignment is offered from them.
+        aiAvailable={!!groupDetail && !groupDetail.pseudo}
         k={k}
         assignFetcher={assignFetcher}
         startDistribution={startDistribution}
         runningDistribution={runningDistribution}
       />
 
-      {/* Move a keyword to another group and/or language. A language change
-          merges the keyword into the target language and carries its item
-          assignments along — hence the warning below. */}
+      {/* Move the selected keywords to another group and/or language. A
+          language change merges each keyword into the target language and
+          carries its item assignments along — hence the warning below. */}
       <Modal
         open={!!moveModal}
         onClose={closeMoveModal}
-        title={k.moveModalTitle || "Move keyword"}
+        title={
+          moveCount > 1
+            ? k.moveModalTitleMany.replace("{count}", String(moveCount))
+            : k.moveModalTitle || "Move keyword"
+        }
         primaryAction={{
           content: k.moveModalConfirm || "Move",
           loading: moveFetcher.state !== "idle",
@@ -707,10 +764,12 @@ export function LibraryTab({
         <Modal.Section>
           <BlockStack gap="300">
             <Text as="p" variant="bodyMd">
-              {(k.moveModalBody || "Move “{keyword}” to another language or group.").replace(
-                "{keyword}",
-                moveModal?.keyword ?? "",
-              )}
+              {moveCount > 1
+                ? k.moveModalBodyMany.replace("{count}", String(moveCount))
+                : (k.moveModalBody || "Move “{keyword}” to another language or group.").replace(
+                    "{keyword}",
+                    moveModal?.[0]?.keyword ?? "",
+                  )}
             </Text>
             {localeOptions.length > 1 && (
               <Select
@@ -739,7 +798,7 @@ export function LibraryTab({
                   : k.moveNoGroupsInLocale || "This language has no keyword groups yet."
               }
             />
-            {moveModal && moveTargetLocale !== moveModal.locale && (
+            {moveModal && moveTargetLocale !== (moveModal[0]?.locale ?? "") && (
               <Banner tone="warning">
                 {(
                   k.moveLocaleWarning ||

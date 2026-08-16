@@ -51,6 +51,12 @@ export interface AssignPanelProps {
   activeLocale: string;
   productTypes: { label: string; value: string }[];
   isPro: boolean;
+  /**
+   * Whether the AI distribution can run for this keyword set at all. It is
+   * driven by a real SeoKeywordGroup row, so the "Alle" / "Ohne Gruppe" views
+   * — whose ids are sentinels, not group rows — offer manual mode only.
+   */
+  aiAvailable: boolean;
   k: KeywordsPageStrings;
   /** Shared assignMany fetcher (dry-run + real apply). */
   assignFetcher: FetcherWithComponents<ActionResult>;
@@ -74,13 +80,15 @@ export function AssignPanel({
   activeLocale,
   productTypes,
   isPro,
+  aiAvailable,
   k,
   assignFetcher,
   startDistribution,
   runningDistribution,
 }: AssignPanelProps) {
+  const canUseAi = isPro && aiAvailable;
   const [selected, setSelected] = useState<SelectedPickerItem[]>([]);
-  const [mode, setMode] = useState<"ai" | "manual">(isPro ? "ai" : "manual");
+  const [mode, setMode] = useState<"ai" | "manual">(canUseAi ? "ai" : "manual");
   const [role, setRole] = useState<KeywordRole>("secondary");
   const [maxSecondaries, setMaxSecondaries] = useState("3");
   const [demoteExisting, setDemoteExisting] = useState(false);
@@ -91,7 +99,7 @@ export function AssignPanel({
   useEffect(() => {
     if (open) {
       setSelected([]);
-      setMode(isPro ? "ai" : "manual");
+      setMode(canUseAi ? "ai" : "manual");
       setRole("secondary");
       setMaxSecondaries("3");
       setDemoteExisting(false);
@@ -198,14 +206,14 @@ export function AssignPanel({
   };
 
   const startAi = () => {
-    if (!isPro || aiResourceIds.length === 0 || runningDistribution) return;
+    if (!canUseAi || aiResourceIds.length === 0 || runningDistribution) return;
     startDistribution({ resourceIds: aiResourceIds, targetType: aiTargetType, maxSecondaries });
     onClose();
   };
 
   const confirmDisabled =
     mode === "ai"
-      ? !isPro || aiResourceIds.length === 0 || !!runningDistribution
+      ? !canUseAi || aiResourceIds.length === 0 || !!runningDistribution
       : selected.length === 0 || keywords.length === 0;
 
   const title = k.assign.title
@@ -262,11 +270,13 @@ export function AssignPanel({
               <RadioButton
                 label={k.assign.aiMode}
                 checked={mode === "ai"}
-                disabled={!isPro}
+                disabled={!canUseAi}
                 id="assign-mode-ai"
                 name="assign-mode"
                 onChange={() => setMode("ai")}
-                helpText={!isPro ? k.distributeProHint : undefined}
+                helpText={
+                  !isPro ? k.distributeProHint : !aiAvailable ? k.assign.aiNeedsGroup : undefined
+                }
               />
               {mode === "ai" && (
                 <div style={{ minWidth: 80 }}>
@@ -276,7 +286,7 @@ export function AssignPanel({
                     options={MAX_SECONDARY_OPTIONS.map((v) => ({ label: v, value: v }))}
                     value={maxSecondaries}
                     onChange={setMaxSecondaries}
-                    disabled={!isPro}
+                    disabled={!canUseAi}
                   />
                 </div>
               )}

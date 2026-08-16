@@ -79,8 +79,17 @@ export default function SeoLayout() {
   // tab click with no visual feedback otherwise. Only swap the outlet for a
   // skeleton when the *target* of the in-flight navigation is itself within
   // /app/seo — the sub-nav (rendered above) stays interactive throughout.
+  //
+  // The skeleton is for switching SECTION, not for a section updating itself:
+  // a section that drives its own view through search params (the keywords
+  // page's ?tab= / ?group= / ?loc=) navigates to the SAME pathname, and
+  // swapping the outlet for a skeleton there unmounts the section on every
+  // click — losing filters, expanded rows and selections and reading as a full
+  // page reload. Same pathname → the section keeps rendering its own data.
   const isSeoSectionLoading =
-    navigation.state !== "idle" && isSeoPath(navigation.location?.pathname ?? "");
+    navigation.state !== "idle"
+    && isSeoPath(navigation.location?.pathname ?? "")
+    && navigation.location?.pathname !== location.pathname;
 
   const lockedTitle = (section: (typeof SEO_SECTIONS)[number]) =>
     section.planGate
