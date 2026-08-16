@@ -99,6 +99,8 @@ interface ItemGroup {
   rows: KeywordRow[];
   primaryScore: number | null;
   gscAvg: number | null;
+  /** One line of this item's keywords for the collapsed header. */
+  keywordSummary: string;
 }
 
 /** Compact score readout: number + tone-tinted bar (reuses scoreTone). */
@@ -248,6 +250,7 @@ export function AssignmentsTab({
           rows: [],
           primaryScore: null,
           gscAvg: null,
+          keywordSummary: "",
         };
         byId.set(row.resourceId, g);
       }
@@ -258,6 +261,11 @@ export function AssignmentsTab({
     for (const g of list) {
       const primary = g.rows.find((r) => r.role === "primary");
       g.primaryScore = primary?.score ?? null;
+      // Same ★ marker the expanded rows use for the primary, so the collapsed
+      // line reads as a preview of what unfolds rather than a second notation.
+      g.keywordSummary = g.rows
+        .map((r) => (r.role === "primary" ? `★ ${r.keyword}` : r.keyword))
+        .join(", ");
       const gscVals = g.rows
         .map((r) => r.gscPosition)
         .filter((v): v is number => v != null);
@@ -411,13 +419,22 @@ export function AssignmentsTab({
                         >
                           {isOpen ? "▾" : "▸"}
                         </span>
-                        <div style={{ maxWidth: "320px" }}>
-                          <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
-                            {g.itemMissing ? k.itemMissing : g.itemTitle || g.resourceId}
-                          </Text>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {" · "}
-                            {k.types[g.resourceType] || g.resourceType}
+                        {/* Line 1: title · type. Line 2: the keywords, in the
+                            type's own subdued style — collapsed, the item's
+                            keywords are the one thing this list is ABOUT, and
+                            they were the one thing not visible. */}
+                        <div style={{ maxWidth: "460px", minWidth: 0 }}>
+                          <div>
+                            <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
+                              {g.itemMissing ? k.itemMissing : g.itemTitle || g.resourceId}
+                            </Text>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {" · "}
+                              {k.types[g.resourceType] || g.resourceType}
+                            </Text>
+                          </div>
+                          <Text as="p" variant="bodySm" tone="subdued" truncate>
+                            {g.keywordSummary}
                           </Text>
                         </div>
                       </InlineStack>

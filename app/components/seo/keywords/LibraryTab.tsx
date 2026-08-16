@@ -55,6 +55,7 @@ import {
   Box,
   Popover,
   ActionList,
+  Tooltip,
   useIndexResourceState,
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "react-router";
@@ -390,6 +391,7 @@ export function LibraryTab({
 
   const renderSelectionBar = (readOnly: boolean) => {
     const nothingSelected = selectedCount === 0;
+    const priorityDisabled = nothingSelected || bulkBusy;
     const selectionHint = (active: string) => (nothingSelected ? k.selectionNeeded : active);
 
     return (
@@ -447,42 +449,60 @@ export function LibraryTab({
 
             {/* Priority for the selection — the replacement for the old
                 "set for ALL keywords in this group" block that sat under the
-                table with its own Select. One menu, applied on click. */}
-            <Popover
-              active={priorityMenuOpen && !nothingSelected}
-              onClose={() => setPriorityMenuOpen(false)}
-              preferredAlignment="left"
-              activator={
-                <ActionTooltip
-                  content={selectionHint(k.setPriorityHint)}
-                  disabled={nothingSelected || bulkBusy}
-                  preferredPosition="below"
-                >
-                  <Button
-                    size="slim"
-                    disclosure
-                    disabled={nothingSelected || bulkBusy}
-                    onClick={() => setPriorityMenuOpen((open) => !open)}
-                  >
-                    {k.setPriority}
-                  </Button>
-                </ActionTooltip>
-              }
-            >
-              <ActionList
-                actionRole="menuitem"
-                items={priorityOptions.map((o) => ({
-                  content: o.label,
-                  onAction: () => {
-                    setPriorityMenuOpen(false);
-                    handleSetPriorityForSelection(
-                      selectedRows.map((r) => r.keywordId),
-                      o.value,
-                    );
-                  },
-                }))}
-              />
-            </Popover>
+                table with its own Select. One menu, applied on click.
+
+                Two branches instead of one Popover with a compound `active`
+                and an ActionTooltip activator: that shape needed TWO clicks to
+                open. ActionTooltip swaps between two different wrappers
+                (plain Tooltip vs. the pointer-events one) depending on
+                `disabled`, so the very first click re-mounted the Popover's
+                activator subtree and was spent on the remount instead of on
+                opening. Now the disabled case never builds a Popover at all,
+                and the live one matches the activator shape that already works
+                elsewhere in this codebase (UnifiedItemList): plain boolean
+                `active`, plain Tooltip, one Button. */}
+            {priorityDisabled ? (
+              <ActionTooltip
+                content={selectionHint(k.setPriorityHint)}
+                disabled
+                preferredPosition="below"
+              >
+                <Button size="slim" disclosure disabled>
+                  {k.setPriority}
+                </Button>
+              </ActionTooltip>
+            ) : (
+              <Popover
+                active={priorityMenuOpen}
+                onClose={() => setPriorityMenuOpen(false)}
+                preferredAlignment="left"
+                activator={
+                  <Tooltip content={k.setPriorityHint} dismissOnMouseOut preferredPosition="below">
+                    <Button
+                      size="slim"
+                      disclosure
+                      onClick={() => setPriorityMenuOpen((open) => !open)}
+                    >
+                      {k.setPriority}
+                    </Button>
+                  </Tooltip>
+                }
+              >
+                <ActionList
+                  actionRole="menuitem"
+                  items={priorityOptions.map((o) => ({
+                    content: o.label,
+                    onAction: () => {
+                      setPriorityMenuOpen(false);
+                      handleSetPriorityForSelection(
+                        selectedRows.map((r) => r.keywordId),
+                        o.value,
+                      );
+                    },
+                  }))}
+                />
+              </Popover>
+            )}
 
             {/* From a pseudo view there is no source group to leave, so a
                 same-language move only ADDS the keywords to the chosen group —
