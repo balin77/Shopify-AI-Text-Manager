@@ -23,6 +23,10 @@ export interface ResearchPanelProps {
   k: KeywordsPageStrings;
   researchAvailability: LoaderData["researchAvailability"];
   groups: LoaderData["groups"];
+  /** Groups of EVERY language: a researched keyword may well belong to another
+   *  language's group, and the group it lands in decides its language (§3.1). */
+  allGroups: LoaderData["allGroups"];
+  localeOptions: LoaderData["localeOptions"];
   seedInput: string;
   setSeedInput: (v: string) => void;
   suggestFetcher: FetcherWithComponents<{
@@ -43,6 +47,8 @@ export function ResearchPanel({
   k,
   researchAvailability,
   groups,
+  allGroups,
+  localeOptions,
   seedInput,
   setSeedInput,
   suggestFetcher,
@@ -55,6 +61,20 @@ export function ResearchPanel({
   groupFetcher,
 }: ResearchPanelProps) {
   const [open, setOpen] = useState(false);
+
+  // The target group decides the imported keywords' language, so on a
+  // multi-language shop the picker lists every language's groups and names the
+  // language — otherwise a research run silently lands in the language the
+  // Locale-Navbar happens to be on. `groups` (active language only) is kept as
+  // the single-language shortcut.
+  const multiLingual = localeOptions.length > 1;
+  const localeName = (locale: string) =>
+    localeOptions.find((l) => l.locale === locale)?.name || locale || k.localePrimary;
+  const importOptions = multiLingual
+    ? [...allGroups]
+        .sort((a, b) => localeName(a.locale).localeCompare(localeName(b.locale)) || a.name.localeCompare(b.name))
+        .map((g) => ({ label: `${g.name} · ${localeName(g.locale)}`, value: g.id }))
+    : groups.map((g) => ({ label: g.name, value: g.id }));
 
   const renderSuggestionGroup = (title: string, list: string[]) =>
     list.length === 0 ? null : (
@@ -167,7 +187,7 @@ export function ResearchPanel({
                           label={k.researchImportGroup || "Import into group"}
                           options={[
                             { label: k.researchImportGroupNone || "Choose a group…", value: "" },
-                            ...groups.map((g) => ({ label: g.name, value: g.id })),
+                            ...importOptions,
                           ]}
                           value={importGroupId}
                           onChange={setImportGroupId}

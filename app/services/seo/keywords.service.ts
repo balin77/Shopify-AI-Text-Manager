@@ -1189,6 +1189,261 @@ export async function removeKeywordFromGroup(
   });
 }
 
+/**
+ * Delete a keyword outright — every group membership, every item assignment
+ * and their ranking snapshots go with it (all three relations are
+ * `onDelete: Cascade`, so the single delete below is enough).
+ *
+ * The pre-existing removal paths only ever delete a keyword as a SIDE EFFECT
+ * of it becoming an orphan (`removeAssignment`, `removeKeywordFromGroup`), so
+ * a keyword that is assigned to items — or one sitting in the "Ohne Gruppe"
+ * bucket, whose table has no remove action — had no way out at all. This is
+ * the explicit "get rid of it" path.
+ *
+ * Returns how many item assignments were dropped so the UI can report it; an
+ * unknown or foreign id is a no-op, not an error.
+ */
+export async function deleteKeyword(
+  db: PrismaClient,
+  shop: string,
+  keywordId: string,
+): Promise<{ ok: boolean; removedAssignments: number }> {
+  return db.$transaction(async (tx) => {
+    const keyword = await tx.seoKeyword.findFirst({
+      where: { id: keywordId, shop },
+      select: { id: true },
+    });
+    if (!keyword) return { ok: false, removedAssignments: 0 };
+    const removedAssignments = await tx.seoKeywordAssignment.count({
+      where: { keywordId: keyword.id },
+    });
+    await tx.seoKeyword.delete({ where: { id: keyword.id } });
+    return { ok: true, removedAssignments };
+  });
+}
+
+// ── Moving a keyword between groups and/or languages ────────────────────────
+
+export interface MoveKeywordInput {
+  keywordId: string;
+  /**
+   * The group the keyword is currently viewed in — its membership is dropped
+   * on a same-language move. Empty/undefined for the "Alle" / "Ohne Gruppe"
+   * pseudo groups: there is no source membership to drop, so a same-language
+   * move only ADDS the target membership. A language change always drops every
+   * membership (groups are locale-scoped, §3.1).
+   */
+  fromGroupId?: string | null;
+  /** "" = the shop's primary locale (the SeoKeyword convention). */
+  targetLocale: string;
+  /** null = no group — the keyword lands in the "Ohne Gruppe" bucket. */
+  targetGroupId: string | null;
+}
+
+export type MoveKeywordResult =
+  | {
+      ok: true;
+      /** The keyword row the caller should now look at — a NEW id whenever the
+       *  language changed and the target language already had that keyword. */
+      keywordId: string;
+      /** Item assignments carried over into the target language. */
+      movedAssignments: number;
+      /** Assignments that arrived as secondary because the item already had a
+       *  primary in the target language. */
+      demoted: number;
+      /** Assignments dropped: the item already tracks this keyword in the
+       *  target language, or it is at MAX_KEYWORDS_PER_ITEM there. */
+      droppedAssignments: number;
+    }
+  | { ok: false; reason: "notFound" | "groupLocaleMismatch" };
+
+/**
+ * Move ONE keyword to another group and/or another language (the merchant-side
+ * fix for a keyword that was tracked under the wrong language — historically a
+ * one-way street, since every writer created keywords under the language it
+ * happened to be on).
+ *
+ * Same language → pure membership churn (drop `fromGroupId`, add
+ * `targetGroupId`), nothing else moves.
+ *
+ * Different language → the (shop, keyword, locale) unique key means the row
+ * itself cannot be re-stamped when the target language already knows this
+ * keyword, so the keyword is MERGED into the target language's row and the old
+ * one is deleted:
+ *  - item assignments are re-pointed at the target row, honouring BOTH
+ *    invariants of the target language: at most one primary per (item, locale)
+ *    — a moved primary that meets an existing one lands as secondary — and the
+ *    MAX_KEYWORDS_PER_ITEM cap per (item, locale).
+ *  - an assignment whose item already tracks the keyword in the target
+ *    language is dropped (the existing row wins — it may carry GSC history).
+ *  - memberships are NOT carried over: a group belongs to exactly one language
+ *    (§3.1), so the caller picks the target group (or "no group").
+ *
+ * Serializable like assignKeyword: the primary check+swap below has the same
+ * race as the one there.
+ */
+export async function moveKeyword(
+  db: PrismaClient,
+  shop: string,
+  input: MoveKeywordInput,
+): Promise<MoveKeywordResult> {
+  return serializableWithRetry(db, async (tx) => {
+    const source = await tx.seoKeyword.findFirst({
+      where: { id: input.keywordId, shop },
+      select: { id: true, keyword: true, locale: true, priority: true, intent: true },
+    });
+    if (!source) return { ok: false, reason: "notFound" } as const;
+
+    // A target group must exist, belong to this shop AND to the target
+    // language — otherwise the move would create the very inconsistency
+    // (membership.keyword.locale !== group.locale) §3.1 rules out.
+    if (input.targetGroupId) {
+      const group = await tx.seoKeywordGroup.findFirst({
+        where: { id: input.targetGroupId, shop },
+        select: { id: true, locale: true },
+      });
+      if (!group) return { ok: false, reason: "notFound" } as const;
+      if (group.locale !== input.targetLocale) {
+        return { ok: false, reason: "groupLocaleMismatch" } as const;
+      }
+    }
+
+    const addMembership = async (keywordId: string) => {
+      if (!input.targetGroupId) return;
+      const existing = await tx.seoKeywordGroupMembership.findFirst({
+        where: { groupId: input.targetGroupId, keywordId },
+        select: { id: true },
+      });
+      if (!existing) {
+        await tx.seoKeywordGroupMembership.create({
+          data: { shop, groupId: input.targetGroupId, keywordId },
+        });
+      }
+    };
+
+    // ── Same language: membership churn only ──
+    if (source.locale === input.targetLocale) {
+      if (input.fromGroupId && input.fromGroupId !== input.targetGroupId) {
+        await tx.seoKeywordGroupMembership.deleteMany({
+          where: { groupId: input.fromGroupId, keywordId: source.id, shop },
+        });
+      }
+      await addMembership(source.id);
+      return {
+        ok: true,
+        keywordId: source.id,
+        movedAssignments: 0,
+        demoted: 0,
+        droppedAssignments: 0,
+      } as const;
+    }
+
+    // ── Language change: merge into the target language's keyword row ──
+    const target =
+      (await tx.seoKeyword.findUnique({
+        where: {
+          shop_keyword_locale: { shop, keyword: source.keyword, locale: input.targetLocale },
+        },
+        select: { id: true },
+      })) ??
+      (await tx.seoKeyword.create({
+        data: {
+          shop,
+          keyword: source.keyword,
+          locale: input.targetLocale,
+          priority: source.priority,
+          intent: source.intent,
+        },
+        select: { id: true },
+      }));
+
+    const sourceAssignments = await tx.seoKeywordAssignment.findMany({
+      where: { shop, keywordId: source.id },
+      select: { id: true, resourceId: true, resourceType: true, role: true },
+    });
+
+    let movedAssignments = 0;
+    let demoted = 0;
+    let droppedAssignments = 0;
+
+    if (sourceAssignments.length > 0) {
+      const resourceIds = Array.from(new Set(sourceAssignments.map((a) => a.resourceId)));
+      // Everything the target language already tracks on those items — the cap
+      // and the single-primary rule are both per (item, locale).
+      const existing = await tx.seoKeywordAssignment.findMany({
+        where: { shop, resourceId: { in: resourceIds }, keyword: { locale: input.targetLocale } },
+        select: { keywordId: true, resourceId: true, role: true },
+      });
+      const byResource = new Map<string, { keywordId: string; role: string }[]>();
+      for (const a of existing) {
+        const bucket = byResource.get(a.resourceId) ?? [];
+        bucket.push({ keywordId: a.keywordId, role: a.role });
+        byResource.set(a.resourceId, bucket);
+      }
+
+      // Decide per assignment, WRITE in three statements. A keyword can carry
+      // hundreds of assignments after an AI distribution, and this runs inside
+      // one interactive Serializable transaction — Prisma's 5s default would
+      // abort a per-row loop with P2028 long before it finished.
+      const toDrop: string[] = [];
+      const toMove: string[] = [];
+      const toMoveDemoted: string[] = [];
+      for (const assignment of sourceAssignments) {
+        const siblings = byResource.get(assignment.resourceId) ?? [];
+        // Already tracked on this item in the target language, or the item is
+        // at its keyword cap there: the existing rows win (they may carry GSC
+        // history) and the incoming one is dropped.
+        if (siblings.some((s) => s.keywordId === target.id) || siblings.length >= MAX_KEYWORDS_PER_ITEM) {
+          toDrop.push(assignment.id);
+          continue;
+        }
+        let role = assignment.role;
+        if (role === "primary" && siblings.some((s) => s.role === "primary")) {
+          role = "secondary";
+          toMoveDemoted.push(assignment.id);
+          demoted += 1;
+        } else {
+          toMove.push(assignment.id);
+        }
+        siblings.push({ keywordId: target.id, role });
+        byResource.set(assignment.resourceId, siblings);
+      }
+      droppedAssignments = toDrop.length;
+      movedAssignments = toMove.length + toMoveDemoted.length;
+      if (toDrop.length) {
+        await tx.seoKeywordAssignment.deleteMany({ where: { id: { in: toDrop }, shop } });
+      }
+      if (toMove.length) {
+        // Role unchanged — only the keyword row it hangs off.
+        await tx.seoKeywordAssignment.updateMany({
+          where: { id: { in: toMove }, shop },
+          data: { keywordId: target.id },
+        });
+      }
+      if (toMoveDemoted.length) {
+        await tx.seoKeywordAssignment.updateMany({
+          where: { id: { in: toMoveDemoted }, shop },
+          data: { keywordId: target.id, role: "secondary" },
+        });
+      }
+    }
+
+    // Old-language memberships cannot follow (groups are locale-scoped), so
+    // the source row is now empty — drop it and wire up the chosen target group.
+    await tx.seoKeywordGroupMembership.deleteMany({ where: { keywordId: source.id, shop } });
+    await tx.seoKeyword.delete({ where: { id: source.id } });
+    await addMembership(target.id);
+
+    return {
+      ok: true,
+      keywordId: target.id,
+      movedAssignments,
+      demoted,
+      droppedAssignments,
+    } as const;
+  });
+}
+
 /** Inline priority edit (keywords table + group detail, plan §5.2). */
 export async function setKeywordPriority(
   db: PrismaClient,

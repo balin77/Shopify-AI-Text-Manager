@@ -155,7 +155,7 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
 
   const group = await db.seoKeywordGroup.findFirst({
     where: { id: groupId, shop: session.shop },
-    select: { id: true, name: true },
+    select: { id: true, name: true, locale: true },
   });
   if (!group) {
     return json({ success: false, error: "Keyword group not found." }, { status: 404 });
@@ -166,14 +166,21 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
     return json({ success: false, error: "This group has no keywords to distribute." }, { status: 400 });
   }
 
-  const items = await loadTargetItems(db, session.shop, targetType, {
+  // A group owns exactly one language (§3.1), so the whole run matches ONE
+  // language — and it must be the group's, not the primary one. Matching French
+  // keywords against German product copy is why automatic distribution "did not
+  // work" for secondary languages.
+  const primaryItems = await loadTargetItems(db, session.shop, targetType, {
     productType: filterProductType,
     resourceIds,
   });
-  if (items.length === 0) {
+  if (primaryItems.length === 0) {
     return json({ success: false, error: "No target items found for this distribution." }, { status: 400 });
   }
-  if (items.length > MAX_DISTRIBUTION_ITEMS) {
+  // Size guard BEFORE the translation overlay: the overlay's `resourceId: { in: … }`
+  // would otherwise be built from the whole catalogue and blow Postgres'
+  // bind-parameter limit instead of producing this friendly 400.
+  if (primaryItems.length > MAX_DISTRIBUTION_ITEMS) {
     return json(
       {
         success: false,
@@ -182,6 +189,9 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
       { status: 400 },
     );
   }
+  const items = group.locale
+    ? await overlayTranslations(db, session.shop, group.locale, primaryItems)
+    : primaryItems;
 
   const perBatch = computeItemsPerBatch(groupKeywords.length);
   const batches = chunkItems(items, perBatch);
@@ -358,6 +368,54 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
           ? `${failedBatches} of ${batches.length} batch call(s) failed — their items received no votes`
           : null,
     },
+  });
+}
+
+/**
+ * Swap in the target language's title/body wherever a translation exists. The
+ * primary-language value stays as the fallback (unlike the on-page ANALYSIS in
+ * keywords.service.ts, which must report an untranslated field as missing):
+ * here the text is only there for the model to judge topical fit, and an empty
+ * snippet would make an untranslated item unmatchable rather than "worse
+ * matched".
+ */
+async function overlayTranslations(
+  db: PrismaClient,
+  shop: string,
+  locale: string,
+  items: DistributionItem[],
+): Promise<DistributionItem[]> {
+  const rows = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      locale,
+      // GLOBAL translations only (marketId ""): a market override is one
+      // market's wording, and without this filter a shop using Translate &
+      // Adapt would feed the matcher whichever of the two rows Prisma returned
+      // last. Same rule as every other translation read (audit.service.ts).
+      marketId: "",
+      resourceId: { in: items.map((i) => i.id) },
+      key: { in: ["title", "meta_title", "body_html"] },
+    },
+    select: { resourceId: true, key: true, value: true },
+  });
+  if (rows.length === 0) return items;
+  const byResource = new Map<string, Record<string, string>>();
+  for (const r of rows) {
+    const bucket = byResource.get(r.resourceId) ?? {};
+    if (r.value) bucket[r.key] = r.value;
+    byResource.set(r.resourceId, bucket);
+  }
+  return items.map((item) => {
+    const t = byResource.get(item.id);
+    if (!t) return item;
+    // Same title preference as the primary path: SEO title first, then title.
+    const title = t.meta_title || t.title;
+    return {
+      ...item,
+      title: title || item.title,
+      snippet: t.body_html ? buildItemSnippet(t.body_html) : item.snippet,
+    };
   });
 }
 

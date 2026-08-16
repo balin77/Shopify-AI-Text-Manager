@@ -113,9 +113,12 @@ export interface ProductInput {
   brandUrl?: string | null;
   /** Defaults to "https://schema.org/NewCondition" when an Offer is built. */
   itemCondition?: string | null;
-  /** ISO date string; only emitted on the Offer when the caller provides one
-   *  (kept clock-free here for purity/testability — the storefront Liquid
-   *  block defaults it to "now + 1 year" itself). */
+  /** ISO date string; only emitted on the Offer when the caller provides one.
+   *  Never synthesized from a clock: a made-up date would tell Google and
+   *  shoppers the price is guaranteed until then, which no store datum backs
+   *  (App Store requirement 1.1.4, "use only factual information"). The
+   *  storefront Liquid block follows the same rule and reads the merchant's
+   *  `custom.price_valid_until` product metafield. */
   priceValidUntil?: string | null;
 }
 

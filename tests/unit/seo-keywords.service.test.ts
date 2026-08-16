@@ -7,6 +7,8 @@ import {
   assignMany,
   planItemAssignments,
   removeAssignment,
+  moveKeyword,
+  deleteKeyword,
   listAssignments,
   MAX_KEYWORDS_PER_ITEM,
   buildTranslatedContentInput,
@@ -862,5 +864,252 @@ describe("buildTranslatedContentInput", () => {
     const result = analyzeOnPage({ keyword: "widget", ...input, resourceType: "Product" });
     expect(result.score).toBe(0);
     expect(result.presence).toEqual({ title: false, seoTitle: false, metaDescription: false, h1: false, body: false });
+  });
+});
+
+/**
+ * moveKeyword — the merchant-side fix for a keyword tracked under the wrong
+ * language or filed in the wrong group. Same tx-mock style as the assignment
+ * helpers above; a language change is a MERGE into the target language's
+ * keyword row, so the invariants of that language (one primary per item,
+ * MAX_KEYWORDS_PER_ITEM) are enforced on the way in.
+ */
+describe("moveKeyword", () => {
+  const SHOP = "s.myshopify.com";
+  const P1 = "gid://shopify/Product/1";
+  const P2 = "gid://shopify/Product/2";
+
+  function makeDb(overrides: {
+    source?: any;
+    targetGroup?: any;
+    targetKeyword?: any;
+    sourceAssignments?: any[];
+    existingAssignments?: any[];
+    membership?: any;
+  } = {}) {
+    const tx = {
+      seoKeyword: {
+        // `in` rather than ?? so an explicit `source: null` (unknown id) survives.
+        findFirst: vi.fn(async (_a: any) =>
+          "source" in overrides
+            ? overrides.source
+            : { id: "kw1", keyword: "blue shoes", locale: "", priority: 2, intent: null },
+        ),
+        findUnique: vi.fn(async (_a: any) => overrides.targetKeyword ?? null),
+        create: vi.fn(async (_a: any) => ({ id: "kwNew" })),
+        delete: vi.fn(async (_a: any) => ({})),
+      },
+      seoKeywordGroup: {
+        findFirst: vi.fn(async (_a: any) => overrides.targetGroup ?? { id: "g2", locale: "" }),
+      },
+      seoKeywordGroupMembership: {
+        findFirst: vi.fn(async (_a: any) => overrides.membership ?? null),
+        create: vi.fn(async (_a: any) => ({})),
+        deleteMany: vi.fn(async (_a: any) => ({ count: 0 })),
+      },
+      seoKeywordAssignment: {
+        findMany: vi.fn(async (args: any) =>
+          args?.where?.keywordId ? overrides.sourceAssignments ?? [] : overrides.existingAssignments ?? [],
+        ),
+        updateMany: vi.fn(async (_a: any) => ({ count: 0 })),
+        deleteMany: vi.fn(async (_a: any) => ({ count: 0 })),
+      },
+    };
+    const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
+    return { db, tx };
+  }
+
+  it("same language: swaps the group membership and touches nothing else", async () => {
+    const { db, tx } = makeDb();
+    const result = await moveKeyword(db, SHOP, {
+      keywordId: "kw1",
+      fromGroupId: "g1",
+      targetLocale: "",
+      targetGroupId: "g2",
+    });
+    expect(result).toEqual({ ok: true, keywordId: "kw1", movedAssignments: 0, demoted: 0, droppedAssignments: 0 });
+    expect(tx.seoKeywordGroupMembership.deleteMany).toHaveBeenCalledWith({
+      where: { groupId: "g1", keywordId: "kw1", shop: SHOP },
+    });
+    expect(tx.seoKeywordGroupMembership.create).toHaveBeenCalledWith({
+      data: { shop: SHOP, groupId: "g2", keywordId: "kw1" },
+    });
+    expect(tx.seoKeyword.delete).not.toHaveBeenCalled();
+    expect(tx.seoKeywordAssignment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a target group that belongs to another language (§3.1 invariant)", async () => {
+    const { db, tx } = makeDb({ targetGroup: { id: "g2", locale: "de" } });
+    const result = await moveKeyword(db, SHOP, {
+      keywordId: "kw1",
+      targetLocale: "fr",
+      targetGroupId: "g2",
+    });
+    expect(result).toEqual({ ok: false, reason: "groupLocaleMismatch" });
+    expect(tx.seoKeyword.delete).not.toHaveBeenCalled();
+    expect(tx.seoKeyword.create).not.toHaveBeenCalled();
+  });
+
+  it("language change: creates the target-language row, re-points assignments and deletes the old row", async () => {
+    const { db, tx } = makeDb({
+      targetGroup: { id: "g2", locale: "fr" },
+      sourceAssignments: [{ id: "a1", resourceId: P1, resourceType: "Product", role: "primary" }],
+    });
+    const result = await moveKeyword(db, SHOP, {
+      keywordId: "kw1",
+      fromGroupId: "g1",
+      targetLocale: "fr",
+      targetGroupId: "g2",
+    });
+    expect(result).toEqual({
+      ok: true,
+      keywordId: "kwNew",
+      movedAssignments: 1,
+      demoted: 0,
+      droppedAssignments: 0,
+    });
+    expect(tx.seoKeyword.create.mock.calls[0][0].data).toMatchObject({
+      shop: SHOP,
+      keyword: "blue shoes",
+      locale: "fr",
+    });
+    expect(tx.seoKeywordAssignment.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1"] }, shop: SHOP },
+      data: { keywordId: "kwNew" },
+    });
+    // Old-language memberships cannot follow the keyword.
+    expect(tx.seoKeywordGroupMembership.deleteMany).toHaveBeenCalledWith({
+      where: { keywordId: "kw1", shop: SHOP },
+    });
+    expect(tx.seoKeyword.delete).toHaveBeenCalledWith({ where: { id: "kw1" } });
+    expect(tx.seoKeywordGroupMembership.create).toHaveBeenCalledWith({
+      data: { shop: SHOP, groupId: "g2", keywordId: "kwNew" },
+    });
+  });
+
+  it("language change: merges into an EXISTING target-language keyword instead of creating one", async () => {
+    const { db, tx } = makeDb({
+      targetGroup: { id: "g2", locale: "fr" },
+      targetKeyword: { id: "kwFr" },
+      sourceAssignments: [{ id: "a1", resourceId: P1, resourceType: "Product", role: "secondary" }],
+    });
+    const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
+    expect(tx.seoKeyword.create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, keywordId: "kwFr", movedAssignments: 1 });
+  });
+
+  it("language change: a moved primary lands as secondary when the item already has one there", async () => {
+    const { db, tx } = makeDb({
+      targetGroup: { id: "g2", locale: "fr" },
+      sourceAssignments: [{ id: "a1", resourceId: P1, resourceType: "Product", role: "primary" }],
+      existingAssignments: [{ keywordId: "other", resourceId: P1, role: "primary" }],
+    });
+    const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
+    expect(result).toMatchObject({ movedAssignments: 1, demoted: 1, droppedAssignments: 0 });
+    expect(tx.seoKeywordAssignment.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1"] }, shop: SHOP },
+      data: { keywordId: "kwNew", role: "secondary" },
+    });
+  });
+
+  it("language change: drops an assignment whose item is already at the keyword cap in the target language", async () => {
+    const existingAssignments = Array.from({ length: MAX_KEYWORDS_PER_ITEM }, (_, i) => ({
+      keywordId: `k${i}`,
+      resourceId: P2,
+      role: i === 0 ? "primary" : "secondary",
+    }));
+    const { db, tx } = makeDb({
+      targetGroup: { id: "g2", locale: "fr" },
+      sourceAssignments: [{ id: "a2", resourceId: P2, resourceType: "Product", role: "secondary" }],
+      existingAssignments,
+    });
+    const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
+    expect(result).toMatchObject({ movedAssignments: 0, droppedAssignments: 1 });
+    expect(tx.seoKeywordAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a2"] }, shop: SHOP },
+    });
+    expect(tx.seoKeywordAssignment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("language change: drops the incoming assignment when the item already tracks the keyword there", async () => {
+    const { db, tx } = makeDb({
+      targetGroup: { id: "g2", locale: "fr" },
+      targetKeyword: { id: "kwFr" },
+      sourceAssignments: [{ id: "a1", resourceId: P1, resourceType: "Product", role: "primary" }],
+      existingAssignments: [{ keywordId: "kwFr", resourceId: P1, role: "secondary" }],
+    });
+    const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
+    expect(result).toMatchObject({ movedAssignments: 0, droppedAssignments: 1 });
+    expect(tx.seoKeywordAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1"] }, shop: SHOP },
+    });
+  });
+
+  it("a move to 'no group' keeps the keyword (it lands in the ungrouped bucket)", async () => {
+    const { db, tx } = makeDb();
+    const result = await moveKeyword(db, SHOP, {
+      keywordId: "kw1",
+      fromGroupId: "g1",
+      targetLocale: "",
+      targetGroupId: null,
+    });
+    expect(result).toMatchObject({ ok: true, keywordId: "kw1" });
+    expect(tx.seoKeywordGroupMembership.create).not.toHaveBeenCalled();
+    expect(tx.seoKeyword.delete).not.toHaveBeenCalled();
+  });
+
+  it("an unknown keyword id reports notFound without writing", async () => {
+    const { db, tx } = makeDb({ source: null });
+    const result = await moveKeyword(db, SHOP, { keywordId: "nope", targetLocale: "", targetGroupId: null });
+    expect(result).toEqual({ ok: false, reason: "notFound" });
+    expect(tx.seoKeywordGroupMembership.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * deleteKeyword — the explicit "get rid of it" path. The pre-existing removal
+ * helpers only drop a keyword as a side effect of it becoming an orphan, so
+ * this is the only one that removes a keyword that IS assigned to items.
+ */
+describe("deleteKeyword", () => {
+  const SHOP = "s.myshopify.com";
+
+  function makeDb(found: any = { id: "kw1" }, assignmentCount = 0) {
+    const tx = {
+      seoKeyword: {
+        findFirst: vi.fn(async (_a: any) => found),
+        delete: vi.fn(async (_a: any) => ({})),
+      },
+      seoKeywordAssignment: {
+        count: vi.fn(async (_a: any) => assignmentCount),
+      },
+    };
+    const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
+    return { db, tx };
+  }
+
+  it("deletes the keyword row and reports how many assignments cascade with it", async () => {
+    const { db, tx } = makeDb({ id: "kw1" }, 3);
+    const result = await deleteKeyword(db, SHOP, "kw1");
+    expect(result).toEqual({ ok: true, removedAssignments: 3 });
+    expect(tx.seoKeyword.delete).toHaveBeenCalledWith({ where: { id: "kw1" } });
+  });
+
+  it("deletes an unassigned keyword too (the ungrouped-bucket dead end)", async () => {
+    const { db, tx } = makeDb({ id: "kw1" }, 0);
+    const result = await deleteKeyword(db, SHOP, "kw1");
+    expect(result).toEqual({ ok: true, removedAssignments: 0 });
+    expect(tx.seoKeyword.delete).toHaveBeenCalled();
+  });
+
+  it("is shop-scoped: an unknown or foreign id is a no-op, not a delete", async () => {
+    const { db, tx } = makeDb(null);
+    const result = await deleteKeyword(db, SHOP, "foreign");
+    expect(result).toEqual({ ok: false, removedAssignments: 0 });
+    expect(tx.seoKeyword.delete).not.toHaveBeenCalled();
+    expect(tx.seoKeyword.findFirst).toHaveBeenCalledWith({
+      where: { id: "foreign", shop: SHOP },
+      select: { id: true },
+    });
   });
 });

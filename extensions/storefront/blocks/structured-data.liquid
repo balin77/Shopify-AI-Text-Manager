@@ -77,6 +77,22 @@
   2. `@id` uses Dawn's exact scheme (`/products/<handle>#product`,
      `...?variant=<id>#offer`) so removing the theme's schema later does not
      change the identity of anything.
+  3. Nothing in this entity may be INVENTED. Every value has to trace back to
+     a native field or a merchant-set metafield — Shopify App Store
+     requirement 1.1.4 ("use only factual information") applies to structured
+     data just as it does to visible copy, and markup is read by Google and by
+     shoppers alike.
+
+     `priceValidUntil` is the property that broke this rule: it was
+     synthesized as "now + 1 year" on every Offer, i.e. this app told the
+     world that every price in the shop is guaranteed for exactly a year.
+     No store datum says that. It is now read from the merchant's
+     `custom.price_valid_until` product metafield (type `date`/`date_time`)
+     and omitted otherwise — including when the date has already passed,
+     because a stale guarantee is as untrue as an invented one. Omitting it
+     is cheap: Google lists the property as RECOMMENDED, so its absence is a
+     non-critical Search Console warning and costs no rich result.
+     app/services/structured-data.service.ts follows the identical rule.
 {%- endcomment -%}
 {%- if want_product and request.page_type == 'product' and product -%}
   {%- liquid
@@ -100,10 +116,30 @@
     assign r_obj = product.metafields.reviews.rating.value
     assign r_count = product.metafields.reviews.rating_count.value
     assign p_mpn = product.metafields.custom.mpn.value
-    # priceValidUntil defaults to "one year from now" here (the pure
-    # structured-data.service.ts keeps this clock-free for testability and
-    # only emits it when a caller supplies one).
-    assign p_valid_until = 'now' | date: '%s' | plus: 31536000 | date: '%Y-%m-%d'
+    # priceValidUntil: merchant metafield only, never synthesized, expired
+    # dates dropped — invariant 3 above has the compliance reasoning.
+    #
+    # Both sides of the comparison run through the SAME `%Y-%m-%d | %s` chain,
+    # and that symmetry is the whole point of the detour:
+    #  - `| date: '%Y-%m-%d'` first reduces both to a calendar DAY, so a
+    #    date_time metafield stays valid for the rest of its last day, and a
+    #    date metafield (UTC midnight) is not compared against a shop-local
+    #    midnight — that mismatch dropped the final valid day west of UTC.
+    #  - `| plus: 0` then forces INTEGER comparison. Liquid would otherwise
+    #    compare the two as strings: `>=` on strings is lexicographic, and an
+    #    unparseable metafield ("soon") survives `date` unchanged and would
+    #    sort ABOVE any ISO date — publishing "soon" as priceValidUntil, i.e.
+    #    the very fabrication this code exists to prevent. As an integer it
+    #    coerces to 0 and is dropped.
+    assign p_valid_until = ''
+    assign pvu_raw = product.metafields.custom.price_valid_until.value
+    if pvu_raw != blank
+      assign pvu_ts = pvu_raw | date: '%Y-%m-%d' | date: '%s' | plus: 0
+      assign pvu_today_ts = 'now' | date: '%Y-%m-%d' | date: '%s' | plus: 0
+      if pvu_ts >= pvu_today_ts
+        assign p_valid_until = pvu_raw | date: '%Y-%m-%d'
+      endif
+    endif
     assign variant_count = product.variants | size
     assign max_variant_offers = 25
 
@@ -213,6 +249,7 @@
         "availability": {{ agg_availability | json }},
         "itemCondition": "https://schema.org/NewCondition",
         "url": {{ p_url | json }}
+        {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json }}{%- endif -%}
       }
     {%- else -%}
     [
@@ -255,8 +292,8 @@
           "priceCurrency": {{ p_currency | json }},
           "availability": {{ v_avail | json }},
           "itemCondition": "https://schema.org/NewCondition",
-          "priceValidUntil": {{ p_valid_until | json }},
           "url": {{ v_url | json }}
+          {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json }}{%- endif -%}
           {%- if v.sku != blank -%}, "sku": {{ v.sku | json }}{%- endif -%}
           {%- if v_gtin_key != '' -%}, "{{ v_gtin_key }}": {{ v_gtin | json }}{%- endif -%}
         }
@@ -479,6 +516,7 @@
       "type": "checkbox",
       "id": "enable_product",
       "label": "Product (product pages)",
+      "info": "Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
       "default": true
     },
     {

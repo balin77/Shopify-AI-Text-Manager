@@ -132,6 +132,17 @@ async function getShopPrimaryDomain(admin: any, fallbackShop: string): Promise<s
   }
 }
 
+/**
+ * Own-property lookup on a query-keyed map. Search queries are arbitrary user
+ * text, and plenty of real words collide with `Object.prototype` members —
+ * "constructor" is Spanish for builder, "__proto__" is what a scraped query can
+ * look like. A bare `map[query] ?? fallback` then hands back an inherited
+ * function instead of the fallback and the caller blows up on it.
+ */
+export function ownEntry<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
+
 /** A Quick-win row enriched with the store resource its page URL resolves to
  *  (null when unresolvable) — drives the "Optimize" button's target. */
 export interface QuickWinOpportunity extends CtrOpportunity {
@@ -221,7 +232,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // the queries already tracked as keywords (any locale) so their rows show
     // a "tracked" badge instead of the button.
     topPages: {} as Record<string, string>,
-    trackedQueries: [] as string[],
+    // normalized query → the locales it is already tracked in ("" = primary).
+    // Per LOCALE, not a flat list: a query tracked in German must still offer
+    // the button for French, or the language picker is unreachable for it.
+    trackedQueryLocales: {} as Record<string, string[]>,
+    // Languages the adopt / quick-win flows may track a query under. A GSC
+    // query carries NO language of its own, so silently writing it under the
+    // primary locale is a guess — with more than one entry here the UI asks.
+    // Same convention as SeoKeyword: the primary locale is the "" value.
+    localeOptions: [] as Array<{ locale: string; name: string; primary: boolean }>,
     // Per-type item pickers for the adopt modal (unresolvable rows) — same
     // shape/cap as the keywords tab's add form.
     pickers: { Product: [], Collection: [], Article: [], Page: [] } as Record<
@@ -256,6 +275,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   base.connected = true;
+  // Locale picker options for the adopt / quick-win modals. A failed lookup
+  // resolves with [] (never gate on it — CLAUDE.md): the picker then lists only
+  // the primary locale, i.e. exactly the pre-existing behaviour, instead of
+  // blocking the tracking buttons.
+  {
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    const primaryLocale = shopLocales.find((l: any) => l.primary);
+    base.localeOptions = [
+      { locale: "", name: String(primaryLocale?.name || primaryLocale?.locale || ""), primary: true },
+      ...shopLocales
+        .filter((l: any) => !l.primary && l.published)
+        .map((l: any) => ({ locale: String(l.locale), name: String(l.name || l.locale), primary: false })),
+    ];
+  }
   base.property = connection.propertyUrl || null;
   base.email = connection.email;
   base.lastKeywordSyncAt = connection.lastKeywordSyncAt ? connection.lastKeywordSyncAt.toISOString() : null;
@@ -379,12 +412,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (shownQueries.length) {
         const tracked = await db.seoKeyword.findMany({
           where: { shop: session.shop, keyword: { in: shownQueries } },
-          select: { keyword: true },
+          select: { keyword: true, locale: true },
         });
-        base.trackedQueries = Array.from(new Set(tracked.map((t: { keyword: string }) => t.keyword)));
+        // A Map, not a plain object: a query like "constructor" (a real word in
+        // several languages) would resolve to an inherited Object.prototype
+        // member, so `byQuery[q] ||= []` would never assign and the push below
+        // would throw — silently costing every badge via the catch.
+        const byQuery = new Map<string, string[]>();
+        for (const t of tracked as Array<{ keyword: string; locale: string }>) {
+          const bucket = byQuery.get(t.keyword) ?? [];
+          if (!bucket.includes(t.locale)) bucket.push(t.locale);
+          byQuery.set(t.keyword, bucket);
+        }
+        base.trackedQueryLocales = Object.fromEntries(byQuery);
       }
     } catch {
-      base.trackedQueries = [];
+      base.trackedQueryLocales = {};
     }
 
     // Item pickers for the adopt modal (unresolvable rows) — same cap/order
@@ -574,6 +617,29 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     return json<ActionResult>({ ok: true, kind: "freshnessDismissed", key });
   }
 
+  /**
+   * The locale a "track this query" write should use. A GSC query has no
+   * language of its own, so the UI asks whenever the shop has more than one —
+   * this validates the answer with the same rule as every other keyword write
+   * path ("" = primary, everything else must be a PUBLISHED secondary).
+   *
+   * Returns "" when the form carries no locale field at all (single-language
+   * shops keep their one-click flow) and `null` when the posted value is not a
+   * locale of this shop — the caller answers 400 rather than writing a keyword
+   * under a language the merchant cannot see.
+   */
+  async function resolveTrackLocale(formData: FormData): Promise<string | null> {
+    const raw = formData.get("locale");
+    if (raw === null) return "";
+    const value = String(raw);
+    if (!value) return "";
+    const shopLocales = await getCachedShopLocales(admin, session.shop);
+    const isPublishedSecondary = shopLocales.some(
+      (l: any) => !l.primary && l.published && l.locale === value,
+    );
+    return isPublishedSecondary ? value : null;
+  }
+
   if (actionType === "trackQuickWin") {
     const resourceType = getFormString(form, "resourceType") as KeywordResourceType;
     const resourceId = getFormString(form, "resourceId");
@@ -586,19 +652,25 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     ) {
       return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
     }
-    // Quick wins always track against the PRIMARY locale ("") — same
-    // convention as the keyword→AI-prompt bridge in text-generation.handler.ts,
-    // which only ever looks up locale "". Don't overwrite an existing primary:
-    // the merchant may have deliberately chosen a different target keyword for
-    // this resource already, and a one-click "optimize" shouldn't clobber that
-    // — assignKeyword without demoteExisting returns `primaryExists` instead
-    // of writing, which we treat as "already tracked, fine". A full item at
-    // the keyword cap (`tooMany`) is equally fine to skip silently here.
+    // The language is the merchant's choice, not an assumption: the UI sends
+    // the locale it asked for (multi-language shops) and "" for the primary
+    // locale. Validated against the shop's published secondaries, like every
+    // other keyword write path.
+    const locale = await resolveTrackLocale(form);
+    if (locale === null) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    // Don't overwrite an existing primary: the merchant may have deliberately
+    // chosen a different target keyword for this resource already, and a
+    // one-click "optimize" shouldn't clobber that — assignKeyword without
+    // demoteExisting returns `primaryExists` instead of writing, which we treat
+    // as "already tracked, fine". A full item at the keyword cap (`tooMany`) is
+    // equally fine to skip silently here.
     await assignKeyword(db, session.shop, {
       resourceType,
       resourceId,
       keyword: query,
-      locale: "",
+      locale,
       role: "primary",
     });
     return json<ActionResult>({ ok: true, kind: "quickWinTracked" });
@@ -618,7 +690,15 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
 
     let resourceType = getFormString(form, "resourceType") as KeywordResourceType | "";
     let resourceId = getFormString(form, "resourceId");
-    let locale = "";
+
+    // An explicitly posted language (the modal's picker) always wins; the URL
+    // prefix below only fills in for a one-click track on a single-language
+    // shop, where it is a hint rather than a competing choice.
+    const localeExplicit = form.get("locale") !== null;
+    let locale = await resolveTrackLocale(form);
+    if (locale === null) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
 
     if (!resourceType || !resourceId) {
       // Resolve the row's page URL → handle → cached item. The locale prefix
@@ -644,12 +724,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
           if (item) {
             resourceType = resolved.resourceType;
             resourceId = item.id;
-            if (resolved.locale) {
+            if (resolved.locale && !localeExplicit) {
               const shopLocales = await getCachedShopLocales(admin, session.shop);
-              const isPublishedSecondary = shopLocales.some(
-                (l: any) => !l.primary && l.published && l.locale.toLowerCase() === resolved.locale,
+              const match = shopLocales.find(
+                (l: any) => !l.primary && l.published && String(l.locale).toLowerCase() === resolved.locale,
               );
-              if (isPublishedSecondary) locale = resolved.locale;
+              // Store the shop's OWN casing (e.g. "pt-BR"), not the URL's — the
+              // locale is a lookup key everywhere else in the keyword tables.
+              if (match) locale = String(match.locale);
             }
           }
         } catch {
@@ -756,13 +838,47 @@ export default function SeoSearchConsole() {
   // own response carries no row identity back).
   const optimizeTargetRef = useRef<{ resourceType: string; resourceId: string } | null>(null);
 
-  const handleOptimize = (row: { resourceType: string; resourceId: string; query: string }) => {
+  const submitQuickWin = (
+    row: { resourceType: string; resourceId: string; query: string },
+    locale: string,
+  ) => {
     optimizeTargetRef.current = { resourceType: row.resourceType, resourceId: row.resourceId };
     setOptimizingResourceId(row.resourceId);
     quickWinFetcher.submit(
-      { actionType: "trackQuickWin", resourceType: row.resourceType, resourceId: row.resourceId, query: row.query },
+      {
+        actionType: "trackQuickWin",
+        resourceType: row.resourceType,
+        resourceId: row.resourceId,
+        query: row.query,
+        locale,
+      },
       { method: "post" },
     );
+  };
+
+  /** Optimize = track the query as this item's keyword, then open the editor.
+   *  On a multi-language shop the language is asked for first — a GSC query
+   *  carries none, and guessing the primary one is how keywords ended up in the
+   *  wrong language. Single-language shops keep the one-click flow. */
+  const handleOptimize = (row: {
+    resourceType: string;
+    resourceId: string;
+    query: string;
+    page?: string;
+  }) => {
+    if (hasMultipleLocales) {
+      setAdoptError(null);
+      setAdoptModal({
+        mode: "quickWin",
+        query: row.query,
+        gsc: {},
+        resourceType: row.resourceType,
+        resourceId: row.resourceId,
+        locale: guessLocaleFromPage(row.page),
+      });
+      return;
+    }
+    submitQuickWin(row, "");
   };
 
   useEffect(() => {
@@ -820,16 +936,27 @@ export default function SeoSearchConsole() {
   // ── "Track as keyword" adopt flow (PLAN_KEYWORDS_EXPANSION.md §4) ──
   // Own fetcher so the disconnect/sync/sitemap banner isn't clobbered.
   const adoptFetcher = useFetcher<ActionResult>();
-  // Queries adopted in THIS session — flips the row to its "tracked" badge
-  // without a reload; the loader's trackedQueries covers earlier sessions.
+  // Queries adopted in THIS session, as `<query>::<locale>` — flips the row to
+  // its "tracked" badge without a reload; the loader's trackedQueryLocales
+  // covers earlier sessions. Keyed per locale for the same reason.
   const [adoptedQueries, setAdoptedQueries] = useState<Set<string>>(new Set());
   const [adoptingQuery, setAdoptingQuery] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
-  // Item-picker modal for rows whose page URL couldn't be resolved. Carries
-  // the row's GSC metrics along so the re-submit still stamps them.
+  // The track modal. Two jobs: pick the LANGUAGE the query is tracked under
+  // (whenever the shop has more than one — a GSC query carries none), and pick
+  // the item for rows whose page URL couldn't be resolved. Carries the row's
+  // GSC metrics along so the submit still stamps them.
   const [adoptModal, setAdoptModal] = useState<{
+    /** "adopt" writes a tracked keyword; "quickWin" also opens the editor. */
+    mode: "adopt" | "quickWin";
     query: string;
     gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number };
+    /** Page URL to resolve the item from — absent means the picker is required. */
+    page?: string;
+    /** Quick-win rows (and a re-submit after the picker) know their item. */
+    resourceType?: string;
+    resourceId?: string;
+    locale: string;
   } | null>(null);
   const [adoptType, setAdoptType] = useState<KeywordResourceType>("Product");
   const [adoptItemId, setAdoptItemId] = useState("");
@@ -840,22 +967,61 @@ export default function SeoSearchConsole() {
   const pendingAdoptRef = useRef<{
     query: string;
     gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number };
+    locale: string;
   } | null>(null);
 
-  const isQueryTracked = (query: string) => {
-    const q = query.trim().toLowerCase();
-    return adoptedQueries.has(q) || data.trackedQueries.includes(q);
+  /** Languages this query is already tracked in (stored + this session). */
+  const trackedLocalesFor = (query: string): string[] => {
+    const q = normalizeKeyword(query);
+    const stored = ownEntry(data.trackedQueryLocales, q) ?? [];
+    const session = Array.from(adoptedQueries)
+      .filter((entry) => entry.startsWith(`${q}::`))
+      .map((entry) => entry.slice(q.length + 2));
+    return Array.from(new Set([...stored, ...session]));
+  };
+
+  const isQueryTracked = (query: string) => trackedLocalesFor(query).length > 0;
+
+  /** More than one language to choose from ⇒ never guess one. */
+  const hasMultipleLocales = data.localeOptions.length > 1;
+
+  /** Is there still a language this query could be tracked for? On a
+   *  single-language shop this collapses to "not tracked yet" — the previous
+   *  behaviour. On a multi-language shop a German-tracked query keeps its
+   *  button so it can also be tracked for French. */
+  const hasUntrackedLocale = (query: string): boolean => {
+    const tracked = trackedLocalesFor(query);
+    if (data.localeOptions.length === 0) return tracked.length === 0;
+    return data.localeOptions.some((l) => !tracked.includes(l.locale));
+  };
+
+  /** Pre-select the language from the row's page URL prefix (/fr/products/…)
+   *  when it names a published secondary — the same hint the server applies to
+   *  a one-click track, just made visible and overridable. */
+  const guessLocaleFromPage = (page?: string): string => {
+    if (!page) return "";
+    let path = page;
+    try {
+      path = new URL(page).pathname;
+    } catch {
+      // Not an absolute URL — treat the value as a path already.
+    }
+    const first = path.split("/").filter(Boolean)[0]?.toLowerCase();
+    if (!first) return "";
+    const match = data.localeOptions.find((l) => !l.primary && l.locale.toLowerCase() === first);
+    return match ? match.locale : "";
   };
 
   const submitAdopt = (
     query: string,
     gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number },
     target: { page?: string } | { resourceType: string; resourceId: string },
+    locale: string,
   ) => {
     setAdoptingQuery(query);
     setAdoptError(null);
-    pendingAdoptRef.current = { query, gsc };
-    const payload: Record<string, string> = { actionType: "adoptKeyword", query };
+    pendingAdoptRef.current = { query, gsc, locale };
+    const payload: Record<string, string> = { actionType: "adoptKeyword", query, locale };
     if ("page" in target && target.page) payload.page = target.page;
     if ("resourceId" in target) {
       payload.resourceType = target.resourceType;
@@ -868,18 +1034,20 @@ export default function SeoSearchConsole() {
     adoptFetcher.submit(payload, { method: "post" });
   };
 
-  /** Row click: resolve via the row's page when we have one, else straight to
-   *  the item-picker modal (no wasted server round-trip). */
+  /** Row click. Single-language shop with a resolvable page: one click, as
+   *  before. Otherwise the modal opens — to pick the language, the item, or
+   *  both. */
   const handleTrackClick = (
     query: string,
     gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number },
     page?: string,
   ) => {
-    if (page) submitAdopt(query, gsc, { page });
-    else {
-      setAdoptError(null);
-      setAdoptModal({ query, gsc });
+    if (page && !hasMultipleLocales) {
+      submitAdopt(query, gsc, { page }, "");
+      return;
     }
+    setAdoptError(null);
+    setAdoptModal({ mode: "adopt", query, gsc, page, locale: guessLocaleFromPage(page) });
   };
 
   useEffect(() => {
@@ -887,8 +1055,9 @@ export default function SeoSearchConsole() {
     const res = adoptFetcher.data;
     setAdoptingQuery(null);
     if (res.ok && res.kind === "keywordAdopted") {
+      const adoptedLocale = pendingAdoptRef.current?.locale ?? "";
       pendingAdoptRef.current = null;
-      setAdoptedQueries((prev) => new Set(prev).add(res.query.trim().toLowerCase()));
+      setAdoptedQueries((prev) => new Set(prev).add(`${normalizeKeyword(res.query)}::${adoptedLocale}`));
       setAdoptModal(null);
       setAdoptItemId("");
       setAdoptItemInput("");
@@ -896,16 +1065,25 @@ export default function SeoSearchConsole() {
     }
     if (!res.ok && res.error === "unresolved" && "query" in res) {
       // No store item found for the row's page — let the merchant pick one.
+      // `page` is dropped so the modal switches to the (now required) picker;
+      // the language already chosen survives.
       const pending = pendingAdoptRef.current;
-      setAdoptModal({
+      setAdoptModal((prev) => ({
+        mode: "adopt",
         query: res.query,
         gsc: pending && pending.query === res.query ? pending.gsc : {},
-      });
+        locale: prev?.locale ?? "",
+      }));
       return;
     }
     if (!res.ok) setAdoptError(res.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adoptFetcher.state, adoptFetcher.data]);
+
+  // The item picker only appears when the target is still unknown: quick-win
+  // rows carry their item, and an adopt row with a page URL is resolved
+  // server-side (the picker appears on its "unresolved" answer).
+  const needsItemPicker = !!adoptModal && !adoptModal.page && !adoptModal.resourceId;
 
   const adoptModalOptions = (data.pickers[adoptType] ?? []).map((i) => ({
     label: i.title || i.id,
@@ -1242,7 +1420,7 @@ export default function SeoSearchConsole() {
                         </thead>
                         <tbody>
                           {data.topQueries.map((row, i) => {
-                            const delta = data.deltas[(row.keys[0] ?? "").toLowerCase()];
+                            const delta = ownEntry(data.deltas, (row.keys[0] ?? "").toLowerCase());
                             return (
                               <tr key={`${row.keys[0]}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
                                 <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
@@ -1277,30 +1455,36 @@ export default function SeoSearchConsole() {
                                   {(() => {
                                     const query = row.keys[0] ?? "";
                                     if (!query) return null;
-                                    if (isQueryTracked(query)) {
-                                      return <Badge tone="success">{g.trackedBadge}</Badge>;
-                                    }
+                                    const tracked = isQueryTracked(query);
+                                    // Badge AND button while another language
+                                    // is still untracked — the badge alone used
+                                    // to make the language picker unreachable.
                                     return (
-                                      <Button
-                                        size="slim"
-                                        variant="plain"
-                                        loading={adoptFetcher.state !== "idle" && adoptingQuery === query}
-                                        disabled={adoptFetcher.state !== "idle" && adoptingQuery !== query}
-                                        onClick={() =>
-                                          handleTrackClick(
-                                            query,
-                                            {
-                                              position: row.position,
-                                              clicks: row.clicks,
-                                              impressions: row.impressions,
-                                              ctr: row.ctr,
-                                            },
-                                            data.topPages[query.toLowerCase()],
-                                          )
-                                        }
-                                      >
-                                        {g.trackKeyword}
-                                      </Button>
+                                      <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                        {tracked && <Badge tone="success">{g.trackedBadge}</Badge>}
+                                        {hasUntrackedLocale(query) && (
+                                          <Button
+                                            size="slim"
+                                            variant="plain"
+                                            loading={adoptFetcher.state !== "idle" && adoptingQuery === query}
+                                            disabled={adoptFetcher.state !== "idle" && adoptingQuery !== query}
+                                            onClick={() =>
+                                              handleTrackClick(
+                                                query,
+                                                {
+                                                  position: row.position,
+                                                  clicks: row.clicks,
+                                                  impressions: row.impressions,
+                                                  ctr: row.ctr,
+                                                },
+                                                ownEntry(data.topPages, query.toLowerCase()),
+                                              )
+                                            }
+                                          >
+                                            {tracked ? g.trackAnotherLanguage : g.trackKeyword}
+                                          </Button>
+                                        )}
+                                      </InlineStack>
                                     );
                                   })()}
                                 </td>
@@ -1488,15 +1672,15 @@ export default function SeoSearchConsole() {
                                         resourceType: row.resourceType as string,
                                         resourceId: row.resourceId as string,
                                         query: row.query,
+                                        page: row.page,
                                       })
                                     }
                                   >
                                     {g.quickWinOptimize}
                                   </Button>
                                 )}
-                                {isQueryTracked(row.query) ? (
-                                  <Badge tone="success">{g.trackedBadge}</Badge>
-                                ) : (
+                                {isQueryTracked(row.query) && <Badge tone="success">{g.trackedBadge}</Badge>}
+                                {hasUntrackedLocale(row.query) && (
                                   <Button
                                     size="slim"
                                     variant="plain"
@@ -1505,16 +1689,33 @@ export default function SeoSearchConsole() {
                                     onClick={() => {
                                       const gsc = { position: row.position, impressions: row.impressions, ctr: row.ctr };
                                       if (row.resourceId && row.resourceType) {
-                                        submitAdopt(row.query, gsc, {
-                                          resourceType: row.resourceType,
-                                          resourceId: row.resourceId,
-                                        });
+                                        // Item already known — the modal only
+                                        // has to ask for the language, and
+                                        // only when there is a choice.
+                                        if (hasMultipleLocales) {
+                                          setAdoptError(null);
+                                          setAdoptModal({
+                                            mode: "adopt",
+                                            query: row.query,
+                                            gsc,
+                                            resourceType: row.resourceType,
+                                            resourceId: row.resourceId,
+                                            locale: guessLocaleFromPage(row.page),
+                                          });
+                                        } else {
+                                          submitAdopt(
+                                            row.query,
+                                            gsc,
+                                            { resourceType: row.resourceType, resourceId: row.resourceId },
+                                            "",
+                                          );
+                                        }
                                       } else {
                                         handleTrackClick(row.query, gsc, row.page);
                                       }
                                     }}
                                   >
-                                    {g.trackKeyword}
+                                    {isQueryTracked(row.query) ? g.trackAnotherLanguage : g.trackKeyword}
                                   </Button>
                                 )}
                               </InlineStack>
@@ -1644,23 +1845,51 @@ export default function SeoSearchConsole() {
         )}
       </BlockStack>
 
-      {/* Item-picker modal for adopt rows whose page URL didn't resolve to a
-          cached store item (PLAN_KEYWORDS_EXPANSION.md §4.3). */}
+      {/* Track modal: language picker (multi-language shops) plus the item
+          picker for adopt rows whose page URL didn't resolve to a cached store
+          item (PLAN_KEYWORDS_EXPANSION.md §4.3). */}
       <Modal
         open={!!adoptModal}
         onClose={() => setAdoptModal(null)}
-        title={g.adoptModalTitle}
+        title={needsItemPicker ? g.adoptModalTitle : g.trackModalTitle}
         primaryAction={{
           content: g.trackKeyword,
-          disabled: !adoptItemId,
-          loading: adoptFetcher.state !== "idle",
+          disabled: needsItemPicker && !adoptItemId,
+          loading: adoptFetcher.state !== "idle" || quickWinFetcher.state !== "idle",
           onAction: () => {
-            if (adoptModal && adoptItemId) {
-              submitAdopt(adoptModal.query, adoptModal.gsc, {
-                resourceType: adoptType,
-                resourceId: adoptItemId,
-              });
+            if (!adoptModal) return;
+            if (adoptModal.mode === "quickWin" && adoptModal.resourceType && adoptModal.resourceId) {
+              submitQuickWin(
+                {
+                  resourceType: adoptModal.resourceType,
+                  resourceId: adoptModal.resourceId,
+                  query: adoptModal.query,
+                },
+                adoptModal.locale,
+              );
+              setAdoptModal(null);
+              return;
             }
+            if (needsItemPicker) {
+              if (!adoptItemId) return;
+              submitAdopt(
+                adoptModal.query,
+                adoptModal.gsc,
+                { resourceType: adoptType, resourceId: adoptItemId },
+                adoptModal.locale,
+              );
+              return;
+            }
+            // Either the row resolved to an item already, or the server
+            // resolves it from the page URL.
+            submitAdopt(
+              adoptModal.query,
+              adoptModal.gsc,
+              adoptModal.resourceType && adoptModal.resourceId
+                ? { resourceType: adoptModal.resourceType, resourceId: adoptModal.resourceId }
+                : { page: adoptModal.page },
+              adoptModal.locale,
+            );
           },
         }}
         secondaryActions={[{ content: g.adoptModalCancel, onAction: () => setAdoptModal(null) }]}
@@ -1668,46 +1897,64 @@ export default function SeoSearchConsole() {
         <Modal.Section>
           <BlockStack gap="300">
           <Text as="p" variant="bodyMd">
-            {g.adoptModalBody.replace("{query}", adoptModal?.query ?? "")}
+            {(needsItemPicker ? g.adoptModalBody : g.trackModalBody).replace("{query}", adoptModal?.query ?? "")}
           </Text>
           {adoptError && (
             <Banner tone="critical">{adoptError === "tooMany" ? g.adoptTooMany : g.errorGeneric}</Banner>
           )}
-          <Select
-            label={t.seo.keywordsPage.typeLabel}
-            options={(["Product", "Collection", "Article", "Page"] as KeywordResourceType[]).map((rt) => ({
-              label: t.seo.keywordsPage.types[rt],
-              value: rt,
-            }))}
-            value={adoptType}
-            onChange={(v) => {
-              setAdoptType(v as KeywordResourceType);
-              setAdoptItemId("");
-              setAdoptItemInput("");
-            }}
-          />
-          <Autocomplete
-            options={filteredAdoptOptions}
-            selected={adoptItemId ? [adoptItemId] : []}
-            onSelect={(selected) => {
-              const id = selected[0] ?? "";
-              setAdoptItemId(id);
-              const match = adoptModalOptions.find((o) => o.value === id);
-              setAdoptItemInput(match ? match.label : "");
-            }}
-            textField={
-              <Autocomplete.TextField
-                label={t.seo.keywordsPage.itemLabel}
-                autoComplete="off"
-                placeholder={t.seo.keywordsPage.selectItem}
-                value={adoptItemInput}
-                onChange={(value) => {
-                  setAdoptItemInput(value);
-                  if (adoptItemId) setAdoptItemId("");
+          {hasMultipleLocales && (
+            <Select
+              label={g.trackLocaleLabel}
+              helpText={g.trackLocaleHelp}
+              options={data.localeOptions.map((l) => ({
+                label: l.primary
+                  ? `${l.name || l.locale} (${t.seo.keywordsPage.localePrimary})`
+                  : l.name || l.locale,
+                value: l.locale,
+              }))}
+              value={adoptModal?.locale ?? ""}
+              onChange={(v) => setAdoptModal((prev) => (prev ? { ...prev, locale: v } : prev))}
+            />
+          )}
+          {needsItemPicker && (
+            <>
+              <Select
+                label={t.seo.keywordsPage.typeLabel}
+                options={(["Product", "Collection", "Article", "Page"] as KeywordResourceType[]).map((rt) => ({
+                  label: t.seo.keywordsPage.types[rt],
+                  value: rt,
+                }))}
+                value={adoptType}
+                onChange={(v) => {
+                  setAdoptType(v as KeywordResourceType);
+                  setAdoptItemId("");
+                  setAdoptItemInput("");
                 }}
               />
-            }
-          />
+              <Autocomplete
+                options={filteredAdoptOptions}
+                selected={adoptItemId ? [adoptItemId] : []}
+                onSelect={(selected) => {
+                  const id = selected[0] ?? "";
+                  setAdoptItemId(id);
+                  const match = adoptModalOptions.find((o) => o.value === id);
+                  setAdoptItemInput(match ? match.label : "");
+                }}
+                textField={
+                  <Autocomplete.TextField
+                    label={t.seo.keywordsPage.itemLabel}
+                    autoComplete="off"
+                    placeholder={t.seo.keywordsPage.selectItem}
+                    value={adoptItemInput}
+                    onChange={(value) => {
+                      setAdoptItemInput(value);
+                      if (adoptItemId) setAdoptItemId("");
+                    }}
+                  />
+                }
+              />
+            </>
+          )}
           </BlockStack>
         </Modal.Section>
       </Modal>
