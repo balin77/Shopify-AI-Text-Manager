@@ -10,6 +10,7 @@
  * Replaces the two separate Cards (LanguageBar + OperationButtons) on mobile.
  */
 
+import type { ReloadResourceType } from "../../utils/reload-resource-type";
 import { useState, useCallback } from "react";
 import { Card, Button, Popover, ActionList, Tooltip } from "@shopify/polaris";
 import { MenuHorizontalIcon } from "@shopify/polaris-icons";
@@ -56,7 +57,7 @@ interface MobileToolbarProps {
 
   // Reload button props
   reloadResourceId: string;
-  reloadResourceType: "product" | "collection" | "page" | "article" | "policy" | "templates";
+  reloadResourceType: ReloadResourceType;
   reloadLocale: string;
   onReloadComplete: () => void;
   revalidator?: { state: "idle" | "loading"; revalidate: () => void };

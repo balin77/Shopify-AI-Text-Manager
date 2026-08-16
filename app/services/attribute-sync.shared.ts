@@ -216,12 +216,31 @@ function parseDate(value: string | null | undefined): Date | null {
 }
 
 /**
- * Did this response actually carry the attribute block? An absent key means
- * "not requested", which must NOT be written as a value — a partial response
- * would otherwise erase vendor/tags that an earlier full sync established.
+ * Did this response actually carry the attribute block?
+ *
+ * The check is ALL keys, never "any of them". GraphQL returns every key it was
+ * asked for (null-valued if unset), so a response missing even one of them was
+ * built from a different, narrower selection — and treating that as a complete
+ * block is precisely the failure this module exists to prevent: the missing
+ * fields would be written as their defaults (`tags: []`, `isPublished: false`)
+ * and stamped with `attributesSyncedAt`, turning "unknown" into a confident
+ * wrong value that no later reader can tell apart from the truth.
  */
+function hasEveryKey<T extends object>(data: T | null | undefined, keys: Array<keyof T>): boolean {
+  if (!data) return false;
+  return keys.every((key) => data[key] !== undefined);
+}
+
+const PRODUCT_ATTRIBUTE_KEYS: Array<keyof ShopifyProductAttributes> = [
+  "vendor",
+  "tags",
+  "templateSuffix",
+  "publishedAt",
+  "category",
+];
+
 export function hasProductAttributes(data: ShopifyProductAttributes | null | undefined): boolean {
-  return !!data && (data.vendor !== undefined || data.tags !== undefined);
+  return hasEveryKey(data, PRODUCT_ATTRIBUTE_KEYS);
 }
 
 export function productAttributeColumns(
@@ -269,8 +288,14 @@ export function productCollectionRows(
   return { rows, hasMore: collections.pageInfo?.hasNextPage ?? false };
 }
 
+const COLLECTION_ATTRIBUTE_KEYS: Array<keyof ShopifyCollectionAttributes> = [
+  "sortOrder",
+  "templateSuffix",
+  "ruleSet",
+];
+
 export function hasCollectionAttributes(data: ShopifyCollectionAttributes | null | undefined): boolean {
-  return !!data && data.sortOrder !== undefined;
+  return hasEveryKey(data, COLLECTION_ATTRIBUTE_KEYS);
 }
 
 export function collectionAttributeColumns(
@@ -297,8 +322,16 @@ export function collectionAttributeColumns(
   };
 }
 
+const ARTICLE_ATTRIBUTE_KEYS: Array<keyof ShopifyArticleAttributes> = [
+  "author",
+  "tags",
+  "templateSuffix",
+  "isPublished",
+  "publishedAt",
+];
+
 export function hasArticleAttributes(data: ShopifyArticleAttributes | null | undefined): boolean {
-  return !!data && (data.author !== undefined || data.tags !== undefined);
+  return hasEveryKey(data, ARTICLE_ATTRIBUTE_KEYS);
 }
 
 export function articleAttributeColumns(
@@ -317,8 +350,14 @@ export function articleAttributeColumns(
   };
 }
 
+const PAGE_ATTRIBUTE_KEYS: Array<keyof ShopifyPageAttributes> = [
+  "templateSuffix",
+  "isPublished",
+  "publishedAt",
+];
+
 export function hasPageAttributes(data: ShopifyPageAttributes | null | undefined): boolean {
-  return !!data && data.isPublished !== undefined;
+  return hasEveryKey(data, PAGE_ATTRIBUTE_KEYS);
 }
 
 export function pageAttributeColumns(

@@ -6,6 +6,7 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
+import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -759,7 +760,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   featuredImage={state.featuredImage ?? undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
-                  reloadResourceType={getResourceType(config.contentType)}
+                  reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
                   reloadLocale={state.currentLanguage}
                   onReloadComplete={handleReloadComplete}
                   revalidator={revalidator}
@@ -905,7 +906,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
                       <ReloadButton
                         resourceId={selectedItem.id}
-                        resourceType={getResourceType(config.contentType)}
+                        resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
                         locale={state.currentLanguage}
                         tooltip={t.content?.reloadItemTooltip}
                         onReloadComplete={handleReloadComplete}
@@ -1478,20 +1479,3 @@ const SYNC_CONTENT_TYPE: Record<string, string> = {
   sellingPlans: "sellingPlans",
 };
 
-function getResourceType(contentType: string): "product" | "collection" | "page" | "article" | "policy" | "templates" {
-  // The whole theme-content family (templates + system / delivery / sellingPlans
-  // / onlineStoreExtras) reloads through the single-group theme-content path
-  // (api.sync-single-resource → syncSingleThemeGroup, which is now domain-aware).
-  // Without this, non-templates rubrics posted their raw contentType and the
-  // route rejected it ("Unknown resource type: sellingPlans").
-  if (isThemeContentType(contentType)) return "templates";
-  const resourceTypeMap: Record<string, "product" | "collection" | "page" | "article" | "policy" | "templates"> = {
-    blogs: "article",
-    pages: "page",
-    policies: "policy",
-    collections: "collection",
-    products: "product",
-    templates: "templates",
-  };
-  return resourceTypeMap[contentType] || contentType as any;
-}

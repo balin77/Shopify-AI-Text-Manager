@@ -23,6 +23,22 @@ import {
 
 const NOW = new Date("2026-08-16T12:00:00.000Z");
 
+/**
+ * A response carrying EVERY key `PRODUCT_ATTRIBUTE_SELECTION` asks for — which
+ * is what the mappers require before they treat the block as delivered.
+ * GraphQL always returns the keys it was asked for, null-valued when unset.
+ */
+function fullProduct(overrides: Record<string, unknown> = {}) {
+  return {
+    vendor: "Acme",
+    tags: [] as string[],
+    templateSuffix: null,
+    publishedAt: null,
+    category: null,
+    ...overrides,
+  };
+}
+
 describe("productAttributeColumns", () => {
   it("returns {} when the response did not carry the attribute block", () => {
     // An older query path: the keys are ABSENT, not empty. Writing anything
@@ -62,35 +78,44 @@ describe("productAttributeColumns", () => {
   it("treats an empty vendor as null, not as the string \"\"", () => {
     // Shopify returns "" for an unset vendor; a "" in the cache would render
     // as a set-but-blank value in the sidebar.
-    const columns = productAttributeColumns({ vendor: "   ", tags: [] }, NOW);
+    const columns = productAttributeColumns(fullProduct({ vendor: "   " }), NOW);
     expect(columns.vendor).toBeNull();
   });
 
   it("drops blank tags and trims the rest", () => {
-    const columns = productAttributeColumns({ vendor: "x", tags: [" sale ", "", "  "] }, NOW);
+    const columns = productAttributeColumns(fullProduct({ tags: [" sale ", "", "  "] }), NOW);
     expect(columns.tags).toEqual(["sale"]);
   });
 
-  it("still recognises the block when only tags came back", () => {
-    expect(hasProductAttributes({ tags: [] })).toBe(true);
+  it("requires EVERY key of the selection, not just one of them", () => {
+    // A response built from a narrower selection is not a complete block.
+    // Accepting it would write tags: [] over real tags and stamp
+    // attributesSyncedAt — "unknown" turned into a confident wrong value.
+    expect(hasProductAttributes(fullProduct())).toBe(true);
+    expect(hasProductAttributes({ vendor: "Acme" })).toBe(false);
+    expect(hasProductAttributes({ tags: ["sale"] })).toBe(false);
     expect(hasProductAttributes({})).toBe(false);
+  });
+
+  it("does not overwrite tags from a response that only carried vendor", () => {
+    expect(productAttributeColumns({ vendor: "Acme" }, NOW)).toEqual({});
   });
 
   it("falls back to the category leaf name when fullName is absent", () => {
     const columns = productAttributeColumns(
-      { vendor: "x", tags: [], category: { id: "gid://x/1", name: "Shirts" } },
+      fullProduct({ category: { id: "gid://x/1", name: "Shirts" } }),
       NOW,
     );
     expect(columns.categoryName).toBe("Shirts");
   });
 
   it("maps an unparsable publishedAt to null instead of an Invalid Date", () => {
-    const columns = productAttributeColumns({ vendor: "x", tags: [], publishedAt: "not-a-date" }, NOW);
+    const columns = productAttributeColumns(fullProduct({ publishedAt: "not-a-date" }), NOW);
     expect(columns.publishedAt).toBeNull();
   });
 
   it("maps a never-published product to publishedAt null", () => {
-    const columns = productAttributeColumns({ vendor: "x", tags: [], publishedAt: null }, NOW);
+    const columns = productAttributeColumns(fullProduct({ publishedAt: null }), NOW);
     expect(columns.publishedAt).toBeNull();
   });
 });
@@ -174,14 +199,26 @@ describe("collectionAttributeColumns", () => {
   });
 
   it("names the API version it read, so a 2026-07 'sources' row is never mistaken for a ruleSet row", () => {
-    const columns = collectionAttributeColumns({ sortOrder: "MANUAL" }, "2026-07", NOW);
+    const columns = collectionAttributeColumns(
+      { sortOrder: "MANUAL", templateSuffix: null, ruleSet: null },
+      "2026-07",
+      NOW,
+    );
     expect(columns.sourcesJson).toMatchObject({ shape: "ruleSet", apiVersion: "2026-07" });
+  });
+
+  it("requires EVERY key of the selection", () => {
+    expect(collectionAttributeColumns({ sortOrder: "MANUAL" }, "2025-10", NOW)).toEqual({});
   });
 
   it("clears the tree when a collection stopped being rule-based", () => {
     // A stale tree left behind would keep the rule editor showing rules that
     // no longer govern the collection's membership.
-    const columns = collectionAttributeColumns({ sortOrder: "MANUAL", ruleSet: null }, "2025-10", NOW);
+    const columns = collectionAttributeColumns(
+      { sortOrder: "MANUAL", templateSuffix: null, ruleSet: null },
+      "2025-10",
+      NOW,
+    );
     expect(columns.isSmart).toBe(false);
     expect(columns.sourcesJson).toEqual({ shape: "ruleSet", apiVersion: "2025-10", data: null });
   });
@@ -196,7 +233,7 @@ describe("articleAttributeColumns", () => {
     // ArticleCreateInput requires an author (PLAN §1.4) — this is the one
     // attribute whose absence blocks a feature outright, not just a display.
     const columns = articleAttributeColumns(
-      { author: { name: "Jane Doe" }, tags: ["news"], isPublished: true, publishedAt: "2026-03-04T00:00:00Z" },
+      { author: { name: "Jane Doe" }, tags: ["news"], templateSuffix: null, isPublished: true, publishedAt: "2026-03-04T00:00:00Z" },
       NOW,
     );
     expect(columns.author).toBe("Jane Doe");
@@ -207,14 +244,24 @@ describe("articleAttributeColumns", () => {
   });
 
   it("maps a missing author to null rather than an empty string", () => {
-    const columns = articleAttributeColumns({ author: null, tags: [] }, NOW);
+    const columns = articleAttributeColumns(
+      { author: null, tags: [], templateSuffix: null, isPublished: true, publishedAt: null },
+      NOW,
+    );
     expect(columns.author).toBeNull();
+  });
+
+  it("requires EVERY key of the selection", () => {
+    expect(articleAttributeColumns({ author: { name: "x" } }, NOW)).toEqual({});
   });
 
   it("writes isPublished false for an unpublished article", () => {
     // The column DEFAULTS to true, so a false has to be written explicitly —
     // dropping it would publish every draft in the sidebar's eyes.
-    const columns = articleAttributeColumns({ author: { name: "x" }, tags: [], isPublished: false }, NOW);
+    const columns = articleAttributeColumns(
+      { author: { name: "x" }, tags: [], templateSuffix: null, isPublished: false, publishedAt: null },
+      NOW,
+    );
     expect(columns.isPublished).toBe(false);
   });
 });
@@ -222,7 +269,10 @@ describe("articleAttributeColumns", () => {
 describe("pageAttributeColumns", () => {
   it("returns {} when the block was not delivered", () => {
     expect(pageAttributeColumns({}, NOW)).toEqual({});
+    // A narrower selection is not a complete block, even though the one key
+    // it did carry is a real one.
     expect(pageAttributeColumns({ templateSuffix: "x" }, NOW)).toEqual({});
+    expect(pageAttributeColumns({ isPublished: true }, NOW)).toEqual({});
   });
 
   it("maps a delivered block", () => {
