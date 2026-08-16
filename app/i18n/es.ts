@@ -430,6 +430,7 @@ export const es: Translation = {
     // ── Duplicar (§1.9) ───────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicar",
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
+    rulesNeedApiUpgrade: "Las colecciones automatizadas necesitan la API {version} de Shopify. Hasta que esta aplicación se actualice, puedes crear colecciones y elegir sus productos manualmente.",
     duplicateModal: {
       title: "Duplicar \u201c{name}\u201d",
       intro: "Shopify copia todo \u2014 imágenes, variantes, opciones y metacampos. Solo necesitas un nombre.",

@@ -33,6 +33,13 @@ import {
   Box,
 } from "@shopify/polaris";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
+import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
+import {
+  conditionKinds,
+  newCondition,
+  validateRuleSources,
+  type RuleSource,
+} from "~/config/collection-rules.shared";
 import {
   createSpecFor,
   suggestHandle,
@@ -55,6 +62,11 @@ export interface CreateItemModalTexts {
   fields?: Record<string, string>;
   /** Option labels, keyed like `"status.DRAFT"`. */
   options?: Record<string, string>;
+  collectionTypeLabel?: string;
+  collectionManual?: string;
+  collectionAutomated?: string;
+  /** Passed straight to the rule builder. */
+  rules?: Record<string, never> | Record<string, unknown>;
 }
 
 export interface CreateItemModalProps {
@@ -72,6 +84,10 @@ export interface CreateItemModalProps {
   blocked?: { message: string; actionLabel?: string; onAction?: () => void } | null;
   /** §1.9 — values the form starts with when duplicating. */
   initialValues?: Record<string, string>;
+  /** §1.4b — rendered for collections. False below API 2026-07, where
+   *  `sources[]` does not exist and only manual collections are creatable. */
+  rulesAvailable?: boolean;
+  rulesUnavailableReason?: string;
   /** Options for `blogPicker` / `metaobjectType`, loaded by the caller. */
   dynamicOptions?: Record<string, Array<{ value: string; label: string; disabled?: boolean; helpText?: string }>>;
   /** Hands the payload to the caller. Fire-and-forget: the outcome arrives
@@ -94,6 +110,8 @@ export interface CreateSubmitPayload {
   values: Record<string, string>;
   imageUrl: string;
   imageAlt: string;
+  /** §1.4b — absent for a manual collection, which is the default. */
+  ruleSources?: RuleSource[];
   /** Minted per attempt — the server de-duplicates on it (§1.7). */
   requestId: string;
 }
@@ -112,6 +130,8 @@ export function CreateItemModal({
   extraFieldsKey,
   blocked = null,
   initialValues,
+  rulesAvailable = false,
+  rulesUnavailableReason,
   dynamicOptions = {},
   onSubmit,
   submitting = false,
@@ -126,6 +146,14 @@ export function CreateItemModal({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [touched, setTouched] = useState(false);
+
+  // §1.4b — empty means MANUAL, which is the default and stays the default.
+  // A merchant who wants a hand-picked collection should not have to dismiss
+  // a rule editor to get one.
+  const [ruleSources, setRuleSources] = useState<RuleSource[]>([]);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [rulesAdvanced, setRulesAdvanced] = useState(false);
+  const ruleErrors = useMemo(() => (rulesOpen ? validateRuleSources(ruleSources) : []), [rulesOpen, ruleSources]);
 
   // A metaobject's own fields appear only once its definition is chosen —
   // rendering them before that would ask for values against no schema.
@@ -179,7 +207,7 @@ export function CreateItemModal({
   const errorFor = (key: string) => shownErrors.find((e) => e.field === key);
 
   const isDirty = Object.values(values).some((v) => v.trim().length > 0) || !!image;
-  const canSubmit = !submitting && !blocked && localErrors.length === 0;
+  const canSubmit = !submitting && !blocked && localErrors.length === 0 && ruleErrors.length === 0;
 
   /**
    * Drop `field.*` values belonging to a metaobject definition that is no
@@ -215,11 +243,14 @@ export function CreateItemModal({
     onSubmit({
       resource,
       values: withSelectDefaults(values),
+      // Sent only when the merchant actually built rules — an empty tree must
+      // not turn a manual collection into an automated one with no rules.
+      ruleSources: rulesOpen && ruleSources.length > 0 ? ruleSources : undefined,
       imageUrl: image?.url ?? "",
       imageAlt: image?.alt ?? "",
       requestId: mintRequestId(),
     });
-  }, [localErrors, onSubmit, resource, values, image, withSelectDefaults]);
+  }, [localErrors, onSubmit, resource, values, image, withSelectDefaults, rulesOpen, ruleSources]);
 
   /**
    * The picker can return video and 3D as well. Swallowing those silently is
@@ -438,6 +469,49 @@ export function CreateItemModal({
             )}
 
             {!blocked && basicFields.map(renderField)}
+
+            {!blocked && resource === "collection" && (
+              <BlockStack gap="300">
+                <Select
+                  label={t.collectionTypeLabel || "How are products added?"}
+                  options={[
+                    { value: "manual", label: t.collectionManual || "I pick them myself" },
+                    { value: "automated", label: t.collectionAutomated || "Automatically, by rules" },
+                  ]}
+                  value={rulesOpen ? "automated" : "manual"}
+                  onChange={(value) => {
+                    const automated = value === "automated";
+                    setRulesOpen(automated);
+                    if (automated && ruleSources.length === 0) {
+                      setRuleSources([
+                        {
+                          title: "Rule set 1",
+                          inclusion: {
+                            matchType: "ALL",
+                            conditions: [newCondition("inclusion", conditionKinds("inclusion")[0].key, "c0")],
+                          },
+                        },
+                      ]);
+                    }
+                  }}
+                  disabled={!rulesAvailable}
+                  helpText={!rulesAvailable ? rulesUnavailableReason : undefined}
+                />
+
+                {rulesOpen && (
+                  <CollectionRuleBuilder
+                    sources={ruleSources}
+                    onChange={setRuleSources}
+                    errors={touched ? ruleErrors : []}
+                    available={rulesAvailable}
+                    unavailableReason={rulesUnavailableReason}
+                    showAdvanced={rulesAdvanced}
+                    onToggleAdvanced={() => setRulesAdvanced((v) => !v)}
+                    t={t.rules}
+                  />
+                )}
+              </BlockStack>
+            )}
 
             {!blocked && advancedFields.length > 0 && (
               <BlockStack gap="200">

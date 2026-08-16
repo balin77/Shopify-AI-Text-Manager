@@ -176,6 +176,7 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
       values: Record<string, string>;
       imageUrl: string;
       imageAlt: string;
+      ruleSources?: unknown[];
       requestId: string;
     }) => {
       setSubmitting(true);
@@ -190,6 +191,9 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
       formData.set("requestId", payload.requestId);
       if (payload.imageUrl) formData.set("imageUrl", payload.imageUrl);
       if (payload.imageAlt) formData.set("imageAlt", payload.imageAlt);
+      // §1.4b — only when rules were actually built. Absent means MANUAL, and
+      // the server takes the path that works on every pinned version.
+      if (payload.ruleSources?.length) formData.set("ruleSources", JSON.stringify(payload.ruleSources));
       // Prefixed so the server can tell a field value apart from a control
       // field without keeping a second list of reserved names.
       for (const [key, value] of Object.entries(payload.values)) {

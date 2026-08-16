@@ -661,3 +661,33 @@ export const DUPLICATE_COLLECTION = `#graphql
     }
   }
 `;
+
+/**
+ * Rule-based collection create — 2026-07 and later ONLY.
+ *
+ * The argument name differs from the manual path (`collection:` vs `input:`)
+ * because the whole input type is different: `CollectionCreateInput` carries
+ * `sources[]`, `CollectionInput` carries the deprecated `ruleSet`. The two are
+ * not interchangeable (PLAN §1.2a), which is why this is a separate mutation
+ * rather than a conditional variable on the existing one.
+ *
+ * `sources` is selected back so the echo can confirm the rules landed —
+ * NEVER `ruleSet`, which is a lossy projection that would report a
+ * multi-condition source as a single legacy rule.
+ */
+export const CREATE_COLLECTION_WITH_SOURCES = `#graphql
+  mutation createCollectionWithSources($collection: CollectionCreateInput!) {
+    collectionCreate(collection: $collection) {
+      collection {
+        id
+        title
+        handle
+        descriptionHtml
+        sortOrder
+        seo { title description }
+        sources { __typename }
+      }
+      userErrors { field message }
+    }
+  }
+`;

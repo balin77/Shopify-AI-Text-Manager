@@ -431,6 +431,7 @@ export const en: Translation = {
     // ── Duplicating (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicate",
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
+    rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
     duplicateModal: {
       title: "Duplicate \u201c{name}\u201d",
       intro: "Shopify copies everything \u2014 images, variants, options and metafields. You only need a name.",

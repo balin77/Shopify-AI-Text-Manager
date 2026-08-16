@@ -15,6 +15,8 @@ import type { CreatableResource, DeletableResource } from "../config/create-fiel
 import { useDeleteItem } from "../hooks/useDeleteItem";
 import { DeleteItemModal } from "./create/DeleteItemModal";
 import { useDuplicateItem } from "../hooks/useDuplicateItem";
+import { useRouteLoaderData } from "react-router";
+import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-rules.shared";
 import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
@@ -467,6 +469,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // The ONE delete path. Offered on the same tabs that can create — the types
   // this app cannot create are exactly the ones Shopify has no delete API for.
+  // §1.4b — the rule editor needs `sources[]`, which exists from API 2026-07.
+  // Below that only manual collections are creatable, and the type choice says
+  // so instead of offering an editor whose payload would be refused.
+  const appData = useRouteLoaderData("routes/app") as { shopifyApiVersion?: string } | undefined;
+  const rulesAvailable = rulesAvailableOn(appData?.shopifyApiVersion ?? "");
+
   const deleteItem = useDeleteItem({
     onDeleted: (target) => {
       // The selection now points at something that no longer exists.
@@ -1681,6 +1689,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onClose={createItem.close}
           resource={createItem.openResource}
           initialValues={createItem.initialValues}
+          rulesAvailable={rulesAvailable}
+          rulesUnavailableReason={
+            rulesAvailable
+              ? undefined
+              : (t.content?.rulesNeedApiUpgrade ||
+                  "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself."
+                ).replace("{version}", RULES_MIN_API_VERSION)
+          }
           dynamicOptions={createItem.dynamicOptions}
           extraFieldsByOption={createItem.extraFieldsByOption}
           extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}

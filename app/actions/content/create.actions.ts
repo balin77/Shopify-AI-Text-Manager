@@ -53,6 +53,15 @@ import {
 import { canAccessContentType, getMaxForResource, isAtLimit, type Plan } from "~/utils/planUtils";
 import type { ContentType } from "~/types/content-editor.types";
 import {
+  RULES_MIN_API_VERSION,
+  rulesAvailableOn,
+  toSourcesInput,
+  validateRuleSources,
+  type RuleSource,
+} from "~/config/collection-rules.shared";
+import { resolveApiVersionString } from "~/utils/api-version";
+import { CREATE_COLLECTION_WITH_SOURCES } from "~/graphql/content.mutations";
+import {
   claimCreateRequest,
   previousCreateResult,
   recordCreateResult,
@@ -191,6 +200,39 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
       imageAlt: getFormString(formData, "imageAlt") || "",
     };
 
+    // §1.4b — the rule tree for an automated collection. Validated against the
+    // SHARED spec, exactly like the field payload: the client's claim about
+    // which condition kinds and relations exist is never taken at face value,
+    // and the asymmetry between inclusion and exclusion is enforced here too.
+    let ruleSources: RuleSource[] = [];
+    if (resource === "collection") {
+      const raw = getFormString(formData, "ruleSources") || "";
+      if (raw) {
+        if (!rulesAvailableOn(resolveApiVersionString())) {
+          // The UI hides the editor below 2026-07; a direct POST must be
+          // refused rather than silently dropped, or the merchant would be
+          // told a rule was saved that was never sent.
+          return json(
+            {
+              success: false,
+              errorCode: "rulesUnavailable",
+              error: `Collection rules need Shopify API ${RULES_MIN_API_VERSION}; this app is on ${resolveApiVersionString()}.`,
+            },
+            { status: 400 },
+          );
+        }
+        try {
+          ruleSources = JSON.parse(raw) as RuleSource[];
+        } catch {
+          return json({ success: false, errorCode: "validation", error: "Malformed rule payload." }, { status: 400 });
+        }
+        const ruleErrors = validateRuleSources(ruleSources);
+        if (ruleErrors.length > 0) {
+          return json({ success: false, errorCode: "ruleValidation", ruleErrors, error: "Invalid collection rules." }, { status: 400 });
+        }
+      }
+    }
+
     // Metaobjects carry the definition's own fields, which only exist at
     // runtime — the validator has to be told about them or it would reject
     // every one of them as an unknown field.
@@ -228,7 +270,7 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
     let outcome: CreateOutcome;
     switch (resource) {
       case "product":     outcome = await createProduct(graphql, input); break;
-      case "collection":  outcome = await createCollection(graphql, input); break;
+      case "collection":  outcome = await createCollection(graphql, input, ruleSources); break;
       case "page":        outcome = await createPage(graphql, input); break;
       case "article":     outcome = await createArticle(graphql, input); break;
       case "blog":        outcome = await createBlog(graphql, input); break;
@@ -430,6 +472,7 @@ async function createProduct(
 async function createCollection(
   graphql: (q: string, v: Record<string, unknown>) => Promise<GraphQLResponse>,
   input: CreateInput,
+  ruleSources: RuleSource[],
 ): Promise<CreateOutcome> {
   const title = str(input, "title");
 
@@ -449,7 +492,18 @@ async function createCollection(
     collectionInput.image = { src: input.imageUrl, altText: input.imageAlt || undefined };
   }
 
-  const response = await graphql(CREATE_COLLECTION, { input: stripUndefined(collectionInput) });
+  // TWO shapes on purpose. A MANUAL collection goes through the deprecated
+  // `input: CollectionInput`, which exists on every version this app can be
+  // pinned to — so creating one is not held hostage to the API move. A
+  // RULE-BASED one needs `collection: CollectionCreateInput` with `sources[]`,
+  // which only exists from 2026-07; the caller has already refused the request
+  // if that is not reachable.
+  const hasRules = ruleSources.some((s) => !s.unrenderable);
+  const response = hasRules
+    ? await graphql(CREATE_COLLECTION_WITH_SOURCES, {
+        collection: stripUndefined({ ...collectionInput, sources: toSourcesInput(ruleSources) }),
+      })
+    : await graphql(CREATE_COLLECTION, { input: stripUndefined(collectionInput) });
   const payload = response.data?.collectionCreate;
   const errorText = userErrorText(payload?.userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
   const collection = payload?.collection;

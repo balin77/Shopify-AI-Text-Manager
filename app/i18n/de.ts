@@ -428,6 +428,7 @@ export const de = {
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplizieren",
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
+    rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
     duplicateModal: {
       title: "\u201e{name}\u201c duplizieren",
       intro: "Shopify kopiert alles mit \u2014 Bilder, Varianten, Optionen und Metafelder. Du brauchst nur einen Namen.",
