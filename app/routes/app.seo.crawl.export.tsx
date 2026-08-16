@@ -25,6 +25,7 @@ import type { Plan } from "../config/plans";
 import { toCsv, csvFilename, type CsvColumn } from "../services/seo/csv-export";
 import { classifyLinkStatus, isBotBlockStatus } from "../services/seo/crawl.service";
 import { EXTERNAL_NOT_CHECKED } from "../services/seo/external-links.shared";
+import { isAuditType } from "../services/seo/resource-types.shared";
 
 const CATEGORIES = [
   "allPages",
@@ -179,7 +180,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         snapshot.status === "capped"
           ? []
           : pages.filter(
-              (p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0,
+              // Same narrowing as the tab and the persisted orphanCount.
+              (p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0,
             );
       break;
     case "slowest":

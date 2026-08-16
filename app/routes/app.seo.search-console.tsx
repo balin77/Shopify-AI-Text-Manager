@@ -70,7 +70,7 @@ import {
   type KeywordResourceType,
 } from "../services/seo/keywords.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
-import { resolvePathsToResources } from "../services/seo/url-resolver.server";
+import { resolvePathsToResources, isContentResourceType } from "../services/seo/url-resolver.server";
 import {
   analyzeFreshness,
   excludeDismissed,
@@ -169,8 +169,12 @@ async function resolveQuickWinResources(
     const r = resolved.get(opp.page);
     return {
       ...opp,
-      resourceType: r?.id ? (r.resourceType as KeywordResourceType) : null,
-      resourceId: r?.id ?? null,
+      // `isContentResourceType`, not just `r?.id`: a policy page resolves to a
+      // real ShopPolicy id but is not a keyword target (no handle, no SEO
+      // title). Leaving it null keeps the row on its item-picker fallback
+      // instead of rendering an Optimize button the action rejects.
+      resourceType: r?.id && isContentResourceType(r.resourceType) ? (r.resourceType as KeywordResourceType) : null,
+      resourceId: r?.id && isContentResourceType(r.resourceType) ? r.id : null,
     };
   });
 }
@@ -707,7 +711,11 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       // page should be tracked against the FR edition (§4.2 Locale-Hinweis).
       const page = getFormString(form, "page");
       const resolved = page ? resolveGscPagePath(page) : null;
-      if (resolved) {
+      // "Policy" is a resolvable storefront page (the crawl report deep-links
+      // it) but not a keyword TARGET: ShopPolicy has no handle, no SEO title
+      // and no meta description to optimize against. Left unresolved on
+      // purpose, which routes the row into the existing item-picker modal.
+      if (resolved && resolved.resourceType !== "Policy") {
         try {
           const model =
             resolved.resourceType === "Product"

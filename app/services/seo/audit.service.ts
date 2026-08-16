@@ -25,7 +25,12 @@ import {
   type OnPageRow,
 } from "./onpage.service";
 
-export type AuditType = "product" | "collection" | "article" | "page";
+// The resource-type vocabulary lives in `resource-types.shared.ts` (a value
+// import from crawl.service.ts would otherwise close the import cycle between
+// these two modules). Re-exported here so every existing `AuditType` import
+// site keeps working unchanged.
+export { isAuditType, type AuditType, type DeepLinkType } from "./resource-types.shared";
+import { isAuditType, type AuditType } from "./resource-types.shared";
 
 /** Per-type cap. Keeps the largest shops bounded; reported via `capped`. */
 export const MAX_AUDIT_ITEMS_PER_TYPE = 1000;
@@ -595,7 +600,7 @@ async function buildCrawlProblemBuckets(
   const brokenAffected = new Map<string, { type: AuditType; id: string; title: string }>();
   for (const bl of brokenLinks) {
     const from = pageByUrl.get(bl.fromUrl);
-    if (!from?.resourceId || !from.resourceType || from.resourceType === "unknown") continue;
+    if (!from?.resourceId || !isAuditType(from.resourceType)) continue;
     const key = `${from.resourceType}:${from.resourceId}`;
     if (!brokenAffected.has(key)) {
       brokenAffected.set(key, { type: from.resourceType as AuditType, id: from.resourceId, title: from.title || "" });
@@ -622,7 +627,7 @@ async function buildCrawlProblemBuckets(
       code: "serverErrors",
       count: serverErrorPages.length,
       items: serverErrorPages
-        .filter((p) => p.resourceId && p.resourceType && p.resourceType !== "unknown")
+        .filter((p) => p.resourceId && isAuditType(p.resourceType))
         .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
         .map((p) => ({
           type: p.resourceType as AuditType,
@@ -637,7 +642,7 @@ async function buildCrawlProblemBuckets(
   // capped crawl produces phantom orphans on any large shop.
   if (snapshot.status !== "capped") {
     const orphans = pages.filter(
-      (p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0,
+      (p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0,
     );
     if (orphans.length > 0) {
       buckets.push({
@@ -659,8 +664,7 @@ async function buildCrawlProblemBuckets(
     .filter(
       (p) =>
         p.resourceId &&
-        p.resourceType &&
-        p.resourceType !== "unknown" &&
+        isAuditType(p.resourceType) &&
         p.locale === "" &&
         p.statusCode >= 200 &&
         p.statusCode < 300,
@@ -714,7 +718,7 @@ async function buildOnPageProblemBuckets(
     findings: Array<{ resourceType: string | null; resourceId: string | null; url: string; title?: string | null }>,
   ) =>
     findings
-      .filter((f) => f.resourceId && f.resourceType && f.resourceType !== "unknown")
+      .filter((f) => f.resourceId && isAuditType(f.resourceType))
       .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
       .map((f) => ({
         type: f.resourceType as AuditType,

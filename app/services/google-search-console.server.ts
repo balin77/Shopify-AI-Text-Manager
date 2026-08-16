@@ -15,7 +15,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
-import { resolvePathsToResources } from "./seo/url-resolver.server";
+import { resolvePathsToResources, isContentResourceType } from "./seo/url-resolver.server";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -897,8 +897,12 @@ export async function enrichPageStatsFromGsc(db: PrismaClient, shop: string, now
     const page = row.keys?.[0];
     if (!page) continue;
     const ref = resolved.get(page);
-    const resourceType = ref?.id ? ref.resourceType : null;
-    const resourceId = ref?.id ?? null;
+    // A policy page resolves to a real ShopPolicy id, but this column's domain
+    // is the four content types every reader narrows to (freshness, quick
+    // wins). Storing "Policy" would put a value in the table that nothing maps.
+    const usable = !!ref?.id && isContentResourceType(ref.resourceType);
+    const resourceType = usable ? ref!.resourceType : null;
+    const resourceId = usable ? ref!.id : null;
     await db.seoGscPageStat.upsert({
       where: { shop_page: { shop, page } },
       create: {
