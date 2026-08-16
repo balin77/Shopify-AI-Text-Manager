@@ -1073,16 +1073,8 @@ model SeoKeyword {
   id       String @id @default(cuid())
   shop     String
   keyword  String // lowercased, single-spaced (normalizeKeyword)
-  locale   String  @default("") // "" = primary/default locale
-  priority Int     @default(2) // 1 = high, 2 = medium, 3 = low
-  // DEAD COLUMN — the search-intent classifier is removed and nothing reads or
-  // writes this any more (see KEYWORDS_CONTRACT §7). It stays declared on
-  // purpose: dropping it in the SAME release that stops reading it breaks the
-  // cutover window, because Railway runs the migration on the new container's
-  // start while the old one is still serving `SELECT ... "intent" ...` (Prisma
-  // emits explicit column lists). Drop it in a FOLLOW-UP deploy, once no
-  // running container knows the column.
-  intent   String?
+  locale   String @default("") // "" = primary/default locale
+  priority Int    @default(2) // 1 = high, 2 = medium, 3 = low
 
   assignments SeoKeywordAssignment[]
   groups      SeoKeywordGroupMembership[]

@@ -1,0 +1,20 @@
+-- Drop the dead search-intent column from SeoKeyword.
+--
+-- The column held one of "informational" | "commercial" | "transactional" |
+-- "navigational", written by an LLM classifier over the keyword TEXT alone.
+-- That is not decidable from the text: "Stifthalter" is a comparison query for
+-- one searcher and a purchase query for the next, and the single stored label
+-- forced one reading on both. The feature was removed in the release before
+-- this one; nothing has read or written the column since.
+--
+-- DEPLOY ORDER MATTERS. This must NOT ship in the same release as the code
+-- removal. Railway runs migrations on the new container's start while the old
+-- one is still serving traffic, and any container built before that release
+-- emits `SELECT ... "intent" ...` (Prisma writes explicit column lists) — it
+-- would fail on the keywords page and in AI text generation for the whole
+-- cutover window. Merge this only once the intent-free release is live.
+--
+-- DESTRUCTIVE: the classifications are gone for good afterwards. They carry no
+-- merchant-authored content — every value was machine-generated — so no
+-- backfill table is kept.
+ALTER TABLE "SeoKeyword" DROP COLUMN IF EXISTS "intent";
