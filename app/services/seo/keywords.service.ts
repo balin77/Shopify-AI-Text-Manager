@@ -1222,6 +1222,144 @@ export async function deleteKeyword(
   });
 }
 
+// ── Creating and renaming a single keyword (inline table editing) ───────────
+
+/**
+ * Stem of the auto-generated name a freshly added keyword carries until the
+ * merchant types over it — the table adds a row in edit mode rather than
+ * asking for the text up front, so the row needs SOME name to exist under.
+ * Deliberately not translated: it is stored as the keyword text itself, and a
+ * merchant switching UI language must not end up with two naming schemes.
+ */
+export const PLACEHOLDER_KEYWORD_BASE = "keyword";
+
+const PLACEHOLDER_PATTERN = new RegExp(`^${PLACEHOLDER_KEYWORD_BASE} (\\d+)$`);
+
+export type CreateKeywordResult =
+  | { ok: true; keywordId: string; keyword: string }
+  | { ok: false; reason: "notFound" };
+
+/**
+ * Add ONE empty-but-named keyword, ready to be renamed inline.
+ *
+ * The name is the lowest free `keyword N` within the target language, so a
+ * merchant adding three rows in a row gets 1, 2, 3 — and a gap left by a
+ * deleted placeholder is reused instead of counting ever upwards. Scoped per
+ * LOCALE because that is what the uniqueness key is scoped to: "keyword 1" may
+ * legitimately exist once per language.
+ *
+ * `groupId` null creates the keyword outside any group (the "Ohne Gruppe"
+ * bucket), which is what the pseudo views need; with a group, the group owns
+ * the locale (§3.1) and the passed one is ignored.
+ */
+export async function createKeyword(
+  db: PrismaClient,
+  shop: string,
+  input: { groupId: string | null; locale: string },
+): Promise<CreateKeywordResult> {
+  let locale = input.locale;
+  if (input.groupId) {
+    const group = await db.seoKeywordGroup.findFirst({
+      where: { id: input.groupId, shop },
+      select: { locale: true },
+    });
+    if (!group) return { ok: false, reason: "notFound" };
+    locale = group.locale;
+  }
+
+  // Retry on the unique key: two tabs adding a row at the same moment would
+  // otherwise both compute the same free number and one would blow up.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const taken = await db.seoKeyword.findMany({
+      where: { shop, locale, keyword: { startsWith: `${PLACEHOLDER_KEYWORD_BASE} ` } },
+      select: { keyword: true },
+    });
+    const used = new Set<number>();
+    for (const row of taken) {
+      const match = PLACEHOLDER_PATTERN.exec(row.keyword);
+      if (match) used.add(Number(match[1]));
+    }
+    let n = 1;
+    while (used.has(n)) n += 1;
+    const keyword = `${PLACEHOLDER_KEYWORD_BASE} ${n}`;
+
+    try {
+      const created = await db.seoKeyword.create({
+        data: { shop, keyword, locale },
+        select: { id: true },
+      });
+      if (input.groupId) {
+        await db.seoKeywordGroupMembership.create({
+          data: { shop, groupId: input.groupId, keywordId: created.id },
+        });
+      }
+      return { ok: true, keywordId: created.id, keyword };
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      // Someone took that number in between — recompute and try again.
+    }
+  }
+  return { ok: false, reason: "notFound" };
+}
+
+export type RenameKeywordResult =
+  | { ok: true; keywordId: string; keyword: string }
+  | { ok: false; reason: "notFound" | "duplicate" | "invalid" };
+
+/**
+ * Rename a keyword in place — the inline table edit.
+ *
+ * A rename is NOT a merge: (shop, keyword, locale) is unique, so renaming onto
+ * a keyword the language already tracks would have to fold two keywords (and
+ * their assignments and ranking history) into one. That is what `moveKeyword`
+ * does deliberately and visibly for a language change; doing it silently
+ * behind a text edit would quietly destroy history, so a collision is
+ * REJECTED and the UI says which keyword is in the way.
+ */
+export async function renameKeyword(
+  db: PrismaClient,
+  shop: string,
+  keywordId: string,
+  nextKeyword: string,
+): Promise<RenameKeywordResult> {
+  const keyword = normalizeKeyword(nextKeyword);
+  if (!keyword || keyword.length > MAX_KEYWORD_LENGTH) {
+    return { ok: false, reason: "invalid" };
+  }
+  const row = await db.seoKeyword.findFirst({
+    where: { id: keywordId, shop },
+    select: { id: true, keyword: true, locale: true },
+  });
+  if (!row) return { ok: false, reason: "notFound" };
+  // Normalizing can make an edit a no-op ("Vase " → "vase"); report success so
+  // the cell simply closes instead of showing a spurious duplicate error.
+  if (row.keyword === keyword) return { ok: true, keywordId: row.id, keyword };
+
+  const clash = await db.seoKeyword.findFirst({
+    where: { shop, keyword, locale: row.locale },
+    select: { id: true },
+  });
+  if (clash) return { ok: false, reason: "duplicate" };
+
+  try {
+    await db.seoKeyword.update({ where: { id: row.id }, data: { keyword } });
+  } catch (error) {
+    // Lost the race against a concurrent writer — same answer as the check.
+    if (isUniqueViolation(error)) return { ok: false, reason: "duplicate" };
+    throw error;
+  }
+  return { ok: true, keywordId: row.id, keyword };
+}
+
+/** Prisma's unique-constraint code, without a runtime @prisma/client import. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
 // ── Moving a keyword between groups and/or languages ────────────────────────
 
 export interface MoveKeywordInput {

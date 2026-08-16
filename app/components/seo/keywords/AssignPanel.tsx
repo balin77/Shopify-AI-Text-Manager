@@ -63,6 +63,9 @@ export interface AssignPanelProps {
   /** Kick off an AI distribution over the selected items (§3). */
   startDistribution: (opts: {
     resourceIds: string[];
+    /** The keyword subset this panel was opened for — the AI run is scoped to
+     *  it, so "Zuordnen" on a selection means those keywords, not the group. */
+    keywordIds: string[];
     targetType: KeywordResourceType;
     maxSecondaries: string;
   }) => void;
@@ -207,7 +210,12 @@ export function AssignPanel({
 
   const startAi = () => {
     if (!canUseAi || aiResourceIds.length === 0 || runningDistribution) return;
-    startDistribution({ resourceIds: aiResourceIds, targetType: aiTargetType, maxSecondaries });
+    startDistribution({
+      resourceIds: aiResourceIds,
+      keywordIds,
+      targetType: aiTargetType,
+      maxSecondaries,
+    });
     onClose();
   };
 

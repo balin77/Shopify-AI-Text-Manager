@@ -161,7 +161,29 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
     return json({ success: false, error: "Keyword group not found." }, { status: 404 });
   }
 
-  const groupKeywords = await getGroupKeywords(db, session.shop, groupId);
+  // Optional explicit keyword selection, the counterpart to `resourceIds`:
+  // the assign panel is opened from a checkbox selection now, so "distribute"
+  // must mean THOSE keywords, not the whole group. Without this the AI mode
+  // silently distributed all of a 50-keyword group when three were ticked.
+  // Intersected against the group's own keywords, never trusted as a list of
+  // ids to load — a foreign id can only shrink the run, never widen it.
+  let keywordIds: Set<string> | undefined;
+  const rawKeywordIds = getFormString(formData, "keywordIds");
+  if (rawKeywordIds) {
+    try {
+      const parsed = JSON.parse(rawKeywordIds);
+      if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string") && parsed.length > 0) {
+        keywordIds = new Set(parsed as string[]);
+      }
+    } catch {
+      // Malformed selection — fall back to the whole group.
+    }
+  }
+
+  const allGroupKeywords = await getGroupKeywords(db, session.shop, groupId);
+  const groupKeywords = keywordIds
+    ? allGroupKeywords.filter((kw) => keywordIds.has(kw.keywordId))
+    : allGroupKeywords;
   if (groupKeywords.length === 0) {
     return json({ success: false, error: "This group has no keywords to distribute." }, { status: 400 });
   }

@@ -9,6 +9,8 @@ import {
   removeAssignment,
   moveKeyword,
   deleteKeyword,
+  createKeyword,
+  renameKeyword,
   listAssignments,
   MAX_KEYWORDS_PER_ITEM,
   buildTranslatedContentInput,
@@ -1111,5 +1113,159 @@ describe("deleteKeyword", () => {
       where: { id: "foreign", shop: SHOP },
       select: { id: true },
     });
+  });
+});
+
+/**
+ * Inline table editing: "+ Keyword" adds a row under an auto-generated name
+ * and the name is then edited in place. The two rules worth pinning down are
+ * the placeholder numbering (lowest FREE number, per language) and that a
+ * rename never silently merges two keywords.
+ */
+describe("createKeyword — placeholder rows for inline editing", () => {
+  const SHOP = "s.myshopify.com";
+
+  function makeDb(existing: { keyword: string }[], group?: { locale: string } | null) {
+    const create = vi.fn(async (_args: any) => ({ id: "new-id" }));
+    const membershipCreate = vi.fn(async (_args: any) => ({}));
+    const db = {
+      seoKeyword: {
+        findMany: vi.fn(async (_args: any) => existing),
+        create,
+      },
+      seoKeywordGroup: { findFirst: vi.fn(async (_args: any) => group ?? null) },
+      seoKeywordGroupMembership: { create: membershipCreate },
+    } as any;
+    return { db, create, membershipCreate };
+  }
+
+  it("numbers from 1 when the language has no placeholders yet", async () => {
+    const { db, create } = makeDb([]);
+    const result = await createKeyword(db, SHOP, { groupId: null, locale: "" });
+    expect(result).toEqual({ ok: true, keywordId: "new-id", keyword: "keyword 1" });
+    expect(create).toHaveBeenCalledWith({
+      data: { shop: SHOP, keyword: "keyword 1", locale: "" },
+      select: { id: true },
+    });
+  });
+
+  it("reuses the lowest FREE number rather than counting ever upwards", async () => {
+    // "keyword 2" was deleted — the next row takes that slot back.
+    const { db, create } = makeDb([{ keyword: "keyword 1" }, { keyword: "keyword 3" }]);
+    const result = await createKeyword(db, SHOP, { groupId: null, locale: "" });
+    expect(result).toMatchObject({ ok: true, keyword: "keyword 2" });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ keyword: "keyword 2" }) }),
+    );
+  });
+
+  it("ignores real keywords that merely start with the stem", async () => {
+    const { db } = makeDb([{ keyword: "keyword tool vergleich" }, { keyword: "keyword 1" }]);
+    const result = await createKeyword(db, SHOP, { groupId: null, locale: "" });
+    expect(result).toMatchObject({ keyword: "keyword 2" });
+  });
+
+  it("takes the locale from the GROUP, not from the caller (§3.1)", async () => {
+    const { db, create, membershipCreate } = makeDb([], { locale: "fr" });
+    const result = await createKeyword(db, SHOP, { groupId: "g1", locale: "de" });
+    expect(result).toMatchObject({ ok: true });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ locale: "fr" }) }),
+    );
+    expect(membershipCreate).toHaveBeenCalledWith({
+      data: { shop: SHOP, groupId: "g1", keywordId: "new-id" },
+    });
+  });
+
+  it("is shop-scoped: an unknown or foreign group creates nothing", async () => {
+    const { db, create } = makeDb([], null);
+    const result = await createKeyword(db, SHOP, { groupId: "foreign", locale: "" });
+    expect(result).toEqual({ ok: false, reason: "notFound" });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("recomputes the number when another writer took it (unique-key race)", async () => {
+    const { db } = makeDb([]);
+    let calls = 0;
+    db.seoKeyword.findMany = vi.fn(async (_args: any) =>
+      calls++ === 0 ? [] : [{ keyword: "keyword 1" }],
+    );
+    db.seoKeyword.create = vi.fn(async (args: any) => {
+      if (args.data.keyword === "keyword 1") throw Object.assign(new Error("dup"), { code: "P2002" });
+      return { id: "new-id" };
+    });
+    const result = await createKeyword(db, SHOP, { groupId: null, locale: "" });
+    expect(result).toMatchObject({ ok: true, keyword: "keyword 2" });
+  });
+});
+
+describe("renameKeyword — inline rename never merges", () => {
+  const SHOP = "s.myshopify.com";
+
+  function makeDb(row: any, clash: any = null) {
+    const update = vi.fn(async (_args: any) => ({}));
+    let call = 0;
+    const db = {
+      seoKeyword: {
+        // First findFirst resolves the row, second looks for a collision.
+        findFirst: vi.fn(async (_args: any) => (call++ === 0 ? row : clash)),
+        update,
+      },
+    } as any;
+    return { db, update };
+  }
+
+  it("normalizes before writing", async () => {
+    const { db, update } = makeDb({ id: "kw1", keyword: "alt", locale: "" });
+    const result = await renameKeyword(db, SHOP, "kw1", "  Blaue   SCHUHE ");
+    expect(result).toEqual({ ok: true, keywordId: "kw1", keyword: "blaue schuhe" });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: "kw1" },
+      data: { keyword: "blaue schuhe" },
+    });
+  });
+
+  it("treats an edit that normalizes back to the same text as a no-op success", async () => {
+    const { db, update } = makeDb({ id: "kw1", keyword: "blaue schuhe", locale: "" });
+    const result = await renameKeyword(db, SHOP, "kw1", "Blaue Schuhe ");
+    expect(result).toMatchObject({ ok: true, keyword: "blaue schuhe" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("REJECTS a rename onto a keyword the language already has", async () => {
+    const { db, update } = makeDb({ id: "kw1", keyword: "alt", locale: "" }, { id: "kw2" });
+    const result = await renameKeyword(db, SHOP, "kw1", "neu");
+    expect(result).toEqual({ ok: false, reason: "duplicate" });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("reports a lost unique-key race as a duplicate, not a crash", async () => {
+    const { db } = makeDb({ id: "kw1", keyword: "alt", locale: "" });
+    db.seoKeyword.update = vi.fn(async () => {
+      throw Object.assign(new Error("dup"), { code: "P2002" });
+    });
+    await expect(renameKeyword(db, SHOP, "kw1", "neu")).resolves.toEqual({
+      ok: false,
+      reason: "duplicate",
+    });
+  });
+
+  it("rejects empty and over-long text without touching the DB", async () => {
+    const { db, update } = makeDb({ id: "kw1", keyword: "alt", locale: "" });
+    expect(await renameKeyword(db, SHOP, "kw1", "   ")).toEqual({ ok: false, reason: "invalid" });
+    expect(await renameKeyword(db, SHOP, "kw1", "x".repeat(121))).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("is shop-scoped: an unknown or foreign id renames nothing", async () => {
+    const { db, update } = makeDb(null);
+    expect(await renameKeyword(db, SHOP, "foreign", "neu")).toEqual({
+      ok: false,
+      reason: "notFound",
+    });
+    expect(update).not.toHaveBeenCalled();
   });
 });
