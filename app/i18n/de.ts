@@ -1215,6 +1215,9 @@ export const de = {
       seoBulkMeta: "Bulk-Editor-Speichern",
       bulkEditorTranslate: "Bulk-Editor-Übersetzung",
       distributeKeywords: "Keyword-Verteilung",
+      // Die Intent-Klassifizierung ist entfernt. Neue Tasks dieses Typs kann
+      // niemand mehr starten, aber bereits gespeicherte Zeilen stehen bis zu
+      // ihrem Ablauf im Aufgaben-Tab — ohne dieses Label als roher Bezeichner.
       keywordIntent: "Keyword-Intent-Klassifizierung",
       pageSpeed: "Ladezeit-Test",
       seoJsonLdAudit: "JSON-LD-Batch-Prüfung",
@@ -1277,7 +1280,6 @@ export const de = {
     robotsAdviceCompleted: "robots.txt-Analyse abgeschlossen",
     bulkEditorSaveCompleted: "Bulk-Editor: Änderungen gespeichert",
     bulkEditorTranslateCompleted: "Bulk-Editor: Übersetzung abgeschlossen",
-    keywordIntentCompleted: "Keyword-Analyse abgeschlossen",
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
     taskTimedOut: "Zeitüberschreitung — die Aufgabe hat zu lange keinen Fortschritt gemeldet und wurde abgebrochen. Bitte erneut starten.",
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
@@ -2423,7 +2425,7 @@ export const de = {
       groupSidebarCreate: "Neue Gruppe",
       libraryEmptyPrompt: "Wähle links eine Gruppe oder „Alle“ / „Ohne Gruppe“, um die Keywords zu sehen.",
       pasteLabel: "Keywords einfügen",
-      pastePlaceholder: "vase gross\nvase glas klar\nkeramikvase handgemacht,1,commercial",
+      pastePlaceholder: "vase gross\nvase glas klar\nkeramikvase handgemacht,1",
       pasteButton: "Einfügen",
       pasteDefaultPriority: "Priorität",
       researchToggle: "Recherche",
@@ -2439,6 +2441,9 @@ export const de = {
       selectionCount: "{count} ausgewählt",
       selectionClear: "Auswahl aufheben",
       selectionNeeded: "Zuerst links Keywords per Checkbox auswählen.",
+      setPriority: "Priorität",
+      setPriorityHint: "Setzt die Priorität für alle ausgewählten Keywords.",
+      priorityForKeyword: "Priorität von „{keyword}“",
       selectionTooMany: "Zu viele Keywords auf einmal ausgewählt — bitte höchstens {max} gleichzeitig bearbeiten.",
       moveFailedSome: "{failed} Keyword(s) konnten nicht verschoben werden ({moved} verschoben).",
       loading: "Lädt…",
@@ -2448,14 +2453,13 @@ export const de = {
       editKeywordHint: "„{keyword}“ umbenennen",
       editKeywordCommitHint: "Enter oder Klick daneben speichert · Esc bricht ab",
       duplicateKeyword: "Dieses Keyword gibt es in dieser Sprache bereits.",
-      colIntent: "Intention",
       assignmentsNone: "keine",
       // Massen-Import, jetzt hinter einem Button statt dauerhaft sichtbar.
       importButton: "Importieren",
       importHint: "Mehrere Keywords auf einmal einfügen — eine Zeile pro Keyword.",
       importModalTitle: "Keywords importieren",
       importModalIntro:
-        "Eine Zeile pro Keyword. Optional pro Zeile mit Komma getrennt: Priorität (1–3) und Intention.",
+        "Eine Zeile pro Keyword, optional mit Komma und der Priorität (1–3) dahinter. Die Sprache bestimmt die Gruppe, in die importiert wird.",
       importModalPriorityHint: "Gilt für Zeilen ohne eigene Priorität.",
       // Tooltips der Aktionsleiste.
       moveKeywordHint: "Verschiebt die Auswahl in eine andere Gruppe oder Sprache.",
@@ -2466,7 +2470,6 @@ export const de = {
       distributeEmptyHint: "Diese Gruppe hat noch keine Keywords.",
       distributeRunningHint: "Es läuft bereits eine Verteilung.",
       groupDeleteHint: "Löscht nur die Gruppe. Die Keywords selbst bleiben erhalten.",
-      bulkPriorityHint: "Setzt die links gewählte Priorität für alle Keywords dieser Gruppe.",
       keywordsDeleteConfirmTitle: "{count} Keywords endgültig löschen?",
       keywordsDeleteConfirmBody: "{count} Keywords werden gelöscht. Das lässt sich nicht rückgängig machen.",
       keywordsDeleteConfirmBodyAssigned: "{count} Keywords werden gelöscht — samt {assignments} Inhalts-Zuordnung(en) und deren Ranking-Verlauf. Das lässt sich nicht rückgängig machen.",
@@ -2490,7 +2493,6 @@ export const de = {
       csvErrors: {
         tooLong: "Keyword zu lang",
         badPriority: "Ungültige Priorität (erlaubt: 1, 2, 3)",
-        badIntent: "Ungültige Intention (informational/commercial/transactional/navigational)",
         badLocale: "Unbekannte Sprache",
       } as Record<string, string>,
       distributeButton: "Auf Inhalte verteilen",
@@ -2565,34 +2567,12 @@ export const de = {
       // Fachbegriffe — als nacktes Badge in der Tabelle waren sie für
       // Merchants nicht lesbar, deshalb sprechende Labels plus die Legende
       // darunter.
-      intents: {
-        informational: "Info-Suche",
-        commercial: "Vergleich",
-        transactional: "Kaufabsicht",
-        navigational: "Marken-Suche",
-      } as Record<string, string>,
-      intentExplain: {
-        informational: "will etwas erfahren — „vase reinigen“",
-        commercial: "vergleicht vor dem Kauf — „beste keramikvase“",
-        transactional: "will jetzt kaufen — „keramikvase kaufen“",
-        navigational: "sucht eine bestimmte Marke — „ikea vasen“",
-      } as Record<string, string>,
-      intentLegendTitle: "Intention",
-      intentFilterLabel: "Intent",
-      intentFilterAll: "Alle Intents",
-      intentFilterNone: "Nicht klassifiziert",
-      classifyButton: "Intent klassifizieren ({count} offen)",
-      classifyDone: "{count} Keyword(s) klassifiziert, {remaining} verbleibend.",
       cannibalizationConfirmTitle: "Keyword bereits woanders Primary",
       cannibalizationConfirmBody: "„{keyword}“ ist bereits das Primary-Keyword von „{item}“. Zwei Inhalte, die um dasselbe Keyword konkurrieren, kannibalisieren sich bei Google. Trotzdem hier als Primary tracken?",
       cannibalizationConfirm: "Trotzdem tracken",
       groupRename: "Umbenennen",
       groupRenameLabel: "Neuer Name",
       groupRenameSave: "Speichern",
-      bulkPriorityLabel: "Priorität für ALLE setzen",
-      bulkPriorityConfirmTitle: "Priorität für alle Keywords setzen?",
-      bulkPriorityConfirmBody: "Setzt die Priorität aller {count} Keywords dieser Gruppe.",
-      bulkPriorityApply: "Auf alle anwenden",
       distModalFilterType: "Filter: Produkt-Typ",
       distModalFilterAll: "Alle",
       distModalFilterCapped: "Es werden nur die ersten 100 Produkt-Typen angeboten.",
@@ -3197,7 +3177,7 @@ export const de = {
     keywordsAssignments: {
       title: "Zuordnungen",
       summary:
-        "Diese Liste zeigt pro Inhalt die in der aktiven Sprache zugewiesenen Keywords. Filtere nach Text, Intent oder Score, klappe einen Eintrag auf, um seine Keywords zu sehen, und lege ein primäres Keyword je Inhalt fest.",
+        "Diese Liste zeigt pro Inhalt die in der aktiven Sprache zugewiesenen Keywords. Filtere nach Text oder Score, klappe einen Eintrag auf, um seine Keywords zu sehen, und lege ein primäres Keyword je Inhalt fest.",
       tips: [
         "Einen Eintrag aufklappen zeigt seine Keywords",
         "Das primäre Keyword ist das Haupt-Ziel des Inhalts",
@@ -3230,7 +3210,7 @@ export const de = {
         "Keywords gelten pro Sprache: Sprache im Editor wechseln heißt, den Satz dieser Sprache bearbeiten",
       ],
       details:
-        "Hinterlegte Keywords sind nicht nur Dokumentation — die KI nutzt sie. Beim Generieren von Titel, SEO-Titel, Meta-Description, Beschreibung, URL-Slug oder Alt-Text geht das Primary-Keyword als Anforderung in den Prompt, die Secondaries als Angebot und die klassifizierte Suchintention als Kontext. Danach wird das Ergebnis auf Stuffing geprüft: Bei zu hoher Dichte wird einmal automatisch neu generiert, und wenn auch der zweite Versuch überzieht, bekommen Sie eine Warnung statt eines still schlechten Textes. Die Formatieren-Funktion geht behutsamer vor: Sie erhält vorhandene Keywords und arbeitet ein fehlendes Primary-Keyword durch Umformulieren eines Satzes ein, fügt aber nie die Secondaries hinzu.",
+        "Hinterlegte Keywords sind nicht nur Dokumentation — die KI nutzt sie. Beim Generieren von Titel, SEO-Titel, Meta-Description, Beschreibung, URL-Slug oder Alt-Text geht das Primary-Keyword als Anforderung in den Prompt, die Secondaries als Angebot. Danach wird das Ergebnis auf Stuffing geprüft: Bei zu hoher Dichte wird einmal automatisch neu generiert, und wenn auch der zweite Versuch überzieht, bekommen Sie eine Warnung statt eines still schlechten Textes. Die Formatieren-Funktion geht behutsamer vor: Sie erhält vorhandene Keywords und arbeitet ein fehlendes Primary-Keyword durch Umformulieren eines Satzes ein, fügt aber nie die Secondaries hinzu.",
     },
     seoSidebarJsonLd: {
       title: "Strukturierte Daten (JSON-LD)",

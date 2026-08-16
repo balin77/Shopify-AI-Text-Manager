@@ -39,7 +39,6 @@ const SITE_WIDE_TASK_MESSAGE_KEY: Record<string, string> = {
   // reasons (CLAUDE.md) — the message must not repeat that name at merchants.
   seoBulkMeta: "bulkEditorSaveCompleted",
   bulkEditorTranslate: "bulkEditorTranslateCompleted",
-  keywordIntent: "keywordIntentCompleted",
 };
 
 /** English fallbacks, mirroring the inline `||` defaults used elsewhere here. */
@@ -51,7 +50,6 @@ const SITE_WIDE_TASK_FALLBACK: Record<string, string> = {
   seoRobotsAdvice: "robots.txt analysis finished",
   seoBulkMeta: "Bulk editor: changes saved",
   bulkEditorTranslate: "Bulk editor: translation finished",
-  keywordIntent: "Keyword analysis finished",
 };
 
 export function MainNavigation() {

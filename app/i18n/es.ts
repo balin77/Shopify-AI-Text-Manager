@@ -1217,6 +1217,9 @@ export const es: Translation = {
       seoBulkMeta: "Guardado del editor masivo",
       bulkEditorTranslate: "Traducción del editor masivo",
       distributeKeywords: "Distribución de palabras clave",
+      // La clasificación de intención se eliminó. Ya no se pueden crear tareas
+      // de este tipo, pero las guardadas siguen en la pestaña Tareas hasta
+      // caducar — sin esta etiqueta saldrían como identificador crudo.
       keywordIntent: "Clasificación de intención de palabras clave",
       pageSpeed: "Prueba de velocidad",
       seoJsonLdAudit: "Comprobación masiva de JSON-LD",
@@ -1279,7 +1282,6 @@ export const es: Translation = {
     robotsAdviceCompleted: "Análisis de robots.txt finalizado",
     bulkEditorSaveCompleted: "Editor masivo: cambios guardados",
     bulkEditorTranslateCompleted: "Editor masivo: traducción finalizada",
-    keywordIntentCompleted: "Análisis de palabras clave finalizado",
     seoBulkFixCompleted: "Corrección SEO finalizada",
     taskTimedOut: "Tiempo agotado — la tarea no informó progreso durante demasiado tiempo y se canceló. Vuelve a iniciarla.",
     translationCompleted: "Traducción completada para \"{title}\"",
@@ -2422,7 +2424,7 @@ export const es: Translation = {
       groupSidebarCreate: "Nuevo grupo",
       libraryEmptyPrompt: "Selecciona un grupo a la izquierda, o «Todas» / «Sin grupo», para ver sus palabras clave.",
       pasteLabel: "Pegar palabras clave",
-      pastePlaceholder: "vase gross\nvase glas klar\njarrón cerámico artesanal,1,commercial",
+      pastePlaceholder: "vase gross\nvase glas klar\njarrón cerámico artesanal,1",
       pasteButton: "Añadir",
       pasteDefaultPriority: "Prioridad",
       researchToggle: "Investigación",
@@ -2438,6 +2440,9 @@ export const es: Translation = {
       selectionCount: "{count} seleccionadas",
       selectionClear: "Quitar selección",
       selectionNeeded: "Marca primero algunas palabras clave a la izquierda.",
+      setPriority: "Prioridad",
+      setPriorityHint: "Fija la prioridad de todas las palabras clave seleccionadas.",
+      priorityForKeyword: "Prioridad de «{keyword}»",
       selectionTooMany: "Demasiadas palabras clave seleccionadas — trata como máximo {max} a la vez.",
       moveFailedSome: "No se pudieron mover {failed} palabra(s) clave ({moved} movidas).",
       loading: "Cargando…",
@@ -2447,14 +2452,13 @@ export const es: Translation = {
       editKeywordHint: "Renombrar «{keyword}»",
       editKeywordCommitHint: "Enter o un clic fuera guarda · Esc cancela",
       duplicateKeyword: "Este idioma ya tiene esa palabra clave.",
-      colIntent: "Intención",
       assignmentsNone: "ninguna",
       // Importación masiva, ahora tras un botón en vez de siempre visible.
       importButton: "Importar",
       importHint: "Pega muchas palabras clave a la vez — una por línea.",
       importModalTitle: "Importar palabras clave",
       importModalIntro:
-        "Una palabra clave por línea. Opcionalmente separadas por comas: prioridad (1–3) e intención.",
+        "Una palabra clave por línea, opcionalmente seguida de una coma y la prioridad (1–3). El idioma lo decide el grupo al que importas.",
       importModalPriorityHint: "Se aplica a las filas sin prioridad propia.",
       // Tooltips de la barra de acciones.
       moveKeywordHint: "Mueve la selección a otro grupo o idioma.",
@@ -2466,8 +2470,6 @@ export const es: Translation = {
       distributeEmptyHint: "Este grupo aún no tiene palabras clave.",
       distributeRunningHint: "Ya hay una distribución en curso.",
       groupDeleteHint: "Elimina solo el grupo. Las palabras clave se mantienen.",
-      bulkPriorityHint:
-        "Aplica la prioridad elegida a la izquierda a todas las palabras clave de este grupo.",
       keywordsDeleteConfirmTitle: "¿Eliminar definitivamente {count} palabras clave?",
       keywordsDeleteConfirmBody: "Se eliminarán {count} palabras clave. Esta acción no se puede deshacer.",
       keywordsDeleteConfirmBodyAssigned: "Se eliminarán {count} palabras clave junto con {assignments} asignación(es) de contenido y su historial de posiciones. Esta acción no se puede deshacer.",
@@ -2491,7 +2493,6 @@ export const es: Translation = {
       csvErrors: {
         tooLong: "Palabra clave demasiado larga",
         badPriority: "Prioridad no válida (permitido: 1, 2, 3)",
-        badIntent: "Intención no válida (informational/commercial/transactional/navigational)",
         badLocale: "Idioma desconocido",
       } as Record<string, string>,
       distributeButton: "Distribuir sobre elementos",
@@ -2562,34 +2563,12 @@ export const es: Translation = {
       conflictsTitle: "Conflictos de palabras clave",
       conflictsIntro: "La misma palabra clave principal en varios elementos del mismo tipo hace que compitan entre sí en Google (canibalización).",
       conflictItem: "«{keyword}» es principal en {count} elementos de tipo {type}: {items}",
-      intents: {
-        informational: "Informarse",
-        commercial: "Comparar",
-        transactional: "Listo para comprar",
-        navigational: "Buscar marca",
-      } as Record<string, string>,
-      intentExplain: {
-        informational: "quiere aprender algo — «cómo limpiar un jarrón»",
-        commercial: "compara antes de comprar — «mejores jarrones cerámicos»",
-        transactional: "quiere comprar ya — «comprar jarrón cerámico»",
-        navigational: "busca una marca concreta — «jarrones ikea»",
-      } as Record<string, string>,
-      intentLegendTitle: "Intención",
-      intentFilterLabel: "Intención",
-      intentFilterAll: "Todas las intenciones",
-      intentFilterNone: "Sin clasificar",
-      classifyButton: "Clasificar intención ({count} pendientes)",
-      classifyDone: "{count} palabra(s) clave clasificada(s), {remaining} restante(s).",
       cannibalizationConfirmTitle: "Palabra clave ya principal en otro elemento",
       cannibalizationConfirmBody: "«{keyword}» ya es la palabra clave principal de «{item}». Dos elementos compitiendo por la misma palabra clave se canibalizan en Google. ¿Rastrearla aquí como principal de todos modos?",
       cannibalizationConfirm: "Rastrear de todos modos",
       groupRename: "Renombrar",
       groupRenameLabel: "Nuevo nombre",
       groupRenameSave: "Guardar",
-      bulkPriorityLabel: "Establecer prioridad para TODAS",
-      bulkPriorityConfirmTitle: "¿Establecer la prioridad de todas las palabras clave?",
-      bulkPriorityConfirmBody: "Esto establece la prioridad de las {count} palabras clave de este grupo.",
-      bulkPriorityApply: "Aplicar a todas",
       distModalFilterType: "Filtro: tipo de producto",
       distModalFilterAll: "Todos",
       distModalFilterCapped: "Solo se muestran los primeros 100 tipos de producto.",
@@ -3195,7 +3174,7 @@ export const es: Translation = {
     keywordsAssignments: {
       title: "Asignaciones",
       summary:
-        "Esta lista muestra, por contenido, las palabras clave asignadas en el idioma activo. Filtra por texto, intención o puntuación, despliega una entrada para ver sus palabras clave y define una palabra clave principal por contenido.",
+        "Esta lista muestra, por contenido, las palabras clave asignadas en el idioma activo. Filtra por texto o puntuación, despliega una entrada para ver sus palabras clave y define una palabra clave principal por contenido.",
       tips: [
         "Al desplegar una entrada se muestran sus palabras clave",
         "La palabra clave principal es el objetivo principal del contenido",
@@ -3228,7 +3207,7 @@ export const es: Translation = {
         "Las palabras clave son por idioma: cambia el idioma del editor y editarás el conjunto de ese idioma",
       ],
       details:
-        "Las palabras clave registradas no son solo documentación: la IA las usa. Al generar título, título SEO, meta descripción, descripción, slug de URL o texto alternativo, la principal entra en el prompt como requisito, las secundarias como oferta y la intención de búsqueda clasificada como contexto. Después se comprueba el resultado: si la densidad es excesiva se regenera una vez automáticamente, y si el segundo intento sigue abusando del término recibes un aviso en lugar de un texto malo en silencio. La función de formato actúa con más cautela: conserva las palabras clave que ya están en el texto e incorpora la principal si falta, reformulando una frase existente, pero nunca añade las secundarias.",
+        "Las palabras clave registradas no son solo documentación: la IA las usa. Al generar título, título SEO, meta descripción, descripción, slug de URL o texto alternativo, la principal entra en el prompt como requisito, y las secundarias como oferta. Después se comprueba el resultado: si la densidad es excesiva se regenera una vez automáticamente, y si el segundo intento sigue abusando del término recibes un aviso en lugar de un texto malo en silencio. La función de formato actúa con más cautela: conserva las palabras clave que ya están en el texto e incorpora la principal si falta, reformulando una frase existente, pero nunca añade las secundarias.",
     },
     seoSidebarJsonLd: {
       title: "Datos estructurados (JSON-LD)",

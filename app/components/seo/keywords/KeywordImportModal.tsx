@@ -6,8 +6,8 @@
  * keyword is now the "+ Keyword" button on the table; pasting a list from a
  * keyword tool is the exception and lives behind this modal.
  *
- * The payload is unchanged: one line = one keyword with optional trailing
- * `,priority[,intent]` columns, submitted to the same importCsv action, with a
+ * The payload is unchanged: one line = one keyword with an optional trailing
+ * `,priority` column, submitted to the same importCsv action, with a
  * default-priority Select for rows that carry no explicit one.
  */
 

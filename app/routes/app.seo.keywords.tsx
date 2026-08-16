@@ -33,7 +33,6 @@ import {
   createGroup,
   renameGroup,
   deleteGroup,
-  setGroupPriority,
   findPrimaryElsewhere,
   findCannibalizationConflicts,
   getGroupKeywords,
@@ -48,6 +47,7 @@ import {
   renameKeyword,
   moveKeyword,
   setKeywordPriority,
+  setKeywordPriorities,
   MAX_KEYWORD_LENGTH,
   MAX_KEYWORDS_PER_ITEM,
   buildTranslatedContentInput,
@@ -81,7 +81,7 @@ interface ItemContent {
 /**
  * The "Zuordnungen" half of the page's data: every tracked assignment, its
  * item content resolved from the cache, the on-page analysis per row, the
- * cannibalization conflicts and the intent backlog.
+ * cannibalization conflicts.
  *
  * Split out of the loader so it only runs for the tab that renders it — it
  * reads four content tables plus the translation table and analyzes every row,
@@ -211,7 +211,6 @@ async function loadAssignmentsData(db: PrismaClient, shop: string, primaryLocale
       localeDisplay: row.locale || primaryLocaleCode,
       itemTitle: c?.title ?? "",
       itemMissing: !c,
-      intent: row.intent, // threaded for the intent badge + filter (§7.2)
       // Only the primary carries the 0-100 on-page score — it is
       // presence-weighted and would dilute or double-count across several
       // keywords. Secondaries keep presence/density (factual per keyword).
@@ -242,17 +241,14 @@ async function loadAssignmentsData(db: PrismaClient, shop: string, primaryLocale
     itemTitles: c.resourceIds.map((id) => content.get(id)?.title || id),
   }));
 
-  // Intent classification backlog (§7.2) — drives the classify button label.
-  const unclassifiedCount = await db.seoKeyword.count({ where: { shop, intent: null } });
-
-  return { keywords, conflicts, unclassifiedCount };
+  return { keywords, conflicts };
 }
 
 /** Shape of the Zuordnungen half — also the type of the empty stand-in the
  *  loader returns while the Bibliothek tab is active. */
 type AssignmentsData = Awaited<ReturnType<typeof loadAssignmentsData>>;
 
-const EMPTY_ASSIGNMENTS: AssignmentsData = { keywords: [], conflicts: [], unclassifiedCount: 0 };
+const EMPTY_ASSIGNMENTS: AssignmentsData = { keywords: [], conflicts: [] };
 
 /**
  * The "Bibliothek" half: groups, the selected group's keywords, the sidebar
@@ -570,8 +566,15 @@ async function lookupItemTitle(
 /** CSV import cap per request (plan §5.3) — anything bigger must be split. */
 const MAX_CSV_ROWS = 2000;
 
-/** Upper bound for one bulk selection — matches the assignMany caps. */
+/**
+ * Upper bound for one bulk selection. The delete/move/remove actions loop one
+ * transaction PER id, so they stay at the assignMany cap; setting a priority is
+ * a single `updateMany`, so it may span a whole imported group (MAX_CSV_ROWS)
+ * — otherwise "select all, set priority" is unreachable in exactly the group
+ * that most needs it.
+ */
 const MAX_BULK_IDS = 500;
+const MAX_PRIORITY_IDS = 2000;
 
 /**
  * Read a JSON array of keyword ids from the form. The library table's actions
@@ -583,7 +586,7 @@ const MAX_BULK_IDS = 500;
  */
 type KeywordIdList = { ok: true; ids: string[] } | { ok: false; reason: "invalid" | "tooMany" };
 
-function parseKeywordIds(form: FormData): KeywordIdList {
+function parseKeywordIds(form: FormData, max = MAX_BULK_IDS): KeywordIdList {
   let raw: unknown;
   try {
     raw = JSON.parse(getFormString(form, "keywordIds"));
@@ -597,14 +600,14 @@ function parseKeywordIds(form: FormData): KeywordIdList {
   // A selection can legitimately carry a duplicate after a revalidation race;
   // de-duplicate BEFORE the cap so a duplicate can't push a legal selection over.
   const ids = Array.from(new Set(raw as string[]));
-  if (ids.length > MAX_BULK_IDS) return { ok: false, reason: "tooMany" };
+  if (ids.length > max) return { ok: false, reason: "tooMany" };
   return { ok: true, ids };
 }
 
 /** Turn a rejected id list into the matching action response. */
-function keywordIdsError(reason: "invalid" | "tooMany") {
+function keywordIdsError(reason: "invalid" | "tooMany", max = MAX_BULK_IDS) {
   return reason === "tooMany"
-    ? json<ActionResult>({ ok: false, error: "tooManySelected", max: MAX_BULK_IDS }, { status: 400 })
+    ? json<ActionResult>({ ok: false, error: "tooManySelected", max }, { status: 400 })
     : json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
 }
 
@@ -746,6 +749,20 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     return json<ActionResult>({ ok: true, kind: "prioritySet" });
   }
 
+  // Priority over the checkbox SELECTION — the group-wide variant is gone, so
+  // this is the one bulk priority path and it reads the same id list as every
+  // other selection action.
+  if (actionType === "setPriorityForKeywords") {
+    const parsed = parseKeywordIds(form, MAX_PRIORITY_IDS);
+    if (!parsed.ok) return keywordIdsError(parsed.reason, MAX_PRIORITY_IDS);
+    const priority = Number(getFormString(form, "priority"));
+    if (![1, 2, 3].includes(priority)) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    await setKeywordPriorities(db, session.shop, parsed.ids, priority);
+    return json<ActionResult>({ ok: true, kind: "prioritySet" });
+  }
+
   // ── Groups (plan §5.1) ──
   if (actionType === "createGroup") {
     const name = getFormString(form, "name").trim();
@@ -788,16 +805,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       }
       return json<ActionResult>({ ok: false, error: "duplicateName" }, { status: 409 });
     }
-    return json<ActionResult>({ ok: true, kind: "groupUpdated" });
-  }
-
-  if (actionType === "setGroupPriority") {
-    const groupId = getFormString(form, "groupId");
-    const priority = Number(getFormString(form, "priority"));
-    if (!groupId || ![1, 2, 3].includes(priority)) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
-    }
-    await setGroupPriority(db, session.shop, groupId, priority);
     return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
@@ -956,7 +963,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     return json<ActionResult>({ ok: true, kind: "groupUpdated" });
   }
 
-  // ── CSV import (plan §5.3): keyword[,priority][,intent][,locale] ──
+  // ── CSV import (plan §5.3): keyword[,priority][,locale] ──
   if (actionType === "importCsv") {
     const groupId = getFormString(form, "groupId");
     const csv = getFormString(form, "csv");
@@ -996,7 +1003,6 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
         keyword: r.keyword,
         locale: r.locale,
         priority: r.priority ?? defaultPriority,
-        intent: r.intent,
       })),
     );
     return json<ActionResult>({
@@ -1338,7 +1344,6 @@ export default function SeoKeywords() {
   // Group rename + bulk priority (plan §5.1).
   const [renameValue, setRenameValue] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
-  const [bulkPriority, setBulkPriority] = useState("2");
   // Per-suggestion decision for the preview table; keyed by keyword.
   const [decisions, setDecisions] = useState<Record<string, "accept" | "secondaryOnly" | "reject">>({});
   const [demoteExisting, setDemoteExisting] = useState(false);
@@ -1560,14 +1565,6 @@ export default function SeoKeywords() {
     setSelectedSuggestions(new Set());
   };
 
-  // ── Intent classification + filter (plan §7.2) ──
-  // No revalidate effect: the classify POST is a fetcher submission, which
-  // already revalidates this route's loader once it resolves.
-  const intentFetcher = useFetcher<{ success: boolean; classified?: number; remaining?: number; error?: string }>();
-
-  const intentLabel = (intent: string | null | undefined): string | null =>
-    intent ? (k.intents as Record<string, string> | undefined)?.[intent] ?? intent : null;
-
   const openInEditor = (row: { resourceType: string; resourceId: string }) => {
     const path = KEYWORD_TYPE_PATH[row.resourceType as KeywordResourceType];
     if (!path) return;
@@ -1590,18 +1587,16 @@ export default function SeoKeywords() {
     groupFetcher.submit({ actionType: "deleteGroup", groupId: data.groupDetail.id }, { method: "post" });
   };
 
-  const handleApplyBulkPriority = async () => {
-    if (!data.groupDetail) return;
-    const ok = await confirm({
-      title: k.bulkPriorityConfirmTitle || "Set priority for all keywords?",
-      message: (
-        k.bulkPriorityConfirmBody || "This sets the priority of all {count} keywords in this group."
-      ).replace("{count}", String(data.groupDetail.keywords.length)),
-      confirmLabel: k.bulkPriorityApply || "Apply to all",
-    });
-    if (!ok) return;
+  /**
+   * Priority for the checkbox SELECTION — the replacement for the old
+   * "apply to ALL keywords in this group" block that sat under the table with
+   * its own Select and its own confirm. No confirm: priority is a cheap,
+   * visible, reversible attribute, and the merchant picked the exact rows.
+   */
+  const handleSetPriorityForSelection = (keywordIds: string[], priority: string) => {
+    if (keywordIds.length === 0) return;
     groupFetcher.submit(
-      { actionType: "setGroupPriority", groupId: data.groupDetail.id, priority: bulkPriority },
+      { actionType: "setPriorityForKeywords", keywordIds: JSON.stringify(keywordIds), priority },
       { method: "post" },
     );
   };
@@ -1738,12 +1733,8 @@ export default function SeoKeywords() {
             activeLocale={data.activeLocale}
             conflicts={data.conflicts}
             keywords={keywords}
-            isPro={data.isPro}
-            unclassifiedCount={data.unclassifiedCount}
-            intentLabel={intentLabel}
             saveFetcher={saveFetcher}
             rowFetcher={rowFetcher}
-            intentFetcher={intentFetcher}
             pendingRowId={pendingRowId}
             handleAddKeyword={handleAddKeyword}
             handleMakePrimary={handleMakePrimary}
@@ -1765,7 +1756,6 @@ export default function SeoKeywords() {
             productTypes={data.productTypes}
             localeOptions={localeOptions}
             priorityOptions={priorityOptions}
-            intentLabel={intentLabel}
             selectGroup={selectGroup}
             activeLocale={data.activeLocale}
             newGroupName={newGroupName}
@@ -1785,9 +1775,7 @@ export default function SeoKeywords() {
             renameValue={renameValue}
             setRenameValue={setRenameValue}
             handleDeleteGroup={handleDeleteGroup}
-            handleApplyBulkPriority={handleApplyBulkPriority}
-            bulkPriority={bulkPriority}
-            setBulkPriority={setBulkPriority}
+            handleSetPriorityForSelection={handleSetPriorityForSelection}
             priorityFetcher={priorityFetcher}
             distFetcher={distFetcher}
             decisions={decisions}

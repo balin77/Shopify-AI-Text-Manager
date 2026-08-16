@@ -52,13 +52,11 @@ export interface TrackedKeywords {
   primary: string | null;
   /** Secondary keywords, primary excluded. */
   secondaries: string[];
-  /** Classified search intent of the primary keyword, when available. */
-  primaryIntent: string | null;
   /** primary + secondaries — the set the stuffing guard measures. */
   all: string[];
 }
 
-const EMPTY: TrackedKeywords = { primary: null, secondaries: [], primaryIntent: null, all: [] };
+const EMPTY: TrackedKeywords = { primary: null, secondaries: [], all: [] };
 
 /**
  * Load an item's tracked keywords for one locale, sanitized for prompt
@@ -102,22 +100,9 @@ export async function loadTrackedKeywordsUnfiltered(
   return {
     primary,
     secondaries,
-    primaryIntent: primaryRow?.intent ?? null,
     all: [...(primary ? [primary] : []), ...secondaries],
   };
 }
-
-/**
- * Search-intent hints (PLAN_KEYWORDS_EXPANSION.md §7.2): when the primary
- * keyword has been classified, tell the model what the searcher is after — a
- * small but measurable quality lift, especially for meta descriptions.
- */
-const INTENT_HINTS: Record<string, string> = {
-  informational: "the searcher wants to learn — lead with the answer/benefit, not the sale",
-  commercial: "the searcher is comparing options — emphasize differentiators and proof",
-  transactional: "the searcher is ready to buy — emphasize purchase, benefit, availability",
-  navigational: "the searcher looks for a specific brand/page — be precise and recognizable",
-};
 
 /**
  * Requirement lines for a GENERATING prompt — the model is writing new copy and
@@ -135,12 +120,6 @@ export function keywordRequirementLines(kw: TrackedKeywords, isSlug = false): st
     out += `\n- If it fits naturally, you may also mention: ${kw.secondaries
       .map((s) => `"${s}"`)
       .join(", ")}. Only use those that flow with the sentence; skip any that would sound forced or repetitive. Never use more than one per sentence.`;
-  }
-  // The intent hints are prose advice ("emphasize purchase, benefit,
-  // availability") — useless to a prompt whose output is restricted to
-  // a-z0-9-, and noise the model may try to act on. Slugs get the keyword only.
-  if (!isSlug && kw.primaryIntent && INTENT_HINTS[kw.primaryIntent]) {
-    out += `\n- Search intent of the target keyword: ${kw.primaryIntent} — ${INTENT_HINTS[kw.primaryIntent]}.`;
   }
   return out;
 }

@@ -6,7 +6,7 @@
  * Language is the top dimension: only rows whose `locale === activeLocale` are
  * shown. Cannibalization conflicts render as a single warning header (no card).
  * A type mini-navbar (Produkte / Collections / Seiten / Blogartikel) plus a
- * text / intent / score filter row narrow the list. Each item is a collapsible
+ * text / score filter row narrow the list. Each item is a collapsible
  * header (title · type, primary on-page Score, GSC ⌀) revealing its keyword
  * rows (primary first) with presence badges, density, GSC position and per-row
  * actions, plus an inline "+ Keyword" control that assigns under the active
@@ -79,18 +79,9 @@ export interface AssignmentsTabProps {
   activeLocale: string;
   conflicts: LoaderData["conflicts"];
   keywords: LoaderData["keywords"];
-  isPro: boolean;
-  unclassifiedCount: number;
-  intentLabel: (intent: string | null | undefined) => string | null;
 
   saveFetcher: FetcherWithComponents<ActionResult>;
   rowFetcher: FetcherWithComponents<ActionResult>;
-  intentFetcher: FetcherWithComponents<{
-    success: boolean;
-    classified?: number;
-    remaining?: number;
-    error?: string;
-  }>;
   pendingRowId: string | null;
 
   /** Per-item inline add — locale is fixed to activeLocale by the Shell. */
@@ -212,12 +203,8 @@ export function AssignmentsTab({
   activeLocale,
   conflicts,
   keywords,
-  isPro,
-  unclassifiedCount,
-  intentLabel,
   saveFetcher,
   rowFetcher,
-  intentFetcher,
   pendingRowId,
   handleAddKeyword,
   handleMakePrimary,
@@ -226,7 +213,6 @@ export function AssignmentsTab({
 }: AssignmentsTabProps) {
   const [activeType, setActiveType] = useState<KeywordResourceType>("Product");
   const [textFilter, setTextFilter] = useState("");
-  const [intentFilter, setIntentFilter] = useState("all");
   const [scoreFilter, setScoreFilter] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -286,18 +272,13 @@ export function AssignmentsTab({
           g.rows.some((r) => r.keyword.toLowerCase().includes(q)),
       );
     }
-    if (intentFilter === "none") {
-      list = list.filter((g) => g.rows.some((r) => !r.intent));
-    } else if (intentFilter !== "all") {
-      list = list.filter((g) => g.rows.some((r) => r.intent === intentFilter));
-    }
     if (scoreFilter === "under50") {
       list = list.filter((g) => g.primaryScore != null && g.primaryScore < 50);
     } else if (scoreFilter === "under80") {
       list = list.filter((g) => g.primaryScore != null && g.primaryScore < 80);
     }
     return list;
-  }, [keywords, activeLocale, activeType, textFilter, intentFilter, scoreFilter]);
+  }, [keywords, activeLocale, activeType, textFilter, scoreFilter]);
 
   const typeNavItems: SubNavBarItem[] = TYPE_ORDER.map((rt) => ({
     id: rt,
@@ -359,21 +340,6 @@ export function AssignmentsTab({
                   onClearButtonClick={() => setTextFilter("")}
                 />
               </div>
-              <div style={{ minWidth: "170px" }}>
-                <Select
-                  label={k.intentFilterLabel || "Intent"}
-                  labelHidden
-                  options={[
-                    { label: k.intentFilterAll || "All intents", value: "all" },
-                    { label: k.intentFilterNone || "Unclassified", value: "none" },
-                    ...(["informational", "commercial", "transactional", "navigational"] as const).map(
-                      (i) => ({ label: intentLabel(i) ?? i, value: i }),
-                    ),
-                  ]}
-                  value={intentFilter}
-                  onChange={setIntentFilter}
-                />
-              </div>
               <div style={{ minWidth: "150px" }}>
                 <Select
                   label={k.scoreFilterLabel || "Score"}
@@ -388,31 +354,8 @@ export function AssignmentsTab({
                 />
               </div>
             </InlineStack>
-            {isPro && unclassifiedCount > 0 && (
-              <Button
-                loading={intentFetcher.state !== "idle"}
-                onClick={() =>
-                  intentFetcher.submit(
-                    { action: "classifyKeywordIntents", contentType: "products" },
-                    { method: "post", action: "/api/ai" },
-                  )
-                }
-              >
-                {(k.classifyButton || "Classify intent ({count} open)").replace(
-                  "{count}",
-                  String(unclassifiedCount),
-                )}
-              </Button>
-            )}
           </InlineStack>
 
-          {intentFetcher.state === "idle" && intentFetcher.data?.success && (
-            <Banner tone="success">
-              {(k.classifyDone || "{count} keyword(s) classified, {remaining} remaining.")
-                .replace("{count}", String(intentFetcher.data.classified ?? 0))
-                .replace("{remaining}", String(intentFetcher.data.remaining ?? 0))}
-            </Banner>
-          )}
           {rowFetcher.data && !rowFetcher.data.ok && (
             <Banner tone="critical">{k.errorGeneric}</Banner>
           )}
@@ -517,9 +460,6 @@ export function AssignmentsTab({
                                     </span>
                                     {row.keyword}
                                   </Text>
-                                  {row.intent && (
-                                    <Badge>{intentLabel(row.intent) ?? row.intent}</Badge>
-                                  )}
                                   <InlineStack gap="100" wrap>
                                     {PRESENCE_KEYS.map((key) => (
                                       <Badge

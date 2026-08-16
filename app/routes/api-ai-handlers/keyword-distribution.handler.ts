@@ -237,7 +237,6 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
     keyword: k.keyword,
     locale: k.locale,
     priority: k.priority,
-    intent: k.intent,
   }));
 
   void runSuggestStage(task.id, {

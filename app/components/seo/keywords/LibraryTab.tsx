@@ -8,16 +8,16 @@
  * and the group editor on the right. Under ~768px the grid collapses to a
  * single column (sidebar above editor).
  *
- * The editor shows, for a REAL group: rename/delete, the keyword table, bulk
- * priority and the distribution entry. For a PSEUDO group ("all"/"ungrouped"):
- * the keyword table with its group-membership actions dropped. Nothing
- * selected → a friendly prompt.
+ * The editor shows, for a REAL group: rename/delete, the keyword table and the
+ * distribution entry. For a PSEUDO group ("all"/"ungrouped"): the same table
+ * with its group-membership actions dropped. Nothing selected → a friendly
+ * prompt.
  *
  * Two interaction rules the whole tab follows:
  *  - Keyword actions are SELECTION-driven. Rows carry a checkbox and
- *    "Zuordnen" / "Verschieben" / "Entfernen" / "Löschen" sit in one bar above
- *    the table, so a merchant acts on many keywords at once instead of
- *    repeating the same click per row.
+ *    "Zuordnen" / "Priorität" / "Verschieben" / "Entfernen" / "Löschen" sit in
+ *    one bar above the table, so a merchant acts on many keywords at once
+ *    instead of repeating the same click per row.
  *  - Keywords are edited IN PLACE. "+ Keyword" adds a row under an
  *    auto-generated name, already in edit mode; every name is a click away
  *    from being editable. The bulk paste box moved into a modal behind
@@ -36,7 +36,7 @@
  * callbacks / fetchers it is handed.
  */
 
-import { useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Card,
   BlockStack,
@@ -50,11 +50,11 @@ import {
   Banner,
   IndexTable,
   Modal,
-  // Checkbox is gone with the distribution preview's Selects — the decisions
-  // live in SuggestionsPanel now.
   ProgressBar,
   Divider,
   Box,
+  Popover,
+  ActionList,
   useIndexResourceState,
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "react-router";
@@ -66,6 +66,7 @@ import type { loader, ActionResult, KeywordSelection } from "../../../routes/app
 import { GroupSidebar } from "./GroupSidebar";
 import { KeywordImportModal } from "./KeywordImportModal";
 import { EditableKeywordCell } from "./EditableKeywordCell";
+import { PriorityBadgeSelect } from "./PriorityBadgeSelect";
 import { ResearchPanel } from "./ResearchPanel";
 import { AssignPanel } from "./AssignPanel";
 import { SuggestionsPanel, type DecisionMap } from "./SuggestionsPanel";
@@ -75,13 +76,6 @@ import "../../../styles/KeywordsPage.css";
 type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
 type AssignKeyword = { keywordId: string; keyword: string };
-
-/** Tone per priority so 1/2/3 reads at a glance instead of as a bare number. */
-const PRIORITY_TONE: Record<number, "critical" | "warning" | undefined> = {
-  1: "critical",
-  2: "warning",
-  3: undefined,
-};
 
 export interface LibraryTabProps {
   k: KeywordsPageStrings;
@@ -99,7 +93,6 @@ export interface LibraryTabProps {
   productTypes: LoaderData["productTypes"];
   localeOptions: LoaderData["localeOptions"];
   priorityOptions: { label: string; value: string }[];
-  intentLabel: (intent: string | null | undefined) => string | null;
   selectGroup: (groupId: string | null) => void;
   /** Active locale — new groups are created under it (§3.1). */
   activeLocale: string;
@@ -130,9 +123,8 @@ export interface LibraryTabProps {
   renameValue: string;
   setRenameValue: (v: string) => void;
   handleDeleteGroup: () => void;
-  handleApplyBulkPriority: () => void;
-  bulkPriority: string;
-  setBulkPriority: (v: string) => void;
+  /** Priority for the checkbox selection — replaces the old group-wide block. */
+  handleSetPriorityForSelection: (keywordIds: string[], priority: string) => void;
   priorityFetcher: FetcherWithComponents<ActionResult>;
   distFetcher: FetcherWithComponents<{
     success: boolean;
@@ -206,7 +198,6 @@ export function LibraryTab({
   productTypes,
   localeOptions,
   priorityOptions,
-  intentLabel,
   selectGroup,
   activeLocale,
   newGroupName,
@@ -226,9 +217,7 @@ export function LibraryTab({
   renameValue,
   setRenameValue,
   handleDeleteGroup,
-  handleApplyBulkPriority,
-  bulkPriority,
-  setBulkPriority,
+  handleSetPriorityForSelection,
   priorityFetcher,
   distFetcher,
   decisions,
@@ -321,6 +310,15 @@ export function LibraryTab({
   );
   const selectedCount = selectedRows.length;
   const moveCount = moveModal?.length ?? 0;
+  // Open state of the selection bar's priority menu — view-local, like the
+  // selection itself.
+  const [priorityMenuOpen, setPriorityMenuOpen] = useState(false);
+  // Losing the selection HIDES the popover (its activator goes disabled) but
+  // Polaris only fires onClose while it is active, so the flag would survive
+  // and the menu would spring open again on the next tick.
+  useEffect(() => {
+    if (selectedCount === 0) setPriorityMenuOpen(false);
+  }, [selectedCount]);
   // One in-flight write at a time — group actions and the move share the
   // selection, and a second submit would race the first one's revalidation.
   const bulkBusy = groupFetcher.state !== "idle" || moveFetcher.state !== "idle";
@@ -333,37 +331,6 @@ export function LibraryTab({
     if (selectedCount === 0) return;
     openAssignPanel(selectedRows.map((r) => ({ keywordId: r.keywordId, keyword: r.keyword })));
   };
-  /**
-   * Legend for the Intention column. The stored values are English SEO jargon
-   * ("commercial", "transactional") that a merchant has no way of decoding
-   * from a bare badge — so whenever the visible rows actually carry one, the
-   * table says what those words mean.
-   */
-  const intentLegend = useMemo(() => {
-    const present = Array.from(
-      new Set(keywordRows.map((r) => r.intent).filter((i): i is string => !!i)),
-    );
-    return present
-      .map((intent) => `${intentLabel(intent) ?? intent} — ${k.intentExplain[intent] ?? ""}`)
-      .filter((line) => line.trim().length > 0);
-  }, [keywordRows, intentLabel, k.intentExplain]);
-
-  const renderIntentLegend = () =>
-    intentLegend.length === 0 ? null : (
-      <Box paddingBlockStart="100">
-        <BlockStack gap="050">
-          <Text as="span" variant="bodySm" fontWeight="medium" tone="subdued">
-            {k.intentLegendTitle}
-          </Text>
-          {intentLegend.map((line) => (
-            <Text key={line} as="span" variant="bodySm" tone="subdued">
-              {line}
-            </Text>
-          ))}
-        </BlockStack>
-      </Box>
-    );
-
   const pseudoTitle =
     groupDetail?.pseudo === "all"
       ? k.groupAll || "All"
@@ -478,6 +445,45 @@ export function LibraryTab({
               </Button>
             </ActionTooltip>
 
+            {/* Priority for the selection — the replacement for the old
+                "set for ALL keywords in this group" block that sat under the
+                table with its own Select. One menu, applied on click. */}
+            <Popover
+              active={priorityMenuOpen && !nothingSelected}
+              onClose={() => setPriorityMenuOpen(false)}
+              preferredAlignment="left"
+              activator={
+                <ActionTooltip
+                  content={selectionHint(k.setPriorityHint)}
+                  disabled={nothingSelected || bulkBusy}
+                  preferredPosition="below"
+                >
+                  <Button
+                    size="slim"
+                    disclosure
+                    disabled={nothingSelected || bulkBusy}
+                    onClick={() => setPriorityMenuOpen((open) => !open)}
+                  >
+                    {k.setPriority}
+                  </Button>
+                </ActionTooltip>
+              }
+            >
+              <ActionList
+                actionRole="menuitem"
+                items={priorityOptions.map((o) => ({
+                  content: o.label,
+                  onAction: () => {
+                    setPriorityMenuOpen(false);
+                    handleSetPriorityForSelection(
+                      selectedRows.map((r) => r.keywordId),
+                      o.value,
+                    );
+                  },
+                }))}
+              />
+            </Popover>
+
             {/* From a pseudo view there is no source group to leave, so a
                 same-language move only ADDS the keywords to the chosen group —
                 the dialog spells that out. */}
@@ -535,9 +541,9 @@ export function LibraryTab({
   };
 
   // The keyword table. `readOnly` is about GROUP MEMBERSHIP, not about the
-  // keywords: a pseudo view has no membership to edit (no priority Select, no
-  // "Entfernen"), but its rows are still selectable, still editable in place
-  // and still support every keyword-level action in the bar above.
+  // keywords: a pseudo view has no membership to edit (no "Entfernen"), but its
+  // rows are still selectable, still editable in place, still carry the same
+  // priority control and still support every action in the bar above.
   const renderKeywordTable = (readOnly: boolean) => {
     if (!groupDetail) return null;
     if (groupDetail.keywords.length === 0) {
@@ -563,7 +569,6 @@ export function LibraryTab({
     }
     const headings: { title: string }[] = [
       { title: k.colKeyword },
-      { title: k.colIntent },
       { title: k.colLocale },
       { title: k.colPriority },
       { title: k.colAssignments },
@@ -609,47 +614,33 @@ export function LibraryTab({
                 </div>
               </IndexTable.Cell>
               <IndexTable.Cell>
-                {gk.intent ? (
-                  <Badge>{intentLabel(gk.intent) ?? gk.intent}</Badge>
-                ) : (
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    —
-                  </Text>
-                )}
-              </IndexTable.Cell>
-              <IndexTable.Cell>
                 <Text as="span" variant="bodySm" tone="subdued">
                   {localeName(gk.locale)}
                 </Text>
               </IndexTable.Cell>
               <IndexTable.Cell>
-                {readOnly ? (
-                  <Badge tone={PRIORITY_TONE[gk.priority]}>
-                    {priorityOptions.find((o) => o.value === String(gk.priority))?.label ??
-                      String(gk.priority)}
-                  </Badge>
-                ) : (
-                  <div
-                    style={{ minWidth: "110px" }}
-                    onClick={(event) => event.stopPropagation()}
-                    onKeyUp={(event) => event.stopPropagation()}
-                    role="presentation"
-                  >
-                    <Select
-                      label={k.colPriority}
-                      labelHidden
-                      options={priorityOptions}
-                      value={String(gk.priority)}
-                      disabled={priorityFetcher.state !== "idle"}
-                      onChange={(v) =>
-                        priorityFetcher.submit(
-                          { actionType: "setPriority", keywordId: gk.keywordId, priority: v },
-                          { method: "post" },
-                        )
-                      }
-                    />
-                  </div>
-                )}
+                {/* Same control in every view: priority belongs to the KEYWORD,
+                    not to its group membership, so "Alle" / "Ohne Gruppe" can
+                    edit it just as well as a real group. */}
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyUp={(event) => event.stopPropagation()}
+                  role="presentation"
+                >
+                  <PriorityBadgeSelect
+                    k={k}
+                    keyword={gk.keyword}
+                    value={gk.priority}
+                    options={priorityOptions}
+                    disabled={priorityFetcher.state !== "idle"}
+                    onChange={(v) =>
+                      priorityFetcher.submit(
+                        { actionType: "setPriority", keywordId: gk.keywordId, priority: v },
+                        { method: "post" },
+                      )
+                    }
+                  />
+                </div>
               </IndexTable.Cell>
               <IndexTable.Cell>
                 {gk.assignmentCount > 0 ? (
@@ -686,7 +677,6 @@ export function LibraryTab({
         {groupDetail.keywords.length > 0 && renderSelectionBar(true)}
         {renderBulkError()}
         {renderKeywordTable(true)}
-        {renderIntentLegend()}
       </BlockStack>
     </Card>
   ) : (
@@ -805,29 +795,7 @@ export function LibraryTab({
         {groupDetail.keywords.length > 0 && renderSelectionBar(false)}
         {renderBulkError()}
         {renderKeywordTable(false)}
-        {renderIntentLegend()}
 
-        {/* Bulk priority (plan §5.1 group bulk actions) */}
-        {groupDetail.keywords.length > 1 && (
-          <>
-            <Divider />
-            <InlineStack gap="200" blockAlign="end" wrap>
-              <div style={{ minWidth: "170px" }}>
-                <Select
-                  label={k.bulkPriorityLabel}
-                  options={priorityOptions}
-                  value={bulkPriority}
-                  onChange={setBulkPriority}
-                />
-              </div>
-              <ActionTooltip content={k.bulkPriorityHint} preferredPosition="above">
-                <Button loading={groupFetcher.state !== "idle"} onClick={handleApplyBulkPriority}>
-                  {k.bulkPriorityApply}
-                </Button>
-              </ActionTooltip>
-            </InlineStack>
-          </>
-        )}
       </BlockStack>
     </Card>
   );

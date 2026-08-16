@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   analyzeOnPage,
+  findCannibalizationConflicts,
+  type KeywordAssignmentRow,
   analyzeMultiKeyword,
   normalizeKeyword,
   assignKeyword,
@@ -469,20 +471,23 @@ describe("persistence helpers (keyword + assignment)", () => {
     });
   });
 
-  it("setGroupPriority refuses foreign groups and invalid priorities", async () => {
-    const { setGroupPriority } = await import("~/services/seo/keywords.service");
+  it("setKeywordPriorities writes the selection shop-scoped, rejects bad input", async () => {
+    const { setKeywordPriorities } = await import("~/services/seo/keywords.service");
     const updateMany = vi.fn(async (_args: any) => ({ count: 3 }));
-    const findFirst = vi.fn(async (_args: any): Promise<any> => null);
-    const db = { seoKeywordGroup: { findFirst }, seoKeyword: { updateMany } } as any;
-    // Unknown/foreign group → 0, no write.
-    expect(await setGroupPriority(db, SHOP, "foreign", 1)).toBe(0);
+    const db = { seoKeyword: { updateMany } } as any;
+    // Invalid priority → 0, no write.
+    expect(await setKeywordPriorities(db, SHOP, ["kw1"], 7)).toBe(0);
     expect(updateMany).not.toHaveBeenCalled();
-    // Invalid priority → 0 without even the ownership lookup write.
-    expect(await setGroupPriority(db, SHOP, "g1", 7)).toBe(0);
-    // Owned group → shop-scoped updateMany via the membership relation.
-    findFirst.mockResolvedValueOnce({ id: "g1" });
-    expect(await setGroupPriority(db, SHOP, "g1", 1)).toBe(3);
-    expect(updateMany.mock.calls[0][0].where).toEqual({ shop: SHOP, groups: { some: { groupId: "g1" } } });
+    // Empty selection → 0, no write (an updateMany with `in: []` would be a
+    // pointless round trip).
+    expect(await setKeywordPriorities(db, SHOP, [], 1)).toBe(0);
+    expect(updateMany).not.toHaveBeenCalled();
+    // Real selection → one shop-scoped updateMany over exactly those ids.
+    expect(await setKeywordPriorities(db, SHOP, ["kw1", "kw2"], 1)).toBe(3);
+    expect(updateMany.mock.calls[0][0]).toEqual({
+      where: { id: { in: ["kw1", "kw2"] }, shop: SHOP },
+      data: { priority: 1 },
+    });
   });
 
   it("listAssignments flattens the keyword join into rows (incl. locale + role)", async () => {
@@ -490,12 +495,12 @@ describe("persistence helpers (keyword + assignment)", () => {
       {
         id: "a1", resourceType: "Product", resourceId: "p1", role: "primary",
         gscPosition: null, gscClicks: null, gscImpressions: null, gscCtr: null,
-        keyword: { id: "kw1", keyword: "widget", locale: "", priority: 2, intent: null, updatedAt: new Date() },
+        keyword: { id: "kw1", keyword: "widget", locale: "", priority: 2, updatedAt: new Date() },
       },
       {
         id: "a2", resourceType: "Product", resourceId: "p1", role: "secondary",
         gscPosition: 3.2, gscClicks: 5, gscImpressions: 100, gscCtr: 0.05,
-        keyword: { id: "kw2", keyword: "gadget", locale: "fr", priority: 1, intent: "commercial", updatedAt: new Date() },
+        keyword: { id: "kw2", keyword: "gadget", locale: "fr", priority: 1, updatedAt: new Date() },
       },
     ];
     const findMany = vi.fn(async (_args: any) => rows);
@@ -799,8 +804,8 @@ describe("group locale (Phase 0)", () => {
   it("listUngrouped passes { shop, locale, groups: { none: {} } } and maps + sorts rows", async () => {
     const { listUngrouped } = await import("~/services/seo/keywords.service");
     const findMany = vi.fn(async (_args: any) => [
-      { id: "kw2", keyword: "zebra", locale: "", priority: 1, intent: null, _count: { assignments: 4 } },
-      { id: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", _count: { assignments: 0 } },
+      { id: "kw2", keyword: "zebra", locale: "", priority: 1, _count: { assignments: 4 } },
+      { id: "kw1", keyword: "apple", locale: "", priority: 1, _count: { assignments: 0 } },
     ]);
     const db = { seoKeyword: { findMany } } as any;
 
@@ -808,7 +813,7 @@ describe("group locale (Phase 0)", () => {
     expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "", groups: { none: {} } });
     // Same sort as getGroupKeywords: priority asc, then keyword asc.
     expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
-    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
+    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, assignmentCount: 0 });
   });
 
   it("countAllKeywords passes { shop, locale }", async () => {
@@ -823,8 +828,8 @@ describe("group locale (Phase 0)", () => {
   it("listAllKeywords passes { shop, locale } and maps + sorts rows", async () => {
     const { listAllKeywords } = await import("~/services/seo/keywords.service");
     const findMany = vi.fn(async (_args: any) => [
-      { id: "kw2", keyword: "zebra", locale: "", priority: 1, intent: null, _count: { assignments: 4 } },
-      { id: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", _count: { assignments: 0 } },
+      { id: "kw2", keyword: "zebra", locale: "", priority: 1, _count: { assignments: 4 } },
+      { id: "kw1", keyword: "apple", locale: "", priority: 1, _count: { assignments: 0 } },
     ]);
     const db = { seoKeyword: { findMany } } as any;
 
@@ -833,7 +838,7 @@ describe("group locale (Phase 0)", () => {
     expect(findMany.mock.calls[0][0].where).toEqual({ shop: SHOP, locale: "" });
     // Same sort as getGroupKeywords: priority asc, then keyword asc.
     expect(rows.map((r) => r.keyword)).toEqual(["apple", "zebra"]);
-    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, intent: "info", assignmentCount: 0 });
+    expect(rows[0]).toEqual({ keywordId: "kw1", keyword: "apple", locale: "", priority: 1, assignmentCount: 0 });
   });
 });
 
@@ -895,7 +900,7 @@ describe("moveKeyword", () => {
         findFirst: vi.fn(async (_a: any) =>
           "source" in overrides
             ? overrides.source
-            : { id: "kw1", keyword: "blue shoes", locale: "", priority: 2, intent: null },
+            : { id: "kw1", keyword: "blue shoes", locale: "", priority: 2 },
         ),
         findUnique: vi.fn(async (_a: any) => overrides.targetKeyword ?? null),
         create: vi.fn(async (_a: any) => ({ id: "kwNew" })),
@@ -1267,5 +1272,59 @@ describe("renameKeyword — inline rename never merges", () => {
       reason: "notFound",
     });
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Cannibalization (§7.1). These moved here when the intent classifier was
+ * removed — they lived in that feature's test file only because §7 covered
+ * both topics, and deleting it would have left the invariant uncovered.
+ */
+describe("findCannibalizationConflicts", () => {
+  const row = (
+    keywordId: string,
+    keyword: string,
+    resourceType: string,
+    resourceId: string,
+    role: "primary" | "secondary",
+  ): KeywordAssignmentRow => ({
+    id: `${keywordId}:${resourceId}`,
+    keywordId,
+    resourceType,
+    resourceId,
+    keyword,
+    locale: "",
+    role,
+    priority: 2,
+    gscPosition: null,
+    gscClicks: null,
+    gscImpressions: null,
+    gscCtr: null,
+    updatedAt: new Date(0),
+  });
+
+  it("flags the same keyword primary on two items of the SAME type", () => {
+    const conflicts = findCannibalizationConflicts([
+      row("kw1", "vases", "Product", "p1", "primary"),
+      row("kw1", "vases", "Product", "p2", "primary"),
+    ]);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].resourceIds.sort()).toEqual(["p1", "p2"]);
+  });
+
+  it("does NOT flag Product vs. Collection sharing a primary (plan §7.1)", () => {
+    const conflicts = findCannibalizationConflicts([
+      row("kw1", "vases", "Product", "p1", "primary"),
+      row("kw1", "vases", "Collection", "c1", "primary"),
+    ]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it("ignores secondary assignments entirely", () => {
+    const conflicts = findCannibalizationConflicts([
+      row("kw1", "vases", "Product", "p1", "primary"),
+      row("kw1", "vases", "Product", "p2", "secondary"),
+    ]);
+    expect(conflicts).toEqual([]);
   });
 });

@@ -1218,6 +1218,9 @@ export const en: Translation = {
       seoBulkMeta: "Bulk editor save",
       bulkEditorTranslate: "Bulk editor translation",
       distributeKeywords: "Keyword distribution",
+      // Intent classification is gone. Nobody can start a task of this type
+      // any more, but already-stored rows sit in the Tasks tab until they
+      // expire — without this label they would render as a raw identifier.
       keywordIntent: "Keyword intent classification",
       pageSpeed: "Speed test",
       seoJsonLdAudit: "JSON-LD batch check",
@@ -1280,7 +1283,6 @@ export const en: Translation = {
     robotsAdviceCompleted: "robots.txt analysis finished",
     bulkEditorSaveCompleted: "Bulk editor: changes saved",
     bulkEditorTranslateCompleted: "Bulk editor: translation finished",
-    keywordIntentCompleted: "Keyword analysis finished",
     seoBulkFixCompleted: "SEO fix finished",
     taskTimedOut: "Timed out — the task reported no progress for too long and was cancelled. Please start it again.",
     translationCompleted: "Translation completed for \"{title}\"",
@@ -2423,7 +2425,7 @@ export const en: Translation = {
       groupSidebarCreate: "New group",
       libraryEmptyPrompt: "Select a group on the left, or “All” / “Ungrouped”, to see its keywords.",
       pasteLabel: "Paste keywords",
-      pastePlaceholder: "vase gross\nvase glas klar\nhandmade ceramic vase,1,commercial",
+      pastePlaceholder: "vase gross\nvase glas klar\nhandmade ceramic vase,1",
       pasteButton: "Add keywords",
       pasteDefaultPriority: "Priority",
       researchToggle: "Research",
@@ -2439,6 +2441,9 @@ export const en: Translation = {
       selectionCount: "{count} selected",
       selectionClear: "Clear selection",
       selectionNeeded: "Tick some keywords on the left first.",
+      setPriority: "Priority",
+      setPriorityHint: "Sets the priority for every selected keyword.",
+      priorityForKeyword: "Priority of “{keyword}”",
       selectionTooMany: "Too many keywords selected at once — please handle at most {max} at a time.",
       moveFailedSome: "{failed} keyword(s) could not be moved ({moved} moved).",
       loading: "Loading…",
@@ -2448,14 +2453,13 @@ export const en: Translation = {
       editKeywordHint: "Rename “{keyword}”",
       editKeywordCommitHint: "Enter or a click outside saves · Esc cancels",
       duplicateKeyword: "This language already tracks that keyword.",
-      colIntent: "Intent",
       assignmentsNone: "none",
       // Bulk import, now behind a button instead of permanently on screen.
       importButton: "Import",
       importHint: "Paste many keywords at once — one per line.",
       importModalTitle: "Import keywords",
       importModalIntro:
-        "One keyword per line. Optionally comma-separated per line: priority (1–3) and intent.",
+        "One keyword per line, optionally followed by a comma and the priority (1–3). The language is decided by the group you import into.",
       importModalPriorityHint: "Applies to rows without their own priority.",
       // Action bar tooltips.
       moveKeywordHint: "Moves the selection to another group or language.",
@@ -2466,7 +2470,6 @@ export const en: Translation = {
       distributeEmptyHint: "This group has no keywords yet.",
       distributeRunningHint: "A distribution is already running.",
       groupDeleteHint: "Deletes only the group. The keywords themselves stay.",
-      bulkPriorityHint: "Applies the priority chosen on the left to every keyword in this group.",
       keywordsDeleteConfirmTitle: "Delete {count} keywords for good?",
       keywordsDeleteConfirmBody: "{count} keywords will be deleted. This can't be undone.",
       keywordsDeleteConfirmBodyAssigned: "{count} keywords will be deleted, together with {assignments} item assignment(s) and their ranking history. This can't be undone.",
@@ -2490,7 +2493,6 @@ export const en: Translation = {
       csvErrors: {
         tooLong: "Keyword too long",
         badPriority: "Invalid priority (allowed: 1, 2, 3)",
-        badIntent: "Invalid intent (informational/commercial/transactional/navigational)",
         badLocale: "Unknown language",
       } as Record<string, string>,
       distributeButton: "Distribute onto items",
@@ -2561,37 +2563,12 @@ export const en: Translation = {
       conflictsTitle: "Keyword conflicts",
       conflictsIntro: "The same primary keyword on several items of the same type makes them compete against each other in Google (cannibalization).",
       conflictItem: "\"{keyword}\" is primary on {count} {type} items: {items}",
-      // Search intent behind a keyword. The stored values are English jargon
-      // and read as nothing at all in a bare badge, hence the plain labels
-      // plus the legend under the table.
-      intents: {
-        informational: "Learning",
-        commercial: "Comparing",
-        transactional: "Ready to buy",
-        navigational: "Brand search",
-      } as Record<string, string>,
-      intentExplain: {
-        informational: "wants to learn something — “how to clean a vase”",
-        commercial: "comparing before buying — “best ceramic vases”",
-        transactional: "ready to buy now — “buy ceramic vase”",
-        navigational: "looking for a specific brand — “ikea vases”",
-      } as Record<string, string>,
-      intentLegendTitle: "Intent",
-      intentFilterLabel: "Intent",
-      intentFilterAll: "All intents",
-      intentFilterNone: "Unclassified",
-      classifyButton: "Classify intent ({count} open)",
-      classifyDone: "{count} keyword(s) classified, {remaining} remaining.",
       cannibalizationConfirmTitle: "Keyword already primary elsewhere",
       cannibalizationConfirmBody: "\"{keyword}\" is already the primary keyword of \"{item}\". Two items competing for the same keyword cannibalize each other in Google. Track it here as primary anyway?",
       cannibalizationConfirm: "Track anyway",
       groupRename: "Rename",
       groupRenameLabel: "New name",
       groupRenameSave: "Save",
-      bulkPriorityLabel: "Set priority for ALL",
-      bulkPriorityConfirmTitle: "Set priority for all keywords?",
-      bulkPriorityConfirmBody: "This sets the priority of all {count} keywords in this group.",
-      bulkPriorityApply: "Apply to all",
       distModalFilterType: "Filter: product type",
       distModalFilterAll: "All",
       distModalFilterCapped: "Only the first 100 product types are listed.",
@@ -3195,7 +3172,7 @@ export const en: Translation = {
     keywordsAssignments: {
       title: "Assignments",
       summary:
-        "This list shows, per content item, the keywords assigned in the active language. Filter by text, intent or score, expand an entry to see its keywords, and set one primary keyword per item.",
+        "This list shows, per content item, the keywords assigned in the active language. Filter by text or score, expand an entry to see its keywords, and set one primary keyword per item.",
       tips: [
         "Expanding an entry reveals its keywords",
         "The primary keyword is the item's main target",
@@ -3228,7 +3205,7 @@ export const en: Translation = {
         "Keywords are per language: switch the editor language and you edit that language's set",
       ],
       details:
-        "Tracked keywords are not just documentation — the AI uses them. When you generate a title, SEO title, meta description, description, URL slug or alt text, the primary keyword goes into the prompt as a requirement, the secondaries as an offer, and the classified search intent as context. Afterwards the result is checked for stuffing: too high a density regenerates once automatically, and if the second attempt still overuses the term you get a warning instead of a silently bad text. The format function goes about it more carefully: it keeps the keywords already in the text and works a missing primary keyword in by rewording an existing sentence, but it never adds the secondaries.",
+        "Tracked keywords are not just documentation — the AI uses them. When you generate a title, SEO title, meta description, description, URL slug or alt text, the primary keyword goes into the prompt as a requirement, and the secondaries as an offer. Afterwards the result is checked for stuffing: too high a density regenerates once automatically, and if the second attempt still overuses the term you get a warning instead of a silently bad text. The format function goes about it more carefully: it keeps the keywords already in the text and works a missing primary keyword in by rewording an existing sentence, but it never adds the secondaries.",
     },
     seoSidebarJsonLd: {
       title: "Structured data (JSON-LD)",

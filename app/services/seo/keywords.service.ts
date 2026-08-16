@@ -244,7 +244,6 @@ export interface KeywordAssignmentRow {
   locale: string;
   role: KeywordRole;
   priority: number;
-  intent: string | null;
   gscPosition: number | null;
   gscClicks: number | null;
   gscImpressions: number | null;
@@ -310,7 +309,6 @@ function toRow(a: {
     keyword: string;
     locale: string;
     priority: number;
-    intent: string | null;
     updatedAt: Date;
   };
 }): KeywordAssignmentRow {
@@ -323,7 +321,6 @@ function toRow(a: {
     locale: a.keyword.locale,
     role: a.role as KeywordRole,
     priority: a.keyword.priority,
-    intent: a.keyword.intent,
     gscPosition: a.gscPosition,
     gscClicks: a.gscClicks,
     gscImpressions: a.gscImpressions,
@@ -854,7 +851,6 @@ export interface GroupKeywordRow {
   keyword: string;
   locale: string;
   priority: number;
-  intent: string | null;
   /** How many items this keyword is currently assigned to (any role). */
   assignmentCount: number;
 }
@@ -980,7 +976,6 @@ export async function getGroupKeywords(
       keyword: m.keyword.keyword,
       locale: m.keyword.locale,
       priority: m.keyword.priority,
-      intent: m.keyword.intent,
       assignmentCount: m.keyword._count.assignments,
     }))
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
@@ -1009,7 +1004,6 @@ export async function listUngrouped(
       keyword: k.keyword,
       locale: k.locale,
       priority: k.priority,
-      intent: k.intent,
       assignmentCount: k._count.assignments,
     }))
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
@@ -1038,7 +1032,6 @@ export async function listAllKeywords(
       keyword: k.keyword,
       locale: k.locale,
       priority: k.priority,
-      intent: k.intent,
       assignmentCount: k._count.assignments,
     }))
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
@@ -1048,7 +1041,6 @@ export interface GroupImportEntry {
   keyword: string;
   locale?: string;
   priority?: number;
-  intent?: string | null;
 }
 
 /**
@@ -1056,15 +1048,15 @@ export interface GroupImportEntry {
  * the CSV importer's write path, also used for single manual adds. The locale
  * is OWNED by the group (§3.1 invariant: membership.keyword.locale ===
  * group.locale), so `entry.locale` is IGNORED — every keyword is created under
- * the group's locale. Explicit priority/intent from the file win over an
- * existing keyword's values; omitted ones (undefined priority / null intent)
+ * the group's locale. An explicit priority from the file wins over an
+ * existing keyword's value; an omitted one (undefined priority)
  * leave the existing row untouched. Returns how many keywords were newly added
  * to the group vs. already members. A missing/foreign group is a no-op.
  *
  * Batched (review L13): a 2000-row import used to be ~6000 sequential
  * queries inside a synchronous Remix action — now it's a handful of
  * findMany/createMany calls plus one updateMany per distinct explicit
- * (priority, intent) combination (≤ 15).
+ * priority (≤ 3).
  */
 export async function addKeywordsToGroup(
   db: PrismaClient,
@@ -1079,13 +1071,13 @@ export async function addKeywordsToGroup(
     select: { locale: true },
   });
   if (!group) return { added: 0, alreadyInGroup: 0 };
-  const byKey = new Map<string, { keyword: string; locale: string; priority?: number; intent?: string | null }>();
+  const byKey = new Map<string, { keyword: string; locale: string; priority?: number }>();
   for (const entry of entries) {
     const keyword = normalizeKeyword(entry.keyword);
     if (!keyword) continue;
     // The locale is owned by the group, not the entry (invariant).
     const locale = group.locale;
-    byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority, intent: entry.intent });
+    byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority });
   }
   if (byKey.size === 0) return { added: 0, alreadyInGroup: 0 };
   const normalized = Array.from(byKey.values());
@@ -1111,37 +1103,27 @@ export async function addKeywordsToGroup(
         keyword: e.keyword,
         locale: e.locale,
         priority: e.priority ?? 2,
-        intent: e.intent ?? null,
       })),
       skipDuplicates: true,
     });
   }
 
-  // 2. Explicit priority/intent overrides for PRE-EXISTING rows, grouped by
-  //    value combination so 2000 explicit rows become ≤ 15 updateMany calls.
-  const overrideGroups = new Map<string, { priority?: number; intent?: string; ids: string[] }>();
+  // 2. Explicit priority overrides for PRE-EXISTING rows, grouped by value so
+  //    2000 explicit rows become at most three updateMany calls.
+  const overrideGroups = new Map<string, { priority: number; ids: string[] }>();
   for (const e of normalized) {
     const id = existingIds.get(keyOf(e));
     if (!id) continue; // freshly created above — values already right
-    const hasPriority = e.priority != null;
-    const hasIntent = e.intent != null;
-    if (!hasPriority && !hasIntent) continue;
-    const comboKey = `${hasPriority ? e.priority : "-"}::${hasIntent ? e.intent : "-"}`;
-    const group = overrideGroups.get(comboKey) ?? {
-      ...(hasPriority ? { priority: e.priority } : {}),
-      ...(hasIntent ? { intent: e.intent as string } : {}),
-      ids: [],
-    };
+    if (e.priority == null) continue;
+    const comboKey = String(e.priority);
+    const group = overrideGroups.get(comboKey) ?? { priority: e.priority, ids: [] };
     group.ids.push(id);
     overrideGroups.set(comboKey, group);
   }
   for (const group of overrideGroups.values()) {
     await db.seoKeyword.updateMany({
       where: { id: { in: group.ids }, shop },
-      data: {
-        ...(group.priority != null ? { priority: group.priority } : {}),
-        ...(group.intent != null ? { intent: group.intent } : {}),
-      },
+      data: { priority: group.priority },
     });
   }
 
@@ -1428,7 +1410,7 @@ export async function moveKeyword(
   return serializableWithRetry(db, async (tx) => {
     const source = await tx.seoKeyword.findFirst({
       where: { id: input.keywordId, shop },
-      select: { id: true, keyword: true, locale: true, priority: true, intent: true },
+      select: { id: true, keyword: true, locale: true, priority: true },
     });
     if (!source) return { ok: false, reason: "notFound" } as const;
 
@@ -1490,7 +1472,6 @@ export async function moveKeyword(
           keyword: source.keyword,
           locale: input.targetLocale,
           priority: source.priority,
-          intent: source.intent,
         },
         select: { id: true },
       }));
@@ -1595,20 +1576,24 @@ export async function setKeywordPriority(
 
 /** Bulk action (plan §5.1 group detail): set the priority of EVERY keyword in
  *  a group in one statement. Returns the number of updated keywords. */
-export async function setGroupPriority(
+/**
+ * Set the priority of an explicit keyword SELECTION.
+ *
+ * Replaces the old group-wide `setGroupPriority`: "apply to every keyword in
+ * this group" was a separate mechanism sitting in its own corner of the page,
+ * while every other bulk action already worked off the table's checkboxes.
+ * One selection model, one place to act on it.
+ */
+export async function setKeywordPriorities(
   db: PrismaClient,
   shop: string,
-  groupId: string,
+  keywordIds: string[],
   priority: number,
 ): Promise<number> {
   if (priority !== 1 && priority !== 2 && priority !== 3) return 0;
-  const group = await db.seoKeywordGroup.findFirst({
-    where: { id: groupId, shop },
-    select: { id: true },
-  });
-  if (!group) return 0;
+  if (keywordIds.length === 0) return 0;
   const updated = await db.seoKeyword.updateMany({
-    where: { shop, groups: { some: { groupId } } },
+    where: { id: { in: keywordIds }, shop },
     data: { priority },
   });
   return updated.count;

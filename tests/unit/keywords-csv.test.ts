@@ -6,15 +6,15 @@ const LOCALES = new Set(["fr", "en"]);
 describe("parseKeywordsCsv", () => {
   it("parses a headered CSV with all four columns", () => {
     const { rows, errors } = parseKeywordsCsv(
-      "keyword,priority,intent,locale\nGreen  Vase,1,transactional,fr\nblue vase,,,\n",
+      "keyword,priority,locale\nGreen  Vase,1,fr\nblue vase,,\n",
       LOCALES,
     );
     expect(errors).toEqual([]);
     expect(rows).toEqual([
-      { keyword: "green vase", priority: 1, intent: "transactional", locale: "fr", csvRow: 2 },
+      { keyword: "green vase", priority: 1, locale: "fr", csvRow: 2 },
       // No explicit priority in the file → undefined (must NOT reset an
       // existing keyword's priority to the default on re-import).
-      { keyword: "blue vase", priority: undefined, intent: null, locale: "", csvRow: 3 },
+      { keyword: "blue vase", priority: undefined, locale: "", csvRow: 3 },
     ]);
   });
 
@@ -25,16 +25,16 @@ describe("parseKeywordsCsv", () => {
 
   it("supports German ;-delimited files and German headers", () => {
     const { rows } = parseKeywordsCsv("Suchbegriff;Priorität\nkeramik vase;3\n", LOCALES);
-    expect(rows).toEqual([{ keyword: "keramik vase", priority: 3, intent: null, locale: "", csvRow: 2 }]);
+    expect(rows).toEqual([{ keyword: "keramik vase", priority: 3, locale: "", csvRow: 2 }]);
   });
 
-  it("errors on bad priority / intent / locale without dropping other rows", () => {
+  it("errors on bad priority / locale without dropping other rows", () => {
     const { rows, errors } = parseKeywordsCsv(
-      "keyword,priority,intent,locale\nok keyword,2,commercial,\nbad prio,7,,\nbad intent,,buying,\nbad locale,,,xx\n",
+      "keyword,priority,locale\nok keyword,2,\nbad prio,7,\nbad locale,,xx\n",
       LOCALES,
     );
     expect(rows).toHaveLength(1);
-    expect(errors.map((e) => e.error).sort()).toEqual(["badIntent", "badLocale", "badPriority"]);
+    expect(errors.map((e) => e.error).sort()).toEqual(["badLocale", "badPriority"]);
   });
 
   it("rejects over-long keywords with a tooLong error", () => {
