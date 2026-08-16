@@ -62,7 +62,7 @@ import {
 } from "../services/seo/onpage-report.server";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
-import type { DeepLinkType } from "../services/seo/resource-types.shared";
+import { isAuditType, type DeepLinkType } from "../services/seo/resource-types.shared";
 import { isBotBlockStatus, classifyLinkStatus } from "../services/seo/crawl.service";
 // Client-safe module on purpose: the component renders this threshold, and
 // importing it from crawl.service would pull url-resolver.server into the
@@ -88,7 +88,7 @@ const TYPE_PATH: Record<DeepLinkType, string> = {
   page: "/app/pages",
   // Policies carry no SEO fields, but their BODY is editable — and a crawl
   // finding about a policy page (multiple H1s, thin content) is actionable
-  // exactly there. `DeepLinkType`, not `DeepLinkType`: the audit never scores them.
+  // exactly there. `DeepLinkType`, not `AuditType`: the audit never scores them.
   policy: "/app/policies",
 };
 
@@ -484,7 +484,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     snapshotRow.status === "capped"
       ? []
       : pages
-          .filter((p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0)
+          // Same narrowing as the persisted orphanCount and the dashboard
+          // bucket — see the note in crawl.service.ts.
+          .filter((p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0)
           .slice(0, UI_ROW_CAP)
           .map((p) => ({
             url: p.url,

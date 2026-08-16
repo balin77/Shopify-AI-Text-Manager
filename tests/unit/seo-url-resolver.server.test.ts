@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { resolveGscPagePath, resolvePathsToResources } from "~/services/seo/url-resolver.server";
+import {
+  resolveGscPagePath,
+  resolvePathsToResources,
+  isContentResourceType,
+} from "~/services/seo/url-resolver.server";
 
 /**
  * Phase 1 extraction (PLAN_SEO_SUITE_COMPLETION.md §1/§3.1): `resolveGscPagePath`
@@ -187,6 +191,18 @@ describe("policy pages", () => {
       "https://shop.example.com/policies/legal-notice",
     ]);
     expect(out.get("https://shop.example.com/policies/legal-notice")?.id).toBeNull();
+  });
+});
+
+describe("isContentResourceType", () => {
+  it("separates the keyword/SEO targets from a policy page", () => {
+    // A policy resolves to a real id, so `ref?.id` alone stopped being enough
+    // to know the ref is usable — that turned the Search-Console quick-win
+    // fallback (item-picker modal) into an Optimize button its action rejects.
+    expect(isContentResourceType("Product")).toBe(true);
+    expect(isContentResourceType("Article")).toBe(true);
+    expect(isContentResourceType("Policy")).toBe(false);
+    expect(isContentResourceType(null)).toBe(false);
   });
 });
 

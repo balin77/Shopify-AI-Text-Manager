@@ -1765,7 +1765,7 @@ export const de = {
 
       thinHint: "„Dünn\" wird hier nicht an einer festen Wortzahl gemessen, sondern im Vergleich zu Seiten desselben Typs in deinem Shop: gemeldet wird nur, was zu den kürzesten 10 % gehört UND weniger als die Hälfte des typischen Umfangs hat.",
       thinSkippedTypesHint: "Für diese Typen gibt es zu wenige Seiten für einen Vergleich (mindestens {min} nötig): {types}. Sie werden hier bewusst nicht bewertet.",
-      metadataSkippedHint: "{count} Seiten sind hier bewusst ausgenommen: Shopify bietet für Rechtstexte (/policies/…), die virtuelle Sammlung /collections/all und Blätterseiten (?page=2) überhaupt kein Titel-/Meta-Description-Feld. Ein Befund dort wäre nicht behebbar.",
+      metadataSkippedHint: "{count} gecrawlte Seiten werden in dieser Kategorie nicht bewertet: Shopify bietet für Rechtstexte (/policies/…), die virtuelle Sammlung /collections/all und Blätterseiten (?page=2) überhaupt kein Titel-/Meta-Description-Feld. Ein Befund dort wäre nicht behebbar. Im CSV-Export stehen sie als «metadata_not_editable».",
       emptyThin: "Keine auffällig dünnen Seiten gefunden.",
       thinWordCount: "{count} Wörter",
 

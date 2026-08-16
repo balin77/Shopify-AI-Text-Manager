@@ -70,7 +70,7 @@ import {
   type KeywordResourceType,
 } from "../services/seo/keywords.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
-import { resolvePathsToResources } from "../services/seo/url-resolver.server";
+import { resolvePathsToResources, isContentResourceType } from "../services/seo/url-resolver.server";
 import {
   analyzeFreshness,
   excludeDismissed,
@@ -169,8 +169,12 @@ async function resolveQuickWinResources(
     const r = resolved.get(opp.page);
     return {
       ...opp,
-      resourceType: r?.id ? (r.resourceType as KeywordResourceType) : null,
-      resourceId: r?.id ?? null,
+      // `isContentResourceType`, not just `r?.id`: a policy page resolves to a
+      // real ShopPolicy id but is not a keyword target (no handle, no SEO
+      // title). Leaving it null keeps the row on its item-picker fallback
+      // instead of rendering an Optimize button the action rejects.
+      resourceType: r?.id && isContentResourceType(r.resourceType) ? (r.resourceType as KeywordResourceType) : null,
+      resourceId: r?.id && isContentResourceType(r.resourceType) ? r.id : null,
     };
   });
 }

@@ -461,6 +461,8 @@ describe("hasEditableMetadata (§ the title/meta false-positive rule)", () => {
   it("survives a locale prefix", () => {
     expect(hasEditableMetadata(`${BASE}/es/policies/refund-policy`)).toBe(false);
     expect(hasEditableMetadata(`${BASE}/it/collections/all`)).toBe(false);
+    expect(hasEditableMetadata(`${BASE}/en-us/policies/refund-policy`)).toBe(false);
+    expect(hasEditableMetadata(`${BASE}/fil/policies/refund-policy`)).toBe(false);
   });
 
   it("excludes pagination — page N serves page 1's metadata by construction", () => {

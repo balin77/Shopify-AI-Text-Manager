@@ -1766,7 +1766,7 @@ export const en: Translation = {
 
       thinHint: "\"Thin\" is not measured against a fixed word count here, but against pages of the same type in your shop: only what is among the shortest 10% AND below half the typical length is reported.",
       thinSkippedTypesHint: "Too few pages of these types for a comparison (at least {min} needed): {types}. They are deliberately not judged here.",
-      metadataSkippedHint: "{count} pages are deliberately excluded here: Shopify offers no title/meta description field at all for policy pages (/policies/…), the virtual /collections/all listing, or pagination (?page=2). A finding there could not be fixed.",
+      metadataSkippedHint: "{count} crawled pages are not judged in this category: Shopify offers no title/meta description field at all for policy pages (/policies/…), the virtual /collections/all listing, or pagination (?page=2). A finding there could not be fixed. The CSV export lists them as \"metadata_not_editable\".",
       emptyThin: "No noticeably thin pages found.",
       thinWordCount: "{count} words",
 

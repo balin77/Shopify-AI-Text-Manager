@@ -48,7 +48,9 @@ export interface ResolvedGscPage {
 // "/de/products/foo" or "/en-us/collections/bar" — Shopify prefixes every
 // path with the active locale under an internationalized domain/subfolder
 // setup, and that segment must be stripped before matching /products/ etc.
-const LOCALE_SEGMENT_RE = /^[a-z]{2}(-[a-z]{2,4})?$/i;
+// Imported rather than re-declared: the crawl denylist and the on-page rules
+// strip the same segment, and a second hand-written copy is how the two drift.
+import { LOCALE_SEGMENT_RE } from "./locale-path.shared";
 
 /**
  * Map a storefront path/URL (as returned by GSC's page-dimensioned rows, OR
@@ -91,6 +93,26 @@ const RESOURCE_MODELS = ["Product", "Collection", "Page", "Article", "Policy"] a
 /** `/policies/refund-policy` → `REFUND_POLICY`, the `ShopPolicy.type` value. */
 export function policyHandleToType(handle: string): string {
   return handle.toUpperCase().replace(/-/g, "_");
+}
+
+/** The four types keyed by HANDLE and carrying SEO fields. */
+export type ContentResourceType = Exclude<ResolvedGscPage["resourceType"], "Policy">;
+
+/**
+ * True for everything except "Policy".
+ *
+ * Every consumer that tracks keywords, scores SEO or persists a resource
+ * reference for later use has to ask this. A `ShopPolicy` resolves to a real
+ * cached id, so a bare `ref?.id` check is no longer enough to know the ref is
+ * usable: before policies resolved at all, `/policies/shipping-policy` came
+ * back unresolved and the Search-Console quick-win row fell through to the
+ * item-picker modal. Blind-casting the wider type instead renders an "Optimize"
+ * button whose action rejects it — a working fallback traded for a dead button.
+ */
+export function isContentResourceType(
+  type: ResolvedGscPage["resourceType"] | null | undefined,
+): type is ContentResourceType {
+  return !!type && type !== "Policy";
 }
 
 /** A resolved path, now including the DB id when the handle matched a cached row. */

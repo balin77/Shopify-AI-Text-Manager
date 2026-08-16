@@ -167,6 +167,8 @@ describe("isDenylistedPath", () => {
     expect(isDenylistedPath("/en/account/login")).toBe(true);
     expect(isDenylistedPath("/pt-br/challenge")).toBe(true);
     expect(isDenylistedPath("/en-us/apps/some-app")).toBe(true);
+    // Shopify supports three-letter language codes too (fil, haw).
+    expect(isDenylistedPath("/fil/cart")).toBe(true);
   });
 
   it("does not treat a locale-looking first segment as a free pass", () => {

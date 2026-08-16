@@ -217,7 +217,14 @@ async function buildRows(
           resourceId: null,
         })),
       );
-      return [...missing, ...duplicates];
+      // Carried TAGGED, the same contract the indexability export follows: the
+      // point of a CSV is that the merchant can check our filtering rather than
+      // trust it, and the tab's "N pages excluded" banner is otherwise
+      // unverifiable.
+      const notEditable = pages
+        .filter((p) => p.statusCode >= 200 && p.statusCode < 300 && !hasEditableMetadata(p.url))
+        .map((p) => flat(p, "metadata_not_editable"));
+      return [...missing, ...duplicates, ...notEditable];
     }
     case "thin":
       return findThinPages(pages).pages.map((r) => ({

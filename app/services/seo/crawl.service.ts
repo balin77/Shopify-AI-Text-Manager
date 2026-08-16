@@ -42,8 +42,9 @@ import { isAuditType, type AuditType, type DeepLinkType } from "./resource-types
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-/** Pagination whitelist (§3.2): `?page=1..5` survives the query-strip; anything
- *  else (facets, `?variant=`, `?sort_by=`, `page=6+`) is dropped entirely. */
+/** Pagination whitelist (§3.2): `?page=2..5` survives the query-strip; anything
+ *  else (facets, `?variant=`, `?sort_by=`, `page=6+`) is dropped entirely.
+ *  `page=1` is dropped too — it is the same document as the bare URL. */
 export const CRAWL_PAGINATION_MAX = 5;
 
 /** Hardcoded denylist (§3.2), in addition to robots.txt — paths we never crawl
@@ -185,10 +186,10 @@ export function isFeedPath(pathname: string): boolean {
  * primary domain) so both hostnames collapse to one crawl identity.
  *
  * Rules (§3.2): query string stripped entirely except `page` (whitelisted,
- * clamped to 1..CRAWL_PAGINATION_MAX — out-of-range values are dropped, not
+ * kept only for 2..CRAWL_PAGINATION_MAX — out-of-range values are dropped, not
  * clamped, since a stripped page param collapses harmlessly with the
- * unpaginated URL); fragment stripped; trailing slash normalized (except
- * root); host lowercased.
+ * unpaginated URL, and `page=1` IS that same URL); fragment stripped; trailing
+ * slash normalized (except root); host lowercased.
  */
 export function normalizeCrawlUrl(
   rawUrl: string,
@@ -1673,7 +1674,14 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     }
   }
 
-  const orphanCount = persistablePages.filter((p) => p.resourceId && p.inboundCount === 0).length;
+  // `isAuditType`, not just `resourceId`: policy pages now resolve to a real id,
+  // and the dashboard's orphanPages bucket narrows to the four audit types (its
+  // items feed Record<AuditType, …> maps). Counting them here would make the
+  // crawl tile disagree with the dashboard on the same snapshot — the exact
+  // double-counting the brokenLinks/serverErrors split was introduced to stop.
+  const orphanCount = persistablePages.filter(
+    (p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0,
+  ).length;
   const headDrift = await computeHeadDrift(db, shop, headDriftCandidates, shopName, Infinity);
 
   // Only genuinely broken targets become SeoCrawlBrokenLink rows — a 403/429

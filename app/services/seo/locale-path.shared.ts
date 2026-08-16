@@ -14,8 +14,20 @@
  * hand-copied regex in a second file is how the robots-token bug shipped twice.
  */
 
-/** Matches a leading locale segment: `/de/…`, `/en-us/…`, `/pt-BR/…`. */
-const LEADING_LOCALE_RE = /^\/[a-z]{2}(-[a-z]{2,4})?(?=\/)/;
+/**
+ * ONE storefront path segment that is a locale code: `de`, `en-us`, `pt-BR`,
+ * and the three-letter codes Shopify supports (`fil`, `haw`). Anchored at both
+ * ends and case-insensitive; `url-resolver.server.ts` matches segments with it.
+ *
+ * Three letters are allowed because `/fil/cart` is a real Shopify URL. That
+ * cannot swallow a content path: every storefront prefix this app resolves
+ * (`products`, `collections`, `pages`, `blogs`, `policies`) is longer, and a
+ * stripped path is only ever an ADDITIONAL match, never a replacement.
+ */
+export const LOCALE_SEGMENT_RE = /^[a-z]{2,3}(-[a-z]{2,4})?$/i;
+
+/** The same rule anchored as a LEADING path segment: `/de/…`, `/en-us/…`. */
+const LEADING_LOCALE_RE = /^\/[a-z]{2,3}(-[a-z]{2,4})?(?=\/)/;
 
 /** `"/it/cart"` → `"/cart"`. Unprefixed paths come back unchanged. */
 export function stripLocalePrefix(lowerPath: string): string {

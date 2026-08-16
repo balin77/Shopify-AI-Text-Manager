@@ -38,7 +38,7 @@ const TYPE_PATH: Record<DeepLinkType, string> = {
   page: "/app/pages",
   // Policies carry no SEO fields, but their BODY is editable — and a crawl
   // finding about a policy page (multiple H1s, thin content) is actionable
-  // exactly there. `DeepLinkType`, not `DeepLinkType`: the audit never scores them.
+  // exactly there. `DeepLinkType`, not `AuditType`: the audit never scores them.
   policy: "/app/policies",
 };
 
