@@ -205,7 +205,8 @@ export async function redactCustomerData(
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
  *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
  *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
- *      SeoCrawlBrokenLink, SeoGscPageStat, SeoInternalLinkSuggestion,
+ *      SeoCrawlBrokenLink, SeoCrawlExternalLink, SeoGscPageStat,
+ *      SeoInternalLinkSuggestion,
  *      SeoSitemapExclusion, MediaLibraryImage, MediaLibrarySyncState
  *                                                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
@@ -507,6 +508,13 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seoCrawlBrokenLinksDeleted.count} SEO crawl broken links`);
+
+    // PLAN_SEO_CRAWL_EXPANSION §6: outbound links to other domains, found by
+    // the same crawl — another child of the snapshot.
+    const seoCrawlExternalLinksDeleted = await tx.seoCrawlExternalLink.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlExternalLinksDeleted.count} SEO crawl external links`);
 
     const seoCrawlPagesDeleted = await tx.seoCrawlPage.deleteMany({
       where: { shop: shop_domain },

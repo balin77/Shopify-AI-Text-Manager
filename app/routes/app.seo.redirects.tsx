@@ -45,6 +45,8 @@ import {
   parseRedirectsCsv,
   type RedirectCsvError,
 } from "../services/seo/redirects-csv";
+import { findRedirectChains, type RedirectChain } from "../services/seo/redirect-chains";
+import { fetchPrimaryDomain } from "../utils/shop-domain.server";
 import {
   GET_PRODUCT_HANDLES,
   GET_COLLECTION_HANDLES,
@@ -54,6 +56,19 @@ import { getFormString } from "../utils/form-data.utils";
 import type { DataResponse } from "~/types/data-response";
 
 const IMPORT_ROW_CAP = 1000;
+
+/**
+ * Redirects loaded for the chain scan (§4). Chain detection needs the WHOLE
+ * list — a chain whose second hop sits on page 7 is invisible to the 50-row
+ * page the table shows — but a loader must not walk an unbounded connection on
+ * every visit. Four pages of 250 covers the overwhelming majority of shops; if
+ * it is exhausted the UI SAYS so rather than silently claiming "no chains
+ * found" (no silent caps).
+ */
+const CHAIN_SCAN_MAX_REDIRECTS = 1000;
+const CHAIN_SCAN_PAGE_SIZE = 250;
+/** Chains rendered before the "+N more" line. */
+const CHAIN_UI_CAP = 25;
 
 type HitWithSuggestion = Omit<Hit404, "firstSeenAt" | "lastSeenAt"> & {
   firstSeenAt: string | Date;
@@ -67,6 +82,10 @@ interface LoaderData {
   endCursor: string | null;
   q: string;
   hits: HitWithSuggestion[];
+  /** §4 — redirect chains found in the FULL list (not just the shown page). */
+  chains: RedirectChain[];
+  /** True when the chain scan hit CHAIN_SCAN_MAX_REDIRECTS — see the constant. */
+  chainScanCapped: boolean;
 }
 
 type ExportPayload = { csv: string; filename: string; rowCount: number };
@@ -105,10 +124,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const q = url.searchParams.get("q") || "";
   const after = url.searchParams.get("after") || null;
 
-  const [redirectsResult, hits, handles] = await Promise.all([
+  const [redirectsResult, hits, handles, chainScan] = await Promise.all([
     listRedirects(admin, { first: 50, after, query: q }),
     list404Hits(db, session.shop, { status: "new", limit: 100 }),
     fetchAllHandles(admin),
+    // Skipped while paging ("Load more" re-runs this loader): that response is
+    // only read for the next slice of rows, and re-scanning the full list on
+    // every page click would quadruple the request cost for nothing.
+    after ? Promise.resolve({ chains: [], capped: false }) : scanRedirectChains(admin, session.shop),
   ]);
 
   const enrichedHits: HitWithSuggestion[] = hits.map((h) => ({
@@ -122,13 +145,56 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     endCursor: redirectsResult.endCursor,
     q,
     hits: enrichedHits,
+    chains: chainScan.chains,
+    chainScanCapped: chainScan.capped,
   });
 };
+
+/**
+ * Loads the shop's redirects (bounded, see CHAIN_SCAN_MAX_REDIRECTS) and folds
+ * them into chains (§4.1-§4.2). Deliberately UNFILTERED by the search box: a
+ * chain is a property of the whole list, and scanning only the search result
+ * would report a chain as "resolved" the moment the merchant typed something.
+ */
+async function scanRedirectChains(
+  admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"],
+  shop: string,
+): Promise<{ chains: RedirectChain[]; capped: boolean }> {
+  try {
+    const all: Array<{ id: string; path: string; target: string }> = [];
+    let cursor: string | null = null;
+    let capped = false;
+    for (;;) {
+      const page = await listRedirects(admin, {
+        first: CHAIN_SCAN_PAGE_SIZE,
+        after: cursor,
+        query: null,
+      });
+      all.push(...page.redirects);
+      if (all.length >= CHAIN_SCAN_MAX_REDIRECTS) {
+        capped = page.hasNextPage || all.length > CHAIN_SCAN_MAX_REDIRECTS;
+        break;
+      }
+      if (!page.hasNextPage || !page.endCursor) break;
+      cursor = page.endCursor;
+    }
+    // The primary domain is what makes an ABSOLUTE target on the shop's own
+    // host a followable hop (§4.2). Without it those targets end the chain,
+    // which only ever costs us a finding — never a wrong fix.
+    const primaryHost = await fetchPrimaryDomain(admin, shop);
+    return { chains: findRedirectChains(all, primaryHost), capped };
+  } catch {
+    // The chain card is an extra on this page — a hiccup here must never take
+    // the redirect management itself down with it.
+    return { chains: [], capped: false };
+  }
+}
 
 type ImportError = { row: number; path: string; error: string };
 type ActionResult =
   | { ok: true; kind: "created" | "updated" | "deleted" | "dismissed" }
   | { ok: true; kind: "imported"; created: number; skipped: number; errors: ImportError[] }
+  | { ok: true; kind: "chainsResolved"; resolved: number; failed: number }
   | { ok: false; error: string; detail?: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
@@ -180,6 +246,38 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     const hitId = getFormString(form, "hitId");
     if (hitId) await set404Status(db, session.shop, hitId, "dismissed");
     return json<ActionResult>({ ok: true, kind: "dismissed" });
+  }
+
+  // §4.3 — repoint the FIRST redirect of a chain straight at its final target.
+  // The intermediate redirects are deliberately left in place: they can have
+  // inbound links of their own, and deleting them would turn those into 404s.
+  if (actionType === "resolveChain") {
+    // `chainId` names WHICH chain, never WHAT to write: the chain is re-derived
+    // from Shopify's live list here, so a stale client view (or a hand-crafted
+    // POST — this action is directly reachable) can't repoint a redirect at an
+    // arbitrary target. Same rule as the bulk editor's server-side diff check.
+    const chainId = getFormString(form, "chainId"); // "" = all resolvable chains
+    const { chains } = await scanRedirectChains(admin, session.shop);
+    const resolvable = chains.filter(
+      (c) => !c.isLoop && c.finalTarget && (!chainId || c.firstRedirectId === chainId),
+    );
+    if (resolvable.length === 0) {
+      return json<ActionResult>({ ok: false, error: "chainGone" }, { status: 409 });
+    }
+
+    let resolved = 0;
+    let failed = 0;
+    // Sequential: Shopify rate-limits burst redirect writes and there is no
+    // batch mutation — same reason the CSV import loops.
+    for (const chain of resolvable) {
+      const res = await updateRedirect(admin, chain.firstRedirectId, {
+        path: chain.hops[0],
+        target: chain.finalTarget as string,
+      });
+      if (res.userErrors.length > 0 || !res.redirect) failed += 1;
+      else resolved += 1;
+    }
+    return json<ActionResult>({ ok: true, kind: "chainsResolved", resolved, failed });
   }
 
   if (actionType === "importCsv") {
@@ -255,6 +353,8 @@ export default function SeoRedirects() {
   const loaderEndCursor = raw.endCursor ?? null;
   const q = raw.q ?? "";
   const hits = raw.hits ?? [];
+  const chains = raw.chains ?? [];
+  const chainScanCapped = raw.chainScanCapped ?? false;
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const confirm = useConfirm();
@@ -262,6 +362,7 @@ export default function SeoRedirects() {
 
   const createFetcher = useFetcher<ActionResult>();
   const rowFetcher = useFetcher<ActionResult>();
+  const chainFetcher = useFetcher<ActionResult>();
   const importFetcher = useFetcher<ActionResult>();
   const exportFetcher = useFetcher<ExportPayload>();
   // Dedicated fetcher for "Load more" — GET requests to the same loader, kept
@@ -363,6 +464,27 @@ export default function SeoRedirects() {
   const importResult =
     importFetcher.state === "idle" && importFetcher.data?.ok && importFetcher.data.kind === "imported"
       ? importFetcher.data
+      : null;
+
+  // §4.3 — chain resolution. `pendingChainId` is "" for "resolve all", which is
+  // also what the action reads as "every resolvable chain".
+  const [pendingChainId, setPendingChainId] = useState<string | null>(null);
+  const resolvableChains = chains.filter((c) => !c.isLoop && c.finalTarget);
+  const resolveChain = (chainId: string) => {
+    setPendingChainId(chainId);
+    chainFetcher.submit({ actionType: "resolveChain", chainId }, { method: "post" });
+  };
+  useEffect(() => {
+    if (chainFetcher.state === "idle" && chainFetcher.data) setPendingChainId(null);
+  }, [chainFetcher.state, chainFetcher.data]);
+
+  const chainError =
+    chainFetcher.data && !chainFetcher.data.ok
+      ? (r.errors as Record<string, string>)[chainFetcher.data.error] || r.errors.updateFailed
+      : null;
+  const chainResult =
+    chainFetcher.state === "idle" && chainFetcher.data?.ok && chainFetcher.data.kind === "chainsResolved"
+      ? chainFetcher.data
       : null;
 
   const submitSearch = () => {
@@ -486,6 +608,78 @@ export default function SeoRedirects() {
             <Text as="p" variant="bodyMd">{r.helpBody2}</Text>
           </BlockStack>
         </Banner>
+
+        {/* §4.3 — redirect chains. Above the list on purpose: it is the one
+            finding on this page the merchant cannot see by scrolling. */}
+        {chains.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingMd">
+                  {r.chainsTitle.replace("{count}", String(chains.length))}
+                </Text>
+                {resolvableChains.length > 1 && (
+                  <Button
+                    variant="primary"
+                    loading={chainFetcher.state !== "idle" && pendingChainId === ""}
+                    disabled={chainFetcher.state !== "idle"}
+                    onClick={() => resolveChain("")}
+                  >
+                    {r.resolveAllChains.replace("{count}", String(resolvableChains.length))}
+                  </Button>
+                )}
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">{r.chainsIntro}</Text>
+              {chainScanCapped && <Banner tone="info">{r.chainsScanCapped}</Banner>}
+              {chainError && <Banner tone="critical">{chainError}</Banner>}
+              {chainResult && (
+                <Banner tone={chainResult.failed > 0 ? "warning" : "success"}>
+                  {r.chainsResolvedSummary
+                    .replace("{resolved}", String(chainResult.resolved))
+                    .replace("{failed}", String(chainResult.failed))}
+                </Banner>
+              )}
+
+              <BlockStack gap="200">
+                {chains.slice(0, CHAIN_UI_CAP).map((chain) => (
+                  <InlineStack
+                    key={chain.firstRedirectId}
+                    align="space-between"
+                    blockAlign="center"
+                    gap="200"
+                    wrap
+                  >
+                    <div style={{ flex: "1 1 260px", minWidth: 0, overflowWrap: "anywhere" }}>
+                      <Text as="span" variant="bodySm" tone={chain.isLoop ? "critical" : undefined}>
+                        {chain.hops.join(" → ")}
+                      </Text>
+                    </div>
+                    {chain.isLoop ? (
+                      // A loop has no end an auto-fix could point at — saying so
+                      // is the whole action here.
+                      <Text as="span" variant="bodySm" tone="critical">{r.chainLoop}</Text>
+                    ) : (
+                      <Button
+                        size="slim"
+                        loading={chainFetcher.state !== "idle" && pendingChainId === chain.firstRedirectId}
+                        disabled={chainFetcher.state !== "idle"}
+                        onClick={() => resolveChain(chain.firstRedirectId)}
+                      >
+                        {r.resolveChain}
+                      </Button>
+                    )}
+                  </InlineStack>
+                ))}
+                {chains.length > CHAIN_UI_CAP && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {r.chainsMore.replace("{count}", String(chains.length - CHAIN_UI_CAP))}
+                  </Text>
+                )}
+              </BlockStack>
+              <Text as="p" variant="bodySm" tone="subdued">{r.chainsKeepIntermediateHint}</Text>
+            </BlockStack>
+          </Card>
+        )}
 
         {/* Frequent 404s */}
         <Card>

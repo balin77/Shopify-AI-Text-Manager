@@ -1964,6 +1964,19 @@ export const de = {
       importResultErrors: "Erste fehlerhafte Zeilen:",
       useSuggestion: "Vorschlag übernehmen",
       suggestedTargetLabel: "Vorgeschlagenes Ziel",
+      // Weiterleitungsketten (PLAN_SEO_CRAWL_EXPANSION §4)
+      chainsTitle: "{count} Weiterleitungsketten gefunden",
+      chainsIntro:
+        "Eine Kette entsteht, wenn eine Weiterleitung auf eine Seite zeigt, die selbst wieder weiterleitet. Besucher und Google warten dadurch auf zwei Anfragen statt einer — und Google folgt langen Ketten irgendwann gar nicht mehr.",
+      chainsScanCapped:
+        "Für die Ketten-Prüfung wurden die ersten 1000 Weiterleitungen geladen. Weitere Ketten dahinter sind hier nicht aufgeführt.",
+      resolveChain: "Kette auflösen",
+      resolveAllChains: "Alle Ketten auflösen ({count})",
+      chainLoop: "Schleife — kein Ziel, das automatisch gesetzt werden kann. Bitte manuell bearbeiten.",
+      chainsMore: "… und {count} weitere.",
+      chainsKeepIntermediateHint:
+        "„Kette auflösen“ biegt nur die ERSTE Weiterleitung direkt auf das Endziel um. Die Zwischenschritte bleiben bestehen — auf sie können eigene Links von außen zeigen, die sonst ins Leere liefen.",
+      chainsResolvedSummary: "{resolved} Ketten aufgelöst, {failed} fehlgeschlagen.",
       errors: {
         pathRequired: "Bitte einen gültigen Quellpfad angeben.",
         pathLeadingSlash: "Der Pfad muss mit „/“ beginnen.",
@@ -1976,6 +1989,7 @@ export const de = {
         unsupportedRegex: "Regex-Weiterleitungen werden von Shopify nicht unterstützt — Zeile übersprungen.",
         unsupportedWildcard: "Wildcard-Weiterleitungen (contains/startsWith/endsWith/start/end) werden von Shopify nicht unterstützt — Zeile übersprungen.",
         duplicateInCsv: "Doppelter Quellpfad in der CSV — nur die erste Zeile mit diesem Pfad wird importiert.",
+        chainGone: "Diese Kette gibt es nicht mehr — die Weiterleitungen wurden zwischenzeitlich geändert.",
       },
     },
     hreflangPage: {

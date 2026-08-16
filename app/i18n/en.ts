@@ -1964,6 +1964,19 @@ export const en: Translation = {
       importResultErrors: "First failed rows:",
       useSuggestion: "Use suggestion",
       suggestedTargetLabel: "Suggested target",
+      // Redirect chains (PLAN_SEO_CRAWL_EXPANSION §4)
+      chainsTitle: "{count} redirect chains found",
+      chainsIntro:
+        "A chain is a redirect pointing at a page that redirects again. Visitors and Google wait for two requests instead of one — and Google eventually stops following long chains altogether.",
+      chainsScanCapped:
+        "The chain check loaded the first 1000 redirects. Any chains beyond that are not listed here.",
+      resolveChain: "Resolve chain",
+      resolveAllChains: "Resolve all chains ({count})",
+      chainLoop: "Loop — there is no end target to set automatically. Please edit it by hand.",
+      chainsMore: "… and {count} more.",
+      chainsKeepIntermediateHint:
+        "“Resolve chain” only repoints the FIRST redirect straight at the final target. The intermediate steps stay in place — external links may point at them, and removing them would turn those into dead ends.",
+      chainsResolvedSummary: "{resolved} chains resolved, {failed} failed.",
       errors: {
         pathRequired: "Please enter a valid source path.",
         pathLeadingSlash: "The path must start with \"/\".",
@@ -1976,6 +1989,7 @@ export const en: Translation = {
         unsupportedRegex: "Regex redirects aren't supported by Shopify — row skipped.",
         unsupportedWildcard: "Wildcard redirects (contains/startsWith/endsWith/start/end) aren't supported by Shopify — row skipped.",
         duplicateInCsv: "Duplicate source path in the CSV — only the first row with this path is imported.",
+        chainGone: "That chain no longer exists — the redirects have changed in the meantime.",
       },
     },
     hreflangPage: {

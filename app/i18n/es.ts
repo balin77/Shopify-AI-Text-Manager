@@ -1963,6 +1963,19 @@ export const es: Translation = {
       importResultErrors: "Primeras filas con error:",
       useSuggestion: "Usar sugerencia",
       suggestedTargetLabel: "Destino sugerido",
+      // Cadenas de redirección (PLAN_SEO_CRAWL_EXPANSION §4)
+      chainsTitle: "{count} cadenas de redirección encontradas",
+      chainsIntro:
+        "Una cadena surge cuando una redirección apunta a una página que vuelve a redirigir. Los visitantes y Google esperan dos peticiones en lugar de una, y Google acaba por no seguir las cadenas largas.",
+      chainsScanCapped:
+        "La comprobación de cadenas cargó las primeras 1000 redirecciones. Las cadenas posteriores no aparecen aquí.",
+      resolveChain: "Resolver cadena",
+      resolveAllChains: "Resolver todas las cadenas ({count})",
+      chainLoop: "Bucle: no hay destino final que se pueda fijar automáticamente. Edítalo a mano.",
+      chainsMore: "… y {count} más.",
+      chainsKeepIntermediateHint:
+        "«Resolver cadena» solo reapunta la PRIMERA redirección directamente al destino final. Los pasos intermedios se mantienen: puede haber enlaces externos hacia ellos que, si se eliminaran, quedarían rotos.",
+      chainsResolvedSummary: "{resolved} cadenas resueltas, {failed} con error.",
       errors: {
         pathRequired: "Introduce una ruta de origen válida.",
         pathLeadingSlash: "La ruta debe empezar con \"/\".",
@@ -1975,6 +1988,7 @@ export const es: Translation = {
         unsupportedRegex: "Shopify no admite redirecciones regex — fila omitida.",
         unsupportedWildcard: "Shopify no admite redirecciones con comodines (contains/startsWith/endsWith/start/end) — fila omitida.",
         duplicateInCsv: "Ruta de origen duplicada en el CSV — solo se importa la primera fila con esa ruta.",
+        chainGone: "Esa cadena ya no existe: las redirecciones han cambiado mientras tanto.",
       },
     },
     hreflangPage: {
