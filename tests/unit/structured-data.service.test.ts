@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   plainText,
   absoluteUrl,
@@ -421,5 +423,51 @@ describe("renderJsonLdScript", () => {
     const out = renderJsonLdScript({ x: "</script><script>alert(1)" });
     expect(out).not.toContain("</script>");
     expect(out).toContain("\\u003c/script>");
+  });
+});
+
+/**
+ * priceValidUntil is the one Offer property this app is structurally tempted to
+ * invent: it is easy to synthesize from a clock and impossible to derive from
+ * store data. The storefront Liquid block did exactly that ("now + 1 year" on
+ * every Offer), asserting a price guarantee no merchant had given — the kind of
+ * non-factual claim Shopify App Store requirement 1.1.4 forbids.
+ *
+ * The service half is pinned by the byte-parity test above (absent input ⇒ no
+ * key). These tests pin the Liquid half to the same rule, by reading the block
+ * source: a unit test cannot render Liquid, but it CAN prove the fabrication
+ * never comes back and that both emission sites stay conditional.
+ */
+describe("storefront Liquid block: priceValidUntil parity with the service", () => {
+  const liquid = readFileSync(
+    join(__dirname, "../../extensions/storefront/blocks/structured-data.liquid"),
+    "utf8",
+  );
+
+  it("never derives the date from a clock", () => {
+    // 31536000 = one year in seconds, the old synthesized horizon.
+    expect(liquid).not.toContain("31536000");
+    expect(liquid).not.toMatch(/p_valid_until\s*=\s*'now'/);
+  });
+
+  it("sources it from the merchant's product metafield", () => {
+    expect(liquid).toContain("product.metafields.custom.price_valid_until.value");
+  });
+
+  it("guards every emission site with a non-empty check", () => {
+    const emissions = liquid.match(/"priceValidUntil":/g) ?? [];
+    // Both offer branches: the per-variant Offer loop and AggregateOffer.
+    expect(emissions).toHaveLength(2);
+    for (const line of liquid.split("\n")) {
+      if (!line.includes('"priceValidUntil":')) continue;
+      expect(line).toMatch(/\{%-?\s*if p_valid_until != ''\s*-?%\}/);
+    }
+  });
+
+  it("stays independent of ?variant= — the date comes off the PRODUCT", () => {
+    // The block's own invariant 1: no offer input may be read from the
+    // selected variant. (Only prose mentions that name; no `assign` may.)
+    expect(liquid).not.toMatch(/=\s*[^\n#]*selected_or_first_available_variant/);
+    expect(liquid).toMatch(/pvu_raw = product\.metafields\./);
   });
 });
