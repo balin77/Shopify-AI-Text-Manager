@@ -477,7 +477,19 @@ export function LibraryTab({
                 onClose={() => setPriorityMenuOpen(false)}
                 preferredAlignment="left"
                 activator={
-                  <Tooltip content={k.setPriorityHint} dismissOnMouseOut preferredPosition="below">
+                  /* `active={false}` while the menu is open, rather than
+                     dropping the Tooltip from the tree: an open menu and its
+                     own tooltip overlap, but swapping the activator's wrapper
+                     mid-interaction is exactly what cost this button its first
+                     click before. Polaris gates hover AND focus activation on
+                     `active !== false`, so this suppresses it outright instead
+                     of showing and hiding it again. */
+                  <Tooltip
+                    content={k.setPriorityHint}
+                    active={priorityMenuOpen ? false : undefined}
+                    dismissOnMouseOut
+                    preferredPosition="below"
+                  >
                     <Button
                       size="slim"
                       disclosure

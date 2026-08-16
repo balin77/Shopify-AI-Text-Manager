@@ -419,23 +419,29 @@ export function AssignmentsTab({
                         >
                           {isOpen ? "▾" : "▸"}
                         </span>
-                        {/* Line 1: title · type. Line 2: the keywords, in the
-                            type's own subdued style — collapsed, the item's
-                            keywords are the one thing this list is ABOUT, and
-                            they were the one thing not visible. */}
-                        <div style={{ maxWidth: "460px", minWidth: 0 }}>
+                        {/* Two labelled lines — "Produkt: <Titel>" over
+                            "Keyword: <…>". Collapsed, the item's keywords are
+                            the one thing this list is ABOUT and they were the
+                            one thing not visible; giving both lines the same
+                            label/value shape makes the pair scannable instead
+                            of turning the second line into loose text. */}
+                        <div style={{ maxWidth: "520px", minWidth: 0 }}>
                           <div>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {`${k.types[g.resourceType] || g.resourceType}: `}
+                            </Text>
                             <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
                               {g.itemMissing ? k.itemMissing : g.itemTitle || g.resourceId}
                             </Text>
+                          </div>
+                          <div>
                             <Text as="span" variant="bodySm" tone="subdued">
-                              {" · "}
-                              {k.types[g.resourceType] || g.resourceType}
+                              {`${k.colKeyword}: `}
+                            </Text>
+                            <Text as="span" variant="bodySm" truncate>
+                              {g.keywordSummary}
                             </Text>
                           </div>
-                          <Text as="p" variant="bodySm" tone="subdued" truncate>
-                            {g.keywordSummary}
-                          </Text>
                         </div>
                       </InlineStack>
                       <InlineStack gap="400" blockAlign="center" wrap={false}>
