@@ -2976,14 +2976,14 @@ export const de = {
       summary:
         "Alle Bilder eines Produkts auf einmal ablegen und die Dateinamen entscheiden lassen, zu welcher Variante jedes gehört.",
       tips: [
-        "Die Zuordnung läuft über den Dateinamen: entweder die Varianten-SKU oder ein Bildschlüssel aus den Optionswerten",
-        "Unterstriche trennen die Segmente — ein Segment darf selbst keinen enthalten",
+        "Dateiname = die Varianten-SKU (oder der Bildschlüssel) PLUS ein Bezeichner am Ende: produkt_rot_L_01.jpg passt zur SKU produkt_rot_L",
+        "Das letzte Segment unterscheidet Bild 1 von Bild 2 derselben Variante — ohne es passt gar nichts",
+        "Unterstriche trennen die Segmente, ein Segment darf selbst keinen enthalten; die Zuordnung unterscheidet Groß-/Kleinschreibung",
         "Die Reihenfolge lässt sich nach Bezeichner, SKU oder Dateiname sortieren oder von Hand ziehen",
         "Videos und 3D-Modelle laufen über denselben Weg wie Bilder",
-        "Zu Shopify geschrieben wird erst nach Ihrer Bestätigung",
       ],
       details:
-        "Der Sinn dieses Tabs ist nicht das Hochladen, sondern das Zuordnen: Zwölf Bilder für ein Produkt mit vier Varianten bedeuten sonst zwölf manuelle Zuweisungen. Benennen Sie die Dateien nach SKU oder Optionswerten, übernimmt das Panel diese Arbeit — und zeigt Ihnen die Zuordnung, bevor etwas geschrieben wird. Eine falsche Zuweisung rückgängig zu machen ist deutlich lästiger, als sie zu verhindern.",
+        "Der Sinn dieses Tabs ist nicht das Hochladen, sondern das Zuordnen: Zwölf Bilder für ein Produkt mit vier Varianten bedeuten sonst zwölf manuelle Zuweisungen. Benennen Sie die Dateien nach SKU oder Optionswerten, übernimmt das Panel diese Arbeit und zeigt Ihnen die Zuordnung, bevor Sie sie übernehmen. Beachten Sie: Abgelegte Dateien werden sofort hochgeladen — das verbraucht je eine Bildoperation aus Ihrem Monatskontingent, und bei einem 3D-Modell landet zusätzlich dessen Vorschaubild in Ihren Dateien. Die Bestätigung ordnet die hochgeladenen Medien den Varianten zu; sie ist nicht der Moment, in dem der Upload beginnt."
     },
     imageBulkAltText: {
       title: "Bulk-Alt-Text",
@@ -2992,7 +2992,7 @@ export const de = {
       tips: [
         "Eine Vorlage pro Position: Bild 1 darf anders lauten als Bild 2",
         "Vorlagen gelten pro Sprache, jede Sprache bekommt ihre eigene Formulierung",
-        "Wirkt auf alle ausgewählten Varianten gleichzeitig",
+        "Wirkt auf ALLE Varianten des Produkts — nicht nur auf die in der Galerie ausgewählten",
         "Alt-Text liest zuerst der Screenreader und erst dann die Suchmaschine — beschreiben Sie das Bild, statt Keywords zu stapeln",
       ],
       details:

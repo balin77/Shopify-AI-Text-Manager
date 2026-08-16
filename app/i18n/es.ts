@@ -2975,14 +2975,14 @@ export const es: Translation = {
       summary:
         "Suelta todas las imágenes de un producto a la vez y deja que los nombres de archivo decidan a qué variante pertenece cada una.",
       tips: [
-        "La correspondencia se basa en el nombre del archivo: el SKU de la variante o una clave construida con los valores de opción",
-        "Los guiones bajos separan los segmentos, así que un segmento no puede contener uno",
+        "Nombre de archivo = el SKU de la variante (o la clave de imagen) MÁS un identificador final: producto_rojo_L_01.jpg corresponde al SKU producto_rojo_L",
+        "El último segmento distingue la imagen 1 de la imagen 2 de la misma variante; sin él no corresponde nada",
+        "Los guiones bajos separan los segmentos, así que un segmento no puede contener uno; se distinguen mayúsculas y minúsculas",
         "El orden se puede ordenar por identificador, SKU o nombre de archivo, o arrastrar a mano",
         "Los vídeos y los modelos 3D usan la misma vía que las imágenes",
-        "No se escribe nada en Shopify hasta que confirmas",
       ],
       details:
-        "Lo importante de esta pestaña no es la carga sino la asignación: subir doce imágenes a un producto con cuatro variantes significa normalmente doce asignaciones manuales. Nombra los archivos con el SKU o los valores de opción y el panel lo hace por ti, mostrándote la correspondencia antes de escribir nada: deshacer una asignación equivocada molesta mucho más que evitarla.",
+        "Lo importante de esta pestaña no es la carga sino la asignación: subir doce imágenes a un producto con cuatro variantes significa normalmente doce asignaciones manuales. Nombra los archivos con el SKU o los valores de opción y el panel lo hace por ti, mostrándote la correspondencia antes de confirmarla. Ten en cuenta que soltar los archivos los sube de inmediato: eso consume una operación de imagen de tu cuota mensual, y un modelo 3D además guarda su vista previa en tus Archivos. Confirmar asigna los medios ya subidos a las variantes; no es el momento en que empieza la carga."
     },
     imageBulkAltText: {
       title: "Texto alternativo masivo",
@@ -2991,7 +2991,7 @@ export const es: Translation = {
       tips: [
         "Una plantilla por posición: la imagen 1 puede decir algo distinto que la imagen 2",
         "Las plantillas son por idioma, cada configuración regional tiene su propia redacción",
-        "Se aplica a todas las variantes seleccionadas a la vez",
+        "Se aplica a TODAS las variantes del producto, no solo a las seleccionadas en la galería",
         "El texto alternativo lo lee primero un lector de pantalla y después un buscador: describe la imagen, no acumules palabras clave",
       ],
       details:

@@ -63,6 +63,12 @@ export function SidebarTabBar({
 
   return (
     <div
+      // role="tablist"/"tab" rather than aria-current: these switch panes
+      // inside the sidebar, they do not navigate, and "page" would tell a
+      // screen-reader user they are on a different page. aria-controls is
+      // omitted deliberately — the panes are rendered by three different
+      // callers and carry no stable ids to point at.
+      role="tablist"
       style={{
         display: "flex",
         alignItems: "center",
@@ -78,8 +84,9 @@ export function SidebarTabBar({
             <button
               key={item.id}
               type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => onSelect(item.id)}
-              aria-current={isActive ? "page" : undefined}
               style={{
                 flex: 1,
                 padding,

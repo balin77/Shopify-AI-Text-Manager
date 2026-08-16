@@ -2975,14 +2975,14 @@ export const en: Translation = {
       summary:
         "Drop in all images for a product at once and let the filenames decide which variant each one belongs to.",
       tips: [
-        "Matching runs on the filename: either the variant SKU or an image key built from the option values",
-        "Underscores separate the segments, so a segment must not contain one itself",
+        "Filename = the variant SKU (or image key) PLUS a trailing identifier: product_red_L_01.jpg matches the SKU product_red_L",
+        "The trailing segment is what separates image 1 from image 2 of the same variant — without it nothing matches",
+        "Underscores separate the segments, so a segment must not contain one itself; matching is case-sensitive",
         "The order can be sorted by identifier, SKU, filename or dragged by hand",
         "Videos and 3D models go through the same route as images",
-        "Nothing is written to Shopify until you confirm",
       ],
       details:
-        "The point of this tab is not the upload but the assignment: uploading twelve images to a product with four variants normally means twelve manual assignments. Name the files after the SKU or the option values and the panel does it for you — and shows you the match before anything is written, because a wrong assignment is far more annoying to undo than to prevent.",
+        "The point of this tab is not the upload but the assignment: uploading twelve images to a product with four variants normally means twelve manual assignments. Name the files after the SKU or the option values and the panel does it for you, showing you the match before you commit it. Note that dropping files uploads them right away — that is what consumes an image operation from your monthly quota, and a dropped 3D model also stores its preview in your Files. Confirming assigns the uploaded media to the variants; it is not the moment the upload starts."
     },
     imageBulkAltText: {
       title: "Bulk alt text",
@@ -2991,7 +2991,7 @@ export const en: Translation = {
       tips: [
         "One template per position: image 1 can read differently than image 2",
         "Templates are per language, so each locale gets its own wording",
-        "Applies to all selected variants at once",
+        "Applies to EVERY variant of the product, not just the ones you selected in the gallery",
         "Alt text is read by screen readers first and search engines second — describe the picture, don't stuff keywords",
       ],
       details:
