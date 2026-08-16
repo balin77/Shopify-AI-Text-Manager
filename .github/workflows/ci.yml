@@ -2,7 +2,7 @@ name: CI
 
 # Gates every push and PR to the long-lived branches. Before this workflow
 # existed, `npm test` (vitest) was wired into NO build/container/deploy path
-# (nixpacks/Dockerfile only run build + start), so the security tests —
+# (the Dockerfile only runs build + start), so the security tests —
 # including the GDPR schema-drift guard in tests/unit/gdpr.service.test.ts
 # that would have caught a cross-tenant data-retention leak — never ran and
 # could not block a release (review R3-C2).

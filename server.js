@@ -324,8 +324,11 @@ const server = app.listen(port, host, async () => {
   //     guards resurrect/refund WITHIN one instance, not across replicas;
   //   • duplicated cleanup churn / racing deletes.
   //
-  // This is currently LATENT: the app is deployed as a single `web` process
-  // (Procfile: `web: npm run start:production`; no replica/scale config).
+  // This is currently LATENT: the app is deployed as a single web process
+  // (railway.json: `startCommand: npm run start:production`). NOTE the replica
+  // count is NOT pinned in railway.json — it is a Railway dashboard value, so
+  // this assumption is only as strong as that setting. Scaling the service past
+  // one instance activates every problem listed above.
   //
   // A correct fix needs cluster-wide mutual exclusion, but every safe option
   // is a dedicated piece of infra work, NOT a rider here:

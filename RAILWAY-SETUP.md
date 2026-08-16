@@ -21,11 +21,15 @@ keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Blo
 `"environments": { "development": { "deploy": { … } } }` dazu, statt die Abweichung
 nur im Dashboard zu machen.
 
-**Alle drei Services bauen mit dem [Dockerfile](Dockerfile).** `Procfile` und
-`nixpacks.toml` sind damit wirkungslos — sie beschreiben einen Build-Pfad, den
-Railway hier nie nimmt. Nicht als Referenz lesen: der `CMD` im Dockerfile
-(`npm run start`, **ohne** Migrationen) wird ebenfalls überschrieben, nämlich vom
-`startCommand` oben.
+**Alle drei Services bauen mit dem [Dockerfile](Dockerfile).** Der `CMD` darin
+(`npm run start`, **ohne** Migrationen) wird vom `startCommand` oben überschrieben —
+der Dockerfile ist also nicht die Antwort darauf, wie die App startet.
+
+Früher lagen hier zusätzlich ein `Procfile` und eine `nixpacks.toml`, die einen
+Build-Pfad beschrieben, den Railway nie genommen hat. Beide sind gelöscht: drei
+Dateien mit drei verschiedenen Start-Befehlen, von denen keine galt, haben
+nachweislich zu falschen Annahmen geführt. Neue Deploy-Einstellungen gehören in
+die Config-Dateien oben, nicht in eine weitere Parallelquelle.
 
 Der Cron-Service hat im Dashboard zusätzlich ein *Custom Build Command*
 (`npm ci && npx prisma generate`). Das steht bewusst nicht in der Config-Datei:

@@ -13,7 +13,7 @@
  * `allowWebVitalSample` is a per-shop rate limiter for the beacon route
  * (proxy.web-vitals.tsx), mirroring `allow404Hit` in redirects.service.ts:
  * same single-process-in-memory rationale (this app currently deploys as one
- * Node process — see server.js / Procfile — so a module-level Map is
+ * Node process — see server.js / railway.json — so a module-level Map is
  * sufficient; a multi-instance deploy would need a shared store instead).
  *
  * `db` params are typed loosely (`any`) rather than `PrismaClient`, same as
@@ -38,10 +38,10 @@ import type { WebVitalDevice, WebVitalsSummary, WebVitalsSummaryRow, WebVitalsSl
 //
 // Single-process-in-memory rationale: same as allow404Hit in
 // redirects.service.ts — server.js documents that this app currently deploys
-// as a single Node process (Procfile: `web: npm run start:production`; no
-// replica/scale config), so a module-level Map is sufficient. Multi-instance
-// would need a shared store (e.g. Redis) since each replica would otherwise
-// keep its own independent bucket per shop.
+// as a single Node process (railway.json: `startCommand: npm run
+// start:production`, replica count dashboard-owned), so a module-level Map is
+// sufficient. Multi-instance would need a shared store (e.g. Redis) since each
+// replica would otherwise keep its own independent bucket per shop.
 const WV_BUCKET_CAPACITY = 120; // max burst samples per shop
 const WV_BUCKET_REFILL_PER_MIN = 120; // steady-state samples/min per shop
 const WV_BUCKET_STALE_MS = 60 * 60 * 1000; // 1h idle -> bucket is dropped, not refilled forever

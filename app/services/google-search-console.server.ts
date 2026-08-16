@@ -142,10 +142,11 @@ export function verifyOAuthState(
 // ── Single-use nonce store (OAuth-state replay protection) ──────────────────
 //
 // This app deploys as a single Node process: server.js documents (see the
-// R4-C2 comment there, "the app is currently deployed as a single `web`
-// process (Procfile: `web: npm run start:production`; no replica/scale
-// config)") that every in-process singleton in this codebase relies on that
-// assumption. A plain in-memory Map is therefore sufficient here too — it
+// R4-C2 comment there, "the app is deployed as a single web process
+// (railway.json: `startCommand: npm run start:production`)") that every
+// in-process singleton in this codebase relies on that assumption — and that
+// the replica count backing it lives in the Railway dashboard, not in the
+// repo. A plain in-memory Map is therefore sufficient here too — it
 // only needs to prevent a nonce being redeemed twice on the ONE process
 // handling all callbacks. If this app is ever scaled to multiple instances,
 // the upgrade path is a DB-backed nonce table (e.g. a UsedOAuthNonce model
