@@ -25,6 +25,7 @@ import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@sho
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import { resolvePrimaryDomain } from "../utils/shop-domain.server";
@@ -365,12 +366,12 @@ export default function SeoIndexNow() {
     <SeoSectionLayout sectionId="indexNow">
       {data.gated ? null : (
         <BlockStack gap="400">
-          <Banner tone="info" title={n.helpTitle}>
+          <SeoHelpBanner title={n.helpTitle}>
             <BlockStack gap="200">
               <Text as="p" variant="bodyMd">{n.helpBody1}</Text>
               <Text as="p" variant="bodyMd">{n.helpBody2}</Text>
             </BlockStack>
-          </Banner>
+          </SeoHelpBanner>
 
           {msg && <Banner tone={msg.tone}>{msg.text}</Banner>}
 

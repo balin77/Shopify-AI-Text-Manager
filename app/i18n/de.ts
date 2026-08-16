@@ -1384,6 +1384,9 @@ export const de = {
     // SEO tab (Level-1) — sub-section labels/headers
     tabTitle: "SEO",
     upgradeForSection: "Upgrade auf {plan}, um diese Funktion zu nutzen.",
+    // Tooltip/Label des ❓ neben dem Sektionstitel, das die ausgeblendete
+    // Infobox wieder einblendet (SeoHelpBanner).
+    sectionHelpShow: "Hilfe einblenden",
     // Level-2 rubrics of the SEO tab (see SEO_RUBRICS in config/seo-sections.ts)
     rubrics: {
       overview: "Übersicht",

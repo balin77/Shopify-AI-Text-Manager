@@ -29,6 +29,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
@@ -1175,12 +1176,12 @@ export default function SeoSearchConsole() {
   return (
     <SeoSectionLayout sectionId="searchConsole">
       <BlockStack gap="400">
-        <Banner tone="info" title={g.helpTitle}>
+        <SeoHelpBanner title={g.helpTitle}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{g.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{g.helpBody2}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* Status from the OAuth bounce-back */}
         {data.statusParam === "connected" && <Banner tone="success">{g.connectedBanner}</Banner>}

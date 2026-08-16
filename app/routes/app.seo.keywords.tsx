@@ -11,12 +11,13 @@ import type { PrismaClient } from "@prisma/client";
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator, useNavigation } from "react-router";
 import { useEffect, useRef, useState } from "react";
-import { BlockStack, InlineStack, Banner, Text, Button, Spinner, Card } from "@shopify/polaris";
+import { BlockStack, InlineStack, Text, Button, Spinner, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
 import { HelpTooltip } from "../components/HelpTooltip";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
@@ -1674,12 +1675,12 @@ export default function SeoKeywords() {
   return (
     <SeoSectionLayout sectionId="keywords">
       <BlockStack gap="400">
-        <Banner tone="info" title={k.helpTitle}>
+        <SeoHelpBanner title={k.helpTitle}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{k.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{k.helpBody2}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* Locale-Navbar (top): language is the outermost dimension (§2).
             Rendered as Polaris buttons to match the locale bar on the content

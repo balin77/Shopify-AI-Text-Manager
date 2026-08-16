@@ -34,6 +34,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { CrawlSnapshotHeader } from "../components/seo/CrawlSnapshotHeader";
 import {
   ReportGrid,
@@ -735,9 +736,14 @@ export default function SeoCrawl() {
 
   const body = (
     <BlockStack gap="400">
-      <Banner tone="info" title={view === "onpage" ? o.introTitle : c.introTitle}>
+      {/* One box per STEP, not per section: the two steps explain different
+          things, so hiding the on-page intro must leave the delivery one. */}
+      <SeoHelpBanner
+        helpId={view === "onpage" ? "crawl-onpage" : "crawl-delivery"}
+        title={view === "onpage" ? o.introTitle : c.introTitle}
+      >
         <Text as="p" variant="bodyMd">{view === "onpage" ? o.introBody : c.introBody}</Text>
-      </Banner>
+      </SeoHelpBanner>
 
       <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
         {/* §6.5 — visible where the crawl is started, because it changes what

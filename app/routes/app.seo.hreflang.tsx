@@ -24,6 +24,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { scoreTone, progressTone } from "../utils/seo-score";
 import { analyzeHreflang, type HreflangType } from "../services/seo/hreflang.service";
 
@@ -57,12 +58,12 @@ export default function SeoHreflang() {
   return (
     <SeoSectionLayout sectionId="hreflang">
       <BlockStack gap="400">
-        <Banner tone="info" title={h.helpTitle}>
+        <SeoHelpBanner title={h.helpTitle}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{h.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{h.helpBody2}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* x-default / primary status */}
         <Card>

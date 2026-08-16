@@ -69,6 +69,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
@@ -709,9 +710,9 @@ export default function SeoInternalLinks() {
 
   const body = (
     <BlockStack gap="400">
-      <Banner tone="info" title={c.introTitle}>
+      <SeoHelpBanner title={c.introTitle}>
         <Text as="p" variant="bodyMd">{c.introBody}</Text>
-      </Banner>
+      </SeoHelpBanner>
 
       <Card>
         <BlockStack gap="300">

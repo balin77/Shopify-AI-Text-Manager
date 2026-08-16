@@ -1386,6 +1386,7 @@ export const es: Translation = {
     // SEO tab (Level-1) — sub-section labels/headers
     tabTitle: "SEO",
     upgradeForSection: "Mejora a {plan} para usar esta función.",
+    sectionHelpShow: "Mostrar la ayuda",
     // Level-2 rubrics of the SEO tab (see SEO_RUBRICS in config/seo-sections.ts)
     rubrics: {
       overview: "Resumen",

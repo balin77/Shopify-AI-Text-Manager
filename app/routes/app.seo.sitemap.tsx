@@ -34,6 +34,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import { fetchPrimaryDomain } from "../utils/shop-domain.server";
@@ -403,7 +404,7 @@ export default function SeoSitemap() {
   // The guidance lives inside the intro banner, collapsed by default — it's
   // reference material you read once, not something worth a permanent card.
   const intro = (
-    <Banner tone="info" title={c.introTitle}>
+    <SeoHelpBanner title={c.introTitle}>
       <BlockStack gap="200">
         <Text as="p" variant="bodyMd">{c.introBody}</Text>
         <div>
@@ -448,7 +449,7 @@ export default function SeoSitemap() {
           </BlockStack>
         </Collapsible>
       </BlockStack>
-    </Banner>
+    </SeoHelpBanner>
   );
 
   // "Try again later" is the wrong advice for the most common cause, so the

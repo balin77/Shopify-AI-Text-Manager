@@ -18,6 +18,7 @@ import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { meetsPlan } from "../../utils/planUtils";
 import { SEO_SECTIONS, SEO_LAYOUT_ROUTE_ID } from "../../config/seo-sections";
 import { PLAN_DISPLAY_NAMES } from "../../config/plans";
+import { SeoHelpProvider, SeoHelpToggle } from "./SeoHelpBanner";
 
 interface SeoSectionLayoutProps {
   sectionId: string;
@@ -61,7 +62,7 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
     && typeof layoutData?.localeCount === "number"
     && layoutData.localeCount <= 1;
 
-  return (
+  const body = (
     <BlockStack gap="400">
       <BlockStack gap="100">
         <InlineStack gap="200" blockAlign="center">
@@ -73,6 +74,7 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
           <Text as="h2" variant="headingLg">
             {title}
           </Text>
+          <SeoHelpToggle />
         </InlineStack>
         {strings.description && (
           <Text as="p" variant="bodyMd" tone="subdued">
@@ -121,4 +123,8 @@ export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectio
       )}
     </BlockStack>
   );
+
+  // The ❓ toggle lives in the header while the help box it reopens is rendered
+  // by `children` — the provider has to span both.
+  return <SeoHelpProvider sectionId={sectionId}>{body}</SeoHelpProvider>;
 }
