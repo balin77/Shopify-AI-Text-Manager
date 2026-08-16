@@ -74,3 +74,32 @@
   background: var(--p-color-bg-surface-info, rgba(0, 91, 211, 0.06));
   border-color: var(--p-color-border-emphasis, #005bd3);
 }
+
+/* ── Suggestion review rows ──
+ * Three buckets, three weights: an undecided row is the task (full size, own
+ * surface), a decided row is a record (compact, tinted, recede). */
+.keyword-suggestion {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--p-border-radius-200, 8px);
+  border: 1px solid var(--p-color-border-secondary, #e1e3e5);
+  border-inline-start-width: 4px;
+  transition:
+    background-color 150ms ease,
+    opacity 150ms ease;
+}
+
+.keyword-suggestion--pending {
+  border-inline-start-color: var(--p-color-border-emphasis, #005bd3);
+  background: var(--p-color-bg-surface, transparent);
+}
+
+.keyword-suggestion--accepted {
+  border-inline-start-color: var(--p-color-border-success, #29845a);
+  background: var(--p-color-bg-surface-success, rgba(41, 132, 90, 0.07));
+}
+
+.keyword-suggestion--rejected {
+  border-inline-start-color: var(--p-color-border-disabled, #c9cccf);
+  background: var(--p-color-bg-surface-disabled, rgba(0, 0, 0, 0.03));
+  opacity: 0.7;
+}

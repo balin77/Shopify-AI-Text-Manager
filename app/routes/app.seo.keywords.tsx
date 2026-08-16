@@ -1375,9 +1375,13 @@ export default function SeoKeywords() {
     if (!preview || !taskId) return;
     if (seededSuggestTaskRef.current === taskId) return;
     seededSuggestTaskRef.current = taskId;
+    // Pre-accept the confident ones (plan §5.4 step 4) and leave the rest
+    // UNDECIDED rather than pre-rejected: the panel's three buckets treat a
+    // missing entry as "zu prüfen", so the uncertain suggestions land where
+    // they get looked at instead of silently starting out as rejected.
     const seeded: Record<string, "accept" | "secondaryOnly" | "reject"> = {};
     for (const s of preview.suggestions) {
-      seeded[s.keyword] = s.primaryItemId && s.confidence >= 0.6 ? "accept" : "reject";
+      if (s.primaryItemId && s.confidence >= 0.6) seeded[s.keyword] = "accept";
     }
     setDecisions(seeded);
     setDemoteExisting(false);

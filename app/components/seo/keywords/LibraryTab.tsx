@@ -25,8 +25,10 @@
  *    exception.
  *
  * Every action button carries a Tooltip saying what it does, via
- * DisabledActionTooltip so the hint also shows while the button is disabled
- * (browsers swallow pointer events on disabled controls).
+ * ActionTooltip — which picks a plain Tooltip while the button is live and the
+ * pointer-events wrapper only while it is disabled. Reaching for
+ * DisabledActionTooltip directly is what made every one of these buttons inert
+ * and cursor-locked: it applies that wrapper unconditionally.
  *
  * PURE PRESENTATION apart from the selection and which cell is being edited.
  * All other state, fetchers, refs, effects and confirm-dialog flows live in
@@ -58,7 +60,7 @@ import {
 import type { FetcherWithComponents } from "react-router";
 import type { KeywordResourceType } from "../../../services/seo/keywords.service";
 import { HelpTooltip } from "../../HelpTooltip";
-import { DisabledActionTooltip } from "../../DisabledActionTooltip";
+import { ActionTooltip } from "../../ActionTooltip";
 import type { Translation } from "../../../i18n/de";
 import type { loader, ActionResult, KeywordSelection } from "../../../routes/app.seo.keywords";
 import { GroupSidebar } from "./GroupSidebar";
@@ -378,9 +380,9 @@ export function LibraryTab({
    * — "Entfernen" and "Importieren" are the entries a pseudo view drops, since
    * a view has no membership to remove from or import into.
    *
-   * Every button is wrapped in DisabledActionTooltip: it shows the hint on a
-   * disabled control too, so "why can I not click this" is answered by hover
-   * instead of by guessing.
+   * Every button is wrapped in ActionTooltip, which keeps the hint reachable
+   * on a disabled control too — so "why can I not click this" is answered by
+   * hover instead of by guessing.
    */
   /**
    * Why a selection action just did nothing. Without this a rejected bulk
@@ -445,24 +447,25 @@ export function LibraryTab({
             {/* Row-creating entries first — they need no selection. */}
             {!readOnly && (
               <>
-                <DisabledActionTooltip hint={k.addKeywordHint} preferredPosition="below">
+                <ActionTooltip content={k.addKeywordHint} disabled={bulkBusy} preferredPosition="below">
                   <Button size="slim" disabled={bulkBusy} onClick={handleCreateKeyword}>
                     {`＋ ${k.addKeyword}`}
                   </Button>
-                </DisabledActionTooltip>
-                <DisabledActionTooltip hint={k.importHint} preferredPosition="below">
+                </ActionTooltip>
+                <ActionTooltip content={k.importHint} preferredPosition="below">
                   <Button size="slim" variant="plain" onClick={openImportModal}>
                     {k.importButton}
                   </Button>
-                </DisabledActionTooltip>
+                </ActionTooltip>
                 <div style={{ height: "1.25rem" }}>
                   <Divider borderColor="border" />
                 </div>
               </>
             )}
 
-            <DisabledActionTooltip
-              hint={selectionHint(k.assign.assignSelectionHint)}
+            <ActionTooltip
+              content={selectionHint(k.assign.assignSelectionHint)}
+              disabled={nothingSelected}
               preferredPosition="below"
             >
               <Button
@@ -473,13 +476,14 @@ export function LibraryTab({
               >
                 {k.assign.assignSelection}
               </Button>
-            </DisabledActionTooltip>
+            </ActionTooltip>
 
             {/* From a pseudo view there is no source group to leave, so a
                 same-language move only ADDS the keywords to the chosen group —
                 the dialog spells that out. */}
-            <DisabledActionTooltip
-              hint={selectionHint(k.moveKeywordHint)}
+            <ActionTooltip
+              content={selectionHint(k.moveKeywordHint)}
+              disabled={nothingSelected || bulkBusy}
               preferredPosition="below"
             >
               <Button
@@ -489,13 +493,14 @@ export function LibraryTab({
               >
                 {k.moveKeyword}
               </Button>
-            </DisabledActionTooltip>
+            </ActionTooltip>
 
             {/* Only out of THIS group — a keyword survives as long as it is
                 assigned to an item or belongs to another group. */}
             {!readOnly && (
-              <DisabledActionTooltip
-                hint={selectionHint(k.groupRemoveKeywordHint)}
+              <ActionTooltip
+                content={selectionHint(k.groupRemoveKeywordHint)}
+                disabled={nothingSelected || bulkBusy}
                 preferredPosition="below"
               >
                 <Button
@@ -505,12 +510,13 @@ export function LibraryTab({
                 >
                   {k.groupRemoveKeyword}
                 </Button>
-              </DisabledActionTooltip>
+              </ActionTooltip>
             )}
 
             {/* Gone for good, including every item assignment. */}
-            <DisabledActionTooltip
-              hint={selectionHint(k.deleteKeywordHint)}
+            <ActionTooltip
+              content={selectionHint(k.deleteKeywordHint)}
+              disabled={nothingSelected || bulkBusy}
               preferredPosition="below"
             >
               <Button
@@ -521,7 +527,7 @@ export function LibraryTab({
               >
                 {k.delete}
               </Button>
-            </DisabledActionTooltip>
+            </ActionTooltip>
           </InlineStack>
         </InlineStack>
       </div>
@@ -738,14 +744,15 @@ export function LibraryTab({
               in the selection bar above the table (k.assign.assignSelection),
               so these stay secondary. */}
           <InlineStack gap="200" blockAlign="center">
-            <DisabledActionTooltip
-              hint={
+            <ActionTooltip
+              content={
                 groupDetail.keywords.length === 0
                   ? k.distributeEmptyHint
                   : runningDistribution
                     ? k.distributeRunningHint
                     : k.distributeButtonHint
               }
+              disabled={!!runningDistribution || groupDetail.keywords.length === 0}
               preferredPosition="below"
             >
               <Button
@@ -759,13 +766,14 @@ export function LibraryTab({
               >
                 {k.distributeButton}
               </Button>
-            </DisabledActionTooltip>
-            <DisabledActionTooltip
-              hint={
+            </ActionTooltip>
+            <ActionTooltip
+              content={
                 unassignedKeywords.length === 0
                   ? k.assign.redistributeNone
                   : k.assign.redistributeHint.replace("{count}", String(unassignedKeywords.length))
               }
+              disabled={!!runningDistribution || unassignedKeywords.length === 0}
               preferredPosition="below"
             >
               <Button
@@ -779,12 +787,12 @@ export function LibraryTab({
               >
                 {k.assign.redistribute}
               </Button>
-            </DisabledActionTooltip>
-            <DisabledActionTooltip hint={k.groupDeleteHint} preferredPosition="below">
+            </ActionTooltip>
+            <ActionTooltip content={k.groupDeleteHint} preferredPosition="below">
               <Button size="slim" tone="critical" variant="plain" onClick={handleDeleteGroup}>
                 {k.groupDelete}
               </Button>
-            </DisabledActionTooltip>
+            </ActionTooltip>
             <HelpTooltip helpKey="keywordsDistribute" position="below" />
           </InlineStack>
         </InlineStack>
@@ -812,11 +820,11 @@ export function LibraryTab({
                   onChange={setBulkPriority}
                 />
               </div>
-              <DisabledActionTooltip hint={k.bulkPriorityHint} preferredPosition="above">
+              <ActionTooltip content={k.bulkPriorityHint} preferredPosition="above">
                 <Button loading={groupFetcher.state !== "idle"} onClick={handleApplyBulkPriority}>
                   {k.bulkPriorityApply}
                 </Button>
-              </DisabledActionTooltip>
+              </ActionTooltip>
             </InlineStack>
           </>
         )}
