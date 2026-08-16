@@ -5,6 +5,66 @@ Dieses Projekt nutzt zwei Railway Environments für eine saubere Trennung:
 - **Production**: Läuft auf dem `master` Branch
 - **Development**: Läuft auf dem `develop` Branch
 
+## 0. Config as Code — welche Datei zu welchem Service gehört
+
+Die Deploy-Mechanik liegt im Repo, damit sie versioniert ist und nicht still im
+Dashboard driftet. Railway liest die Config-Datei **pro Service**; der Pfad wird
+je Service unter Settings → Config-as-Code hinterlegt.
+
+| Service | Config-Datei | Inhalt |
+|---|---|---|
+| Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` |
+| Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
+
+Beide Web-Environments sind identisch konfiguriert — deshalb braucht `railway.json`
+keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Block
+`"environments": { "development": { "deploy": { … } } }` dazu, statt die Abweichung
+nur im Dashboard zu machen.
+
+**Alle drei Services bauen mit dem [Dockerfile](Dockerfile).** `Procfile` und
+`nixpacks.toml` sind damit wirkungslos — sie beschreiben einen Build-Pfad, den
+Railway hier nie nimmt. Nicht als Referenz lesen: der `CMD` im Dockerfile
+(`npm run start`, **ohne** Migrationen) wird ebenfalls überschrieben, nämlich vom
+`startCommand` oben.
+
+Der Cron-Service hat im Dashboard zusätzlich ein *Custom Build Command*
+(`npm ci && npx prisma generate`). Das steht bewusst nicht in der Config-Datei:
+unter dem Dockerfile-Builder bestimmt der Dockerfile den Build, und der führt
+`npm ci` und `npx prisma generate` ohnehin selbst aus. Der Eintrag im Dashboard
+ist also im besten Fall redundant und kann geleert werden.
+
+**Achtung: was die Datei überschreibt.** Jedes Feld, das hier steht, sticht den
+Dashboard-Wert. Felder, die *nicht* hier stehen (z. B. Restart-Policy des Web-Service,
+Replicas, Region), bleiben Dashboard-Sache. Beim Ergänzen also immer erst den
+Ist-Wert im Dashboard ablesen, sonst ändert der nächste Deploy stillschweigend
+das Laufzeitverhalten.
+
+**Was NICHT hier hineinkann** und darum weiterhin nur im Dashboard existiert:
+Environment-Variablen und Secrets, die Postgres-Datenbank, Volumes und deren Größe,
+Domains, sowie die Branch-Zuordnung eines Environments.
+
+### Env-Variablen des Cron-Service `Db Space Checker`
+
+[scripts/db-alert.mjs](scripts/db-alert.mjs) misst `pg_database_size` + WAL und
+schlägt Alarm, bevor das Railway-Volume voll läuft. Erforderlich:
+
+| Variable | Bedeutung |
+|---|---|
+| `DATABASE_URL` | von Railway injiziert (`${{Postgres.DATABASE_URL}}`) |
+| `VOLUME_LIMIT_MB` | **die real provisionierte Volume-Größe in MB** (z. B. `5120` für 5 GB) |
+| `ALERT_PCT` | Schwelle in Prozent, Default `70` |
+| `ALERT_WEBHOOK_URL` | Slack-/Discord-kompatibler Incoming-Webhook; fehlt er, wird nur geloggt |
+
+`VOLUME_LIMIT_MB` gehört bewusst **nicht** ins Repo: der Wert muss dem Dashboard
+folgen. Wird das Volume vergrößert, muss er dort mitgezogen werden — sonst feuert
+der Alarm bei der falschen Schwelle.
+
+Testlauf mit garantiertem Webhook-Post: `node scripts/db-alert.mjs --test`.
+Im Cron-Modus postet das Skript nur bei Überschreitung und beendet sich dann mit
+Exit-Code 2 — der Lauf erscheint in Railway also absichtlich als fehlgeschlagen.
+Genau deshalb steht die Restart-Policy auf `NEVER`: bei `ON_FAILURE` würde Railway
+den Container nach jedem Alarm neu starten und der Webhook liefe in eine Schleife.
+
 ## 1. Railway Project Setup
 
 ### Schritt 1: Environments einrichten
