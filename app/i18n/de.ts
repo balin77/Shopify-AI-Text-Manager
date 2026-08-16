@@ -2265,7 +2265,7 @@ export const de = {
       moveNoGroup: "Ohne Gruppe",
       moveNoGroupsInLocale: "Für diese Sprache gibt es noch keine Keyword-Gruppen.",
       moveLocaleWarning:
-        "Das Keyword und seine Inhalts-Zuordnungen wechseln nach {locale}. Zuordnungen entfallen, wenn der Inhalt dieses Keyword dort bereits verfolgt oder sein Keyword-Limit erreicht hat.",
+        "Das Keyword und seine Inhalts-Zuordnungen wechseln nach {locale}. Zuordnungen entfallen, wenn der Inhalt dieses Keyword dort bereits verfolgt oder sein Keyword-Limit erreicht hat. Da eine Gruppe zu genau einer Sprache gehört, verliert das Keyword ALLE bisherigen Gruppen-Mitgliedschaften und liegt danach nur noch in der oben gewählten Gruppe.",
       csvHint: "Bis zu {max} Zeilen pro Import.",
       csvResult: "{added} importiert, {existing} bereits in der Gruppe.",
       csvTooMany: "Ein einzelner Import ist auf {max} Zeilen begrenzt.",

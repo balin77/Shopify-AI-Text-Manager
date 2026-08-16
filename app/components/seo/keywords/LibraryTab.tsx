@@ -743,7 +743,7 @@ export function LibraryTab({
               <Banner tone="warning">
                 {(
                   k.moveLocaleWarning ||
-                  "The keyword and its item assignments move to {locale}. Assignments are dropped where the item already tracks this keyword there or has reached its keyword limit."
+                  "The keyword and its item assignments move to {locale}. Assignments are dropped where the item already tracks this keyword there or has reached its keyword limit. Because a group belongs to exactly one language, the keyword loses ALL its current group memberships and ends up only in the group chosen above."
                 ).replace("{locale}", localeName(moveTargetLocale))}
               </Banner>
             )}

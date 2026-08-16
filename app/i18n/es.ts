@@ -2264,7 +2264,7 @@ export const es: Translation = {
       moveNoGroup: "Sin grupo",
       moveNoGroupsInLocale: "Este idioma todavía no tiene grupos de palabras clave.",
       moveLocaleWarning:
-        "La palabra clave y sus asignaciones de contenido pasan a {locale}. Se descartan las asignaciones cuando el contenido ya sigue esta palabra clave en ese idioma o ha alcanzado su límite.",
+        "La palabra clave y sus asignaciones de contenido pasan a {locale}. Se descartan las asignaciones cuando el contenido ya sigue esta palabra clave en ese idioma o ha alcanzado su límite. Como un grupo pertenece a un solo idioma, la palabra clave pierde TODAS sus pertenencias a grupos actuales y queda solo en el grupo elegido arriba.",
       csvHint: "Hasta {max} filas por importación.",
       csvResult: "{added} importadas, {existing} ya estaban en el grupo.",
       csvTooMany: "Una importación está limitada a {max} filas.",

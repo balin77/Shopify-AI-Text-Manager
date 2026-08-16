@@ -132,6 +132,17 @@ async function getShopPrimaryDomain(admin: any, fallbackShop: string): Promise<s
   }
 }
 
+/**
+ * Own-property lookup on a query-keyed map. Search queries are arbitrary user
+ * text, and plenty of real words collide with `Object.prototype` members —
+ * "constructor" is Spanish for builder, "__proto__" is what a scraped query can
+ * look like. A bare `map[query] ?? fallback` then hands back an inherited
+ * function instead of the fallback and the caller blows up on it.
+ */
+export function ownEntry<T>(map: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
+
 /** A Quick-win row enriched with the store resource its page URL resolves to
  *  (null when unresolvable) — drives the "Optimize" button's target. */
 export interface QuickWinOpportunity extends CtrOpportunity {
@@ -403,12 +414,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           where: { shop: session.shop, keyword: { in: shownQueries } },
           select: { keyword: true, locale: true },
         });
-        const byQuery: Record<string, string[]> = {};
+        // A Map, not a plain object: a query like "constructor" (a real word in
+        // several languages) would resolve to an inherited Object.prototype
+        // member, so `byQuery[q] ||= []` would never assign and the push below
+        // would throw — silently costing every badge via the catch.
+        const byQuery = new Map<string, string[]>();
         for (const t of tracked as Array<{ keyword: string; locale: string }>) {
-          const bucket = (byQuery[t.keyword] ||= []);
+          const bucket = byQuery.get(t.keyword) ?? [];
           if (!bucket.includes(t.locale)) bucket.push(t.locale);
+          byQuery.set(t.keyword, bucket);
         }
-        base.trackedQueryLocales = byQuery;
+        base.trackedQueryLocales = Object.fromEntries(byQuery);
       }
     } catch {
       base.trackedQueryLocales = {};
@@ -957,7 +973,7 @@ export default function SeoSearchConsole() {
   /** Languages this query is already tracked in (stored + this session). */
   const trackedLocalesFor = (query: string): string[] => {
     const q = normalizeKeyword(query);
-    const stored = data.trackedQueryLocales[q] ?? [];
+    const stored = ownEntry(data.trackedQueryLocales, q) ?? [];
     const session = Array.from(adoptedQueries)
       .filter((entry) => entry.startsWith(`${q}::`))
       .map((entry) => entry.slice(q.length + 2));
@@ -1404,7 +1420,7 @@ export default function SeoSearchConsole() {
                         </thead>
                         <tbody>
                           {data.topQueries.map((row, i) => {
-                            const delta = data.deltas[(row.keys[0] ?? "").toLowerCase()];
+                            const delta = ownEntry(data.deltas, (row.keys[0] ?? "").toLowerCase());
                             return (
                               <tr key={`${row.keys[0]}:${i}`} style={{ borderBottom: "1px solid #f1f2f3" }}>
                                 <td style={{ padding: "6px 8px", maxWidth: "320px" }}>
@@ -1461,7 +1477,7 @@ export default function SeoSearchConsole() {
                                                   impressions: row.impressions,
                                                   ctr: row.ctr,
                                                 },
-                                                data.topPages[query.toLowerCase()],
+                                                ownEntry(data.topPages, query.toLowerCase()),
                                               )
                                             }
                                           >
