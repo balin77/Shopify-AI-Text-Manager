@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
-import { HelpTooltip } from "./HelpTooltip";
+import { SidebarTabBar } from "./SidebarTabBar";
 import {
   validateJsonLd,
   renderJsonLdScript,
@@ -374,44 +374,16 @@ export function SeoSidebar({
   return (
     <Card>
       <BlockStack gap="400">
-        {/* Sub-tab bar (Score / Keywords / JSON-LD) + the current tab's help.
-            The row renders even with a single tab so the "?" always has a
-            home; the divider is what's conditional, not the row. */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            borderBottom: availableTabs.length > 1 ? "1px solid #e1e3e5" : undefined,
-            marginTop: "-0.25rem",
-          }}
-        >
-          {availableTabs.length > 1 &&
-            availableTabs.map((id) => {
-              const isActive = id === currentTab;
-              return (
-                <button
-                  key={id}
-                  onClick={() => setActiveTab(id)}
-                  style={{
-                    flex: 1,
-                    padding: "6px 4px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: isActive ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: isActive ? 600 : 400,
-                    fontSize: 12,
-                    color: isActive ? "#005bd3" : "#616161",
-                  }}
-                >
-                  {tabLabel(id)}
-                </button>
-              );
-            })}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-            <HelpTooltip helpKey={TAB_HELP_KEY[currentTab]} position="below" />
-          </div>
-        </div>
+        {/* Sub-tab bar (Score / Keywords / JSON-LD) + the current tab's help —
+            the same component the image-processing section uses one level
+            over, so the two halves of the sidebar read as one thing. */}
+        <SidebarTabBar
+          items={availableTabs.map((id) => ({ id, label: tabLabel(id) }))}
+          activeId={currentTab}
+          onSelect={(id) => setActiveTab(id as SidebarTab)}
+          helpKey={TAB_HELP_KEY[currentTab]}
+          containerStyle={{ marginTop: "-0.25rem" }}
+        />
 
         {currentTab === "score" && (
         <BlockStack gap="400">

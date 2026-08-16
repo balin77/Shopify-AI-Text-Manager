@@ -2969,6 +2969,35 @@ export const es: Translation = {
         "No tienes que pegar esto en tu tema: la extensión de tienda de la app lo emite automáticamente. Esto es una vista previa, por eso algunos avisos están silenciados: los precios de variantes, las fechas de publicación y el logotipo de tu tienda se añaden al generar la salida a partir de datos en vivo que el editor no tiene, así que señalarlos aquí sería una falsa alarma. Lo que sí ves son los campos que realmente faltan en este elemento.",
     },
 
+    // Editor de contenido — la sección de procesamiento de imágenes
+    imageBulkUpload: {
+      title: "Carga masiva",
+      summary:
+        "Suelta todas las imágenes de un producto a la vez y deja que los nombres de archivo decidan a qué variante pertenece cada una.",
+      tips: [
+        "La correspondencia se basa en el nombre del archivo: el SKU de la variante o una clave construida con los valores de opción",
+        "Los guiones bajos separan los segmentos, así que un segmento no puede contener uno",
+        "El orden se puede ordenar por identificador, SKU o nombre de archivo, o arrastrar a mano",
+        "Los vídeos y los modelos 3D usan la misma vía que las imágenes",
+        "No se escribe nada en Shopify hasta que confirmas",
+      ],
+      details:
+        "Lo importante de esta pestaña no es la carga sino la asignación: subir doce imágenes a un producto con cuatro variantes significa normalmente doce asignaciones manuales. Nombra los archivos con el SKU o los valores de opción y el panel lo hace por ti, mostrándote la correspondencia antes de escribir nada: deshacer una asignación equivocada molesta mucho más que evitarla.",
+    },
+    imageBulkAltText: {
+      title: "Texto alternativo masivo",
+      summary:
+        "Plantillas de texto alternativo por posición de imagen e idioma, aplicadas a todas las variantes de una vez.",
+      tips: [
+        "Una plantilla por posición: la imagen 1 puede decir algo distinto que la imagen 2",
+        "Las plantillas son por idioma, cada configuración regional tiene su propia redacción",
+        "Se aplica a todas las variantes seleccionadas a la vez",
+        "El texto alternativo lo lee primero un lector de pantalla y después un buscador: describe la imagen, no acumules palabras clave",
+      ],
+      details:
+        "El texto alternativo es el campo que más tiempo pasa vacío, porque hay que escribirlo imagen por imagen y su beneficio es invisible. Una plantilla lo convierte en una decisión por posición en lugar de una por imagen. Además mantiene la redacción coherente en todo el producto, que es justo lo que premian tanto una auditoría de accesibilidad como la búsqueda de imágenes. Para las imágenes que merecen una redacción propia, genera el texto alternativo en la propia imagen desde la pestaña SEO.",
+    },
+
     keywordsAssignModal: {
       title: "Asignar palabras clave",
       summary:

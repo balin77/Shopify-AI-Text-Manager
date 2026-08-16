@@ -2970,6 +2970,35 @@ export const de = {
         "Sie müssen das nicht ins Theme einfügen — die Storefront-Extension der App gibt es automatisch aus. Dies ist eine Vorschau, deshalb sind einige Warnungen unterdrückt: Variantenpreise, Veröffentlichungsdaten und Ihr Shop-Logo werden erst bei der Ausgabe aus Live-Daten ergänzt, die der Editor nicht hat — sie hier zu melden wäre ein Fehlalarm. Was Sie sehen, sind die Felder, die auf diesem Eintrag tatsächlich fehlen.",
     },
 
+    // Content-Editor — der Bereich Bildverarbeitung
+    imageBulkUpload: {
+      title: "Bulk-Upload",
+      summary:
+        "Alle Bilder eines Produkts auf einmal ablegen und die Dateinamen entscheiden lassen, zu welcher Variante jedes gehört.",
+      tips: [
+        "Die Zuordnung läuft über den Dateinamen: entweder die Varianten-SKU oder ein Bildschlüssel aus den Optionswerten",
+        "Unterstriche trennen die Segmente — ein Segment darf selbst keinen enthalten",
+        "Die Reihenfolge lässt sich nach Bezeichner, SKU oder Dateiname sortieren oder von Hand ziehen",
+        "Videos und 3D-Modelle laufen über denselben Weg wie Bilder",
+        "Zu Shopify geschrieben wird erst nach Ihrer Bestätigung",
+      ],
+      details:
+        "Der Sinn dieses Tabs ist nicht das Hochladen, sondern das Zuordnen: Zwölf Bilder für ein Produkt mit vier Varianten bedeuten sonst zwölf manuelle Zuweisungen. Benennen Sie die Dateien nach SKU oder Optionswerten, übernimmt das Panel diese Arbeit — und zeigt Ihnen die Zuordnung, bevor etwas geschrieben wird. Eine falsche Zuweisung rückgängig zu machen ist deutlich lästiger, als sie zu verhindern.",
+    },
+    imageBulkAltText: {
+      title: "Bulk-Alt-Text",
+      summary:
+        "Alt-Text-Vorlagen je Bildposition und Sprache, in einem Durchgang auf alle Varianten angewandt.",
+      tips: [
+        "Eine Vorlage pro Position: Bild 1 darf anders lauten als Bild 2",
+        "Vorlagen gelten pro Sprache, jede Sprache bekommt ihre eigene Formulierung",
+        "Wirkt auf alle ausgewählten Varianten gleichzeitig",
+        "Alt-Text liest zuerst der Screenreader und erst dann die Suchmaschine — beschreiben Sie das Bild, statt Keywords zu stapeln",
+      ],
+      details:
+        "Alt-Text ist das Feld, das am längsten leer bleibt, weil es pro Bild geschrieben werden muss und der Nutzen unsichtbar ist. Eine Vorlage macht daraus eine Entscheidung pro Position statt einer pro Bild. Außerdem bleibt die Formulierung über ein Produkt hinweg einheitlich — genau das belohnen ein Accessibility-Audit und die Bildersuche gleichermaßen. Bilder, die eine eigene Formulierung verdienen, generieren Sie stattdessen direkt am Bild im SEO-Tab.",
+    },
+
     keywordsAssignModal: {
       title: "Keywords zuordnen",
       summary:

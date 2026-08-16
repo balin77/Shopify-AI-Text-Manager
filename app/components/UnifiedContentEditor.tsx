@@ -22,6 +22,7 @@ import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
+import { SidebarTabBar } from "./SidebarTabBar";
 import {
   buildProductJsonLd,
   buildCollectionJsonLd,
@@ -1300,77 +1301,39 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </Button>
               </div>
             )}
-            {/* Tab-Toggle für Pro/Max Image Manager */}
+            {/* Section switch (Pro/Max image manager) */}
             {showImageManager && imageManager && (
-              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 8, flexShrink: 0 }}>
-                <button
-                  style={{
-                    flex: 1,
-                    padding: "8px 4px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeRightTab === "seo" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeRightTab === "seo" ? 600 : 400,
-                    fontSize: 13,
-                    color: imageManager.activeRightTab === "seo" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onTabChange("seo")}
-                >
-                  {t.imageManager?.seoScoreTab ?? "SEO Score"}
-                </button>
-                <button
-                  style={{
-                    flex: 1,
-                    padding: "8px 4px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeRightTab === "images" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeRightTab === "images" ? 600 : 400,
-                    fontSize: 13,
-                    color: imageManager.activeRightTab === "images" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onTabChange("images")}
-                >
-                  {t.imageManager?.imagesTab ?? "Bulk Upload"}
-                </button>
-              </div>
+              <SidebarTabBar
+                size="md"
+                items={[
+                  { id: "seo", label: t.imageManager?.seoScoreTab ?? "SEO Score" },
+                  { id: "images", label: t.imageManager?.imagesTab ?? "Image processing" },
+                ]}
+                activeId={imageManager.activeRightTab}
+                onSelect={(id) => imageManager.onTabChange(id as "seo" | "images")}
+                containerStyle={{ marginBottom: 8 }}
+              />
             )}
-            {/* Sub-Tab bar for Image Processing tab */}
+            {/* Image-processing tabs. Same component and the same trailing "?"
+                as the SEO card's own tab row one level over — the section used
+                to carry a differently-styled bar and no help at all. */}
             {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
-              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 4, flexShrink: 0, paddingLeft: 4 }}>
-                <button
-                  style={{
-                    padding: "6px 10px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeImageSubTab === "bulkUpload" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeImageSubTab === "bulkUpload" ? 600 : 400,
-                    fontSize: 12,
-                    color: imageManager.activeImageSubTab === "bulkUpload" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onImageSubTabChange("bulkUpload")}
-                >
-                  {t.imageManager?.bulkUploadSubTab ?? "Bulk Upload"}
-                </button>
-                <button
-                  style={{
-                    padding: "6px 10px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeImageSubTab === "bulkAltText" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeImageSubTab === "bulkAltText" ? 600 : 400,
-                    fontSize: 12,
-                    color: imageManager.activeImageSubTab === "bulkAltText" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onImageSubTabChange("bulkAltText")}
-                >
-                  {t.imageManager?.bulkAltTextSubTab ?? "Bulk Alt Text"}
-                </button>
-              </div>
+              <SidebarTabBar
+                items={[
+                  { id: "bulkUpload", label: t.imageManager?.bulkUploadSubTab ?? "Bulk Upload" },
+                  { id: "bulkAltText", label: t.imageManager?.bulkAltTextSubTab ?? "Bulk Alt Text" },
+                ]}
+                activeId={imageManager.activeImageSubTab}
+                onSelect={(id) =>
+                  imageManager.onImageSubTabChange(id as "bulkUpload" | "bulkAltText")
+                }
+                helpKey={
+                  imageManager.activeImageSubTab === "bulkAltText"
+                    ? "imageBulkAltText"
+                    : "imageBulkUpload"
+                }
+                containerStyle={{ marginBottom: 4 }}
+              />
             )}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (

@@ -2969,6 +2969,35 @@ export const en: Translation = {
         "You do not have to paste this into your theme — the app's storefront extension emits it automatically. This is a preview, which is why some warnings are suppressed: variant prices, publication dates and your shop logo are added at output time from live data the editor does not have, so flagging them here would be a false alarm. What you do see are the fields that really are missing on this item.",
     },
 
+    // Content editor — the image processing section
+    imageBulkUpload: {
+      title: "Bulk upload",
+      summary:
+        "Drop in all images for a product at once and let the filenames decide which variant each one belongs to.",
+      tips: [
+        "Matching runs on the filename: either the variant SKU or an image key built from the option values",
+        "Underscores separate the segments, so a segment must not contain one itself",
+        "The order can be sorted by identifier, SKU, filename or dragged by hand",
+        "Videos and 3D models go through the same route as images",
+        "Nothing is written to Shopify until you confirm",
+      ],
+      details:
+        "The point of this tab is not the upload but the assignment: uploading twelve images to a product with four variants normally means twelve manual assignments. Name the files after the SKU or the option values and the panel does it for you — and shows you the match before anything is written, because a wrong assignment is far more annoying to undo than to prevent.",
+    },
+    imageBulkAltText: {
+      title: "Bulk alt text",
+      summary:
+        "Alt-text templates by image position and language, applied to every variant in one go.",
+      tips: [
+        "One template per position: image 1 can read differently than image 2",
+        "Templates are per language, so each locale gets its own wording",
+        "Applies to all selected variants at once",
+        "Alt text is read by screen readers first and search engines second — describe the picture, don't stuff keywords",
+      ],
+      details:
+        "Alt text is the field that stays empty the longest because writing it per image is tedious and the payoff is invisible. A template turns it into one decision per position instead of one per image. It also keeps the wording consistent across a product, which is exactly what an accessibility audit and an image search both reward. For images that deserve individual wording, generate the alt text on the image itself in the SEO tab instead.",
+    },
+
     keywordsAssignModal: {
       title: "Assign keywords",
       summary:
