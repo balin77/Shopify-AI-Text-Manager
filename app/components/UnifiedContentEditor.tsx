@@ -33,7 +33,7 @@ import { ReloadButton } from "./ReloadButton";
 import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
-import { SeoSidebar } from "./SeoSidebar";
+import { ItemSidebar } from "./ItemSidebar";
 import { SidebarTabBar } from "./SidebarTabBar";
 import {
   buildProductJsonLd,
@@ -616,7 +616,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // Default sidebar renderer
   const defaultRenderSidebar = (item: TranslatableContentItem, editableValues: Record<string, string>) => {
-    if (!config.showSeoSidebar) return null;
+    if (!config.showItemSidebar) return null;
 
     const itemAny = item as any;
     const isBlogContainer = !!itemAny.isBlogContainer;
@@ -705,7 +705,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     const keywordLocale = state.currentLanguage === primaryLocale ? "" : state.currentLanguage;
 
     return (
-      <SeoSidebar
+      <ItemSidebar
         title={editableValues.title || ""}
         description={editableValues.description || editableValues.body || ""}
         handle={editableValues.handle || ""}
@@ -761,7 +761,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // reachable through the nav toggle. Tell the nav a sidebar exists (and take
   // the registration back on unmount — the toggle would otherwise survive onto
   // a page that has no sidebar at all).
-  const hasSidebar = !!selectedItem && !!config.showSeoSidebar;
+  const hasSidebar = !!selectedItem && !!config.showItemSidebar;
   const { open: sidebarPanelOpen, setAvailable: setSidebarPanelAvailable, close: closeSidebarPanel } = useSidebarPanel();
   useEffect(() => {
     setSidebarPanelAvailable(hasSidebar);
@@ -1454,7 +1454,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </div>
 
         {/* Resizer handle between editor and sidebar */}
-        {selectedItem && config.showSeoSidebar && (
+        {selectedItem && config.showItemSidebar && (
           <div
             className="sidebar-resizer desktop-only"
             onMouseDown={handleResizerMouseDown}
@@ -1482,7 +1482,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         {/* Right: Optional Sidebar (Fixed). Hidden below 1100px via CSS — there
             it is reachable through the nav toggle, which makes this column
             replace the editor instead (`.sidebar-panel-open`). */}
-        {selectedItem && config.showSeoSidebar && (
+        {selectedItem && config.showItemSidebar && (
           <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {/* Way back to the content. `open` can survive a resize past the
                 breakpoint, where the sidebar is shown normally and this row

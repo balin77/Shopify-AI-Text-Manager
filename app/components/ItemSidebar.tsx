@@ -1,3 +1,15 @@
+/**
+ * The editor's right-hand sidebar.
+ *
+ * Renamed from SeoSidebar in PLAN_CONTENT_CREATION Phase 1b: it stopped being
+ * SEO-only when the attribute tab arrived (Phase 2), which reports tags,
+ * vendor, category, status, price and channels — none of them SEO. The old
+ * name would have kept telling readers this file is narrower than it is.
+ *
+ * The i18n keys deliberately stay under `t.seo.sidebarTabs.*`. Renaming them
+ * would touch three language files for something no user can see.
+ */
+
 import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "react-router";
@@ -44,7 +56,7 @@ interface SeoAnalysis {
   recommendations: string[];
 }
 
-interface SeoSidebarProps {
+interface ItemSidebarProps {
   title: string;
   description: string;
   handle?: string;
@@ -93,7 +105,7 @@ interface SeoSidebarProps {
   keywordLocaleName?: string;
 }
 
-export function SeoSidebar({
+export function ItemSidebar({
   title,
   description,
   handle,
@@ -109,7 +121,7 @@ export function SeoSidebar({
   resourceType,
   keywordLocale = "",
   keywordLocaleName,
-}: SeoSidebarProps) {
+}: ItemSidebarProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const jsonLdString = useMemo(

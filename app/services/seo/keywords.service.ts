@@ -7,7 +7,7 @@
  * external keyword API. The CRUD helpers persist one keyword per item/locale.
  */
 
-// TYPE-ONLY Prisma imports — this module is imported CLIENT-SIDE (SeoSidebar
+// TYPE-ONLY Prisma imports — this module is imported CLIENT-SIDE (ItemSidebar
 // uses analyzeOnPage), so a value import of @prisma/client would drag the
 // Prisma runtime into the browser bundle and break the vite build.
 import type { Prisma, PrismaClient } from "@prisma/client";

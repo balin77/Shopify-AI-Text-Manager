@@ -327,7 +327,7 @@ export interface ContentEditorConfig {
   displayNameSingular: string;
 
   /** Whether to show SEO sidebar */
-  showSeoSidebar?: boolean;
+  showItemSidebar?: boolean;
 
   /**
    * PLAN_CONTENT_CREATION §1.1/§2.6 — which resource the "+" button creates.

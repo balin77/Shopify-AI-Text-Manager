@@ -20,7 +20,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
   resourceType: "Product",
   displayName: "Products",
   displayNameSingular: "Product",
-  showSeoSidebar: true,
+  showItemSidebar: true,
   idPrefix: "ID:",
 
   fieldDefinitions: [
@@ -114,7 +114,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
   resourceType: "Collection",
   displayName: "Collections",
   displayNameSingular: "Collection",
-  showSeoSidebar: true,
+  showItemSidebar: true,
   idPrefix: "ID:",
 
   fieldDefinitions: [
@@ -314,7 +314,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
   resourceType: "Article",
   displayName: "Articles & Blogs",
   displayNameSingular: "Article",
-  showSeoSidebar: true,
+  showItemSidebar: true,
   idPrefix: "ID:",
   dynamicFields: true,
 
@@ -348,7 +348,7 @@ export const PAGES_CONFIG: ContentEditorConfig = {
   resourceType: "Page",
   displayName: "Pages",
   displayNameSingular: "Page",
-  showSeoSidebar: true,
+  showItemSidebar: true,
   idPrefix: "ID:",
 
   fieldDefinitions: [
@@ -438,7 +438,7 @@ export const POLICIES_CONFIG: ContentEditorConfig = {
   resourceType: "ShopPolicy",
   displayName: "Policies",
   displayNameSingular: "Policy",
-  showSeoSidebar: false,
+  showItemSidebar: false,
   idPrefix: "ID:",
   getPrimaryField: (item, t) => item.title || getPolicyTypeName(item.type, t),
   getSubtitle: (item, t) => getPolicyTypeName(item.type, t),
@@ -466,7 +466,7 @@ export const TEMPLATES_CONFIG: ContentEditorConfig = {
   resourceType: "OnlineStoreTheme",
   displayName: "Theme Content",
   displayNameSingular: "Theme Group",
-  showSeoSidebar: false,
+  showItemSidebar: false,
   idPrefix: "Group:",
   getPrimaryField: (item) => item.title || item.groupName,
   getSubtitle: (item) => `${item.contentCount || 0} translatable fields`,
@@ -550,7 +550,7 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   resourceType: "Metaobject",
   displayName: "Metaobjects",
   displayNameSingular: "Metaobject Type",
-  showSeoSidebar: false,
+  showItemSidebar: false,
   idPrefix: "Type:",
   getPrimaryField: (item) => item.title || item.definitionName || "Untitled",
   getSubtitle: (item) => {
