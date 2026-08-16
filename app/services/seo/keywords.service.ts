@@ -1189,6 +1189,39 @@ export async function removeKeywordFromGroup(
   });
 }
 
+/**
+ * Delete a keyword outright — every group membership, every item assignment
+ * and their ranking snapshots go with it (all three relations are
+ * `onDelete: Cascade`, so the single delete below is enough).
+ *
+ * The pre-existing removal paths only ever delete a keyword as a SIDE EFFECT
+ * of it becoming an orphan (`removeAssignment`, `removeKeywordFromGroup`), so
+ * a keyword that is assigned to items — or one sitting in the "Ohne Gruppe"
+ * bucket, whose table has no remove action — had no way out at all. This is
+ * the explicit "get rid of it" path.
+ *
+ * Returns how many item assignments were dropped so the UI can report it; an
+ * unknown or foreign id is a no-op, not an error.
+ */
+export async function deleteKeyword(
+  db: PrismaClient,
+  shop: string,
+  keywordId: string,
+): Promise<{ ok: boolean; removedAssignments: number }> {
+  return db.$transaction(async (tx) => {
+    const keyword = await tx.seoKeyword.findFirst({
+      where: { id: keywordId, shop },
+      select: { id: true },
+    });
+    if (!keyword) return { ok: false, removedAssignments: 0 };
+    const removedAssignments = await tx.seoKeywordAssignment.count({
+      where: { keywordId: keyword.id },
+    });
+    await tx.seoKeyword.delete({ where: { id: keyword.id } });
+    return { ok: true, removedAssignments };
+  });
+}
+
 // ── Moving a keyword between groups and/or languages ────────────────────────
 
 export interface MoveKeywordInput {

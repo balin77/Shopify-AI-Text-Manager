@@ -8,6 +8,7 @@ import {
   planItemAssignments,
   removeAssignment,
   moveKeyword,
+  deleteKeyword,
   listAssignments,
   MAX_KEYWORDS_PER_ITEM,
   buildTranslatedContentInput,
@@ -1062,5 +1063,53 @@ describe("moveKeyword", () => {
     const result = await moveKeyword(db, SHOP, { keywordId: "nope", targetLocale: "", targetGroupId: null });
     expect(result).toEqual({ ok: false, reason: "notFound" });
     expect(tx.seoKeywordGroupMembership.create).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * deleteKeyword — the explicit "get rid of it" path. The pre-existing removal
+ * helpers only drop a keyword as a side effect of it becoming an orphan, so
+ * this is the only one that removes a keyword that IS assigned to items.
+ */
+describe("deleteKeyword", () => {
+  const SHOP = "s.myshopify.com";
+
+  function makeDb(found: any = { id: "kw1" }, assignmentCount = 0) {
+    const tx = {
+      seoKeyword: {
+        findFirst: vi.fn(async (_a: any) => found),
+        delete: vi.fn(async (_a: any) => ({})),
+      },
+      seoKeywordAssignment: {
+        count: vi.fn(async (_a: any) => assignmentCount),
+      },
+    };
+    const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
+    return { db, tx };
+  }
+
+  it("deletes the keyword row and reports how many assignments cascade with it", async () => {
+    const { db, tx } = makeDb({ id: "kw1" }, 3);
+    const result = await deleteKeyword(db, SHOP, "kw1");
+    expect(result).toEqual({ ok: true, removedAssignments: 3 });
+    expect(tx.seoKeyword.delete).toHaveBeenCalledWith({ where: { id: "kw1" } });
+  });
+
+  it("deletes an unassigned keyword too (the ungrouped-bucket dead end)", async () => {
+    const { db, tx } = makeDb({ id: "kw1" }, 0);
+    const result = await deleteKeyword(db, SHOP, "kw1");
+    expect(result).toEqual({ ok: true, removedAssignments: 0 });
+    expect(tx.seoKeyword.delete).toHaveBeenCalled();
+  });
+
+  it("is shop-scoped: an unknown or foreign id is a no-op, not a delete", async () => {
+    const { db, tx } = makeDb(null);
+    const result = await deleteKeyword(db, SHOP, "foreign");
+    expect(result).toEqual({ ok: false, removedAssignments: 0 });
+    expect(tx.seoKeyword.delete).not.toHaveBeenCalled();
+    expect(tx.seoKeyword.findFirst).toHaveBeenCalledWith({
+      where: { id: "foreign", shop: SHOP },
+      select: { id: true },
+    });
   });
 });

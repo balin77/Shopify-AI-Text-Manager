@@ -42,6 +42,7 @@ import {
   listUngrouped,
   addKeywordsToGroup,
   removeKeywordFromGroup,
+  deleteKeyword,
   moveKeyword,
   setKeywordPriority,
   MAX_KEYWORD_LENGTH,
@@ -420,6 +421,8 @@ type CsvErrorRow = { row: number; keyword: string; error: string };
 export type ActionResult =
   | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
   | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
+  // The keyword itself is gone, not just one of its assignments.
+  | { ok: true; kind: "keywordDeleted"; removedAssignments: number }
   // Move to another group and/or language (§ "keyword is stuck in the language
   // it was first tracked in"). The counters report what happened to the
   // keyword's item assignments on a language change.
@@ -664,6 +667,17 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     const groupId = getFormString(form, "groupId");
     if (groupId) await deleteGroup(db, session.shop, groupId);
     return json<ActionResult>({ ok: true, kind: "groupDeleted" });
+  }
+
+  // Delete a keyword outright (assignments + memberships cascade). Distinct
+  // from `deleteKeyword` above, which drops ONE assignment.
+  if (actionType === "deleteKeywordCompletely") {
+    const keywordId = getFormString(form, "keywordId");
+    if (!keywordId) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const { removedAssignments } = await deleteKeyword(db, session.shop, keywordId);
+    return json<ActionResult>({ ok: true, kind: "keywordDeleted", removedAssignments });
   }
 
   // ── Move a keyword to another group and/or language ──
@@ -941,6 +955,25 @@ export default function SeoKeywords() {
     setMoveTargetGroupId(data.groupDetail && !data.groupDetail.pseudo ? data.groupDetail.id : "");
   };
   const closeMoveModal = () => setMoveModal(null);
+
+  // Delete a keyword for good. The confirm names the collateral damage —
+  // assignments and their ranking history cascade with it.
+  const handleDeleteKeywordRow = async (row: {
+    keywordId: string;
+    keyword: string;
+    assignmentCount: number;
+  }) => {
+    const ok = await confirm({
+      title: k.keywordDeleteConfirmTitle,
+      message: (row.assignmentCount > 0 ? k.keywordDeleteConfirmBodyAssigned : k.keywordDeleteConfirmBody)
+        .replace("{keyword}", row.keyword)
+        .replace("{count}", String(row.assignmentCount)),
+      confirmLabel: k.delete,
+      destructive: true,
+    });
+    if (!ok) return;
+    groupFetcher.submit({ actionType: "deleteKeywordCompletely", keywordId: row.keywordId }, { method: "post" });
+  };
   const submitMove = () => {
     if (!moveModal) return;
     moveFetcher.submit(
@@ -1392,6 +1425,7 @@ export default function SeoKeywords() {
             setMoveTargetGroupId={setMoveTargetGroupId}
             submitMove={submitMove}
             moveFetcher={moveFetcher}
+            handleDeleteKeywordRow={handleDeleteKeywordRow}
           />
         )}
       </BlockStack>

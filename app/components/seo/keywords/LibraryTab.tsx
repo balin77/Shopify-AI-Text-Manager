@@ -136,6 +136,8 @@ export interface LibraryTabProps {
   setMoveTargetGroupId: (v: string) => void;
   submitMove: () => void;
   moveFetcher: FetcherWithComponents<ActionResult>;
+  /** Delete the keyword itself (not just its group membership). */
+  handleDeleteKeywordRow: (row: { keywordId: string; keyword: string; assignmentCount: number }) => void;
 }
 
 export function LibraryTab({
@@ -197,6 +199,7 @@ export function LibraryTab({
   setMoveTargetGroupId,
   submitMove,
   moveFetcher,
+  handleDeleteKeywordRow,
 }: LibraryTabProps) {
   const isPseudo = !!groupDetail?.pseudo;
 
@@ -334,10 +337,11 @@ export function LibraryTab({
                       label says so rather than promising a move. */}
                   {readOnly ? k.assignToGroup || "Assign" : k.moveKeyword || "Move"}
                 </Button>
+                {/* Only out of THIS group — the keyword itself survives if it
+                    is assigned to items or belongs to another group. */}
                 {!readOnly && (
                   <Button
                     variant="plain"
-                    tone="critical"
                     disabled={groupFetcher.state !== "idle"}
                     onClick={() =>
                       groupDetail &&
@@ -354,6 +358,21 @@ export function LibraryTab({
                     {k.groupRemoveKeyword || "Remove"}
                   </Button>
                 )}
+                {/* Gone for good, including every item assignment. */}
+                <Button
+                  variant="plain"
+                  tone="critical"
+                  disabled={groupFetcher.state !== "idle"}
+                  onClick={() =>
+                    handleDeleteKeywordRow({
+                      keywordId: gk.keywordId,
+                      keyword: gk.keyword,
+                      assignmentCount: gk.assignmentCount,
+                    })
+                  }
+                >
+                  {k.delete}
+                </Button>
               </InlineStack>
             </IndexTable.Cell>
           </IndexTable.Row>
