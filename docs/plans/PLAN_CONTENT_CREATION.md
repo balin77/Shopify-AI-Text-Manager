@@ -344,6 +344,24 @@ Steht vor allem anderen und ist **auch ohne diesen Plan** bis **2026-10-16** zu 
 ---
 
 ### Phase 0 — Fundament: Messungen, Schema, Sync
+
+> **Stand 2026-08-16 — Schritte 2–4 umgesetzt, Schritt 5 teilweise.** Migration
+> [`20260818000000_content_creation_attributes`](../../prisma/migrations/20260818000000_content_creation_attributes/migration.sql),
+> Sync-Mapping in [attribute-sync.shared.ts](../../app/services/attribute-sync.shared.ts),
+> `blog`-Case entschieden und gebaut. `typecheck` + `test` grün (110 Dateien / 2248 Tests).
+> Offen bleiben die Messungen, die eine **echte Shop-Verbindung** brauchen — siehe Schritt 5.
+>
+> **Eine Ergänzung gegenüber dem Entwurf, die tragend ist:** jedes der vier Modelle
+> bekommt zusätzlich ein `attributesSyncedAt DateTime?`. Ohne diesen Diskriminator wäre
+> „vor dem ersten Sync = unbekannt" (§2.4) nicht *darstellbar*: `vendor NULL`,
+> `tags '{}'` und `isPublished true` sind die Migrations-Defaults und von „der Merchant
+> hat nichts eingetragen" nicht zu unterscheiden — exakt die Falle, die CLAUDE.md für
+> `SeoCrawlPage.metaRobots` beschreibt. `attributesKnown()` ist das Gate, durch das jeder
+> Leser dieser Spalten muss. Die Mapper erzwingen die andere Hälfte derselben Regel:
+> liefert eine Antwort den Attribut-Block **nicht**, geben sie `{}` zurück und schreiben
+> weder Defaults über vorhandene Werte noch einen `attributesSyncedAt`-Stempel für Daten,
+> die nie ankamen.
+
 2. **Prisma-Migration:**
    - `Product`: `vendor String?`, `tags String[]`, `categoryId String?`, `categoryName String?`, `templateSuffix String?`, `publishedAt DateTime?`
    - `Collection`: `sortOrder String?`, `templateSuffix String?`, `isSmart Boolean @default(false)`, `sourcesJson Json?` (voller Baum, nicht flachgeklopft — §2.4)
@@ -355,15 +373,21 @@ Steht vor allem anderen und ist **auch ohne diesen Plan** bis **2026-10-16** zu 
    - **GDPR-Drift-Guard:** [gdpr.service.ts](../../app/services/gdpr.service.ts) muss jedes neue shop-scoped Modell löschen, sonst schlägt `tests/unit/gdpr.service.test.ts` fehl — der Test parst das Schema.
 3. **Sync-Queries erweitern:** [product-sync.service.ts:178](../../app/services/product-sync.service.ts#L178) (`vendor`, `tags`, `category`, `templateSuffix`, `publishedAt`, Collection-Mitgliedschaft), analog in [content-sync.service.ts](../../app/services/content-sync.service.ts). Backfill über den regulären Sync; bis dahin sind die Spalten `null` = „unbekannt", nicht „fehlt".
 4. **`blog`-Case in [api.sync-single-resource.tsx](../../app/routes/api.sync-single-resource.tsx)** — und dabei entscheiden, **wohin** er synct: Es gibt kein `Blog`-Modell, heute existieren nur `ContentTranslation`-Zeilen mit `resourceType: "Blog"`. Entweder ein Modell anlegen oder den Case auf „Loader-Revalidierung anstoßen" beschränken. So oder so explizit, nicht implizit.
+
+   **✅ Entschieden (2026-08-16): kein `Blog`-Modell.** Die Primärfelder eines Blog-Containers holt der Loader von [app.blog.tsx](../../app/routes/app.blog.tsx) ohnehin bei **jedem** Besuch live — eine Cache-Zeile wäre eine zweite Wahrheit für Daten, die nie veralten. Nur die Übersetzungen brauchen einen Speicher, und den haben sie (`ContentTranslation`, `resourceType: "Blog"`). `syncSingleBlog` in [content-sync.service.ts](../../app/services/content-sync.service.ts) frischt genau die auf: delete + recreate, **skopiert auf die erfolgreich geholten Market-Layer**, wie im Artikel-Pfad. Nebenbei geschlossen: der Loader backfillt Blog-Übersetzungen nur, wenn ein Blog **gar keine** hat — eine geänderte Übersetzung war damit aus Shopify nie nachladbar. Existiert der Blog nicht, gibt der Case 404 zurück statt einen erfolgreichen No-Op zu melden.
 5. **Messungen** (Ergebnisse hier im Dokument festhalten):
-   - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts`
-   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3)
-   - Zeigt Shopifys aktueller Admin bereits Ausschlüsse/Mehrfachquellen? (§2.4)
-   - **Upsertet `syncSingleX` einen bisher UNBEKANNTEN GID?** CLAUDE.md sagt „Reload only refreshes known IDs"; `syncProduct` holt per ID und upsertet, für Collection/Page/Article/Metaobject ist das ungeprüft. Phase 1.6 verlässt sich darauf.
-   - Reichen `write_inventory`/`write_publications` ohne ihre `read_`-Pendants? (§2.1)
+   - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts` — **offen, braucht 2026-07 (Phase −1) und eine Shop-Verbindung.**
+   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3) — **offen, dito.**
+   - Zeigt Shopifys aktueller Admin bereits Ausschlüsse/Mehrfachquellen? (§2.4) — **offen, reine Admin-Beobachtung.**
+   - **Upsertet `syncSingleX` einen bisher UNBEKANNTEN GID?** — **✅ Ja, für alle fünf; am Code beantwortet, keine Shop-Verbindung nötig.** `syncSingleProduct`/`syncSingleCollection`/`syncSingleArticle`/`syncSinglePage` holen per ID und schreiben ein `upsert` **mit `create`-Zweig** — ein unbekannter GID wird angelegt, nicht verworfen. Metaobjects gehen über `syncMetaobjectsForType`, das den ganzen Typ neu holt, also einen neuen Eintrag ebenfalls findet. Die CLAUDE.md-Regel „Reload only refreshes known IDs" meint etwas anderes und bleibt richtig: die **Liste** entdeckt nichts Neues (nur `syncAll*` tut das) — aber ein gezielter Reload auf einen bekannten neuen GID, und genau den hat Phase 1.6 nach dem Create, funktioniert.
+   - Reichen `write_inventory`/`write_publications` ohne ihre `read_`-Pendants? (§2.1) — **offen, erst in Phase 4 messbar.**
 6. **Webhooks:** `products/create` feuert bei unserem eigenen Create mit ([webhooks.products.tsx:141](../../app/routes/webhooks.products.tsx#L141)). Zusammen mit dem expliziten Sync ergibt das zwei Syncs — beide Upserts, also idempotent. `altTextModifiedAt` (5-Min-Preserve-Fenster) muss auch beim Create gesetzt werden.
 
 **DoD:** Migration angewendet, ein Sync-Lauf füllt die Spalten, alle Messungen beantwortet und notiert, `typecheck` + `test` grün.
+
+> **Migration gegen ein echtes Postgres verifiziert (2026-08-16), nicht nur gelesen:** Basis-Schema per `db push` materialisiert, mit je einer Zeile pro Tabelle befüllt, `migration.sql` angewendet, danach `prisma migrate diff` gegen das Ziel-Schema → **leer**. Die bestehenden Zeilen tragen anschließend die Defaults **und `attributesSyncedAt = NULL`**, also „unbekannt" — genau das Verhalten aus §2.4. Der Lauf hat auch den Grund für die zwei expliziten `@default([])` geliefert: ohne sie meldet `migrate diff` gegen **jede** deployte DB dauerhaft Drift, weil Postgres eine `NOT NULL`-Spalte nur mit Default zu einer gefüllten Tabelle hinzufügen kann.
+>
+> **Dabei aufgefallen, unabhängig von diesem Plan:** `prisma migrate deploy` läuft auf einer **frischen** Datenbank nicht durch. `20260516000004_add_initial_sync_completed_at` bricht mit `42804` ab (`SELECT DISTINCT p."shop", NULL, …` — Postgres typt das nackte `NULL` als `text`, die Spalte ist `timestamp`). Auf bestehenden DBs ist die Migration längst angewendet, deshalb fällt es dort nicht auf; ein neu aufgesetztes Railway-Postgres käme nicht hoch. Eine Korrektur ändert die Prüfsumme einer bereits angewendeten Migration und braucht deshalb eine eigene Entscheidung (`migrate resolve` o. ä.) — **nicht** nebenbei in diesem Branch.
 
 ---
 

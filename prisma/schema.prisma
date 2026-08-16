@@ -435,21 +435,80 @@ model Product {
   // does NOT paginate variants (§5.1).
   hasMoreVariants Boolean @default(false)
 
+  // ── PLAN_CONTENT_CREATION Phase 0 — merchandising attributes ──────────────
+  // Everything below is fetched by the product sync from Phase 0 on. Rows
+  // written by an OLDER sync carry the column defaults, which for `vendor`
+  // (null), `tags` ([]) and `isSmart`-style booleans is INDISTINGUISHABLE from
+  // "the merchant left it empty" — the same trap as SeoCrawlPage.metaRobots.
+  // `attributesSyncedAt` is the discriminator and the ONLY thing that tells
+  // them apart: null ⇒ every column in this block is UNKNOWN, not "missing".
+  // The attribute sidebar (§Phase 2) must gate on it before it shows a red dot.
+  vendor         String?
+  // Shopify product tags, verbatim and in Shopify's order. A scalar list can
+  // never be null in Prisma, so [] alone says nothing — read it together with
+  // `attributesSyncedAt`. The explicit @default([]) is what the migration's
+  // `DEFAULT ARRAY[]::TEXT[]` needs to be declared as, or `migrate diff` reports
+  // permanent drift against every deployed database.
+  tags           String[] @default([])
+  // Shopify's product taxonomy. `categoryName` mirrors `fullName`
+  // ("Apparel & Accessories > Clothing"), so the UI can label the category
+  // without a second lookup.
+  categoryId     String?
+  categoryName   String?
+  templateSuffix String?
+  publishedAt    DateTime?
+  // Collection membership window of the sync: true when the product belongs to
+  // MORE collections than `collections(first: N)` fetched. Same reason as
+  // hasMoreVariants — "N memberships" must not read as complete when it is a
+  // truncation.
+  hasMoreCollections Boolean   @default(false)
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
 
   // Relations
   // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
-  images     ProductImage[]
-  options    ProductOption[]
-  metafields ProductMetafield[]
-  variants   ProductVariant[]
+  images      ProductImage[]
+  options     ProductOption[]
+  metafields  ProductMetafield[]
+  variants    ProductVariant[]
+  collections ProductCollection[]
 
   @@unique([shop, id])
   @@index([shop])
   @@index([shop, status])
   @@index([lastSyncedAt])
+}
+
+/// Collection membership of a product (PLAN_CONTENT_CREATION Phase 0).
+///
+/// Deliberately NOT a foreign key to `Collection`: the collection cache is
+/// capped by the merchant's plan (`maxCollections`), so a membership can point
+/// at a collection this shop never cached. `collectionTitle` is mirrored for
+/// exactly that case — without it a capped-out membership would render as a
+/// bare GID. Rows are rebuilt per product on every sync (delete-by-product +
+/// createMany), so they never accumulate.
+model ProductCollection {
+  id        String  @id @default(cuid())
+  shop      String
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  collectionId    String
+  collectionTitle String
+
+  // True for a collection whose membership is rule-based on Shopify's side —
+  // Phase 3's membership picker must not offer to "remove" such a row, the
+  // rule would just re-add it.
+  automated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, collectionId])
+  @@index([productId])
+  @@index([shop, collectionId])
 }
 
 model ProductImage {
@@ -646,6 +705,28 @@ model Collection {
   seoTitle        String?
   seoDescription  String? @db.Text
 
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  sortOrder      String? // Shopify CollectionSortOrder, verbatim (e.g. "BEST_SELLING")
+  templateSuffix String?
+  // True when membership is rule-based rather than hand-picked. Derived from
+  // whatever the pinned API version exposes (2025-10: `ruleSet`; 2026-07 on:
+  // a non-empty `sources[]`), never from a client claim.
+  isSmart        Boolean @default(false)
+  /// The FULL rule tree, never flattened (PLAN §2.4): the editor must be able
+  /// to hand back structures it cannot render instead of silently simplifying
+  /// them, which would change a collection's membership unnoticed.
+  ///
+  /// Stored as a DISCRIMINATED envelope, because the shape depends on the API
+  /// version the sync ran against and the two are not interchangeable:
+  ///   { "shape": "ruleSet", "apiVersion": "2025-10", "data": { … } }
+  ///   { "shape": "sources", "apiVersion": "2026-07", "data": [ … ] }
+  /// A bare tree would leave a reader guessing which model it is looking at —
+  /// exactly the "empty column is never evidence" trap. null = never synced.
+  sourcesJson    Json?
+
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
@@ -669,6 +750,18 @@ model Article {
   seoTitle       String?
   seoDescription String? @db.Text
 
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  // `author` is the one field here that is not merely a gap: ArticleCreateInput
+  // requires it, so article creation is impossible without it (§1.4).
+  author         String?
+  tags           String[] @default([]) // see Product.tags for why the default is explicit
+  templateSuffix String?
+  isPublished    Boolean   @default(true)
+  publishedAt    DateTime?
+
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
@@ -689,6 +782,14 @@ model Page {
   // SEO fields (optional — only present if set in Shopify admin)
   seoTitle       String?
   seoDescription String? @db.Text
+
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  templateSuffix String?
+  isPublished    Boolean   @default(true)
+  publishedAt    DateTime?
+
+  attributesSyncedAt DateTime?
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -865,7 +966,15 @@ model MetaobjectDefinition {
   type             String // Metaobject type identifier (e.g., "size_guide", "product_spec")
   name             String // Display name
   description      String? @db.Text
-  fieldDefinitions Json // Array of field definitions with keys and types
+  /// Array of field definitions. Shape (PLAN_CONTENT_CREATION Phase 0):
+  ///   { key, name, type: { name }, required, validations: [{ name, value }] }
+  ///
+  /// `required` and `validations` were added in Phase 0 — WITHOUT them the
+  /// create form cannot mark a field as mandatory, and it would offer entries
+  /// Shopify then rejects (§1.5). Rows synced before Phase 0 carry entries
+  /// with `required` ABSENT: absent ≠ false. A reader that needs the flag must
+  /// treat `undefined` as "unknown" and re-sync, not as "optional".
+  fieldDefinitions Json
 
   lastSyncedAt DateTime @default(now())
 

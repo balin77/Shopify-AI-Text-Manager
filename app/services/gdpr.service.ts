@@ -189,11 +189,12 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 57 models in prisma/schema.prisma:
+ * Coverage of all 59 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
- *      Article, Page, ShopPolicy, Menu, ContentTranslation, ThemeContent,
+ *      Article, Page, ShopPolicy, Menu, ProductCollection,
+ *      ContentTranslation, ThemeContent,
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
@@ -265,6 +266,14 @@ export async function redactShopData(
     logger.debug(`[GDPR] Deleted ${tasksDeleted.count} tasks`);
 
     // 5. Delete products (cascade will delete translations, images, etc.)
+    // ProductCollection cascades through Product, but is deleted explicitly
+    // anyway: it is shop-scoped in its own right, and a purge that depends on
+    // the FK would silently miss rows whose product row was already gone.
+    const productCollectionsDeleted = await tx.productCollection.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${productCollectionsDeleted.count} product-collection memberships`);
+
     const productsDeleted = await tx.product.deleteMany({
       where: { shop: shop_domain },
     });

@@ -20,12 +20,22 @@ interface MetaobjectDefinition {
   type: string;
   name: string;
   description?: string | null;
+  /**
+   * PLAN_CONTENT_CREATION Phase 0 (§1.5): `required` and `validations` were
+   * added because the create form cannot mark a field as mandatory without
+   * them — and would offer entries Shopify then rejects. Definitions cached
+   * BEFORE Phase 0 carry entries where `required` is ABSENT; absent is not
+   * false. A reader that needs the flag must treat `undefined` as unknown and
+   * re-sync, never as "optional".
+   */
   fieldDefinitions: Array<{
     key: string;
     name: string;
     type: {
       name: string;
     };
+    required?: boolean;
+    validations?: Array<{ name: string; value: string | null }>;
   }>;
 }
 
@@ -158,8 +168,13 @@ export class MetaobjectSyncService {
               fieldDefinitions {
                 key
                 name
+                required
                 type {
                   name
+                }
+                validations {
+                  name
+                  value
                 }
               }
             }

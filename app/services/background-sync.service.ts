@@ -15,6 +15,11 @@ import { db } from '../db.server';
 import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
 import { stripLiquid } from '../utils/liquid-strip';
+import {
+  PAGE_ATTRIBUTE_SELECTION,
+  pageAttributeColumns,
+  type ShopifyPageAttributes,
+} from './attribute-sync.shared';
 
 /** A single translatable content item from Shopify */
 interface TranslatableContentItem {
@@ -25,7 +30,7 @@ interface TranslatableContentItem {
 }
 
 /** Page data from Shopify GraphQL */
-interface ShopifyPageData {
+interface ShopifyPageData extends ShopifyPageAttributes {
   id: string;
   title: string;
   handle: string;
@@ -298,7 +303,7 @@ export class BackgroundSyncService {
                   title
                   handle
                   body
-                  updatedAt
+                  updatedAt${PAGE_ATTRIBUTE_SELECTION}
                   seoTitle: metafield(namespace: "global", key: "title_tag") { value }
                   seoDescription: metafield(namespace: "global", key: "description_tag") { value }
                 }
@@ -432,7 +437,7 @@ export class BackgroundSyncService {
             title
             handle
             body
-            updatedAt
+            updatedAt${PAGE_ATTRIBUTE_SELECTION}
             seoTitle: metafield(namespace: "global", key: "title_tag") { value }
             seoDescription: metafield(namespace: "global", key: "description_tag") { value }
           }
@@ -504,6 +509,11 @@ export class BackgroundSyncService {
     // from a partially failed market stay harmless (no delete involved).
     const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
 
+    // PLAN_CONTENT_CREATION Phase 0. `{}` when the response did not carry the
+    // attribute block — the stored values (and attributesSyncedAt) then stay
+    // untouched instead of being overwritten with the migration defaults.
+    const attributes = pageAttributeColumns(pageData);
+
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
       // Upsert page
@@ -522,6 +532,7 @@ export class BackgroundSyncService {
           handle: pageData.handle,
           seoTitle: pageData.seoTitle?.value ?? null,
           seoDescription: pageData.seoDescription?.value ?? null,
+          ...attributes,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -531,6 +542,7 @@ export class BackgroundSyncService {
           handle: pageData.handle,
           seoTitle: pageData.seoTitle?.value ?? null,
           seoDescription: pageData.seoDescription?.value ?? null,
+          ...attributes,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },

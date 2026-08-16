@@ -17,6 +17,7 @@ import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
 import { EncryptedPrismaSessionStorage } from "./utils/encrypted-session-storage.server";
 import { checkAndSyncSubscription } from "./services/billing.server";
+import { DEFAULT_SHOPIFY_API_VERSION } from "./utils/api-version";
 
 /**
  * Map string API version (e.g., "2025-10") to ApiVersion enum
@@ -40,7 +41,10 @@ function getApiVersion(versionString?: string): ApiVersion {
     "unstable": ApiVersion.Unstable,
   };
 
-  const defaultVersion = ApiVersion.October25; // Default to 2025-10 for MEDIA_IMAGE translation support
+  // The default STRING lives in utils/api-version.ts — a second hard-coded
+  // default here is how a version pin drifts. Kept at 2025-10 for MEDIA_IMAGE
+  // translation support.
+  const defaultVersion = versionMap[DEFAULT_SHOPIFY_API_VERSION];
 
   if (!versionString) {
     return defaultVersion;
@@ -48,7 +52,7 @@ function getApiVersion(versionString?: string): ApiVersion {
 
   const version = versionMap[versionString.toLowerCase()];
   if (!version) {
-    logger.warn(`[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to 2025-10`);
+    logger.warn(`[SHOPIFY.SERVER] Unknown API version "${versionString}", falling back to ${DEFAULT_SHOPIFY_API_VERSION}`);
     return defaultVersion;
   }
 
