@@ -2427,6 +2427,7 @@ export const de = {
       quickWinOptimize: "Optimieren",
       trackKeyword: "Als Keyword tracken",
       trackedBadge: "Getrackt",
+      trackAnotherLanguage: "Weitere Sprache tracken",
       adoptTooMany: "Dieser Inhalt verfolgt bereits die maximale Anzahl an Keywords (5).",
       adoptModalTitle: "Inhalt für dieses Keyword wählen",
       adoptModalBody: "Für „{query}“ konnte keine Seite automatisch zugeordnet werden. Wähle den Inhalt, für den dieses Keyword getrackt werden soll.",

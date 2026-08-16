@@ -221,7 +221,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // the queries already tracked as keywords (any locale) so their rows show
     // a "tracked" badge instead of the button.
     topPages: {} as Record<string, string>,
-    trackedQueries: [] as string[],
+    // normalized query → the locales it is already tracked in ("" = primary).
+    // Per LOCALE, not a flat list: a query tracked in German must still offer
+    // the button for French, or the language picker is unreachable for it.
+    trackedQueryLocales: {} as Record<string, string[]>,
     // Languages the adopt / quick-win flows may track a query under. A GSC
     // query carries NO language of its own, so silently writing it under the
     // primary locale is a guess — with more than one entry here the UI asks.
@@ -398,12 +401,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (shownQueries.length) {
         const tracked = await db.seoKeyword.findMany({
           where: { shop: session.shop, keyword: { in: shownQueries } },
-          select: { keyword: true },
+          select: { keyword: true, locale: true },
         });
-        base.trackedQueries = Array.from(new Set(tracked.map((t: { keyword: string }) => t.keyword)));
+        const byQuery: Record<string, string[]> = {};
+        for (const t of tracked as Array<{ keyword: string; locale: string }>) {
+          const bucket = (byQuery[t.keyword] ||= []);
+          if (!bucket.includes(t.locale)) bucket.push(t.locale);
+        }
+        base.trackedQueryLocales = byQuery;
       }
     } catch {
-      base.trackedQueries = [];
+      base.trackedQueryLocales = {};
     }
 
     // Item pickers for the adopt modal (unresolvable rows) — same cap/order
@@ -912,8 +920,9 @@ export default function SeoSearchConsole() {
   // ── "Track as keyword" adopt flow (PLAN_KEYWORDS_EXPANSION.md §4) ──
   // Own fetcher so the disconnect/sync/sitemap banner isn't clobbered.
   const adoptFetcher = useFetcher<ActionResult>();
-  // Queries adopted in THIS session — flips the row to its "tracked" badge
-  // without a reload; the loader's trackedQueries covers earlier sessions.
+  // Queries adopted in THIS session, as `<query>::<locale>` — flips the row to
+  // its "tracked" badge without a reload; the loader's trackedQueryLocales
+  // covers earlier sessions. Keyed per locale for the same reason.
   const [adoptedQueries, setAdoptedQueries] = useState<Set<string>>(new Set());
   const [adoptingQuery, setAdoptingQuery] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
@@ -942,15 +951,33 @@ export default function SeoSearchConsole() {
   const pendingAdoptRef = useRef<{
     query: string;
     gsc: { position?: number; clicks?: number; impressions?: number; ctr?: number };
+    locale: string;
   } | null>(null);
 
-  const isQueryTracked = (query: string) => {
-    const q = query.trim().toLowerCase();
-    return adoptedQueries.has(q) || data.trackedQueries.includes(q);
+  /** Languages this query is already tracked in (stored + this session). */
+  const trackedLocalesFor = (query: string): string[] => {
+    const q = normalizeKeyword(query);
+    const stored = data.trackedQueryLocales[q] ?? [];
+    const session = Array.from(adoptedQueries)
+      .filter((entry) => entry.startsWith(`${q}::`))
+      .map((entry) => entry.slice(q.length + 2));
+    return Array.from(new Set([...stored, ...session]));
   };
+
+  const isQueryTracked = (query: string) => trackedLocalesFor(query).length > 0;
 
   /** More than one language to choose from ⇒ never guess one. */
   const hasMultipleLocales = data.localeOptions.length > 1;
+
+  /** Is there still a language this query could be tracked for? On a
+   *  single-language shop this collapses to "not tracked yet" — the previous
+   *  behaviour. On a multi-language shop a German-tracked query keeps its
+   *  button so it can also be tracked for French. */
+  const hasUntrackedLocale = (query: string): boolean => {
+    const tracked = trackedLocalesFor(query);
+    if (data.localeOptions.length === 0) return tracked.length === 0;
+    return data.localeOptions.some((l) => !tracked.includes(l.locale));
+  };
 
   /** Pre-select the language from the row's page URL prefix (/fr/products/…)
    *  when it names a published secondary — the same hint the server applies to
@@ -977,7 +1004,7 @@ export default function SeoSearchConsole() {
   ) => {
     setAdoptingQuery(query);
     setAdoptError(null);
-    pendingAdoptRef.current = { query, gsc };
+    pendingAdoptRef.current = { query, gsc, locale };
     const payload: Record<string, string> = { actionType: "adoptKeyword", query, locale };
     if ("page" in target && target.page) payload.page = target.page;
     if ("resourceId" in target) {
@@ -1012,8 +1039,9 @@ export default function SeoSearchConsole() {
     const res = adoptFetcher.data;
     setAdoptingQuery(null);
     if (res.ok && res.kind === "keywordAdopted") {
+      const adoptedLocale = pendingAdoptRef.current?.locale ?? "";
       pendingAdoptRef.current = null;
-      setAdoptedQueries((prev) => new Set(prev).add(res.query.trim().toLowerCase()));
+      setAdoptedQueries((prev) => new Set(prev).add(`${normalizeKeyword(res.query)}::${adoptedLocale}`));
       setAdoptModal(null);
       setAdoptItemId("");
       setAdoptItemInput("");
@@ -1411,30 +1439,36 @@ export default function SeoSearchConsole() {
                                   {(() => {
                                     const query = row.keys[0] ?? "";
                                     if (!query) return null;
-                                    if (isQueryTracked(query)) {
-                                      return <Badge tone="success">{g.trackedBadge}</Badge>;
-                                    }
+                                    const tracked = isQueryTracked(query);
+                                    // Badge AND button while another language
+                                    // is still untracked — the badge alone used
+                                    // to make the language picker unreachable.
                                     return (
-                                      <Button
-                                        size="slim"
-                                        variant="plain"
-                                        loading={adoptFetcher.state !== "idle" && adoptingQuery === query}
-                                        disabled={adoptFetcher.state !== "idle" && adoptingQuery !== query}
-                                        onClick={() =>
-                                          handleTrackClick(
-                                            query,
-                                            {
-                                              position: row.position,
-                                              clicks: row.clicks,
-                                              impressions: row.impressions,
-                                              ctr: row.ctr,
-                                            },
-                                            data.topPages[query.toLowerCase()],
-                                          )
-                                        }
-                                      >
-                                        {g.trackKeyword}
-                                      </Button>
+                                      <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                        {tracked && <Badge tone="success">{g.trackedBadge}</Badge>}
+                                        {hasUntrackedLocale(query) && (
+                                          <Button
+                                            size="slim"
+                                            variant="plain"
+                                            loading={adoptFetcher.state !== "idle" && adoptingQuery === query}
+                                            disabled={adoptFetcher.state !== "idle" && adoptingQuery !== query}
+                                            onClick={() =>
+                                              handleTrackClick(
+                                                query,
+                                                {
+                                                  position: row.position,
+                                                  clicks: row.clicks,
+                                                  impressions: row.impressions,
+                                                  ctr: row.ctr,
+                                                },
+                                                data.topPages[query.toLowerCase()],
+                                              )
+                                            }
+                                          >
+                                            {tracked ? g.trackAnotherLanguage : g.trackKeyword}
+                                          </Button>
+                                        )}
+                                      </InlineStack>
                                     );
                                   })()}
                                 </td>
@@ -1629,9 +1663,8 @@ export default function SeoSearchConsole() {
                                     {g.quickWinOptimize}
                                   </Button>
                                 )}
-                                {isQueryTracked(row.query) ? (
-                                  <Badge tone="success">{g.trackedBadge}</Badge>
-                                ) : (
+                                {isQueryTracked(row.query) && <Badge tone="success">{g.trackedBadge}</Badge>}
+                                {hasUntrackedLocale(row.query) && (
                                   <Button
                                     size="slim"
                                     variant="plain"
@@ -1666,7 +1699,7 @@ export default function SeoSearchConsole() {
                                       }
                                     }}
                                   >
-                                    {g.trackKeyword}
+                                    {isQueryTracked(row.query) ? g.trackAnotherLanguage : g.trackKeyword}
                                   </Button>
                                 )}
                               </InlineStack>

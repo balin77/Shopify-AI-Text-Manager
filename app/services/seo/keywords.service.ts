@@ -1348,32 +1348,50 @@ export async function moveKeyword(
         byResource.set(a.resourceId, bucket);
       }
 
+      // Decide per assignment, WRITE in three statements. A keyword can carry
+      // hundreds of assignments after an AI distribution, and this runs inside
+      // one interactive Serializable transaction — Prisma's 5s default would
+      // abort a per-row loop with P2028 long before it finished.
+      const toDrop: string[] = [];
+      const toMove: string[] = [];
+      const toMoveDemoted: string[] = [];
       for (const assignment of sourceAssignments) {
         const siblings = byResource.get(assignment.resourceId) ?? [];
-        // The item already tracks this keyword in the target language: keep
-        // that row (it may carry GSC history) and drop the incoming one.
-        if (siblings.some((s) => s.keywordId === target.id)) {
-          await tx.seoKeywordAssignment.delete({ where: { id: assignment.id } });
-          droppedAssignments += 1;
-          continue;
-        }
-        if (siblings.length >= MAX_KEYWORDS_PER_ITEM) {
-          await tx.seoKeywordAssignment.delete({ where: { id: assignment.id } });
-          droppedAssignments += 1;
+        // Already tracked on this item in the target language, or the item is
+        // at its keyword cap there: the existing rows win (they may carry GSC
+        // history) and the incoming one is dropped.
+        if (siblings.some((s) => s.keywordId === target.id) || siblings.length >= MAX_KEYWORDS_PER_ITEM) {
+          toDrop.push(assignment.id);
           continue;
         }
         let role = assignment.role;
         if (role === "primary" && siblings.some((s) => s.role === "primary")) {
           role = "secondary";
+          toMoveDemoted.push(assignment.id);
           demoted += 1;
+        } else {
+          toMove.push(assignment.id);
         }
-        await tx.seoKeywordAssignment.update({
-          where: { id: assignment.id },
-          data: { keywordId: target.id, role },
-        });
         siblings.push({ keywordId: target.id, role });
         byResource.set(assignment.resourceId, siblings);
-        movedAssignments += 1;
+      }
+      droppedAssignments = toDrop.length;
+      movedAssignments = toMove.length + toMoveDemoted.length;
+      if (toDrop.length) {
+        await tx.seoKeywordAssignment.deleteMany({ where: { id: { in: toDrop }, shop } });
+      }
+      if (toMove.length) {
+        // Role unchanged — only the keyword row it hangs off.
+        await tx.seoKeywordAssignment.updateMany({
+          where: { id: { in: toMove }, shop },
+          data: { keywordId: target.id },
+        });
+      }
+      if (toMoveDemoted.length) {
+        await tx.seoKeywordAssignment.updateMany({
+          where: { id: { in: toMoveDemoted }, shop },
+          data: { keywordId: target.id, role: "secondary" },
+        });
       }
     }
 

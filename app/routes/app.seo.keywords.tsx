@@ -158,6 +158,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shop,
         resourceId: { in: resourceIds },
         locale: { in: locales },
+        // Global rows only — a market override would collide with the global
+        // row on the same (resourceId, key, locale) and the last one read would
+        // silently win the analysis.
+        marketId: "",
         key: { in: TRANSLATED_CONTENT_KEYS },
       },
       select: { resourceId: true, locale: true, key: true, value: true },

@@ -910,8 +910,8 @@ describe("moveKeyword", () => {
         findMany: vi.fn(async (args: any) =>
           args?.where?.keywordId ? overrides.sourceAssignments ?? [] : overrides.existingAssignments ?? [],
         ),
-        update: vi.fn(async (_a: any) => ({})),
-        delete: vi.fn(async (_a: any) => ({})),
+        updateMany: vi.fn(async (_a: any) => ({ count: 0 })),
+        deleteMany: vi.fn(async (_a: any) => ({ count: 0 })),
       },
     };
     const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
@@ -934,7 +934,7 @@ describe("moveKeyword", () => {
       data: { shop: SHOP, groupId: "g2", keywordId: "kw1" },
     });
     expect(tx.seoKeyword.delete).not.toHaveBeenCalled();
-    expect(tx.seoKeywordAssignment.update).not.toHaveBeenCalled();
+    expect(tx.seoKeywordAssignment.updateMany).not.toHaveBeenCalled();
   });
 
   it("rejects a target group that belongs to another language (§3.1 invariant)", async () => {
@@ -972,9 +972,9 @@ describe("moveKeyword", () => {
       keyword: "blue shoes",
       locale: "fr",
     });
-    expect(tx.seoKeywordAssignment.update).toHaveBeenCalledWith({
-      where: { id: "a1" },
-      data: { keywordId: "kwNew", role: "primary" },
+    expect(tx.seoKeywordAssignment.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1"] }, shop: SHOP },
+      data: { keywordId: "kwNew" },
     });
     // Old-language memberships cannot follow the keyword.
     expect(tx.seoKeywordGroupMembership.deleteMany).toHaveBeenCalledWith({
@@ -1005,8 +1005,8 @@ describe("moveKeyword", () => {
     });
     const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
     expect(result).toMatchObject({ movedAssignments: 1, demoted: 1, droppedAssignments: 0 });
-    expect(tx.seoKeywordAssignment.update).toHaveBeenCalledWith({
-      where: { id: "a1" },
+    expect(tx.seoKeywordAssignment.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1"] }, shop: SHOP },
       data: { keywordId: "kwNew", role: "secondary" },
     });
   });
@@ -1024,8 +1024,10 @@ describe("moveKeyword", () => {
     });
     const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
     expect(result).toMatchObject({ movedAssignments: 0, droppedAssignments: 1 });
-    expect(tx.seoKeywordAssignment.delete).toHaveBeenCalledWith({ where: { id: "a2" } });
-    expect(tx.seoKeywordAssignment.update).not.toHaveBeenCalled();
+    expect(tx.seoKeywordAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a2"] }, shop: SHOP },
+    });
+    expect(tx.seoKeywordAssignment.updateMany).not.toHaveBeenCalled();
   });
 
   it("language change: drops the incoming assignment when the item already tracks the keyword there", async () => {
@@ -1037,7 +1039,9 @@ describe("moveKeyword", () => {
     });
     const result = await moveKeyword(db, SHOP, { keywordId: "kw1", targetLocale: "fr", targetGroupId: "g2" });
     expect(result).toMatchObject({ movedAssignments: 0, droppedAssignments: 1 });
-    expect(tx.seoKeywordAssignment.delete).toHaveBeenCalledWith({ where: { id: "a1" } });
+    expect(tx.seoKeywordAssignment.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["a1"] }, shop: SHOP },
+    });
   });
 
   it("a move to 'no group' keeps the keyword (it lands in the ungrouped bucket)", async () => {

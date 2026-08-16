@@ -2426,6 +2426,7 @@ export const es: Translation = {
       quickWinOptimize: "Optimizar",
       trackKeyword: "Rastrear como palabra clave",
       trackedBadge: "Rastreada",
+      trackAnotherLanguage: "Seguir en otro idioma",
       adoptTooMany: "Este elemento ya rastrea el número máximo de palabras clave (5).",
       adoptModalTitle: "Elige un elemento para esta palabra clave",
       adoptModalBody: "No se pudo asignar automáticamente una página para «{query}». Elige el elemento contra el que se rastreará esta palabra clave.",

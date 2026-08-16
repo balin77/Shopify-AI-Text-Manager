@@ -170,15 +170,17 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
   // language — and it must be the group's, not the primary one. Matching French
   // keywords against German product copy is why automatic distribution "did not
   // work" for secondary languages.
-  const items = await loadTargetItems(db, session.shop, targetType, {
+  const primaryItems = await loadTargetItems(db, session.shop, targetType, {
     productType: filterProductType,
     resourceIds,
-    locale: group.locale,
   });
-  if (items.length === 0) {
+  if (primaryItems.length === 0) {
     return json({ success: false, error: "No target items found for this distribution." }, { status: 400 });
   }
-  if (items.length > MAX_DISTRIBUTION_ITEMS) {
+  // Size guard BEFORE the translation overlay: the overlay's `resourceId: { in: … }`
+  // would otherwise be built from the whole catalogue and blow Postgres'
+  // bind-parameter limit instead of producing this friendly 400.
+  if (primaryItems.length > MAX_DISTRIBUTION_ITEMS) {
     return json(
       {
         success: false,
@@ -187,6 +189,9 @@ async function handleSuggestStage(ctx: AIActionContext): Promise<DataResponse> {
       { status: 400 },
     );
   }
+  const items = group.locale
+    ? await overlayTranslations(db, session.shop, group.locale, primaryItems)
+    : primaryItems;
 
   const perBatch = computeItemsPerBatch(groupKeywords.length);
   const batches = chunkItems(items, perBatch);
@@ -366,18 +371,6 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
   });
 }
 
-async function loadTargetItems(
-  db: PrismaClient,
-  shop: string,
-  targetType: KeywordResourceType,
-  filters: { productType?: string; resourceIds?: string[]; locale?: string },
-): Promise<DistributionItem[]> {
-  const items = await loadPrimaryItems(db, shop, targetType, filters);
-  const locale = filters.locale ?? "";
-  if (!locale || items.length === 0) return items;
-  return overlayTranslations(db, shop, locale, items);
-}
-
 /**
  * Swap in the target language's title/body wherever a translation exists. The
  * primary-language value stays as the fallback (unlike the on-page ANALYSIS in
@@ -396,6 +389,11 @@ async function overlayTranslations(
     where: {
       shop,
       locale,
+      // GLOBAL translations only (marketId ""): a market override is one
+      // market's wording, and without this filter a shop using Translate &
+      // Adapt would feed the matcher whichever of the two rows Prisma returned
+      // last. Same rule as every other translation read (audit.service.ts).
+      marketId: "",
       resourceId: { in: items.map((i) => i.id) },
       key: { in: ["title", "meta_title", "body_html"] },
     },
@@ -421,7 +419,7 @@ async function overlayTranslations(
   });
 }
 
-async function loadPrimaryItems(
+async function loadTargetItems(
   db: PrismaClient,
   shop: string,
   targetType: KeywordResourceType,

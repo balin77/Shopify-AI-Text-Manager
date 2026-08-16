@@ -2427,6 +2427,7 @@ export const en: Translation = {
       quickWinOptimize: "Optimize",
       trackKeyword: "Track as keyword",
       trackedBadge: "Tracked",
+      trackAnotherLanguage: "Track another language",
       adoptTooMany: "This item already tracks the maximum number of keywords (5).",
       adoptModalTitle: "Choose an item for this keyword",
       adoptModalBody: "No page could be matched automatically for \"{query}\". Pick the item this keyword should be tracked against.",
