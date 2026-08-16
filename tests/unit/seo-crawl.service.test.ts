@@ -15,6 +15,8 @@ import {
   SPACING_DECAY_AFTER_OK,
   BASE_SPACING_MS,
   MAX_SPACING_MS,
+  MIN_SPACING_MS,
+  clampSpacingMs,
   parseRetryAfter,
   dominantBlockSource,
   parseCrawlError,
@@ -405,6 +407,46 @@ describe("adaptive request spacing", () => {
 
   it("keeps the decay threshold small enough to recover within a normal crawl", () => {
     expect(SPACING_DECAY_AFTER_OK).toBeLessThanOrEqual(50);
+  });
+
+  it("can probe BELOW the base once a floor of MIN_SPACING_MS is passed in", () => {
+    // The floor used to be BASE_SPACING_MS in both directions, so a storefront
+    // that happily served four requests a second was crawled at one forever —
+    // a 2000-page shop took half an hour because of an unmeasured constant.
+    let s = BASE_SPACING_MS;
+    for (let i = 0; i < 10; i++) s = decaySpacingMs(s, MIN_SPACING_MS);
+    expect(s).toBe(MIN_SPACING_MS);
+    expect(decaySpacingMs(s, MIN_SPACING_MS)).toBe(MIN_SPACING_MS);
+  });
+
+  it("never probes faster than a rate that already earned a 429", () => {
+    // The convergence rule: the floor is raised to the escalated spacing, so
+    // the ramp settles on the host's real limit instead of oscillating into
+    // the same wall — down, refused, back off, down again.
+    const refusedAt = BASE_SPACING_MS;
+    const floor = escalateSpacingMs(refusedAt);
+    let s = MAX_SPACING_MS;
+    for (let i = 0; i < 10; i++) s = decaySpacingMs(s, floor);
+    expect(s).toBe(floor);
+    expect(s).toBeGreaterThan(refusedAt);
+  });
+
+  it("keeps the fastest possible rate defensible", () => {
+    // 4 requests/second, and only after ~50 consecutive clean responses.
+    expect(MIN_SPACING_MS).toBeGreaterThanOrEqual(250);
+    expect(MIN_SPACING_MS).toBeLessThan(BASE_SPACING_MS);
+  });
+
+  it("clamps a remembered spacing into the operating range", () => {
+    // A stored value out of range (an older row, a hand-edited one) must not be
+    // able to set the crawler to 0.
+    expect(clampSpacingMs(null)).toBeNull();
+    expect(clampSpacingMs(undefined)).toBeNull();
+    expect(clampSpacingMs(0)).toBe(MIN_SPACING_MS);
+    expect(clampSpacingMs(-5)).toBe(MIN_SPACING_MS);
+    expect(clampSpacingMs(999_999)).toBe(MAX_SPACING_MS);
+    expect(clampSpacingMs(700)).toBe(700);
+    expect(clampSpacingMs(Number.NaN)).toBeNull();
   });
 });
 
@@ -844,6 +886,59 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
     const blueShoePage = db.__created.pages.find((p: any) => p.url.includes("/products/blue-shoe"));
     expect(blueShoePage?.resourceType).toBe("product");
     expect(blueShoePage?.resourceId).toBe("gid://shopify/Product/1");
+  });
+
+  it("starts at the remembered pace and reports what it settled on", async () => {
+    // The learned-pace loop: the handler persists `settledSpacingMs` as
+    // AISettings.seoCrawlSpacingMs and hands it back as `learnedSpacingMs`, so
+    // a shop that already proved it takes 4 requests/second does not spend the
+    // first fifty requests of every crawl proving it again.
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", "<p>hi</p>"))),
+    );
+
+    const summary = await runCrawl("snap-pace", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 5,
+      learnedSpacingMs: MIN_SPACING_MS,
+      checkExternalLinks: false,
+    });
+
+    expect(summary.status).toBe("completed");
+    // One clean page is nowhere near SPACING_DECAY_AFTER_OK, so the pace is
+    // exactly what it was handed — it neither drifted nor reset to the base.
+    expect(summary.settledSpacingMs).toBe(MIN_SPACING_MS);
+  });
+
+  it("ignores a remembered pace outside the operating range", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", "<p>hi</p>"))),
+    );
+
+    const summary = await runCrawl("snap-pace-bad", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 5,
+      // A hand-edited or corrupted row must never be able to set the crawler
+      // to "no spacing at all" against a live storefront.
+      learnedSpacingMs: 0,
+      checkExternalLinks: false,
+    });
+
+    expect(summary.settledSpacingMs).toBe(MIN_SPACING_MS);
   });
 
   it("persists the JSON-LD types each page served", async () => {

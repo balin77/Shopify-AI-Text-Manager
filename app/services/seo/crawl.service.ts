@@ -13,10 +13,17 @@
  * robots.txt (via the shared `parseRobots`, aeo.service.ts). A `Semaphore`
  * (app/utils/semaphore.ts) caps the parallel requests and enforces a spacing
  * floor so the crawl never becomes a self-inflicted load spike on the store.
- * Both are deliberately conservative (see CRAWL_CONCURRENCY / BASE_SPACING_MS):
  * Shopify's storefront shield counts requests per IP and the whole crawl runs
  * from one server address, so an aggressive crawl gets challenged and returns
  * nothing at all.
+ *
+ * The pace is MEASURED, not assumed. It starts at whatever the last crawl of
+ * this shop settled on (`learnedSpacingMs`), ramps down one step per
+ * SPACING_DECAY_AFTER_OK clean responses — past BASE_SPACING_MS all the way to
+ * MIN_SPACING_MS — and on a 429 both widens the spacing and raises the probe
+ * floor, so a refused rate is never tried again within the run. Spacing is
+ * GLOBAL, which is why CRAWL_CONCURRENCY barely matters: two slots only absorb
+ * latency, the floor alone sets the sustained rate.
  *
  * The link GRAPH is not persisted (§2 — would be ~200k rows on a 2000-page
  * crawl): inbound/outbound counts are aggregated in-memory, and only broken
@@ -121,14 +128,47 @@ export const BASE_SPACING_MS = 1_000;
 export const MAX_SPACING_MS = 5_000;
 export const SPACING_DECAY_AFTER_OK = 25;
 
+/**
+ * The fastest this crawler will ever go: 4 requests/second.
+ *
+ * The spacing used to be able to move in ONE direction only — up on a 429,
+ * back down to `BASE_SPACING_MS` and no further. So a shop whose storefront
+ * happily serves four requests a second was permanently crawled at one, and a
+ * 2000-page shop took half an hour because of a number nobody had measured.
+ *
+ * Going below the base is a PROBE, not an assumption, and it is deliberately
+ * expensive to earn: each step down costs another `SPACING_DECAY_AFTER_OK`
+ * clean responses in a row, and the first 429 both doubles the spacing and
+ * raises `probeFloor` so the run never tries that rate again. A shop that
+ * cannot take it therefore pays at most one refused request per step and ends
+ * up exactly where the old fixed floor would have put it.
+ */
+export const MIN_SPACING_MS = 250;
+
 /** Brake harder after a 429 — saturating, never unbounded. */
 export function escalateSpacingMs(current: number, base = BASE_SPACING_MS, max = MAX_SPACING_MS): number {
   return Math.min(max, Math.max(base, current) * 2);
 }
 
-/** Release the brake after a clean streak, back down to the base floor. */
-export function decaySpacingMs(current: number, base = BASE_SPACING_MS): number {
-  return Math.max(base, Math.round(current / 2));
+/** Release the brake after a clean streak, down to `floor` — which is the
+ *  base spacing for a shop we know nothing about, and `MIN_SPACING_MS` once
+ *  the run has earned the right to probe faster than that. */
+export function decaySpacingMs(current: number, floor = BASE_SPACING_MS): number {
+  return Math.max(floor, Math.round(current / 2));
+}
+
+/**
+ * Clamp a remembered spacing to the range this crawler operates in.
+ *
+ * `AISettings.seoCrawlSpacingMs` carries the rate the LAST run settled on, so
+ * a shop that proved it can take 250ms starts there instead of re-earning it
+ * over 50 requests every time, and a shop that got throttled to 5s starts
+ * cautious. A stored value out of range (an older row, a hand-edited one) must
+ * not be able to set the crawler to 0.
+ */
+export function clampSpacingMs(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.min(MAX_SPACING_MS, Math.max(MIN_SPACING_MS, Math.round(value)));
 }
 /** Safety bound on in-memory edges — a pathological site (or a crawl bug)
  *  must not grow unbounded memory; not in the plan text, defensive only. */
@@ -1098,6 +1138,15 @@ export interface RunCrawlDeps {
   /** Overrides both the spacing floor and ceiling for the run. Tests set 0 to
    *  take real wall-clock throttling out of the picture. */
   spacingMs?: number;
+  /**
+   * The request spacing the LAST crawl of this shop settled on
+   * (`AISettings.seoCrawlSpacingMs`). The run starts there instead of
+   * re-earning the rate over ~50 requests every time — and a shop that got
+   * throttled last time starts cautious rather than walking into the same
+   * shield again. Clamped to [MIN_SPACING_MS, MAX_SPACING_MS]; null on a shop
+   * that has never been crawled.
+   */
+  learnedSpacingMs?: number | null;
   maxPages?: number;
   onProgress?: (pagesCrawled: number, totalDiscovered: number) => void | Promise<void>;
   /** Heartbeat cadence in pages (§3.5: every 25). */
@@ -1150,6 +1199,13 @@ export interface CrawlSummary {
   externalTimedOut: boolean;
   /** MAX_EXTERNAL_TARGETS was hit — said out loud, never silently. */
   externalTruncated: boolean;
+  /**
+   * The request spacing the run ended on — what the caller persists as
+   * `AISettings.seoCrawlSpacingMs` so the next crawl starts here. Absent on the
+   * paths that never got as far as issuing requests (invalid domain), where
+   * there is nothing to have learned and the stored value must stay untouched.
+   */
+  settledSpacingMs?: number;
 }
 
 /** Lowercase resourceType, matching `SeoCrawlPage.resourceType` / `AuditType`
@@ -1189,6 +1245,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     resolveNsImpl,
     coolDownMs = BLOCK_COOLDOWN_MS,
     spacingMs: spacingOverride,
+    learnedSpacingMs,
     maxPages = DEFAULT_MAX_CRAWL_PAGES,
     onProgress,
     heartbeatEvery = 25,
@@ -1259,7 +1316,20 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   const blockSourceCounts = new Map<BlockSource, number>();
   const baseSpacing = spacingOverride ?? BASE_SPACING_MS;
   const maxSpacing = spacingOverride ?? MAX_SPACING_MS;
-  let spacingMs = baseSpacing;
+  /**
+   * Where this run STARTS: the rate the last run settled on, or the cautious
+   * default for a shop we have never crawled. `spacingOverride` (tests) pins
+   * everything, so it wins over the remembered value.
+   */
+  let spacingMs = spacingOverride ?? clampSpacingMs(learnedSpacingMs) ?? BASE_SPACING_MS;
+  /**
+   * The fastest rate this run is still allowed to PROBE. Starts at the hard
+   * floor and is raised to whatever spacing just earned a 429, so the ramp
+   * converges on the host's real limit instead of oscillating around it:
+   * without it the crawler would ramp down to the rate that just failed, get
+   * refused, back off, and ramp straight back into the same wall.
+   */
+  let probeFloorMs = spacingOverride ?? MIN_SPACING_MS;
   let consecutiveOk = 0;
   /** While in the future, every worker parks before issuing a request. */
   let coolDownUntil = 0;
@@ -1272,7 +1342,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     resolveDone = resolve;
   });
 
-  const semaphore = new Semaphore(CRAWL_CONCURRENCY, baseSpacing);
+  const semaphore = new Semaphore(CRAWL_CONCURRENCY, spacingMs);
 
   /** §6.1 — one entry per UNIQUE target URL, not per edge: an Instagram link
    *  in the footer appears on every page and would otherwise be 2000 rows. */
@@ -1355,9 +1425,14 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       // Adaptive backoff: a 429 that survived its retry means we're still
       // going too fast for this host. Widen the spacing for every remaining
       // request rather than burning through the queue collecting more 429s.
-      if (outcome.status === 429 && spacingMs < maxSpacing) {
-        spacingMs = escalateSpacingMs(spacingMs, baseSpacing, maxSpacing);
-        semaphore.setMinSpacing(spacingMs);
+      if (outcome.status === 429) {
+        // The refused rate is now off-limits for the rest of the run, even if
+        // the spacing is already at the ceiling and cannot widen further.
+        probeFloorMs = Math.max(probeFloorMs, escalateSpacingMs(spacingMs, baseSpacing, maxSpacing));
+        if (spacingMs < maxSpacing) {
+          spacingMs = escalateSpacingMs(spacingMs, baseSpacing, maxSpacing);
+          semaphore.setMinSpacing(spacingMs);
+        }
       }
 
       consecutiveBlocked += 1;
@@ -1386,13 +1461,16 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     } else {
       consecutiveBlocked = 0;
       consecutiveOk += 1;
-      // Release the brake again. The escalation above is a gear change, not a
-      // permanent setting: without this, one 429 burst early in a crawl left
-      // every remaining request seconds apart for the rest of the run, which
-      // reads as "stuck at 80%" rather than "throttled".
-      if (spacingMs > baseSpacing && consecutiveOk >= SPACING_DECAY_AFTER_OK) {
+      // Release the brake again, and keep going PAST the base spacing when the
+      // host shows no sign of minding. The escalation above is a gear change,
+      // not a permanent setting: without this, one 429 burst early in a crawl
+      // left every remaining request seconds apart for the rest of the run,
+      // which reads as "stuck at 80%" rather than "throttled". The floor is
+      // `probeFloorMs`, so a host that has already refused a rate is never
+      // asked for it twice.
+      if (spacingMs > probeFloorMs && consecutiveOk >= SPACING_DECAY_AFTER_OK) {
         consecutiveOk = 0;
-        spacingMs = decaySpacingMs(spacingMs, baseSpacing);
+        spacingMs = decaySpacingMs(spacingMs, probeFloorMs);
         semaphore.setMinSpacing(spacingMs);
       }
     }
@@ -1793,6 +1871,11 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     externalUnchecked,
     externalTimedOut,
     externalTruncated,
+    // What this run settled on. Persisted by the caller, read back as
+    // `learnedSpacingMs` next time: a shop that proved it takes 4 req/s should
+    // not spend the first fifty requests of every crawl proving it again, and
+    // one that got throttled to 5s should not walk back into the same shield.
+    settledSpacingMs: spacingMs,
   };
 }
 
