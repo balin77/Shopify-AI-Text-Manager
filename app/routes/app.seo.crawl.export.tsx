@@ -1,0 +1,137 @@
+/**
+ * Resource route: CSV export of one crawl-report category
+ * (PLAN_SEO_CRAWL_EXPANSION §5).
+ *
+ * Loaded through `useFetcher().load()` and Blob-downloaded on the client, for
+ * the same reason as `app.seo.redirects.export.tsx`: a top-level navigation
+ * inside the embedded app lands on the App Bridge HTML shell instead of the
+ * CSV body.
+ *
+ * §5.2 — THE GATE: a resource route is directly reachable by GET. The plan gate
+ * on the crawl TAB does nothing for a merchant who guesses this URL, and
+ * without the check here the export would hand a Free shop the full crawl the
+ * tab only shows as a static example. Same class of hole as the /api/ai
+ * handlers, which check their own plan for the same reason.
+ *
+ * No row cap on purpose: `UI_ROW_CAP` is a rendering limit, not a data limit,
+ * and getting past it is exactly why a merchant exports. 2000 pages × a dozen
+ * columns is well under a megabyte — nothing to stream.
+ */
+
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { authenticate } from "../shopify.server";
+import { meetsPlan } from "../utils/planUtils";
+import type { Plan } from "../config/plans";
+import { toCsv, csvFilename, type CsvColumn } from "../services/seo/csv-export";
+import { classifyLinkStatus, isBotBlockStatus } from "../services/seo/crawl.service";
+
+const CATEGORIES = ["allPages", "broken", "serverErrors", "blocked", "orphans", "slowest"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+interface ExportPage {
+  url: string;
+  title: string | null;
+  statusCode: number;
+  responseMs: number;
+  redirectedTo: string | null;
+  redirectHops: number;
+  resourceType: string | null;
+  resourceId: string | null;
+  locale: string;
+  inboundCount: number;
+  outboundCount: number;
+}
+
+const PAGE_COLUMNS: CsvColumn<ExportPage>[] = [
+  { header: "url", value: (p) => p.url },
+  { header: "title", value: (p) => p.title },
+  // -1 is the crawler's marker for a redirect loop, not an HTTP status.
+  { header: "status", value: (p) => (p.statusCode === -1 ? "redirect_loop" : p.statusCode) },
+  { header: "status_class", value: (p) => classifyLinkStatus(p.statusCode) },
+  { header: "response_ms", value: (p) => p.responseMs },
+  { header: "redirected_to", value: (p) => p.redirectedTo },
+  { header: "redirect_hops", value: (p) => p.redirectHops },
+  { header: "resource_type", value: (p) => p.resourceType },
+  { header: "resource_id", value: (p) => p.resourceId },
+  { header: "locale", value: (p) => p.locale },
+  { header: "inbound_links", value: (p) => p.inboundCount },
+  { header: "outbound_links", value: (p) => p.outboundCount },
+];
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const { db } = await import("../db.server");
+  const shop = session.shop;
+
+  const settings = await db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  if (!meetsPlan(plan, "pro")) {
+    return json({ error: "plan_required" }, { status: 403 });
+  }
+
+  const url = new URL(request.url);
+  const requested = url.searchParams.get("category") as Category | null;
+  const category: Category = requested && CATEGORIES.includes(requested) ? requested : "allPages";
+
+  const snapshot = await db.seoCrawlSnapshot.findFirst({
+    where: { shop },
+    orderBy: { startedAt: "desc" },
+    select: { id: true, status: true },
+  });
+  if (!snapshot) {
+    return json({ csv: "", filename: csvFilename(`crawl-${category}`, shop), rowCount: 0 });
+  }
+
+  const pages: ExportPage[] = await db.seoCrawlPage.findMany({
+    where: { shop, snapshotId: snapshot.id },
+    select: {
+      url: true,
+      title: true,
+      statusCode: true,
+      responseMs: true,
+      redirectedTo: true,
+      redirectHops: true,
+      resourceType: true,
+      resourceId: true,
+      locale: true,
+      inboundCount: true,
+      outboundCount: true,
+    },
+  });
+
+  let rows: ExportPage[];
+  switch (category) {
+    case "broken":
+      rows = pages.filter((p) => classifyLinkStatus(p.statusCode) === "broken");
+      break;
+    case "serverErrors":
+      rows = pages.filter((p) => classifyLinkStatus(p.statusCode) === "server_error");
+      break;
+    case "blocked":
+      rows = pages.filter((p) => isBotBlockStatus(p.statusCode));
+      break;
+    case "orphans":
+      // Same rule as the tab: a capped crawl produces phantom orphans, so it
+      // exports none rather than a list the merchant would act on.
+      rows =
+        snapshot.status === "capped"
+          ? []
+          : pages.filter(
+              (p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0,
+            );
+      break;
+    case "slowest":
+      rows = pages
+        .filter((p) => classifyLinkStatus(p.statusCode) === "ok")
+        .sort((a, b) => b.responseMs - a.responseMs);
+      break;
+    default:
+      rows = [...pages].sort((a, b) => a.url.localeCompare(b.url));
+  }
+
+  return json({
+    csv: toCsv(rows, PAGE_COLUMNS),
+    filename: csvFilename(`crawl-${category}`, shop),
+    rowCount: rows.length,
+  });
+};

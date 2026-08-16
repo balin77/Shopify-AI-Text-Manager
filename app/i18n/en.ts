@@ -1681,6 +1681,8 @@ export const en: Translation = {
       introBody: "This tab reads the same crawl as the site crawl, but answers the other half of the question: is Google even allowed to index your pages, and is what gets delivered any good? Nothing extra is scanned — \"Scan now\" starts the same single crawl.",
       upgradeExampleTitle: "What the report looks like (example)",
       rowCapHint: "Showing the first {shown} of {total} entries.",
+      exportCsv: "Export CSV",
+      exportCsvEmpty: "Nothing to export.",
       openInEditor: "Open in editor",
 
       tileIndexability: "Not indexable",
@@ -1776,6 +1778,8 @@ export const en: Translation = {
       movedToOnPageLink: "Open On-page & indexing",
       redirectHopsBadge: "→ {count} redirects",
       scanNow: "Scan now",
+      exportCsv: "Export CSV",
+      exportCsvEmpty: "Nothing to export.",
       scanning: "Crawl running — refreshing automatically…",
       scanStartError: "Couldn't start the crawl. Please try again.",
       scanRunningBanner: "A crawl is already running for this store.",

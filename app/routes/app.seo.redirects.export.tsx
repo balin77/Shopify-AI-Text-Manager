@@ -11,12 +11,9 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { listRedirects } from "../services/seo/redirects.service";
+import { toCsv, csvFilename } from "../services/seo/csv-export";
 
 const EXPORT_ROW_CAP = 10_000;
-
-function csvEscape(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
-}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -35,10 +32,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     cursor = page.endCursor;
   }
 
-  const header = "path,target\n";
-  const body = all.map((r) => `${csvEscape(r.path)},${csvEscape(r.target)}`).join("\n");
-  const csv = header + body + (body ? "\n" : "");
-  const shopSlug = session.shop.replace(/\.myshopify\.com$/, "").replace(/[^a-z0-9-]/gi, "-");
+  // Comma-delimited and BOM-less, unlike the crawl/on-page exports: this file
+  // is round-tripped through `parseRedirectsCsv` on import, and the format is
+  // what merchants already have in their tooling. The shared serializer only
+  // replaces the local `csvEscape` copy — the bytes are unchanged.
+  const csv = toCsv(
+    all,
+    [
+      { header: "path", value: (r) => r.path },
+      { header: "target", value: (r) => r.target },
+    ],
+    { delimiter: ",", bom: false },
+  );
 
-  return json({ csv, filename: `redirects-${shopSlug}.csv`, rowCount: all.length });
+  return json({ csv, filename: csvFilename("redirects", session.shop), rowCount: all.length });
 };

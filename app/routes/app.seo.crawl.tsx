@@ -41,6 +41,7 @@ import {
   Indent,
   EditAction,
   PageRowLine,
+  CsvExportButton,
   PAGE_COLUMNS,
   STATUS_COLUMNS,
   ACTION_COLUMNS,
@@ -86,6 +87,19 @@ const CATEGORY_IDS = [
   "slowest",
 ] as const;
 type CategoryId = (typeof CATEGORY_IDS)[number];
+
+/** Tab → the `?category=` the export route understands. "okPages" has no
+ *  export of its own: "everything that answered fine" is the all-pages file
+ *  minus a filter the merchant can apply in their spreadsheet. */
+const EXPORT_CATEGORY: Record<CategoryId, string> = {
+  allPages: "allPages",
+  okPages: "allPages",
+  broken: "broken",
+  serverErrors: "serverErrors",
+  blocked: "blocked",
+  orphans: "orphans",
+  slowest: "slowest",
+};
 
 /** The header half comes from the shared `SnapshotHeaderView`; this adds the
  *  counts only this tab's tiles render. */
@@ -525,7 +539,17 @@ export default function SeoCrawl() {
       {snapshot && (
         <Card>
           <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">{CATEGORY_LABEL[activeTab]}</Text>
+            <InlineStack align="space-between" blockAlign="center" gap="200">
+              <Text as="h3" variant="headingMd">{CATEGORY_LABEL[activeTab]}</Text>
+              {/* Exports the FULL category, not the UI_ROW_CAP slice — getting
+                  past that cap is the reason to export at all (§5.3). */}
+              <CsvExportButton
+                path="/app/seo/crawl/export"
+                category={EXPORT_CATEGORY[activeTab]}
+                label={c.exportCsv}
+                emptyLabel={c.exportCsvEmpty}
+              />
+            </InlineStack>
 
             {activeTab === "allPages" && (
               <BlockStack gap="200">

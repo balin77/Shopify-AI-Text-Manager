@@ -30,6 +30,7 @@ import {
   ReportRow,
   CapNotice,
   EditAction,
+  CsvExportButton,
   ACTION_COLUMNS,
   STATUS_COLUMNS,
 } from "../components/seo/crawl/ReportTable";
@@ -450,7 +451,16 @@ export default function SeoOnPage() {
       {snapshot && (
         <Card>
           <BlockStack gap="300">
-            <Text as="h3" variant="headingMd">{CATEGORY_LABEL[activeTab]}</Text>
+            <InlineStack align="space-between" blockAlign="center" gap="200">
+              <Text as="h3" variant="headingMd">{CATEGORY_LABEL[activeTab]}</Text>
+              {/* Exports the FULL category, not the UI_ROW_CAP slice (§5.3). */}
+              <CsvExportButton
+                path="/app/seo/onpage/export"
+                category={activeTab}
+                label={o.exportCsv}
+                emptyLabel={o.exportCsvEmpty}
+              />
+            </InlineStack>
 
             {activeTab === "indexability" && (
               <BlockStack gap="300">

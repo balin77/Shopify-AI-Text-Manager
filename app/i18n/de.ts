@@ -1680,6 +1680,8 @@ export const de = {
       introBody: "Dieser Tab liest denselben Crawl wie der Website-Crawl — beantwortet aber die andere Hälfte der Frage: Darf Google deine Seiten überhaupt indexieren, und taugt das, was ausgeliefert wird? Gescannt wird nichts zusätzlich; „Jetzt scannen\" startet denselben einen Crawl.",
       upgradeExampleTitle: "So sieht der Bericht aus (Beispiel)",
       rowCapHint: "Es werden die ersten {shown} von {total} Einträgen angezeigt.",
+      exportCsv: "CSV exportieren",
+      exportCsvEmpty: "Keine Einträge zum Exportieren.",
       openInEditor: "Im Editor öffnen",
 
       tileIndexability: "Nicht indexierbar",
@@ -1775,6 +1777,8 @@ export const de = {
       movedToOnPageLink: "On-Page & Indexierung öffnen",
       redirectHopsBadge: "→ {count} Weiterleitungen",
       scanNow: "Jetzt scannen",
+      exportCsv: "CSV exportieren",
+      exportCsvEmpty: "Keine Einträge zum Exportieren.",
       scanning: "Crawl läuft — wird automatisch aktualisiert…",
       scanStartError: "Der Crawl konnte nicht gestartet werden. Bitte erneut versuchen.",
       scanRunningBanner: "Ein Crawl läuft bereits für diesen Shop.",

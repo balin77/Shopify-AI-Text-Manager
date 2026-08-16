@@ -1680,6 +1680,8 @@ export const es: Translation = {
       introBody: "Esta pestaña lee el mismo rastreo que el rastreo del sitio, pero responde la otra mitad de la pregunta: ¿puede Google indexar tus páginas y sirve lo que se entrega? No se rastrea nada adicional: «Escanear ahora» inicia ese mismo y único rastreo.",
       upgradeExampleTitle: "Así se ve el informe (ejemplo)",
       rowCapHint: "Se muestran las primeras {shown} de {total} entradas.",
+      exportCsv: "Exportar CSV",
+      exportCsvEmpty: "No hay nada que exportar.",
       openInEditor: "Abrir en el editor",
 
       tileIndexability: "No indexable",
@@ -1775,6 +1777,8 @@ export const es: Translation = {
       movedToOnPageLink: "Abrir On-page e indexación",
       redirectHopsBadge: "→ {count} redirecciones",
       scanNow: "Rastrear ahora",
+      exportCsv: "Exportar CSV",
+      exportCsvEmpty: "No hay nada que exportar.",
       scanning: "Rastreo en curso — actualizando automáticamente…",
       scanStartError: "No se pudo iniciar el rastreo. Inténtalo de nuevo.",
       scanRunningBanner: "Ya hay un rastreo en curso para esta tienda.",

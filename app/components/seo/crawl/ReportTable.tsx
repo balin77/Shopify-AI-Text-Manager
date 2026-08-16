@@ -18,7 +18,8 @@
  * computed in the loader and passed in.
  */
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useFetcher } from "react-router";
 import { BlockStack, Badge, Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
 import type { AuditType } from "../../../services/seo/audit.service";
@@ -109,6 +110,76 @@ export function CapNotice({ shown, total, template }: { shown: number; total: nu
     <Text as="p" variant="bodySm" tone="subdued">
       {template.replace("{shown}", String(shown)).replace("{total}", String(total))}
     </Text>
+  );
+}
+
+/**
+ * "Export CSV" for the currently shown category (PLAN_SEO_CRAWL_EXPANSION §5).
+ *
+ * Goes through `useFetcher().load()` + a client-side Blob download, not a
+ * plain link: a top-level navigation inside the embedded app lands on the App
+ * Bridge HTML shell instead of the CSV body. Same mechanism as the redirects
+ * export, including the consumed-key guard so one click yields exactly one
+ * download even when the fetcher re-renders.
+ *
+ * The export route re-checks the plan itself — it is GET-reachable without
+ * this button (§5.2).
+ */
+export function CsvExportButton({
+  path,
+  category,
+  label,
+  emptyLabel,
+}: {
+  /** Resource route, e.g. "/app/seo/crawl/export". */
+  path: string;
+  category: string;
+  label: string;
+  /** Shown once when the export came back with zero rows. */
+  emptyLabel?: string;
+}) {
+  const fetcher = useFetcher<{ csv: string; filename: string; rowCount: number; error?: string }>();
+  const consumedKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data || fetcher.data.error) return;
+    const { csv, filename, rowCount } = fetcher.data;
+    const key = `${filename}:${rowCount}`;
+    if (consumedKey.current === key) return;
+    consumedKey.current = key;
+    if (!csv) return;
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [fetcher.state, fetcher.data]);
+
+  const empty = fetcher.state === "idle" && fetcher.data && !fetcher.data.error && fetcher.data.rowCount === 0;
+
+  return (
+    <>
+      <Button
+        size="slim"
+        loading={fetcher.state !== "idle"}
+        onClick={() => {
+          // Re-clicking the same category has to download again, so the guard
+          // is reset here rather than keyed only by the response.
+          consumedKey.current = null;
+          fetcher.load(`${path}?category=${encodeURIComponent(category)}`);
+        }}
+      >
+        {label}
+      </Button>
+      {empty && emptyLabel && (
+        <Text as="span" variant="bodySm" tone="subdued">{emptyLabel}</Text>
+      )}
+    </>
   );
 }
 
