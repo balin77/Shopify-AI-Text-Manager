@@ -552,6 +552,12 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
       },
       seoCrawlPage: { findMany: async () => pages },
       seoCrawlBrokenLink: { findMany: async () => brokenLinks },
+      // PLAN_SEO_CRAWL_EXPANSION §7.1 — the on-page buckets read these two.
+      // They are separately guarded in the service, so a stub without them
+      // still yields the delivery-health buckets; declared here so the on-page
+      // ones are actually exercised.
+      seoSitemapExclusion: { findMany: async () => [] },
+      seoCrawlExternalLink: { count: async () => 0 },
     } as any;
   }
 
@@ -603,6 +609,67 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
     expect(headDrift?.action).toBe("deepLink");
     expect(headDrift?.count).toBeGreaterThanOrEqual(1);
     expect(headDrift?.items.some((i) => i.id === "gid-PG1")).toBe(true);
+  });
+
+  // PLAN_SEO_CRAWL_EXPANSION §7.1 — the on-page buckets.
+  it("adds nonIndexable/missingH1 buckets and ranks nonIndexable above a much larger bucket", async () => {
+    const onPage = (over: Record<string, unknown>) => ({
+      title: "T",
+      metaDesc: "d",
+      canonical: null,
+      metaRobots: "",
+      xRobotsTag: "",
+      indexabilityKnown: true,
+      h1Count: 1,
+      h1First: "H",
+      wordCount: 400,
+      imgCount: 0,
+      imgMissingAlt: 0,
+      statusCode: 200,
+      redirectHops: 0,
+      locale: "",
+      inboundCount: 2,
+      ...over,
+    });
+    const pages = [
+      onPage({
+        url: "https://shop.com/products/hidden",
+        metaRobots: "noindex",
+        resourceType: "product",
+        resourceId: "gid-P2",
+      }),
+      // Shopify's own noindex path — expected, so it must NOT be counted.
+      onPage({ url: "https://shop.com/search", metaRobots: "noindex", resourceType: "unknown", resourceId: null }),
+      onPage({
+        url: "https://shop.com/pages/pg1",
+        h1Count: 0,
+        h1First: null,
+        resourceType: "page",
+        resourceId: "gid-PG1",
+      }),
+    ];
+    const db = makeDbWithCrawl("completed", pages, []);
+
+    const audit = await analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      shopName: "Shop",
+    });
+
+    const nonIndexable = audit.problems.find((p) => p.code === "nonIndexable");
+    expect(nonIndexable?.action).toBe("deepLink");
+    // The /search page is expected and excluded; only the product counts.
+    expect(nonIndexable?.count).toBe(1);
+    expect(nonIndexable?.items[0]).toMatchObject({ type: "product", id: "gid-P2" });
+
+    const missingH1 = audit.problems.find((p) => p.code === "missingH1");
+    expect(missingH1?.action).toBe("deepLink");
+    expect(missingH1?.count).toBe(1);
+
+    // One accidental noindex outranks any number of cosmetic findings.
+    expect(audit.problems[0].code).toBe("nonIndexable");
+    expect(audit.problems.some((p) => p.count > 1)).toBe(true);
   });
 
   it("blames the FAILING page in the serverErrors bucket, not the page linking to it", async () => {

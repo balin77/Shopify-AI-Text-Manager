@@ -18,7 +18,7 @@
 
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useSearchParams } from "react-router";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import {
   Card,
   BlockStack,
@@ -56,6 +56,8 @@ import { isBotBlockStatus, classifyLinkStatus } from "../services/seo/crawl.serv
 // importing it from crawl.service would pull url-resolver.server into the
 // client bundle and break the production build.
 import { SLOW_PAGE_WARN_MS, type SnapshotHeaderView } from "../services/seo/crawl.shared";
+// Pure and dependency-free (see its header) — safe in component scope.
+import { hasDiffContent, type CrawlDiff } from "../services/seo/crawl-diff";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
 const TYPE_PATH: Record<AuditType, string> = {
@@ -204,6 +206,8 @@ const EMPTY_LISTS = {
   blocked: [] as BlockedRow[],
   orphans: [] as OrphanRow[],
   slowest: [] as SlowRow[],
+  /** §7.2 — null when there is no previous snapshot to compare against. */
+  diff: null as (CrawlDiff & { previousAt: string }) | null,
   /** Row counts before the UI_ROW_CAP slice, for the "showing N of M" hint. */
   totals: { allPages: 0, okPages: 0, brokenPages: 0 },
 };
@@ -401,10 +405,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .slice(0, 20)
     .map((p) => ({ url: p.url, responseMs: p.responseMs, statusCode: p.statusCode }));
 
+  // §7.2 — compare against the previous snapshot. Retention keeps 5, so there
+  // usually is one; the whole card is hidden when there isn't.
+  const diff = await buildCrawlDiff(db, shop, snapshotRow.id);
+
   return json({
     gated: false,
     running: latest.running,
     snapshot,
+    diff,
     allPages,
     okPages,
     brokenPages,
@@ -416,6 +425,45 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     totals: { allPages: pages.length, okPages: okTotal, brokenPages: brokenTotal },
   });
 };
+
+/**
+ * The "since the last crawl" diff (§7.2), or null when this is the first
+ * snapshot. Best-effort: the diff is an extra on this page, never the reason
+ * the report fails to load.
+ */
+async function buildCrawlDiff(
+  db: any,
+  shop: string,
+  currentSnapshotId: string,
+): Promise<(CrawlDiff & { previousAt: string }) | null> {
+  try {
+    const { diffCrawls } = await import("../services/seo/crawl-diff");
+    const previous = await db.seoCrawlSnapshot.findFirst({
+      // Only a run that actually produced pages. Comparing against a failed
+      // crawl would report the whole shop as "gone" and then "new".
+      where: { shop, id: { not: currentSnapshotId }, status: { in: ["completed", "capped"] } },
+      orderBy: { startedAt: "desc" },
+      select: { id: true, startedAt: true },
+    });
+    if (!previous) return null;
+
+    const select = {
+      url: true,
+      statusCode: true,
+      title: true,
+      metaRobots: true,
+      xRobotsTag: true,
+      indexabilityKnown: true,
+    };
+    const [previousRows, currentRows] = await Promise.all([
+      db.seoCrawlPage.findMany({ where: { shop, snapshotId: previous.id }, select }),
+      db.seoCrawlPage.findMany({ where: { shop, snapshotId: currentSnapshotId }, select }),
+    ]);
+    return { ...diffCrawls(previousRows, currentRows), previousAt: previous.startedAt.toISOString() };
+  } catch {
+    return null;
+  }
+}
 
 export default function SeoCrawl() {
   const data = useLoaderData<typeof loader>();
@@ -457,6 +505,8 @@ export default function SeoCrawl() {
     slowest: c.tabSlowest,
   };
 
+  const [diffOpen, setDiffOpen] = useState(false);
+
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
 
@@ -478,6 +528,76 @@ export default function SeoCrawl() {
           </Button>
         </InlineStack>
       </Banner>
+
+      {/* §7.2 — what CHANGED since the last crawl. Above the tiles, because a
+          state report reads "fine" right up until it isn't. */}
+      {data.diff && hasDiffContent(data.diff) && (
+        <Card>
+          <BlockStack gap="300">
+            <button
+              type="button"
+              onClick={() => setDiffOpen((open) => !open)}
+              aria-expanded={diffOpen}
+              style={DIFF_TOGGLE_STYLE}
+            >
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="span" tone="subdued" variant="bodySm">
+                  <span aria-hidden="true">{diffOpen ? "▼" : "▶"}</span>
+                </Text>
+                <Text as="span" variant="headingMd">
+                  {c.diffTitle.replace("{date}", formatDiffDate(data.diff.previousAt))}
+                </Text>
+                <Badge tone={diffDelta(data.diff.counts.pages) > 0 ? "success" : undefined}>
+                  {c.diffPages.replace("{delta}", signed(diffDelta(data.diff.counts.pages)))}
+                </Badge>
+                <Badge tone={diffDelta(data.diff.counts.broken) > 0 ? "critical" : "success"}>
+                  {c.diffBroken.replace("{delta}", signed(diffDelta(data.diff.counts.broken)))}
+                </Badge>
+                {data.diff.indexabilityComparable && (
+                  <Badge tone={diffDelta(data.diff.counts.nonIndexable) > 0 ? "critical" : "success"}>
+                    {c.diffNonIndexable.replace(
+                      "{delta}",
+                      signed(diffDelta(data.diff.counts.nonIndexable)),
+                    )}
+                  </Badge>
+                )}
+              </InlineStack>
+            </button>
+
+            {diffOpen && (
+              <BlockStack gap="300">
+                {/* The most valuable line of the card — and the one that must
+                    stay hidden when either snapshot predates the columns,
+                    since unknown→indexable would flag the whole shop (§1.1). */}
+                {data.diff.indexabilityComparable && data.diff.indexabilityChanged.length > 0 && (
+                  <DiffList
+                    title={c.diffIndexabilityTitle}
+                    rows={data.diff.indexabilityChanged.map((r) => `${r.url}: ${r.from} → ${r.to}`)}
+                  />
+                )}
+                {data.diff.statusChanged.length > 0 && (
+                  <DiffList
+                    title={c.diffStatusTitle}
+                    rows={data.diff.statusChanged.map((r) => `${r.url}: ${r.from} → ${r.to}`)}
+                  />
+                )}
+                {data.diff.newUrls.length > 0 && (
+                  <DiffList title={c.diffNewTitle} rows={data.diff.newUrls} />
+                )}
+                {data.diff.goneUrls.length > 0 && (
+                  <DiffList title={c.diffGoneTitle} rows={data.diff.goneUrls} />
+                )}
+                {data.diff.titleChanged.length > 0 && (
+                  <DiffList
+                    title={c.diffTitleChangedTitle}
+                    rows={data.diff.titleChanged.map((r) => `${r.url}: ${r.from || "—"} → ${r.to || "—"}`)}
+                  />
+                )}
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Card>
+      )}
 
       <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
         {snapshot && snapshot.pagesBlocked > 0 && !data.running && (
@@ -865,4 +985,53 @@ export default function SeoCrawl() {
   }
 
   return <SeoSectionLayout sectionId="crawl">{body}</SeoSectionLayout>;
+}
+
+// ── §7.2 diff card helpers ─────────────────────────────────────────────────
+
+/** `<button>` reset, same approach as the Tile — a card header can be a
+ *  control without looking like a browser button. */
+const DIFF_TOGGLE_STYLE: CSSProperties = {
+  display: "block",
+  width: "100%",
+  padding: 0,
+  border: "none",
+  background: "none",
+  textAlign: "left",
+  cursor: "pointer",
+  font: "inherit",
+  color: "inherit",
+};
+
+const DIFF_ROW_CAP = 20;
+
+function diffDelta([before, after]: [number, number]): number {
+  return after - before;
+}
+
+/** "+3" / "-2" / "0" — the sign is the information. */
+function signed(delta: number): string {
+  return delta > 0 ? `+${delta}` : String(delta);
+}
+
+function formatDiffDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+function DiffList({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <BlockStack gap="100">
+      <Text as="h4" variant="headingSm">{`${title} (${rows.length})`}</Text>
+      {rows.slice(0, DIFF_ROW_CAP).map((row) => (
+        <Text as="span" variant="bodySm" tone="subdued" key={row}>{row}</Text>
+      ))}
+      {rows.length > DIFF_ROW_CAP && (
+        <Text as="span" variant="bodySm" tone="subdued">{`… +${rows.length - DIFF_ROW_CAP}`}</Text>
+      )}
+    </BlockStack>
+  );
 }

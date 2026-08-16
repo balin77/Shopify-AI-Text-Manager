@@ -16,6 +16,13 @@ import type { PrismaClient } from "@prisma/client";
 import { computeSeoScore, type SeoSeverity } from "../../utils/seo-score";
 import { PLAN_CONFIG, type Plan, type ContentType } from "../../config/plans";
 import { computeHeadDrift, classifyLinkStatus } from "./crawl.service";
+import {
+  analyzeIndexability,
+  analyzeCanonicals,
+  analyzeHeadings,
+  findThinPages,
+  type OnPageRow,
+} from "./onpage.service";
 
 export type AuditType = "product" | "collection" | "article" | "page";
 
@@ -101,6 +108,21 @@ export interface AuditTypeStat {
  * still reports its real size while the bulk-fix handler gets a bounded,
  * cheap-to-persist batch to work from. */
 export const MAX_PROBLEM_BUCKET_ITEMS = 100;
+
+/**
+ * Buckets that outrank a plain "most affected items first" sort
+ * (PLAN_SEO_CRAWL_EXPANSION §7.1). Higher wins; everything unlisted is 0 and
+ * keeps sorting by count.
+ *
+ * `nonIndexable` is first because it is categorically more expensive than the
+ * rest: one accidental `noindex` on a product removes it from Google entirely,
+ * which costs more revenue than any number of meta descriptions being three
+ * characters too long. A count-only sort would bury a single such finding
+ * under a bucket of 400 cosmetic ones.
+ */
+const BUCKET_PRIORITY: Record<string, number> = {
+  nonIndexable: 100,
+};
 
 export interface AuditProblemBucket {
   /** i18n key under t.seo.dashboard.problems.* */
@@ -494,12 +516,26 @@ async function loadProductAltCoverageForLocale(
 }
 
 /**
- * Builds the three crawl-derived dashboard buckets (§3.6): `brokenLinks`,
- * `orphanPages`, `headDrift`. Reads the latest completed/capped
- * SeoCrawlSnapshot + its SeoCrawlPage/SeoCrawlBrokenLink rows — a cheap,
- * already-DB-cached read (the crawl itself is the one live fetch this app
- * makes; this function makes none). Returns `[]` when no snapshot exists yet
- * (free plan / never crawled) — no special-casing needed by the caller.
+ * Builds the crawl-derived dashboard buckets (§3.6, extended by
+ * PLAN_SEO_CRAWL_EXPANSION §7.1): `brokenLinks`, `serverErrors`,
+ * `orphanPages`, `headDrift`, plus the on-page ones `nonIndexable`,
+ * `canonicalIssue`, `missingH1`, `thinContent` and `externalBrokenLinks`.
+ *
+ * Reads the latest completed/capped SeoCrawlSnapshot + its child rows — a
+ * cheap, already-DB-cached read (the crawl itself is the one live fetch this
+ * app makes; this function makes none). Returns `[]` when no snapshot exists
+ * yet (free plan / never crawled) — no special-casing needed by the caller.
+ *
+ * Every bucket here is `action: "deepLink"`. None of these findings has an AI
+ * fix, and a button that looked like one would be a lie: a `noindex` is
+ * removed in Shopify, a canonical comes from the theme, thin content needs
+ * writing, not rewriting.
+ *
+ * NOT built here: `redirectChains` (§7.1). Chains live only in Shopify's
+ * redirect list, which needs an Admin API call — and this function is
+ * deliberately DB-only, called from four places, one of which is a background
+ * task. The redirects tab shows the chain card unconditionally and ungated, so
+ * the finding is not hidden; only its dashboard shortcut is missing.
  */
 async function buildCrawlProblemBuckets(
   db: PrismaClient,
@@ -523,6 +559,20 @@ async function buildCrawlProblemBuckets(
       resourceId: true,
       locale: true,
       inboundCount: true,
+      // §7.1 — the on-page half. Same columns the /app/seo/onpage loader reads,
+      // evaluated by the same pure functions so the dashboard count and the
+      // tab's list can never disagree.
+      metaDesc: true,
+      canonical: true,
+      metaRobots: true,
+      xRobotsTag: true,
+      indexabilityKnown: true,
+      h1Count: true,
+      h1First: true,
+      wordCount: true,
+      imgCount: true,
+      imgMissingAlt: true,
+      redirectHops: true,
     },
   });
   const pageByUrl = new Map(pages.map((p) => [p.url, p]));
@@ -627,6 +677,122 @@ async function buildCrawlProblemBuckets(
       items: headDrift.items.map((i) => ({ type: i.type, id: i.id, title: i.title })),
       action: "deepLink",
     });
+  }
+
+  // Own catch, deliberately not folded into the caller's: the on-page half
+  // reads two tables the delivery-health half does not (SeoSitemapExclusion,
+  // SeoCrawlExternalLink). One of those failing must cost the merchant those
+  // buckets only — not brokenLinks, serverErrors, orphanPages and headDrift
+  // along with them.
+  const onPage = await buildOnPageProblemBuckets(db, shop, snapshot.id, pages).catch(() => []);
+  buckets.push(...onPage);
+  return buckets;
+}
+
+/**
+ * The on-page half of §7.1. Split out only for readability — it runs on the
+ * same already-loaded rows and adds exactly one extra query (the external-link
+ * count).
+ */
+async function buildOnPageProblemBuckets(
+  db: PrismaClient,
+  shop: string,
+  snapshotId: string,
+  pages: OnPageRow[],
+): Promise<AuditProblemBucket[]> {
+  const buckets: AuditProblemBucket[] = [];
+
+  // The canonical host comes from the crawled URLs themselves — they were
+  // already normalized to the shop's primary domain by the crawler, so this
+  // needs no Admin API call and cannot disagree with what was crawled.
+  const canonicalHost = (() => {
+    for (const p of pages) {
+      try {
+        return new URL(p.url).hostname;
+      } catch {
+        /* keep looking */
+      }
+    }
+    return "";
+  })();
+
+  /** Only rows that resolve to something a merchant can open get `items`;
+   *  `count` stays the true total either way (same contract as serverErrors). */
+  const toItems = (
+    findings: Array<{ resourceType: string | null; resourceId: string | null; url: string; title?: string | null }>,
+  ) =>
+    findings
+      .filter((f) => f.resourceId && f.resourceType && f.resourceType !== "unknown")
+      .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
+      .map((f) => ({
+        type: f.resourceType as AuditType,
+        id: f.resourceId as string,
+        title: f.title || f.url,
+      }));
+
+  // --- nonIndexable: ONLY the unexpected ones. The expected list (Shopify's
+  // own /search, /cart, applied sitemap exclusions) is not a problem and must
+  // never inflate a dashboard number.
+  const exclusions = await db.seoSitemapExclusion.findMany({
+    where: { shop, status: "applied" },
+    select: { resourceType: true, resourceId: true },
+  });
+  const excludedKeys = new Set(exclusions.map((e) => `${e.resourceType}:${e.resourceId}`));
+  const indexability = analyzeIndexability(pages, excludedKeys);
+  if (indexability.problems.length > 0) {
+    buckets.push({
+      code: "nonIndexable",
+      count: indexability.problems.length,
+      items: toItems(indexability.problems),
+      action: "deepLink",
+    });
+  }
+
+  if (canonicalHost) {
+    const canonicalIssues = analyzeCanonicals(pages, canonicalHost, [shop]);
+    if (canonicalIssues.length > 0) {
+      buckets.push({
+        code: "canonicalIssue",
+        count: canonicalIssues.length,
+        items: toItems(canonicalIssues),
+        action: "deepLink",
+      });
+    }
+  }
+
+  const headings = analyzeHeadings(pages);
+  if (headings.missing.length > 0) {
+    buckets.push({
+      code: "missingH1",
+      count: headings.missing.length,
+      items: toItems(headings.missing),
+      action: "deepLink",
+    });
+  }
+
+  const thin = findThinPages(pages);
+  if (thin.pages.length > 0) {
+    buckets.push({
+      code: "thinContent",
+      count: thin.pages.length,
+      items: toItems(thin.pages),
+      action: "deepLink",
+    });
+  }
+
+  // --- externalBrokenLinks: dead links to OTHER domains (§6). Counted per
+  // target URL, not per edge — one dead footer link is one problem, not 2000.
+  // `items` stays empty: the affected thing is an external URL, not a shop
+  // resource the editor could open.
+  const externalBroken = await db.seoCrawlExternalLink
+    .count({
+      where: { shop, snapshotId, OR: [{ statusCode: { gte: 400 } }, { statusCode: { lte: 0 } }] },
+    })
+    // Its own guard for the same reason as above: the external-link pass is
+    // opt-out, so an empty/absent table is the NORMAL case, not an error.
+    .catch(() => 0);
+  if (externalBroken > 0) {
+    buckets.push({ code: "externalBrokenLinks", count: externalBroken, items: [], action: "deepLink" });
   }
 
   return buckets;
@@ -1195,7 +1361,9 @@ export async function analyzeStore(
     const crawlBuckets = await buildCrawlProblemBuckets(db, shop, shopName).catch(() => []);
     if (crawlBuckets.length > 0) {
       problems.push(...crawlBuckets);
-      problems.sort((a, b) => b.count - a.count);
+      problems.sort(
+        (a, b) => (BUCKET_PRIORITY[b.code] ?? 0) - (BUCKET_PRIORITY[a.code] ?? 0) || b.count - a.count,
+      );
     }
   }
 

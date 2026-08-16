@@ -67,6 +67,12 @@ const DEEP_LINK_FOR_PROBLEM: Record<string, { path: string; tab: string }> = {
   serverErrors: { path: "/app/seo/crawl", tab: "serverErrors" },
   orphanPages: { path: "/app/seo/crawl", tab: "orphans" },
   headDrift: { path: "/app/seo/onpage", tab: "headDrift" },
+  // §7.1 — the on-page buckets.
+  nonIndexable: { path: "/app/seo/onpage", tab: "indexability" },
+  canonicalIssue: { path: "/app/seo/onpage", tab: "canonicals" },
+  missingH1: { path: "/app/seo/onpage", tab: "h1" },
+  thinContent: { path: "/app/seo/onpage", tab: "thin" },
+  externalBrokenLinks: { path: "/app/seo/crawl", tab: "external" },
 };
 const DEEP_LINK_FALLBACK = { path: "/app/seo/crawl", tab: "broken" };
 
