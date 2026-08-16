@@ -21,6 +21,14 @@
 export type CreatableResource = "product" | "collection" | "page" | "article" | "blog" | "metaobject";
 
 /**
+ * What can be DELETED. The same six, and not by coincidence: the types this
+ * app cannot create are the ones Shopify has no create API for (policies are a
+ * fixed set of six, theme content is not a resource), and it has no delete API
+ * for those either. Aliased rather than re-listed so the two cannot drift.
+ */
+export type DeletableResource = CreatableResource;
+
+/**
  * How a field is entered. The modal maps these to controls; the server maps
  * them to a validation rule. A new kind has to be handled in BOTH — which is
  * the point of naming them here rather than inferring from the key.

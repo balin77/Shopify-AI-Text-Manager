@@ -11,7 +11,9 @@ import { useCreateItem } from "../hooks/useCreateItem";
 import { CreateItemModal } from "./create/CreateItemModal";
 import { CreateResultBanner } from "./create/CreateResultBanner";
 import { CreateResourceChooser } from "./create/CreateResourceChooser";
-import type { CreatableResource } from "../config/create-fields.config";
+import type { CreatableResource, DeletableResource } from "../config/create-fields.config";
+import { useDeleteItem } from "../hooks/useDeleteItem";
+import { DeleteItemModal } from "./create/DeleteItemModal";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -461,6 +463,47 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const handleAddItemRef = useRef<() => void>(() => {});
   const stableAddItem = useCallback(() => handleAddItemRef.current(), []);
 
+  // The ONE delete path. Offered on the same tabs that can create — the types
+  // this app cannot create are exactly the ones Shopify has no delete API for.
+  const deleteItem = useDeleteItem({
+    onDeleted: (target) => {
+      // The selection now points at something that no longer exists.
+      handleItemSelectRef.current("");
+      revalidator?.revalidate();
+      showInfoBox(
+        (t.content?.deletedMessage || "“{name}” was deleted.").replace("{name}", target.title || target.id),
+        "success",
+        t.content?.success || "Success!",
+      );
+    },
+  });
+
+  /** Which resource a given item id IS — the blogs tab holds two kinds. */
+  const resourceOfItem = useCallback(
+    (itemId: string): DeletableResource | null => {
+      if (itemId.includes("/Blog/")) return "blog";
+      const single = createResources.length === 1 ? createResources[0] : null;
+      if (single) return single;
+      if (itemId.includes("/Article/")) return "article";
+      return null;
+    },
+    [createResources],
+  );
+
+  const handleDeleteItem = useCallback(
+    (itemId: string) => {
+      const resource = resourceOfItem(itemId);
+      if (!resource) return;
+      const item = unifiedItems.find((i) => i.id === itemId);
+      deleteItem.request({
+        id: itemId,
+        title: (item?.title as string) || itemId,
+        resource,
+      });
+    },
+    [resourceOfItem, unifiedItems, deleteItem],
+  );
+
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
     // One creatable resource opens its form directly; the blogs tab has two
@@ -744,6 +787,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           // Labelling it without disabling it let a merchant fill in a whole
           // form only to meet a 403 — and made the two entry points disagree.
           addButtonDisabled={!!createDisabledReason}
+          showDeleteButton={createResources.length > 0}
+          onDeleteItem={handleDeleteItem}
+          deleteButtonLabel={t.content?.deleteButtonLabel || "Delete"}
           addButtonLabel={createDisabledReason || t.content?.createButtonLabel || "Create"}
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
@@ -1478,11 +1524,37 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       {/* §1.6 — the post-create box. Rendered even when the cache sync failed:
           the object EXISTS, and calling that an error is what produces a
           second click and a duplicate. */}
+      {deleteItem.target && (
+        <DeleteItemModal
+          open={!!deleteItem.target}
+          onClose={deleteItem.cancel}
+          item={deleteItem.target}
+          onConfirm={deleteItem.confirm}
+          deleting={deleteItem.deleting}
+          error={deleteItem.error}
+          t={t.content?.deleteModal}
+        />
+      )}
+
       {createItem.created && (
         <div style={{ padding: "0 1rem 1rem" }}>
           <CreateResultBanner
             info={createItem.created}
             onDismiss={createItem.dismissCreated}
+            // §1.8 — undo is the SAME delete path and the same confirmation.
+            // Letting it skip the dialog was tempting (they just made the
+            // thing), but "clicked undo by mistake" destroys work where
+            // "clicked create by mistake" only makes some.
+            onUndo={() => {
+              const created = createItem.created!;
+              deleteItem.request({
+                id: created.id,
+                title: created.title || created.id,
+                resource: created.resource,
+                isUndo: true,
+              });
+            }}
+            undoLabel={t.content?.undoCreate}
             onReload={
               createItem.created.synced
                 ? undefined

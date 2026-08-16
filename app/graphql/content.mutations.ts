@@ -566,3 +566,98 @@ export const LIST_BLOGS_FOR_CREATE = `#graphql
     }
   }
 `;
+
+// ────────────────────────────────────────────────────────────────────────────
+// DELETE mutations
+//
+// The FIRST content deletes in this app (before these, only productDeleteMedia
+// existed). Each returns the deleted id, and that id is the ONLY thing that
+// counts as confirmation: `userErrors: []` means Shopify did not object, not
+// that anything was removed. If the id does not come back, the local cache row
+// must stay — a cache that forgets an object Shopify still has is worse than
+// one that briefly remembers a deleted one, because only the second self-heals
+// on the next sync.
+// ────────────────────────────────────────────────────────────────────────────
+
+export const DELETE_PRODUCT = `#graphql
+  mutation deleteProduct($input: ProductDeleteInput!) {
+    productDelete(input: $input) {
+      deletedProductId
+      userErrors { field message }
+    }
+  }
+`;
+
+export const DELETE_COLLECTION = `#graphql
+  mutation deleteCollection($input: CollectionDeleteInput!) {
+    collectionDelete(input: $input) {
+      deletedCollectionId
+      userErrors { field message }
+    }
+  }
+`;
+
+export const DELETE_PAGE = `#graphql
+  mutation deletePage($id: ID!) {
+    pageDelete(id: $id) {
+      deletedPageId
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const DELETE_ARTICLE = `#graphql
+  mutation deleteArticle($id: ID!) {
+    articleDelete(id: $id) {
+      deletedArticleId
+      userErrors { field message code }
+    }
+  }
+`;
+
+/** Deleting a blog deletes every article inside it — the UI must say so. */
+export const DELETE_BLOG = `#graphql
+  mutation deleteBlog($id: ID!) {
+    blogDelete(id: $id) {
+      deletedBlogId
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const DELETE_METAOBJECT = `#graphql
+  mutation deleteMetaobject($id: ID!) {
+    metaobjectDelete(id: $id) {
+      deletedId
+      userErrors { field message code }
+    }
+  }
+`;
+
+/** Duplicate mutations — PLAN_CONTENT_CREATION §1.9 / §2.5f.
+ *
+ *  Both are ASYNCHRONOUS: they return a `job`, not a finished object. The
+ *  caller therefore cannot select the new item straight away the way the
+ *  synchronous create path does, and must say "being created" rather than
+ *  pretend otherwise. */
+export const DUPLICATE_PRODUCT = `#graphql
+  mutation duplicateProduct($productId: ID!, $newTitle: String!, $newStatus: ProductStatus, $includeImages: Boolean) {
+    productDuplicate(productId: $productId, newTitle: $newTitle, newStatus: $newStatus, includeImages: $includeImages) {
+      newProduct { id title handle status }
+      productDuplicateOperation { id status }
+      userErrors { field message }
+    }
+  }
+`;
+
+/** Measured on 2026-07 (PLAN §1.2a): `copyPublications` comes along, which
+ *  settles the §2.3 "active but invisible" trap for the copy in one step. */
+export const DUPLICATE_COLLECTION = `#graphql
+  mutation duplicateCollection($input: CollectionDuplicateInput!) {
+    collectionDuplicate(input: $input) {
+      collection { id title handle }
+      job { id done }
+      userErrors { field message code }
+    }
+  }
+`;

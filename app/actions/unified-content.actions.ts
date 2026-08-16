@@ -46,6 +46,7 @@ import {
 } from "./content/translation.action";
 import { handleUpdateContent } from "./content/content-update.action";
 import { handleCreateContent } from "./content/create.actions";
+import { handleDeleteContent } from "./content/delete.actions";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -148,6 +149,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     // Note it is the one action that runs WITHOUT an itemId: the resource it
     // writes does not exist yet.
     case "createContent":                    return handleCreateContent(ctx, formData);
+    // The app's ONE content delete. Two entrances share it: the item list's
+    // delete button and the post-create undo (§1.8).
+    case "deleteContent":                    return handleDeleteContent(ctx, formData);
   }
 
   // ── Remaining inline actions (loadTranslations, generateAIText, formatAIText) ─

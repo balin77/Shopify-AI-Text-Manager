@@ -24,8 +24,11 @@ export interface CreateResultBannerProps {
   onDismiss: () => void;
   /** Offered when the cache did not pick the new item up. */
   onReload?: () => void;
-  /** §1.8 — not decided yet; the banner shows nothing while this is absent. */
+  /** §1.8 — routed through the ONE delete path, with its two-step
+   *  confirmation. Absent (e.g. after a failed sync, where there is no
+   *  confirmed id to remove) means the action is simply not offered. */
   onUndo?: () => void;
+  undoLabel?: string;
   t?: {
     createdTitle?: string;
     createdNotSyncedTitle?: string;
@@ -36,7 +39,7 @@ export interface CreateResultBannerProps {
   };
 }
 
-export function CreateResultBanner({ info, onDismiss, onReload, onUndo, t = {} }: CreateResultBannerProps) {
+export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabel, t = {} }: CreateResultBannerProps) {
   const name = info.title || info.id;
 
   return (
@@ -74,7 +77,7 @@ export function CreateResultBanner({ info, onDismiss, onReload, onUndo, t = {} }
             )}
             {onUndo && (
               <Button tone="critical" variant="plain" onClick={onUndo}>
-                {t.undo || "Undo this create"}
+                {undoLabel || t.undo || "Undo this create"}
               </Button>
             )}
           </InlineStack>
