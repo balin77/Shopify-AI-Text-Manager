@@ -96,6 +96,19 @@ export const SEO_RUBRICS: SeoRubricDef[] = [
         planGate: "pro",
       },
       {
+        // PLAN_SEO_CRAWL_EXPANSION §0.4 — deliberately BEHIND `crawl`: the
+        // crawl produces the data, this tab reads it, and the nav follows the
+        // workflow. `planGate` MUST stay identical to the crawl's: a shop that
+        // cannot crawl can never have a snapshot, so an ungated on-page tab
+        // would be permanently empty instead of merely locked.
+        id: "onpage",
+        path: "/app/seo/onpage",
+        icon: "📄",
+        labelKey: "onpage",
+        kind: "audit",
+        planGate: "pro",
+      },
+      {
         id: "hreflang",
         path: "/app/seo/hreflang",
         icon: "🌐",

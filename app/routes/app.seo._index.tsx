@@ -53,14 +53,22 @@ import type { Plan } from "../config/plans";
 
 // Problem-bucket codes the "Fix with AI" button supports today — must match
 // FIXABLE_CODE_TO_FIELD in api-ai-handlers/seo-bulk-fix.handler.ts.
-/** Crawl-derived problem bucket → the tab id that actually shows it on
- *  /app/seo/crawl. Ids must match the `tabs` array in app.seo.crawl.tsx. */
-const CRAWL_TAB_FOR_PROBLEM: Record<string, string> = {
-  brokenLinks: "broken",
-  serverErrors: "serverErrors",
-  orphanPages: "orphans",
-  headDrift: "headDrift",
+/**
+ * Crawl-derived problem bucket → the ROUTE and tab id that actually shows it.
+ * Ids must match `CATEGORY_IDS` in the target route.
+ *
+ * The route is part of the mapping since PLAN_SEO_CRAWL_EXPANSION §3.8: head
+ * drift moved to /app/seo/onpage, and a deep link still pointing at
+ * /app/seo/crawl would land the merchant on a tab that no longer has the
+ * category at all.
+ */
+const DEEP_LINK_FOR_PROBLEM: Record<string, { path: string; tab: string }> = {
+  brokenLinks: { path: "/app/seo/crawl", tab: "broken" },
+  serverErrors: { path: "/app/seo/crawl", tab: "serverErrors" },
+  orphanPages: { path: "/app/seo/crawl", tab: "orphans" },
+  headDrift: { path: "/app/seo/onpage", tab: "headDrift" },
 };
+const DEEP_LINK_FALLBACK = { path: "/app/seo/crawl", tab: "broken" };
 
 const AI_FIXABLE_PROBLEM_CODES = new Set([
   "seoTitleMissing",
@@ -726,14 +734,17 @@ export default function SeoDashboard() {
                         {p.action === "deepLink" ? (
                           <Button
                             size="slim"
-                            onClick={() =>
-                              handleNavigate("/app/seo/crawl", {
-                                // Without this every crawl bucket landed on the
-                                // first tab, so "pages returning a server error"
-                                // opened on "no broken links found".
-                                searchParams: new URLSearchParams({ tab: CRAWL_TAB_FOR_PROBLEM[p.code] ?? "broken" }),
-                              })
-                            }
+                            onClick={() => {
+                              // Without the tab every crawl bucket landed on the
+                              // first tab, so "pages returning a server error"
+                              // opened on "no broken links found". Without the
+                              // path (§3.8) head drift would open a tab that no
+                              // longer has the category.
+                              const target = DEEP_LINK_FOR_PROBLEM[p.code] ?? DEEP_LINK_FALLBACK;
+                              handleNavigate(target.path, {
+                                searchParams: new URLSearchParams({ tab: target.tab }),
+                              });
+                            }}
                           >
                             {d.viewInCrawlTab}
                           </Button>

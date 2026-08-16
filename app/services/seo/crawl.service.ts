@@ -1750,25 +1750,52 @@ export interface DuplicateTitleGroup {
   urls: string[];
 }
 
-/** Groups crawled pages by normalized title (>=2 URLs sharing one). Pure —
- *  used by the crawl route loader against the persisted SeoCrawlPage rows;
- *  no dedicated count field exists on SeoCrawlSnapshot for this. */
-export function groupDuplicateTitles(
-  pagesForGrouping: { url: string; title: string | null }[],
-  shopName: string,
+/**
+ * Groups pages by a normalized value, returning only the values shared by two
+ * or more URLs (PLAN_SEO_CRAWL_EXPANSION §3.6).
+ *
+ * Generalized rather than copied: duplicate <title>s and duplicate meta
+ * descriptions are the same question asked of a different column, and the
+ * on-page tab needed the second one. The `normalize` callback is what differs
+ * — titles strip the theme's "– ShopName" suffix, meta descriptions do not.
+ *
+ * A value that normalizes to "" is skipped: "these 40 pages all have no
+ * description" is the MISSING category, not the duplicate one.
+ */
+export function groupDuplicateValues(
+  rows: { url: string; value: string | null }[],
+  normalize: (value: string | null) => string,
 ): DuplicateTitleGroup[] {
   const groups = new Map<string, string[]>();
-  for (const p of pagesForGrouping) {
-    const norm = normalizeHeadTitle(p.title, shopName);
+  for (const row of rows) {
+    const norm = normalize(row.value);
     if (!norm) continue;
     const list = groups.get(norm);
-    if (list) list.push(p.url);
-    else groups.set(norm, [p.url]);
+    if (list) list.push(row.url);
+    else groups.set(norm, [row.url]);
   }
   return Array.from(groups.entries())
     .filter(([, urls]) => urls.length > 1)
     .map(([title, urls]) => ({ title, urls }))
     .sort((a, b) => b.urls.length - a.urls.length);
+}
+
+/** Duplicate <title>s. Thin wrapper over `groupDuplicateValues` — kept because
+ *  the crawl tab, the on-page tab and the existing tests all call it by name. */
+export function groupDuplicateTitles(
+  pagesForGrouping: { url: string; title: string | null }[],
+  shopName: string,
+): DuplicateTitleGroup[] {
+  return groupDuplicateValues(
+    pagesForGrouping.map((p) => ({ url: p.url, value: p.title })),
+    (value) => normalizeHeadTitle(value, shopName),
+  );
+}
+
+/** Normalization for duplicate META DESCRIPTIONS: no shop-name suffix to
+ *  strip, so plain trim + lowercase (§3.6). */
+export function normalizeMetaDescription(value: string | null): string {
+  return decodeHtmlEntities(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 // ── Retention (§2) ──────────────────────────────────────────────────────────
