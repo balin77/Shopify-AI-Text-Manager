@@ -4,19 +4,20 @@
  * expandable list scoped to the active language (§2.3).
  *
  * Language is the top dimension: only rows whose `locale === activeLocale` are
- * shown. Cannibalization conflicts render as a single warning header (no card).
- * A type mini-navbar (Produkte / Collections / Seiten / Blogartikel) plus a
- * text / score filter row narrow the list. Each item is a collapsible
- * header (title · type, primary on-page Score, GSC ⌀) revealing its keyword
- * rows (primary first) with presence badges, density, GSC position and per-row
+ * shown, narrowed further to `activeType`. Both of those bars live in the Shell
+ * — the type bar shares one card with the Bibliothek/Zuordnungen tabs, so it
+ * cannot be rendered from in here. Cannibalization conflicts render as a single
+ * warning header (no card), and a text / score filter row narrows the list
+ * further. Each item is a collapsible header ("Produkt: <Titel>" over
+ * "Keyword: <…>", primary on-page Score, GSC ⌀) revealing its keyword rows
+ * (primary first) with presence badges, density, GSC position and per-row
  * actions, plus an inline "+ Keyword" control that assigns under the active
  * locale through the SAME saveFetcher submit path the old add-form used — so the
  * Shell's primaryExists-swap and cannibalization confirm dialogs keep working.
  *
  * PURE PRESENTATION for cross-cutting state: all fetchers, refs, confirm-dialog
  * flows and the submit helper live in the Shell (SeoKeywords). Only view-local
- * state (active type, filters, which items are expanded, the inline add fields)
- * lives here.
+ * state (filters, which items are expanded, the inline add fields) lives here.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -34,7 +35,6 @@ import {
 import type { FetcherWithComponents } from "react-router";
 import { scoreTone } from "../../../utils/seo-score";
 import { HelpTooltip } from "../../HelpTooltip";
-import { SubNavBar, type SubNavBarItem } from "../../nav/SubNavBar";
 import type {
   KeywordResourceType,
   KeywordRole,
@@ -55,8 +55,15 @@ const DENSITY_TONE: Record<DensityBand, "success" | "warning" | "critical" | und
   none: undefined,
 };
 
-/** Type mini-navbar order (§2.3): Produkte / Collections / Seiten / Blogartikel. */
-const TYPE_ORDER: KeywordResourceType[] = ["Product", "Collection", "Page", "Article"];
+/** Type mini-navbar order (§2.3): Produkte / Collections / Seiten / Blogartikel.
+ *  The BAR itself lives in the Shell, so it can share one card with the
+ *  Bibliothek/Zuordnungen tabs above it — this list is what it is built from. */
+export const ASSIGNMENT_TYPE_ORDER: KeywordResourceType[] = [
+  "Product",
+  "Collection",
+  "Page",
+  "Article",
+];
 
 /** Presence badge order: T · H1 · Meta · SEO · Body (matches the old table). */
 const PRESENCE_KEYS = ["title", "h1", "metaDescription", "seoTitle", "body"] as const;
@@ -77,6 +84,8 @@ export interface AssignmentsTabProps {
   k: KeywordsPageStrings;
   /** Active language — rows are scoped to it and inline adds assign under it. */
   activeLocale: string;
+  /** Active resource type — its bar is rendered by the Shell (see above). */
+  activeType: KeywordResourceType;
   conflicts: LoaderData["conflicts"];
   keywords: LoaderData["keywords"];
 
@@ -203,6 +212,7 @@ function InlineAddKeyword({
 export function AssignmentsTab({
   k,
   activeLocale,
+  activeType,
   conflicts,
   keywords,
   saveFetcher,
@@ -213,7 +223,6 @@ export function AssignmentsTab({
   handleDeleteKeyword,
   openInEditor,
 }: AssignmentsTabProps) {
-  const [activeType, setActiveType] = useState<KeywordResourceType>("Product");
   const [textFilter, setTextFilter] = useState("");
   const [scoreFilter, setScoreFilter] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -288,11 +297,6 @@ export function AssignmentsTab({
     return list;
   }, [keywords, activeLocale, activeType, textFilter, scoreFilter]);
 
-  const typeNavItems: SubNavBarItem[] = TYPE_ORDER.map((rt) => ({
-    id: rt,
-    label: k.types[rt],
-  }));
-
   return (
     <BlockStack gap="400">
       {/* Conflicts as a single warning header (§2.3, replaces the old card). */}
@@ -318,14 +322,6 @@ export function AssignmentsTab({
           </BlockStack>
         </Banner>
       )}
-
-      {/* Type mini-navbar (§2.3). */}
-      <SubNavBar
-        ariaLabel={k.listTitle}
-        items={typeNavItems}
-        activeId={activeType}
-        onSelect={(item) => setActiveType(item.id as KeywordResourceType)}
-      />
 
       <Card>
         <BlockStack gap="300">

@@ -11,7 +11,7 @@ import type { PrismaClient } from "@prisma/client";
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useSearchParams, useRevalidator, useNavigation } from "react-router";
 import { useEffect, useRef, useState } from "react";
-import { BlockStack, InlineStack, Banner, Text, Button, Spinner } from "@shopify/polaris";
+import { BlockStack, InlineStack, Banner, Text, Button, Spinner, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -21,7 +21,7 @@ import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
 import { HelpTooltip } from "../components/HelpTooltip";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { LibraryTab } from "../components/seo/keywords/LibraryTab";
-import { AssignmentsTab } from "../components/seo/keywords/AssignmentsTab";
+import { AssignmentsTab, ASSIGNMENT_TYPE_ORDER } from "../components/seo/keywords/AssignmentsTab";
 import {
   analyzeOnPage,
   listAssignments,
@@ -1190,6 +1190,7 @@ export default function SeoKeywords() {
   const [editingKeywordId, setEditingKeywordId] = useState<string | null>(null);
   const [editKeywordError, setEditKeywordError] = useState<string | null>(null);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [assignmentType, setAssignmentType] = useState<KeywordResourceType>("Product");
 
   const startEditKeyword = (keywordId: string) => {
     setEditKeywordError(null);
@@ -1649,6 +1650,16 @@ export default function SeoKeywords() {
     { id: "library", label: k.tabLibrary },
     { id: "assignments", label: k.tabAssignments },
   ];
+
+  // The Zuordnungen list's resource-type dimension. Owned here rather than by
+  // the tab so its bar can sit in the SAME card as the tab bar — and kept as
+  // React state rather than a search param, because the filter is applied
+  // client-side over rows that are already loaded; a param would re-run the
+  // (expensive) assignments loader on every type click for no new data.
+  const typeNavItems: SubNavBarItem[] = ASSIGNMENT_TYPE_ORDER.map((rt) => ({
+    id: rt,
+    label: k.types[rt],
+  }));
   const onTabSelect = (item: SubNavBarItem) => {
     setSearchParams(
       (prev) => {
@@ -1706,18 +1717,38 @@ export default function SeoKeywords() {
             and the assignments half is deliberately expensive. So the feedback
             is local: a spinner in the tab bar and a dimmed, non-interactive
             body, with the previous content still on screen underneath. */}
-        <SubNavBar
-          ariaLabel={k.tabNavLabel}
-          items={tabNavItems}
-          activeId={tab}
-          onSelect={onTabSelect}
-          trailing={
-            <InlineStack gap="200" blockAlign="center">
-              {isReloading && <Spinner size="small" accessibilityLabel={k.loading} />}
-              <HelpTooltip helpKey="keywordsLibraryTabs" position="below" />
-            </InlineStack>
-          }
-        />
+        {/* Both navigation levels in ONE card: the tab bar's own bottom border
+            is the rule separating it from the type bar below, and the type bar
+            is level3 (flat sub-tabs, active state marked by an underline only)
+            so it reads as subordinate to the tabs rather than as a second,
+            equal-weight card. `padding="0"` lets both bars span the full card
+            width; the level3 bar gets the level2 bar's own inline padding back
+            so their labels line up. */}
+        <Card padding="0">
+          <SubNavBar
+            ariaLabel={k.tabNavLabel}
+            items={tabNavItems}
+            activeId={tab}
+            onSelect={onTabSelect}
+            trailing={
+              <InlineStack gap="200" blockAlign="center">
+                {isReloading && <Spinner size="small" accessibilityLabel={k.loading} />}
+                <HelpTooltip helpKey="keywordsLibraryTabs" position="below" />
+              </InlineStack>
+            }
+          />
+          {tab === "assignments" && (
+            <div style={{ paddingInline: "1rem" }}>
+              <SubNavBar
+                ariaLabel={k.listTitle}
+                items={typeNavItems}
+                activeId={assignmentType}
+                onSelect={(item) => setAssignmentType(item.id as KeywordResourceType)}
+                variant="level3"
+              />
+            </div>
+          )}
+        </Card>
 
         <div
           style={{
@@ -1731,6 +1762,7 @@ export default function SeoKeywords() {
           <AssignmentsTab
             k={k}
             activeLocale={data.activeLocale}
+            activeType={assignmentType}
             conflicts={data.conflicts}
             keywords={keywords}
             saveFetcher={saveFetcher}
