@@ -432,6 +432,7 @@ export const en: Translation = {
     duplicateButtonLabel: "Duplicate",
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
     rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
+    attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     duplicateModal: {
       title: "Duplicate \u201c{name}\u201d",
       intro: "Shopify copies everything \u2014 images, variants, options and metafields. You only need a name.",
@@ -1385,7 +1386,32 @@ export const en: Translation = {
     // button in the navigation.
     showPanel: "Show SEO score",
     hidePanel: "Back to content",
+    // ── PLAN_CONTENT_CREATION §2 — attribute tab ──────────────────────────
+    attributes: {
+      heading: "Completeness",
+      unknownBanner: "These details have not been fetched for this item yet. Reload it to see them — the grey dots are UNKNOWN, not missing.",
+      reload: "Reload this item",
+      adminHint: "Only visible in the Shopify admin.",
+      statuses: { unknown: "unknown" },
+      rows: {
+        status: "Status",
+        channels: "Sales channels",
+        tags: "Tags",
+        vendor: "Vendor",
+        category: "Category",
+        productType: "Product type",
+        collections: "In collections",
+        price: "Price",
+        sortOrder: "Sort order",
+        author: "Author",
+        published: "Published",
+        featuredImage: "Featured image",
+        template: "Theme template",
+        keyword: "Keyword",
+      },
+    },
     sidebarTabs: {
+      attributes: "Attributes",
       score: "Score",
       keywords: "Keywords",
       jsonLd: "JSON-LD",
@@ -3208,6 +3234,16 @@ export const en: Translation = {
       ],
     },
     // Content editor — the three sidebar tabs
+    seoSidebarAttributes: {
+      title: "Attributes",
+      summary:
+        "The NON-SEO completeness of this item: status, sales channels, tags, vendor, category, price. Deliberately disjoint from the score, which judges titles, descriptions and alt text.",
+      tips: [
+        "Grey = UNKNOWN, not missing. A sync fetches these — before that, every red cross would be a guess",
+        "Status and sales channels are two separate rows: \u201cActive\u201d alone does NOT make a product visible, that needs a channel",
+        "In a foreign language the tab is read-only — tags, vendor and category exist once per item, not per language",
+      ],
+    },
     seoSidebarScore: {
       title: "SEO score",
       summary:

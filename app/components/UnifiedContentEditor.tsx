@@ -17,6 +17,7 @@ import { DeleteItemModal } from "./create/DeleteItemModal";
 import { useDuplicateItem } from "../hooks/useDuplicateItem";
 import { useRouteLoaderData } from "react-router";
 import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-rules.shared";
+import { buildAttributeChecklist, needsAttributeSync } from "../services/attribute-checklist.shared";
 import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
@@ -704,8 +705,59 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       : undefined;
     const keywordLocale = state.currentLanguage === primaryLocale ? "" : state.currentLanguage;
 
+    // ── PLAN_CONTENT_CREATION §2 — the attribute checklist ────────────────
+    // Only the four types that HAVE merchandising attributes; everything else
+    // gets no tab rather than an empty one.
+    const attributeResource =
+      config.contentType === "products" ? "product"
+      : config.contentType === "collections" ? "collection"
+      : config.contentType === "pages" ? "page"
+      : config.contentType === "blogs" && !isBlogContainer ? "article"
+      : null;
+
+    const attributes = attributeResource
+      ? (() => {
+          const row = item as unknown as Record<string, unknown>;
+          const checklistRows = buildAttributeChecklist({
+            resource: attributeResource,
+            // THE gate. Absent on an item the route does not carry it on,
+            // which is the honest "we have not fetched this" rather than a
+            // pile of red findings (§2.4).
+            attributesSyncedAt: (row.attributesSyncedAt as string | null | undefined) ?? null,
+            status: (row.status as string | null | undefined) ?? null,
+            vendor: (row.vendor as string | null | undefined) ?? null,
+            productType: (row.productType as string | null | undefined) ?? null,
+            categoryName: (row.categoryName as string | null | undefined) ?? null,
+            tags: (row.tags as string[] | null | undefined) ?? null,
+            collectionCount: Array.isArray(row.collections) ? (row.collections as unknown[]).length : null,
+            hasMoreCollections: row.hasMoreCollections === true,
+            defaultVariantPrice: (row.defaultVariantPrice as string | null | undefined) ?? null,
+            sortOrder: (row.sortOrder as string | null | undefined) ?? null,
+            author: (row.author as string | null | undefined) ?? null,
+            isPublished: (row.isPublished as boolean | null | undefined) ?? null,
+            featuredImageUrl: (row.featuredImageUrl as string | null | undefined) ?? primaryImageUrl ?? null,
+            templateSuffix: (row.templateSuffix as string | null | undefined) ?? null,
+            hasKeyword: null,
+          });
+          return {
+            rows: checklistRows,
+            needsSync: needsAttributeSync(checklistRows),
+            onReload: () => { void handleSyncAll(); },
+            // §2.4 — tags, vendor and category are not translatable, so acting
+            // on a finding here while a translation is selected would edit the
+            // primary value from a screen that says otherwise.
+            readOnlyReason:
+              state.currentLanguage !== primaryLocale
+                ? t.content?.attributesForeignLocale ||
+                  "These details exist once per item, not per language. Switch to the primary language to change them."
+                : null,
+          };
+        })()
+      : undefined;
+
     return (
       <ItemSidebar
+        attributes={attributes}
         title={editableValues.title || ""}
         description={editableValues.description || editableValues.body || ""}
         handle={editableValues.handle || ""}

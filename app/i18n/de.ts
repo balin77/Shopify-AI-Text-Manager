@@ -429,6 +429,7 @@ export const de = {
     duplicateButtonLabel: "Duplizieren",
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
     rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
+    attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
     duplicateModal: {
       title: "\u201e{name}\u201c duplizieren",
       intro: "Shopify kopiert alles mit \u2014 Bilder, Varianten, Optionen und Metafelder. Du brauchst nur einen Namen.",
@@ -1382,7 +1383,32 @@ export const de = {
     // Spalte den Plan-Button in der Navigation.
     showPanel: "SEO-Score anzeigen",
     hidePanel: "Zurück zum Inhalt",
+    // ── PLAN_CONTENT_CREATION §2 — Attribute-Tab ──────────────────────────
+    attributes: {
+      heading: "Vollständigkeit",
+      unknownBanner: "Diese Angaben wurden für diesen Eintrag noch nicht geholt. Lade ihn neu, um sie zu sehen — die grauen Punkte sind UNBEKANNT, nicht fehlend.",
+      reload: "Eintrag neu laden",
+      adminHint: "Nur im Shopify-Admin sichtbar.",
+      statuses: { unknown: "unbekannt" },
+      rows: {
+        status: "Status",
+        channels: "Vertriebskanäle",
+        tags: "Tags",
+        vendor: "Hersteller",
+        category: "Kategorie",
+        productType: "Produkttyp",
+        collections: "In Kollektionen",
+        price: "Preis",
+        sortOrder: "Sortierung",
+        author: "Autor",
+        published: "Veröffentlicht",
+        featuredImage: "Titelbild",
+        template: "Theme-Template",
+        keyword: "Keyword",
+      },
+    },
     sidebarTabs: {
+      attributes: "Attribute",
       score: "Score",
       keywords: "Keywords",
       jsonLd: "JSON-LD",
@@ -3209,6 +3235,16 @@ export const de = {
       ],
     },
     // Content-Editor — die drei Sidebar-Tabs
+    seoSidebarAttributes: {
+      title: "Attribute",
+      summary:
+        "Die NICHT-SEO-Vollständigkeit dieses Eintrags: Status, Vertriebskanäle, Tags, Hersteller, Kategorie, Preis. Überschneidet sich bewusst nicht mit dem Score, der Titel, Beschreibungen und Alt-Texte bewertet.",
+      tips: [
+        "Grau = UNBEKANNT, nicht fehlend. Diese Angaben holt erst ein Sync — vorher wäre jedes rote Kreuz geraten",
+        "Status und Vertriebskanäle sind zwei Zeilen: „Aktiv“ allein macht ein Produkt NICHT sichtbar, dafür braucht es einen Kanal",
+        "In einer Fremdsprache ist der Tab read-only — Tags, Hersteller und Kategorie gibt es nur einmal pro Eintrag",
+      ],
+    },
     seoSidebarScore: {
       title: "SEO-Score",
       summary:

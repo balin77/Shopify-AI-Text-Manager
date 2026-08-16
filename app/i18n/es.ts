@@ -431,6 +431,7 @@ export const es: Translation = {
     duplicateButtonLabel: "Duplicar",
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
     rulesNeedApiUpgrade: "Las colecciones automatizadas necesitan la API {version} de Shopify. Hasta que esta aplicación se actualice, puedes crear colecciones y elegir sus productos manualmente.",
+    attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     duplicateModal: {
       title: "Duplicar \u201c{name}\u201d",
       intro: "Shopify copia todo \u2014 imágenes, variantes, opciones y metacampos. Solo necesitas un nombre.",
@@ -1384,7 +1385,32 @@ export const es: Translation = {
     // sustituye al botón de plan en la navegación.
     showPanel: "Mostrar puntuación SEO",
     hidePanel: "Volver al contenido",
+    // ── PLAN_CONTENT_CREATION §2 — pestaña de atributos ───────────────────
+    attributes: {
+      heading: "Integridad",
+      unknownBanner: "Estos datos todavía no se han obtenido para este elemento. Recárgalo para verlos — los puntos grises son DESCONOCIDOS, no faltantes.",
+      reload: "Recargar este elemento",
+      adminHint: "Solo visible en el admin de Shopify.",
+      statuses: { unknown: "desconocido" },
+      rows: {
+        status: "Estado",
+        channels: "Canales de venta",
+        tags: "Etiquetas",
+        vendor: "Proveedor",
+        category: "Categoría",
+        productType: "Tipo de producto",
+        collections: "En colecciones",
+        price: "Precio",
+        sortOrder: "Orden",
+        author: "Autor",
+        published: "Publicado",
+        featuredImage: "Imagen destacada",
+        template: "Plantilla del tema",
+        keyword: "Palabra clave",
+      },
+    },
     sidebarTabs: {
+      attributes: "Atributos",
       score: "Score",
       keywords: "Keywords",
       jsonLd: "JSON-LD",
@@ -3208,6 +3234,16 @@ export const es: Translation = {
       ],
     },
     // Editor de contenido — las tres pestañas de la barra lateral
+    seoSidebarAttributes: {
+      title: "Atributos",
+      summary:
+        "La integridad NO-SEO de este elemento: estado, canales de venta, etiquetas, proveedor, categoría, precio. Deliberadamente disjunto de la puntuación, que evalúa títulos, descripciones y textos alternativos.",
+      tips: [
+        "Gris = DESCONOCIDO, no faltante. Una sincronización obtiene estos datos; antes, cada cruz roja sería una suposición",
+        "Estado y canales de venta son dos filas distintas: \u201cActivo\u201d por sí solo NO hace visible un producto, hace falta un canal",
+        "En un idioma extranjero la pestaña es de solo lectura — etiquetas, proveedor y categoría existen una vez por elemento",
+      ],
+    },
     seoSidebarScore: {
       title: "Puntuación SEO",
       summary:
