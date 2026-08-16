@@ -699,6 +699,51 @@ export function normalizeHeadTitle(title: string | null | undefined, shopName: s
 
 // ── Word count (§3.1) ───────────────────────────────────────────────────────
 
+// ── Indexability + on-page capture (§2.2 / §2.3, pure + unit-tested) ────────
+
+/** Defensive bound before these strings reach the DB. */
+const MAX_META_ROBOTS_LENGTH = 300;
+/** Bound on the stored H1 text (§1.1). */
+const MAX_H1_TEXT_LENGTH = 300;
+
+/**
+ * The page's robots meta directives (§2.2), as served.
+ *
+ * `name` is matched case-insensitively (`[name="robots" i]`) because the
+ * attribute value is not case-sensitive in HTML and themes write `ROBOTS` /
+ * `Robots` often enough to matter. A `name="googlebot"` tag is collected IN
+ * ADDITION and appended with a comma: it OVERRIDES the generic tag for Google
+ * and is the more common place for an accidental `noindex`, so dropping it
+ * would hide exactly the finding this column exists for. The verdict is
+ * derived later (`deriveIndexability`) — nothing is interpreted here.
+ */
+export function extractMetaRobots($: cheerio.CheerioAPI): string {
+  const parts: string[] = [];
+  for (const selector of ['meta[name="robots" i]', 'meta[name="googlebot" i]']) {
+    const raw = $(selector).attr("content")?.trim();
+    if (raw) parts.push(raw);
+  }
+  return parts.join(",").slice(0, MAX_META_ROBOTS_LENGTH);
+}
+
+/**
+ * Image count and how many of them carry no usable alt text (§2.3). Costs no
+ * extra request — the HTML is already parsed.
+ *
+ * `alt=""` counts as MISSING here, deliberately: it is valid HTML for a
+ * decorative image, so this number is a "worth a look" signal, never an error
+ * count. The UI must label it "without alt text" — a theme full of decorative
+ * icons would otherwise produce hundreds of false alarms.
+ */
+export function countImagesWithoutAlt($: cheerio.CheerioAPI): { imgCount: number; imgMissingAlt: number } {
+  const imgs = $("img");
+  let missing = 0;
+  imgs.each((_, el) => {
+    if (!($(el).attr("alt") || "").trim()) missing += 1;
+  });
+  return { imgCount: imgs.length, imgMissingAlt: missing };
+}
+
 function countWords($: cheerio.CheerioAPI): number {
   const hasBody = $("body").length > 0;
   const root = (hasBody ? $("body") : $.root()) as cheerio.Cheerio<any>;
@@ -722,6 +767,14 @@ interface FetchOutcome {
   hops: string[];
   /** Non-null only on a 403/429 — who refused us (see `diagnoseBlock`). */
   block: BlockDiagnosis | null;
+  /**
+   * `X-Robots-Tag` of the FINAL response of the redirect chain (§2.1). Only
+   * the non-redirect return branch sets it: a header on a 301 governs the
+   * REDIRECT, not the page it points at, so carrying it forward would report a
+   * perfectly indexable target as noindex. Repeated headers arrive already
+   * comma-joined from `Headers.get()`, which is exactly what we store.
+   */
+  xRobotsTag: string;
 }
 
 async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
@@ -787,6 +840,7 @@ async function fetchOnceWithRedirects(
         responseMs: Date.now() - started,
         hops,
         block: null,
+        xRobotsTag: "",
       };
     }
     clearTimeout(timer);
@@ -802,6 +856,7 @@ async function fetchOnceWithRedirects(
           responseMs: Date.now() - started,
           hops,
           block: null,
+          xRobotsTag: "",
         };
       }
       let next: string;
@@ -816,6 +871,7 @@ async function fetchOnceWithRedirects(
           responseMs: Date.now() - started,
           hops,
           block: null,
+          xRobotsTag: "",
         };
       }
       // Redirect-SSRF guard (§ security fix): the initial links are
@@ -834,6 +890,7 @@ async function fetchOnceWithRedirects(
           responseMs: Date.now() - started,
           hops,
           block: null,
+          xRobotsTag: "",
         };
       }
       if (hop === REDIRECT_MAX_HOPS) {
@@ -846,6 +903,7 @@ async function fetchOnceWithRedirects(
           responseMs: Date.now() - started,
           hops,
           block: null,
+          xRobotsTag: "",
         };
       }
       currentUrl = next;
@@ -873,6 +931,9 @@ async function fetchOnceWithRedirects(
       responseMs: Date.now() - started,
       hops,
       block: diagnoseBlock(res.status, res.headers, body),
+      // §2.1 — the ONLY branch that reads the header: this is the final,
+      // non-redirect response of the chain.
+      xRobotsTag: (res.headers.get("x-robots-tag") || "").trim(),
     };
   }
   // Unreachable (loop always returns), kept for type-completeness.
@@ -884,6 +945,7 @@ async function fetchOnceWithRedirects(
     responseMs: Date.now() - started,
     hops,
     block: null,
+    xRobotsTag: "",
   };
 }
 
@@ -1006,6 +1068,16 @@ interface PageRecord {
   jsonLdTypes: string[];
   /** …of which came from this app's storefront block (data-contentpilot). */
   jsonLdAppTypes: string[];
+  /** §2.1-§2.2 — raw indexability signals, plus whether we got to look at all. */
+  metaRobots: string;
+  xRobotsTag: string;
+  indexabilityKnown: boolean;
+  /** §2.3 */
+  h1First: string | null;
+  imgCount: number;
+  imgMissingAlt: number;
+  /** §2.4 — hops the redirect chain took (0 = no redirect). */
+  redirectHops: number;
 }
 
 export interface RunCrawlDeps {
@@ -1276,6 +1348,20 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       locale: resolveGscPagePath(url)?.locale ?? "",
       jsonLdTypes: [],
       jsonLdAppTypes: [],
+      // §2.1 — the header is read even when no body follows (a 404 can still
+      // carry one); the META half below needs a parsed body.
+      metaRobots: "",
+      xRobotsTag: outcome.xRobotsTag,
+      // §2.2 — flipped to true only once the body is actually parsed. A page
+      // without one (4xx/5xx/firewall block) leaves it false: the question
+      // "is this indexable" has no answer there, and claiming "" = indexable
+      // is the exact trap this flag exists to prevent.
+      indexabilityKnown: false,
+      h1First: null,
+      imgCount: 0,
+      imgMissingAlt: 0,
+      // §2.4 — `hops` always includes the start URL, so a plain 200 is 0 hops.
+      redirectHops: Math.max(0, outcome.hops.length - 1),
     };
     pages.set(url, record);
 
@@ -1295,6 +1381,14 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       record.canonical = $('link[rel="canonical"]').attr("href")?.trim() || null;
       record.h1Count = $("h1").length;
       record.wordCount = countWords($);
+      // §2.2-§2.3 — free: the HTML is parsed either way.
+      record.metaRobots = extractMetaRobots($);
+      record.indexabilityKnown = true;
+      record.h1First =
+        $("h1").first().text().replace(/\s+/g, " ").trim().slice(0, MAX_H1_TEXT_LENGTH) || null;
+      const images = countImagesWithoutAlt($);
+      record.imgCount = images.imgCount;
+      record.imgMissingAlt = images.imgMissingAlt;
       // Free: the HTML is already fetched and parsed. This is the only place in
       // the app that sees what the storefront actually serves — the JSON-LD
       // section otherwise only validates what the app WOULD emit.
@@ -1435,6 +1529,13 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     outboundCount: number;
     jsonLdTypes: string;
     jsonLdAppTypes: string;
+    metaRobots: string;
+    xRobotsTag: string;
+    indexabilityKnown: boolean;
+    h1First: string | null;
+    imgCount: number;
+    imgMissingAlt: number;
+    redirectHops: number;
   }[] = [];
 
   const headDriftCandidates: { resourceType: AuditType; resourceId: string; crawledTitle: string | null }[] = [];
@@ -1471,6 +1572,13 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       outboundCount: outboundCounts.get(url) ?? 0,
       jsonLdTypes: page.jsonLdTypes.join(","),
       jsonLdAppTypes: page.jsonLdAppTypes.join(","),
+      metaRobots: page.metaRobots,
+      xRobotsTag: page.xRobotsTag,
+      indexabilityKnown: page.indexabilityKnown,
+      h1First: page.h1First,
+      imgCount: page.imgCount,
+      imgMissingAlt: page.imgMissingAlt,
+      redirectHops: page.redirectHops,
     });
 
     // statusCode must be 2xx (§ fix 5): a broken resolved page never had its

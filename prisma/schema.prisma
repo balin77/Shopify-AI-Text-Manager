@@ -1366,8 +1366,9 @@ model SeoCrawlSnapshot {
   orphanCount     Int       @default(0)
   headDriftCount  Int       @default(0)
 
-  pages       SeoCrawlPage[]
-  brokenLinks SeoCrawlBrokenLink[]
+  pages         SeoCrawlPage[]
+  brokenLinks   SeoCrawlBrokenLink[]
+  externalLinks SeoCrawlExternalLink[]
 
   @@index([shop, startedAt])
 }
@@ -1404,6 +1405,34 @@ model SeoCrawlPage {
   // duplicated type is ours — the delivered HTML tells nobody otherwise.
   jsonLdAppTypes String @default("")
 
+  // PLAN_SEO_CRAWL_EXPANSION §1.1 / §2.1-§2.2 — indexability, stored RAW and
+  // never pre-interpreted: `deriveIndexability` (onpage.service.ts) is a pure
+  // function over these two columns, so the rule can be corrected without a
+  // re-crawl.
+  //
+  // TRAP (same shape as jsonLdTypes / translatableContent): "" means TWO
+  // indistinguishable things — no tag/header was served, OR the row was written
+  // before these columns existed. `indexabilityKnown` is the discriminator: it
+  // is only true when THIS crawl run actually looked (i.e. a body was parsed).
+  // The UI hides the whole category when the latest snapshot doesn't know,
+  // rather than claiming "everything is fine".
+  metaRobots        String  @default("") // <meta name="robots" content="…"> (+ name="googlebot", appended)
+  xRobotsTag        String  @default("") // X-Robots-Tag of the FINAL response of the redirect chain
+  indexabilityKnown Boolean @default(false)
+
+  // §1.1 / §2.3 — on-page. h1Count above only counts; the text is what makes
+  // "H1 equals the title" and "H1 is empty" checkable at all.
+  h1First       String?
+  imgCount      Int     @default(0)
+  // Images WITHOUT a non-empty alt attribute. `alt=""` is valid HTML for
+  // decorative images and is counted here as missing — the UI must therefore
+  // say "without alt text", never "error" (§2.3).
+  imgMissingAlt Int     @default(0)
+
+  // §2.4 — observed redirect chain length (0 = no redirect). `redirectedTo`
+  // above holds the end of the chain; the hop count is the report value.
+  redirectHops Int @default(0)
+
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@unique([snapshotId, url])
@@ -1426,6 +1455,34 @@ model SeoCrawlBrokenLink {
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@index([shop, snapshotId])
+}
+
+// PLAN_SEO_CRAWL_EXPANSION §1.2 / §6 — outbound links to OTHER domains, checked
+// in a second pass after the crawl itself is already persisted.
+//
+// One row per UNIQUE target URL, never per edge: an Instagram link in the footer
+// appears on every page and would otherwise write 2000 identical rows.
+// `sourceCount` keeps how many pages point at it, `sampleSources` up to 5 of
+// them. Dedup is by the FULL url including the query string (unlike the internal
+// crawl, which strips it — on an external target the query usually carries
+// meaning).
+model SeoCrawlExternalLink {
+  id            String   @id @default(cuid())
+  shop          String
+  snapshotId    String
+  url           String
+  statusCode    Int // 0 = timeout/DNS/blocked-by-guard, -1 = redirect loop / too many hops
+  finalUrl      String? // set when the link redirected ("http:// → https://" is a finding in itself)
+  sourceCount   Int      @default(0)
+  sampleSources String   @default("") // up to 5 source URLs, "\n"-separated
+  anchor        String?
+  checkedAt     DateTime @default(now())
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, url])
+  @@index([shop, snapshotId])
+  @@index([shop, snapshotId, statusCode])
 }
 
 // Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1

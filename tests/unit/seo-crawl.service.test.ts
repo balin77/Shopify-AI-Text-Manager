@@ -21,6 +21,8 @@ import {
   rateLimitRetryDelayMs,
   extractJsonLdTypes,
   extractAppJsonLdTypes,
+  extractMetaRobots,
+  countImagesWithoutAlt,
   coolDownDurationMs,
   BLOCK_COOLDOWN_MS,
   MAX_COOLDOWN_MS,
@@ -643,6 +645,44 @@ describe("extractJsonLdTypes", () => {
   it("ignores scripts that are not ld+json", () => {
     const $ = load('<script type="application/json">{"@type":"Product"}</script><script>var x=1;</script>');
     expect(extractJsonLdTypes($)).toEqual([]);
+  });
+});
+
+// ── PLAN_SEO_CRAWL_EXPANSION §2.2 / §2.3 — indexability + on-page capture ───
+
+describe("extractMetaRobots", () => {
+  const load = (html: string) => cheerio.load(html);
+
+  it("reads the generic robots tag", () => {
+    expect(extractMetaRobots(load('<meta name="robots" content="noindex, nofollow">'))).toBe(
+      "noindex, nofollow",
+    );
+  });
+
+  it("matches the name attribute case-insensitively", () => {
+    expect(extractMetaRobots(load('<meta name="ROBOTS" content="noindex">'))).toBe("noindex");
+  });
+
+  it("appends a googlebot-specific tag instead of dropping it — it overrides the generic one for Google", () => {
+    const $ = load('<meta name="robots" content="index"><meta name="googlebot" content="noindex">');
+    expect(extractMetaRobots($)).toBe("index,noindex");
+  });
+
+  it("returns '' when nothing was served — which is NOT the same as 'indexable'", () => {
+    expect(extractMetaRobots(load("<p>no meta here</p>"))).toBe("");
+  });
+});
+
+describe("countImagesWithoutAlt", () => {
+  it('counts alt="" and a missing alt the same — both are "without alt text"', () => {
+    const $ = cheerio.load(
+      '<img src="a.jpg" alt="A cat"><img src="b.jpg" alt=""><img src="c.jpg"><img src="d.jpg" alt="   ">',
+    );
+    expect(countImagesWithoutAlt($)).toEqual({ imgCount: 4, imgMissingAlt: 3 });
+  });
+
+  it("is zero on a page without images", () => {
+    expect(countImagesWithoutAlt(cheerio.load("<p>text</p>"))).toEqual({ imgCount: 0, imgMissingAlt: 0 });
   });
 });
 
@@ -1345,6 +1385,84 @@ describe("runCrawl — end-to-end against an msw-mocked fixture site", () => {
 
     expect(summary.status).toBe("completed");
     expect(summary.headDriftCount).toBe(0);
+  });
+
+  // ── PLAN_SEO_CRAWL_EXPANSION §2.1-§2.4 ───────────────────────────────────
+  it("captures indexability, on-page and redirect-hop fields per page", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html(
+            "Home – Acme",
+            `<meta name="robots" content="index,follow">
+             <h1>  Welcome   home </h1>
+             <img src="a.jpg" alt="A cat"><img src="b.jpg" alt=""><img src="c.jpg">
+             <a href="/hidden">Hidden</a>
+             <a href="/via-redirect">Via redirect</a>
+             <a href="/gone">Gone</a>`,
+          ),
+        ),
+      ),
+      // googlebot-specific noindex — the finding the generic tag alone misses.
+      http.get(`${BASE}/hidden`, () =>
+        HttpResponse.html(
+          html("Hidden – Acme", `<meta name="googlebot" content="noindex"><h1>Hidden</h1>`),
+        ),
+      ),
+      // The X-Robots-Tag on the 301 governs the REDIRECT, not the target: only
+      // the final response's header may be stored.
+      http.get(`${BASE}/via-redirect`, () =>
+        new HttpResponse(null, {
+          status: 301,
+          headers: { Location: `${BASE}/final`, "X-Robots-Tag": "noindex" },
+        }),
+      ),
+      http.get(`${BASE}/final`, () =>
+        HttpResponse.html(html("Final – Acme", "<h1>Final</h1>"), {
+          headers: { "X-Robots-Tag": "noarchive" },
+        }),
+      ),
+      http.get(`${BASE}/gone`, () => HttpResponse.text("Not found", { status: 404 })),
+    );
+
+    const db = makeDb();
+    await runCrawl("snap-onpage", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+    });
+
+    const byUrl = (suffix: string) =>
+      db.__created.pages.find((p: any) => p.url.endsWith(suffix));
+
+    const home = byUrl("/");
+    expect(home.metaRobots).toBe("index,follow");
+    expect(home.indexabilityKnown).toBe(true);
+    // Whitespace collapsed, so "H1 equals the title" stays comparable.
+    expect(home.h1First).toBe("Welcome home");
+    // alt="" and a missing alt count the same.
+    expect(home.imgCount).toBe(3);
+    expect(home.imgMissingAlt).toBe(2);
+    expect(home.redirectHops).toBe(0);
+
+    expect(byUrl("/hidden").metaRobots).toBe("noindex");
+
+    const viaRedirect = byUrl("/via-redirect");
+    expect(viaRedirect.xRobotsTag).toBe("noarchive"); // NOT the 301's "noindex"
+    expect(viaRedirect.redirectHops).toBe(1);
+
+    // No body was ever parsed on a 404 — "is this indexable" has no answer
+    // there, and `indexabilityKnown: false` is what says so.
+    const gone = byUrl("/gone");
+    expect(gone.indexabilityKnown).toBe(false);
+    expect(gone.metaRobots).toBe("");
   });
 });
 
