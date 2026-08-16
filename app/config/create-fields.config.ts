@@ -57,6 +57,14 @@ export interface CreateFieldDef {
   advanced?: boolean;
   /** Never offered on the edit surface; exists only at creation time. */
   createOnly?: boolean;
+  /**
+   * Shopify stores this metaobject field as a JSON ARRAY
+   * (`list.single_line_text_field`). The form collects it comma-separated and
+   * the server serialises it — sending the raw string is accepted by neither,
+   * so a definition with such a REQUIRED field would be advertised as
+   * creatable and then always rejected.
+   */
+  listValue?: boolean;
 }
 
 export interface CreateResourceSpec {
@@ -326,12 +334,19 @@ export function metaobjectCreatability(fieldDefinitions: MetaobjectFieldDefiniti
 export function metaobjectFieldDefs(fieldDefinitions: MetaobjectFieldDefinition[]): CreateFieldDef[] {
   return fieldDefinitions
     .filter((f) => (EDITABLE_METAOBJECT_FIELD_TYPES as readonly string[]).includes(fieldTypeName(f)))
-    .map((f) => ({
-      key: `field.${f.key}`,
-      kind: fieldTypeName(f) === "multi_line_text_field" ? ("textarea" as const) : ("text" as const),
-      required: f.required === true,
-      labelKey: f.name || f.key,
-    }));
+    .map((f) => {
+      const type = fieldTypeName(f);
+      const isList = type === "list.single_line_text_field";
+      return {
+        key: `field.${f.key}`,
+        // A list is collected the way tags are — comma-separated — and
+        // serialised to JSON before it is sent.
+        kind: isList ? ("tags" as const) : type === "multi_line_text_field" ? ("textarea" as const) : ("text" as const),
+        required: f.required === true,
+        labelKey: f.name || f.key,
+        listValue: isList,
+      };
+    });
 }
 
 // ────────────────────────────────────────────────────────────────────────────

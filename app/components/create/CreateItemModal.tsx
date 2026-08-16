@@ -18,7 +18,7 @@
  * by the close confirmation, not by a persisted draft.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Modal,
   BlockStack,
@@ -79,6 +79,9 @@ export interface CreateItemModalProps {
   submitting?: boolean;
   /** Server-side failure, shown verbatim — never swallowed. */
   error?: string | null;
+  /** §1.7 — the same request is still running. Not an error, but saying
+   *  nothing at all is what invites the extra click this guards against. */
+  pendingNotice?: string | null;
   /** Field-level errors the SERVER rejected, so the two validators agree visibly. */
   fieldErrors?: CreateValidationError[];
   t?: CreateItemModalTexts;
@@ -110,6 +113,7 @@ export function CreateItemModal({
   onSubmit,
   submitting = false,
   error,
+  pendingNotice,
   fieldErrors = [],
   t = {},
 }: CreateItemModalProps) {
@@ -133,9 +137,31 @@ export function CreateItemModal({
   const basicFields = allFields.filter((f) => !f.advanced);
   const advancedFields = allFields.filter((f) => f.advanced);
 
+  const setValue = useCallback((key: string, value: string) => {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  /**
+   * A `select` shows its first option before anyone touches it. Displaying a
+   * default without SENDING it means an untouched "Status: Draft" is never
+   * transmitted and Shopify applies its own, different default — the form
+   * would be showing one thing and doing another.
+   */
+  const withSelectDefaults = useCallback(
+    (raw: Record<string, string>) => {
+      const filled = { ...raw };
+      for (const field of allFields) {
+        if (field.kind !== "select" || !field.options?.length) continue;
+        if (!filled[field.key]) filled[field.key] = field.options[0].value;
+      }
+      return filled;
+    },
+    [allFields],
+  );
+
   const localErrors = useMemo(
-    () => (spec ? validateCreatePayload(resource, values, runtimeFields) : []),
-    [spec, resource, values, runtimeFields],
+    () => (spec ? validateCreatePayload(resource, withSelectDefaults(values), runtimeFields) : []),
+    [spec, resource, values, runtimeFields, withSelectDefaults],
   );
   // Server errors win: they are the authority, and showing only the local ones
   // would hide a rejection the merchant has to act on.
@@ -145,9 +171,23 @@ export function CreateItemModal({
   const isDirty = Object.values(values).some((v) => v.trim().length > 0) || !!image;
   const canSubmit = !submitting && !blocked && localErrors.length === 0;
 
-  const setValue = useCallback((key: string, value: string) => {
-    setValues((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  /**
+   * Drop `field.*` values belonging to a metaobject definition that is no
+   * longer selected. They would validate as `unknownField` against fields that
+   * are not rendered any more — an error with no visible cause, and a Create
+   * button disabled forever.
+   */
+  useEffect(() => {
+    if (!extraFieldsKey) return;
+    const allowed = new Set(chosenExtras.map((f) => f.key));
+    setValues((prev) => {
+      const stale = Object.keys(prev).filter((k) => k.startsWith("field.") && !allowed.has(k));
+      if (stale.length === 0) return prev;
+      const next = { ...prev };
+      for (const key of stale) delete next[key];
+      return next;
+    });
+  }, [extraFieldsKey, chosenExtras]);
 
   const handleClose = useCallback(() => {
     // AppSaveBar convention (§1.4): unsaved input is never dropped silently.
@@ -164,12 +204,12 @@ export function CreateItemModal({
     if (localErrors.length > 0) return;
     onSubmit({
       resource,
-      values,
+      values: withSelectDefaults(values),
       imageUrl: image?.url ?? "",
       imageAlt: image?.alt ?? "",
       requestId: mintRequestId(),
     });
-  }, [localErrors, onSubmit, resource, values, image]);
+  }, [localErrors, onSubmit, resource, values, image, withSelectDefaults]);
 
   /**
    * The picker can return video and 3D as well. Swallowing those silently is
@@ -370,6 +410,12 @@ export function CreateItemModal({
             {error && (
               <Banner tone="critical" title="Could not create">
                 <p>{error}</p>
+              </Banner>
+            )}
+
+            {pendingNotice && (
+              <Banner tone="info">
+                <p>{pendingNotice}</p>
               </Banner>
             )}
 

@@ -138,6 +138,11 @@ interface UnifiedItemListProps {
   /** Optional: Accessible label / tooltip for the add button */
   addButtonLabel?: string;
 
+  /** Optional: disable the add button while keeping it VISIBLE. A refused
+   *  create must explain itself, not disappear — a missing button reads as a
+   *  missing feature (PLAN_CONTENT_CREATION §1.2). */
+  addButtonDisabled?: boolean;
+
   /** Optional: Show a trash button to delete the selected entry (default: false).
    *  Only enabled when an item is selected — without a target there is nothing
    *  to remove. Other content tabs can opt-in later; for now used by the
@@ -202,6 +207,7 @@ export function UnifiedItemList({
   showAddButton = false,
   onAddItem,
   addButtonLabel,
+  addButtonDisabled,
   showDeleteButton = false,
   onDeleteItem,
   deleteButtonLabel,
@@ -725,13 +731,21 @@ export function UnifiedItemList({
                   </Tooltip>
                 )}
                 {showAddButton && onAddItem && (
-                  <Button
-                    icon={PlusIcon}
-                    variant="primary"
-                    onClick={onAddItem}
-                    accessibilityLabel={addButtonLabel || "Add"}
-                    size="slim"
-                  />
+                  <Tooltip content={addButtonLabel || "Add"}>
+                    {/* A disabled control dispatches no pointer events, so the
+                        tooltip needs a wrapper to be reachable at all — the
+                        same reason DisabledActionTooltip exists. */}
+                    <span>
+                      <Button
+                        icon={PlusIcon}
+                        variant="primary"
+                        onClick={onAddItem}
+                        disabled={addButtonDisabled}
+                        accessibilityLabel={addButtonLabel || "Add"}
+                        size="slim"
+                      />
+                    </span>
+                  </Tooltip>
                 )}
                 {showDeleteButton && onDeleteItem && (
                   <Button

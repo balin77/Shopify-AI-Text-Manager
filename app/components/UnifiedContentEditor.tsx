@@ -444,12 +444,22 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // §1.6: select the new item and refresh. When the cache sync failed the
       // item is NOT in the list yet — the banner says so and offers a reload
       // rather than pretending the create failed.
-      if (info.synced) {
-        handleItemSelectRef.current(info.id);
-        revalidator?.revalidate();
-      }
+      if (!info.synced) return;
+      // The metaobjects tab lists TYPES (`metaobject_type_<type>`), not
+      // entries, so the new entry's GID matches no row — selecting it would
+      // silently clear the selection. Refresh and leave the selection alone.
+      if (info.resource !== "metaobject") handleItemSelectRef.current(info.id);
+      revalidator?.revalidate();
     },
   });
+
+  // registerItems() sets context state on every call, and every consumer
+  // re-renders when it does. Depending that effect on a callback whose
+  // identity changes each render is therefore not a missing-dep nicety but an
+  // infinite loop. The handler goes through a ref so the effect can depend on
+  // VALUES only.
+  const handleAddItemRef = useRef<() => void>(() => {});
+  const stableAddItem = useCallback(() => handleAddItemRef.current(), []);
 
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
@@ -461,6 +471,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     }
     setChooserOpen(true);
   }, [createResources, createItem]);
+  handleAddItemRef.current = handleAddItem;
 
   const createDisabledReason = useMemo(() => {
     if (createResources.length === 0 || createItem.anyAllowed) return null;
@@ -619,7 +630,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       resourceName: translatedResourceName,
       // §1.2 — the SAME entry point on mobile. Without it the "+" lives only
       // on the desktop list and creating is unreachable on a phone.
-      onAddItem: createResources.length > 0 ? handleAddItem : null,
+      onAddItem: createResources.length > 0 ? stableAddItem : null,
       addDisabledReason: createDisabledReason,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
@@ -627,7 +638,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         selectItem: t.content?.selectItem || `Select ${translatedResourceName.singular}`,
       },
     });
-  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural, createResources.length, handleAddItem, createDisabledReason]);
+  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural, createResources.length, stableAddItem, createDisabledReason]);
 
   // Cleanup: clear items when component unmounts
   useEffect(() => {
@@ -729,6 +740,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           planLimit={finalPlanLimit}
           showAddButton={createResources.length > 0}
           onAddItem={handleAddItem}
+          // Visible-but-disabled with the reason, the same as the mobile path.
+          // Labelling it without disabling it let a merchant fill in a whole
+          // form only to meet a 403 — and made the two entry points disagree.
+          addButtonDisabled={!!createDisabledReason}
           addButtonLabel={createDisabledReason || t.content?.createButtonLabel || "Create"}
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
@@ -1532,6 +1547,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onSubmit={createItem.create}
           submitting={createItem.submitting}
           error={createItem.error}
+          pendingNotice={createItem.pendingNotice}
           fieldErrors={createItem.fieldErrors}
           t={t.content?.createModal}
         />

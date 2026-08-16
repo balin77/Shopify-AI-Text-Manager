@@ -64,6 +64,7 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<CreateValidationError[]>([]);
   const [created, setCreated] = useState<CreatedItemInfo | null>(null);
+  const [pendingNotice, setPendingNotice] = useState<string | null>(null);
 
   const gates = useMemo(() => {
     const base = evaluateCreateGates(plan, resources, counts);
@@ -98,6 +99,7 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
   const open = useCallback((resource: CreatableResource) => {
     setError(null);
     setFieldErrors([]);
+    setPendingNotice(null);
     setOpenResource(resource);
   }, []);
 
@@ -123,6 +125,18 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
+        if (!data.success) {
+          // A FAILED lookup is not "this shop has no blogs". Without this the
+          // form would show an empty required picker and no explanation —
+          // and, worse, the "create a blog first" hint would fire on a shop
+          // that has plenty. Same rule as everywhere else here: an empty
+          // result is not evidence.
+          setError(typeof data.error === "string" ? data.error : "Could not load the options for this form.");
+          setDynamicOptions({});
+          setExtraFieldsByOption({});
+          setNeedsBlogFirst(false);
+          return;
+        }
         setDynamicOptions(data.options ?? {});
         setExtraFieldsByOption(data.extraFieldsByOption ?? {});
         setNeedsBlogFirst(!!data.needsBlogFirst);
@@ -156,6 +170,7 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
       setSubmitting(true);
       setError(null);
       setFieldErrors([]);
+      setPendingNotice(null);
       pendingPayload.current = { resource: payload.resource };
 
       const formData = new FormData();
@@ -187,8 +202,14 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     setSubmitting(false);
 
     if (result.pending) {
-      // The same request is already running (§1.7). Not an error, and
-      // emphatically not a reason to submit again.
+      // The same request is already running (§1.7). Not an error — but saying
+      // nothing at all just stops the spinner, which is exactly what invites
+      // the extra click this guard exists to absorb.
+      setPendingNotice(
+        typeof result.message === "string"
+          ? result.message
+          : "This is already being created — please wait a moment rather than submitting again.",
+      );
       return;
     }
     if (!result.success) {
@@ -236,6 +257,7 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     create,
     submitting,
     error,
+    pendingNotice,
     fieldErrors,
     dynamicOptions,
     extraFieldsByOption,

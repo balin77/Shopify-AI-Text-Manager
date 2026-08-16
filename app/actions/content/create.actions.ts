@@ -121,6 +121,13 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
 
   const requestId = getFormString(formData, "requestId") || "";
 
+  // Once Shopify has created the object, NOTHING downstream may turn this into
+  // a failure: the merchant would retry and get a duplicate they cannot delete
+  // from this app (§0.1). This holds the id from the moment it exists so the
+  // catch below can tell "nothing happened" from "it exists, a later step
+  // stumbled".
+  let createdSoFar: CreateOutcome | null = null;
+
   // ── Idempotency (§1.7) ──────────────────────────────────────────────────
   // Checked BEFORE the plan gates so a retry cannot be turned into a
   // limit-reached error by the object the FIRST attempt already created.
@@ -230,11 +237,21 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
         return json({ success: false, error: `Unhandled resource: ${resource}` }, { status: 400 });
     }
 
+    createdSoFar = outcome;
+
     // SEO for page/article/blog is a SECOND step — the create input has no
     // `seo` field at all and the values would otherwise vanish silently.
+    // Wrapped: the resource already exists, so a transport failure here is a
+    // NOTE on a successful create, never a failed one.
     if (spec.seoViaMetafields) {
-      const seoNote = await writeSeoMetafields(graphql, outcome.id, str(input, "seoTitle"), str(input, "metaDescription"));
-      if (seoNote) outcome.notes.push(seoNote);
+      try {
+        const seoNote = await writeSeoMetafields(graphql, outcome.id, str(input, "seoTitle"), str(input, "metaDescription"));
+        if (seoNote) outcome.notes.push(seoNote);
+      } catch (seoError) {
+        const message = seoError instanceof Error ? seoError.message : String(seoError);
+        logger.warn("[CreateContent] SEO metafield step failed", { context: "CreateContent", id: outcome.id, error: message });
+        outcome.notes.push("SEO fields could not be stored — please set them on the item.");
+      }
     }
 
     // ── 5. Cache, keyword, response ───────────────────────────────────────
@@ -292,10 +309,34 @@ export async function handleCreateContent(ctx: ContentActionHandlerContext, form
 
     return json(result);
   } catch (error) {
-    // Release the claim so the merchant can genuinely retry — a failed create
-    // that stays claimed would answer every retry with "already in progress".
-    releaseCreateRequest(session.shop, requestId);
     const message = error instanceof Error ? error.message : String(error);
+
+    if (createdSoFar) {
+      // The object EXISTS. Reporting a failure here — and releasing the claim
+      // with it — is precisely the "retry produces a duplicate" outcome this
+      // whole flow is built to prevent. Report success with the problem as a
+      // note, keep the claim, and let the merchant reload.
+      logger.error("[CreateContent] Created, but a later step failed", {
+        context: "CreateContent", shop: session.shop, resource, id: createdSoFar.id, error: message,
+      });
+      const salvaged = {
+        actionType: "createContent" as const,
+        success: true as const,
+        resource,
+        id: createdSoFar.id,
+        handle: createdSoFar.handle ?? null,
+        title: createdSoFar.title ?? null,
+        synced: false,
+        notes: [...createdSoFar.notes, "The item was created, but finishing up failed. Reload to see it — do not create it again."],
+      };
+      recordCreateResult(session.shop, requestId, salvaged);
+      return json(salvaged);
+    }
+
+    // Nothing was created: release the claim so the merchant can genuinely
+    // retry — a failed create that stays claimed would answer every retry
+    // with "already in progress".
+    releaseCreateRequest(session.shop, requestId);
     logger.error("[CreateContent] Failed", { context: "CreateContent", shop: session.shop, resource, error: message });
     return json({ success: false, error: message }, { status: 500 });
   }
@@ -515,8 +556,20 @@ async function createMetaobject(
   // The definition's fields arrive prefixed so they cannot collide with the
   // spec's own keys (`handle`, `type`).
   const fields = extraFields
-    .map((f) => ({ key: f.key.replace(/^field\./, ""), value: str(input, f.key) }))
-    .filter((f) => f.value.length > 0);
+    .map((f) => {
+      const raw = str(input, f.key);
+      return {
+        key: f.key.replace(/^field\./, ""),
+        // `list.single_line_text_field` is stored as a JSON array. Sending the
+        // comma-separated string the form collected would be rejected every
+        // time, which would make such definitions "offered but impossible".
+        value: f.listValue
+          ? JSON.stringify(raw.split(",").map((v) => v.trim()).filter(Boolean))
+          : raw,
+        listValue: !!f.listValue,
+      };
+    })
+    .filter((f) => (f.listValue ? f.value !== "[]" : f.value.length > 0));
 
   const response = await graphql(CREATE_METAOBJECT, {
     metaobject: stripUndefined({

@@ -128,6 +128,22 @@ describe("metaobjectCreatability", () => {
 });
 
 describe("metaobjectFieldDefs", () => {
+  it("marks a list field so the server can serialise it", () => {
+    // `list.single_line_text_field` is stored as a JSON ARRAY. Sending the
+    // comma-separated string the form collects would be rejected every time,
+    // which would make a definition with such a REQUIRED field "offered but
+    // impossible to create" — advertised, then always refused.
+    const defs = metaobjectFieldDefs([
+      { key: "sizes", type: { name: "list.single_line_text_field" } },
+      { key: "headline", type: { name: "single_line_text_field" } },
+    ]);
+    const list = defs.find((d) => d.key === "field.sizes")!;
+    const plain = defs.find((d) => d.key === "field.headline")!;
+    expect(list.listValue).toBe(true);
+    expect(list.kind).toBe("tags");
+    expect(plain.listValue).toBe(false);
+  });
+
   it("renders only the three editable field types", () => {
     const defs = metaobjectFieldDefs([
       { key: "a", type: { name: "single_line_text_field" } },
