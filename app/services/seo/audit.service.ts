@@ -781,11 +781,15 @@ async function buildOnPageProblemBuckets(
       // Mirrors `isExternalLinkBroken`: 403/429 is a bot filter refusing US
       // (same rule as the internal broken-link list), and -2 means the pass
       // never got to it. Neither is a dead link.
+      // Must mirror `isExternalLinkBroken` exactly. `lte: -1` would ALSO match
+      // EXTERNAL_NOT_CHECKED (-2) — a budget-exhausted pass would then show
+      // "600 dead external links" on the dashboard while the tab it deep-links
+      // to correctly reports zero. The sentinels are listed explicitly.
       where: {
         shop,
         snapshotId,
         statusCode: { notIn: [403, 429] },
-        OR: [{ statusCode: { gte: 400 } }, { statusCode: { lte: -1 } }, { statusCode: 0 }],
+        OR: [{ statusCode: { gte: 400 } }, { statusCode: -1 }, { statusCode: 0 }],
       },
     })
     // Its own guard for the same reason as above: the external-link pass is

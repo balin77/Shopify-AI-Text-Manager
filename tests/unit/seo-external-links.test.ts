@@ -10,7 +10,7 @@ import {
   EXTERNAL_NOT_CHECKED,
   MAX_SAMPLE_SOURCES,
   type ExternalTarget,
-} from "~/services/seo/external-links";
+} from "~/services/seo/external-links.server";
 
 /** PLAN_SEO_CRAWL_EXPANSION §6 — outbound links to other domains. */
 
@@ -91,7 +91,14 @@ describe("checkExternalUrl", () => {
   afterEach(() => server.resetHandlers());
   afterAll(() => server.close());
 
-  const deps = { userAgent: UA, timeoutMs: 2000 };
+  // msw intercepts fetch, so the hosts below never resolve for real — the
+  // resolver is injected. Anything not named here resolves to a public address.
+  const lookupImpl = async (hostname: string): Promise<string[]> => {
+    if (hostname === "internal.example") return ["10.0.0.5"];
+    if (hostname === "unresolvable.example") throw new Error("ENOTFOUND");
+    return ["93.184.216.34"];
+  };
+  const deps = { userAgent: UA, timeoutMs: 2000, lookupImpl };
 
   it("uses HEAD when the host answers it", async () => {
     const methods: string[] = [];
@@ -185,6 +192,33 @@ describe("checkExternalUrl", () => {
     expect(result.statusCode).toBe(0);
   });
 
+  it("REFUSES a host that merely RESOLVES to a private address", async () => {
+    // The lexical guard cannot see this — `internal.example` looks like any
+    // other domain. On Railway `*.railway.internal` is exactly this shape.
+    let hit = false;
+    server.use(
+      http.all("https://internal.example/x", () => {
+        hit = true;
+        return new HttpResponse(null, { status: 200 });
+      }),
+    );
+    const result = await checkExternalUrl("https://internal.example/x", deps);
+    expect(hit).toBe(false);
+    expect(result.statusCode).toBe(0);
+  });
+
+  it("fails CLOSED when the name cannot be resolved", async () => {
+    let hit = false;
+    server.use(
+      http.all("https://unresolvable.example/x", () => {
+        hit = true;
+        return new HttpResponse(null, { status: 200 });
+      }),
+    );
+    expect((await checkExternalUrl("https://unresolvable.example/x", deps)).statusCode).toBe(0);
+    expect(hit).toBe(false);
+  });
+
   it("reports an unreachable host as 0 rather than throwing", async () => {
     server.use(http.all("https://down.example/x", () => HttpResponse.error()));
     expect((await checkExternalUrl("https://down.example/x", deps)).statusCode).toBe(0);
@@ -192,6 +226,7 @@ describe("checkExternalUrl", () => {
 });
 
 describe("runExternalLinkPass", () => {
+  const lookupImpl = async (): Promise<string[]> => ["93.184.216.34"];
   const server = setupServer();
   beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
   afterEach(() => server.resetHandlers());
@@ -212,7 +247,7 @@ describe("runExternalLinkPass", () => {
     );
     const pass = await runExternalLinkPass(
       [target("https://a.example/1", { count: 12 }), target("https://b.example/2")],
-      { userAgent: UA, timeoutMs: 2000 },
+      { userAgent: UA, timeoutMs: 2000, lookupImpl },
     );
     expect(pass.results).toHaveLength(2);
     expect(pass.unchecked).toBe(0);
@@ -239,6 +274,7 @@ describe("runExternalLinkPass", () => {
     const pass = await runExternalLinkPass(targets, {
       userAgent: UA,
       timeoutMs: 2000,
+      lookupImpl,
       concurrency: 6,
       perHostConcurrency: 2,
     });
@@ -257,6 +293,7 @@ describe("runExternalLinkPass", () => {
     const pass = await runExternalLinkPass(targets, {
       userAgent: UA,
       timeoutMs: 2000,
+      lookupImpl,
       budgetMs: 60,
       concurrency: 2,
       perHostConcurrency: 2,
@@ -282,6 +319,7 @@ describe("runExternalLinkPass", () => {
     const pass = await runExternalLinkPass([target("https://shielded.example/x")], {
       userAgent: UA,
       timeoutMs: 2000,
+      lookupImpl,
     });
     expect(pass.results[0].statusCode).toBe(403);
     expect(isExternalLinkBroken(403)).toBe(false);
@@ -293,7 +331,7 @@ describe("runExternalLinkPass", () => {
     let beats = 0;
     await runExternalLinkPass(
       Array.from({ length: 6 }, (_, i) => target(`https://a.example/${i}`)),
-      { userAgent: UA, timeoutMs: 2000, progressEvery: 2, onProgress: () => { beats += 1; } },
+      { userAgent: UA, timeoutMs: 2000, lookupImpl, progressEvery: 2, onProgress: () => { beats += 1; } },
     );
     expect(beats).toBeGreaterThan(1);
   });
@@ -303,7 +341,7 @@ describe("runExternalLinkPass", () => {
     const many = Array.from({ length: MAX_SAMPLE_SOURCES + 3 }, (_, i) => `${PAGE}/${i}`);
     const pass = await runExternalLinkPass(
       [target("https://a.example/1", { count: 99, sources: many })],
-      { userAgent: UA, timeoutMs: 2000 },
+      { userAgent: UA, timeoutMs: 2000, lookupImpl },
     );
     expect(pass.results[0].sampleSources.split("\n")).toHaveLength(MAX_SAMPLE_SOURCES);
     expect(pass.results[0].sourceCount).toBe(99);

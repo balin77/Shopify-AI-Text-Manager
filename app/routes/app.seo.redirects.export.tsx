@@ -34,8 +34,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Comma-delimited and BOM-less, unlike the crawl/on-page exports: this file
   // is round-tripped through `parseRedirectsCsv` on import, and the format is
-  // what merchants already have in their tooling. The shared serializer only
-  // replaces the local `csvEscape` copy — the bytes are unchanged.
+  // what merchants already have in their tooling. The shared serializer
+  // replaces the local `csvEscape` copy; the only behavioural difference is
+  // that a cell starting with `= + - @` now gains a `'` formula guard — which
+  // a Shopify redirect path (always `/…`) cannot trigger, and a target only
+  // could if a merchant stored something that is not a URL.
   const csv = toCsv(
     all,
     [

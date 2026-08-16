@@ -1554,6 +1554,9 @@ describe("runCrawl — external links (PLAN_SEO_CRAWL_EXPANSION §6)", () => {
       maxPages: 100,
       spacingMs: 0,
       externalTimeoutMs: 2000,
+      // msw intercepts fetch, so `partner.example` never resolves for real and
+      // the SSRF guard — which fails closed — would refuse every fixture host.
+      externalLookupImpl: async () => ["93.184.216.34"],
     });
 
     // mailto: and the Shopify CDN asset are not links to check.

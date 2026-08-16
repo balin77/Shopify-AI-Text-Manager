@@ -92,6 +92,30 @@ describe("deriveIndexability", () => {
     expect(deriveIndexability({ ...base, indexabilityKnown: false, metaRobots: "" })).toBe("unknown");
   });
 
+  it("does NOT read `max-image-preview:none` as a noindex", () => {
+    // The value-carrying directives are the reason a token cannot simply be
+    // "everything after the colon": `none` alone is shorthand for
+    // noindex,nofollow, and this page is perfectly indexable.
+    expect(
+      deriveIndexability({ ...base, metaRobots: "index, follow, max-image-preview:none" }),
+    ).toBe("indexable");
+    expect(deriveIndexability({ ...base, xRobotsTag: "max-snippet:-1, max-video-preview:0" })).toBe(
+      "indexable",
+    );
+    expect(deriveIndexability({ ...base, metaRobots: "unavailable_after: 2026-01-01" })).toBe(
+      "indexable",
+    );
+  });
+
+  it("still catches a user-agent-prefixed noindex alongside a value directive", () => {
+    expect(
+      deriveIndexability({ ...base, xRobotsTag: "googlebot: noindex, max-image-preview:large" }),
+    ).toBe("noindex");
+    expect(
+      deriveIndexability({ ...base, xRobotsTag: "googlebot: max-image-preview:none" }),
+    ).toBe("indexable");
+  });
+
   it("is `unknown` for a page that did not serve content", () => {
     expect(deriveIndexability({ ...base, statusCode: 404 })).toBe("unknown");
   });

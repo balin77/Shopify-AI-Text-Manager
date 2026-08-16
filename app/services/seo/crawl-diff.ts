@@ -9,7 +9,7 @@
  * while a diff names the day it changed.
  */
 
-import type { IndexabilityVerdict } from "./onpage.service";
+import { deriveIndexability, type IndexabilityVerdict } from "./indexability.shared";
 
 /** The columns a diff needs — a deliberate subset of SeoCrawlPage. */
 export interface DiffRow {
@@ -43,25 +43,10 @@ export interface CrawlDiff {
   indexabilityComparable: boolean;
 }
 
-/** Local copy of the verdict rule, kept dependency-free on purpose: importing
- *  `deriveIndexability` would pull `onpage.service` → `crawl.service` →
- *  `url-resolver.server` into whatever imports this. The rule is three lines
- *  and covered by its own tests on both sides. */
-function verdict(row: DiffRow): IndexabilityVerdict {
-  if (!row.indexabilityKnown) return "unknown";
-  if (row.statusCode < 200 || row.statusCode >= 300) return "unknown";
-  const tokens = `${row.metaRobots},${row.xRobotsTag}`
-    .split(",")
-    .map((part) => {
-      const trimmed = part.trim();
-      const colon = trimmed.lastIndexOf(":");
-      return (colon >= 0 ? trimmed.slice(colon + 1) : trimmed).trim().toLowerCase();
-    })
-    .filter(Boolean);
-  if (tokens.some((t) => t === "noindex" || t === "none")) return "noindex";
-  if (tokens.some((t) => t === "nofollow")) return "nofollow_only";
-  return "indexable";
-}
+/** The ONE verdict rule (indexability.shared.ts) — this module used to carry a
+ *  hand-copied duplicate of it, which is precisely how one parsing bug ended up
+ *  in two places. */
+const verdict = (row: DiffRow): IndexabilityVerdict => deriveIndexability(row);
 
 function isBroken(statusCode: number): boolean {
   // Mirrors `classifyLinkStatus`'s "broken" bucket (4xx + redirect loop) —

@@ -24,6 +24,7 @@ import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { toCsv, csvFilename, type CsvColumn } from "../services/seo/csv-export";
 import { classifyLinkStatus, isBotBlockStatus } from "../services/seo/crawl.service";
+import { EXTERNAL_NOT_CHECKED } from "../services/seo/external-links.shared";
 
 const CATEGORIES = [
   "allPages",
@@ -77,10 +78,18 @@ interface ExportExternalLink {
 
 const EXTERNAL_COLUMNS: CsvColumn<ExportExternalLink>[] = [
   { header: "url", value: (r) => r.url },
-  // 0 and -1 are the crawler's sentinels, not HTTP statuses.
+  // -2/-1/0 are the crawler's sentinels, not HTTP statuses. They get the same
+  // words the UI uses, or a CSV reader has to guess what "-2" means.
   {
     header: "status",
-    value: (r) => (r.statusCode === -1 ? "redirect_loop" : r.statusCode === 0 ? "unreachable" : r.statusCode),
+    value: (r) =>
+      r.statusCode === EXTERNAL_NOT_CHECKED
+        ? "not_checked"
+        : r.statusCode === -1
+          ? "redirect_loop"
+          : r.statusCode === 0
+            ? "unreachable"
+            : r.statusCode,
   },
   { header: "final_url", value: (r) => r.finalUrl },
   { header: "linked_from_pages", value: (r) => r.sourceCount },

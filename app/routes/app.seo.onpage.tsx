@@ -163,6 +163,7 @@ const EMPTY_LISTS = {
     images: 0,
     headDrift: 0,
     duplicates: 0,
+    metaDuplicates: 0,
   },
 };
 
@@ -243,14 +244,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const thin = findThinPages(pages);
 
   const okPages = pages.filter((p) => p.statusCode >= 200 && p.statusCode < 300);
-  const duplicates = groupDuplicateTitles(
+  // Totals BEFORE the slice — taking `.length` of an already-sliced array is
+  // how a tile ends up reporting the cap ("100") as the answer.
+  const duplicatesAll = groupDuplicateTitles(
     okPages.map((p) => ({ url: p.url, title: p.title })),
     shopName,
-  ).slice(0, UI_ROW_CAP);
-  const metaDuplicates = groupDuplicateValues(
+  );
+  const metaDuplicatesAll = groupDuplicateValues(
     okPages.map((p) => ({ url: p.url, value: p.metaDesc })),
     normalizeMetaDescription,
-  ).slice(0, UI_ROW_CAP);
+  );
+  const duplicates = duplicatesAll.slice(0, UI_ROW_CAP);
+  const metaDuplicates = metaDuplicatesAll.slice(0, UI_ROW_CAP);
 
   // §3.8 — head drift moved over from the crawl tab, comparison rule unchanged.
   const headDriftCandidates = pages
@@ -326,7 +331,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       thin: thin.pages.length,
       images: images.length,
       headDrift: headDriftResult.count,
-      duplicates: duplicates.length,
+      duplicates: duplicatesAll.length,
+      metaDuplicates: metaDuplicatesAll.length,
     },
   });
 };
@@ -397,13 +403,19 @@ export default function SeoOnPage() {
     </BlockStack>
   );
 
-  const duplicateList = (groups: DuplicateGroupRow[], emptyText: string, hint: string) => (
+  const duplicateList = (
+    groups: DuplicateGroupRow[],
+    emptyText: string,
+    hint: string,
+    total: number,
+  ) => (
     <BlockStack gap="200">
       {groups.length === 0 ? (
         <Text as="p" tone="subdued">{emptyText}</Text>
       ) : (
         <>
           <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>
+          <CapNotice shown={groups.length} total={total} template={o.rowCapHint} />
           {groups.map((g) => (
             <BlockStack key={g.title} gap="100">
               <Text as="span" variant="bodySm" fontWeight="semibold">{g.title}</Text>
@@ -662,7 +674,7 @@ export default function SeoOnPage() {
                 </BlockStack>
                 <BlockStack gap="200">
                   <Text as="h4" variant="headingSm">{o.metaDuplicateTitle}</Text>
-                  {duplicateList(data.metaDuplicates, o.emptyMetaDuplicates, o.metaDuplicateHint)}
+                  {duplicateList(data.metaDuplicates, o.emptyMetaDuplicates, o.metaDuplicateHint, data.totals.metaDuplicates)}
                 </BlockStack>
               </BlockStack>
             )}
@@ -743,7 +755,7 @@ export default function SeoOnPage() {
             )}
 
             {activeTab === "duplicates" &&
-              duplicateList(data.duplicates, o.emptyDuplicates, o.duplicatesHint)}
+              duplicateList(data.duplicates, o.emptyDuplicates, o.duplicatesHint, data.totals.duplicates)}
           </BlockStack>
         </Card>
       )}

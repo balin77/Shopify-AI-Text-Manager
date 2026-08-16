@@ -56,6 +56,17 @@ describe("diffCrawls", () => {
     expect(diff.indexabilityChanged).toEqual([{ url: "/a", from: "indexable", to: "noindex" }]);
   });
 
+  it("shares the ONE verdict rule — `max-image-preview:none` is not a noindex here either", () => {
+    // This module used to carry a hand-copied duplicate of the rule, which is
+    // how one parsing bug lived in two places.
+    const diff = diffCrawls(
+      [r("/a")],
+      [r("/a", { metaRobots: "index, max-image-preview:none" })],
+    );
+    expect(diff.indexabilityChanged).toEqual([]);
+    expect(diff.counts.nonIndexable).toEqual([0, 0]);
+  });
+
   it("does not count a firewall block as broken", () => {
     const diff = diffCrawls([r("/a")], [r("/a", { statusCode: 403 })]);
     expect(diff.counts.broken).toEqual([0, 0]);

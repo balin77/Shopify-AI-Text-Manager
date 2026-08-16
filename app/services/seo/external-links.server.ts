@@ -15,17 +15,29 @@
  *
  * The pure half is exported separately from the fetching half so the rules
  * (what counts as an external link, what a status means) are unit-testable
- * without a network.
+ * without a network — see `external-links.shared.ts`, which is also what the
+ * report component imports (this module reaches for `node:dns`).
  */
 
 import { isPrivateOrLoopbackHost } from "../../utils/private-host";
+import {
+  MAX_EXTERNAL_TARGETS,
+  MAX_SAMPLE_SOURCES,
+  EXTERNAL_NOT_CHECKED,
+  type ExternalTarget,
+  type ExternalCheckResult,
+} from "./external-links.shared";
 
-/** Distinct target URLs recorded per crawl. Past this only `count` keeps
- *  rising — and the UI SAYS so (§6.1: silent truncation has hurt this codebase
- *  before). */
-export const MAX_EXTERNAL_TARGETS = 2000;
-/** Source URLs kept per target for the "linked from" list. */
-export const MAX_SAMPLE_SOURCES = 5;
+// Re-exported so callers need only one import; the definitions live in the
+// client-safe module.
+export {
+  MAX_EXTERNAL_TARGETS,
+  MAX_SAMPLE_SOURCES,
+  EXTERNAL_NOT_CHECKED,
+  isExternalLinkBroken,
+  isExternalLinkBlocked,
+} from "./external-links.shared";
+export type { ExternalTarget, ExternalCheckResult } from "./external-links.shared";
 
 /** Parallel checks. Three times the crawl's, because these requests go to many
  *  different strangers rather than all to one storefront edge. */
@@ -94,66 +106,65 @@ export function normalizeExternalUrl(
   return u.toString();
 }
 
-export interface ExternalTarget {
-  url: string;
-  /** How many pages link here (every occurrence, not just the sampled ones). */
-  count: number;
-  /** Up to MAX_SAMPLE_SOURCES source page URLs. */
-  sources: string[];
-  anchor: string | null;
-}
-
-/**
- * `statusCode` sentinel for a target the pass never got to — the 120s budget
- * ran out (§6.3). Persisted rather than dropped, because "we did not check
- * these" and "these are fine" must not look the same in the report.
- */
-export const EXTERNAL_NOT_CHECKED = -2;
-
-export interface ExternalCheckResult {
-  url: string;
-  /** HTTP status, `0` = timeout/DNS/refused by the safety guard, `-1` = redirect
-   *  loop or more than EXTERNAL_MAX_HOPS, `-2` = not checked (budget). Same
-   *  sentinel convention as SeoCrawlPage. */
-  statusCode: number;
-  /** Set when the link redirected. "points at http://, redirects to https://"
-   *  is a useful finding in its own right. */
-  finalUrl: string | null;
-  sourceCount: number;
-  sampleSources: string;
-  anchor: string | null;
-}
-
-/**
- * True when a result is a genuine dead link.
- *
- * 403/429 are excluded, for exactly the reason `isBotBlockStatus`
- * (crawl.service.ts) excludes them from the internal broken-link list: they
- * mean "a bot filter refused US", not "the target is gone" — a visitor and
- * Googlebot still reach the page. Here the risk is higher, not lower: the
- * check already retries a HEAD-403 with a GET, so a 403 that survives is
- * almost always a shield that refuses non-browser clients outright. Counting
- * those as dead links would flood the report with false positives, which is
- * the failure mode §6.2 exists to avoid.
- *
- * `EXTERNAL_NOT_CHECKED` is not broken either — it is unknown, and the UI says
- * so separately.
- */
-export function isExternalLinkBroken(statusCode: number): boolean {
-  if (statusCode === EXTERNAL_NOT_CHECKED) return false;
-  if (statusCode === 403 || statusCode === 429) return false;
-  return statusCode <= 0 || statusCode >= 400;
-}
-
-/** A bot filter refused the check — reported, but never as a dead link. */
-export function isExternalLinkBlocked(statusCode: number): boolean {
-  return statusCode === 403 || statusCode === 429;
-}
-
 interface CheckDeps {
   fetchImpl?: typeof fetch;
   userAgent: string;
   timeoutMs?: number;
+  /** Injectable resolver (tests). Defaults to `dns.promises.lookup`. */
+  lookupImpl?: (hostname: string) => Promise<string[]>;
+  /** Shared across one pass so a host is resolved once, not once per link. */
+  resolvedHostCache?: Map<string, boolean>;
+}
+
+/** Budget for the pre-fetch DNS check. A name that cannot be resolved this
+ *  fast would not have been fetchable either. */
+const DNS_LOOKUP_TIMEOUT_MS = 2_000;
+
+/**
+ * True when `hostname` is safe to fetch — LEXICALLY and by RESOLUTION.
+ *
+ * `isPrivateOrLoopbackHost` can only judge literals, so a plain NAME pointing
+ * inside the network walks straight past it. That is not hypothetical here:
+ * this app deploys on Railway, where `*.railway.internal` names resolve to
+ * private addresses, and an external link is by definition attacker-influenced
+ * — anyone who can get an `<a href>` into the storefront (the merchant, but
+ * also a reviews/UGC app) would otherwise have a blind SSRF oracle whose
+ * results this feature helpfully persists and exports as CSV.
+ *
+ * Fails CLOSED: an unresolvable or slow name is refused. That costs nothing —
+ * the fetch would have failed too — and keeps a resolver hiccup from becoming
+ * a hole. DNS rebinding (a name that resolves differently between this check
+ * and the fetch) is explicitly out of scope; closing it needs connection-level
+ * control this runtime does not offer.
+ */
+async function isPublicHost(hostname: string, deps: CheckDeps): Promise<boolean> {
+  if (isPrivateOrLoopbackHost(hostname)) return false;
+  const cache = deps.resolvedHostCache;
+  const cached = cache?.get(hostname);
+  if (cached !== undefined) return cached;
+
+  const lookup =
+    deps.lookupImpl ??
+    (async (host: string) => {
+      const { promises } = await import("node:dns");
+      const records = await promises.lookup(host, { all: true });
+      return records.map((r) => r.address);
+    });
+
+  let ok: boolean;
+  try {
+    const addresses = await Promise.race([
+      lookup(hostname),
+      new Promise<string[]>((_, reject) =>
+        setTimeout(() => reject(new Error("dns_timeout")), DNS_LOOKUP_TIMEOUT_MS),
+      ),
+    ]);
+    ok = addresses.length > 0 && addresses.every((address) => !isPrivateOrLoopbackHost(address));
+  } catch {
+    ok = false;
+  }
+  cache?.set(hostname, ok);
+  return ok;
 }
 
 /**
@@ -174,21 +185,26 @@ export async function checkExternalUrl(url: string, deps: CheckDeps): Promise<{ 
   const fetchImpl = deps.fetchImpl ?? fetch;
   const timeoutMs = deps.timeoutMs ?? EXTERNAL_TIMEOUT_MS;
 
-  const isFetchable = (candidate: string): boolean => {
+  const isFetchable = async (candidate: string): Promise<boolean> => {
+    let u: URL;
     try {
-      const u = new URL(candidate);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-      return !isPrivateOrLoopbackHost(u.hostname);
+      u = new URL(candidate);
     } catch {
       return false;
     }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    return isPublicHost(u.hostname, deps);
   };
 
   const run = async (method: "HEAD" | "GET"): Promise<{ statusCode: number; finalUrl: string | null }> => {
     let current = url;
     const seen = new Set<string>([url]);
     for (let hop = 0; hop <= EXTERNAL_MAX_HOPS; hop++) {
-      if (!isFetchable(current)) return { statusCode: 0, finalUrl: current === url ? null : current };
+      // Every hop, not just the first: an external link may point anywhere,
+      // and a cooperative host can redirect the checker inward.
+      if (!(await isFetchable(current))) {
+        return { statusCode: 0, finalUrl: current === url ? null : current };
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let res: Response;
@@ -210,6 +226,12 @@ export async function checkExternalUrl(url: string, deps: CheckDeps): Promise<{ 
       } finally {
         clearTimeout(timer);
       }
+
+      // Nothing below reads the body (HEAD has none, and the GET only asks for
+      // one byte — `Range` is advisory, so hosts that ignore it stream a full
+      // page). Undici holds the socket until the body is consumed or cancelled,
+      // and a pass can make 2000 of these.
+      void res.body?.cancel().catch(() => {});
 
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("location");
@@ -269,6 +291,9 @@ export async function runExternalLinkPass(
     now?: () => number;
   },
 ): Promise<ExternalPassResult> {
+  // One DNS answer per host for the whole pass, not one per link.
+  const resolvedHostCache = deps.resolvedHostCache ?? new Map<string, boolean>();
+  const checkDeps: CheckDeps = { ...deps, resolvedHostCache };
   const now = deps.now ?? Date.now;
   const deadline = now() + (deps.budgetMs ?? EXTERNAL_CHECK_BUDGET_MS);
   const concurrency = deps.concurrency ?? EXTERNAL_CONCURRENCY;
@@ -332,7 +357,7 @@ export async function runExternalLinkPass(
         continue;
       }
       try {
-        const outcome = await checkExternalUrl(next.target.url, deps);
+        const outcome = await checkExternalUrl(next.target.url, checkDeps);
         results.push({
           url: next.target.url,
           statusCode: outcome.statusCode,

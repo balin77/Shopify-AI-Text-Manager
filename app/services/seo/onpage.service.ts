@@ -14,67 +14,21 @@
  */
 
 import { normalizeCrawlUrl, classifyLinkStatus } from "./crawl.service";
+import { deriveIndexability, type IndexabilityVerdict } from "./indexability.shared";
 
 // ── §3.1 Indexability ──────────────────────────────────────────────────────
+//
+// The verdict itself lives in `indexability.shared.ts`: the crawl DIFF needs
+// the same rule in component scope, and a hand-copied second version is what
+// let a directive-parsing bug ship to both. Re-exported here so every existing
+// import site (and its tests) keeps working.
 
-export type IndexabilityVerdict =
-  /** Nothing stops it from being indexed. */
-  | "indexable"
-  /** `noindex`/`none` in the meta tag OR the X-Robots-Tag header. */
-  | "noindex"
-  /** Indexable, but its links are not followed. */
-  | "nofollow_only"
-  /** The snapshot never looked (old row, or a page with no body). NOT "fine". */
-  | "unknown";
-
-export interface IndexabilityInput {
-  metaRobots: string;
-  xRobotsTag: string;
-  indexabilityKnown: boolean;
-  statusCode: number;
-}
-
-/**
- * Splits a robots directive string into bare directive tokens.
- *
- * Both sources are comma-separated lists. `X-Robots-Tag` may additionally
- * address a specific crawler (`googlebot: noindex, nosnippet`), and repeated
- * headers arrive comma-joined from `Headers.get()`, so a token can carry a
- * `<user-agent>:` prefix. The prefix is dropped rather than parsed: a
- * `noindex` aimed at Googlebot is exactly the finding this report exists for,
- * so narrowing by user-agent would hide the most valuable case.
- */
-function robotsTokens(raw: string): string[] {
-  return (raw || "")
-    .split(",")
-    .map((part) => {
-      const trimmed = part.trim();
-      const colon = trimmed.lastIndexOf(":");
-      return (colon >= 0 ? trimmed.slice(colon + 1) : trimmed).trim().toLowerCase();
-    })
-    .filter(Boolean);
-}
-
-/**
- * The page's indexability, derived — never stored (§1.1): the raw strings are
- * persisted so this rule can be corrected without a re-crawl.
- *
- * `none` is shorthand for `noindex, nofollow`, so it counts as both.
- */
-export function deriveIndexability(row: IndexabilityInput): IndexabilityVerdict {
-  // The flag, not the emptiness of the strings, is the discriminator: "" means
-  // "no directive served" OR "row written before the columns existed", and
-  // those are indistinguishable (§1.1).
-  if (!row.indexabilityKnown) return "unknown";
-  // Defensive: a non-2xx page never had a body parsed, so there is nothing to
-  // judge even if the flag somehow says otherwise.
-  if (row.statusCode < 200 || row.statusCode >= 300) return "unknown";
-
-  const tokens = [...robotsTokens(row.metaRobots), ...robotsTokens(row.xRobotsTag)];
-  if (tokens.some((t) => t === "noindex" || t === "none")) return "noindex";
-  if (tokens.some((t) => t === "nofollow")) return "nofollow_only";
-  return "indexable";
-}
+export {
+  deriveIndexability,
+  robotsTokens,
+  type IndexabilityVerdict,
+  type IndexabilityInput,
+} from "./indexability.shared";
 
 // ── §3.2 The false-positive rule for `noindex` ─────────────────────────────
 

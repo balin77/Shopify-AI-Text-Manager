@@ -36,7 +36,7 @@ import {
   MAX_EXTERNAL_TARGETS,
   MAX_SAMPLE_SOURCES,
   type ExternalTarget,
-} from "./external-links";
+} from "./external-links.server";
 import type { AuditType } from "./audit.service";
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -1097,6 +1097,10 @@ export interface RunCrawlDeps {
   /** Overrides for the external pass, used by tests to keep it instant. */
   externalBudgetMs?: number;
   externalTimeoutMs?: number;
+  /** Injectable DNS resolver for the external pass's SSRF guard. Tests mock
+   *  `fetch`, so without this the guard (which fails closed on an unresolvable
+   *  name) would refuse every fixture host. */
+  externalLookupImpl?: (hostname: string) => Promise<string[]>;
 }
 
 export interface CrawlSummary {
@@ -1172,6 +1176,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     checkExternalLinks = true,
     externalBudgetMs,
     externalTimeoutMs,
+    externalLookupImpl,
   } = deps;
 
   const userAgent = crawlUserAgent(appUrl);
@@ -1253,6 +1258,12 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   /** §6.1 — one entry per UNIQUE target URL, not per edge: an Instagram link
    *  in the footer appears on every page and would otherwise be 2000 rows. */
   const externalTargets = new Map<string, ExternalTarget>();
+  /** Last page seen linking to a target, so the same page linking twice counts
+   *  once. The UI says "linked from N PAGES", and a header + footer link to the
+   *  same partner would otherwise double it. Safe as a single value rather than
+   *  a Set: a page's `<a href>` sweep is synchronous, so all of one page's
+   *  occurrences for a target are consecutive. */
+  const externalLastSource = new Map<string, string>();
   let externalTruncated = false;
 
   const trackExternalTarget = (rawHref: string, fromUrl: string, anchor: string | null) => {
@@ -1260,9 +1271,12 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     if (!target) return;
     const existing = externalTargets.get(target);
     if (existing) {
-      existing.count += 1;
-      if (existing.sources.length < MAX_SAMPLE_SOURCES && !existing.sources.includes(fromUrl)) {
-        existing.sources.push(fromUrl);
+      if (externalLastSource.get(target) !== fromUrl) {
+        externalLastSource.set(target, fromUrl);
+        existing.count += 1;
+        if (existing.sources.length < MAX_SAMPLE_SOURCES && !existing.sources.includes(fromUrl)) {
+          existing.sources.push(fromUrl);
+        }
       }
       return;
     }
@@ -1273,6 +1287,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       return;
     }
     externalTargets.set(target, { url: target, count: 1, sources: [fromUrl], anchor });
+    externalLastSource.set(target, fromUrl);
   };
 
   const recordEdge = (from: string, to: string, anchor: string | null) => {
@@ -1684,6 +1699,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
         fetchImpl,
         budgetMs: externalBudgetMs,
         timeoutMs: externalTimeoutMs,
+        lookupImpl: externalLookupImpl,
         // The crawl loop's heartbeat has stopped by now, so without this the
         // merchant watches a frozen progress bar for up to two minutes.
         onProgress: async () => {

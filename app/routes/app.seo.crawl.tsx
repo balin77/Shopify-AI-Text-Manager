@@ -59,13 +59,15 @@ import { isBotBlockStatus, classifyLinkStatus } from "../services/seo/crawl.serv
 import { SLOW_PAGE_WARN_MS, type SnapshotHeaderView } from "../services/seo/crawl.shared";
 // Pure and dependency-free (see its header) — safe in component scope.
 import { hasDiffContent, type CrawlDiff } from "../services/seo/crawl-diff";
-// Also pure: only the private-host guard behind it, no server-only imports.
+// The client-safe half: `external-links.server` reaches for node:dns, so the
+// constants and classifications the component renders live in their own module
+// (same split as crawl.shared.ts).
 import {
   isExternalLinkBroken,
   isExternalLinkBlocked,
   EXTERNAL_NOT_CHECKED,
   MAX_EXTERNAL_TARGETS,
-} from "../services/seo/external-links";
+} from "../services/seo/external-links.shared";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
 const TYPE_PATH: Record<AuditType, string> = {
