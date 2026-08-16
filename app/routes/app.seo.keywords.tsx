@@ -42,6 +42,8 @@ import {
   listUngrouped,
   addKeywordsToGroup,
   removeKeywordFromGroup,
+  deleteKeyword,
+  moveKeyword,
   setKeywordPriority,
   MAX_KEYWORD_LENGTH,
   MAX_KEYWORDS_PER_ITEM,
@@ -157,6 +159,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         shop,
         resourceId: { in: resourceIds },
         locale: { in: locales },
+        // Global rows only — a market override would collide with the global
+        // row on the same (resourceId, key, locale) and the last one read would
+        // silently win the analysis.
+        marketId: "",
         key: { in: TRANSLATED_CONTENT_KEYS },
       },
       select: { resourceId: true, locale: true, key: true, value: true },
@@ -280,6 +286,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const groups = await listGroups(db, shop, activeLocale);
 
+  // Every group of the shop, across ALL languages — the move dialog's target
+  // picker needs the OTHER languages' groups, which `groups` (scoped to the
+  // active locale) deliberately doesn't list.
+  const allGroups = (
+    await db.seoKeywordGroup.findMany({
+      where: { shop },
+      select: { id: true, name: true, locale: true },
+      orderBy: { name: "asc" },
+    })
+  ).map((g) => ({ id: g.id, name: g.name, locale: g.locale }));
+
   // Sidebar counts for the "Alle" / "Ohne Gruppe" pseudo-groups (§2.1), scoped
   // to the active locale — badges without loading the rows.
   const [allCount, ungroupedCount] = await Promise.all([
@@ -389,6 +406,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     productTypes,
     isPro,
     groups,
+    allGroups,
     allCount,
     ungroupedCount,
     groupDetail,
@@ -403,6 +421,21 @@ type CsvErrorRow = { row: number; keyword: string; error: string };
 export type ActionResult =
   | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
   | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
+  // The keyword itself is gone, not just one of its assignments.
+  | { ok: true; kind: "keywordDeleted"; removedAssignments: number }
+  // Move to another group and/or language (§ "keyword is stuck in the language
+  // it was first tracked in"). The counters report what happened to the
+  // keyword's item assignments on a language change.
+  | {
+      ok: true;
+      kind: "keywordMoved";
+      keywordId: string;
+      targetLocale: string;
+      targetGroupId: string | null;
+      movedAssignments: number;
+      demoted: number;
+      droppedAssignments: number;
+    }
   // Bulk assignment (plan §4.1): `applied` writes plus a per-pair skip report.
   // `dryRun` echoes back so the client can tell a preview from a real apply.
   | { ok: true; kind: "assigned"; applied: number; skipped: AssignManySkip[]; dryRun?: boolean }
@@ -636,6 +669,63 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     return json<ActionResult>({ ok: true, kind: "groupDeleted" });
   }
 
+  // Delete a keyword outright (assignments + memberships cascade). Distinct
+  // from `deleteKeyword` above, which drops ONE assignment.
+  if (actionType === "deleteKeywordCompletely") {
+    const keywordId = getFormString(form, "keywordId");
+    if (!keywordId) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const { removedAssignments } = await deleteKeyword(db, session.shop, keywordId);
+    return json<ActionResult>({ ok: true, kind: "keywordDeleted", removedAssignments });
+  }
+
+  // ── Move a keyword to another group and/or language ──
+  if (actionType === "moveKeyword") {
+    const keywordId = getFormString(form, "keywordId");
+    const fromGroupId = getFormString(form, "fromGroupId");
+    const targetGroupIdRaw = getFormString(form, "targetGroupId");
+    const targetLocaleInput = getFormString(form, "targetLocale");
+    if (!keywordId) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    // Same locale rule as setKeyword/createGroup: "" (primary) is free, every
+    // other value must be a published secondary of THIS shop.
+    let targetLocale = "";
+    if (targetLocaleInput) {
+      const shopLocales = await getCachedShopLocales(admin, session.shop);
+      const isPublishedSecondary = shopLocales.some(
+        (l: any) => !l.primary && l.published && l.locale === targetLocaleInput,
+      );
+      if (!isPublishedSecondary) {
+        return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      }
+      targetLocale = targetLocaleInput;
+    }
+    // The pseudo groups ("Alle"/"Ohne Gruppe") are views, not memberships —
+    // never pass their sentinel id to the service as a source group.
+    const isPseudo = (id: string) => id === "__all__" || id === "__ungrouped__";
+    const result = await moveKeyword(db, session.shop, {
+      keywordId,
+      fromGroupId: fromGroupId && !isPseudo(fromGroupId) ? fromGroupId : null,
+      targetLocale,
+      targetGroupId: targetGroupIdRaw && !isPseudo(targetGroupIdRaw) ? targetGroupIdRaw : null,
+    });
+    if (!result.ok) {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    return json<ActionResult>({
+      ok: true,
+      kind: "keywordMoved",
+      keywordId: result.keywordId,
+      targetLocale,
+      targetGroupId: targetGroupIdRaw && !isPseudo(targetGroupIdRaw) ? targetGroupIdRaw : null,
+      movedAssignments: result.movedAssignments,
+      demoted: result.demoted,
+      droppedAssignments: result.droppedAssignments,
+    });
+  }
+
   if (actionType === "removeFromGroup") {
     const groupId = getFormString(form, "groupId");
     const keywordId = getFormString(form, "keywordId");
@@ -851,6 +941,53 @@ export default function SeoKeywords() {
     setAssignPanelOpen(true);
   };
   const closeAssignPanel = () => setAssignPanelOpen(false);
+  // Move a keyword to another group and/or language. Lives in the Shell like
+  // every other stateful flow; LibraryTab only renders the dialog.
+  const moveFetcher = useFetcher<ActionResult>();
+  const [moveModal, setMoveModal] = useState<{ keywordId: string; keyword: string; locale: string } | null>(null);
+  const [moveTargetLocale, setMoveTargetLocale] = useState("");
+  const [moveTargetGroupId, setMoveTargetGroupId] = useState("");
+  const openMoveModal = (row: { keywordId: string; keyword: string; locale: string }) => {
+    setMoveModal(row);
+    setMoveTargetLocale(row.locale);
+    // Pre-select the group the keyword is being viewed in (a pseudo group is a
+    // view, not a membership — it pre-selects "no group").
+    setMoveTargetGroupId(data.groupDetail && !data.groupDetail.pseudo ? data.groupDetail.id : "");
+  };
+  const closeMoveModal = () => setMoveModal(null);
+
+  // Delete a keyword for good. The confirm names the collateral damage —
+  // assignments and their ranking history cascade with it.
+  const handleDeleteKeywordRow = async (row: {
+    keywordId: string;
+    keyword: string;
+    assignmentCount: number;
+  }) => {
+    const ok = await confirm({
+      title: k.keywordDeleteConfirmTitle,
+      message: (row.assignmentCount > 0 ? k.keywordDeleteConfirmBodyAssigned : k.keywordDeleteConfirmBody)
+        .replace("{keyword}", row.keyword)
+        .replace("{count}", String(row.assignmentCount)),
+      confirmLabel: k.delete,
+      destructive: true,
+    });
+    if (!ok) return;
+    groupFetcher.submit({ actionType: "deleteKeywordCompletely", keywordId: row.keywordId }, { method: "post" });
+  };
+  const submitMove = () => {
+    if (!moveModal) return;
+    moveFetcher.submit(
+      {
+        actionType: "moveKeyword",
+        keywordId: moveModal.keywordId,
+        fromGroupId: data.groupDetail?.id ?? "",
+        targetLocale: moveTargetLocale,
+        targetGroupId: moveTargetGroupId,
+      },
+      { method: "post" },
+    );
+  };
+
   // Group rename + bulk priority (plan §5.1).
   const [renameValue, setRenameValue] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
@@ -926,6 +1063,29 @@ export default function SeoKeywords() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignFetcher.state, assignFetcher.data]);
+
+  // A successful move follows the keyword: the Locale-Navbar switches to the
+  // target language and the target group is selected, so the merchant sees
+  // where it landed instead of watching it vanish from the current view.
+  useEffect(() => {
+    if (moveFetcher.state !== "idle" || !moveFetcher.data) return;
+    const d = moveFetcher.data;
+    if (!d.ok || d.kind !== "keywordMoved") return;
+    setMoveModal(null);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (d.targetLocale) next.set("loc", d.targetLocale);
+        else next.delete("loc");
+        if (d.targetGroupId) next.set("group", d.targetGroupId);
+        else next.delete("group");
+        return next;
+      },
+      { preventScrollReset: true },
+    );
+    revalidator.revalidate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moveFetcher.state, moveFetcher.data]);
 
   // AI distribution over an explicit item selection (§3): the assign panel
   // hands us the chosen resourceIds + target type. targetType still selects the
@@ -1209,6 +1369,7 @@ export default function SeoKeywords() {
           <LibraryTab
             k={k}
             groups={data.groups}
+            allGroups={data.allGroups}
             allCount={data.allCount}
             ungroupedCount={data.ungroupedCount}
             groupDetail={data.groupDetail}
@@ -1255,6 +1416,16 @@ export default function SeoKeywords() {
             closeAssignPanel={closeAssignPanel}
             assignFetcher={assignFetcher}
             startDistribution={startDistribution}
+            moveModal={moveModal}
+            openMoveModal={openMoveModal}
+            closeMoveModal={closeMoveModal}
+            moveTargetLocale={moveTargetLocale}
+            setMoveTargetLocale={setMoveTargetLocale}
+            moveTargetGroupId={moveTargetGroupId}
+            setMoveTargetGroupId={setMoveTargetGroupId}
+            submitMove={submitMove}
+            moveFetcher={moveFetcher}
+            handleDeleteKeywordRow={handleDeleteKeywordRow}
           />
         )}
       </BlockStack>

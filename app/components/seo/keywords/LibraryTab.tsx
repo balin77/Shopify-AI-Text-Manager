@@ -31,6 +31,7 @@ import {
   Banner,
   IndexTable,
   Checkbox,
+  Modal,
   ProgressBar,
   useIndexResourceState,
 } from "@shopify/polaris";
@@ -53,6 +54,9 @@ type AssignKeyword = { keywordId: string; keyword: string };
 export interface LibraryTabProps {
   k: KeywordsPageStrings;
   groups: LoaderData["groups"];
+  /** Every group of the shop across ALL languages — the move dialog's target
+   *  group picker (`groups` only holds the active language's). */
+  allGroups: LoaderData["allGroups"];
   allCount: number;
   ungroupedCount: number;
   groupDetail: LoaderData["groupDetail"];
@@ -121,11 +125,25 @@ export interface LibraryTabProps {
     targetType: KeywordResourceType;
     maxSecondaries: string;
   }) => void;
+
+  // Move a keyword to another group and/or language.
+  moveModal: { keywordId: string; keyword: string; locale: string } | null;
+  openMoveModal: (row: { keywordId: string; keyword: string; locale: string }) => void;
+  closeMoveModal: () => void;
+  moveTargetLocale: string;
+  setMoveTargetLocale: (v: string) => void;
+  moveTargetGroupId: string;
+  setMoveTargetGroupId: (v: string) => void;
+  submitMove: () => void;
+  moveFetcher: FetcherWithComponents<ActionResult>;
+  /** Delete the keyword itself (not just its group membership). */
+  handleDeleteKeywordRow: (row: { keywordId: string; keyword: string; assignmentCount: number }) => void;
 }
 
 export function LibraryTab({
   k,
   groups,
+  allGroups,
   allCount,
   ungroupedCount,
   groupDetail,
@@ -172,8 +190,33 @@ export function LibraryTab({
   closeAssignPanel,
   assignFetcher,
   startDistribution,
+  moveModal,
+  openMoveModal,
+  closeMoveModal,
+  moveTargetLocale,
+  setMoveTargetLocale,
+  moveTargetGroupId,
+  setMoveTargetGroupId,
+  submitMove,
+  moveFetcher,
+  handleDeleteKeywordRow,
 }: LibraryTabProps) {
   const isPseudo = !!groupDetail?.pseudo;
+
+  // Display name for a stored locale value ("" = primary, the SeoKeyword
+  // convention) — the loader's localeOptions are the single source.
+  const localeName = (locale: string) =>
+    localeOptions.find((l) => l.locale === locale)?.name || locale || k.localePrimary;
+  // Groups available as a move target: exactly the chosen language's, since a
+  // group owns its language (§3.1) and cannot hold a foreign-language keyword.
+  const moveGroupOptions = [
+    { label: k.moveNoGroup || "No group", value: "" },
+    ...allGroups.filter((g) => g.locale === moveTargetLocale).map((g) => ({ label: g.name, value: g.id })),
+  ];
+  const moveIsNoop =
+    !!moveModal &&
+    moveTargetLocale === moveModal.locale &&
+    moveTargetGroupId === (groupDetail && !groupDetail.pseudo ? groupDetail.id : "");
 
   // Group-keyword table selection (real groups only) drives the "Auswahl
   // zuordnen" bulk action. Transient view state — the selected ids map back to
@@ -219,8 +262,10 @@ export function LibraryTab({
       { title: k.colLocale },
       { title: k.colPriority || "Priority" },
       { title: k.colAssignments || "Assignments" },
+      // Move is offered in the pseudo views too — "Ohne Gruppe" is exactly
+      // where a keyword tracked under the wrong language tends to sit.
+      { title: "" },
     ];
-    if (!readOnly) headings.push({ title: "" });
     return (
       <IndexTable
         itemCount={groupDetail.keywords.length}
@@ -248,7 +293,7 @@ export function LibraryTab({
               </InlineStack>
             </IndexTable.Cell>
             <IndexTable.Cell>
-              <Badge>{gk.locale || localeOptions[0]?.name || "–"}</Badge>
+              <Badge>{localeName(gk.locale)}</Badge>
             </IndexTable.Cell>
             <IndexTable.Cell>
               {readOnly ? (
@@ -278,28 +323,58 @@ export function LibraryTab({
                 {gk.assignmentCount}
               </Text>
             </IndexTable.Cell>
-            {!readOnly && (
-              <IndexTable.Cell>
+            <IndexTable.Cell>
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <Button
+                  variant="plain"
+                  disabled={moveFetcher.state !== "idle"}
+                  onClick={() =>
+                    openMoveModal({ keywordId: gk.keywordId, keyword: gk.keyword, locale: gk.locale })
+                  }
+                >
+                  {/* From a pseudo view there is no source group to leave, so
+                      the same-language case ADDS the keyword to a group — the
+                      label says so rather than promising a move. */}
+                  {readOnly ? k.assignToGroup || "Assign" : k.moveKeyword || "Move"}
+                </Button>
+                {/* Only out of THIS group — the keyword itself survives if it
+                    is assigned to items or belongs to another group. */}
+                {!readOnly && (
+                  <Button
+                    variant="plain"
+                    disabled={groupFetcher.state !== "idle"}
+                    onClick={() =>
+                      groupDetail &&
+                      groupFetcher.submit(
+                        {
+                          actionType: "removeFromGroup",
+                          groupId: groupDetail.id,
+                          keywordId: gk.keywordId,
+                        },
+                        { method: "post" },
+                      )
+                    }
+                  >
+                    {k.groupRemoveKeyword || "Remove"}
+                  </Button>
+                )}
+                {/* Gone for good, including every item assignment. */}
                 <Button
                   variant="plain"
                   tone="critical"
                   disabled={groupFetcher.state !== "idle"}
                   onClick={() =>
-                    groupDetail &&
-                    groupFetcher.submit(
-                      {
-                        actionType: "removeFromGroup",
-                        groupId: groupDetail.id,
-                        keywordId: gk.keywordId,
-                      },
-                      { method: "post" },
-                    )
+                    handleDeleteKeywordRow({
+                      keywordId: gk.keywordId,
+                      keyword: gk.keyword,
+                      assignmentCount: gk.assignmentCount,
+                    })
                   }
                 >
-                  {k.groupRemoveKeyword || "Remove"}
+                  {k.delete}
                 </Button>
-              </IndexTable.Cell>
-            )}
+              </InlineStack>
+            </IndexTable.Cell>
           </IndexTable.Row>
         ))}
       </IndexTable>
@@ -567,6 +642,8 @@ export function LibraryTab({
         k={k}
         researchAvailability={researchAvailability}
         groups={groups}
+        allGroups={allGroups}
+        localeOptions={localeOptions}
         seedInput={seedInput}
         setSeedInput={setSeedInput}
         suggestFetcher={suggestFetcher}
@@ -611,6 +688,71 @@ export function LibraryTab({
         startDistribution={startDistribution}
         runningDistribution={runningDistribution}
       />
+
+      {/* Move a keyword to another group and/or language. A language change
+          merges the keyword into the target language and carries its item
+          assignments along — hence the warning below. */}
+      <Modal
+        open={!!moveModal}
+        onClose={closeMoveModal}
+        title={k.moveModalTitle || "Move keyword"}
+        primaryAction={{
+          content: k.moveModalConfirm || "Move",
+          loading: moveFetcher.state !== "idle",
+          disabled: moveIsNoop,
+          onAction: submitMove,
+        }}
+        secondaryActions={[{ content: k.distModalCancel || "Cancel", onAction: closeMoveModal }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodyMd">
+              {(k.moveModalBody || "Move “{keyword}” to another language or group.").replace(
+                "{keyword}",
+                moveModal?.keyword ?? "",
+              )}
+            </Text>
+            {localeOptions.length > 1 && (
+              <Select
+                label={k.moveTargetLocale || "Language"}
+                options={localeOptions.map((l) => ({
+                  label: l.primary ? `${l.name} (${k.localePrimary})` : l.name || l.locale,
+                  value: l.locale,
+                }))}
+                value={moveTargetLocale}
+                onChange={(v) => {
+                  setMoveTargetLocale(v);
+                  // Groups belong to exactly one language — a group of the old
+                  // language must not survive the switch as a target.
+                  setMoveTargetGroupId("");
+                }}
+              />
+            )}
+            <Select
+              label={k.moveTargetGroup || "Group"}
+              options={moveGroupOptions}
+              value={moveTargetGroupId}
+              onChange={setMoveTargetGroupId}
+              helpText={
+                allGroups.some((g) => g.locale === moveTargetLocale)
+                  ? undefined
+                  : k.moveNoGroupsInLocale || "This language has no keyword groups yet."
+              }
+            />
+            {moveModal && moveTargetLocale !== moveModal.locale && (
+              <Banner tone="warning">
+                {(
+                  k.moveLocaleWarning ||
+                  "The keyword and its item assignments move to {locale}. Assignments are dropped where the item already tracks this keyword there or has reached its keyword limit. Because a group belongs to exactly one language, the keyword loses ALL its current group memberships and ends up only in the group chosen above."
+                ).replace("{locale}", localeName(moveTargetLocale))}
+              </Banner>
+            )}
+            {moveFetcher.state === "idle" && moveFetcher.data && !moveFetcher.data.ok && (
+              <Banner tone="critical">{k.errorGeneric}</Banner>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </BlockStack>
   );
 }
