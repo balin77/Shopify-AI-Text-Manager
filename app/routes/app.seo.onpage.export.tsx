@@ -24,6 +24,7 @@ import {
   findImagesWithoutAlt,
   findThinPages,
   canonicalHostFromPages,
+  selfCanonicalPages,
   type OnPageRow,
 } from "../services/seo/onpage.service";
 import type { AuditType } from "../services/seo/audit.service";
@@ -130,6 +131,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({ csv: toCsv(rows, COLUMNS), filename, rowCount: rows.length });
 };
 
+/**
+ * The pages a duplicate check may look at — the SAME filter the tab applies.
+ *
+ * Without it the tab shows zero duplicates while its own CSV lists every
+ * product once per locale: Shopify answers 200 for a translated product under
+ * its primary handle behind every locale prefix, each canonicalising to the
+ * properly translated URL.
+ */
+function indexablePages(pages: OnPageRow[], ctx: { shop: string }): OnPageRow[] {
+  const ok = pages.filter((p) => p.statusCode >= 200 && p.statusCode < 300);
+  const canonicalHost = canonicalHostFromPages(pages);
+  return canonicalHost ? selfCanonicalPages(ok, canonicalHost, [ctx.shop]) : ok;
+}
+
 async function buildRows(
   category: Category,
   pages: OnPageRow[],
@@ -184,9 +199,7 @@ async function buildRows(
       const { groupDuplicateValues, normalizeMetaDescription } = await import("../services/seo/crawl.service");
       const missing = findMissingMetaDescriptions(pages).map((r) => flat(r, "meta_description_missing"));
       const duplicates = groupDuplicateValues(
-        pages
-          .filter((p) => p.statusCode >= 200 && p.statusCode < 300)
-          .map((p) => ({ url: p.url, value: p.metaDesc })),
+        indexablePages(pages, ctx).map((p) => ({ url: p.url, value: p.metaDesc })),
         normalizeMetaDescription,
       ).flatMap((group) =>
         group.urls.map((u) => ({
@@ -229,9 +242,11 @@ async function buildRows(
           resourceId: p.resourceId as string,
           crawledTitle: p.title,
         }));
+      // `locale === ""` matches the candidate filter above — see the note in
+      // onpage-report.server.ts.
       const urlByResource = new Map(
         pages
-          .filter((p) => p.resourceId && p.resourceType)
+          .filter((p) => p.resourceId && p.resourceType && p.locale === "")
           .map((p) => [`${p.resourceType}:${p.resourceId}`, p.url]),
       );
       const drift = await computeHeadDrift(ctx.db, ctx.shop, candidates, shopName, Infinity);
@@ -248,9 +263,7 @@ async function buildRows(
       const { groupDuplicateTitles } = await import("../services/seo/crawl.service");
       const shopName = await fetchShopName(ctx.admin, ctx.shop);
       return groupDuplicateTitles(
-        pages
-          .filter((p) => p.statusCode >= 200 && p.statusCode < 300)
-          .map((p) => ({ url: p.url, title: p.title })),
+        indexablePages(pages, ctx).map((p) => ({ url: p.url, title: p.title })),
         shopName,
       ).flatMap((group) =>
         group.urls.map((u) => ({

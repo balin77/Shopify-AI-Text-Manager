@@ -99,6 +99,31 @@ export function ReportRow({ cells, spacedAbove }: { cells: ReactNode[]; spacedAb
  * Rendered as `bodySm` so a row reads the same whether or not the URL happens
  * to be linkable, and `overflowWrap` is inherited from the grid's first cell.
  */
+/**
+ * A value that may or may not be a linkable URL — a canonical as SERVED, for
+ * instance, which is often relative (`/products/x`) and, in the `crossHost`
+ * case, may not be a URL at all.
+ *
+ * Resolved against `base` when possible so a relative canonical opens the
+ * storefront rather than this app's own 404; rendered as plain text when it
+ * cannot be resolved, because a broken link is worse than no link.
+ */
+export function MaybeLink({ value, base }: { value: string; base?: string }) {
+  let href: string | null = null;
+  try {
+    const u = new URL(value, base);
+    if (u.protocol === "http:" || u.protocol === "https:") href = u.toString();
+  } catch {
+    href = null;
+  }
+  if (!href) {
+    return (
+      <Text as="span" variant="bodySm" tone="subdued">{value}</Text>
+    );
+  }
+  return <PageLink url={href} label={value} />;
+}
+
 export function PageLink({ url, label }: { url: string; label?: string }) {
   return (
     <a

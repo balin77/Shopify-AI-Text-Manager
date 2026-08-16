@@ -308,7 +308,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // the shop name; a merchant reading the delivery report must not pay for it.
   if (view === "onpage") {
     const { buildOnPageReport } = await import("../services/seo/onpage-report.server");
-    const onPage = await buildOnPageReport(db, admin, shop, snapshotRow.id);
+    const { countPageClasses } = await import("../services/seo/crawl-snapshot.server");
+    // Step 1's badge and the firewall banner read these even while step 2 is
+    // shown, so they are counted rather than stubbed — cheaply, via groupBy,
+    // since this branch has no other use for the page rows.
+    const [onPage, counts] = await Promise.all([
+      buildOnPageReport(db, admin, shop, snapshotRow.id),
+      countPageClasses(db, shop, snapshotRow.id),
+    ]);
     return json({
       gated: false,
       view,
@@ -322,10 +329,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         blockedBy: latest.blockedBy,
         pagesCrawled: snapshotRow.pagesCrawled,
         totalDiscovered: snapshotRow.totalDiscovered,
-        pagesOk: snapshotRow.pagesOk,
-        pagesBroken: snapshotRow.pagesBroken,
-        pagesServerError: 0,
-        pagesBlocked: 0,
+        pagesOk: counts.ok,
+        pagesBroken: counts.broken,
+        pagesServerError: counts.serverError,
+        pagesBlocked: counts.blocked,
         orphanCount: snapshotRow.orphanCount,
       } satisfies SnapshotView,
       ...EMPTY_LISTS,

@@ -11,6 +11,7 @@ import {
   findThinPages,
   snapshotKnowsParseState,
   canonicalHostFromPages,
+  selfCanonicalPages,
   THIN_MIN_SAMPLE,
   type OnPageRow,
 } from "~/services/seo/onpage.service";
@@ -350,6 +351,37 @@ describe("analyzeCanonicals", () => {
       HOST,
     );
     expect(findings.map((f) => f.issue)).toEqual(["missing"]);
+  });
+});
+
+describe("selfCanonicalPages", () => {
+  it("drops a page whose canonical points elsewhere — Google does not index it there", () => {
+    // Shopify answers 200 for a translated product under its PRIMARY handle
+    // behind every locale prefix, each canonicalising to the translated URL.
+    // Grouping those by title reported one product as five duplicates.
+    const rows = [
+      row({ url: `${BASE}/products/schreibtisch-organizer`, canonical: `${BASE}/products/schreibtisch-organizer` }),
+      row({ url: `${BASE}/es/products/schreibtisch-organizer`, canonical: `${BASE}/es/products/organizador` }),
+      row({ url: `${BASE}/fr/products/schreibtisch-organizer`, canonical: `${BASE}/fr/products/organiseur` }),
+    ];
+    expect(selfCanonicalPages(rows, HOST).map((p) => p.url)).toEqual([
+      `${BASE}/products/schreibtisch-organizer`,
+    ]);
+  });
+
+  it("KEEPS a page with no canonical — that is its own finding, not a reason to go quiet", () => {
+    const rows = [row({ url: `${BASE}/a`, canonical: null })];
+    expect(selfCanonicalPages(rows, HOST)).toHaveLength(1);
+  });
+
+  it("keeps a self-referencing canonical that differs only by a trailing slash", () => {
+    const rows = [row({ url: `${BASE}/a`, canonical: `${BASE}/a/` })];
+    expect(selfCanonicalPages(rows, HOST)).toHaveLength(1);
+  });
+
+  it("keeps a cross-host canonical — analyzeCanonicals reports that, it is not a duplicate", () => {
+    const rows = [row({ url: `${BASE}/a`, canonical: "https://other.example/a" })];
+    expect(selfCanonicalPages(rows, HOST)).toHaveLength(1);
   });
 });
 

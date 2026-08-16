@@ -19,6 +19,7 @@ import {
   CapNotice,
   EditAction,
   PageLink,
+  MaybeLink,
   SubsectionHeading,
   AiFixButton,
   CsvExportButton,
@@ -382,7 +383,9 @@ export function OnPageSections({
                                 <Text as="span" variant="bodySm" tone="subdued">
                                   {o.canonicalTargetLabel}:
                                 </Text>
-                                <PageLink url={f.target} />
+                                {/* As SERVED — often relative, and on a
+                                    crossHost finding possibly not a URL. */}
+                                <MaybeLink value={f.target} base={f.url} />
                               </InlineStack>
                             )}
                           </BlockStack>,

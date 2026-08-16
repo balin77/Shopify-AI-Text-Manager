@@ -106,3 +106,40 @@ export async function loadExpectedNoindexReasons(
   for (const p of unlisted) out.set(`product:${p.id}`, "unlistedProduct");
   return out;
 }
+
+/**
+ * The four delivery counters, straight from the DB.
+ *
+ * A `groupBy` rather than loading every page row: step 2 of the crawl tab needs
+ * these for step 1's badge and the firewall banner, but has no other use for
+ * the rows — and stubbing them to 0 (which it did at first) silently dropped
+ * server errors out of the badge and hid the "pages blocked" warning the moment
+ * a merchant switched steps.
+ *
+ * The classification mirrors `classifyLinkStatus`: -1 is a redirect loop (a
+ * link fault), 0 is a timeout (the page failed), 403/429 is a bot firewall and
+ * NOT broken.
+ */
+export async function countPageClasses(
+  db: PrismaClient,
+  shop: string,
+  snapshotId: string,
+): Promise<{ ok: number; broken: number; serverError: number; blocked: number }> {
+  const rows = await db.seoCrawlPage.groupBy({
+    by: ["statusCode"],
+    where: { shop, snapshotId },
+    _count: { _all: true },
+  });
+  const out = { ok: 0, broken: 0, serverError: 0, blocked: 0 };
+  for (const row of rows) {
+    const n = row._count._all;
+    const status = row.statusCode;
+    if (status === -1) out.broken += n;
+    else if (status === 0) out.serverError += n;
+    else if (status === 403 || status === 429) out.blocked += n;
+    else if (status >= 500) out.serverError += n;
+    else if (status >= 400) out.broken += n;
+    else out.ok += n;
+  }
+  return out;
+}

@@ -225,9 +225,13 @@ export async function buildOnPageReport(
   // `count` is the TRUE total, `items` the capped slice — the tile must show
   // the former, or every shop past 100 findings reads exactly "100".
   const headDriftResult = await computeHeadDrift(db, shop, headDriftCandidates, shopName, UI_ROW_CAP);
+  // Same filter the drift CANDIDATES use — `locale === ""`. Without it the map
+  // keeps whichever row came last, so now that translated handles resolve, the
+  // clickable URL could point at a locale variant rather than the primary page
+  // the drift was actually measured on.
   const urlByResource = new Map(
     pages
-      .filter((p) => p.resourceId && p.resourceType)
+      .filter((p) => p.resourceId && p.resourceType && p.locale === "")
       .map((p) => [`${p.resourceType}:${p.resourceId}`, p.url]),
   );
   const headDrift: HeadDriftRow[] = headDriftResult.items.map((i) => ({
