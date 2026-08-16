@@ -21,6 +21,7 @@ import {
   analyzeCanonicals,
   analyzeHeadings,
   findThinPages,
+  canonicalHostFromPages,
   type OnPageRow,
 } from "./onpage.service";
 
@@ -705,16 +706,7 @@ async function buildOnPageProblemBuckets(
   // The canonical host comes from the crawled URLs themselves — they were
   // already normalized to the shop's primary domain by the crawler, so this
   // needs no Admin API call and cannot disagree with what was crawled.
-  const canonicalHost = (() => {
-    for (const p of pages) {
-      try {
-        return new URL(p.url).hostname;
-      } catch {
-        /* keep looking */
-      }
-    }
-    return "";
-  })();
+  const canonicalHost = canonicalHostFromPages(pages);
 
   /** Only rows that resolve to something a merchant can open get `items`;
    *  `count` stays the true total either way (same contract as serverErrors). */
@@ -786,7 +778,15 @@ async function buildOnPageProblemBuckets(
   // resource the editor could open.
   const externalBroken = await db.seoCrawlExternalLink
     .count({
-      where: { shop, snapshotId, OR: [{ statusCode: { gte: 400 } }, { statusCode: { lte: 0 } }] },
+      // Mirrors `isExternalLinkBroken`: 403/429 is a bot filter refusing US
+      // (same rule as the internal broken-link list), and -2 means the pass
+      // never got to it. Neither is a dead link.
+      where: {
+        shop,
+        snapshotId,
+        statusCode: { notIn: [403, 429] },
+        OR: [{ statusCode: { gte: 400 } }, { statusCode: { lte: -1 } }, { statusCode: 0 }],
+      },
     })
     // Its own guard for the same reason as above: the external-link pass is
     // opt-out, so an empty/absent table is the NORMAL case, not an error.

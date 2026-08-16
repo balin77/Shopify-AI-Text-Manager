@@ -9,6 +9,8 @@ import {
   findMissingMetaDescriptions,
   findImagesWithoutAlt,
   findThinPages,
+  snapshotKnowsParseState,
+  canonicalHostFromPages,
   THIN_MIN_SAMPLE,
   type OnPageRow,
 } from "~/services/seo/onpage.service";
@@ -176,6 +178,19 @@ describe("analyzeIndexability", () => {
   });
 });
 
+describe("canonicalHostFromPages", () => {
+  it("takes the host from the crawled URLs — never from a lookup that can fail", () => {
+    // fetchPrimaryDomain falls back to the myshopify host on a throttled Admin
+    // call, and every canonical would then read as "foreign domain", critical,
+    // on every page.
+    expect(canonicalHostFromPages([row({ url: `${BASE}/a` })])).toBe(HOST);
+  });
+
+  it("returns '' when nothing is parsable — the caller must then not judge", () => {
+    expect(canonicalHostFromPages([{ url: "not a url" }])).toBe("");
+  });
+});
+
 describe("analyzeCanonicals", () => {
   it("reports a missing canonical", () => {
     const findings = analyzeCanonicals([row({ url: `${BASE}/a`, canonical: null })], HOST);
@@ -278,11 +293,27 @@ describe("analyzeCanonicals", () => {
   });
 
   it("never reports 'missing' for a page whose body was never parsed", () => {
+    // A page at the BFS depth limit is fetched but never parsed, so its
+    // canonical is null for that reason alone. The OTHER row is what makes
+    // this a current snapshot rather than a pre-migration one.
+    const findings = analyzeCanonicals(
+      [
+        row({ url: `${BASE}/deep`, canonical: null, indexabilityKnown: false }),
+        row({ url: `${BASE}/b`, canonical: `${BASE}/b` }),
+      ],
+      HOST,
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it("still judges canonicals on a snapshot that predates the parse flag", () => {
+    // `canonical` is a pre-existing column, so gating it on a flag that did
+    // not exist yet would make the whole category claim "no problems".
     const findings = analyzeCanonicals(
       [row({ url: `${BASE}/a`, canonical: null, indexabilityKnown: false })],
       HOST,
     );
-    expect(findings).toEqual([]);
+    expect(findings.map((f) => f.issue)).toEqual(["missing"]);
   });
 });
 
@@ -312,6 +343,21 @@ describe("analyzeHeadings / meta / images", () => {
       row({ url: `${BASE}/gone`, statusCode: 404, indexabilityKnown: false, h1Count: 0 }),
     ]);
     expect(report.missing).toEqual([]);
+  });
+
+  it("keeps judging h1Count on a pre-migration snapshot, but marks H1==title unknown", () => {
+    // h1Count is a pre-existing column and its values are real; h1First is new,
+    // so an empty sameAsTitle there means "not measured", not "none match".
+    const report = analyzeHeadings([
+      row({ url: `${BASE}/a`, h1Count: 0, h1First: null, indexabilityKnown: false }),
+    ]);
+    expect(report.missing.map((r) => r.url)).toEqual([`${BASE}/a`]);
+    expect(report.sameAsTitleKnown).toBe(false);
+  });
+
+  it("reports images as measurable only on a snapshot that knows the parse state", () => {
+    expect(snapshotKnowsParseState([row({ url: `${BASE}/a`, indexabilityKnown: false })])).toBe(false);
+    expect(snapshotKnowsParseState([row({ url: `${BASE}/a` })])).toBe(true);
   });
 
   it("finds meta descriptions missing from the DELIVERED html", () => {

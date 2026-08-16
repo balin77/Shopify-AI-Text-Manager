@@ -32,6 +32,7 @@ import { isPrivateOrLoopbackHost } from "../../utils/private-host";
 import {
   normalizeExternalUrl,
   runExternalLinkPass,
+  isExternalLinkBroken,
   MAX_EXTERNAL_TARGETS,
   MAX_SAMPLE_SOURCES,
   type ExternalTarget,
@@ -1124,6 +1125,10 @@ export interface CrawlSummary {
   externalFound: number;
   externalChecked: number;
   externalBroken: number;
+  /** Targets the 120s budget never got to — persisted as EXTERNAL_NOT_CHECKED
+   *  rows so the report can distinguish them from healthy ones (§6.3). */
+  externalUnchecked: number;
+  externalTimedOut: boolean;
   /** MAX_EXTERNAL_TARGETS was hit — said out loud, never silently. */
   externalTruncated: boolean;
 }
@@ -1188,6 +1193,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       externalFound: 0,
       externalChecked: 0,
       externalBroken: 0,
+      externalUnchecked: 0,
+      externalTimedOut: false,
       externalTruncated: false,
     };
   }
@@ -1668,6 +1675,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   // firewalled off its own storefront has no business hammering strangers.
   let externalChecked = 0;
   let externalBroken = 0;
+  let externalUnchecked = 0;
+  let externalTimedOut = false;
   if (checkExternalLinks && !abortedError && externalTargets.size > 0) {
     try {
       const pass = await runExternalLinkPass(Array.from(externalTargets.values()), {
@@ -1681,8 +1690,13 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
           if (onProgress) await onProgress(pagesCompleted, discovered.size);
         },
       });
-      externalChecked = pass.results.length;
-      externalBroken = pass.results.filter((r) => r.statusCode <= 0 || r.statusCode >= 400).length;
+      // `results` now includes the not-checked leftovers, so "checked" is the
+      // count minus those — and 403/429 is a bot shield, not a dead link
+      // (isExternalLinkBroken).
+      externalUnchecked = pass.unchecked;
+      externalTimedOut = pass.timedOut;
+      externalChecked = pass.results.length - pass.unchecked;
+      externalBroken = pass.results.filter((r) => isExternalLinkBroken(r.statusCode)).length;
       if (pass.results.length > 0) {
         await db.seoCrawlExternalLink.createMany({
           data: pass.results.map((r) => ({
@@ -1733,6 +1747,8 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     externalFound: externalTargets.size,
     externalChecked,
     externalBroken,
+    externalUnchecked,
+    externalTimedOut,
     externalTruncated,
   };
 }

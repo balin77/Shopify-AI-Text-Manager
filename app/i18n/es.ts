@@ -1713,6 +1713,8 @@ export const es: Translation = {
       indexabilityProblemHint: "Estas páginas están en «noindex» aunque no pertenecen a las zonas que Shopify excluye por sí mismo ni se ocultaron desde la pestaña de sitemap. Es el hallazgo más valioso de esta pestaña.",
       emptyIndexability: "No se encontraron páginas excluidas de forma inesperada.",
       indexabilityUnknownHint: "Todavía no registrado en este rastreo.",
+      categoryUnknownHint: "Todavía no registrado en este rastreo.",
+      categoryUnknownBanner: "El último rastreo aún no registró este dato (se ejecutó antes de esta actualización). Un resultado vacío afirmaría aquí «no se encontró nada»: lanza un nuevo rastreo y aparecerá.",
       indexabilityUnknownBanner: "El último rastreo aún no registró la indexabilidad (se ejecutó antes de esta actualización). Un resultado vacío afirmaría aquí «todo correcto», algo que no sabemos: lanza un nuevo rastreo y aparecerá.",
       indexabilityPartialUnknown: "Sin datos para {count} páginas (no se entregó HTML o el rastreo es anterior).",
       badgeNoindex: "noindex",
@@ -1795,6 +1797,9 @@ export const es: Translation = {
       externalSourceCount: "enlazado desde {count} páginas",
       externalRedirectsTo: "Redirige a",
       externalUnreachable: "Inaccesible",
+      externalNotChecked: "Sin comprobar",
+      externalTruncatedBanner: "Solo se registraron los primeros {max} destinos externos distintos. Los enlaces posteriores no aparecen aquí.",
+      externalUncheckedBanner: "{count} destinos no se pudieron comprobar dentro del tiempo disponible. Abajo aparecen como «Sin comprobar», no como correctos.",
       externalChecksLabel: "Comprobar también los enlaces externos",
       externalChecksHelp: "Tras el rastreo, comprueba si los enlaces a otros sitios web siguen funcionando. Esto envía peticiones a servidores que no controlamos y alarga un poco el rastreo (2 minutos adicionales como máximo).",
       // Comparación de rastreos (PLAN_SEO_CRAWL_EXPANSION §7.2)

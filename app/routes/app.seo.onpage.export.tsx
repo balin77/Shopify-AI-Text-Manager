@@ -23,6 +23,7 @@ import {
   findMissingMetaDescriptions,
   findImagesWithoutAlt,
   findThinPages,
+  canonicalHostFromPages,
   type OnPageRow,
 } from "../services/seo/onpage.service";
 import type { AuditType } from "../services/seo/audit.service";
@@ -162,9 +163,13 @@ async function buildRows(
       ];
     }
     case "canonicals": {
+      // Host from the crawled URLs, looked-up domain only as an alias — see
+      // the note in canonicalHostFromPages.
       const { fetchPrimaryDomain } = await import("../utils/shop-domain.server");
       const primaryDomain = await fetchPrimaryDomain(ctx.admin, ctx.shop);
-      return analyzeCanonicals(pages, primaryDomain, [ctx.shop]).map((f) => ({
+      const canonicalHost = canonicalHostFromPages(pages);
+      if (!canonicalHost) return [];
+      return analyzeCanonicals(pages, canonicalHost, [ctx.shop, primaryDomain]).map((f) => ({
         url: f.url,
         finding: `canonical_${f.issue}`,
         detail: f.target ?? "",

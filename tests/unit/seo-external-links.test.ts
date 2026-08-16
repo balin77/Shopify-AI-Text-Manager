@@ -6,6 +6,8 @@ import {
   checkExternalUrl,
   runExternalLinkPass,
   isExternalLinkBroken,
+  isExternalLinkBlocked,
+  EXTERNAL_NOT_CHECKED,
   MAX_SAMPLE_SOURCES,
   type ExternalTarget,
 } from "~/services/seo/external-links";
@@ -72,6 +74,14 @@ describe("isExternalLinkBroken", () => {
     expect(isExternalLinkBroken(500)).toBe(true);
     expect(isExternalLinkBroken(200)).toBe(false);
     expect(isExternalLinkBroken(301)).toBe(false);
+  });
+
+  it("never calls a bot block or an unchecked target a dead link", () => {
+    expect(isExternalLinkBroken(403)).toBe(false);
+    expect(isExternalLinkBroken(429)).toBe(false);
+    expect(isExternalLinkBroken(EXTERNAL_NOT_CHECKED)).toBe(false);
+    expect(isExternalLinkBlocked(403)).toBe(true);
+    expect(isExternalLinkBlocked(404)).toBe(false);
   });
 });
 
@@ -252,8 +262,30 @@ describe("runExternalLinkPass", () => {
       perHostConcurrency: 2,
     });
     expect(pass.timedOut).toBe(true);
-    expect(pass.results.length).toBeLessThan(targets.length);
-    expect(pass.unchecked).toBe(targets.length - pass.results.length);
+    // Everything is RECORDED either way — the leftovers as EXTERNAL_NOT_CHECKED,
+    // because a target missing from the table is indistinguishable from a
+    // healthy one, and "0 dead links" after checking a tenth would be the most
+    // misleading number in the report.
+    expect(pass.results).toHaveLength(targets.length);
+    expect(pass.unchecked).toBeGreaterThan(0);
+    const notChecked = pass.results.filter((r) => r.statusCode === EXTERNAL_NOT_CHECKED);
+    expect(notChecked).toHaveLength(pass.unchecked);
+    // …and "not checked" is never counted as broken.
+    expect(notChecked.every((r) => !isExternalLinkBroken(r.statusCode))).toBe(true);
+  });
+
+  it("does not call a 403/429 a dead link — that is a bot shield refusing US", async () => {
+    // Exactly the rule `isBotBlockStatus` enforces for the internal crawl. The
+    // check already retried the HEAD with a GET, so a surviving 403 is almost
+    // always a shield that refuses non-browser clients outright.
+    server.use(http.all("https://shielded.example/x", () => new HttpResponse(null, { status: 403 })));
+    const pass = await runExternalLinkPass([target("https://shielded.example/x")], {
+      userAgent: UA,
+      timeoutMs: 2000,
+    });
+    expect(pass.results[0].statusCode).toBe(403);
+    expect(isExternalLinkBroken(403)).toBe(false);
+    expect(isExternalLinkBlocked(403)).toBe(true);
   });
 
   it("keeps the heartbeat alive — a frozen progress bar is the trap here", async () => {

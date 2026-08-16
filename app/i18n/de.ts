@@ -1713,6 +1713,8 @@ export const de = {
       indexabilityProblemHint: "Diese Seiten sind auf „noindex\" gesetzt, obwohl sie nicht zu den Bereichen gehören, die Shopify von sich aus ausschließt, und auch nicht über den Sitemap-Tab ausgeblendet wurden. Das ist der wertvollste Fund dieses Tabs.",
       emptyIndexability: "Keine unerwartet ausgeschlossenen Seiten gefunden.",
       indexabilityUnknownHint: "Für diesen Crawl noch nicht erfasst.",
+      categoryUnknownHint: "Für diesen Crawl noch nicht erfasst.",
+      categoryUnknownBanner: "Der letzte Crawl hat diese Angabe noch nicht erfasst (er lief vor diesem Update). Ein leeres Ergebnis würde hier „nichts gefunden\" behaupten — starte einen neuen Crawl, dann steht es hier.",
       indexabilityUnknownBanner: "Der letzte Crawl hat die Indexierbarkeit noch nicht erfasst (er lief vor diesem Update). Ein leeres Ergebnis würde hier „alles in Ordnung\" behaupten, was wir nicht wissen — starte einen neuen Crawl, dann steht es hier.",
       indexabilityPartialUnknown: "Für {count} Seiten liegt keine Angabe vor (kein HTML ausgeliefert oder älterer Crawl).",
       badgeNoindex: "noindex",
@@ -1795,6 +1797,9 @@ export const de = {
       externalSourceCount: "von {count} Seiten verlinkt",
       externalRedirectsTo: "Leitet weiter auf",
       externalUnreachable: "Nicht erreichbar",
+      externalNotChecked: "Nicht geprüft",
+      externalTruncatedBanner: "Es wurden nur die ersten {max} verschiedenen externen Ziele erfasst. Weitere Links dahinter sind hier nicht aufgeführt.",
+      externalUncheckedBanner: "{count} Ziele konnten im Zeitrahmen nicht mehr geprüft werden. Sie sind unten als „Nicht geprüft\" markiert — nicht als in Ordnung.",
       externalChecksLabel: "Externe Links mitprüfen",
       externalChecksHelp: "Prüft nach dem Crawl, ob Links auf fremde Websites noch funktionieren. Dabei werden Anfragen an fremde Server geschickt und der Crawl dauert etwas länger (maximal 2 Minuten zusätzlich).",
       // Crawl-Vergleich (PLAN_SEO_CRAWL_EXPANSION §7.2)

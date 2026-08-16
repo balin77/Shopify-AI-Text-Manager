@@ -50,6 +50,7 @@ import {
   findMissingMetaDescriptions,
   findImagesWithoutAlt,
   findThinPages,
+  canonicalHostFromPages,
   THIN_MIN_SAMPLE,
   type OnPageRow,
   type IndexabilityFinding,
@@ -147,13 +148,21 @@ const EMPTY_LISTS = {
   duplicates: [] as DuplicateGroupRow[],
   /** Handed to the component rather than imported there — see the import note. */
   thinMinSample: THIN_MIN_SAMPLE,
+  parseStateKnown: false,
   totals: {
     indexability: 0,
+    indexabilityExpected: 0,
+    nofollowOnly: 0,
     canonicals: 0,
     h1: 0,
+    h1Missing: 0,
+    h1Multiple: 0,
+    h1SameAsTitle: 0,
     meta: 0,
     thin: 0,
     images: 0,
+    headDrift: 0,
+    duplicates: 0,
   },
 };
 
@@ -220,7 +229,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ]);
 
   const indexability = analyzeIndexability(pages, excludedKeys);
-  const canonicals = analyzeCanonicals(pages, primaryDomain, [shop]);
+  // The host comes from the crawled URLs, never from `fetchPrimaryDomain` —
+  // that one falls back to the myshopify host on a throttled Admin call, and
+  // every canonical would then read as "foreign domain". The looked-up domain
+  // is passed as an ALIAS instead, so a canonical spelled either way collapses.
+  const canonicalHost = canonicalHostFromPages(pages);
+  const canonicals = canonicalHost
+    ? analyzeCanonicals(pages, canonicalHost, [shop, primaryDomain])
+    : [];
   const headings = analyzeHeadings(pages);
   const metaMissing = findMissingMetaDescriptions(pages);
   const images = findImagesWithoutAlt(pages);
@@ -252,6 +268,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       resourceId: p.resourceId as string,
       crawledTitle: p.title,
     }));
+  // `count` is the TRUE total, `items` the capped slice — the tile must show
+  // the former, or every shop past 100 findings reads exactly "100".
   const headDriftResult = await computeHeadDrift(db, shop, headDriftCandidates, shopName, UI_ROW_CAP);
   const urlByResource = new Map(
     pages
@@ -288,13 +306,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     headDrift,
     duplicates,
     thinMinSample: THIN_MIN_SAMPLE,
+    // §2.2/§2.3 — this snapshot records whether a page's body was parsed. The
+    // two categories built on the NEW columns (images, "H1 equals title") are
+    // unmeasurable without it and must say "unknown" rather than "none found".
+    parseStateKnown: headings.sameAsTitleKnown,
+    // TRUE totals, before every UI_ROW_CAP slice above: the tiles and the
+    // "showing N of M" notices both read these, so neither can quietly report
+    // the cap as the answer.
     totals: {
       indexability: indexability.problems.length,
+      indexabilityExpected: indexability.expected.length,
+      nofollowOnly: indexability.nofollowOnly.length,
       canonicals: canonicals.length,
       h1: headings.missing.length + headings.multiple.length,
+      h1Missing: headings.missing.length,
+      h1Multiple: headings.multiple.length,
+      h1SameAsTitle: headings.sameAsTitle.length,
       meta: metaMissing.length,
       thin: thin.pages.length,
       images: images.length,
+      headDrift: headDriftResult.count,
+      duplicates: duplicates.length,
     },
   });
 };
@@ -337,14 +369,14 @@ export default function SeoOnPage() {
   const indexabilityUnknownAll =
     data.indexabilityConsidered > 0 && data.indexabilityUnknown === data.indexabilityConsidered;
 
-  const issueList = (rows: OnPageIssueRow[], emptyText: string, hint?: string, total?: number) => (
+  const issueList = (rows: OnPageIssueRow[], emptyText: string, hint: string | undefined, total: number) => (
     <BlockStack gap="200">
       {rows.length === 0 ? (
         <Text as="p" tone="subdued">{emptyText}</Text>
       ) : (
         <>
           {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
-          <CapNotice shown={rows.length} total={total ?? rows.length} template={o.rowCapHint} />
+          <CapNotice shown={rows.length} total={total} template={o.rowCapHint} />
           <ReportGrid columns={STATUS_COLUMNS}>
             {rows.map((row) => (
               <ReportRow
@@ -427,20 +459,28 @@ export default function SeoOnPage() {
             />
             <Tile
               label={o.tileImages}
-              value={data.totals.images}
-              hint={data.totals.images > 0 ? o.imagesTileHint : undefined}
+              // "—", not 0: on a snapshot predating the imgCount columns there
+              // is nothing to count, which is not the same as "all fine".
+              value={data.parseStateKnown ? data.totals.images : "—"}
+              hint={
+                !data.parseStateKnown
+                  ? o.categoryUnknownHint
+                  : data.totals.images > 0
+                    ? o.imagesTileHint
+                    : undefined
+              }
               onClick={() => setActiveTab("images")}
               selected={activeTab === "images"}
             />
             <Tile
               label={o.tileHeadDrift}
-              value={data.headDrift.length}
+              value={data.totals.headDrift}
               onClick={() => setActiveTab("headDrift")}
               selected={activeTab === "headDrift"}
             />
             <Tile
               label={o.tileDuplicates}
-              value={data.duplicates.length}
+              value={data.totals.duplicates}
               onClick={() => setActiveTab("duplicates")}
               selected={activeTab === "duplicates"}
             />
@@ -475,6 +515,11 @@ export default function SeoOnPage() {
                     ) : (
                       <>
                         <Banner tone="critical">{o.indexabilityProblemHint}</Banner>
+                        <CapNotice
+                          shown={data.indexabilityProblems.length}
+                          total={data.totals.indexability}
+                          template={o.rowCapHint}
+                        />
                         <ReportGrid columns={STATUS_COLUMNS}>
                           {data.indexabilityProblems.map((f) => (
                             <ReportRow
@@ -556,6 +601,12 @@ export default function SeoOnPage() {
                 {data.canonicals.length === 0 ? (
                   <Text as="p" tone="subdued">{o.emptyCanonicals}</Text>
                 ) : (
+                  <>
+                  <CapNotice
+                    shown={data.canonicals.length}
+                    total={data.totals.canonicals}
+                    template={o.rowCapHint}
+                  />
                   <ReportGrid columns={STATUS_COLUMNS}>
                     {data.canonicals.map((f) => (
                       <ReportRow
@@ -575,6 +626,7 @@ export default function SeoOnPage() {
                       />
                     ))}
                   </ReportGrid>
+                  </>
                 )}
               </BlockStack>
             )}
@@ -583,15 +635,21 @@ export default function SeoOnPage() {
               <BlockStack gap="300">
                 <BlockStack gap="200">
                   <Text as="h4" variant="headingSm">{o.h1MissingTitle}</Text>
-                  {issueList(data.h1Missing, o.emptyH1Missing, o.h1MissingHint)}
+                  {issueList(data.h1Missing, o.emptyH1Missing, o.h1MissingHint, data.totals.h1Missing)}
                 </BlockStack>
                 <BlockStack gap="200">
                   <Text as="h4" variant="headingSm">{o.h1MultipleTitle}</Text>
-                  {issueList(data.h1Multiple, o.emptyH1Multiple, o.h1MultipleHint)}
+                  {issueList(data.h1Multiple, o.emptyH1Multiple, o.h1MultipleHint, data.totals.h1Multiple)}
                 </BlockStack>
                 <BlockStack gap="200">
                   <Text as="h4" variant="headingSm">{o.h1SameTitle}</Text>
-                  {issueList(data.h1SameAsTitle, o.emptyH1Same, o.h1SameHint)}
+                  {/* Needs h1First, a new column — unmeasurable on an older
+                      snapshot, and "none found" would be a claim (§1.1). */}
+                  {data.parseStateKnown ? (
+                    issueList(data.h1SameAsTitle, o.emptyH1Same, o.h1SameHint, data.totals.h1SameAsTitle)
+                  ) : (
+                    <Banner tone="info">{o.categoryUnknownBanner}</Banner>
+                  )}
                 </BlockStack>
               </BlockStack>
             )}
@@ -600,7 +658,7 @@ export default function SeoOnPage() {
               <BlockStack gap="300">
                 <BlockStack gap="200">
                   <Text as="h4" variant="headingSm">{o.metaMissingTitle}</Text>
-                  {issueList(data.metaMissing, o.emptyMetaMissing, o.metaMissingHint)}
+                  {issueList(data.metaMissing, o.emptyMetaMissing, o.metaMissingHint, data.totals.meta)}
                 </BlockStack>
                 <BlockStack gap="200">
                   <Text as="h4" variant="headingSm">{o.metaDuplicateTitle}</Text>
@@ -624,6 +682,8 @@ export default function SeoOnPage() {
                 {data.thin.length === 0 ? (
                   <Text as="p" tone="subdued">{o.emptyThin}</Text>
                 ) : (
+                  <>
+                  <CapNotice shown={data.thin.length} total={data.totals.thin} template={o.rowCapHint} />
                   <ReportGrid columns={STATUS_COLUMNS}>
                     {data.thin.map((row) => (
                       <ReportRow
@@ -641,11 +701,17 @@ export default function SeoOnPage() {
                       />
                     ))}
                   </ReportGrid>
+                  </>
                 )}
               </BlockStack>
             )}
 
-            {activeTab === "images" && issueList(data.images, o.emptyImages, o.imagesHint, data.totals.images)}
+            {activeTab === "images" &&
+              (data.parseStateKnown ? (
+                issueList(data.images, o.emptyImages, o.imagesHint, data.totals.images)
+              ) : (
+                <Banner tone="info">{o.categoryUnknownBanner}</Banner>
+              ))}
 
             {activeTab === "headDrift" && (
               <BlockStack gap="200">

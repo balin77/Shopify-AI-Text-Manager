@@ -59,6 +59,13 @@ import { isBotBlockStatus, classifyLinkStatus } from "../services/seo/crawl.serv
 import { SLOW_PAGE_WARN_MS, type SnapshotHeaderView } from "../services/seo/crawl.shared";
 // Pure and dependency-free (see its header) — safe in component scope.
 import { hasDiffContent, type CrawlDiff } from "../services/seo/crawl-diff";
+// Also pure: only the private-host guard behind it, no server-only imports.
+import {
+  isExternalLinkBroken,
+  isExternalLinkBlocked,
+  EXTERNAL_NOT_CHECKED,
+  MAX_EXTERNAL_TARGETS,
+} from "../services/seo/external-links";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
 const TYPE_PATH: Record<AuditType, string> = {
@@ -217,6 +224,8 @@ const EMPTY_LISTS = {
   external: [] as ExternalLinkRow[],
   externalTotal: 0,
   externalBrokenTotal: 0,
+  externalUncheckedTotal: 0,
+  externalTruncated: false,
   /** §6.5 — the opt-out switch's current state. */
   externalChecksEnabled: true,
   /** §7.2 — null when there is no previous snapshot to compare against. */
@@ -439,13 +448,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       anchor: true,
     },
   });
-  const externalBrokenTotal = externalRows.filter(
-    (r) => r.statusCode <= 0 || r.statusCode >= 400,
+  const externalBrokenTotal = externalRows.filter((r) => isExternalLinkBroken(r.statusCode)).length;
+  const externalUncheckedTotal = externalRows.filter(
+    (r) => r.statusCode === EXTERNAL_NOT_CHECKED,
   ).length;
   const external: ExternalLinkRow[] = [...externalRows]
     .sort((a, b) => {
-      const aBroken = a.statusCode <= 0 || a.statusCode >= 400 ? 0 : 1;
-      const bBroken = b.statusCode <= 0 || b.statusCode >= 400 ? 0 : 1;
+      // Dead first, then by how many pages link there. Same classification the
+      // crawler and the dashboard bucket use — 403/429 is a bot shield.
+      const aBroken = isExternalLinkBroken(a.statusCode) ? 0 : 1;
+      const bBroken = isExternalLinkBroken(b.statusCode) ? 0 : 1;
       return aBroken - bBroken || b.sourceCount - a.sourceCount || a.url.localeCompare(b.url);
     })
     .slice(0, UI_ROW_CAP)
@@ -460,7 +472,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // §7.2 — compare against the previous snapshot. Retention keeps 5, so there
   // usually is one; the whole card is hidden when there isn't.
-  const diff = await buildCrawlDiff(db, shop, snapshotRow.id);
+  const diff = await buildCrawlDiff(db, shop, snapshotRow.id, snapshotRow.status);
 
   return json({
     gated: false,
@@ -478,6 +490,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     external,
     externalTotal: externalRows.length,
     externalBrokenTotal,
+    externalUncheckedTotal,
+    // §6.1 — the collection stopped at the bound, so there are outbound links
+    // we never even recorded. Derivable from the row count, which is why no
+    // snapshot column was needed for it.
+    externalTruncated: externalRows.length >= MAX_EXTERNAL_TARGETS,
     externalChecksEnabled,
     totals: { allPages: pages.length, okPages: okTotal, brokenPages: brokenTotal },
   });
@@ -524,7 +541,14 @@ async function buildCrawlDiff(
   db: any,
   shop: string,
   currentSnapshotId: string,
+  currentStatus: string,
 ): Promise<(CrawlDiff & { previousAt: string }) | null> {
+  // The current side must be a SETTLED run. Pages are written in one bulk
+  // insert at the very end, so while a crawl is running — and forever after a
+  // failed one — the current snapshot has zero rows, and diffing against it
+  // reports the entire shop as gone (−412 pages, every URL in "no longer
+  // found"). The same reason the previous side is filtered below.
+  if (currentStatus !== "completed" && currentStatus !== "capped") return null;
   try {
     const { diffCrawls } = await import("../services/seo/crawl-diff");
     const previous = await db.seoCrawlSnapshot.findFirst({
@@ -1087,6 +1111,19 @@ export default function SeoCrawl() {
             {activeTab === "external" && (
               <BlockStack gap="200">
                 <Text as="p" variant="bodySm" tone="subdued">{c.externalHint}</Text>
+                {/* Neither cap is allowed to be silent (§6.1/§6.3): "0 dead
+                    links" after checking a tenth of them is the most
+                    misleading number this report could show. */}
+                {data.externalTruncated && (
+                  <Banner tone="warning">
+                    {c.externalTruncatedBanner.replace("{max}", String(MAX_EXTERNAL_TARGETS))}
+                  </Banner>
+                )}
+                {data.externalUncheckedTotal > 0 && (
+                  <Banner tone="warning">
+                    {c.externalUncheckedBanner.replace("{count}", String(data.externalUncheckedTotal))}
+                  </Banner>
+                )}
                 {!data.externalChecksEnabled ? (
                   <Banner tone="info">{c.externalDisabledBanner}</Banner>
                 ) : data.external.length === 0 ? (
@@ -1120,11 +1157,13 @@ export default function SeoCrawl() {
                             </BlockStack>,
                             <BlockStack gap="050" inlineAlign="end">
                               <Badge tone={externalTone(link.statusCode)}>
-                                {link.statusCode === -1
-                                  ? c.statusRedirectLoop
-                                  : link.statusCode === 0
-                                    ? c.externalUnreachable
-                                    : String(link.statusCode)}
+                                {link.statusCode === EXTERNAL_NOT_CHECKED
+                                  ? c.externalNotChecked
+                                  : link.statusCode === -1
+                                    ? c.statusRedirectLoop
+                                    : link.statusCode === 0
+                                      ? c.externalUnreachable
+                                      : String(link.statusCode)}
                               </Badge>
                               <Badge>{c.externalSourceCount.replace("{count}", String(link.sourceCount))}</Badge>
                             </BlockStack>,
@@ -1234,10 +1273,13 @@ function DiffList({ title, rows }: { title: string; rows: string[] }) {
   );
 }
 
-/** §6.4 — 0 is "unreachable" and -1 a redirect loop, both as bad as a 4xx. */
-function externalTone(statusCode: number): "critical" | "warning" | "success" {
-  if (statusCode <= 0) return "critical";
-  if (statusCode >= 400) return "critical";
+/** §6.4 — 0 is "unreachable" and -1 a redirect loop, both as bad as a 4xx.
+ *  A 403/429 is a bot shield refusing US and stays a warning, never a dead
+ *  link (isExternalLinkBroken). -2 is "we never got to it". */
+function externalTone(statusCode: number): "critical" | "warning" | "success" | undefined {
+  if (statusCode === EXTERNAL_NOT_CHECKED) return undefined;
+  if (isExternalLinkBroken(statusCode)) return "critical";
+  if (isExternalLinkBlocked(statusCode)) return "warning";
   if (statusCode >= 300) return "warning";
   return "success";
 }

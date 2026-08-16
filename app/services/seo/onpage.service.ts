@@ -263,6 +263,30 @@ export interface CanonicalFinding {
  * crawler used to build `url` — without it (trailing slash, myshopify vs.
  * primary host, query) every page reports a chain against itself.
  */
+/**
+ * The host to compare canonicals against, taken from the CRAWLED URLs
+ * themselves.
+ *
+ * Not from `fetchPrimaryDomain`: that helper falls back to the
+ * `.myshopify.com` host whenever the Admin call is throttled or fails, and
+ * every crawled URL is normalized to the PRIMARY domain — so on a bad lookup
+ * every single canonical would be "points at a foreign domain", critical, on
+ * every page. The crawl's own URLs cannot be wrong about the host the crawl
+ * used. Returns "" only when there are no parsable URLs at all, which the
+ * caller must treat as "cannot judge canonicals".
+ */
+export function canonicalHostFromPages(pages: Array<{ url: string }>): string {
+  for (const page of pages) {
+    try {
+      const host = new URL(page.url).hostname;
+      if (host) return host;
+    } catch {
+      /* keep looking */
+    }
+  }
+  return "";
+}
+
 export function analyzeCanonicals(
   pages: OnPageRow[],
   canonicalHost: string,
@@ -277,14 +301,17 @@ export function analyzeCanonicals(
     if (key) byUrl.set(key, p);
   }
 
+  const knowsParseState = snapshotKnowsParseState(pages);
   const findings: CanonicalFinding[] = [];
   for (const page of pages) {
     // Only pages that actually served content can have a canonical judged.
     if (page.statusCode < 200 || page.statusCode >= 300) continue;
     // A page whose body was never parsed has `canonical === null` for that
     // reason alone — reporting "missing" there is a crawl artifact, not a
-    // theme defect.
-    if (!page.indexabilityKnown) continue;
+    // theme defect. On a snapshot that predates the flag it is unknowable, and
+    // `canonical` was captured back then too, so 2xx is the gate there (same
+    // fallback as `judgeable`).
+    if (knowsParseState && !page.indexabilityKnown) continue;
 
     const of = (issue: CanonicalIssue, target: string | null): CanonicalFinding => ({
       url: page.url,
@@ -347,11 +374,39 @@ export interface OnPageIssueRow {
   resourceId: string | null;
 }
 
-/** Pages that served content and were actually parsed — the only rows any
- *  on-page rule below may judge. */
+/**
+ * True when this snapshot records WHETHER a page's body was parsed.
+ *
+ * `indexabilityKnown` is that marker (§2.2), and it is false on every row of a
+ * snapshot crawled before the column existed. Which of the two it is decides
+ * how the rules below may read the data, so it is asked once per snapshot
+ * rather than per row: a single 404 legitimately has no answer, and requiring
+ * every row to know would declare a perfectly current snapshot unusable.
+ */
+export function snapshotKnowsParseState(pages: OnPageRow[]): boolean {
+  return pages.some((p) => p.indexabilityKnown);
+}
+
+/**
+ * Pages an on-page rule may judge.
+ *
+ * On a CURRENT snapshot: 2xx AND actually parsed. The parse flag matters
+ * beyond old rows — a page found at the BFS depth limit is fetched but never
+ * parsed, so its `canonical`/`title` are null for that reason alone, and
+ * judging it would invent a "canonical missing" finding on every deep page.
+ *
+ * On an OLD snapshot (no row knows): 2xx only. `title`, `metaDesc`,
+ * `canonical`, `h1Count` and `wordCount` are pre-existing columns and their
+ * values are real, so gating them on a flag that did not exist yet would make
+ * five categories claim "no problems found" — the loudest possible version of
+ * the empty-column trap this plan exists to avoid. Rules that depend on the
+ * NEW columns (`h1First`, `imgMissingAlt`) cannot fall back that way and are
+ * marked unknown by their callers instead.
+ */
 function judgeable(pages: OnPageRow[]): OnPageRow[] {
+  const knowsParseState = snapshotKnowsParseState(pages);
   return pages.filter(
-    (p) => p.statusCode >= 200 && p.statusCode < 300 && p.indexabilityKnown,
+    (p) => p.statusCode >= 200 && p.statusCode < 300 && (p.indexabilityKnown || !knowsParseState),
   );
 }
 
@@ -372,6 +427,13 @@ export interface HeadingReport {
   multiple: OnPageIssueRow[];
   /** H1 and <title> are the same text. Informational only. */
   sameAsTitle: OnPageIssueRow[];
+  /**
+   * False on a snapshot crawled before `h1First` existed. `sameAsTitle` is
+   * then empty because the TEXT was never stored — not because no page matches
+   * — so the UI must say "unknown" rather than "none found". `missing` and
+   * `multiple` read `h1Count`, which is a pre-existing column and stays valid.
+   */
+  sameAsTitleKnown: boolean;
 }
 
 /** Comparison form for "H1 equals title" — entity decoding is unnecessary
@@ -386,6 +448,7 @@ function compareText(value: string | null | undefined): string {
 export function analyzeHeadings(pages: OnPageRow[]): HeadingReport {
   const rows = judgeable(pages);
   return {
+    sameAsTitleKnown: snapshotKnowsParseState(pages),
     missing: rows.filter((p) => p.h1Count === 0).map((p) => toIssueRow(p, null)),
     multiple: rows.filter((p) => p.h1Count > 1).map((p) => toIssueRow(p, String(p.h1Count))),
     sameAsTitle: rows
@@ -412,9 +475,15 @@ export function findMissingMetaDescriptions(pages: OnPageRow[]): OnPageIssueRow[
     .map((p) => toIssueRow(p, null));
 }
 
-/** Pages serving images without alt text (§2.3). `alt=""` counts — which is
- *  why this is "without alt text", never "error": a theme's decorative icons
- *  legitimately land here. */
+/**
+ * Pages serving images without alt text (§2.3). `alt=""` counts — which is why
+ * this is "without alt text", never "error": a theme's decorative icons
+ * legitimately land here.
+ *
+ * `imgCount`/`imgMissingAlt` are NEW columns, so on an older snapshot every
+ * row reads 0 and this returns []. That is "not measured", not "all good" —
+ * callers gate the category on `snapshotKnowsParseState` and say so.
+ */
 export function findImagesWithoutAlt(pages: OnPageRow[]): OnPageIssueRow[] {
   return judgeable(pages)
     .filter((p) => p.imgMissingAlt > 0)

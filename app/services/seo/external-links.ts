@@ -103,10 +103,18 @@ export interface ExternalTarget {
   anchor: string | null;
 }
 
+/**
+ * `statusCode` sentinel for a target the pass never got to — the 120s budget
+ * ran out (§6.3). Persisted rather than dropped, because "we did not check
+ * these" and "these are fine" must not look the same in the report.
+ */
+export const EXTERNAL_NOT_CHECKED = -2;
+
 export interface ExternalCheckResult {
   url: string;
   /** HTTP status, `0` = timeout/DNS/refused by the safety guard, `-1` = redirect
-   *  loop or more than EXTERNAL_MAX_HOPS. Same sentinels as SeoCrawlPage. */
+   *  loop or more than EXTERNAL_MAX_HOPS, `-2` = not checked (budget). Same
+   *  sentinel convention as SeoCrawlPage. */
   statusCode: number;
   /** Set when the link redirected. "points at http://, redirects to https://"
    *  is a useful finding in its own right. */
@@ -116,9 +124,30 @@ export interface ExternalCheckResult {
   anchor: string | null;
 }
 
-/** True when a result is worth showing as a problem (sorted first in the UI). */
+/**
+ * True when a result is a genuine dead link.
+ *
+ * 403/429 are excluded, for exactly the reason `isBotBlockStatus`
+ * (crawl.service.ts) excludes them from the internal broken-link list: they
+ * mean "a bot filter refused US", not "the target is gone" — a visitor and
+ * Googlebot still reach the page. Here the risk is higher, not lower: the
+ * check already retries a HEAD-403 with a GET, so a 403 that survives is
+ * almost always a shield that refuses non-browser clients outright. Counting
+ * those as dead links would flood the report with false positives, which is
+ * the failure mode §6.2 exists to avoid.
+ *
+ * `EXTERNAL_NOT_CHECKED` is not broken either — it is unknown, and the UI says
+ * so separately.
+ */
 export function isExternalLinkBroken(statusCode: number): boolean {
+  if (statusCode === EXTERNAL_NOT_CHECKED) return false;
+  if (statusCode === 403 || statusCode === 429) return false;
   return statusCode <= 0 || statusCode >= 400;
+}
+
+/** A bot filter refused the check — reported, but never as a dead link. */
+export function isExternalLinkBlocked(statusCode: number): boolean {
+  return statusCode === 403 || statusCode === 429;
 }
 
 interface CheckDeps {
@@ -336,5 +365,25 @@ export async function runExternalLinkPass(
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, targets.length)) }, worker));
   if (deps.onProgress) await deps.onProgress(checked, targets.length);
 
-  return { results, unchecked: Math.max(0, targets.length - results.length), timedOut };
+  // Anything the budget cut short is RECORDED as not-checked rather than
+  // silently dropped: a target missing from the table is indistinguishable
+  // from one that came back healthy, and "0 dead links" after checking a
+  // tenth of them is the most misleading number this report could show.
+  const checkedUrls = new Set(results.map((r) => r.url));
+  const leftovers: ExternalCheckResult[] = [];
+  for (const lane of lanes) {
+    for (const target of lane.items) {
+      if (checkedUrls.has(target.url)) continue;
+      leftovers.push({
+        url: target.url,
+        statusCode: EXTERNAL_NOT_CHECKED,
+        finalUrl: null,
+        sourceCount: target.count,
+        sampleSources: target.sources.slice(0, MAX_SAMPLE_SOURCES).join("\n"),
+        anchor: target.anchor,
+      });
+    }
+  }
+
+  return { results: [...results, ...leftovers], unchecked: leftovers.length, timedOut };
 }

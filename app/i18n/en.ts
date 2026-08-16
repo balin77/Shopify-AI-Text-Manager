@@ -1714,6 +1714,8 @@ export const en: Translation = {
       indexabilityProblemHint: "These pages are set to \"noindex\" even though they are not among the areas Shopify excludes by itself, and were not hidden through the sitemap tab either. This is the most valuable finding on this tab.",
       emptyIndexability: "No unexpectedly excluded pages found.",
       indexabilityUnknownHint: "Not recorded by this crawl yet.",
+      categoryUnknownHint: "Not recorded by this crawl yet.",
+      categoryUnknownBanner: "The last crawl did not record this yet (it ran before this update). An empty result here would claim \"nothing found\" — run a new crawl and it will show up.",
       indexabilityUnknownBanner: "The last crawl did not record indexability yet (it ran before this update). An empty result here would claim \"all good\", which we do not know — run a new crawl and it will show up.",
       indexabilityPartialUnknown: "No answer for {count} pages (no HTML was served, or an older crawl).",
       badgeNoindex: "noindex",
@@ -1796,6 +1798,9 @@ export const en: Translation = {
       externalSourceCount: "linked from {count} pages",
       externalRedirectsTo: "Redirects to",
       externalUnreachable: "Unreachable",
+      externalNotChecked: "Not checked",
+      externalTruncatedBanner: "Only the first {max} distinct external targets were recorded. Any links beyond that are not listed here.",
+      externalUncheckedBanner: "{count} targets could not be checked within the time budget. They are marked \"Not checked\" below — not as fine.",
       externalChecksLabel: "Also check external links",
       externalChecksHelp: "After the crawl, checks whether links to other websites still work. This sends requests to servers we do not control and makes the crawl take a little longer (at most 2 extra minutes).",
       // Crawl comparison (PLAN_SEO_CRAWL_EXPANSION §7.2)
