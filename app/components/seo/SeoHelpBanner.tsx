@@ -12,7 +12,9 @@
  * Visible by default. Dismissing persists per help id (see
  * [seo-help-visibility.ts](../../utils/seo-help-visibility.ts)) — the crawl
  * section has one box per step, so hiding the on-page intro leaves the delivery
- * one alone.
+ * one alone. The state is therefore keyed by id throughout, never by "the
+ * banner that registered last": a section is allowed to render more than one
+ * box, and a single shared flag would let dismissing one hide the other.
  */
 
 import {
@@ -33,21 +35,26 @@ import { readSeoHelpHidden, writeSeoHelpHidden } from "../../utils/seo-help-visi
 interface SeoHelpContextValue {
   /** Help id used when a banner doesn't name one — the section id. */
   defaultHelpId: string;
-  /** Help id of the banner currently mounted, or null while none is. */
-  activeHelpId: string | null;
-  hidden: boolean;
-  setHidden: (hidden: boolean) => void;
+  /** Help ids of the banners currently mounted, in registration order. */
+  registeredIds: readonly string[];
+  isHidden: (helpId: string) => boolean;
+  setHidden: (helpId: string, hidden: boolean) => void;
   /** Called by the banner on mount; returns its unregister callback. */
   register: (helpId: string) => () => void;
 }
 
 const SeoHelpContext = createContext<SeoHelpContextValue | null>(null);
 
+const EMPTY_IDS: readonly string[] = [];
+
 /**
- * localStorage exists only on the client, so the dismissed state has to be
- * applied after hydration — but before paint, otherwise a merchant who hid the
- * box sees it flash on every navigation. A layout effect on the client, a
- * plain (never-running) effect on the server.
+ * localStorage exists only on the client, so the dismissed state can only be
+ * applied after hydration. A layout effect gets it in before paint on every
+ * client-side navigation; on a full document load the server HTML (which has no
+ * storage to read) always contains the box, so a merchant who hid it sees it
+ * once, briefly. Removing that last flash would mean either persisting the
+ * choice server-side or injecting pre-hydration CSS from the root document —
+ * both disproportionate for a help box that defaults to visible.
  */
 const useIsomorphicLayoutEffect = typeof document !== "undefined" ? useLayoutEffect : useEffect;
 
@@ -58,26 +65,41 @@ export function SeoHelpProvider({
   sectionId: string;
   children: ReactNode;
 }) {
-  const [activeHelpId, setActiveHelpId] = useState<string | null>(null);
-  const [hidden, setHiddenState] = useState(false);
+  const [registeredIds, setRegisteredIds] = useState<readonly string[]>(EMPTY_IDS);
+  const [hiddenIds, setHiddenIds] = useState<ReadonlySet<string>>(() => new Set<string>());
 
-  const register = useCallback((helpId: string) => {
-    setActiveHelpId(helpId);
-    setHiddenState(readSeoHelpHidden(helpId));
-    return () => setActiveHelpId((current) => (current === helpId ? null : current));
+  const applyHidden = useCallback((helpId: string, hidden: boolean) => {
+    setHiddenIds((current) => {
+      if (current.has(helpId) === hidden) return current;
+      const next = new Set(current);
+      if (hidden) next.add(helpId);
+      else next.delete(helpId);
+      return next;
+    });
   }, []);
 
-  const setHidden = useCallback(
-    (next: boolean) => {
-      setHiddenState(next);
-      if (activeHelpId) writeSeoHelpHidden(activeHelpId, next);
+  const register = useCallback(
+    (helpId: string) => {
+      setRegisteredIds((current) => (current.includes(helpId) ? current : [...current, helpId]));
+      applyHidden(helpId, readSeoHelpHidden(helpId));
+      return () => setRegisteredIds((current) => current.filter((id) => id !== helpId));
     },
-    [activeHelpId],
+    [applyHidden],
   );
 
+  const setHidden = useCallback(
+    (helpId: string, hidden: boolean) => {
+      applyHidden(helpId, hidden);
+      writeSeoHelpHidden(helpId, hidden);
+    },
+    [applyHidden],
+  );
+
+  const isHidden = useCallback((helpId: string) => hiddenIds.has(helpId), [hiddenIds]);
+
   const value = useMemo<SeoHelpContextValue>(
-    () => ({ defaultHelpId: sectionId, activeHelpId, hidden, setHidden, register }),
-    [sectionId, activeHelpId, hidden, setHidden, register],
+    () => ({ defaultHelpId: sectionId, registeredIds, isHidden, setHidden, register }),
+    [sectionId, registeredIds, isHidden, setHidden, register],
   );
 
   return <SeoHelpContext.Provider value={value}>{children}</SeoHelpContext.Provider>;
@@ -113,23 +135,24 @@ export function SeoHelpBanner({ title, children, helpId }: SeoHelpBannerProps) {
     );
   }
 
-  // Before the register effect has run, `activeHelpId` is still null — showing
-  // the banner is the right default there too.
-  if (ctx.hidden && ctx.activeHelpId === id) return null;
+  // Before the register effect has run nothing is known about this id yet, and
+  // showing the box is the right default there too.
+  if (ctx.isHidden(id)) return null;
 
   return (
-    <Banner tone="info" title={title} onDismiss={() => ctx.setHidden(true)}>
+    <Banner tone="info" title={title} onDismiss={() => ctx.setHidden(id, true)}>
       {children}
     </Banner>
   );
 }
 
-/** The ❓ next to the section title, shown only while the box is hidden. */
+/** The ❓ next to the section title, shown only while a box is hidden. */
 export function SeoHelpToggle() {
   const ctx = useContext(SeoHelpContext);
   const { t } = useI18n();
 
-  if (!ctx || !ctx.activeHelpId || !ctx.hidden) return null;
+  const hiddenIds = ctx ? ctx.registeredIds.filter((id) => ctx.isHidden(id)) : EMPTY_IDS;
+  if (!ctx || hiddenIds.length === 0) return null;
 
   const label = t.seo.sectionHelpShow;
   return (
@@ -138,7 +161,7 @@ export function SeoHelpToggle() {
         icon={QuestionCircleIcon}
         variant="tertiary"
         accessibilityLabel={label}
-        onClick={() => ctx.setHidden(false)}
+        onClick={() => hiddenIds.forEach((id) => ctx.setHidden(id, false))}
       />
     </Tooltip>
   );
