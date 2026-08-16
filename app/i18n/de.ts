@@ -396,6 +396,57 @@ export const de = {
     // Setup
     syncAllContent: "Alle Inhalte synchronisieren",
     syncDescription: "Dies synchronisiert alle Produkte, Kollektionen und Artikel von Shopify in die Datenbank. Auto-Updates über Webhooks.",
+
+    // ── PLAN_CONTENT_CREATION §1.1/§1.2 — Inhalte anlegen ──────────────────
+    createButtonLabel: "Neu anlegen",
+    createChooserTitle: "Was möchtest du anlegen?",
+    // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
+    // denselben Text bekommen (§1.2).
+    createPlanContentType: "Dein Tarif enthält diesen Inhaltstyp nicht.",
+    createPlanLimit: "Du hast das Limit deines Tarifs für diesen Inhaltstyp erreicht.",
+    createUnavailable: "Hier lässt sich nichts anlegen.",
+    createNeedsBlogFirst: "Dieser Shop hat noch keinen Blog. Ein Beitrag muss in einem liegen — lege also zuerst den Blog an.",
+    createResourceLabels: {
+      product: "Produkt",
+      collection: "Kollektion",
+      page: "Seite",
+      article: "Blogbeitrag",
+      blog: "Blog",
+      metaobject: "Metaobjekt-Eintrag",
+    },
+    createdTitle: "\u201e{name}\u201c wurde angelegt",
+    createdNotSyncedTitle: "Angelegt — in der Liste noch nicht sichtbar",
+    createdNotSyncedBody: "Der Eintrag wurde in Shopify angelegt. Nur die lokale Kopie fehlt noch — lade neu, um ihn zu sehen. Lege ihn NICHT ein zweites Mal an.",
+    createdHandle: "Handle: {handle}",
+    createModal: {
+      create: "Anlegen",
+      cancel: "Abbrechen",
+      moreFields: "Mehr Felder",
+      fewerFields: "Weniger Felder",
+      required: "Pflichtfeld",
+      handleHint: "Leer lassen — Shopify leitet den Handle aus dem Titel ab. Bei einer Kollision hängt Shopify eine Zahl an.",
+      discardConfirm: "Eingaben verwerfen?",
+      fields: {
+        title: "Titel", description: "Beschreibung", body: "Inhalt", summary: "Zusammenfassung",
+        handle: "Handle", seoTitle: "SEO-Titel", metaDescription: "Meta-Beschreibung",
+        keyword: "Keyword", image: "Bild", status: "Status", price: "Preis",
+        compareAtPrice: "Vergleichspreis", sku: "SKU", barcode: "Barcode",
+        productType: "Produkttyp", vendor: "Hersteller", tags: "Tags",
+        sortOrder: "Sortierung", author: "Autor", blog: "Blog",
+        commentPolicy: "Kommentare", metaobjectType: "Typ",
+      },
+      options: {
+        "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
+        "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
+        "sortOrder.MANUAL": "Manuell", "sortOrder.BEST_SELLING": "Bestseller",
+        "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+        "sortOrder.PRICE_ASC": "Preis aufsteigend", "sortOrder.PRICE_DESC": "Preis absteigend",
+        "sortOrder.CREATED": "Älteste zuerst", "sortOrder.CREATED_DESC": "Neueste zuerst",
+        "sortOrder.MOST_RELEVANT": "Relevanz",
+        "commentPolicy.CLOSED": "Geschlossen", "commentPolicy.MODERATED": "Moderiert",
+        "commentPolicy.AUTO_PUBLISHED": "Automatisch veröffentlicht",
+      },
+    },
   },
 
   // Direct translations ("Direktübersetzungen") content type

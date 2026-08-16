@@ -399,6 +399,57 @@ export const en: Translation = {
     // Setup
     syncAllContent: "Sync All Content",
     syncDescription: "This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks.",
+
+    // ── PLAN_CONTENT_CREATION §1.1/§1.2 — creating content ─────────────────
+    createButtonLabel: "Create",
+    createChooserTitle: "What would you like to create?",
+    // Two DIFFERENT refusals with different remedies — they must never share
+    // the same text (§1.2).
+    createPlanContentType: "Your plan does not include this content type.",
+    createPlanLimit: "You have reached your plan's limit for this content type.",
+    createUnavailable: "Nothing can be created here.",
+    createNeedsBlogFirst: "This shop has no blog yet. A post has to live in one, so create the blog first.",
+    createResourceLabels: {
+      product: "Product",
+      collection: "Collection",
+      page: "Page",
+      article: "Blog post",
+      blog: "Blog",
+      metaobject: "Metaobject entry",
+    },
+    createdTitle: "\u201c{name}\u201d was created",
+    createdNotSyncedTitle: "Created — not visible in the list yet",
+    createdNotSyncedBody: "The item was created in Shopify. Only the local copy is missing — reload to see it. Do NOT create it a second time.",
+    createdHandle: "Handle: {handle}",
+    createModal: {
+      create: "Create",
+      cancel: "Cancel",
+      moreFields: "More fields",
+      fewerFields: "Fewer fields",
+      required: "Required",
+      handleHint: "Leave empty — Shopify derives the handle from the title. On a collision it appends a number.",
+      discardConfirm: "Discard your input?",
+      fields: {
+        title: "Title", description: "Description", body: "Content", summary: "Summary",
+        handle: "Handle", seoTitle: "SEO title", metaDescription: "Meta description",
+        keyword: "Keyword", image: "Image", status: "Status", price: "Price",
+        compareAtPrice: "Compare-at price", sku: "SKU", barcode: "Barcode",
+        productType: "Product type", vendor: "Vendor", tags: "Tags",
+        sortOrder: "Sort order", author: "Author", blog: "Blog",
+        commentPolicy: "Comments", metaobjectType: "Type",
+      },
+      options: {
+        "status.DRAFT": "Draft", "status.ACTIVE": "Active",
+        "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
+        "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
+        "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+        "sortOrder.PRICE_ASC": "Price, low to high", "sortOrder.PRICE_DESC": "Price, high to low",
+        "sortOrder.CREATED": "Oldest first", "sortOrder.CREATED_DESC": "Newest first",
+        "sortOrder.MOST_RELEVANT": "Relevance",
+        "commentPolicy.CLOSED": "Closed", "commentPolicy.MODERATED": "Moderated",
+        "commentPolicy.AUTO_PUBLISHED": "Auto-published",
+      },
+    },
   },
 
   // Direct translations content type

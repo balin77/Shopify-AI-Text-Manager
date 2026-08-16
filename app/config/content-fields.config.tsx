@@ -15,6 +15,8 @@ import { isMetaobjectLabelField } from "../constants/shopifyFields";
 
 export const PRODUCTS_CONFIG: ContentEditorConfig = {
   contentType: "products",
+  // PLAN_CONTENT_CREATION §1.1 — what the "+" button offers on this tab.
+  createSupport: { resources: ["product"] },
   resourceType: "Product",
   displayName: "Products",
   displayNameSingular: "Product",
@@ -108,6 +110,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
 
 export const COLLECTIONS_CONFIG: ContentEditorConfig = {
   contentType: "collections",
+  createSupport: { resources: ["collection"] },
   resourceType: "Collection",
   displayName: "Collections",
   displayNameSingular: "Collection",
@@ -306,6 +309,8 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
 
 export const BLOGS_CONFIG: ContentEditorConfig = {
   contentType: "blogs",
+  // Two creatable resources on one tab: an article, and the blog it lives in.
+  createSupport: { resources: ["article", "blog"] },
   resourceType: "Article",
   displayName: "Articles & Blogs",
   displayNameSingular: "Article",
@@ -339,6 +344,7 @@ export const BLOGS_CONFIG: ContentEditorConfig = {
 
 export const PAGES_CONFIG: ContentEditorConfig = {
   contentType: "pages",
+  createSupport: { resources: ["page"] },
   resourceType: "Page",
   displayName: "Pages",
   displayNameSingular: "Page",
@@ -427,6 +433,8 @@ function getPolicyTypeName(type: string | undefined, t?: import("~/i18n/de").Tra
 
 export const POLICIES_CONFIG: ContentEditorConfig = {
   contentType: "policies",
+  // No createSupport on purpose (§2.6): a shop has exactly six policies and
+  // Shopify has no create API for them.
   resourceType: "ShopPolicy",
   displayName: "Policies",
   displayNameSingular: "Policy",
@@ -536,6 +544,9 @@ export const COOKIE_BANNER_CONFIG: ContentEditorConfig = {
 
 export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   contentType: "metaobjects",
+  // Entries only — read_metaobject_definitions does not allow new DEFINITIONS,
+  // and only definitions whose required fields are plain text are offered (§1.5).
+  createSupport: { resources: ["metaobject"] },
   resourceType: "Metaobject",
   displayName: "Metaobjects",
   displayNameSingular: "Metaobject Type",

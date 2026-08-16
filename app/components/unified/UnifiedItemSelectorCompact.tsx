@@ -8,7 +8,7 @@
 
 import { useState, useEffect } from "react";
 import { Card, TextField, BlockStack, InlineStack, Text, Icon, Button, Thumbnail } from "@shopify/polaris";
-import { SearchIcon, ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronDownIcon, ChevronUpIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "@shopify/polaris-icons";
 import type { UnifiedItem } from "./UnifiedItemList";
 
 interface UnifiedItemSelectorCompactProps {
@@ -23,6 +23,12 @@ interface UnifiedItemSelectorCompactProps {
     singular: string;
     plural: string;
   };
+  /** PLAN_CONTENT_CREATION §1.2 — the mobile create entry point. Omitted on
+   *  tabs where nothing can be created (§2.6). */
+  onAddItem?: (() => void) | null;
+  /** Set when creating is refused: the button stays visible and says why,
+   *  rather than vanishing and reading as a missing feature. */
+  addDisabledReason?: string | null;
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -36,6 +42,8 @@ export function UnifiedItemSelectorCompact({
   selectedItemId,
   onItemSelect,
   resourceName,
+  onAddItem,
+  addDisabledReason,
   t = {},
 }: UnifiedItemSelectorCompactProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -155,16 +163,38 @@ export function UnifiedItemSelectorCompact({
             }}
           >
             <div style={{ padding: "12px", borderBottom: "1px solid #e1e3e5" }}>
-              <TextField
-                label=""
-                value={searchQuery}
-                onChange={handleSearchChange}
-                placeholder={t.searchPlaceholder || `Search ${resourceName.plural}...`}
-                prefix={<Icon source={SearchIcon} />}
-                autoComplete="off"
-                clearButton
-                onClearButtonClick={() => handleSearchChange("")}
-              />
+              <InlineStack gap="200" blockAlign="center" wrap={false}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <TextField
+                    label=""
+                    value={searchQuery}
+                    onChange={handleSearchChange}
+                    placeholder={t.searchPlaceholder || `Search ${resourceName.plural}...`}
+                    prefix={<Icon source={SearchIcon} />}
+                    autoComplete="off"
+                    clearButton
+                    onClearButtonClick={() => handleSearchChange("")}
+                  />
+                </div>
+                {onAddItem && (
+                  <Button
+                    icon={PlusIcon}
+                    variant="primary"
+                    onClick={() => {
+                      setIsExpanded(false);
+                      onAddItem();
+                    }}
+                    disabled={!!addDisabledReason}
+                    accessibilityLabel={addDisabledReason || `Add ${resourceName.singular}`}
+                    size="slim"
+                  />
+                )}
+              </InlineStack>
+              {onAddItem && addDisabledReason && (
+                <div style={{ paddingTop: "6px" }}>
+                  <Text as="p" variant="bodySm" tone="subdued">{addDisabledReason}</Text>
+                </div>
+              )}
             </div>
 
             <div style={{ padding: "8px 12px", borderBottom: "1px solid #e1e3e5" }}>

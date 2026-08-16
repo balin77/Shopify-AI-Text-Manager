@@ -7,6 +7,11 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
+import { useCreateItem } from "../hooks/useCreateItem";
+import { CreateItemModal } from "./create/CreateItemModal";
+import { CreateResultBanner } from "./create/CreateResultBanner";
+import { CreateResourceChooser } from "./create/CreateResourceChooser";
+import type { CreatableResource } from "../config/create-fields.config";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -423,6 +428,53 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   };
   const finalPlanLimit = planLimit || defaultPlanLimit;
 
+  // ── PLAN_CONTENT_CREATION §1.1/§1.2 — the "+" button ────────────────────
+  // The tab declares WHAT it can create; the gate decides whether it may.
+  // Both refusals stay visible-and-disabled with their own reason: a hidden
+  // button reads as a missing feature, and "limit reached" shown to someone
+  // whose plan simply lacks the type sends them deleting things that will not
+  // help (§1.2).
+  const createResources = (config.createSupport?.resources ?? []) as CreatableResource[];
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const createItem = useCreateItem({
+    plan,
+    resources: createResources,
+    atLimit: finalPlanLimit.isAtLimit,
+    onCreated: (info) => {
+      // §1.6: select the new item and refresh. When the cache sync failed the
+      // item is NOT in the list yet — the banner says so and offers a reload
+      // rather than pretending the create failed.
+      if (info.synced) {
+        handleItemSelectRef.current(info.id);
+        revalidator?.revalidate();
+      }
+    },
+  });
+
+  const handleAddItem = useCallback(() => {
+    if (createResources.length === 0) return;
+    // One creatable resource opens its form directly; the blogs tab has two
+    // (an article and the blog it lives in) and asks first.
+    if (createResources.length === 1) {
+      createItem.open(createResources[0]);
+      return;
+    }
+    setChooserOpen(true);
+  }, [createResources, createItem]);
+
+  const createDisabledReason = useMemo(() => {
+    if (createResources.length === 0 || createItem.anyAllowed) return null;
+    const refused = createItem.gates.find((g) => !g.gate.allowed)?.gate;
+    if (!refused || refused.allowed) return null;
+    if (refused.reason === "planContentType") {
+      return t.content?.createPlanContentType || "Your plan does not include this content type.";
+    }
+    if (refused.reason === "planLimit") {
+      return t.content?.createPlanLimit || "You have reached your plan's limit for this content type.";
+    }
+    return t.content?.createUnavailable || "Creating is not available here.";
+  }, [createResources.length, createItem.anyAllowed, createItem.gates, t.content]);
+
   // Default list item renderer (if custom renderListItem not provided)
   const defaultRenderListItem = (item: UnifiedItem, isSelected: boolean, isHovered: boolean) => {
     return (
@@ -565,13 +617,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       selectedItemId: state.selectedItemId,
       onItemSelect: (itemId: string) => handleItemSelectRef.current(itemId),
       resourceName: translatedResourceName,
+      // §1.2 — the SAME entry point on mobile. Without it the "+" lives only
+      // on the desktop list and creating is unreachable on a phone.
+      onAddItem: createResources.length > 0 ? handleAddItem : null,
+      addDisabledReason: createDisabledReason,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
         selectItem: t.content?.selectItem || `Select ${translatedResourceName.singular}`,
       },
     });
-  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural]);
+  }, [unifiedItems, state.selectedItemId, translatedResourceName.singular, translatedResourceName.plural, createResources.length, handleAddItem, createDisabledReason]);
 
   // Cleanup: clear items when component unmounts
   useEffect(() => {
@@ -671,6 +727,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
+          showAddButton={createResources.length > 0}
+          onAddItem={handleAddItem}
+          addButtonLabel={createDisabledReason || t.content?.createButtonLabel || "Create"}
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
           sortOptions={sortOptions}
@@ -1400,6 +1459,83 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </TextContainer>
         </Modal.Section>
       </Modal>
+
+      {/* §1.6 — the post-create box. Rendered even when the cache sync failed:
+          the object EXISTS, and calling that an error is what produces a
+          second click and a duplicate. */}
+      {createItem.created && (
+        <div style={{ padding: "0 1rem 1rem" }}>
+          <CreateResultBanner
+            info={createItem.created}
+            onDismiss={createItem.dismissCreated}
+            onReload={
+              createItem.created.synced
+                ? undefined
+                : () => {
+                    void handleSyncAll();
+                    createItem.dismissCreated();
+                  }
+            }
+            t={{
+              createdTitle: t.content?.createdTitle,
+              createdNotSyncedTitle: t.content?.createdNotSyncedTitle,
+              createdNotSyncedBody: t.content?.createdNotSyncedBody,
+              handleChanged: t.content?.createdHandle,
+              reload: t.content?.reloadAllTooltip,
+            }}
+          />
+        </div>
+      )}
+
+      {/* PLAN_CONTENT_CREATION §1.1/§1.4 — create flow. Rendered at the page
+          root so the modal is not clipped by the editor's overflow:hidden
+          columns. */}
+      {chooserOpen && (
+        <CreateResourceChooser
+          open={chooserOpen}
+          onClose={() => setChooserOpen(false)}
+          resources={createItem.gates}
+          onChoose={(resource) => {
+            setChooserOpen(false);
+            createItem.open(resource);
+          }}
+          labels={t.content?.createResourceLabels}
+          reasons={{
+            planContentType: t.content?.createPlanContentType,
+            planLimit: t.content?.createPlanLimit,
+            unavailable: t.content?.createUnavailable,
+          }}
+          title={t.content?.createChooserTitle}
+          cancel={t.content?.cancel}
+        />
+      )}
+
+      {createItem.openResource && (
+        <CreateItemModal
+          open={!!createItem.openResource}
+          onClose={createItem.close}
+          resource={createItem.openResource}
+          dynamicOptions={createItem.dynamicOptions}
+          extraFieldsByOption={createItem.extraFieldsByOption}
+          extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}
+          blocked={
+            createItem.openResource === "article" && createItem.needsBlogFirst
+              ? {
+                  message:
+                    t.content?.createNeedsBlogFirst ||
+                    "This shop has no blog yet. A post has to live in one, so create the blog first.",
+                  actionLabel: t.content?.createResourceLabels?.blog || "Blog",
+                  onAction: () => createItem.open("blog"),
+                }
+              : null
+          }
+          onSubmit={createItem.create}
+          submitting={createItem.submitting}
+          error={createItem.error}
+          fieldErrors={createItem.fieldErrors}
+          t={t.content?.createModal}
+        />
+      )}
     </Page>
     </LocaleAvailabilityProvider>
   );

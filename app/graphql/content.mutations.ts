@@ -435,3 +435,134 @@ export const URL_REDIRECT_DELETE = `#graphql
     }
   }
 `;
+
+// ────────────────────────────────────────────────────────────────────────────
+// CREATE mutations — PLAN_CONTENT_CREATION §1.5
+//
+// Every one of these selects back the CORE FIELDS it set, not just an id. The
+// echo rule this repo applies to translations applies here too and for the same
+// reason: `userErrors: []` only means Shopify did not object, never that it
+// stored anything (see the invariants in CLAUDE.md).
+//
+// Page / Article / Blog notably do NOT carry `seo` on their create inputs —
+// their meta title/description live in the `global.title_tag` /
+// `description_tag` metafields and need the separate METAFIELDS_SET step.
+// Selecting them back here is what makes that step verifiable.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `productSet` rather than `productCreate` (§1.1): it covers the default
+ * variant's price/sku/barcode in the SAME call — a product without a price is
+ * not sellable (§2.2) — and it accepts `identifier: { handle }`, which makes a
+ * retry idempotent instead of duplicating (§1.7).
+ */
+export const CREATE_PRODUCT_SET = `#graphql
+  mutation createProductSet($input: ProductSetInput!, $synchronous: Boolean!) {
+    productSet(input: $input, synchronous: $synchronous) {
+      product {
+        id
+        title
+        handle
+        status
+        vendor
+        productType
+        tags
+        descriptionHtml
+        seo { title description }
+        variants(first: 1) {
+          nodes { id price compareAtPrice sku barcode }
+        }
+      }
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const CREATE_COLLECTION = `#graphql
+  mutation createCollection($input: CollectionInput!) {
+    collectionCreate(input: $input) {
+      collection {
+        id
+        title
+        handle
+        descriptionHtml
+        sortOrder
+        seo { title description }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+
+export const CREATE_PAGE = `#graphql
+  mutation createPage($page: PageCreateInput!) {
+    pageCreate(page: $page) {
+      page {
+        id
+        title
+        handle
+        body
+        isPublished
+      }
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const CREATE_ARTICLE = `#graphql
+  mutation createArticle($article: ArticleCreateInput!) {
+    articleCreate(article: $article) {
+      article {
+        id
+        title
+        handle
+        body
+        summary
+        tags
+        isPublished
+        author { name }
+        blog { id title }
+        image { url altText }
+      }
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const CREATE_BLOG = `#graphql
+  mutation createBlog($blog: BlogCreateInput!) {
+    blogCreate(blog: $blog) {
+      blog {
+        id
+        title
+        handle
+        commentPolicy
+      }
+      userErrors { field message code }
+    }
+  }
+`;
+
+export const CREATE_METAOBJECT = `#graphql
+  mutation createMetaobject($metaobject: MetaobjectCreateInput!) {
+    metaobjectCreate(metaobject: $metaobject) {
+      metaobject {
+        id
+        type
+        handle
+        displayName
+        fields { key value type }
+      }
+      userErrors { field message code }
+    }
+  }
+`;
+
+/** Blogs a merchant can file an article under (§1.7: none ⇒ offer the blog form). */
+export const LIST_BLOGS_FOR_CREATE = `#graphql
+  query listBlogsForCreate($first: Int!) {
+    blogs(first: $first) {
+      nodes { id title handle }
+    }
+  }
+`;

@@ -329,6 +329,22 @@ export interface ContentEditorConfig {
   /** Whether to show SEO sidebar */
   showSeoSidebar?: boolean;
 
+  /**
+   * PLAN_CONTENT_CREATION §1.1/§2.6 — which resource the "+" button creates.
+   *
+   * A FLAG per config, not a global default, because create is impossible on
+   * several tabs and for different reasons: policies are a fixed set of six
+   * with no create API, the whole theme-content family has no creatable
+   * resources at all. Leaving it unset is how those tabs say so.
+   *
+   * `blogs` is the one tab with TWO creatable resources (the blog container
+   * and an article inside it), which is why this is a list.
+   */
+  createSupport?: {
+    /** Offered in the create menu, in this order. */
+    resources: Array<"product" | "collection" | "page" | "article" | "blog" | "metaobject">;
+  };
+
   /** Custom primary field getter (t is optional for i18n support) */
   getPrimaryField?: (item: TranslatableContentItem, t?: I18nTranslation) => string | undefined;
 

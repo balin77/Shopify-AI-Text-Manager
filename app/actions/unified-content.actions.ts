@@ -45,6 +45,7 @@ import {
   handleTranslateFieldToAllLocales,
 } from "./content/translation.action";
 import { handleUpdateContent } from "./content/content-update.action";
+import { handleCreateContent } from "./content/create.actions";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -143,6 +144,10 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     case "translateSubResources":            return handleTranslateSubResources(ctx, formData);
     case "translateSubResourceToAllLocales": return handleTranslateSubResourceToAllLocales(ctx, formData);
     case "savePrimarySubResources":          return handleSavePrimarySubResources(ctx, formData);
+    // PLAN_CONTENT_CREATION §1.5 — a CASE here, never a parallel route.
+    // Note it is the one action that runs WITHOUT an itemId: the resource it
+    // writes does not exist yet.
+    case "createContent":                    return handleCreateContent(ctx, formData);
   }
 
   // ── Remaining inline actions (loadTranslations, generateAIText, formatAIText) ─

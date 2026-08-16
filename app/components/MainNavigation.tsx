@@ -64,7 +64,7 @@ export function MainNavigation() {
   const [popoverActive, setPopoverActive] = useState(false);
   const { plan, getPlanDisplayName, getMaxProducts, canAccessContentType } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
-  const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
+  const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT, onAddItem: onAddItemMobile, addDisabledReason } = useItemSelector();
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
   // Narrow screens hide the editor's right-hand sidebar entirely; when one is
   // registered its toggle takes the plan button's slot (see below).
@@ -433,6 +433,8 @@ export function MainNavigation() {
                 selectedItemId={selectedItemId}
                 onItemSelect={onItemSelect}
                 resourceName={resourceName}
+                onAddItem={onAddItemMobile}
+                addDisabledReason={addDisabledReason}
                 t={itemSelectorT}
               />
             </div>

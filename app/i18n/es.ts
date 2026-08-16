@@ -398,6 +398,57 @@ export const es: Translation = {
     // Setup
     syncAllContent: "Sincronizar todo el contenido",
     syncDescription: "Esto sincronizará todos los productos, colecciones y artículos de Shopify a la base de datos. Auto-actualización mediante webhooks.",
+
+    // ── PLAN_CONTENT_CREATION §1.1/§1.2 — crear contenido ──────────────────
+    createButtonLabel: "Crear",
+    createChooserTitle: "¿Qué quieres crear?",
+    // Dos rechazos DISTINTOS con soluciones distintas — nunca deben compartir
+    // el mismo texto (§1.2).
+    createPlanContentType: "Tu plan no incluye este tipo de contenido.",
+    createPlanLimit: "Has alcanzado el límite de tu plan para este tipo de contenido.",
+    createUnavailable: "Aquí no se puede crear nada.",
+    createNeedsBlogFirst: "Esta tienda todavía no tiene ningún blog. Una entrada debe estar en uno, así que crea primero el blog.",
+    createResourceLabels: {
+      product: "Producto",
+      collection: "Colección",
+      page: "Página",
+      article: "Entrada de blog",
+      blog: "Blog",
+      metaobject: "Entrada de metaobjeto",
+    },
+    createdTitle: "\u201c{name}\u201d se ha creado",
+    createdNotSyncedTitle: "Creado — todavía no visible en la lista",
+    createdNotSyncedBody: "El elemento se creó en Shopify. Solo falta la copia local — recarga para verlo. NO lo crees por segunda vez.",
+    createdHandle: "Handle: {handle}",
+    createModal: {
+      create: "Crear",
+      cancel: "Cancelar",
+      moreFields: "Más campos",
+      fewerFields: "Menos campos",
+      required: "Obligatorio",
+      handleHint: "Déjalo vacío — Shopify deriva el handle del título. Si hay colisión, añade un número.",
+      discardConfirm: "¿Descartar lo introducido?",
+      fields: {
+        title: "Título", description: "Descripción", body: "Contenido", summary: "Resumen",
+        handle: "Handle", seoTitle: "Título SEO", metaDescription: "Metadescripción",
+        keyword: "Palabra clave", image: "Imagen", status: "Estado", price: "Precio",
+        compareAtPrice: "Precio comparativo", sku: "SKU", barcode: "Código de barras",
+        productType: "Tipo de producto", vendor: "Proveedor", tags: "Etiquetas",
+        sortOrder: "Orden", author: "Autor", blog: "Blog",
+        commentPolicy: "Comentarios", metaobjectType: "Tipo",
+      },
+      options: {
+        "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
+        "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
+        "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Más vendidos",
+        "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+        "sortOrder.PRICE_ASC": "Precio ascendente", "sortOrder.PRICE_DESC": "Precio descendente",
+        "sortOrder.CREATED": "Más antiguos primero", "sortOrder.CREATED_DESC": "Más recientes primero",
+        "sortOrder.MOST_RELEVANT": "Relevancia",
+        "commentPolicy.CLOSED": "Cerrados", "commentPolicy.MODERATED": "Moderados",
+        "commentPolicy.AUTO_PUBLISHED": "Publicación automática",
+      },
+    },
   },
 
   // Direct translations content type
