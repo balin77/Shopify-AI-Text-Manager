@@ -21,13 +21,14 @@ import {
   analyzeCanonicals,
   analyzeHeadings,
   findMissingMetaDescriptions,
+  hasEditableMetadata,
   findImagesWithoutAlt,
   findThinPages,
   canonicalHostFromPages,
   selfCanonicalPages,
   type OnPageRow,
 } from "../services/seo/onpage.service";
-import type { AuditType } from "../services/seo/audit.service";
+import { isAuditType, type AuditType } from "../services/seo/resource-types.shared";
 
 const SHOP_NAME_QUERY = `#graphql
   query seoOnPageExportShopName {
@@ -138,11 +139,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
  * product once per locale: Shopify answers 200 for a translated product under
  * its primary handle behind every locale prefix, each canonicalising to the
  * properly translated URL.
+ *
+ * `hasEditableMetadata` is the second half of that filter (policies,
+ * /collections/all, `?page=N`) and belongs here for the same reason: an export
+ * that disagrees with the tab it exports is worse than no export.
  */
 function indexablePages(pages: OnPageRow[], ctx: { shop: string }): OnPageRow[] {
   const ok = pages.filter((p) => p.statusCode >= 200 && p.statusCode < 300);
   const canonicalHost = canonicalHostFromPages(pages);
-  return canonicalHost ? selfCanonicalPages(ok, canonicalHost, [ctx.shop]) : ok;
+  const selfCanonical = canonicalHost ? selfCanonicalPages(ok, canonicalHost, [ctx.shop]) : ok;
+  return selfCanonical.filter((p) => hasEditableMetadata(p.url));
 }
 
 async function buildRows(
@@ -231,8 +237,9 @@ async function buildRows(
         .filter(
           (p) =>
             p.resourceId &&
-            p.resourceType &&
-            p.resourceType !== "unknown" &&
+            // Policies resolve to a real id but store no SEO title — same
+            // narrowing the report applies (onpage-report.server.ts).
+            isAuditType(p.resourceType) &&
             p.locale === "" &&
             p.statusCode >= 200 &&
             p.statusCode < 300,

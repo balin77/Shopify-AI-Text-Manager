@@ -21,7 +21,15 @@ import type { PrismaClient } from "@prisma/client";
 
 /** A URL path resolved to the store resource it points at. */
 export interface ResolvedGscPage {
-  resourceType: "Product" | "Collection" | "Page" | "Article";
+  /**
+   * "Policy" is deliberately part of this union even though it is NOT an
+   * `AuditType`: `/policies/refund-policy` is a real, editable storefront page
+   * (Settings → Policies, body only), and leaving it unresolved meant the crawl
+   * report offered no "open in editor" on any policy page of any shop. Callers
+   * that only handle the four content types must filter it out explicitly —
+   * the GSC ones do.
+   */
+  resourceType: "Product" | "Collection" | "Page" | "Article" | "Policy";
   handle: string;
   /**
    * The locale prefix the path carried (e.g. "de" from "/de/products/foo"),
@@ -72,10 +80,18 @@ export function resolveGscPagePath(pageUrl: string): ResolvedGscPage | null {
   // /blogs/<blogHandle>/<articleHandle> — the article's own handle (third
   // segment) is what SeoKeyword/Article rows are keyed by, not the blog handle.
   if (first === "blogs" && second && third) return { resourceType: "Article", handle: third, locale };
+  // /policies/<policyHandle> — the handle IS the policy type in kebab case
+  // ("refund-policy" ⇄ REFUND_POLICY); ShopPolicy has no handle column.
+  if (first === "policies" && second) return { resourceType: "Policy", handle: second, locale };
   return null;
 }
 
-const RESOURCE_MODELS = ["Product", "Collection", "Page", "Article"] as const;
+const RESOURCE_MODELS = ["Product", "Collection", "Page", "Article", "Policy"] as const;
+
+/** `/policies/refund-policy` → `REFUND_POLICY`, the `ShopPolicy.type` value. */
+export function policyHandleToType(handle: string): string {
+  return handle.toUpperCase().replace(/-/g, "_");
+}
 
 /** A resolved path, now including the DB id when the handle matched a cached row. */
 export interface ResolvedResourceRef {
@@ -113,6 +129,7 @@ export async function resolvePathsToResources(
     Collection: new Set(),
     Page: new Set(),
     Article: new Set(),
+    Policy: new Set(),
   };
   for (const { resolved } of parsed) {
     if (resolved) handlesByType[resolved.resourceType].add(resolved.handle);
@@ -120,7 +137,11 @@ export async function resolvePathsToResources(
 
   const idByTypeAndHandle = new Map<string, string>(); // key: `${resourceType}::${handle}`
   try {
-    const [products, collections, pages, articles] = await Promise.all([
+    // ShopPolicy is keyed by TYPE, not by handle — the storefront handle is the
+    // type in kebab case, so the `in` list is built from the mapped values and
+    // mapped back below.
+    const policyTypes = Array.from(handlesByType.Policy).map(policyHandleToType);
+    const [products, collections, pages, articles, policies] = await Promise.all([
       handlesByType.Product.size
         ? db.product.findMany({
             where: { shop, handle: { in: Array.from(handlesByType.Product) } },
@@ -145,11 +166,22 @@ export async function resolvePathsToResources(
             select: { id: true, handle: true },
           })
         : Promise.resolve([]),
+      policyTypes.length
+        ? db.shopPolicy.findMany({
+            where: { shop, type: { in: policyTypes } },
+            select: { id: true, type: true },
+          })
+        : Promise.resolve([]),
     ]);
     for (const p of products as { id: string; handle: string }[]) idByTypeAndHandle.set(`Product::${p.handle}`, p.id);
     for (const c of collections as { id: string; handle: string }[]) idByTypeAndHandle.set(`Collection::${c.handle}`, c.id);
     for (const pg of pages as { id: string; handle: string }[]) idByTypeAndHandle.set(`Page::${pg.handle}`, pg.id);
     for (const a of articles as { id: string; handle: string }[]) idByTypeAndHandle.set(`Article::${a.handle}`, a.id);
+    // Back from `REFUND_POLICY` to the `refund-policy` the URL carried, so the
+    // key composes exactly like the handle-keyed types above.
+    for (const pol of policies as { id: string; type: string }[]) {
+      idByTypeAndHandle.set(`Policy::${pol.type.toLowerCase().replace(/_/g, "-")}`, pol.id);
+    }
 
     // TRANSLATED handles. Shopify serves a translated resource under its own
     // translated handle — `/es/products/caja-kumiko-…` is the SAME product as

@@ -707,7 +707,11 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       // page should be tracked against the FR edition (§4.2 Locale-Hinweis).
       const page = getFormString(form, "page");
       const resolved = page ? resolveGscPagePath(page) : null;
-      if (resolved) {
+      // "Policy" is a resolvable storefront page (the crawl report deep-links
+      // it) but not a keyword TARGET: ShopPolicy has no handle, no SEO title
+      // and no meta description to optimize against. Left unresolved on
+      // purpose, which routes the row into the existing item-picker modal.
+      if (resolved && resolved.resourceType !== "Policy") {
         try {
           const model =
             resolved.resourceType === "Product"

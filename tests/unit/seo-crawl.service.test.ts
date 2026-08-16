@@ -64,6 +64,15 @@ describe("normalizeCrawlUrl", () => {
     );
   });
 
+  it("collapses ?page=1 onto the unpaginated URL", () => {
+    // Same document, and Shopify canonicalises it to the bare path. Keeping the
+    // param crawled the page twice, and both copies then showed up as separate
+    // findings in every on-page list.
+    expect(normalizeCrawlUrl("https://shop.example.com/collections/all?page=1", "https://shop.example.com", canon, alias)).toBe(
+      "https://shop.example.com/collections/all",
+    );
+  });
+
   it("drops ?page=N entirely once it exceeds the whitelist", () => {
     expect(normalizeCrawlUrl("https://shop.example.com/collections/all?page=6", "https://shop.example.com", canon, alias)).toBe(
       "https://shop.example.com/collections/all",
@@ -146,6 +155,24 @@ describe("isDenylistedPath", () => {
 
   it("is case-insensitive", () => {
     expect(isDenylistedPath("/Cart")).toBe(true);
+  });
+
+  it("survives a locale prefix", () => {
+    // Shopify serves every one of these under each published locale. A prefix
+    // match on the raw path missed ALL of them, so a multilingual shop had its
+    // cart and its PII-adjacent account pages crawled and then reported.
+    expect(isDenylistedPath("/it/cart")).toBe(true);
+    expect(isDenylistedPath("/es/cart")).toBe(true);
+    expect(isDenylistedPath("/fr/checkout")).toBe(true);
+    expect(isDenylistedPath("/en/account/login")).toBe(true);
+    expect(isDenylistedPath("/pt-br/challenge")).toBe(true);
+    expect(isDenylistedPath("/en-us/apps/some-app")).toBe(true);
+  });
+
+  it("does not treat a locale-looking first segment as a free pass", () => {
+    // The stripped form is only ever an ADDITIONAL match, never a replacement.
+    expect(isDenylistedPath("/es/products/blue-shoe")).toBe(false);
+    expect(isDenylistedPath("/de/cart-bags")).toBe(false);
   });
 
   it("does not false-positive on a path that merely starts with a denylisted word", () => {

@@ -15,6 +15,8 @@ function makeDb(overrides: {
   collections?: { id: string; handle: string }[];
   pages?: { id: string; handle: string }[];
   articles?: { id: string; handle: string }[];
+  /** ShopPolicy rows — keyed by TYPE ("REFUND_POLICY"), not by handle. */
+  policies?: { id: string; type: string }[];
   /** ContentTranslation rows with key "handle" — a resource's TRANSLATED handle. */
   handleTranslations?: { resourceId: string; resourceType: string; value: string }[];
 } = {}) {
@@ -22,6 +24,7 @@ function makeDb(overrides: {
   const collections = overrides.collections ?? [];
   const pages = overrides.pages ?? [];
   const articles = overrides.articles ?? [];
+  const policies = overrides.policies ?? [];
   const handleTranslations = overrides.handleTranslations ?? [];
   return {
     contentTranslation: {
@@ -39,6 +42,9 @@ function makeDb(overrides: {
     },
     article: {
       findMany: async ({ where }: any) => articles.filter((a) => where.handle.in.includes(a.handle)),
+    },
+    shopPolicy: {
+      findMany: async ({ where }: any) => policies.filter((p) => where.type.in.includes(p.type)),
     },
   } as any;
 }
@@ -150,6 +156,37 @@ describe("resolvePathsToResources", () => {
   it("returns an empty map for an empty input", async () => {
     const out = await resolvePathsToResources(makeDb(), "shop.myshopify.com", []);
     expect(out.size).toBe(0);
+  });
+});
+
+describe("policy pages", () => {
+  it("resolves /policies/<handle> via ShopPolicy.type", async () => {
+    // ShopPolicy has no handle column: the storefront handle IS the type in
+    // kebab case. Without this the crawl report offered no "open in editor" on
+    // any policy page of any shop.
+    const db = makeDb({ policies: [{ id: "gid://shopify/ShopPolicy/9", type: "REFUND_POLICY" }] });
+    const out = await resolvePathsToResources(db, "shop.myshopify.com", [
+      "https://shop.example.com/policies/refund-policy",
+      "https://shop.example.com/it/policies/refund-policy",
+    ]);
+    expect(out.get("https://shop.example.com/policies/refund-policy")).toEqual({
+      resourceType: "Policy",
+      handle: "refund-policy",
+      locale: null,
+      id: "gid://shopify/ShopPolicy/9",
+    });
+    // A locale prefix resolves to the SAME policy — Shopify has one record per
+    // type, translated, not one per language.
+    expect(out.get("https://shop.example.com/it/policies/refund-policy")?.id).toBe(
+      "gid://shopify/ShopPolicy/9",
+    );
+  });
+
+  it("leaves an unsynced policy unresolved rather than guessing", async () => {
+    const out = await resolvePathsToResources(makeDb(), "shop.myshopify.com", [
+      "https://shop.example.com/policies/legal-notice",
+    ]);
+    expect(out.get("https://shop.example.com/policies/legal-notice")?.id).toBeNull();
   });
 });
 

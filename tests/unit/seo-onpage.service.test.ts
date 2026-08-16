@@ -7,6 +7,8 @@ import {
   analyzeCanonicals,
   analyzeHeadings,
   findMissingMetaDescriptions,
+  countPagesWithoutEditableMetadata,
+  hasEditableMetadata,
   findImagesWithoutAlt,
   findThinPages,
   snapshotKnowsParseState,
@@ -445,6 +447,52 @@ describe("analyzeHeadings / meta / images", () => {
     ]);
     expect(rows.map((r) => r.url)).toEqual([`${BASE}/b`, `${BASE}/a`]);
     expect(rows[0].detail).toBe("7/10");
+  });
+});
+
+describe("hasEditableMetadata (§ the title/meta false-positive rule)", () => {
+  it("excludes pages Shopify exposes no metadata field for", () => {
+    // shopPolicyUpdate takes { type, body } — there is no seo input at all.
+    expect(hasEditableMetadata(`${BASE}/policies/refund-policy`)).toBe(false);
+    // `all` is a reserved virtual listing, not a Collection record.
+    expect(hasEditableMetadata(`${BASE}/collections/all`)).toBe(false);
+  });
+
+  it("survives a locale prefix", () => {
+    expect(hasEditableMetadata(`${BASE}/es/policies/refund-policy`)).toBe(false);
+    expect(hasEditableMetadata(`${BASE}/it/collections/all`)).toBe(false);
+  });
+
+  it("excludes pagination — page N serves page 1's metadata by construction", () => {
+    expect(hasEditableMetadata(`${BASE}/collections/summer?page=2`)).toBe(false);
+    expect(hasEditableMetadata(`${BASE}/fr/collections/summer?page=3`)).toBe(false);
+  });
+
+  it("leaves ordinary pages alone", () => {
+    expect(hasEditableMetadata(`${BASE}/products/blue-shoe`)).toBe(true);
+    expect(hasEditableMetadata(`${BASE}/es/products/zapato-azul`)).toBe(true);
+    expect(hasEditableMetadata(`${BASE}/collections/summer`)).toBe(true);
+    // Not /collections/all — a handle that merely starts with "all".
+    expect(hasEditableMetadata(`${BASE}/collections/allergy-free`)).toBe(true);
+    expect(hasEditableMetadata(`${BASE}/pages/about`)).toBe(true);
+  });
+
+  it("keeps the missing-description list to pages someone can actually fix", () => {
+    const rows = findMissingMetaDescriptions([
+      row({ url: `${BASE}/products/a`, metaDesc: null }),
+      row({ url: `${BASE}/policies/refund-policy`, metaDesc: null }),
+      row({ url: `${BASE}/it/policies/refund-policy`, metaDesc: null }),
+      row({ url: `${BASE}/collections/all`, metaDesc: null }),
+      row({ url: `${BASE}/collections/all?page=2`, metaDesc: null }),
+    ]);
+    expect(rows.map((r) => r.url)).toEqual([`${BASE}/products/a`]);
+    expect(
+      countPagesWithoutEditableMetadata([
+        row({ url: `${BASE}/products/a`, metaDesc: null }),
+        row({ url: `${BASE}/policies/refund-policy`, metaDesc: null }),
+        row({ url: `${BASE}/collections/all`, metaDesc: null }),
+      ]),
+    ).toBe(2);
   });
 });
 

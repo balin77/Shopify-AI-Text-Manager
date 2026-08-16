@@ -1765,6 +1765,7 @@ export const es: Translation = {
 
       thinHint: "Lo «escaso» no se mide aquí con un número fijo de palabras, sino comparando con páginas del mismo tipo de tu tienda: solo se informa lo que está en el 10 % más corto Y por debajo de la mitad de la extensión típica.",
       thinSkippedTypesHint: "Hay muy pocas páginas de estos tipos para comparar (se necesitan al menos {min}): {types}. No se evalúan aquí a propósito.",
+      metadataSkippedHint: "{count} páginas se excluyen aquí a propósito: Shopify no ofrece ningún campo de título ni de meta descripción para las páginas de políticas (/policies/…), la colección virtual /collections/all ni la paginación (?page=2). Un hallazgo ahí no se podría corregir.",
       emptyThin: "No se encontraron páginas llamativamente escasas.",
       thinWordCount: "{count} palabras",
 

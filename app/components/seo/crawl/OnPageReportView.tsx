@@ -27,15 +27,19 @@ import {
   STATUS_COLUMNS,
 } from "./ReportTable";
 import { Tile } from "./Tile";
-import type { AuditType } from "../../../services/seo/audit.service";
+import type { DeepLinkType } from "../../../services/seo/resource-types.shared";
 import type { OnPageReport, DuplicateGroupRow } from "../../../services/seo/onpage-report.server";
 import type { OnPageIssueRow, CanonicalFinding } from "../../../services/seo/onpage.service";
 
-const TYPE_PATH: Record<AuditType, string> = {
+const TYPE_PATH: Record<DeepLinkType, string> = {
   product: "/app/products",
   collection: "/app/collections",
   article: "/app/blog",
   page: "/app/pages",
+  // Policies carry no SEO fields, but their BODY is editable — and a crawl
+  // finding about a policy page (multiple H1s, thin content) is actionable
+  // exactly there. `DeepLinkType`, not `DeepLinkType`: the audit never scores them.
+  policy: "/app/policies",
 };
 
 /** Ids double as the `?tab=` deep-link values the SEO dashboard's problem
@@ -160,12 +164,17 @@ export function OnPageSections({
   const o = (t.seo as any).onpagePage as Record<string, string>;
   const indexabilityUnknownAll = isIndexabilityUnknown(data);
 
-  const openInEditor = (type: AuditType, id: string) => {
-    handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
+  const openInEditor = (type: DeepLinkType, id: string) => {
+    // Rows carry a persisted string, so an unmapped type is possible in
+    // principle (an older snapshot, a type added later). Navigating to
+    // `undefined` would blank the page — do nothing instead.
+    const path = TYPE_PATH[type];
+    if (!path) return;
+    handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
   };
   const editorCell = (resourceType: string | null, resourceId: string | null) =>
-    resourceType && resourceType !== "unknown" && resourceId ? (
-      <EditAction label={o.openInEditor} onClick={() => openInEditor(resourceType as AuditType, resourceId)} />
+    resourceType && resourceType !== "unknown" && TYPE_PATH[resourceType as DeepLinkType] && resourceId ? (
+      <EditAction label={o.openInEditor} onClick={() => openInEditor(resourceType as DeepLinkType, resourceId)} />
     ) : null;
 
   const CATEGORY_LABEL: Record<OnPageCategoryId, string> = {
@@ -425,6 +434,15 @@ export function OnPageSections({
 
             {activeTab === "meta" && (
               <BlockStack gap="300">
+                {data.metadataSkipped > 0 && (
+                  // Said out loud, same rule as the thin-content sample notice:
+                  // Shopify exposes no title/description field for policy pages,
+                  // /collections/all or paginated listings, so a finding there
+                  // is one nobody can act on.
+                  <Banner tone="info">
+                    {o.metadataSkippedHint.replace("{count}", String(data.metadataSkipped))}
+                  </Banner>
+                )}
                 <BlockStack gap="200">
                   <SubsectionHeading title={o.metaMissingTitle} hint={o.metaMissingHint} />
                   {data.metaMissing.length > 0 && (
@@ -532,6 +550,11 @@ export function OnPageSections({
 
             {activeTab === "duplicates" && (
               <BlockStack gap="200">
+                {data.metadataSkipped > 0 && (
+                  <Banner tone="info">
+                    {o.metadataSkippedHint.replace("{count}", String(data.metadataSkipped))}
+                  </Banner>
+                )}
                 {data.duplicates.length > 0 && (
                   <AiFixButton
                     problemCode="duplicateSeoTitle"

@@ -62,7 +62,7 @@ import {
 } from "../services/seo/onpage-report.server";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
-import type { AuditType } from "../services/seo/audit.service";
+import type { DeepLinkType } from "../services/seo/resource-types.shared";
 import { isBotBlockStatus, classifyLinkStatus } from "../services/seo/crawl.service";
 // Client-safe module on purpose: the component renders this threshold, and
 // importing it from crawl.service would pull url-resolver.server into the
@@ -81,11 +81,15 @@ import {
 } from "../services/seo/external-links.shared";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
-const TYPE_PATH: Record<AuditType, string> = {
+const TYPE_PATH: Record<DeepLinkType, string> = {
   product: "/app/products",
   collection: "/app/collections",
   article: "/app/blog",
   page: "/app/pages",
+  // Policies carry no SEO fields, but their BODY is editable — and a crawl
+  // finding about a policy page (multiple H1s, thin content) is actionable
+  // exactly there. `DeepLinkType`, not `DeepLinkType`: the audit never scores them.
+  policy: "/app/policies",
 };
 
 const UI_ROW_CAP = 100;
@@ -159,7 +163,7 @@ interface ServerErrorRow {
   url: string;
   statusCode: number;
   responseMs: number;
-  resourceType: AuditType | null;
+  resourceType: DeepLinkType | null;
   resourceId: string | null;
 }
 
@@ -168,7 +172,7 @@ interface BrokenLinkRow {
   toUrl: string;
   statusCode: number;
   anchor: string | null;
-  fromResourceType: AuditType | null;
+  fromResourceType: DeepLinkType | null;
   fromResourceId: string | null;
 }
 
@@ -181,13 +185,13 @@ interface BrokenLinkRow {
 interface BrokenPageRow {
   url: string;
   statusCode: number;
-  resourceType: AuditType | null;
+  resourceType: DeepLinkType | null;
   resourceId: string | null;
   /** Internal pages linking here — capped at MAX_SOURCES_PER_PAGE. */
   sources: {
     fromUrl: string;
     anchor: string | null;
-    fromResourceType: AuditType | null;
+    fromResourceType: DeepLinkType | null;
     fromResourceId: string | null;
   }[];
   /** Total inbound broken-link edges found, so the UI can say "+N more". */
@@ -197,7 +201,7 @@ interface BrokenPageRow {
 interface OrphanRow {
   url: string;
   title: string | null;
-  resourceType: AuditType;
+  resourceType: DeepLinkType;
   resourceId: string;
 }
 
@@ -376,7 +380,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     statusCode: p.statusCode,
     statusClass: classifyLinkStatus(p.statusCode),
     responseMs: p.responseMs,
-    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as DeepLinkType) : null,
     resourceId: p.resourceId ?? null,
     // §4.4 — chains the crawler OBSERVED, including ones no merchant redirect
     // explains (theme/app/locale). A badge in the existing table, not a tab:
@@ -397,7 +401,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     url: p.url,
     statusCode: p.statusCode,
     responseMs: p.responseMs,
-    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as DeepLinkType) : null,
     resourceId: p.resourceId ?? null,
   }));
 
@@ -440,7 +444,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         statusCode: bl.statusCode,
         anchor: bl.anchor,
         fromResourceType:
-          from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as AuditType) : null,
+          from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as DeepLinkType) : null,
         fromResourceId: from?.resourceId ?? null,
       };
     });
@@ -454,7 +458,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       fromUrl: bl.fromUrl,
       anchor: bl.anchor,
       fromResourceType:
-        from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as AuditType) : null,
+        from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as DeepLinkType) : null,
       fromResourceId: from?.resourceId ?? null,
     };
     const list = sourcesByTarget.get(bl.toUrl);
@@ -469,7 +473,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return {
         url: p.url,
         statusCode: p.statusCode,
-        resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+        resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as DeepLinkType) : null,
         resourceId: p.resourceId ?? null,
         sources: sources.slice(0, MAX_SOURCES_PER_PAGE),
         sourceTotal: sources.length,
@@ -485,7 +489,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           .map((p) => ({
             url: p.url,
             title: p.title,
-            resourceType: p.resourceType as AuditType,
+            resourceType: p.resourceType as DeepLinkType,
             resourceId: p.resourceId as string,
           }));
 
@@ -659,8 +663,13 @@ export default function SeoCrawl() {
   const c = (t.seo as any).crawlPage as Record<string, string>;
   const o = (t.seo as any).onpagePage as Record<string, string>;
 
-  const openInEditor = (type: AuditType, id: string) => {
-    handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
+  const openInEditor = (type: DeepLinkType, id: string) => {
+    // Rows carry a persisted string, so an unmapped type is possible in
+    // principle (an older snapshot, a type added later). Navigating to
+    // `undefined` would blank the page — do nothing instead.
+    const path = TYPE_PATH[type];
+    if (!path) return;
+    handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
   };
   const createRedirect = (toUrl: string) => {
     let path = toUrl;
@@ -1048,7 +1057,7 @@ export default function SeoCrawl() {
                                 <EditAction
                                   label={c.openInEditor}
                                   onClick={() =>
-                                    openInEditor(s.fromResourceType as AuditType, s.fromResourceId as string)
+                                    openInEditor(s.fromResourceType as DeepLinkType, s.fromResourceId as string)
                                   }
                                 />
                               ) : null,
@@ -1091,7 +1100,7 @@ export default function SeoCrawl() {
                                 <EditAction
                                   label={c.openInEditor}
                                   onClick={() =>
-                                    openInEditor(bl.fromResourceType as AuditType, bl.fromResourceId as string)
+                                    openInEditor(bl.fromResourceType as DeepLinkType, bl.fromResourceId as string)
                                   }
                                 />
                               )}
@@ -1132,7 +1141,7 @@ export default function SeoCrawl() {
                             e.resourceType && e.resourceId ? (
                               <EditAction
                                 label={c.openInEditor}
-                                onClick={() => openInEditor(e.resourceType as AuditType, e.resourceId as string)}
+                                onClick={() => openInEditor(e.resourceType as DeepLinkType, e.resourceId as string)}
                               />
                             ) : null,
                           ]}

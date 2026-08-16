@@ -22,7 +22,7 @@ import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useFetcher } from "react-router";
 import { Box, BlockStack, InlineStack, Badge, Banner, Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
-import type { AuditType } from "../../../services/seo/audit.service";
+import type { DeepLinkType } from "../../../services/seo/resource-types.shared";
 
 /** Mirrors `LinkStatusClass` from crawl.service without importing it. */
 export type ReportStatusClass = "ok" | "broken" | "server_error" | "blocked";
@@ -35,7 +35,7 @@ export interface CrawledPageRow {
   /** Classified server-side — see the module note above. */
   statusClass: ReportStatusClass;
   responseMs: number;
-  resourceType: AuditType | null;
+  resourceType: DeepLinkType | null;
   resourceId: string | null;
   /** §4.4 — observed redirect chain length, rendered as a badge behind the
    *  status. 0 on every row of a snapshot crawled before the column existed. */
@@ -329,7 +329,7 @@ export function PageRowLine({
 }: {
   page: CrawledPageRow;
   openLabel: string;
-  onOpen: (type: AuditType, id: string) => void;
+  onOpen: (type: DeepLinkType, id: string) => void;
   redirectLoopLabel: string;
   /** "→ {count} hops" template (§4.4). Omitted = no hop badge. */
   hopsLabel?: string;
@@ -357,7 +357,7 @@ export function PageRowLine({
         page.resourceType && page.resourceId ? (
           <EditAction
             label={openLabel}
-            onClick={() => onOpen(page.resourceType as AuditType, page.resourceId as string)}
+            onClick={() => onOpen(page.resourceType as DeepLinkType, page.resourceId as string)}
           />
         ) : null,
       ]}
