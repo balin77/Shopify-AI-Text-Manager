@@ -14,6 +14,8 @@ import { CreateResourceChooser } from "./create/CreateResourceChooser";
 import type { CreatableResource, DeletableResource } from "../config/create-fields.config";
 import { useDeleteItem } from "../hooks/useDeleteItem";
 import { DeleteItemModal } from "./create/DeleteItemModal";
+import { useDuplicateItem } from "../hooks/useDuplicateItem";
+import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -504,6 +506,65 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [resourceOfItem, unifiedItems, deleteItem],
   );
 
+  // §1.9 — "create like this one". Products and collections duplicate
+  // SERVER-side (Shopify carries variants, media, metafields and publications
+  // across); the other types prefill the ordinary create form from the cache,
+  // because Shopify has no duplicate mutation for them and a copy is not a
+  // different operation.
+  const duplicateItem = useDuplicateItem({
+    onDuplicated: (outcome) => {
+      if (outcome.pending || !outcome.id) {
+        // Honest: the copy is still being assembled. Selecting it now would
+        // show an empty editor and invite a second duplicate.
+        showInfoBox(
+          t.content?.duplicatePending ||
+            "The copy is being created. Reload in a moment to see it.",
+          "info",
+        );
+        return;
+      }
+      handleItemSelectRef.current(outcome.id);
+      revalidator?.revalidate();
+    },
+  });
+
+  const handleDuplicateItem = useCallback(
+    (itemId: string) => {
+      const item = unifiedItems.find((i) => i.id === itemId);
+      const title = (item?.title as string) || "";
+      if (itemId.includes("/Product/")) {
+        duplicateItem.request({ sourceId: itemId, sourceTitle: title, resource: "product" });
+        return;
+      }
+      if (itemId.includes("/Collection/")) {
+        duplicateItem.request({ sourceId: itemId, sourceTitle: title, resource: "collection" });
+        return;
+      }
+      // Prefill path: page / article / blog. Straight into the create form
+      // with the source's values, through the ordinary createContent action.
+      const resource = itemId.includes("/Blog/")
+        ? "blog"
+        : itemId.includes("/Article/")
+          ? "article"
+          : itemId.includes("/Page/")
+            ? "page"
+            : null;
+      if (!resource) return;
+      const prefill: Record<string, string> = {};
+      const source = item as Record<string, unknown> | undefined;
+      if (title) prefill.title = `${title} (copy)`;
+      for (const [from, to] of [["body", "body"], ["summary", "summary"], ["description", "descriptionHtml"]] as const) {
+        const value = source?.[from];
+        if (typeof value === "string" && value) prefill[to] = value;
+      }
+      // Deliberately NOT copied: handle (it must be unique) and the SEO
+      // fields (a duplicated meta description is a duplicate-content finding
+      // in this app's own crawl report).
+      createItem.open(resource, prefill);
+    },
+    [unifiedItems, duplicateItem, createItem],
+  );
+
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
     // One creatable resource opens its form directly; the blogs tab has two
@@ -787,6 +848,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           // Labelling it without disabling it let a merchant fill in a whole
           // form only to meet a 403 — and made the two entry points disagree.
           addButtonDisabled={!!createDisabledReason}
+          showDuplicateButton={createResources.length > 0}
+          onDuplicateItem={handleDuplicateItem}
+          duplicateButtonLabel={t.content?.duplicateButtonLabel || "Duplicate"}
           showDeleteButton={createResources.length > 0}
           onDeleteItem={handleDeleteItem}
           deleteButtonLabel={t.content?.deleteButtonLabel || "Delete"}
@@ -1524,6 +1588,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       {/* §1.6 — the post-create box. Rendered even when the cache sync failed:
           the object EXISTS, and calling that an error is what produces a
           second click and a duplicate. */}
+      {duplicateItem.target && (
+        <DuplicateItemModal
+          open={!!duplicateItem.target}
+          onClose={duplicateItem.cancel}
+          sourceTitle={duplicateItem.target.sourceTitle}
+          newTitle={duplicateItem.newTitle}
+          onNewTitleChange={duplicateItem.setNewTitle}
+          onConfirm={duplicateItem.confirm}
+          submitting={duplicateItem.submitting}
+          error={duplicateItem.error}
+          t={t.content?.duplicateModal}
+        />
+      )}
+
       {deleteItem.target && (
         <DeleteItemModal
           open={!!deleteItem.target}
@@ -1602,6 +1680,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           open={!!createItem.openResource}
           onClose={createItem.close}
           resource={createItem.openResource}
+          initialValues={createItem.initialValues}
           dynamicOptions={createItem.dynamicOptions}
           extraFieldsByOption={createItem.extraFieldsByOption}
           extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}

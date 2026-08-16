@@ -428,6 +428,17 @@ export const en: Translation = {
       deleting: "Deleting \u2026",
     },
     undoCreate: "Undo this create",
+    // ── Duplicating (§1.9) ────────────────────────────────────────────────
+    duplicateButtonLabel: "Duplicate",
+    duplicatePending: "The copy is being created. Reload in a moment to see it.",
+    duplicateModal: {
+      title: "Duplicate \u201c{name}\u201d",
+      intro: "Shopify copies everything \u2014 images, variants, options and metafields. You only need a name.",
+      newTitleLabel: "Title of the copy",
+      cancel: "Cancel",
+      confirm: "Duplicate",
+      draftNote: "The copy is created as a draft \u2014 it does not go live on its own.",
+    },
     createResourceLabels: {
       product: "Product",
       collection: "Collection",

@@ -70,6 +70,8 @@ export interface CreateItemModalProps {
   extraFieldsKey?: string;
   /** §1.7 — shown instead of the form when an article has no blog to live in. */
   blocked?: { message: string; actionLabel?: string; onAction?: () => void } | null;
+  /** §1.9 — values the form starts with when duplicating. */
+  initialValues?: Record<string, string>;
   /** Options for `blogPicker` / `metaobjectType`, loaded by the caller. */
   dynamicOptions?: Record<string, Array<{ value: string; label: string; disabled?: boolean; helpText?: string }>>;
   /** Hands the payload to the caller. Fire-and-forget: the outcome arrives
@@ -109,6 +111,7 @@ export function CreateItemModal({
   extraFieldsByOption = {},
   extraFieldsKey,
   blocked = null,
+  initialValues,
   dynamicOptions = {},
   onSubmit,
   submitting = false,
@@ -118,7 +121,7 @@ export function CreateItemModal({
   t = {},
 }: CreateItemModalProps) {
   const spec = createSpecFor(resource);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(initialValues ?? {});
   const [image, setImage] = useState<{ url: string; preview: string; alt: string } | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -136,6 +139,13 @@ export function CreateItemModal({
   const allFields = useMemo(() => [...(spec?.fields ?? []), ...runtimeFields], [spec, runtimeFields]);
   const basicFields = allFields.filter((f) => !f.advanced);
   const advancedFields = allFields.filter((f) => f.advanced);
+
+  // Seed once per opening. Not on every render: the merchant's edits would be
+  // overwritten by the source's values on the next keystroke.
+  useEffect(() => {
+    if (open) setValues(initialValues ?? {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, resource]);
 
   const setValue = useCallback((key: string, value: string) => {
     setValues((prev) => ({ ...prev, [key]: value }));

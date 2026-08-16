@@ -47,6 +47,7 @@ import {
 import { handleUpdateContent } from "./content/content-update.action";
 import { handleCreateContent } from "./content/create.actions";
 import { handleDeleteContent } from "./content/delete.actions";
+import { handleDuplicateContent } from "./content/duplicate.actions";
 import {
   handleLoadSubResourceTranslations,
   handleSaveSubResourceTranslations,
@@ -152,6 +153,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     // The app's ONE content delete. Two entrances share it: the item list's
     // delete button and the post-create undo (§1.8).
     case "deleteContent":                    return handleDeleteContent(ctx, formData);
+    // §1.9 — server-side only for product/collection; the other types prefill
+    // the create form from the cache and go through createContent.
+    case "duplicateContent":                 return handleDuplicateContent(ctx, formData);
   }
 
   // ── Remaining inline actions (loadTranslations, generateAIText, formatAIText) ─

@@ -425,6 +425,17 @@ export const de = {
       deleting: "Wird gelöscht \u2026",
     },
     undoCreate: "Anlegen rückgängig machen",
+    // ── Duplizieren (§1.9) ────────────────────────────────────────────────
+    duplicateButtonLabel: "Duplizieren",
+    duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
+    duplicateModal: {
+      title: "\u201e{name}\u201c duplizieren",
+      intro: "Shopify kopiert alles mit \u2014 Bilder, Varianten, Optionen und Metafelder. Du brauchst nur einen Namen.",
+      newTitleLabel: "Titel der Kopie",
+      cancel: "Abbrechen",
+      confirm: "Duplizieren",
+      draftNote: "Die Kopie wird als Entwurf angelegt \u2014 sie geht nicht von selbst live.",
+    },
     createResourceLabels: {
       product: "Produkt",
       collection: "Kollektion",

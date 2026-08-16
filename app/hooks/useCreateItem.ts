@@ -96,10 +96,21 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     [gates],
   );
 
-  const open = useCallback((resource: CreatableResource) => {
+  /**
+   * §1.9 — the prefill half of "create like this one".
+   *
+   * For pages, articles and blogs Shopify has no duplicate mutation, and none
+   * is needed: a copy is just the create form opened with the source's values
+   * already in it. It goes through the ordinary createContent path, echo rule
+   * and all — no second write path for what is not a different operation.
+   */
+  const [initialValues, setInitialValues] = useState<Record<string, string>>({});
+
+  const open = useCallback((resource: CreatableResource, prefill?: Record<string, string>) => {
     setError(null);
     setFieldErrors([]);
     setPendingNotice(null);
+    setInitialValues(prefill ?? {});
     setOpenResource(resource);
   }, []);
 
@@ -259,6 +270,7 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     error,
     pendingNotice,
     fieldErrors,
+    initialValues,
     dynamicOptions,
     extraFieldsByOption,
     optionsLoading,

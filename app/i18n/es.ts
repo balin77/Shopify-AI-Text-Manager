@@ -427,6 +427,17 @@ export const es: Translation = {
       deleting: "Eliminando \u2026",
     },
     undoCreate: "Deshacer la creación",
+    // ── Duplicar (§1.9) ───────────────────────────────────────────────────
+    duplicateButtonLabel: "Duplicar",
+    duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
+    duplicateModal: {
+      title: "Duplicar \u201c{name}\u201d",
+      intro: "Shopify copia todo \u2014 imágenes, variantes, opciones y metacampos. Solo necesitas un nombre.",
+      newTitleLabel: "Título de la copia",
+      cancel: "Cancelar",
+      confirm: "Duplicar",
+      draftNote: "La copia se crea como borrador \u2014 no se publica por sí sola.",
+    },
     createResourceLabels: {
       product: "Producto",
       collection: "Colección",

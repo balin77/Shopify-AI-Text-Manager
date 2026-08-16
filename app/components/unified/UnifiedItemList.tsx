@@ -32,7 +32,7 @@ import {
   Spinner,
   Select,
 } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon, DuplicateIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
 
@@ -143,6 +143,12 @@ interface UnifiedItemListProps {
    *  missing feature (PLAN_CONTENT_CREATION §1.2). */
   addButtonDisabled?: boolean;
 
+  /** Optional: "create like this one" for the selected entry
+   *  (PLAN_CONTENT_CREATION §1.9). Like delete, it needs a selection. */
+  showDuplicateButton?: boolean;
+  onDuplicateItem?: (itemId: string) => void;
+  duplicateButtonLabel?: string;
+
   /** Optional: Show a trash button to delete the selected entry (default: false).
    *  Only enabled when an item is selected — without a target there is nothing
    *  to remove. Other content tabs can opt-in later; for now used by the
@@ -208,6 +214,9 @@ export function UnifiedItemList({
   onAddItem,
   addButtonLabel,
   addButtonDisabled,
+  showDuplicateButton = false,
+  onDuplicateItem,
+  duplicateButtonLabel,
   showDeleteButton = false,
   onDeleteItem,
   deleteButtonLabel,
@@ -742,6 +751,20 @@ export function UnifiedItemList({
                         onClick={onAddItem}
                         disabled={addButtonDisabled}
                         accessibilityLabel={addButtonLabel || "Add"}
+                        size="slim"
+                      />
+                    </span>
+                  </Tooltip>
+                )}
+                {showDuplicateButton && onDuplicateItem && (
+                  <Tooltip content={duplicateButtonLabel || "Duplicate"}>
+                    <span>
+                      <Button
+                        icon={DuplicateIcon}
+                        variant="plain"
+                        onClick={() => { if (selectedItemId) onDuplicateItem(selectedItemId); }}
+                        disabled={!selectedItemId}
+                        accessibilityLabel={duplicateButtonLabel || "Duplicate"}
                         size="slim"
                       />
                     </span>
