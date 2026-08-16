@@ -739,8 +739,68 @@ export default function SeoCrawl() {
         <Text as="p" variant="bodyMd">{view === "onpage" ? o.introBody : c.introBody}</Text>
       </Banner>
 
-      {/* §7.2 — what CHANGED since the last crawl. Above the tiles, because a
-          state report reads "fine" right up until it isn't. */}
+      <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
+        {/* §6.5 — visible where the crawl is started, because it changes what
+            the crawl DOES, not just what it shows. */}
+        <Checkbox
+          label={c.externalChecksLabel}
+          helpText={c.externalChecksHelp}
+          checked={externalChecksEnabled}
+          disabled={externalToggleFetcher.state !== "idle"}
+          onChange={(checked) => {
+            setExternalChecksEnabled(checked);
+            externalToggleFetcher.submit(
+              { actionType: "toggleExternalChecks", enabled: String(checked) },
+              { method: "post" },
+            );
+          }}
+        />
+
+        {snapshot && snapshot.pagesBlocked > 0 && !data.running && (
+          <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
+        )}
+      </CrawlSnapshotHeader>
+
+      {/* The two steps of one crawl — same shape as the AEO section's, because
+          it is the same relationship: step 2 has nothing to judge until step 1
+          says the page was delivered at all. */}
+      <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+        <StepTile
+          selected={view === "delivery"}
+          onSelect={() => goToView("delivery")}
+          kicker={c.stepDeliveryKicker}
+          title={c.stepDeliveryTitle}
+          body={c.stepDeliveryBody}
+          badge={
+            snapshot ? (
+              <Badge tone={snapshot.pagesBroken + snapshot.pagesServerError > 0 ? "critical" : "success"}>
+                {c.stepDeliveryBadge.replace(
+                  "{count}",
+                  String(snapshot.pagesBroken + snapshot.pagesServerError),
+                )}
+              </Badge>
+            ) : null
+          }
+        />
+        <StepTile
+          selected={view === "onpage"}
+          onSelect={() => goToView("onpage")}
+          kicker={c.stepOnPageKicker}
+          title={c.stepOnPageTitle}
+          body={c.stepOnPageBody}
+          badge={
+            view === "onpage" && snapshot ? (
+              <Badge tone={data.onPage.totals.indexability > 0 ? "critical" : "success"}>
+                {c.stepOnPageBadge.replace("{count}", String(data.onPage.totals.indexability))}
+              </Badge>
+            ) : null
+          }
+        />
+      </InlineGrid>
+
+      {/* §7.2 — what CHANGED since the last crawl. Directly above the result
+          tiles, because a state report reads "fine" right up until it isn't —
+          and below the scan card, because it is a RESULT, not scan logic. */}
       {data.diff && hasDiffContent(data.diff) && (
         <Card>
           <BlockStack gap="300">
@@ -809,132 +869,82 @@ export default function SeoCrawl() {
         </Card>
       )}
 
-      {/* The two steps of one crawl — same shape as the AEO section's, because
-          it is the same relationship: step 2 has nothing to judge until step 1
-          says the page was delivered at all. */}
-      <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
-        <StepTile
-          selected={view === "delivery"}
-          onSelect={() => goToView("delivery")}
-          kicker={c.stepDeliveryKicker}
-          title={c.stepDeliveryTitle}
-          body={c.stepDeliveryBody}
-          badge={
-            snapshot ? (
-              <Badge tone={snapshot.pagesBroken + snapshot.pagesServerError > 0 ? "critical" : "success"}>
-                {c.stepDeliveryBadge.replace(
-                  "{count}",
-                  String(snapshot.pagesBroken + snapshot.pagesServerError),
-                )}
-              </Badge>
-            ) : null
-          }
-        />
-        <StepTile
-          selected={view === "onpage"}
-          onSelect={() => goToView("onpage")}
-          kicker={c.stepOnPageKicker}
-          title={c.stepOnPageTitle}
-          body={c.stepOnPageBody}
-          badge={
-            view === "onpage" && snapshot ? (
-              <Badge tone={data.onPage.totals.indexability > 0 ? "critical" : "success"}>
-                {c.stepOnPageBadge.replace("{count}", String(data.onPage.totals.indexability))}
-              </Badge>
-            ) : null
-          }
-        />
-      </InlineGrid>
-
-      <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
-        {/* §6.5 — visible where the crawl is started, because it changes what
-            the crawl DOES, not just what it shows. */}
-        <Checkbox
-          label={c.externalChecksLabel}
-          helpText={c.externalChecksHelp}
-          checked={externalChecksEnabled}
-          disabled={externalToggleFetcher.state !== "idle"}
-          onChange={(checked) => {
-            setExternalChecksEnabled(checked);
-            externalToggleFetcher.submit(
-              { actionType: "toggleExternalChecks", enabled: String(checked) },
-              { method: "post" },
-            );
-          }}
-        />
-
-        {snapshot && snapshot.pagesBlocked > 0 && !data.running && (
-          <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
-        )}
-
-        {snapshot && view === "onpage" && (
-          <OnPageTiles data={data.onPage} activeTab={onPageTab} onSelect={setOnPageTab} />
-        )}
-
-        {snapshot && view === "delivery" && (
-          <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
-              <Tile
-                label={c.tilePages}
-                value={snapshot.pagesCrawled}
-                onClick={() => setActiveTab("allPages")}
-                selected={activeTab === "allPages"}
-              />
-              <Tile
-                label={c.tileOk}
-                value={snapshot.pagesOk}
-                onClick={() => setActiveTab("okPages")}
-                selected={activeTab === "okPages"}
-              />
-              <Tile
-                label={c.tileBroken}
-                value={snapshot.pagesBroken}
-                onClick={() => setActiveTab("broken")}
-                selected={activeTab === "broken"}
-              />
-              <Tile
-                label={c.tileServerErrors}
-                value={snapshot.pagesServerError}
-                // Short form here — the full explanation is the section banner.
-                hint={snapshot.pagesServerError > 0 ? c.tileServerErrorsHint : undefined}
-                onClick={() => setActiveTab("serverErrors")}
-                selected={activeTab === "serverErrors"}
-              />
-              <Tile
-                label={c.tileBlocked}
-                value={snapshot.pagesBlocked}
-                hint={snapshot.pagesBlocked > 0 ? c.blockedHint : undefined}
-                onClick={() => setActiveTab("blocked")}
-                selected={activeTab === "blocked"}
-              />
-              <Tile
-                label={c.tileOrphans}
-                value={isCapped ? "—" : snapshot.orphanCount}
-                hint={isCapped ? c.orphanCappedHint : undefined}
-                onClick={() => setActiveTab("orphans")}
-                selected={activeTab === "orphans"}
-              />
-              <Tile
-                label={c.tileSlowest}
-                value={data.slowest.length}
-                onClick={() => setActiveTab("slowest")}
-                selected={activeTab === "slowest"}
-              />
-              <Tile
-                label={c.tileExternal}
-                // "—" rather than 0 when the check is off: zero would read as
-                // "no dead external links", which we did not measure (§6.5).
-                value={data.externalChecksEnabled ? data.externalBrokenTotal : "—"}
-                hint={
-                  data.externalChecksEnabled
-                    ? c.tileExternalHint.replace("{total}", String(data.externalTotal))
-                    : c.tileExternalDisabledHint
-                }
-                onClick={() => setActiveTab("external")}
-                selected={activeTab === "external"}
-              />
-          </InlineGrid>
-        )}
-      </CrawlSnapshotHeader>
+      {/* The selected step's result tiles. Their own card, BELOW the step
+          badges: the tiles belong to whichever step is open, so putting them in
+          the scan card made the page read "here is the scan, here are ITS
+          numbers, and now — afterwards — here is which of two reports you are
+          looking at". Order is explanation → scan → step badges → results. */}
+      {snapshot && (
+        <Card>
+          <BlockStack gap="300">
+            {view === "onpage" ? (
+              <OnPageTiles data={data.onPage} activeTab={onPageTab} onSelect={setOnPageTab} />
+            ) : (
+              <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
+                <Tile
+                  label={c.tilePages}
+                  value={snapshot.pagesCrawled}
+                  onClick={() => setActiveTab("allPages")}
+                  selected={activeTab === "allPages"}
+                />
+                <Tile
+                  label={c.tileOk}
+                  value={snapshot.pagesOk}
+                  onClick={() => setActiveTab("okPages")}
+                  selected={activeTab === "okPages"}
+                />
+                <Tile
+                  label={c.tileBroken}
+                  value={snapshot.pagesBroken}
+                  onClick={() => setActiveTab("broken")}
+                  selected={activeTab === "broken"}
+                />
+                <Tile
+                  label={c.tileServerErrors}
+                  value={snapshot.pagesServerError}
+                  // Short form here — the full explanation is the section banner.
+                  hint={snapshot.pagesServerError > 0 ? c.tileServerErrorsHint : undefined}
+                  onClick={() => setActiveTab("serverErrors")}
+                  selected={activeTab === "serverErrors"}
+                />
+                <Tile
+                  label={c.tileBlocked}
+                  value={snapshot.pagesBlocked}
+                  hint={snapshot.pagesBlocked > 0 ? c.blockedHint : undefined}
+                  onClick={() => setActiveTab("blocked")}
+                  selected={activeTab === "blocked"}
+                />
+                <Tile
+                  label={c.tileOrphans}
+                  value={isCapped ? "—" : snapshot.orphanCount}
+                  hint={isCapped ? c.orphanCappedHint : undefined}
+                  onClick={() => setActiveTab("orphans")}
+                  selected={activeTab === "orphans"}
+                />
+                <Tile
+                  label={c.tileSlowest}
+                  value={data.slowest.length}
+                  onClick={() => setActiveTab("slowest")}
+                  selected={activeTab === "slowest"}
+                />
+                <Tile
+                  label={c.tileExternal}
+                  // "—" rather than 0 when the check is off: zero would read as
+                  // "no dead external links", which we did not measure (§6.5).
+                  value={data.externalChecksEnabled ? data.externalBrokenTotal : "—"}
+                  hint={
+                    data.externalChecksEnabled
+                      ? c.tileExternalHint.replace("{total}", String(data.externalTotal))
+                      : c.tileExternalDisabledHint
+                  }
+                  onClick={() => setActiveTab("external")}
+                  selected={activeTab === "external"}
+                />
+              </InlineGrid>
+            )}
+          </BlockStack>
+        </Card>
+      )}
 
       {snapshot && view === "onpage" && <OnPageSections data={data.onPage} activeTab={onPageTab} />}
 

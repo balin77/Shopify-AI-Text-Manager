@@ -40,7 +40,13 @@ export function CrawlSnapshotHeader({
   /** A `seoCrawl` task is running server-side (from the shared loader). */
   running: boolean;
   gated: boolean;
-  /** Rendered inside the same card, below the banners — the tile grid. */
+  /**
+   * Rendered inside the same card, below the banners — the controls that change
+   * what the crawl DOES (the external-link opt-in) and the warnings about the
+   * run itself. NOT the result tiles: those belong to whichever step is open
+   * and live in their own card below the step badges, so the page reads
+   * explanation → scan → step badges → results.
+   */
   children?: React.ReactNode;
 }) {
   const { t } = useI18n();
