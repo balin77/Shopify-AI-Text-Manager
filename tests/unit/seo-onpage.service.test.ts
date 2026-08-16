@@ -156,7 +156,7 @@ describe("analyzeIndexability", () => {
   it("reports a noindex product that is NOT in the sitemap exclusions", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/products/blue-shoe`, metaRobots: "noindex" })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(1);
     expect(report.problems[0].url).toContain("/products/blue-shoe");
@@ -166,7 +166,7 @@ describe("analyzeIndexability", () => {
   it("does NOT report it when an APPLIED sitemap exclusion explains it", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/products/blue-shoe`, metaRobots: "noindex" })],
-      new Set(["product:gid://shopify/Product/1"]),
+      new Map([["product:gid://shopify/Product/1", "sitemapExclusion"]]),
     );
     expect(report.problems).toHaveLength(0);
     expect(report.expected).toHaveLength(1);
@@ -176,7 +176,7 @@ describe("analyzeIndexability", () => {
   it("lists Shopify's own noindex paths neutrally, not as problems", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/search`, metaRobots: "noindex", resourceType: null, resourceId: null })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(0);
     expect(report.expected[0].expectedReason).toBe("search");
@@ -185,16 +185,28 @@ describe("analyzeIndexability", () => {
   it("marks a locale-prefixed page but does not judge it", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/fr/products/blue-shoe`, metaRobots: "noindex", locale: "fr" })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(1);
     expect(report.problems[0].localePrefixed).toBe(true);
   });
 
+  it("does not report an UNLISTED product — Shopify itself serves it noindex", () => {
+    // Documented by Shopify and measured on a live shop (sitemap.service.ts's
+    // header). Without this filter every unlisted product lands at the top of
+    // the report and of the SEO dashboard as a critical, unexplained exclusion.
+    const report = analyzeIndexability(
+      [row({ url: `${BASE}/products/staging-copy`, metaRobots: "noindex,nofollow" })],
+      new Map([["product:gid://shopify/Product/1", "unlistedProduct"]]),
+    );
+    expect(report.problems).toHaveLength(0);
+    expect(report.expected[0].expectedReason).toBe("unlistedProduct");
+  });
+
   it("counts unknowns instead of calling them indexable", () => {
     const report = analyzeIndexability(
       [row({ url: `${BASE}/a`, indexabilityKnown: false })],
-      new Set(),
+      new Map(),
     );
     expect(report.problems).toHaveLength(0);
     expect(report.unknownCount).toBe(1);

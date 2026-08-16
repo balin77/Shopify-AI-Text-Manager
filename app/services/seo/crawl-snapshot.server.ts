@@ -75,3 +75,34 @@ export function toHeaderView(snapshot: LatestSnapshot): SnapshotHeaderView | nul
     totalDiscovered: snapshot.row.totalDiscovered,
   };
 }
+
+/**
+ * `"<resourceType>:<resourceId>"` → why a `noindex` on it is EXPECTED.
+ *
+ * Two sources, both measured rather than assumed:
+ *  - applied (never merely suggested) SeoSitemapExclusion rows — the merchant
+ *    hid the page through the sitemap tab, so it is doing what they asked;
+ *  - UNLISTED products, which Shopify itself serves with
+ *    `<meta name="robots" content="noindex,nofollow">` (documented by Shopify
+ *    and measured on a live shop — see sitemap.service.ts's header). Without
+ *    this every unlisted product would show up as a critical, unexplained
+ *    exclusion at the very top of the report and of the SEO dashboard.
+ */
+export async function loadExpectedNoindexReasons(
+  db: PrismaClient,
+  shop: string,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const [exclusions, unlisted] = await Promise.all([
+    db.seoSitemapExclusion.findMany({
+      where: { shop, status: "applied" },
+      select: { resourceType: true, resourceId: true },
+    }),
+    db.product.findMany({ where: { shop, status: "UNLISTED" }, select: { id: true } }),
+  ]);
+  for (const e of exclusions) out.set(`${e.resourceType}:${e.resourceId}`, "sitemapExclusion");
+  // `SeoCrawlPage.resourceType` is lowercase (see its schema comment), unlike
+  // ContentTranslation's capitalized convention.
+  for (const p of unlisted) out.set(`product:${p.id}`, "unlistedProduct");
+  return out;
+}

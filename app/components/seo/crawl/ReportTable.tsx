@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useFetcher } from "react-router";
-import { BlockStack, Badge, Button, Text, Tooltip } from "@shopify/polaris";
+import { Box, BlockStack, Badge, Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
 import type { AuditType } from "../../../services/seo/audit.service";
 
@@ -84,6 +84,57 @@ export function ReportRow({ cells, spacedAbove }: { cells: ReactNode[]; spacedAb
         </div>
       ))}
     </>
+  );
+}
+
+/**
+ * A crawled URL, as a link.
+ *
+ * `target="_blank"` on purpose: this app runs INSIDE the Shopify admin iframe,
+ * so a same-tab navigation to the storefront would replace the whole admin —
+ * the merchant would lose the report they are working through. `rel` carries
+ * `noopener noreferrer` because the target is the merchant's storefront or, in
+ * the external-links tab, a page nobody here controls.
+ *
+ * Rendered as `bodySm` so a row reads the same whether or not the URL happens
+ * to be linkable, and `overflowWrap` is inherited from the grid's first cell.
+ */
+export function PageLink({ url, label }: { url: string; label?: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: "var(--p-color-text-link)", textDecoration: "underline", overflowWrap: "anywhere" }}
+    >
+      <Text as="span" variant="bodySm">{label ?? url}</Text>
+    </a>
+  );
+}
+
+/**
+ * The heading of a sub-section inside a report tab ("Keine H1", "Mehrere H1", …).
+ *
+ * Set in a tinted box with a leading rule rather than left as plain text: these
+ * headings sit between long lists of URLs that are themselves `bodySm`, and a
+ * bare heading plus a subdued explanatory line read as just two more rows. The
+ * explanation belongs INSIDE the box for the same reason — it describes the
+ * section, not the first entry under it.
+ */
+export function SubsectionHeading({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <Box
+      background="bg-surface-secondary"
+      padding="300"
+      borderRadius="200"
+      borderInlineStartWidth="050"
+      borderColor="border-emphasis"
+    >
+      <BlockStack gap="100">
+        <Text as="h4" variant="headingSm" fontWeight="semibold">{title}</Text>
+        {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
+      </BlockStack>
+    </Box>
   );
 }
 
@@ -205,7 +256,7 @@ export function PageRowLine({
     <ReportRow
       cells={[
         <BlockStack gap="050">
-          <Text as="span" variant="bodySm">{page.url}</Text>
+          <PageLink url={page.url} />
           {page.title && <Text as="span" variant="bodySm" tone="subdued">{page.title}</Text>}
         </BlockStack>,
         page.responseMs > 0 ? (

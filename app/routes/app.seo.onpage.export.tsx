@@ -146,14 +146,8 @@ async function buildRows(
 
   switch (category) {
     case "indexability": {
-      const exclusions = await ctx.db.seoSitemapExclusion.findMany({
-        where: { shop: ctx.shop, status: "applied" },
-        select: { resourceType: true, resourceId: true },
-      });
-      const excluded = new Set<string>(
-        exclusions.map((e: { resourceType: string; resourceId: string }) => `${e.resourceType}:${e.resourceId}`),
-      );
-      const report = analyzeIndexability(pages, excluded);
+      const { loadExpectedNoindexReasons } = await import("../services/seo/crawl-snapshot.server");
+      const report = analyzeIndexability(pages, await loadExpectedNoindexReasons(ctx.db, ctx.shop));
       // The export carries the EXPECTED ones too, tagged: the whole point of a
       // CSV is that the merchant can check our filtering rather than trust it.
       return [

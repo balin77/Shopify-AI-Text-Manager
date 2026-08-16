@@ -1731,6 +1731,7 @@ export const de = {
       expectedReason_taggedCollection: "Gefilterte Kollektion",
       expectedReason_constraint: "Markt-/Preisvariante",
       expectedReason_sitemapExclusion: "Im Sitemap-Tab ausgeblendet",
+      expectedReason_unlistedProduct: "Produkt ist „unlisted“ (Shopify setzt noindex)",
 
       nofollowTitle: "Links werden nicht verfolgt (nofollow)",
       nofollowHint: "Diese Seiten dürfen indexiert werden, aber Google folgt den Links darauf nicht — die verlinkten Seiten bekommen von hier kein Signal.",
@@ -1769,6 +1770,8 @@ export const de = {
 
       imagesHint: "Gezählt werden Bilder ohne Alt-Text im ausgelieferten HTML. Ein leeres alt=\"\" ist für rein dekorative Bilder korrekt — die Zahl ist ein Hinweis, keine Fehlerliste.",
       imagesTileHint: "Inklusive dekorativer Theme-Bilder.",
+      h1MultipleBadge: "{detail} H1",
+      imagesBadge: "{detail} Bilder ohne Alt-Text",
       emptyImages: "Alle gefundenen Bilder haben einen Alt-Text.",
 
       headDriftHint: "Der Titel im ausgelieferten HTML weicht vom gespeicherten SEO-Titel ab. Meistens überschreibt das Theme oder eine andere App den Wert.",

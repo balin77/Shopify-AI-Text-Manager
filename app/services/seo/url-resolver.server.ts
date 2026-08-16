@@ -150,6 +150,42 @@ export async function resolvePathsToResources(
     for (const c of collections as { id: string; handle: string }[]) idByTypeAndHandle.set(`Collection::${c.handle}`, c.id);
     for (const pg of pages as { id: string; handle: string }[]) idByTypeAndHandle.set(`Page::${pg.handle}`, pg.id);
     for (const a of articles as { id: string; handle: string }[]) idByTypeAndHandle.set(`Article::${a.handle}`, a.id);
+
+    // TRANSLATED handles. Shopify serves a translated resource under its own
+    // translated handle — `/es/products/caja-kumiko-…` is the SAME product as
+    // `/products/kumikobox-…` — and the cache tables only carry the PRIMARY
+    // handle. Without this pass every foreign-locale URL of a shop that
+    // translates its handles resolves to `id: null`, which on the crawl report
+    // means no "open in editor" button on what is often most of the catalogue.
+    //
+    // Runs only for the handles the primary lookup did NOT find, so a
+    // single-language shop pays one extra query with an empty `in` list — i.e.
+    // nothing. `ContentTranslation.resourceType` uses the same capitalized
+    // convention as `ResolvedGscPage.resourceType`, so the key composes directly.
+    const unresolved = new Map<string, Set<string>>();
+    for (const { resolved } of parsed) {
+      if (!resolved) continue;
+      if (idByTypeAndHandle.has(`${resolved.resourceType}::${resolved.handle}`)) continue;
+      const set = unresolved.get(resolved.resourceType) ?? new Set<string>();
+      set.add(resolved.handle);
+      unresolved.set(resolved.resourceType, set);
+    }
+    const allUnresolved = Array.from(unresolved.values()).flatMap((set) => Array.from(set));
+    if (allUnresolved.length > 0) {
+      const rows: { resourceId: string; resourceType: string; value: string }[] =
+        await db.contentTranslation.findMany({
+          where: { shop, key: "handle", value: { in: allUnresolved } },
+          select: { resourceId: true, resourceType: true, value: true },
+        });
+      for (const row of rows) {
+        const key = `${row.resourceType}::${row.value}`;
+        // First writer wins. A handle translated identically in two locales
+        // points at the same resource anyway; two DIFFERENT resources sharing
+        // one translated handle cannot happen on Shopify (handles are unique
+        // per type), so there is nothing to disambiguate.
+        if (!idByTypeAndHandle.has(key)) idByTypeAndHandle.set(key, row.resourceId);
+      }
+    }
   } catch {
     // Best-effort: leave idByTypeAndHandle empty — every URL falls back to
     // id:null below rather than failing the whole caller.

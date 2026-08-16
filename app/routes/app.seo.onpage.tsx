@@ -30,6 +30,8 @@ import {
   ReportRow,
   CapNotice,
   EditAction,
+  PageLink,
+  SubsectionHeading,
   CsvExportButton,
   ACTION_COLUMNS,
   STATUS_COLUMNS,
@@ -51,6 +53,7 @@ import {
   findImagesWithoutAlt,
   findThinPages,
   canonicalHostFromPages,
+  selfCanonicalPages,
   THIN_MIN_SAMPLE,
   type OnPageRow,
   type IndexabilityFinding,
@@ -94,7 +97,12 @@ interface HeadDriftRow {
 
 interface DuplicateGroupRow {
   title: string;
-  urls: string[];
+  urls: Array<{
+    url: string;
+    resourceType: string | null;
+    resourceId: string | null;
+    locale: string;
+  }>;
 }
 
 const SHOP_NAME_QUERY = `#graphql
@@ -179,7 +187,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Loader-only imports: both modules pull `url-resolver.server` in
   // transitively, which must never reach the client bundle.
-  const { loadLatestSnapshot, toHeaderView } = await import("../services/seo/crawl-snapshot.server");
+  const { loadLatestSnapshot, toHeaderView, loadExpectedNoindexReasons } = await import(
+    "../services/seo/crawl-snapshot.server"
+  );
   const { computeHeadDrift, groupDuplicateTitles, groupDuplicateValues, normalizeMetaDescription } =
     await import("../services/seo/crawl.service");
   const { fetchPrimaryDomain } = await import("../utils/shop-domain.server");
@@ -215,21 +225,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 
-  // §3.2 — ONLY "applied" exclusions explain a `noindex`. A mere suggestion
-  // never wrote `seo.hidden` to Shopify, so treating it as an explanation
-  // would silence exactly the pages that are noindex for some other reason.
-  const exclusions = await db.seoSitemapExclusion.findMany({
-    where: { shop, status: "applied" },
-    select: { resourceType: true, resourceId: true },
-  });
-  const excludedKeys = new Set(exclusions.map((e) => `${e.resourceType}:${e.resourceId}`));
+  // §3.2 — what makes a `noindex` EXPECTED rather than a finding.
+  const expectedByResource = await loadExpectedNoindexReasons(db, shop);
 
   const [shopName, primaryDomain] = await Promise.all([
     fetchShopName(admin, shop),
     fetchPrimaryDomain(admin, shop),
   ]);
 
-  const indexability = analyzeIndexability(pages, excludedKeys);
+  const indexability = analyzeIndexability(pages, expectedByResource);
   // The host comes from the crawled URLs, never from `fetchPrimaryDomain` —
   // that one falls back to the myshopify host on a throttled Admin call, and
   // every canonical would then read as "foreign domain". The looked-up domain
@@ -244,18 +248,42 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const thin = findThinPages(pages);
 
   const okPages = pages.filter((p) => p.statusCode >= 200 && p.statusCode < 300);
+  // Duplicates are judged ONLY on pages Google would index under their own URL.
+  // Shopify answers 200 for a translated product under its primary handle
+  // behind every locale prefix (/es/products/<german-handle>, /fr/…), each
+  // serving the untranslated title and canonicalising to the properly
+  // translated URL — so grouping by title alone reports one product as five
+  // duplicates on every multilingual shop.
+  const indexablePages = selfCanonicalPages(okPages, canonicalHost, [shop, primaryDomain]);
   // Totals BEFORE the slice — taking `.length` of an already-sliced array is
   // how a tile ends up reporting the cap ("100") as the answer.
   const duplicatesAll = groupDuplicateTitles(
-    okPages.map((p) => ({ url: p.url, title: p.title })),
+    indexablePages.map((p) => ({ url: p.url, title: p.title })),
     shopName,
   );
   const metaDuplicatesAll = groupDuplicateValues(
-    okPages.map((p) => ({ url: p.url, value: p.metaDesc })),
+    indexablePages.map((p) => ({ url: p.url, value: p.metaDesc })),
     normalizeMetaDescription,
   );
-  const duplicates = duplicatesAll.slice(0, UI_ROW_CAP);
-  const metaDuplicates = metaDuplicatesAll.slice(0, UI_ROW_CAP);
+
+  // Each grouped URL carries its resource back, so a duplicate row can offer
+  // the editor directly instead of making the merchant hunt for the product.
+  const rowByUrl = new Map(pages.map((p) => [p.url, p]));
+  const withResources = (groups: { title: string; urls: string[] }[]): DuplicateGroupRow[] =>
+    groups.map((group) => ({
+      title: group.title,
+      urls: group.urls.map((url) => {
+        const row = rowByUrl.get(url);
+        return {
+          url,
+          resourceType: row?.resourceType ?? null,
+          resourceId: row?.resourceId ?? null,
+          locale: row?.locale ?? "",
+        };
+      }),
+    }));
+  const duplicates = withResources(duplicatesAll.slice(0, UI_ROW_CAP));
+  const metaDuplicates = withResources(metaDuplicatesAll.slice(0, UI_ROW_CAP));
 
   // §3.8 — head drift moved over from the crawl tab, comparison rule unchanged.
   const headDriftCandidates = pages
@@ -375,7 +403,15 @@ export default function SeoOnPage() {
   const indexabilityUnknownAll =
     data.indexabilityConsidered > 0 && data.indexabilityUnknown === data.indexabilityConsidered;
 
-  const issueList = (rows: OnPageIssueRow[], emptyText: string, hint: string | undefined, total: number) => (
+  const issueList = (
+    rows: OnPageIssueRow[],
+    emptyText: string,
+    hint: string | undefined,
+    total: number,
+    /** Template for the trailing badge, e.g. "{detail} Bilder ohne Alt-Text".
+     *  Without it a bare "6/66" reads as a score, which is how it was read. */
+    detailTemplate?: string,
+  ) => (
     <BlockStack gap="200">
       {rows.length === 0 ? (
         <Text as="p" tone="subdued">{emptyText}</Text>
@@ -389,10 +425,12 @@ export default function SeoOnPage() {
                 key={row.url}
                 cells={[
                   <BlockStack gap="050">
-                    <Text as="span" variant="bodySm">{row.url}</Text>
+                    <PageLink url={row.url} />
                     {row.title && <Text as="span" variant="bodySm" tone="subdued">{row.title}</Text>}
                   </BlockStack>,
-                  row.detail ? <Badge>{row.detail}</Badge> : null,
+                  row.detail ? (
+                    <Badge>{detailTemplate ? detailTemplate.replace("{detail}", row.detail) : row.detail}</Badge>
+                  ) : null,
                   editorCell(row.resourceType, row.resourceId),
                 ]}
               />
@@ -406,7 +444,7 @@ export default function SeoOnPage() {
   const duplicateList = (
     groups: DuplicateGroupRow[],
     emptyText: string,
-    hint: string,
+    hint: string | undefined,
     total: number,
   ) => (
     <BlockStack gap="200">
@@ -414,14 +452,25 @@ export default function SeoOnPage() {
         <Text as="p" tone="subdued">{emptyText}</Text>
       ) : (
         <>
-          <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>
+          {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
           <CapNotice shown={groups.length} total={total} template={o.rowCapHint} />
           {groups.map((g) => (
             <BlockStack key={g.title} gap="100">
               <Text as="span" variant="bodySm" fontWeight="semibold">{g.title}</Text>
-              {g.urls.map((u) => (
-                <Text as="span" variant="bodySm" tone="subdued" key={u}>{u}</Text>
-              ))}
+              <ReportGrid columns={ACTION_COLUMNS}>
+                {g.urls.map((u) => (
+                  <ReportRow
+                    key={u.url}
+                    cells={[
+                      <InlineStack gap="100" blockAlign="center" wrap>
+                        <PageLink url={u.url} />
+                        {u.locale && <Badge>{u.locale}</Badge>}
+                      </InlineStack>,
+                      editorCell(u.resourceType, u.resourceId),
+                    ]}
+                  />
+                ))}
+              </ReportGrid>
             </BlockStack>
           ))}
         </>
@@ -538,7 +587,7 @@ export default function SeoOnPage() {
                               key={f.url}
                               cells={[
                                 <BlockStack gap="050">
-                                  <Text as="span" variant="bodySm">{f.url}</Text>
+                                  <PageLink url={f.url} />
                                   {f.title && (
                                     <Text as="span" variant="bodySm" tone="subdued">{f.title}</Text>
                                   )}
@@ -558,14 +607,13 @@ export default function SeoOnPage() {
 
                     {data.indexabilityExpected.length > 0 && (
                       <BlockStack gap="200">
-                        <Text as="h4" variant="headingSm">{o.expectedNoindexTitle}</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">{o.expectedNoindexHint}</Text>
+                        <SubsectionHeading title={o.expectedNoindexTitle} hint={o.expectedNoindexHint} />
                         <ReportGrid columns={ACTION_COLUMNS}>
                           {data.indexabilityExpected.map((f) => (
                             <ReportRow
                               key={f.url}
                               cells={[
-                                <Text as="span" variant="bodySm" tone="subdued">{f.url}</Text>,
+                                <PageLink url={f.url} />,
                                 <Badge>
                                   {o[`expectedReason_${f.expectedReason}`] || (f.expectedReason ?? "")}
                                 </Badge>,
@@ -578,14 +626,13 @@ export default function SeoOnPage() {
 
                     {data.nofollowOnly.length > 0 && (
                       <BlockStack gap="200">
-                        <Text as="h4" variant="headingSm">{o.nofollowTitle}</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">{o.nofollowHint}</Text>
+                        <SubsectionHeading title={o.nofollowTitle} hint={o.nofollowHint} />
                         <ReportGrid columns={ACTION_COLUMNS}>
                           {data.nofollowOnly.map((f) => (
                             <ReportRow
                               key={f.url}
                               cells={[
-                                <Text as="span" variant="bodySm">{f.url}</Text>,
+                                <PageLink url={f.url} />,
                                 <Badge tone="attention">{o.badgeNofollow}</Badge>,
                               ]}
                             />
@@ -625,11 +672,14 @@ export default function SeoOnPage() {
                         key={`${f.url}:${f.issue}`}
                         cells={[
                           <BlockStack gap="050">
-                            <Text as="span" variant="bodySm">{f.url}</Text>
+                            <PageLink url={f.url} />
                             {f.target && (
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {o.canonicalTargetLabel}: {f.target}
-                              </Text>
+                              <InlineStack gap="100" blockAlign="center" wrap>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {o.canonicalTargetLabel}:
+                                </Text>
+                                <PageLink url={f.target} />
+                              </InlineStack>
                             )}
                           </BlockStack>,
                           <Badge tone={CANONICAL_TONE[f.issue]}>{o[`canonicalIssue_${f.issue}`] || f.issue}</Badge>,
@@ -646,19 +696,19 @@ export default function SeoOnPage() {
             {activeTab === "h1" && (
               <BlockStack gap="300">
                 <BlockStack gap="200">
-                  <Text as="h4" variant="headingSm">{o.h1MissingTitle}</Text>
-                  {issueList(data.h1Missing, o.emptyH1Missing, o.h1MissingHint, data.totals.h1Missing)}
+                  <SubsectionHeading title={o.h1MissingTitle} hint={o.h1MissingHint} />
+                  {issueList(data.h1Missing, o.emptyH1Missing, undefined, data.totals.h1Missing)}
                 </BlockStack>
                 <BlockStack gap="200">
-                  <Text as="h4" variant="headingSm">{o.h1MultipleTitle}</Text>
-                  {issueList(data.h1Multiple, o.emptyH1Multiple, o.h1MultipleHint, data.totals.h1Multiple)}
+                  <SubsectionHeading title={o.h1MultipleTitle} hint={o.h1MultipleHint} />
+                  {issueList(data.h1Multiple, o.emptyH1Multiple, undefined, data.totals.h1Multiple, o.h1MultipleBadge)}
                 </BlockStack>
                 <BlockStack gap="200">
-                  <Text as="h4" variant="headingSm">{o.h1SameTitle}</Text>
+                  <SubsectionHeading title={o.h1SameTitle} hint={o.h1SameHint} />
                   {/* Needs h1First, a new column — unmeasurable on an older
                       snapshot, and "none found" would be a claim (§1.1). */}
                   {data.parseStateKnown ? (
-                    issueList(data.h1SameAsTitle, o.emptyH1Same, o.h1SameHint, data.totals.h1SameAsTitle)
+                    issueList(data.h1SameAsTitle, o.emptyH1Same, undefined, data.totals.h1SameAsTitle)
                   ) : (
                     <Banner tone="info">{o.categoryUnknownBanner}</Banner>
                   )}
@@ -669,12 +719,12 @@ export default function SeoOnPage() {
             {activeTab === "meta" && (
               <BlockStack gap="300">
                 <BlockStack gap="200">
-                  <Text as="h4" variant="headingSm">{o.metaMissingTitle}</Text>
-                  {issueList(data.metaMissing, o.emptyMetaMissing, o.metaMissingHint, data.totals.meta)}
+                  <SubsectionHeading title={o.metaMissingTitle} hint={o.metaMissingHint} />
+                  {issueList(data.metaMissing, o.emptyMetaMissing, undefined, data.totals.meta)}
                 </BlockStack>
                 <BlockStack gap="200">
-                  <Text as="h4" variant="headingSm">{o.metaDuplicateTitle}</Text>
-                  {duplicateList(data.metaDuplicates, o.emptyMetaDuplicates, o.metaDuplicateHint, data.totals.metaDuplicates)}
+                  <SubsectionHeading title={o.metaDuplicateTitle} hint={o.metaDuplicateHint} />
+                  {duplicateList(data.metaDuplicates, o.emptyMetaDuplicates, undefined, data.totals.metaDuplicates)}
                 </BlockStack>
               </BlockStack>
             )}
@@ -702,7 +752,7 @@ export default function SeoOnPage() {
                         key={row.url}
                         cells={[
                           <BlockStack gap="050">
-                            <Text as="span" variant="bodySm">{row.url}</Text>
+                            <PageLink url={row.url} />
                             {row.title && <Text as="span" variant="bodySm" tone="subdued">{row.title}</Text>}
                           </BlockStack>,
                           <Badge tone="attention">
@@ -720,7 +770,7 @@ export default function SeoOnPage() {
 
             {activeTab === "images" &&
               (data.parseStateKnown ? (
-                issueList(data.images, o.emptyImages, o.imagesHint, data.totals.images)
+                issueList(data.images, o.emptyImages, o.imagesHint, data.totals.images, o.imagesBadge)
               ) : (
                 <Banner tone="info">{o.categoryUnknownBanner}</Banner>
               ))}
@@ -737,6 +787,7 @@ export default function SeoOnPage() {
                         key={`${h.resourceType}:${h.resourceId}`}
                         cells={[
                           <BlockStack gap="050">
+                            {h.url && <PageLink url={h.url} />}
                             <Text as="span" variant="bodySm" tone="subdued">
                               {o.colCrawledTitle}: {h.crawledTitle || "—"}
                             </Text>

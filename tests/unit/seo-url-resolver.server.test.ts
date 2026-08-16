@@ -15,12 +15,19 @@ function makeDb(overrides: {
   collections?: { id: string; handle: string }[];
   pages?: { id: string; handle: string }[];
   articles?: { id: string; handle: string }[];
+  /** ContentTranslation rows with key "handle" — a resource's TRANSLATED handle. */
+  handleTranslations?: { resourceId: string; resourceType: string; value: string }[];
 } = {}) {
   const products = overrides.products ?? [];
   const collections = overrides.collections ?? [];
   const pages = overrides.pages ?? [];
   const articles = overrides.articles ?? [];
+  const handleTranslations = overrides.handleTranslations ?? [];
   return {
+    contentTranslation: {
+      findMany: async ({ where }: any) =>
+        handleTranslations.filter((t) => where.value.in.includes(t.value)),
+    },
     product: {
       findMany: async ({ where }: any) => products.filter((p) => where.handle.in.includes(p.handle)),
     },
@@ -86,11 +93,58 @@ describe("resolvePathsToResources", () => {
       collection: { findMany: async () => [] },
       page: { findMany: async () => [] },
       article: { findMany: async () => [] },
+      contentTranslation: { findMany: async () => [] },
     } as any;
     const out = await resolvePathsToResources(db, "shop.myshopify.com", [
       "https://shop.example.com/products/blue-shoe",
     ]);
     expect(out.get("https://shop.example.com/products/blue-shoe")?.id).toBeNull();
+  });
+
+  it("resolves a TRANSLATED handle — Shopify serves /es/products/<spanish-handle>", async () => {
+    // The cache tables only carry the primary handle, so without the fallback
+    // most of a translated catalogue has no "open in editor" link.
+    const db = makeDb({
+      products: [{ id: "gid://shopify/Product/1", handle: "kumikobox-schmuckkaestchen" }],
+      handleTranslations: [
+        {
+          resourceId: "gid://shopify/Product/1",
+          resourceType: "Product",
+          value: "caja-kumiko-joyero-japones",
+        },
+      ],
+    });
+    const url = "https://shop.example.com/es/products/caja-kumiko-joyero-japones";
+    const out = await resolvePathsToResources(db, "shop.myshopify.com", [url]);
+    expect(out.get(url)).toMatchObject({
+      resourceType: "Product",
+      id: "gid://shopify/Product/1",
+      locale: "es",
+    });
+  });
+
+  it("does not consult the translation table when the primary handle already matched", async () => {
+    let translationQueried = false;
+    const db = makeDb({ products: [{ id: "gid-1", handle: "blue-shoe" }] });
+    db.contentTranslation.findMany = async () => {
+      translationQueried = true;
+      return [];
+    };
+    await resolvePathsToResources(db, "shop.myshopify.com", [
+      "https://shop.example.com/products/blue-shoe",
+    ]);
+    expect(translationQueried).toBe(false);
+  });
+
+  it("keeps a translated handle of one type from resolving another type", async () => {
+    const db = makeDb({
+      handleTranslations: [
+        { resourceId: "gid-page-9", resourceType: "Page", value: "sobre-nosotros" },
+      ],
+    });
+    const url = "https://shop.example.com/es/products/sobre-nosotros";
+    const out = await resolvePathsToResources(db, "shop.myshopify.com", [url]);
+    expect(out.get(url)?.id).toBeNull();
   });
 
   it("returns an empty map for an empty input", async () => {

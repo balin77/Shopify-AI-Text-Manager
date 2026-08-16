@@ -1731,6 +1731,7 @@ export const es: Translation = {
       expectedReason_taggedCollection: "Colección filtrada",
       expectedReason_constraint: "Variante de mercado/precio",
       expectedReason_sitemapExclusion: "Oculta desde la pestaña de sitemap",
+      expectedReason_unlistedProduct: "Producto «unlisted» (Shopify pone noindex)",
 
       nofollowTitle: "Los enlaces no se siguen (nofollow)",
       nofollowHint: "Estas páginas pueden indexarse, pero Google no sigue sus enlaces: las páginas enlazadas no reciben ninguna señal desde aquí.",
@@ -1769,6 +1770,8 @@ export const es: Translation = {
 
       imagesHint: "Cuenta las imágenes sin texto alternativo en el HTML entregado. Un alt=\"\" vacío es correcto para imágenes puramente decorativas: la cifra es un aviso, no una lista de errores.",
       imagesTileHint: "Incluye imágenes decorativas del tema.",
+      h1MultipleBadge: "{detail} H1",
+      imagesBadge: "{detail} imágenes sin texto alternativo",
       emptyImages: "Todas las imágenes encontradas tienen texto alternativo.",
 
       headDriftHint: "El título del HTML entregado difiere del título SEO guardado. Normalmente el tema u otra app sobrescribe el valor.",

@@ -130,15 +130,22 @@ export interface IndexabilityReport {
 /**
  * Splits every `noindex` into "meant it" and "did not mean it".
  *
- * `excludedResourceKeys` holds `"<resourceType>:<resourceId>"` for
- * SeoSitemapExclusion rows with status **"applied"** — and only those. A
- * mere SUGGESTION explains nothing: `seo.hidden` was never written to Shopify,
- * so a page that is nevertheless `noindex` is noindex for some OTHER reason,
- * which is exactly the case counting suggestions would hide.
+ * `expectedByResource` maps `"<resourceType>:<resourceId>"` to the REASON its
+ * `noindex` is expected. Two sources fill it, and both are load-bearing:
+ *
+ *  - `"sitemapExclusion"` — a SeoSitemapExclusion row with status **"applied"**,
+ *    and only those. A mere SUGGESTION explains nothing: `seo.hidden` was never
+ *    written to Shopify, so a page that is nevertheless `noindex` is noindex for
+ *    some OTHER reason, which is exactly the case counting suggestions would hide.
+ *  - `"unlistedProduct"` — Shopify serves an UNLISTED product with
+ *    `<meta name="robots" content="noindex,nofollow">`. That is documented by
+ *    Shopify AND measured on a live shop (see sitemap.service.ts's header), so
+ *    every unlisted product would otherwise land at the top of this report and
+ *    of the SEO dashboard as a critical, unexplained exclusion.
  */
 export function analyzeIndexability(
   pages: OnPageRow[],
-  excludedResourceKeys: Set<string>,
+  expectedByResource: Map<string, string>,
 ): IndexabilityReport {
   const problems: IndexabilityFinding[] = [];
   const expected: IndexabilityFinding[] = [];
@@ -170,9 +177,11 @@ export function analyzeIndexability(
       continue;
     }
 
-    const sitemapExcluded =
-      page.resourceType && page.resourceId && excludedResourceKeys.has(`${page.resourceType}:${page.resourceId}`);
-    const reason = sitemapExcluded ? "sitemapExclusion" : expectedNoindexReason(page.url);
+    const byResource =
+      page.resourceType && page.resourceId
+        ? expectedByResource.get(`${page.resourceType}:${page.resourceId}`)
+        : undefined;
+    const reason = byResource ?? expectedNoindexReason(page.url);
     if (reason) expected.push({ ...base, expectedReason: reason });
     else problems.push({ ...base, expectedReason: null });
   }
@@ -239,6 +248,41 @@ export function canonicalHostFromPages(pages: Array<{ url: string }>): string {
     }
   }
   return "";
+}
+
+/**
+ * The pages a DUPLICATE check may look at: those Google would actually index.
+ *
+ * A page whose canonical points elsewhere is, by Google's own rule, not
+ * indexed under its own URL — so it cannot be half of a duplicate-content
+ * problem, and reporting it as one is noise.
+ *
+ * This is not academic. Shopify serves a translated product under BOTH its
+ * primary and its translated handle behind a locale prefix, so
+ * `/es/products/<german-handle>`, `/fr/products/<german-handle>` … all answer
+ * 200 with the untranslated `<title>` while canonicalising to the properly
+ * translated URL. Grouping by title then reports one product as five duplicates
+ * on every multilingual shop — which is what a merchant actually saw.
+ *
+ * A page with NO canonical at all is KEPT: we cannot rule it out, and "canonical
+ * missing" is its own finding in `analyzeCanonicals` rather than a reason to go
+ * quiet here.
+ */
+export function selfCanonicalPages(
+  pages: OnPageRow[],
+  canonicalHost: string,
+  aliasHosts: string[] = [],
+): OnPageRow[] {
+  if (!canonicalHost) return pages;
+  return pages.filter((page) => {
+    if (!page.canonical) return true;
+    const target = normalizeCrawlUrl(page.canonical, page.url, canonicalHost, aliasHosts);
+    const self = normalizeCrawlUrl(page.url, page.url, canonicalHost, aliasHosts);
+    // A cross-host canonical is a defect `analyzeCanonicals` reports; it does
+    // not make the page a duplicate of anything here.
+    if (!target || !self) return true;
+    return target === self;
+  });
 }
 
 export function analyzeCanonicals(
@@ -442,6 +486,8 @@ export function findImagesWithoutAlt(pages: OnPageRow[]): OnPageIssueRow[] {
   return judgeable(pages)
     .filter((p) => p.imgMissingAlt > 0)
     .sort((a, b) => b.imgMissingAlt - a.imgMissingAlt)
+    // The caller labels this — a bare "6/66" badge is unreadable, and it was
+    // read as a score rather than as "6 of 66 images have no alt text".
     .map((p) => toIssueRow(p, `${p.imgMissingAlt}/${p.imgCount}`));
 }
 

@@ -723,14 +723,10 @@ async function buildOnPageProblemBuckets(
       }));
 
   // --- nonIndexable: ONLY the unexpected ones. The expected list (Shopify's
-  // own /search, /cart, applied sitemap exclusions) is not a problem and must
-  // never inflate a dashboard number.
-  const exclusions = await db.seoSitemapExclusion.findMany({
-    where: { shop, status: "applied" },
-    select: { resourceType: true, resourceId: true },
-  });
-  const excludedKeys = new Set(exclusions.map((e) => `${e.resourceType}:${e.resourceId}`));
-  const indexability = analyzeIndexability(pages, excludedKeys);
+  // own /search, /cart, applied sitemap exclusions, UNLISTED products) is not a
+  // problem and must never inflate a dashboard number.
+  const { loadExpectedNoindexReasons } = await import("./crawl-snapshot.server");
+  const indexability = analyzeIndexability(pages, await loadExpectedNoindexReasons(db, shop));
   if (indexability.problems.length > 0) {
     buckets.push({
       code: "nonIndexable",
