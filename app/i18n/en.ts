@@ -1781,6 +1781,13 @@ export const en: Translation = {
       colDbTitle: "Stored SEO title",
 
       duplicatesHint: "Several pages deliver the same page title — which makes it harder for Google to tell them apart.",
+      aiFixMeta: "Generate the missing ones with AI",
+      aiFixMetaDuplicates: "Rewrite the duplicates with AI",
+      aiFixDuplicateTitles: "Rewrite the duplicate titles with AI",
+      aiFixMetaCaveat: "Generates meta descriptions for content that has none in the database. A stored description your theme fails to deliver is a theme problem and is not fixed by this.",
+      aiFixTitleCaveat: "Rewrites the stored SEO titles. Does not change how your theme assembles the title.",
+      aiFixStarted: "The AI run has started. Follow it in the Tasks tab, then run a new crawl so the report shows the new values.",
+      aiFixError: "Could not start the AI run.",
       emptyDuplicates: "No duplicate page titles found.",
     },
     crawlPage: {

@@ -1780,6 +1780,13 @@ export const de = {
       colDbTitle: "Gespeicherter SEO-Titel",
 
       duplicatesHint: "Mehrere Seiten liefern denselben Seitentitel aus — Google kann sie dadurch schlechter auseinanderhalten.",
+      aiFixMeta: "Fehlende per KI erzeugen",
+      aiFixMetaDuplicates: "Doppelte per KI neu schreiben",
+      aiFixDuplicateTitles: "Doppelte Titel per KI neu schreiben",
+      aiFixMetaCaveat: "Erzeugt Meta-Descriptions für Inhalte, denen sie in der Datenbank fehlt. Eine gespeicherte Description, die dein Theme nicht ausliefert, ist ein Theme-Problem und wird dadurch nicht behoben.",
+      aiFixTitleCaveat: "Schreibt die gespeicherten SEO-Titel neu. Ändert nicht, wie dein Theme den Titel zusammensetzt.",
+      aiFixStarted: "Der KI-Lauf wurde gestartet. Den Fortschritt siehst du im Tab „Aufgaben“; danach einen neuen Crawl starten, damit der Bericht die neuen Werte zeigt.",
+      aiFixError: "Der KI-Lauf konnte nicht gestartet werden.",
       emptyDuplicates: "Keine doppelten Seitentitel gefunden.",
     },
     crawlPage: {

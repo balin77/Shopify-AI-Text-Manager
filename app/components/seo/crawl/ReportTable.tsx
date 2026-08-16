@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useFetcher } from "react-router";
-import { Box, BlockStack, Badge, Button, Text, Tooltip } from "@shopify/polaris";
+import { Box, BlockStack, InlineStack, Badge, Banner, Button, Text, Tooltip } from "@shopify/polaris";
 import { EditIcon } from "@shopify/polaris-icons";
 import type { AuditType } from "../../../services/seo/audit.service";
 
@@ -135,6 +135,65 @@ export function SubsectionHeading({ title, hint }: { title: string; hint?: strin
         {hint && <Text as="p" variant="bodySm" tone="subdued">{hint}</Text>}
       </BlockStack>
     </Box>
+  );
+}
+
+/**
+ * "Fix with AI" for a report category that HAS a fix path.
+ *
+ * Deliberately not offered on most of them. There is no AI fix for a `noindex`
+ * (removed in Shopify), a canonical (emitted by the theme), a missing H1 (theme
+ * again) or a dead external link — a button that looked like one would be a
+ * lie, which is why the dashboard's crawl buckets are all `deepLink`.
+ *
+ * Where it IS offered, it starts the EXISTING `seoBulkFix` task with an
+ * existing problem code, so the affected items are re-derived server-side from
+ * the audit rather than posted by the client. That also means it fixes what is
+ * missing in the DATABASE — `caveat` is where a category says what that does
+ * not cover, because this report measures what the storefront DELIVERS, and a
+ * stored value the theme fails to render is not something regeneration fixes.
+ */
+export function AiFixButton({
+  problemCode,
+  label,
+  caveat,
+  startedLabel,
+  errorLabel,
+}: {
+  problemCode: string;
+  label: string;
+  caveat: string;
+  startedLabel: string;
+  errorLabel: string;
+}) {
+  const fetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
+  const started = fetcher.state === "idle" && fetcher.data?.success;
+  const failed = fetcher.state === "idle" && fetcher.data && !fetcher.data.success;
+
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="200" blockAlign="center" wrap>
+        <Button
+          size="slim"
+          loading={fetcher.state !== "idle"}
+          disabled={fetcher.state !== "idle" || started}
+          onClick={() => {
+            const formData = new FormData();
+            formData.append("action", "seoBulkFix");
+            // seoBulkFix spans every content type and re-derives its items
+            // server-side; "products" only satisfies /api/ai's generic gate.
+            formData.append("contentType", "products");
+            formData.append("problemCode", problemCode);
+            fetcher.submit(formData, { method: "post", action: "/api/ai" });
+          }}
+        >
+          {label}
+        </Button>
+        <Text as="span" variant="bodySm" tone="subdued">{caveat}</Text>
+      </InlineStack>
+      {started && <Banner tone="success">{startedLabel}</Banner>}
+      {failed && <Banner tone="critical">{fetcher.data?.error || errorLabel}</Banner>}
+    </BlockStack>
   );
 }
 

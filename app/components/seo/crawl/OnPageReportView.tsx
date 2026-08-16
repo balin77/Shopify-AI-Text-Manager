@@ -20,6 +20,7 @@ import {
   EditAction,
   PageLink,
   SubsectionHeading,
+  AiFixButton,
   CsvExportButton,
   ACTION_COLUMNS,
   STATUS_COLUMNS,
@@ -423,10 +424,28 @@ export function OnPageSections({
               <BlockStack gap="300">
                 <BlockStack gap="200">
                   <SubsectionHeading title={o.metaMissingTitle} hint={o.metaMissingHint} />
+                  {data.metaMissing.length > 0 && (
+                    <AiFixButton
+                      problemCode="metaDescriptionMissing"
+                      label={o.aiFixMeta}
+                      caveat={o.aiFixMetaCaveat}
+                      startedLabel={o.aiFixStarted}
+                      errorLabel={o.aiFixError}
+                    />
+                  )}
                   {issueList(data.metaMissing, o.emptyMetaMissing, undefined, data.totals.meta)}
                 </BlockStack>
                 <BlockStack gap="200">
                   <SubsectionHeading title={o.metaDuplicateTitle} hint={o.metaDuplicateHint} />
+                  {data.metaDuplicates.length > 0 && (
+                    <AiFixButton
+                      problemCode="duplicateSeoDescription"
+                      label={o.aiFixMetaDuplicates}
+                      caveat={o.aiFixMetaCaveat}
+                      startedLabel={o.aiFixStarted}
+                      errorLabel={o.aiFixError}
+                    />
+                  )}
                   {duplicateList(data.metaDuplicates, o.emptyMetaDuplicates, undefined, data.totals.metaDuplicates)}
                 </BlockStack>
               </BlockStack>
@@ -508,8 +527,20 @@ export function OnPageSections({
               </BlockStack>
             )}
 
-            {activeTab === "duplicates" &&
-              duplicateList(data.duplicates, o.emptyDuplicates, o.duplicatesHint, data.totals.duplicates)}
+            {activeTab === "duplicates" && (
+              <BlockStack gap="200">
+                {data.duplicates.length > 0 && (
+                  <AiFixButton
+                    problemCode="duplicateSeoTitle"
+                    label={o.aiFixDuplicateTitles}
+                    caveat={o.aiFixTitleCaveat}
+                    startedLabel={o.aiFixStarted}
+                    errorLabel={o.aiFixError}
+                  />
+                )}
+                {duplicateList(data.duplicates, o.emptyDuplicates, o.duplicatesHint, data.totals.duplicates)}
+              </BlockStack>
+            )}
           </BlockStack>
         </Card>
   );

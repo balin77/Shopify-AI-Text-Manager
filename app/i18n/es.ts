@@ -1780,6 +1780,13 @@ export const es: Translation = {
       colDbTitle: "Título SEO guardado",
 
       duplicatesHint: "Varias páginas entregan el mismo título — a Google le cuesta más distinguirlas.",
+      aiFixMeta: "Generar las que faltan con IA",
+      aiFixMetaDuplicates: "Reescribir las duplicadas con IA",
+      aiFixDuplicateTitles: "Reescribir los títulos duplicados con IA",
+      aiFixMetaCaveat: "Genera meta descripciones para el contenido que no las tiene en la base de datos. Una descripción guardada que tu tema no entrega es un problema del tema y esto no lo arregla.",
+      aiFixTitleCaveat: "Reescribe los títulos SEO guardados. No cambia cómo tu tema compone el título.",
+      aiFixStarted: "Se ha iniciado la ejecución de IA. Síguela en la pestaña Tareas y luego lanza un nuevo rastreo para que el informe muestre los nuevos valores.",
+      aiFixError: "No se pudo iniciar la ejecución de IA.",
       emptyDuplicates: "No se encontraron títulos de página duplicados.",
     },
     crawlPage: {
