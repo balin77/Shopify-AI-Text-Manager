@@ -276,6 +276,30 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [helpers.validationVersion]
   );
 
+  // PLAN §Phase 3 — the shop's existing tags, for the `tags` field's
+  // autocomplete. Derived from the ALREADY-LOADED list rather than fetched:
+  // a tag vocabulary is worth suggesting precisely because it is in use, and
+  // the items on screen are the ones using it. Capped so a catalogue with
+  // thousands of one-off tags does not turn the picker into a wall.
+  const tagSuggestions = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const item of items as unknown as Array<{ tags?: unknown }>) {
+      if (!Array.isArray(item?.tags)) continue;
+      for (const raw of item.tags as string[]) {
+        const tag = String(raw).trim();
+        if (!tag) continue;
+        const key = tag.toLowerCase();
+        const seen = counts.get(key);
+        if (seen) seen.count += 1;
+        else counts.set(key, { label: tag, count: 1 });
+      }
+    }
+    return [...counts.values()]
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+      .slice(0, 50)
+      .map((entry) => entry.label);
+  }, [items]);
+
   const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
@@ -1332,6 +1356,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           fetcherState={fetcherState}
                           fetcherFormData={fetcherFormData}
                           validationOverlays={validationOverlays}
+                          tagSuggestions={tagSuggestions}
                         />
                         );
                       });

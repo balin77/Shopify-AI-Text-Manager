@@ -268,10 +268,14 @@ export const loader = createContentLoader({
       featuredImageUrl: p.featuredImageUrl || null,
       // Membership count comes from the Phase-0 join rows. `hasMoreCollections`
       // marks the window Shopify truncated, so "3" never reads as "exactly 3".
-      collections: (p.collections || []).map((c: any) => ({
-        id: c.collectionId,
-        title: c.collectionTitle || "",
-      })),
+      // NULL until the attribute sync has run, never `[]`. The membership rows
+      // are part of the Phase-0 attribute block, so on a product an older sync
+      // wrote there simply are none — and an empty array would make the
+      // checklist report a confident "missing" while every row beside it says
+      // "unknown". Same discriminator, same rule, applied at the source.
+      collections: p.attributesSyncedAt
+        ? (p.collections || []).map((c: any) => ({ id: c.collectionId, title: c.collectionTitle || "" }))
+        : null,
       hasMoreCollections: p.hasMoreCollections === true,
       // §2.3: the price lives on ProductVariant, NOT in the attribute block —
       // it is therefore NOT gated on attributesSyncedAt. Decimal has no place

@@ -8,6 +8,7 @@ import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../a
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
 import { isAuthError } from './ai.service';
+import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import type { PrismaClient } from "@prisma/client";
 import type { MarketInfo } from "../../app/types/content-editor.types";
 
@@ -247,7 +248,12 @@ export class ShopifyContentService {
    * Note: Shopify Admin API Page type has no `seo` field.
    * SEO data is stored in metafields: global.title_tag and global.description_tag.
    */
-  async updatePage(id: string, page: { title?: string; handle?: string; body?: string; seoTitle?: string; seoDescription?: string }) {
+  async updatePage(id: string, page: {
+    title?: string; handle?: string; body?: string; seoTitle?: string; seoDescription?: string;
+    // PLAN §Phase 3 merchandising attributes. Not translatable — one value per
+    // page — so they only ever arrive on a primary-locale save.
+    isPublished?: boolean; templateSuffix?: string | null;
+  }) {
     // Separate SEO fields from the page input – they go as metafields
     const { seoTitle, seoDescription, ...pageInput } = page;
     const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
@@ -281,7 +287,10 @@ export class ShopifyContentService {
    * Update a blog (container, not article)
    * Note: Like Pages, Blog SEO data is stored in metafields (global.title_tag, global.description_tag).
    */
-  async updateBlog(id: string, blog: { title?: string; handle?: string; seoTitle?: string; seoDescription?: string }) {
+  async updateBlog(id: string, blog: {
+    title?: string; handle?: string; seoTitle?: string; seoDescription?: string;
+    templateSuffix?: string | null;
+  }) {
     const { seoTitle, seoDescription, ...blogInput } = blog;
     const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
 
@@ -315,8 +324,14 @@ export class ShopifyContentService {
    * Note: Like Pages/Blogs, Article SEO data is stored in metafields
    * (global.title_tag, global.description_tag), not a native `seo` field.
    */
-  async updateArticle(id: string, article: { title?: string; handle?: string; body?: string; summary?: string; seoTitle?: string; seoDescription?: string; image?: { altText: string } | null }) {
-    const { seoTitle, seoDescription, ...articleInput } = article;
+  async updateArticle(id: string, article: {
+    title?: string; handle?: string; body?: string; summary?: string; seoTitle?: string;
+    seoDescription?: string; image?: { altText: string } | null;
+    // PLAN §Phase 3. `author` is an AuthorInput on Shopify's side, not a
+    // string — the caller passes the plain name and it is wrapped below.
+    author?: string; tags?: string[]; isPublished?: boolean; templateSuffix?: string | null;
+  }) {
+    const { seoTitle, seoDescription, author, ...articleInput } = article;
     const { toSet: metafields, toDelete } = this.splitSeoMetafields(seoTitle, seoDescription);
 
     const response = await this.admin.graphql(UPDATE_ARTICLE, {
@@ -324,6 +339,11 @@ export class ShopifyContentService {
         id,
         article: {
           ...articleInput,
+          // `author` is an AuthorInput, not a string. Sending the bare name
+          // fails at the schema level — a top-level `errors` array with
+          // `data: null`, which never reaches `userErrors` and would make the
+          // whole save read as a success while nothing was written.
+          ...(author !== undefined ? { author: { name: author } } : {}),
           ...(metafields.length > 0 ? { metafields } : {}),
         },
       }
@@ -406,7 +426,11 @@ export class ShopifyContentService {
   /**
    * Update a collection
    */
-  async updateCollection(id: string, collection: { title?: string; handle?: string; descriptionHtml?: string; seo?: { title?: string; description?: string }; image?: { altText: string } }) {
+  async updateCollection(id: string, collection: {
+    title?: string; handle?: string; descriptionHtml?: string;
+    seo?: { title?: string; description?: string }; image?: { altText: string };
+    sortOrder?: string; templateSuffix?: string | null;
+  }) {
     const response = await this.admin.graphql(UPDATE_COLLECTION, {
       variables: {
         input: {
@@ -997,6 +1021,52 @@ export class ShopifyContentService {
       // Update primary locale
       let updatedResource;
 
+      // ── PLAN §Phase 3 merchandising attributes ──────────────────────────
+      // Built ONCE, from the same flat update map as everything else, and
+      // filtered to the keys this resource actually has — a `sortOrder` on a
+      // page is not a harmless extra, Shopify rejects the whole input.
+      // `rejected` is peeled off here so it can never reach a GraphQL input:
+      // it names the enum values that failed validation, and those are
+      // reported as a warning instead of being sent and coming back as a
+      // schema error the caller would read as a success.
+      const { rejected: rejectedAttributes, ...attributeInput } = buildAttributeInput(
+        resourceType as Parameters<typeof buildAttributeInput>[0],
+        updates,
+      );
+
+      /**
+       * The attribute half of the DB mirror, taken from what Shopify ECHOED
+       * back rather than from what was sent. Shopify normalises tags and can
+       * refuse a template suffix, so mirroring the input would leave the cache
+       * claiming something the shop does not hold — and the §2.2 attribute
+       * checklist reads exactly that cache.
+       *
+       * A key is written only when the merchant actually sent it AND Shopify
+       * answered for it: a missing echo must not be mirrored as `null`/`[]`,
+       * which would read as "the merchant cleared this".
+       */
+      const attributeMirror = (echo: Record<string, unknown> | null | undefined) => {
+        const data: Record<string, unknown> = {};
+        if (!echo) return data;
+        if (attributeInput.templateSuffix !== undefined && 'templateSuffix' in echo) {
+          data.templateSuffix = (echo.templateSuffix as string | null) ?? null;
+        }
+        if (attributeInput.isPublished !== undefined && typeof echo.isPublished === 'boolean') {
+          data.isPublished = echo.isPublished;
+        }
+        if (attributeInput.sortOrder !== undefined && typeof echo.sortOrder === 'string') {
+          data.sortOrder = echo.sortOrder;
+        }
+        if (attributeInput.author !== undefined) {
+          const name = (echo.author as { name?: string } | null | undefined)?.name;
+          if (name) data.author = name;
+        }
+        if (attributeInput.tags !== undefined && Array.isArray(echo.tags)) {
+          data.tags = echo.tags as string[];
+        }
+        return data;
+      };
+
       if (resourceType === 'Page') {
         updatedResource = await this.updatePage(resourceId, {
           title: updates.title,
@@ -1004,6 +1074,7 @@ export class ShopifyContentService {
           body: updates.description || updates.body,
           ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
           ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
+          ...attributeInput,
         });
 
         // Update database
@@ -1017,6 +1088,7 @@ export class ShopifyContentService {
             body: updates.description || updates.body,
             ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
             ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
+            ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
         });
@@ -1026,6 +1098,7 @@ export class ShopifyContentService {
           handle: updates.handle,
           ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
           ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
+          ...attributeInput,
         });
 
         // Update blogTitle on all articles belonging to this blog
@@ -1044,6 +1117,7 @@ export class ShopifyContentService {
           ...(updates.seoTitle !== undefined ? { seoTitle: updates.seoTitle } : {}),
           ...(updates.metaDescription !== undefined ? { seoDescription: updates.metaDescription } : {}),
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
+          ...attributeInput,
         });
 
         // Update database
@@ -1059,6 +1133,7 @@ export class ShopifyContentService {
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
             ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
+            ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
         });
@@ -1071,6 +1146,7 @@ export class ShopifyContentService {
           descriptionHtml: updates.description,
           ...(preservedSeo ? { seo: preservedSeo } : {}),
           ...(updates.imageAltText !== undefined ? { image: { altText: updates.imageAltText } } : {}),
+          ...attributeInput,
         });
 
         // Update database
@@ -1085,6 +1161,7 @@ export class ShopifyContentService {
             seoTitle: updates.seoTitle,
             seoDescription: updates.metaDescription,
             ...(updates.imageAltText !== undefined ? { imageAltText: updates.imageAltText || null } : {}),
+            ...attributeMirror(updatedResource),
             lastSyncedAt: new Date(),
           },
         });
@@ -1162,6 +1239,16 @@ export class ShopifyContentService {
         }
       }
 
+      // A rejected attribute is NOT a failed save — everything else went
+      // through — but it is not a silent drop either. Saying nothing is how a
+      // merchant discovers weeks later that a sort order never took.
+      if (rejectedAttributes && rejectedAttributes.length > 0) {
+        return {
+          success: true,
+          item: updatedResource,
+          warning: `Saved, but these details could not be applied because their value was not recognised: ${rejectedAttributes.join(", ")}.`,
+        };
+      }
       return { success: true, item: updatedResource };
     }
   }

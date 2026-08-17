@@ -255,6 +255,7 @@ export const en: Translation = {
     redirectNotConfirmed: "The old URL {path} could not be redirected — set it up under Shopify's URL redirects if the old link matters.",
     redirectFailed: "The old URL {path} could not be redirected — set it up under Shopify's URL redirects if the old link matters.",
     redirectBlogArticlesUncovered: "The old blog URL {path} now redirects to the new one — but the articles' own URLs changed too and are not covered.",
+    redirectShadowRemoved: "The old URL {path} now redirects to the new one. An existing redirect on the new URL was removed — it would have hidden the page.",
     redirectMissingBlog: "The old article URL could not be redirected because its blog is unknown — set the redirect up manually if the old link matters.",
     reloadSuccess: "Data reloaded from Shopify successfully!",
     reloadItemTooltip: "Reload only this entry's data from Shopify",
@@ -367,6 +368,14 @@ export const en: Translation = {
       metaDescription: "Meta Description",
       productImages: "Product Images",
       featuredImage: "Featured Image",
+      // PLAN §Phase 3 — merchandising attributes.
+      status: "Status",
+      vendor: "Vendor",
+      tags: "Tags",
+      author: "Author",
+      sortOrder: "Sort order",
+      templateSuffix: "Theme template",
+      isPublished: "Visible in the online store",
     },
     // Resource names
     resourceNames: {
@@ -438,6 +447,7 @@ export const en: Translation = {
     duplicateButtonLabel: "Duplicate",
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
     rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
+    addTag: "Add tag",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     duplicateModal: {
       title: "Duplicate \u201c{name}\u201d",
@@ -653,6 +663,7 @@ export const en: Translation = {
     featureBasicImages: "All product images editable (with AI alt text)",
     featureImagesProNote: "Bulk upload, WebP conversion and variant image gallery from Pro.",
     aiInstructionsEditable: "AI Instructions Editable",
+    add: "Add",
     yes: "Yes",
     no: "No",
     changePlan: "Change Plan",

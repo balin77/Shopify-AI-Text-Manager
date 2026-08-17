@@ -254,6 +254,7 @@ export const es: Translation = {
     redirectNotConfirmed: "La URL antigua {path} no se pudo redirigir — crea la redirección en las redirecciones de URL de Shopify si el enlace antiguo te importa.",
     redirectFailed: "La URL antigua {path} no se pudo redirigir — crea la redirección en las redirecciones de URL de Shopify si el enlace antiguo te importa.",
     redirectBlogArticlesUncovered: "La URL antigua del blog {path} ahora redirige a la nueva, pero las URLs de los artículos también cambiaron y no están cubiertas.",
+    redirectShadowRemoved: "La URL antigua {path} ahora redirige a la nueva. Se eliminó una redirección existente en la URL nueva — habría ocultado la página.",
     redirectMissingBlog: "La URL antigua del artículo no se pudo redirigir porque su blog es desconocido — crea la redirección manualmente si el enlace antiguo te importa.",
     reloadSuccess: "¡Datos recargados de Shopify correctamente!",
     reloadItemTooltip: "Recargar solo los datos de esta entrada desde Shopify",
@@ -366,6 +367,14 @@ export const es: Translation = {
       metaDescription: "Meta descripción",
       productImages: "Imágenes del producto",
       featuredImage: "Imagen destacada",
+      // PLAN §Phase 3 — atributos de merchandising.
+      status: "Estado",
+      vendor: "Proveedor",
+      tags: "Etiquetas",
+      author: "Autor",
+      sortOrder: "Orden",
+      templateSuffix: "Plantilla del tema",
+      isPublished: "Visible en la tienda online",
     },
     // Resource names
     resourceNames: {
@@ -437,6 +446,7 @@ export const es: Translation = {
     duplicateButtonLabel: "Duplicar",
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
     rulesNeedApiUpgrade: "Las colecciones automatizadas necesitan la API {version} de Shopify. Hasta que esta aplicación se actualice, puedes crear colecciones y elegir sus productos manualmente.",
+    addTag: "Añadir etiqueta",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     duplicateModal: {
       title: "Duplicar \u201c{name}\u201d",
@@ -652,6 +662,7 @@ export const es: Translation = {
     featureBasicImages: "Todas las imágenes del producto editables (con texto alternativo por IA)",
     featureImagesProNote: "Carga masiva, conversión WebP y galería de imágenes por variante desde Pro.",
     aiInstructionsEditable: "Instrucciones de IA editables",
+    add: "Añadir",
     yes: "Sí",
     no: "No",
     changePlan: "Cambiar plan",

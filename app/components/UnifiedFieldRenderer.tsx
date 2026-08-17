@@ -10,6 +10,7 @@ import { Text, Tooltip } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
+import { AttributeField } from "./unified/AttributeField";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
 import { resolveSeoLimits } from "../utils/character-limits";
@@ -61,6 +62,10 @@ export interface FieldRendererProps {
   contentType: string;
   t: any;
   validationOverlays?: ValidationOverlays;
+  /** PLAN §Phase 3 — tags already in use in this shop, for the `tags` field's
+   *  autocomplete. Derived from the loaded list, so it costs no extra query and
+   *  is naturally scoped to the resource the merchant is editing. */
+  tagSuggestions?: string[];
 }
 
 export function UnifiedFieldRenderer(
@@ -105,6 +110,7 @@ export function UnifiedFieldRenderer(
     fetcherState,
     fetcherFormData,
     validationOverlays,
+    tagSuggestions = [],
   } = props;
 
   const currentAction = fetcherFormData?.get("action");
@@ -285,6 +291,37 @@ export function UnifiedFieldRenderer(
     );
   }
 
+  // ── PLAN §Phase 3 merchandising attributes ───────────────────────────────
+  // Handled before the read-only plumbing below because none of it applies:
+  // these fields carry no AI actions, no translate/copy buttons and no
+  // suggestion state, and their one locked case (a foreign locale) has a
+  // reason of its own that the generic hint would get wrong.
+  if (field.type === "select" || field.type === "tags" || field.type === "toggle") {
+    const suggestions: string[] = field.suggestionsKey ? tagSuggestions : [];
+    return (
+      <AttributeField
+        field={field}
+        value={value}
+        onChange={onChange}
+        label={translatedFieldLabel}
+        isPrimaryLocale={isPrimaryLocale}
+        readOnly={readOnly}
+        readOnlyHint={
+          t.content?.primaryReadOnlyHint ||
+          "This field can't be edited in the main language here — manage the original in your Shopify admin."
+        }
+        suggestions={suggestions}
+        t={{
+          notTranslatable: t.content?.attributesForeignLocale,
+          addTag: t.content?.addTag,
+          add: t.common?.add,
+          yes: t.common?.yes,
+          no: t.common?.no,
+        }}
+      />
+    );
+  }
+
   // Options Field
   if (field.type === "options") {
     return (
@@ -303,14 +340,23 @@ export function UnifiedFieldRenderer(
   // clear); it shows the inherited locale value greyed, with its own hint.
   const slugMarketLocked =
     field.type === "slug" && !isPrimaryLocale && !!selectedMarketId;
-  const effectiveReadOnly = readOnly || slugMarketLocked;
+  // PLAN §Phase 3.5 — a field Shopify stores ONCE per item (vendor, author,
+  // template suffix) has nothing to translate. Left editable it would accept a
+  // foreign-locale edit and write it to the primary value, which reads as a
+  // lost save. `productType` is deliberately not in this class: it IS
+  // translatable, shop-wide, through GroupedFieldTranslation.
+  const attributeForeignLocked = field.supportsTranslation === false && !isPrimaryLocale;
+  const effectiveReadOnly = readOnly || slugMarketLocked || attributeForeignLocked;
 
   // App-embed technical fields (CSS selectors / config) are locked in EVERY
   // locale, so they get a dedicated hint; the market-locked slug gets its own;
   // other read-only fields (main language of resource-backed rubrics like
   // Abo-Pläne) get the primary-read-only hint.
   const readOnlyHint = String(
-    slugMarketLocked
+    attributeForeignLocked
+      ? (t.content?.attributesForeignLocale ||
+         "This detail exists once per item, not per language. Switch to the main language to change it.")
+      : slugMarketLocked
       ? (t.content?.slugMarketLockedHint ||
          "The URL handle can't be customized per market — Shopify only allows translating it per language. The global (translated) handle is used for every market.")
       : embedTechnical

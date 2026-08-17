@@ -225,6 +225,7 @@ export function getItemFieldValue(
   }
 
   // Standard content types: Common field mappings
+  const row = item as unknown as Record<string, unknown>;
   const fieldMappings: Record<string, string> = {
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
@@ -234,6 +235,20 @@ export function getItemFieldValue(
     body: item.body || "",
     summary: item.summary || "",
     productType: item.productType || "",
+    // ── PLAN §Phase 3 merchandising attributes ──────────────────────────────
+    // Every editor value is a STRING — `getChangedFields` compares strings —
+    // so the two non-string columns are flattened here, at the one place that
+    // turns an item into editable values, rather than in each control.
+    status: String(row.status ?? ""),
+    vendor: String(row.vendor ?? ""),
+    author: String(row.author ?? ""),
+    sortOrder: String(row.sortOrder ?? ""),
+    templateSuffix: String(row.templateSuffix ?? ""),
+    // Comma-joined, matching AttributeField's parse/serialize pair.
+    tags: Array.isArray(row.tags) ? (row.tags as string[]).join(", ") : "",
+    // `isPublished` defaults to TRUE in the schema, so a missing value must
+    // read as published — the same rule as the column's own default.
+    isPublished: row.isPublished === false ? "false" : "true",
   };
 
   return fieldMappings[fieldKey] || "";

@@ -8,6 +8,78 @@ import type { ContentEditorConfig, FieldDefinition } from "../types/content-edit
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
+import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "./create-fields.config";
+
+// ============================================================================
+// PLAN_CONTENT_CREATION §Phase 3 — merchandising attributes
+// ============================================================================
+//
+// These are the fields the §2.2 attribute checklist points at: its rows carry a
+// `jumpToField` naming exactly these keys, so the checklist stops being a list
+// of findings the merchant cannot act on.
+//
+// Every one of them is marked `supportsTranslation: false`. Shopify stores one
+// value per item, not one per locale (`FIELD_TO_TRANSLATION_KEY` is the list of
+// what IS translatable and none of these are on it), so a foreign locale gets a
+// read-only control with an explanation. Left editable they would take the
+// merchant's input and write it to the primary value — a save that looks like
+// it worked and quietly changed the wrong thing.
+//
+// `productType` is deliberately NOT in this group: it is translatable, shop-wide,
+// through GroupedFieldTranslation, and must keep going that way.
+//
+// `translationKey: ""` marks "has no Shopify translation key at all". The
+// editor's change-detection walks `translationKey` to decide which translations
+// a primary edit invalidates; an empty one drops out of that walk, which is
+// exactly right for a field that has none.
+
+const ATTRIBUTE_LABELS = {
+  status: "Status",
+  vendor: "Vendor",
+  tags: "Tags",
+  author: "Author",
+  sortOrder: "Sort order",
+  templateSuffix: "Theme template",
+  isPublished: "Visible in the online store",
+} as const;
+
+/** Shared by products and articles — same control, different suggestion pool. */
+function tagsField(suggestionsKey: "productTags" | "articleTags"): FieldDefinition {
+  return {
+    key: "tags",
+    type: "tags",
+    label: ATTRIBUTE_LABELS.tags,
+    translationKey: "",
+    supportsAI: false,
+    supportsFormatting: false,
+    supportsTranslation: false,
+    suggestionsKey,
+  };
+}
+
+/** Every type has one; the value is a theme file suffix, not a display name. */
+const TEMPLATE_SUFFIX_FIELD: FieldDefinition = {
+  key: "templateSuffix",
+  type: "text",
+  label: ATTRIBUTE_LABELS.templateSuffix,
+  translationKey: "",
+  supportsAI: false,
+  supportsFormatting: false,
+  supportsTranslation: false,
+  helpText: "Empty = the theme's default template.",
+};
+
+/** Pages and articles are published or not; products use the four-value status. */
+const IS_PUBLISHED_FIELD: FieldDefinition = {
+  key: "isPublished",
+  type: "toggle",
+  label: ATTRIBUTE_LABELS.isPublished,
+  translationKey: "",
+  supportsAI: false,
+  supportsFormatting: false,
+  supportsTranslation: false,
+  toggleLabels: { on: "Visible", off: "Hidden" },
+};
 
 // ============================================================================
 // PRODUCTS
@@ -101,6 +173,36 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsTranslation: true,
       aiInstructionsKey: "productMetaDesc",
     },
+    // ── §Phase 3 merchandising attributes ──────────────────────────────────
+    {
+      key: "status",
+      type: "select",
+      label: ATTRIBUTE_LABELS.status,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      // All FOUR values (§2.3). UNLISTED exists in real catalogues and code
+      // that enumerates three is what made unlisted products invisible to
+      // several features in this app already.
+      options: CREATE_PRODUCT_STATUSES.map((value) => ({ value, label: value })),
+      // §2.3 — status and sales channels are separate things, and merchants
+      // routinely assume otherwise. Until Phase 4 adds publications, this note
+      // is the only place that says so.
+      attributeNote:
+        "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
+    },
+    {
+      key: "vendor",
+      type: "text",
+      label: ATTRIBUTE_LABELS.vendor,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+    },
+    tagsField("productTags"),
+    TEMPLATE_SUFFIX_FIELD,
   ],
 };
 
@@ -179,6 +281,18 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsTranslation: true,
       aiInstructionsKey: "collectionMetaDesc",
     },
+    // ── §Phase 3 merchandising attributes ──────────────────────────────────
+    {
+      key: "sortOrder",
+      type: "select",
+      label: ATTRIBUTE_LABELS.sortOrder,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      options: COLLECTION_SORT_ORDERS.map((value) => ({ value, label: value })),
+    },
+    TEMPLATE_SUFFIX_FIELD,
   ],
 };
 
@@ -305,6 +419,23 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
     supportsTranslation: true,
     aiInstructionsKey: "blogMetaDesc",
   },
+  // ── §Phase 3 merchandising attributes ────────────────────────────────────
+  {
+    key: "author",
+    type: "text",
+    label: ATTRIBUTE_LABELS.author,
+    translationKey: "",
+    supportsAI: false,
+    supportsFormatting: false,
+    supportsTranslation: false,
+    // Not merely a gap: `ArticleCreateInput.author` is REQUIRED, so an article
+    // cannot exist without one — which makes an empty value here a sign the
+    // item predates the attribute sync, not a merchant choice.
+    required: true,
+  },
+  tagsField("articleTags"),
+  IS_PUBLISHED_FIELD,
+  TEMPLATE_SUFFIX_FIELD,
 ];
 
 export const BLOGS_CONFIG: ContentEditorConfig = {
@@ -404,6 +535,9 @@ export const PAGES_CONFIG: ContentEditorConfig = {
       supportsTranslation: true,
       aiInstructionsKey: "pageMetaDesc",
     },
+    // ── §Phase 3 merchandising attributes ──────────────────────────────────
+    IS_PUBLISHED_FIELD,
+    TEMPLATE_SUFFIX_FIELD,
   ],
 };
 

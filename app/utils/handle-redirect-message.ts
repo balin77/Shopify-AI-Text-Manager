@@ -50,6 +50,18 @@ export function buildRedirectMessage(
         ),
         tone: "warning",
       };
+    // The rename worked AND an existing redirect had to be removed, because it
+    // sat on the new URL and Shopify would have served it in preference to the
+    // page. That may have been a redirect the merchant set up themselves, so
+    // it is said out loud rather than folded into "created".
+    case "shadowRemoved":
+      return {
+        text: s(
+          "redirectShadowRemoved",
+          "The old URL {path} now redirects to the new one. An existing redirect on the new URL was removed — it would have hidden the page.",
+        ),
+        tone: "warning",
+      };
     case "notConfirmed":
       return { text: s("redirectNotConfirmed", "The old URL {path} could not be redirected."), tone: "warning" };
     case "failed":

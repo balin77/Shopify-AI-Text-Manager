@@ -31,7 +31,9 @@ export type HandleRedirectNoteCode =
   | "failed"
   | "missingBlogHandle"
   /** The blog's own URL was redirected; its ARTICLES' URLs were not. */
-  | "blogArticlesUncovered";
+  | "blogArticlesUncovered"
+  /** The new URL had a redirect sitting on it, which had to be removed. */
+  | "shadowRemoved";
 
 export interface HandleRedirectResult {
   created: boolean;
@@ -64,8 +66,15 @@ async function findRedirects(
   paths: string[],
 ): Promise<Array<{ id: string; path: string; target: string }>> {
   const seen = new Map<string, { id: string; path: string; target: string }>();
-  for (const path of paths) {
-    const { redirects } = await listRedirects(admin, { first: 50, query: path });
+  // FIELDED terms, not free text. The two halves of the diff need different
+  // things — repointing looks up by TARGET, the create/update and the shadow
+  // check by PATH — and a bare term is not documented to search both. A query
+  // that quietly matched only `path` would make the chain repointing a no-op
+  // in production while every unit test still passed, which is the worst way
+  // for this to fail.
+  const terms = paths.flatMap((path) => [`path:${path}`, `target:${path}`]);
+  for (const query of terms) {
+    const { redirects } = await listRedirects(admin, { first: 50, query });
     for (const redirect of redirects) seen.set(redirect.id, redirect);
   }
   return [...seen.values()];
@@ -122,13 +131,23 @@ export async function applyHandleRedirect(
     // Shopify serves the redirect in preference to it. Leaving the row would
     // make the very object the merchant just renamed unreachable at its own
     // URL. This is the rename-back case (a→b, then b→a).
+    // It is deleted whatever its target was, including a redirect the merchant
+    // set up themselves: a redirect on a live path is not a redirect the shop
+    // can keep. But it is THEIR row, so it is reported (`shadowRemoved`) and
+    // logged with both halves, never removed in silence.
+    let shadowRemoved = false;
     for (const shadowing of existing.filter((r) => samePath(r.path, decision.toPath))) {
       const removed = await deleteRedirect(admin, shadowing.id);
       if (!removed.deletedId) {
         logger.warn("[HandleRedirect] A redirect still shadows the new URL", {
           context: "HandleRedirect", shop, path: shadowing.path, target: shadowing.target,
         });
+        continue;
       }
+      shadowRemoved = true;
+      logger.info("[HandleRedirect] Removed a redirect that shadowed the new URL", {
+        context: "HandleRedirect", shop, path: shadowing.path, target: shadowing.target,
+      });
     }
 
     // Shopify rejects a second redirect on the same path, so an existing one
@@ -158,8 +177,15 @@ export async function applyHandleRedirect(
       to: decision.toPath,
       reused: !!onSamePath,
       repointed: stale.length,
+      shadowRemoved,
     });
-    return { created: true, noteCode: okCode, fromPath: decision.fromPath };
+    // Removing someone's redirect outranks the good news — the blog case
+    // aside, which is a warning of its own and already the stronger claim.
+    return {
+      created: true,
+      noteCode: shadowRemoved && okCode === "created" ? "shadowRemoved" : okCode,
+      fromPath: decision.fromPath,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn("[HandleRedirect] Failed", { context: "HandleRedirect", shop, error: message });

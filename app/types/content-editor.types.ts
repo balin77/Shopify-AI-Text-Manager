@@ -240,7 +240,18 @@ export interface TranslationStrings {
 
 export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
 
-export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
+/**
+ * `select`, `tags` and `toggle` are the PLAN_CONTENT_CREATION §Phase 3
+ * merchandising attributes. They differ from every type above them in one way
+ * that runs through the whole editor: they are NOT translatable. Shopify stores
+ * one value per item, not one per locale (`FIELD_TO_TRANSLATION_KEY` lists what
+ * is translatable, and none of these are on it), so in a foreign locale they
+ * render read-only with an explanation rather than looking editable and then
+ * silently writing the primary value.
+ */
+export type FieldType =
+  | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
+  | 'select' | 'tags' | 'toggle';
 
 export interface FieldRenderProps {
   value: string;
@@ -308,6 +319,23 @@ export interface FieldDefinition {
 
   /** Optional: Custom render function for special field types */
   renderField?: (props: FieldRenderProps) => React.ReactNode;
+
+  // ── PLAN_CONTENT_CREATION §Phase 3 — merchandising attributes ─────────────
+
+  /** `select` only. `labelKey` resolves under `t.content.fieldOptions`, with
+   *  `label` as the fallback so a missing translation degrades to English
+   *  rather than to a raw enum value. */
+  options?: Array<{ value: string; labelKey?: string; label: string }>;
+
+  /** `tags` only: suggestions for the autocomplete, gathered from the shop. */
+  suggestionsKey?: 'productTags' | 'articleTags';
+
+  /** `toggle` only: what the two states mean, e.g. published vs. hidden. */
+  toggleLabels?: { on: string; off: string };
+
+  /** Rendered under the control — for the things a merchant cannot see, like
+   *  "Active does not mean visible without a sales channel" (§2.3). */
+  attributeNote?: string;
 }
 
 export interface ContentEditorConfig {

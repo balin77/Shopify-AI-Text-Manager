@@ -71,6 +71,8 @@ export const UPDATE_BLOG = `#graphql
         id
         title
         handle
+        # PLAN §Phase 3 — echoed so the caller mirrors what Shopify STORED.
+        templateSuffix
       }
       userErrors {
         field
@@ -88,6 +90,9 @@ export const UPDATE_PAGE = `#graphql
         title
         handle
         body
+        # PLAN §Phase 3 merchandising attributes, echoed for the DB mirror.
+        isPublished
+        templateSuffix
         seoTitle: metafield(namespace: "global", key: "title_tag") { value }
         seoDescription: metafield(namespace: "global", key: "description_tag") { value }
       }
@@ -107,6 +112,9 @@ export const UPDATE_COLLECTION = `#graphql
         title
         handle
         descriptionHtml
+        # PLAN §Phase 3 merchandising attributes, echoed for the DB mirror.
+        sortOrder
+        templateSuffix
         seo {
           title
           description
@@ -129,6 +137,11 @@ export const UPDATE_ARTICLE = `#graphql
         handle
         body
         summary
+        # PLAN §Phase 3 merchandising attributes, echoed for the DB mirror.
+        author { name }
+        tags
+        isPublished
+        templateSuffix
         seoTitle: metafield(namespace: "global", key: "title_tag") { value }
         seoDescription: metafield(namespace: "global", key: "description_tag") { value }
         image {

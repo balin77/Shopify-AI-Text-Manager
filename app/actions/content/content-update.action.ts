@@ -149,6 +149,11 @@ export async function handleUpdateContent(
         seoTitle: "seoTitle",
         metaDescription: "metaDescription",
         productType: "productType",
+        // §Phase 3 attributes keep their own names on both sides.
+        status: "status",
+        vendor: "vendor",
+        tags: "tags",
+        templateSuffix: "templateSuffix",
       };
 
       // Only forward fields that were actually sent by the client.

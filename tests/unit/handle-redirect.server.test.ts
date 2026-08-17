@@ -159,6 +159,18 @@ describe("repeated renames", () => {
     expect(createRedirect).toHaveBeenCalledWith(admin, { path: "/products/b", target: "/products/c" });
   });
 
+  it("uses FIELDED search terms, not a bare path", async () => {
+    // A bare term is not documented to match targets as well as paths. If it
+    // only indexed `path`, the chain repointing below would silently find
+    // nothing in production while every test here still passed.
+    await applyHandleRedirect(admin, "test.myshopify.com", change);
+    const queries = listRedirects.mock.calls.map((c) => (c[1] as { query: string }).query);
+    expect(queries).toContain("path:/products/old");
+    expect(queries).toContain("target:/products/old");
+    expect(queries).toContain("path:/products/new");
+    expect(queries).toContain("target:/products/new");
+  });
+
   it("clears a redirect that would shadow the new URL", async () => {
     // a→b, then back b→a. `/a→/b` must go: `/a` is a LIVE page again and
     // Shopify serves the redirect in preference to it, so leaving the row
@@ -181,6 +193,22 @@ describe("repeated renames", () => {
     expect(createRedirect).toHaveBeenCalledWith(admin, { path: "/products/b", target: "/products/a" });
     // The stale row was deleted, not repointed onto itself.
     expect(updateRedirect).not.toHaveBeenCalled();
+  });
+
+  it("tells the merchant when it removed one of their redirects", async () => {
+    // The removed row may have been set up by hand. Deleting it is right — a
+    // redirect on a live path hides the page — but doing it in silence is not.
+    listRedirects.mockResolvedValue({
+      redirects: [{ id: "gid://shopify/UrlRedirect/7", path: "/products/new", target: "/pages/promo" }],
+      hasNextPage: false,
+      endCursor: null,
+    });
+
+    const result = await applyHandleRedirect(admin, "test.myshopify.com", change);
+
+    expect(deleteRedirect).toHaveBeenCalledWith(admin, "gid://shopify/UrlRedirect/7");
+    expect(result.created).toBe(true);
+    expect(result.noteCode).toBe("shadowRemoved");
   });
 
   it("updates rather than re-creates a redirect on the same old path", async () => {

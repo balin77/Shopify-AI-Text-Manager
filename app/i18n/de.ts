@@ -252,6 +252,7 @@ export const de = {
     redirectNotConfirmed: "Die alte URL {path} konnte nicht weitergeleitet werden — lege die Weiterleitung bei Bedarf unter Shopifys URL-Weiterleitungen selbst an.",
     redirectFailed: "Die alte URL {path} konnte nicht weitergeleitet werden — lege die Weiterleitung bei Bedarf unter Shopifys URL-Weiterleitungen selbst an.",
     redirectBlogArticlesUncovered: "Die alte Blog-URL {path} leitet jetzt auf die neue weiter — die URLs der Artikel in diesem Blog haben sich aber ebenfalls geändert und sind nicht abgedeckt.",
+    redirectShadowRemoved: "Die alte URL {path} leitet jetzt auf die neue weiter. Eine bestehende Weiterleitung auf der neuen URL wurde entfernt — sie hätte die Seite verdeckt.",
     redirectMissingBlog: "Die alte Artikel-URL konnte nicht weitergeleitet werden, weil der Blog unbekannt ist — lege die Weiterleitung bei Bedarf selbst an.",
     reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
     reloadItemTooltip: "Nur die Daten dieses Eintrags von Shopify neu laden",
@@ -364,6 +365,14 @@ export const de = {
       metaDescription: "Meta-Beschreibung",
       productImages: "Produktbilder",
       featuredImage: "Hauptbild",
+      // PLAN §Phase 3 — Merchandising-Attribute.
+      status: "Status",
+      vendor: "Hersteller",
+      tags: "Tags",
+      author: "Autor",
+      sortOrder: "Sortierung",
+      templateSuffix: "Theme-Template",
+      isPublished: "Im Onlineshop sichtbar",
     },
     // Resource names
     resourceNames: {
@@ -435,6 +444,7 @@ export const de = {
     duplicateButtonLabel: "Duplizieren",
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
     rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
+    addTag: "Tag hinzufügen",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
     duplicateModal: {
       title: "\u201e{name}\u201c duplizieren",
@@ -650,6 +660,7 @@ export const de = {
     featureBasicImages: "Alle Produktbilder bearbeitbar (inkl. AI Alt-Text)",
     featureImagesProNote: "Bulk-Upload, WebP-Konvertierung und Varianten-Bildgalerie ab Pro.",
     aiInstructionsEditable: "KI-Anweisungen bearbeitbar",
+    add: "Hinzufügen",
     yes: "Ja",
     no: "Nein",
     changePlan: "Plan ändern",

@@ -11,6 +11,9 @@
 import { data as json } from "react-router";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
+// One rule per attribute, shared with the generic content path — the previous
+// generation of this code kept a per-resource copy of each and they drifted.
+import { isValidProductStatus, parseTagList } from "~/services/content-attributes.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
@@ -29,6 +32,15 @@ interface UpdateProductParams {
   seoTitle?: string;
   metaDescription?: string;
   productType?: string;
+  // ── PLAN_CONTENT_CREATION §Phase 3 merchandising attributes ──────────────
+  // Not translatable (Shopify stores one value per product), so these only
+  // ever arrive on a PRIMARY-locale save — the editor renders them read-only
+  // in every other locale and the write below refuses them anyway.
+  status?: string;
+  vendor?: string;
+  /** Comma-joined on the wire, split into Shopify's array before the write. */
+  tags?: string;
+  templateSuffix?: string;
   imageAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
@@ -95,6 +107,13 @@ export async function handleUpdateProduct(
     seoTitle: getFormStringOrNull(formData, "seoTitle") ?? undefined,
     metaDescription: getFormStringOrNull(formData, "metaDescription") ?? undefined,
     productType: getFormStringOrNull(formData, "productType") ?? undefined,
+    // §Phase 3 attributes. Read on EVERY save and filtered by locale at the
+    // write, not here: an attribute arriving on a foreign-locale save is a
+    // client bug, and dropping it silently at parse time would hide it.
+    status: getFormStringOrNull(formData, "status") ?? undefined,
+    vendor: getFormStringOrNull(formData, "vendor") ?? undefined,
+    tags: getFormStringOrNull(formData, "tags") ?? undefined,
+    templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
     // Primary-locale saves are always global; only foreign locales carry a market.
@@ -931,6 +950,36 @@ async function updatePrimaryProduct(
     mutationInput.productType = params.productType || "";
   }
 
+  // ── PLAN §Phase 3 merchandising attributes ────────────────────────────────
+  // An unrecognised status is REFUSED rather than sent: `status` is the one
+  // attribute whose bad value fails at the GraphQL SCHEMA level, which comes
+  // back as a top-level `errors` array with `data: null` and never reaches
+  // `userErrors` — so the whole save would read as a success while nothing was
+  // written (the false-success pattern in CLAUDE.md). Reachable in practice:
+  // UNLISTED against a pre-2025-10 `SHOPIFY_API_VERSION` pin.
+  if (params.status !== undefined) {
+    const status = params.status.trim().toUpperCase();
+    if (!isValidProductStatus(status)) {
+      return json(
+        { success: false, error: `Unknown product status "${params.status}".` },
+        { status: 400 },
+      );
+    }
+    mutationInput.status = status;
+  }
+  if (params.vendor !== undefined) mutationInput.vendor = params.vendor;
+  if (params.templateSuffix !== undefined) {
+    // "" is meaningful here: it puts the product back on the theme's default
+    // template. Shopify accepts the empty string for exactly that.
+    mutationInput.templateSuffix = params.templateSuffix || null;
+  }
+  if (params.tags !== undefined) {
+    // Shopify REPLACES the whole tag list on productUpdate, so this is a
+    // complete list, not an addition. Trimmed and emptied-dropped to match how
+    // Shopify itself stores them — otherwise a stray comma becomes a tag.
+    mutationInput.tags = parseTagList(params.tags);
+  }
+
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -940,6 +989,14 @@ async function updatePrimaryProduct(
             title
             handle
             descriptionHtml
+            # §Phase 3 — echoed back so the cache mirrors what Shopify STORED,
+            # not what this app sent. Shopify normalises tags (trim, dedupe,
+            # case) and can refuse a template suffix, so the sent value is not
+            # the stored one.
+            status
+            vendor
+            tags
+            templateSuffix
             seo {
               title
               description
@@ -976,7 +1033,8 @@ async function updatePrimaryProduct(
 
   // Update local database
   try {
-    const updateData: Record<string, string | Date | null> = {};
+    // `string[]` is in the union for `tags` — a Prisma scalar list column.
+    const updateData: Record<string, string | string[] | Date | null> = {};
     if (params.title) updateData.title = params.title;
     if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml || null;
     if (params.handle !== undefined) updateData.handle = params.handle || null;
@@ -987,6 +1045,26 @@ async function updatePrimaryProduct(
       updateData.productType = params.productType;
     } else if (changedFields.includes('productType')) {
       updateData.productType = params.productType || null;
+    }
+
+    // §Phase 3 attributes, mirrored from the ECHO rather than from the input:
+    // Shopify normalises tags and may reject a template suffix, so writing the
+    // sent value would leave the cache claiming something the shop does not
+    // hold — and the attribute checklist reads that cache.
+    const echoed = data.data.productUpdate.product as {
+      status?: string; vendor?: string; tags?: string[]; templateSuffix?: string | null;
+    } | null;
+    if (params.status !== undefined && echoed?.status) updateData.status = echoed.status;
+    if (params.vendor !== undefined) updateData.vendor = echoed?.vendor ?? params.vendor ?? null;
+    if (params.templateSuffix !== undefined) {
+      updateData.templateSuffix = echoed?.templateSuffix ?? null;
+    }
+    // A scalar list, so it is written whole. Only when Shopify echoed one:
+    // mirroring `[]` because the echo was missing would WIPE the product's
+    // tags in the cache and light up the attribute checklist for a change the
+    // merchant never made.
+    if (params.tags !== undefined && Array.isArray(echoed?.tags)) {
+      updateData.tags = echoed.tags;
     }
 
     // Always update lastSyncedAt

@@ -56,6 +56,7 @@ import {
 } from "./translations.server";
 import { logger } from "../../utils/logger.server";
 import { redirectResourceFor, type RedirectableResource } from "../seo/handle-redirect.shared";
+import { sanitizeSlug } from "../../utils/slug.utils";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
@@ -459,6 +460,7 @@ async function persistProductBaseFields(
       fields.status = s;
     }
   }
+  normalizeHandleCell(group, fields, failures);
 
   // Partial SEO clobber guard: productUpdate treats `seo` as a unit —
   // sending only `title` wipes the existing description (and vice versa).
@@ -1280,6 +1282,20 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
     throw new Error("Title cannot be empty.");
   }
 
+  // Same normalisation as the product path and the single editor — Shopify
+  // stores the slugified handle, so sending the raw cell drifts the cache and
+  // fabricates a handle "change" that never happened. These rows fail whole
+  // (single mutation), so this throws where the product path fails one cell.
+  if (fields.handle !== undefined) {
+    const clean = sanitizeSlug(fields.handle);
+    if (!clean) {
+      throw new Error(
+        `"${fields.handle}" cannot be used as a URL handle — it must contain at least one letter or digit that survives conversion to a URL slug.`,
+      );
+    }
+    fields.handle = clean;
+  }
+
   // Build the DB patch mirror. Every editable field maps 1:1 to its Prisma
   // column with the same name — no renames — so a single loop is enough.
   const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
@@ -1667,6 +1683,43 @@ async function loadPrimaryHandle(
 // locale-prefixed URL (`/es/products/…`) and how Shopify's path-based redirects
 // interact with the locale prefix is unmeasured. Guessing there would produce
 // redirects nobody can verify, which is worse than the honest gap.
+
+/**
+ * Sanitises a `field.handle` cell in place, exactly as the single editor does
+ * (`sanitizeSlug` in content-update.action.ts).
+ *
+ * Not cosmetic. Shopify normalises a handle it is given — `Summer Sale` is
+ * stored as `summer-sale` — so sending the raw cell meant two things went
+ * wrong at once: the DB mirror recorded a handle the shop does not hold, and
+ * the redirect comparison saw a change where there was none, producing a
+ * redirect FROM the live page's own path TO a path that does not exist. By
+ * this module's own rule (Shopify serves a redirect in preference to the page)
+ * that makes the item unreachable at its own URL.
+ *
+ * An unusable handle fails the CELL rather than being written as "": that is
+ * what `sanitizeSlug` returns for input it cannot turn into an ASCII slug
+ * (CJK, Cyrillic, punctuation only), and "" would clear the handle.
+ */
+function normalizeHandleCell(
+  group: BulkDiffRowGroup,
+  fields: Partial<Record<string, string>>,
+  failures: BulkFailure[],
+): void {
+  if (fields.handle === undefined) return;
+  const clean = sanitizeSlug(fields.handle);
+  if (!clean) {
+    failures.push(
+      failureOf(
+        group,
+        `"${fields.handle}" cannot be used as a URL handle — it must contain at least one letter or digit that survives conversion to a URL slug.`,
+        "field.handle",
+      ),
+    );
+    delete fields.handle;
+    return;
+  }
+  fields.handle = clean;
+}
 
 interface CapturedHandle {
   resource: RedirectableResource;
