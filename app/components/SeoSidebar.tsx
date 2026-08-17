@@ -681,28 +681,6 @@ export function SeoSidebar({
                   </InlineStack>
                 ))}
 
-                {/* Work the tracked keywords into the texts. Deliberately
-                    below the list: it acts on everything above it, and it is
-                    only useful once at least one keyword exists. */}
-                {onInsertKeywords && keywords.length > 0 && (
-                  <ActionTooltip
-                    content={
-                      t.seo?.insertKeywordsHint ||
-                      "Works the keywords above into title, SEO title, meta description and body — only where they are missing. Nothing else is rewritten."
-                    }
-                    preferredPosition="below"
-                  >
-                    <Button
-                      size="slim"
-                      onClick={onInsertKeywords}
-                      loading={insertKeywordsLoading}
-                      disabled={keywordLoadFetcher.state !== "idle"}
-                    >
-                      {t.seo?.insertKeywords || "Keywords einarbeiten"}
-                    </Button>
-                  </ActionTooltip>
-                )}
-
                 {keywords.length < MAX_KEYWORDS_PER_ITEM ? (
                   <InlineStack gap="200" blockAlign="end" wrap={false}>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -792,6 +770,31 @@ export function SeoSidebar({
                       ))}
                     </InlineStack>
                   </BlockStack>
+                )}
+
+                {/* Last in the tab, directly under the presence badges: those
+                    badges ARE the readout this button acts on — they show
+                    which fields are still missing the keyword. Sitting above
+                    the add-field it was easy to miss, and it read as belonging
+                    to the list rather than to the analysis. */}
+                {onInsertKeywords && keywords.length > 0 && (
+                  <ActionTooltip
+                    content={
+                      t.seo?.insertKeywordsHint ||
+                      "Works the keywords above into title, SEO title, meta description and body — only where they are missing. Nothing else is rewritten."
+                    }
+                    preferredPosition="above"
+                  >
+                    <Button
+                      size="slim"
+                      fullWidth
+                      onClick={onInsertKeywords}
+                      loading={insertKeywordsLoading}
+                      disabled={keywordLoadFetcher.state !== "idle"}
+                    >
+                      {t.seo?.insertKeywords || "Keywords einarbeiten"}
+                    </Button>
+                  </ActionTooltip>
                 )}
               </BlockStack>
         )}
