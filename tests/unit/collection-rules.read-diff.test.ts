@@ -22,6 +22,7 @@ import {
   fromShopifySources,
   readConditionFragments,
   readConditionTypename,
+  withoutRawTrees,
   type RuleSource,
 } from "~/config/collection-rules.shared";
 
@@ -165,25 +166,161 @@ describe("readConditionFragments", () => {
 });
 
 describe("diffRuleSources", () => {
-  const renderable = (id: string | undefined, tag: string): RuleSource => ({
+  /** A source as the READ path produces it — Shopify ids on both levels. */
+  const renderable = (
+    id: string | undefined,
+    tag: string,
+    conditionId?: string,
+  ): RuleSource => ({
     ...(id ? { id } : {}),
-    title: `Source ${tag}`,
+    title: `Source ${id ?? tag}`,
     inclusion: {
       matchType: "ALL",
-      conditions: [{ localId: `c-${tag}`, kind: "productTag", relation: "TAGGED_WITH", value: tag, matchType: "ANY" }],
+      conditions: [
+        {
+          localId: `c-${tag}`,
+          ...(conditionId ? { id: conditionId } : {}),
+          kind: "productTag",
+          relation: "TAGGED_WITH",
+          value: tag,
+          matchType: "ANY",
+        },
+      ],
     },
   });
 
+  /** The `{ condition: { … } }` wrapper `CollectionUpdateSourceTargetInput` takes. */
+  const updateBody = (entry: Record<string, unknown>) =>
+    (entry as { condition: Record<string, unknown> }).condition;
+
   it("creates the new, updates the kept, deletes the removed", () => {
-    const before = [renderable("s1", "sale"), renderable("s2", "old")];
-    const after = [renderable("s1", "sale-changed"), renderable(undefined, "brand-new")];
+    const before = [renderable("s1", "sale", "c1"), renderable("s2", "old", "c2")];
+    const after = [renderable("s1", "sale-changed", "c1"), renderable(undefined, "brand-new")];
 
     const diff = diffRuleSources(before, after);
     expect(diff.sourcesToUpdate).toHaveLength(1);
-    expect(diff.sourcesToUpdate[0]).toMatchObject({ id: "s1" });
+    expect(updateBody(diff.sourcesToUpdate[0])).toMatchObject({ id: "s1" });
     expect(diff.sourcesToCreate).toHaveLength(1);
     expect(diff.sourcesToCreate[0]).not.toHaveProperty("id");
     expect(diff.sourcesToDelete).toEqual(["s2"]);
+  });
+
+  it("edits a source by CONDITION diff, never by replacing its list", () => {
+    // `CollectionUpdateSourceInclusionInput` has no `conditions` field at all
+    // (PLAN §1.2a) — only the three lists. A whole-source replace would not
+    // just be wasteful, it would not typecheck against the schema.
+    const before = [renderable("s1", "sale", "c1")];
+    const after = [renderable("s1", "clearance", "c1")];
+
+    const body = updateBody(diffRuleSources(before, after).sourcesToUpdate[0]);
+    const inclusion = body.inclusion as Record<string, unknown>;
+    expect(inclusion).not.toHaveProperty("conditions");
+    expect(inclusion.conditionsToUpdate).toEqual([
+      { id: "c1", productTag: { relation: "TAGGED_WITH", values: ["clearance"], matchType: "ANY" } },
+    ]);
+    expect(inclusion).not.toHaveProperty("conditionsToCreate");
+    expect(inclusion).not.toHaveProperty("conditionsToDelete");
+  });
+
+  it("adds and removes conditions within a kept source", () => {
+    const before: RuleSource[] = [
+      {
+        id: "s1",
+        title: "Source s1",
+        inclusion: {
+          matchType: "ALL",
+          conditions: [
+            { localId: "a", id: "c1", kind: "productTag", relation: "TAGGED_WITH", value: "sale", matchType: "ANY" },
+            { localId: "b", id: "c2", kind: "productVendor", relation: "EQUALS", value: "Acme", matchType: "ANY" },
+          ],
+        },
+      },
+    ];
+    const after: RuleSource[] = [
+      {
+        id: "s1",
+        title: "Source s1",
+        inclusion: {
+          matchType: "ALL",
+          conditions: [
+            { localId: "a", id: "c1", kind: "productTag", relation: "TAGGED_WITH", value: "sale", matchType: "ANY" },
+            { localId: "new", kind: "productType", relation: "EQUALS", value: "Shoe", matchType: "ANY" },
+          ],
+        },
+      },
+    ];
+
+    const inclusion = updateBody(diffRuleSources(before, after).sourcesToUpdate[0]).inclusion as Record<string, unknown>;
+    expect(inclusion.conditionsToDelete).toEqual(["c2"]);
+    expect(inclusion.conditionsToCreate).toHaveLength(1);
+    // c1 is untouched and must not appear in ANY list.
+    expect(inclusion.conditionsToUpdate).toBeUndefined();
+  });
+
+  it("emits no update at all when nothing about a source changed", () => {
+    // Re-sending an unchanged source would make Shopify recompute the
+    // collection's membership on every save of an unrelated text field.
+    const before = [renderable("s1", "sale", "c1")];
+    const diff = diffRuleSources(before, [renderable("s1", "sale", "c1")]);
+    expect(diff.sourcesToUpdate).toEqual([]);
+    expect(diff.sourcesToCreate).toEqual([]);
+    expect(diff.sourcesToDelete).toEqual([]);
+  });
+
+  it("ignores a whitespace-only difference in a list value", () => {
+    // Comparison is on the BUILT INPUT: "a, b" and "a ,b" are the same rule.
+    const before = [renderable("s1", "a, b", "c1")];
+    const after = [renderable("s1", "a ,  b", "c1")];
+    expect(diffRuleSources(before, after).sourcesToUpdate).toEqual([]);
+  });
+
+  it("carries a source-level matchType change on its own", () => {
+    const before = [renderable("s1", "sale", "c1")];
+    const after = [renderable("s1", "sale", "c1")];
+    after[0] = { ...after[0], inclusion: { ...after[0].inclusion, matchType: "ANY" } };
+
+    const inclusion = updateBody(diffRuleSources(before, after).sourcesToUpdate[0]).inclusion as Record<string, unknown>;
+    expect(inclusion.matchType).toBe("ANY");
+    expect(inclusion.conditionsToUpdate).toBeUndefined();
+  });
+
+  it("DROPS an `after` source whose id the cache does not carry", () => {
+    // `before` is the server's cache, `after` is the client's payload. An id
+    // that appears only in the payload is a claim, not an identity — updating
+    // it would let a crafted request rewrite a source this editor never read,
+    // including an unrenderable one or another collection's.
+    const diff = diffRuleSources([renderable("s1", "sale", "c1")], [renderable("s-forged", "evil", "c9")]);
+    expect(diff.sourcesToCreate).toEqual([]);
+    expect(diff.sourcesToUpdate).toEqual([]);
+    // s1 is still deleted — the client genuinely stopped holding it.
+    expect(diff.sourcesToDelete).toEqual(["s1"]);
+  });
+
+  it("cannot reach an unrenderable source by naming its id", () => {
+    const untouchable: RuleSource = {
+      id: "s-nested",
+      title: "Nested",
+      inclusion: { matchType: "ALL", conditions: [] },
+      unrenderable: { reason: "subCollections", raw: { anything: true } },
+    };
+    // The payload drops the `unrenderable` marker and claims the id as a
+    // plain editable source — the one attack the flag exists to stop.
+    const forged: RuleSource = { ...untouchable, unrenderable: undefined, title: "Mine now" };
+    const diff = diffRuleSources([untouchable], [forged]);
+
+    expect(diff.sourcesToCreate).toEqual([]);
+    expect(diff.sourcesToUpdate).toEqual([]);
+    expect(diff.sourcesToDelete).toEqual([]);
+  });
+
+  it("creates a condition whose id the cache does not carry, rather than updating it", () => {
+    const before = [renderable("s1", "sale", "c1")];
+    const after = [renderable("s1", "sale", "c-forged")];
+
+    const inclusion = updateBody(diffRuleSources(before, after).sourcesToUpdate[0]).inclusion as Record<string, unknown>;
+    expect(inclusion.conditionsToUpdate).toBeUndefined();
+    expect(inclusion.conditionsToCreate).toHaveLength(1);
+    expect(inclusion.conditionsToDelete).toEqual(["c1"]);
   });
 
   it("NEVER touches an unrenderable source, in any direction", () => {
@@ -195,10 +332,12 @@ describe("diffRuleSources", () => {
       inclusion: { matchType: "ALL", conditions: [] },
       unrenderable: { reason: "subCollections", raw: { anything: true } },
     };
-    const diff = diffRuleSources([untouchable, renderable("s1", "sale")], [untouchable, renderable("s1", "sale")]);
+    const before = [untouchable, renderable("s1", "sale", "c1")];
+    const after = [untouchable, renderable("s1", "sale-changed", "c1")];
+    const diff = diffRuleSources(before, after);
 
     expect(diff.sourcesToCreate).toHaveLength(0);
-    expect(diff.sourcesToUpdate.map((s) => s.id)).toEqual(["s1"]);
+    expect(diff.sourcesToUpdate.map((s) => updateBody(s).id)).toEqual(["s1"]);
     expect(diff.sourcesToDelete).toEqual([]);
   });
 
@@ -216,7 +355,7 @@ describe("diffRuleSources", () => {
   });
 
   it("deletes nothing when nothing was removed", () => {
-    const before = [renderable("s1", "sale")];
+    const before = [renderable("s1", "sale", "c1")];
     const diff = diffRuleSources(before, before);
     expect(diff.sourcesToDelete).toEqual([]);
   });
@@ -226,5 +365,28 @@ describe("diffRuleSources", () => {
     expect(diff.sourcesToCreate).toHaveLength(1);
     expect(diff.sourcesToUpdate).toHaveLength(0);
     expect(diff.sourcesToDelete).toEqual([]);
+  });
+});
+
+describe("withoutRawTrees", () => {
+  it("keeps the reason and drops the tree", () => {
+    const [stripped] = withoutRawTrees([
+      {
+        id: "s1",
+        title: "Nested",
+        inclusion: { matchType: "ALL", conditions: [] },
+        unrenderable: { reason: "subCollections", raw: { huge: true } },
+      },
+    ]);
+    expect(stripped.unrenderable).toEqual({ reason: "subCollections" });
+  });
+
+  it("leaves a renderable source alone", () => {
+    const source: RuleSource = {
+      id: "s1",
+      title: "Sale",
+      inclusion: { matchType: "ALL", conditions: [] },
+    };
+    expect(withoutRawTrees([source])[0]).toBe(source);
   });
 });

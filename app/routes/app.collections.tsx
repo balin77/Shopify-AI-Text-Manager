@@ -8,7 +8,7 @@
 import { type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
-import { fromShopifySources } from "../config/collection-rules.shared";
+import { editableSourcesFromEnvelope, withoutRawTrees } from "../config/collection-rules.shared";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -35,10 +35,14 @@ import type { FetcherData } from "~/types/content-editor.types";
  * save over the real one.
  */
 function rulesFromEnvelope(envelope: unknown): unknown[] | null {
-  if (!envelope || typeof envelope !== "object") return null;
-  const { shape, data } = envelope as { shape?: string; data?: unknown };
-  if (shape !== "sources" || !Array.isArray(data)) return null;
-  return fromShopifySources(data as never) as unknown[];
+  // The SAME predicate the write path diffs with — a loader that offers an
+  // editable builder over a row the save then refuses is worse than no editor.
+  const sources = editableSourcesFromEnvelope(envelope);
+  if (!sources) return null;
+  // Stripped of the raw sub-trees: they are the server's business only, and
+  // shipping them would weigh down every page load with a blob the builder
+  // does not render.
+  return withoutRawTrees(sources) as unknown[];
 }
 
 export const loader = createContentLoader({

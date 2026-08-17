@@ -66,7 +66,11 @@ export interface CreateItemModalTexts {
   collectionTypeLabel?: string;
   collectionManual?: string;
   collectionAutomated?: string;
-  /** Passed straight to the rule builder. */
+  /**
+   * Passed straight to the rule builder. Sourced from the TOP-LEVEL
+   * `t.collectionRules` block, not from a copy under `createModal`: the editor
+   * field renders the same builder, and two copies of these strings drift.
+   */
   rules?: Record<string, never> | Record<string, unknown>;
 }
 

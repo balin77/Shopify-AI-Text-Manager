@@ -67,6 +67,8 @@ export interface CollectionRuleBuilderTexts {
   readOnlyBody?: string;
   openInAdmin?: string;
   unavailable?: string;
+  definitionPlaceholder?: string;
+  commaSeparated?: string;
   kinds?: Record<string, string>;
   relations?: Record<string, string>;
 }
@@ -176,7 +178,7 @@ export function CollectionRuleBuilder({
             <TextField
               label=""
               labelHidden
-              placeholder="Metafield definition ID"
+              placeholder={t.definitionPlaceholder || "Metafield definition ID"}
               value={condition.definitionId ?? ""}
               onChange={(definitionId) => updateCondition(sourceIndex, side, condition.localId, { definitionId })}
               autoComplete="off"
@@ -195,7 +197,7 @@ export function CollectionRuleBuilder({
               autoComplete="off"
               // A list kind takes several values; saying so beats a merchant
               // discovering it by trying.
-              helpText={spec?.list ? "Comma-separated" : undefined}
+              helpText={spec?.list ? t.commaSeparated || "Comma-separated" : undefined}
               error={error?.code === "emptyValue"}
             />
           </Box>

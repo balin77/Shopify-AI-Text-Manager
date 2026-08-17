@@ -15,6 +15,7 @@ import { getTranslatedValue } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { debugLog } from "../utils/debug";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
+import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
   TranslatableContentItem,
   ContentEditorConfig,
@@ -255,8 +256,14 @@ export function getItemFieldValue(
     // §3.1 — the rule sources, already parsed into the editor's model by the
     // loader. JSON because every editor value is a string and change detection
     // compares strings; an empty string means "no rules", which is a value the
-    // save acts on and not a missing one.
-    collectionRules: Array.isArray(row.ruleSources) ? JSON.stringify(row.ruleSources) : "",
+    // save acts on and not a missing one. That is exactly why the loader's
+    // `null` must NOT collapse into "": null means the row holds a model this
+    // editor may not touch (a `ruleSet` projection, an unsynced collection),
+    // and an empty builder over a collection that HAS rules would make its own
+    // emptiness true on the first save.
+    collectionRules: Array.isArray(row.ruleSources)
+      ? JSON.stringify(row.ruleSources)
+      : RULES_UNREADABLE,
   };
 
   return fieldMappings[fieldKey] || "";

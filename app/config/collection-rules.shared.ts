@@ -40,6 +40,20 @@ import { isSupportedApiVersion, type ShopifyApiVersionString } from "../utils/ap
 export const RULES_MIN_API_VERSION = "2026-07";
 
 /**
+ * The editor value that means "these rules may not be edited" — a `ruleSet`
+ * row (the lossy 2025-10 projection), an unsynced collection, a malformed
+ * envelope.
+ *
+ * It exists because the editor's values are STRINGS, and `""` already means
+ * something: no rules, editable, and saving it strips the collection's rules.
+ * Collapsing "unknown" into "" would hand the merchant an empty builder over a
+ * collection that has rules — and the first save would make the emptiness
+ * true. Deliberately not valid JSON, so no parse path can mistake it for a
+ * tree.
+ */
+export const RULES_UNREADABLE = "unreadable";
+
+/**
  * Can the rule editor talk to this API version?
  *
  * Compared as strings on purpose: Shopify's versions are `YYYY-MM`, which
@@ -152,6 +166,15 @@ export function conditionKind(side: ConditionSide, key: string): ConditionKindSp
 export interface RuleCondition {
   /** Stable within a session so React keys and edits survive reordering. */
   localId: string;
+  /**
+   * Shopify's own condition id, present only on a condition READ back.
+   *
+   * This is what makes editing a source a diff rather than a replace:
+   * `conditionsToUpdate`/`ToDelete` are keyed by it (PLAN §1.2a). A condition
+   * without one is new by definition — and an id the CACHE does not know is
+   * not an identity at all, because the payload is client-supplied.
+   */
+  id?: string;
   kind: string;
   relation: string;
   /** Comma-separated for list kinds; the single value for scalar kinds. */
@@ -182,7 +205,7 @@ export interface RuleSource {
    * tree is kept so it can be displayed, and so nothing about it is lost by
    * having passed through this app.
    */
-  unrenderable?: { reason: "subCollections" | "shareableSource" | "unknownCondition"; raw: unknown };
+  unrenderable?: { reason: "subCollections" | "shareableSource" | "unknownCondition"; raw?: unknown };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -385,7 +408,11 @@ export function readConditionFragments(side: ConditionSide): string {
       const matchType = spec.list ? "\n                    matchType" : "";
       const relation = spec.relations.length > 0 ? "\n                    relation" : "";
       const definition = spec.needsDefinition ? "\n                    definitionId" : "";
-      return `                  ... on ${readConditionTypename(side, spec.key)} {${relation}
+      // `id` first and unconditionally: without it an existing condition has
+      // no identity, and every save would have to delete-and-recreate the
+      // whole side — the replace this module exists to avoid.
+      return `                  ... on ${readConditionTypename(side, spec.key)} {
+                    id${relation}
                     ${value}${matchType}${definition}
                   }`;
     })
@@ -394,6 +421,7 @@ export function readConditionFragments(side: ConditionSide): string {
 
 interface RawCondition {
   __typename?: string;
+  id?: string | null;
   relation?: string | null;
   value?: unknown;
   values?: unknown;
@@ -448,6 +476,7 @@ function readSide(side: ConditionSide, raw: RawSide | null | undefined): { parse
     const values = Array.isArray(condition.values) ? condition.values.map((v) => String(v)) : null;
     conditions.push({
       localId: `read-${side}-${index}`,
+      ...(condition.id ? { id: condition.id } : {}),
       kind: spec.key,
       relation: String(condition.relation ?? spec.relations[0] ?? ""),
       value: values ? values.join(", ") : String(condition.value ?? ""),
@@ -499,10 +528,162 @@ export function fromShopifySources(raw: RawSource[] | null | undefined): RuleSou
   });
 }
 
+/**
+ * The rule sources an editor may TOUCH, from the stored `sourcesJson` envelope.
+ *
+ * `null` is not "no rules" — it is "nothing here may be edited". Three cases
+ * produce it, and collapsing any of them into an empty list would hand the
+ * merchant a blank builder over a collection that has rules, which the first
+ * save would then make true:
+ *
+ *   1. Not a `sources` envelope — a `ruleSet` row is the 2025-10 back-
+ *      projection and has already lost exclusions and extra sources
+ *      (CLAUDE.md), so it is not a base to edit from.
+ *   2. Nothing stored at all — an unsynced collection.
+ *   3. A tree written before the read path selected CONDITION ids. Diffing
+ *      against it would match nothing: every condition the client holds would
+ *      read as new, none as kept, none as removed — and the collection would
+ *      end up with its rules doubled. An id-less condition is a stale cache,
+ *      not an empty one ("an empty column is never evidence").
+ *
+ * One function for both sides on purpose: the loader decides what the merchant
+ * may edit and the write path decides what it will diff, and those two answers
+ * disagreeing is how an editor offers a control whose save then refuses.
+ */
+export function editableSourcesFromEnvelope(envelope: unknown): RuleSource[] | null {
+  if (!envelope || typeof envelope !== "object") return null;
+  const { shape, data } = envelope as { shape?: string; data?: unknown };
+  if (shape !== "sources" || !Array.isArray(data)) return null;
+
+  const sources = fromShopifySources(data as RawSource[]);
+  const stale = sources.some(
+    (source) =>
+      !source.unrenderable &&
+      [source.inclusion, source.exclusion].some((side) => side?.conditions.some((c) => !c.id)),
+  );
+  return stale ? null : sources;
+}
+
+/**
+ * The same sources with the raw trees dropped, for the trip to the browser.
+ *
+ * `unrenderable.raw` is the untouched Shopify sub-tree — the whole point of
+ * which is that it never leaves the server: the diff's BEFORE side comes from
+ * the cache, and an unrenderable source is skipped in every direction. Sending
+ * it down would put an arbitrarily large blob into every collection page load
+ * and every save, and would hand the client a tree it has no legitimate use
+ * for. The `reason` is what the builder actually renders.
+ */
+export function withoutRawTrees(sources: RuleSource[]): RuleSource[] {
+  return sources.map((source) =>
+    source.unrenderable ? { ...source, unrenderable: { reason: source.unrenderable.reason } } : source,
+  );
+}
+
 export interface RuleSourcesDiff {
+  /** `CollectionCreateSourceTargetInput` — `{ source: { … } }`, measured. */
   sourcesToCreate: Array<Record<string, unknown>>;
+  /** `CollectionUpdateSourceTargetInput` — `{ condition: { id, … } }`. */
   sourcesToUpdate: Array<Record<string, unknown>>;
   sourcesToDelete: string[];
+}
+
+/**
+ * ── Why updating a source is itself a diff ──────────────────────────────────
+ * `CollectionUpdateSourceInclusionInput` does not take a `conditions` list. It
+ * takes `conditionsToCreate` / `conditionsToUpdate` / `conditionsToDelete`
+ * (plus `selectionsToAdd`/`ToRemove`), and `CollectionUpdateConditionsSourceInput`
+ * requires `id: ID!` — PLAN §1.2a, introspected on a live 2026-07 shop. There
+ * is no "write the whole list back" on this side of the API, which is why the
+ * read path selects condition ids (`readConditionFragments`) at all.
+ *
+ * Comparison is done on the BUILT INPUT, not on the form fields: two
+ * conditions that produce the same payload are the same condition as far as
+ * Shopify is concerned, so re-typing a comma list with different spacing must
+ * not churn a rule and re-run a membership calculation.
+ */
+function conditionInputsEqual(a: Record<string, unknown> | null, b: Record<string, unknown> | null): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function diffSide(
+  side: ConditionSide,
+  before: RuleSide | undefined,
+  after: RuleSide | undefined,
+): Record<string, unknown> | null {
+  const beforeById = new Map(
+    (before?.conditions ?? []).filter((c) => c.id).map((c) => [c.id as string, c] as const),
+  );
+
+  const conditionsToCreate: Array<Record<string, unknown>> = [];
+  const conditionsToUpdate: Array<Record<string, unknown>> = [];
+  const keptIds = new Set<string>();
+
+  for (const condition of after?.conditions ?? []) {
+    const input = toConditionInput(side, condition);
+    if (!input) continue;
+    // An id the cache does not carry is a client CLAIM, not an identity. It is
+    // created as new rather than updated in place: honouring it would let a
+    // crafted payload rewrite a condition this editor never read.
+    const previous = condition.id ? beforeById.get(condition.id) : undefined;
+    if (!previous) {
+      conditionsToCreate.push(input);
+      continue;
+    }
+    keptIds.add(previous.id as string);
+    if (!conditionInputsEqual(toConditionInput(side, previous), input)) {
+      conditionsToUpdate.push({ id: previous.id, ...input });
+    }
+  }
+
+  const conditionsToDelete = [...beforeById.keys()].filter((id) => !keptIds.has(id));
+
+  // A side that vanished entirely keeps its old matchType rather than
+  // defaulting it — the merchant deleted conditions, not a setting.
+  const matchType = after?.matchType ?? before?.matchType ?? "ALL";
+  const matchTypeChanged = (before?.matchType ?? "ALL") !== matchType;
+
+  if (
+    conditionsToCreate.length === 0 &&
+    conditionsToUpdate.length === 0 &&
+    conditionsToDelete.length === 0 &&
+    !matchTypeChanged
+  ) {
+    return null;
+  }
+
+  return {
+    matchType,
+    ...(conditionsToCreate.length > 0 ? { conditionsToCreate } : {}),
+    ...(conditionsToUpdate.length > 0 ? { conditionsToUpdate } : {}),
+    ...(conditionsToDelete.length > 0 ? { conditionsToDelete } : {}),
+  };
+}
+
+/** One `CollectionUpdateSourceTargetInput`, or null when nothing changed. */
+function buildSourceUpdate(before: RuleSource, after: RuleSource): Record<string, unknown> | null {
+  const inclusion = diffSide("inclusion", before.inclusion, after.inclusion);
+  const exclusion = diffSide("exclusion", before.exclusion, after.exclusion);
+
+  const title = after.title.trim();
+  const titleChanged = title !== before.title.trim();
+  const description = (after.description ?? "").trim();
+  const descriptionChanged = description !== (before.description ?? "").trim();
+
+  if (!inclusion && !exclusion && !titleChanged && !descriptionChanged) return null;
+
+  // `targetType` is deliberately absent: it is a property of the source's
+  // SHAPE, and the update input offers no way to change it. Sending it on a
+  // create is right; sending it here would be inventing a field.
+  return {
+    condition: {
+      id: before.id,
+      ...(titleChanged ? { title } : {}),
+      ...(descriptionChanged ? { description } : {}),
+      ...(inclusion ? { inclusion } : {}),
+      ...(exclusion ? { exclusion } : {}),
+    },
+  };
 }
 
 /**
@@ -511,7 +692,7 @@ export interface RuleSourcesDiff {
  * Shopify keys sources by id, and re-creating them all would churn every
  * membership on every save.
  *
- * Two rules carry the §2.4 guarantee:
+ * Three rules carry the §2.4 guarantee:
  *
  *   - An UNRENDERABLE source is never created, never updated and never
  *     deleted. It is invisible to this diff in every direction, so a
@@ -520,21 +701,37 @@ export interface RuleSourcesDiff {
  *   - A source is only DELETED when it was read as renderable and the editor
  *     no longer holds it. An id that vanished because it could not be parsed
  *     must not be read as "the merchant removed it".
+ *   - An `after` source whose id the BEFORE side does not carry is DROPPED,
+ *     not created and not updated. `before` comes from the cache and `after`
+ *     from the client, so an unknown id is either a stale cache — in which
+ *     case dropping it leaves Shopify's own copy untouched, the correct
+ *     outcome — or a crafted payload aimed at a source this editor is not
+ *     allowed to touch, including an unrenderable one.
  */
 export function diffRuleSources(before: RuleSource[], after: RuleSource[]): RuleSourcesDiff {
   const renderableBefore = before.filter((s) => !s.unrenderable && s.id);
-  const keptIds = new Set(after.filter((s) => !s.unrenderable && s.id).map((s) => s.id as string));
+  const beforeById = new Map(renderableBefore.map((s) => [s.id as string, s] as const));
 
   const sourcesToCreate: Array<Record<string, unknown>> = [];
   const sourcesToUpdate: Array<Record<string, unknown>> = [];
+  const keptIds = new Set<string>();
 
   for (const source of after) {
-    // Untouched by definition — see the rule above.
+    // Untouched by definition — see the rules above.
     if (source.unrenderable) continue;
-    const [input] = toSourcesInput([source]);
-    if (!input) continue;
-    if (source.id) sourcesToUpdate.push({ id: source.id, ...input });
-    else sourcesToCreate.push(input);
+
+    if (!source.id) {
+      const [input] = toSourcesInput([source]);
+      if (input) sourcesToCreate.push(input);
+      continue;
+    }
+
+    const previous = beforeById.get(source.id);
+    if (!previous) continue;
+    keptIds.add(source.id);
+
+    const update = buildSourceUpdate(previous, source);
+    if (update) sourcesToUpdate.push(update);
   }
 
   const sourcesToDelete = renderableBefore

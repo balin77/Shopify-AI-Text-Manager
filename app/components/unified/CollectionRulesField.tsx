@@ -28,6 +28,7 @@ import { useCallback, useMemo, useState } from "react";
 import { BlockStack, Banner, Text } from "@shopify/polaris";
 import { CollectionRuleBuilder } from "../create/CollectionRuleBuilder";
 import {
+  RULES_UNREADABLE,
   rulesAvailableOn,
   validateRuleSources,
   type RuleSource,
@@ -56,6 +57,10 @@ interface ParsedValue {
 function parseSources(value: string): ParsedValue {
   const raw = value.trim();
   if (!raw) return { sources: [], unparsable: false };
+  // The loader's explicit "this row holds a model you may not edit" — a
+  // `ruleSet` projection, an unsynced collection, a malformed envelope. It is
+  // a value, not a missing one, which is the whole reason it is not "".
+  if (raw === RULES_UNREADABLE) return { sources: [], unparsable: true };
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return { sources: [], unparsable: true };

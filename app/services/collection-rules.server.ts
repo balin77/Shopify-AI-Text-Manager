@@ -26,9 +26,10 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
 import { resolveApiVersionString } from "~/utils/api-version";
+import { COLLECTION_SOURCES_FIELDS } from "./attribute-sync.shared";
 import {
   diffRuleSources,
-  fromShopifySources,
+  editableSourcesFromEnvelope,
   rulesAvailableOn,
   validateRuleSources,
   type RuleSource,
@@ -41,16 +42,6 @@ export type CollectionRuleWarning =
   | "rulesInvalid"
   | "rulesNotConfirmed"
   | "rulesFailed";
-
-/** The stored envelope, only ever read as the model it names itself to be. */
-function storedSources(envelope: unknown): RuleSource[] | null {
-  if (!envelope || typeof envelope !== "object") return null;
-  const { shape, data } = envelope as { shape?: string; data?: unknown };
-  // A `ruleSet` row is the 2025-10 projection and is NOT a base to diff
-  // against — it has already lost exclusions and extra sources (CLAUDE.md).
-  if (shape !== "sources" || !Array.isArray(data)) return null;
-  return fromShopifySources(data as never);
-}
 
 export async function applyCollectionRuleChange(
   admin: AdminApiContext,
@@ -82,11 +73,12 @@ export async function applyCollectionRuleChange(
       where: { shop, id: params.collectionId },
       select: { sourcesJson: true },
     });
-    const before = storedSources(row?.sourcesJson);
+    const before = editableSourcesFromEnvelope(row?.sourcesJson);
     if (!before) {
-      // Nothing trustworthy to diff against — an unsynced collection, or one
-      // whose row still holds the old model. Writing the client's list as a
-      // full replacement here is exactly the membership change §2.4 forbids.
+      // Nothing trustworthy to diff against — an unsynced collection, a row
+      // still holding the old model, or a cache written before condition ids
+      // were read. Writing the client's list as a full replacement here is
+      // exactly the membership change §2.4 forbids.
       return "rulesUnreadable";
     }
 
@@ -99,17 +91,25 @@ export async function applyCollectionRuleChange(
       return undefined;
     }
 
+    // The NEW argument, not the deprecated "input: CollectionInput". The
+    // sources* fields live on CollectionUpdateInput only (PLAN §1.2 point 4),
+    // and the same version gate above is what makes naming it safe: below
+    // 2026-07 this mutation shape does not exist and is never sent.
     const response = await admin.graphql(
       `#graphql
-        mutation updateCollectionRules($input: CollectionInput!) {
-          collectionUpdate(input: $input) {
-            collection { id sources { id } }
+        mutation updateCollectionRules($collection: CollectionUpdateInput!) {
+          collectionUpdate(collection: $collection) {
+            # The SAME selection the sync uses. A narrower echo mirrored into
+            # "sourcesJson" would turn every source into an empty renderable
+            # one — the merchant's rules would read as deleted, and the next
+            # diff could delete a real source this editor may not touch.
+            collection { id ${COLLECTION_SOURCES_FIELDS} }
             userErrors { field message }
           }
         }`,
       {
         variables: {
-          input: {
+          collection: {
             id: params.collectionId,
             ...(diff.sourcesToCreate.length > 0 ? { sourcesToCreate: diff.sourcesToCreate } : {}),
             ...(diff.sourcesToUpdate.length > 0 ? { sourcesToUpdate: diff.sourcesToUpdate } : {}),
@@ -122,7 +122,7 @@ export async function applyCollectionRuleChange(
     const body = (await response.json()) as {
       data?: {
         collectionUpdate?: {
-          collection?: { id: string; sources?: Array<{ id: string }> | null } | null;
+          collection?: { id: string; sources?: unknown[] | null } | null;
           userErrors?: Array<{ message: string }>;
         };
       };

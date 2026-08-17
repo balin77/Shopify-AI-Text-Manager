@@ -106,10 +106,17 @@ export const COLLECTION_ATTRIBUTE_SELECTION = `
  * read as "no collections". That is why this is a separate constant behind
  * `collectionAttributeSelection()` and never concatenated blindly.
  */
-export const COLLECTION_SOURCES_SELECTION = `
-            sortOrder
-            templateSuffix
-            sources {
+/**
+ * The `sources` sub-selection, on its own so every reader uses the SAME one.
+ *
+ * Load-bearing: `fromShopifySources` needs title, targetType and both sides'
+ * conditions to tell a renderable source from one it must carry untouched.
+ * A caller that selects a NARROWER shape — the rule mutation's echo did — and
+ * mirrors it into `sourcesJson` turns every source into an empty renderable
+ * one, which then reads as "the merchant deleted their rules" and lets the
+ * next diff delete a real source the editor was never allowed to touch.
+ */
+export const COLLECTION_SOURCES_FIELDS = `sources {
               id
               title
               description
@@ -131,6 +138,11 @@ ${EXCLUSION_CONDITION_FRAGMENTS}
                 }
               }
             }`;
+
+export const COLLECTION_SOURCES_SELECTION = `
+            sortOrder
+            templateSuffix
+            ${COLLECTION_SOURCES_FIELDS}`;
 
 /**
  * Which rule model to ask for, decided by the API version the app is pinned to.

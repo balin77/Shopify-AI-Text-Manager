@@ -1814,7 +1814,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           error={createItem.error}
           pendingNotice={createItem.pendingNotice}
           fieldErrors={createItem.fieldErrors}
-          t={t.content?.createModal}
+          // The rule builder's strings live at the top level because the
+          // editor's own rule FIELD renders the same builder — one block, two
+          // surfaces, no drift.
+          t={{ ...(t.content?.createModal ?? {}), rules: t.collectionRules }}
         />
       )}
     </Page>

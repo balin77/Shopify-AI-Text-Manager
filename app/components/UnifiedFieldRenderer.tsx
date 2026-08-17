@@ -318,6 +318,9 @@ export function UnifiedFieldRenderer(
   if (field.type === "collectionRules") {
     return (
       <CollectionRulesField
+        // Keyed on the item so the "advanced" disclosure does not survive a
+        // switch to another collection — it was opened about THIS rule set.
+        key={selectedItem?.id ? String(selectedItem.id) : "collection-rules"}
         value={value}
         onChange={onChange}
         label={translatedFieldLabel}
@@ -338,11 +341,12 @@ export function UnifiedFieldRenderer(
   // reason of its own that the generic hint would get wrong.
   if (isAttributeField(field)) {
     const suggestions: string[] = field.suggestionsKey ? tagSuggestions : [];
-    // Enum labels are shared with the create modal (`t.create.options`, keyed
-    // `"status.DRAFT"`) rather than duplicated: the two surfaces offer the same
-    // values, and a status the modal calls "Draft" while the editor calls it
-    // "DRAFT" reads as two different things.
-    const optionLabels: Record<string, string> = t.create?.options || {};
+    // Enum labels are shared with the create modal
+    // (`t.content.createModal.options`, keyed `"status.DRAFT"`) rather than
+    // duplicated: the two surfaces offer the same values, and a status the
+    // modal calls "Draft" while the editor calls it "DRAFT" reads as two
+    // different things.
+    const optionLabels: Record<string, string> = t.content?.createModal?.options || {};
     const localizedField = {
       ...field,
       ...(field.type === "money" ? { currencyCode } : {}),
