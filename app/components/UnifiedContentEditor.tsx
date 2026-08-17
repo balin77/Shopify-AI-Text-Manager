@@ -38,6 +38,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
+import { countImagesWithAltForLocale } from "../utils/field-validation.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
@@ -47,7 +48,7 @@ import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperati
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
 import "../styles/content-editor-global.css";
-import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale } from "../types/content-editor.types";
+import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale, ContentImage } from "../types/content-editor.types";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
 
@@ -447,22 +448,25 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
     // Calculate image alt text stats for SEO score
     // Include featured image if no gallery images exist (e.g. articles)
-    const images = (item as TranslatableContentItem & { images?: Array<{ url?: string; altText?: string | null }> }).images ?? [];
-    const featuredImg = (item as TranslatableContentItem & { featuredImage?: { url?: string; altText?: string | null } }).featuredImage;
-    let totalImages = images.length;
-    let imagesWithAlt = images.filter((img, index) => {
-      const localAltText = state.imageAltTexts?.[index];
-      const originalAltText = img.altText;
-      return !!(localAltText || originalAltText);
-    }).length;
-
-    // Count featured image when no gallery images exist
-    if (totalImages === 0 && featuredImg) {
-      totalImages = 1;
-      const localAltText = state.imageAltTexts?.[0];
-      const originalAltText = featuredImg.altText;
-      imagesWithAlt = !!(localAltText || originalAltText) ? 1 : 0;
-    }
+    const images = (item as TranslatableContentItem & { images?: ContentImage[] }).images ?? [];
+    const featuredImg = (item as TranslatableContentItem & { featuredImage?: ContentImage }).featuredImage;
+    // The same list useEditorAltText indexes its alt-text state by: the gallery
+    // when it has entries, otherwise the single featured image at index 0.
+    const scoredImages: ContentImage[] =
+      images.length > 0 ? images : featuredImg ? [featuredImg] : [];
+    const totalImages = scoredImages.length;
+    // Per LOCALE, not per item: in a foreign language an image only counts as
+    // covered when its alt text is TRANSLATED. Counting the primary alt made
+    // the sidebar's image block score identically in every language, so a
+    // product with no alt translations at all still read "all images have alt
+    // text" — while the SEO dashboard, reading the same locale's
+    // ProductImageAltTranslation rows, reported them as missing.
+    const imagesWithAlt = countImagesWithAltForLocale(
+      scoredImages,
+      state.currentLanguage,
+      primaryLocale,
+      state.imageAltTexts,
+    );
 
     // JSON-LD preview for the SEO sidebar. The shop's storefront domain is
     // not available in this translation editor, so URLs are intentionally
