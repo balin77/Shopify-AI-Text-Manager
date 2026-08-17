@@ -77,6 +77,7 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { db } from "~/db.server";
 import { meetsPlan } from "~/utils/planUtils";
+import { resolveApiVersionString } from "~/utils/api-version";
 
 /** Versions every run compares. The pinned one is added by the action. */
 const COMPARE_VERSIONS = ["2025-10", "2026-07"] as const;
@@ -146,7 +147,22 @@ const LINK_SWEEP_QUERY = `#graphql
   }
 `;
 
-/** D + E: one resource, its content and its existing translations. */
+/**
+ * D: content only. Deliberately WITHOUT the translations field — that one
+ * takes a required locale argument, and the derived-GID lookup is the one
+ * measurement that must not be able to fail over a locale this shop does not
+ * have. What D asks is only whether the resource exists and carries the title.
+ */
+const SINGLE_LINK_CONTENT_QUERY = `#graphql
+  query menuProbeSingleLinkContent($resourceId: ID!) {
+    translatableResource(resourceId: $resourceId) {
+      resourceId
+      translatableContent { key value digest }
+    }
+  }
+`;
+
+/** E: the same resource plus its existing translations in the write locale. */
 const SINGLE_LINK_QUERY = `#graphql
   query menuProbeSingleLink($resourceId: ID!, $locale: String!) {
     translatableResource(resourceId: $resourceId) {
@@ -470,7 +486,11 @@ async function measureVersion(run: GqlRunner, apiVersion: string): Promise<Versi
   const linksByTitle = new Map<string, string[]>();
   let cursor: string | null = null;
   let pages = 0;
-  let truncated = false;
+  // Any exit while Shopify still has pages is a TRUNCATED sweep, whether the
+  // cap stopped it or a missing cursor did. Tracking the flag at the exits
+  // instead let a cursor-less break through as a complete read, and an
+  // incomplete read is what turns "absent" into the unproven verdict below.
+  let moreAvailable = false;
   while (pages < LINK_PAGE_CAP) {
     const result: GqlResult = await run(LINK_SWEEP_QUERY, { first: LINK_PAGE_SIZE, after: cursor });
     if (result.errors?.length) {
@@ -493,15 +513,21 @@ async function measureVersion(run: GqlRunner, apiVersion: string): Promise<Versi
       else linksByTitle.set(title, [edge.node.resourceId]);
     }
     pages += 1;
-    if (!connection?.pageInfo?.hasNextPage) break;
-    cursor = connection.pageInfo.endCursor ?? null;
+    moreAvailable = !!connection?.pageInfo?.hasNextPage;
+    if (!moreAvailable) break;
+    cursor = connection?.pageInfo?.endCursor ?? null;
     if (!cursor) break;
-    if (pages >= LINK_PAGE_CAP) truncated = true;
   }
   report.sweep.pages = pages;
-  report.sweep.truncated = truncated;
+  report.sweep.truncated = moreAvailable;
 
   if (!report.sweep.error) {
+    // The title is the ONLY thing relating a Link to a menu item here, so a
+    // title that several menu items share proves nothing about any of them:
+    // a child could be "confirmed" by its own parent's Link, and that GID
+    // would then become the write target. Shop-wide scope on purpose — the
+    // sweep is shop-wide too.
+    const itemsByTitle = indexByTitle(allItems);
     const depths = [...new Set(allItems.map((i) => i.depth))].sort((a, b) => a - b);
     for (const depth of depths) {
       const items = allItems.filter((i) => i.depth === depth);
@@ -509,13 +535,15 @@ async function measureVersion(run: GqlRunner, apiVersion: string): Promise<Versi
       let ambiguous = 0;
       let absent = 0;
       for (const item of items) {
-        const hits = linksByTitle.get(item.title.trim()) ?? [];
-        if (hits.length === 1) {
+        const title = item.title.trim();
+        const hits = linksByTitle.get(title) ?? [];
+        const sharesTitle = (itemsByTitle.get(title) ?? []).length > 1;
+        if (hits.length === 1 && !sharesTitle) {
           unique += 1;
           if (depth >= 2 && report.sweep.deepHits.length < 10) {
             report.sweep.deepHits.push({ title: item.title, depth, menuItemId: item.menuItemId, linkId: hits[0] });
           }
-        } else if (hits.length > 1) {
+        } else if (hits.length > 1 || (hits.length === 1 && sharesTitle)) {
           ambiguous += 1;
         } else {
           absent += 1;
@@ -558,7 +586,7 @@ async function measureVersion(run: GqlRunner, apiVersion: string): Promise<Versi
       report.derivation.probes.push(probe);
       continue;
     }
-    const result = await run(SINGLE_LINK_QUERY, { resourceId: derivedLinkId, locale: "en" });
+    const result = await run(SINGLE_LINK_CONTENT_QUERY, { resourceId: derivedLinkId });
     if (result.errors?.length) {
       probe.error = result.errors.map((e) => e.message).join(" | ");
     } else {
@@ -650,7 +678,18 @@ async function probeWrite(
     // The echo rule: the mutation's own answer is not the evidence. A fresh
     // read is — this is exactly the "accepted the call, stored nothing" case
     // the app's translation invariants exist for.
+    //
+    // But a read that never ARRIVED is not evidence either. A throttled or
+    // failed read-back also produces no value, and calling that a silent
+    // no-op would print "the feature is not buildable" over a network hiccup.
     const after = await run(SINGLE_LINK_QUERY, { resourceId: target.linkId, locale });
+    if (after.errors?.length) {
+      report.result = "failure";
+      report.errors = [
+        `Registered, but the verifying read failed: ${after.errors.map((e) => e.message).join(" | ")}. Nothing is proven either way — re-run.`,
+      ];
+      return report;
+    }
     const readBack = ((after.data as {
       translatableResource?: { translations?: Array<{ key: string; value: string | null }> };
     })?.translatableResource?.translations ?? []).find((t) => t.key === "title")?.value ?? null;
@@ -664,13 +703,35 @@ async function probeWrite(
     return report;
   } finally {
     // Always: a diagnostic must leave the shop as it found it.
+    //
+    // And translationsRemove is subject to the same silent-no-op rule as the
+    // register side (CLAUDE.md: if Shopify does not confirm the removal, it
+    // did not happen). So this counts as removed only when the transport, the
+    // userErrors AND the echoed keys all say so — anything short of that
+    // reports false, and the verdict then tells the merchant where to delete
+    // the leftover by hand. Over-reporting a leftover costs one sentence;
+    // under-reporting one leaves a tagged string in a live storefront menu.
     if (report.attempted && report.attemptedValue) {
-      const removed = await run(REMOVE_MUTATION, {
+      const removal = await run(REMOVE_MUTATION, {
         resourceId: target.linkId,
         translationKeys: ["title"],
         locales: [locale],
       }).catch(() => null);
-      report.removed = !!removed && !removed.errors?.length;
+      const payload = (removal?.data as {
+        translationsRemove?: { translations?: Array<{ key: string }>; userErrors?: Array<{ field: string[] | null; message: string }> };
+      })?.translationsRemove;
+      report.removed =
+        !!removal &&
+        !removal.errors?.length &&
+        !payload?.userErrors?.length &&
+        !!payload?.translations?.some((t) => t.key === "title");
+      if (!report.removed) {
+        const detail =
+          removal?.errors?.map((e) => e.message).join(" | ") ||
+          payload?.userErrors?.map((e) => e.message).join(" | ") ||
+          "Shopify did not echo the removed key back";
+        report.errors = [...(report.errors ?? []), `Cleanup unconfirmed: ${detail}`];
+      }
     }
   }
 }
@@ -702,13 +763,25 @@ function buildVerdict(report: MenuTranslationProbeReport): string[] {
     const sweepUnique = sweepDeep.reduce((sum, l) => sum + l.unique, 0);
     const sweepAbsent = sweepDeep.reduce((sum, l) => sum + l.absent, 0);
     const derivedOk = version.derivation.probes.filter((p) => p.resolved && p.valueMatchesTitle).length;
+    const derivedInconclusive =
+      version.derivation.probes.length === 0 || version.derivation.probes.every((p) => !!p.error);
 
     lines.push(
       `[${version.apiVersion}] nestedTranslatableResources returned ${nestedTop} top-level and ${nestedDeep} sub-level links` +
         `${truncatedNested ? " (a page was truncated — treat the sub-level count as unproven)" : ""}.`,
     );
 
-    if (derivedOk > 0) {
+    // Order matters and is not the order of the measurements: whether the
+    // NESTED query already returns sub-level links decides which of the two
+    // explanations is even on the table. Asking the derived-GID branch first
+    // would print "only the enumeration path did not hand it over" about an
+    // enumeration that handed it over.
+    if (nestedDeep > 0) {
+      lines.push(
+        `[${version.apiVersion}] ANSWER: sub-items ARE translatable, and nestedTranslatableResources already returns them (${nestedDeep} sub-level links). ` +
+          "The enumeration is not the obstacle — whatever failed originally failed on the write side or was never attempted against these ids.",
+      );
+    } else if (derivedOk > 0) {
       lines.push(
         `[${version.apiVersion}] ANSWER: sub-items ARE translatable. ${derivedOk} of ${version.derivation.probes.length} depth>=2 MenuItem ids resolved as gid://shopify/Link/<same-number> with a matching title` +
           `${version.derivation.checked > 0 ? ` (id alignment held for ${version.derivation.aligned}/${version.derivation.checked} known top-level pairs)` : ""}. ` +
@@ -719,15 +792,19 @@ function buildVerdict(report: MenuTranslationProbeReport): string[] {
         `[${version.apiVersion}] ANSWER: sub-items ARE translatable. The flat translatableResources(LINK) sweep found ${sweepUnique} of the sub-level titles as Link resources` +
           `${version.sweep.truncated ? " (the sweep hit its page cap, so the absent ones are unproven)" : ""}, even though the nested query did not return them.`,
       );
-    } else if (nestedDeep > 0) {
-      lines.push(
-        `[${version.apiVersion}] ANSWER: sub-items ARE translatable, and the nested query already returns them — the original failure was on the write side, not here.`,
-      );
     } else if (version.sweep.error) {
       lines.push(`[${version.apiVersion}] INCONCLUSIVE — the flat LINK sweep failed: ${version.sweep.error}`);
-    } else if (sweepAbsent > 0 && !version.sweep.truncated) {
+    } else if (sweepAbsent > 0 && !version.sweep.truncated && !derivedInconclusive) {
       lines.push(
         `[${version.apiVersion}] ANSWER: NO — ${sweepAbsent} sub-level titles have no Link resource anywhere in the shop, and no derived GID resolved. On this version the limitation is the platform's, not the enumeration's.`,
+      );
+    } else if (derivedInconclusive) {
+      // A negative answer needs BOTH paths to have actually run. Derived
+      // lookups that all errored out are an absence of measurement, and
+      // reading them as an absence of the resource is the same mistake the
+      // "menus cannot be translated" claim was.
+      lines.push(
+        `[${version.apiVersion}] INCONCLUSIVE — every derived-GID lookup failed or none ran (${version.derivation.probes.map((p) => p.error).filter(Boolean).join("; ") || "no depth>=2 item to derive from"}). The negative reading is not available from this run.`,
       );
     } else {
       lines.push(`[${version.apiVersion}] INCONCLUSIVE — neither path produced a sub-level Link, and nothing rules out a truncated read.`);
@@ -806,7 +883,11 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "No access token on the session — the per-version probe cannot run." }, { status: 500 });
   }
 
-  const pinnedApiVersion = process.env.SHOPIFY_API_VERSION || "2025-10";
+  // The SAME resolver the admin client is built from, never a second read of
+  // the env var: an unsupported or typo'd value falls back there, and a probe
+  // that queried the raw string would label its report with a version the app
+  // does not actually talk to.
+  const pinnedApiVersion = resolveApiVersionString();
   const versions = [...new Set([pinnedApiVersion, ...COMPARE_VERSIONS])];
 
   const report: MenuTranslationProbeReport = {
@@ -862,7 +943,11 @@ export async function action({ request }: ActionFunctionArgs) {
       // fall back to a unique sweep hit. Later versions first: if they differ,
       // the newer behaviour is the one worth measuring the write against.
       let chosen: { apiVersion: string; linkId: string; title: string; depth: number } | null = null;
-      for (const version of [...report.versions].reverse()) {
+      // Newest first — SORTED, not reversed. The list is [pinned, ...compare]
+      // deduped, so with the pin already at the newest version reversing would
+      // hand the write to the OLDEST one. YYYY-MM sorts correctly as a string.
+      const newestFirst = [...report.versions].sort((a, b) => b.apiVersion.localeCompare(a.apiVersion));
+      for (const version of newestFirst) {
         if (version.fatalError) continue;
         const derived = version.derivation.probes.find((p) => p.resolved && p.valueMatchesTitle);
         if (derived) {
