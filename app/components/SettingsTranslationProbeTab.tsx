@@ -577,6 +577,291 @@ function RedirectLocaleProbeCard() {
   );
 }
 
+// ── Menu translation probe ────────────────────────────────────────────────
+// Answers the one question /app/menus has been asserting an answer to since it
+// was written: menu SUB-items ("Stifthalter" under "Produkte") do not take a
+// translation while their parent does. Shapes mirror
+// api.menu-translation-probe.tsx — re-declared rather than imported, because
+// importing from a route module drags its server code into the client bundle
+// (same reason the other probe reports are duplicated here).
+
+interface MenuProbeStructure {
+  menuId: string;
+  title: string;
+  handle: string;
+  itemsByDepth: number[];
+}
+
+interface MenuProbeNested {
+  menuId: string;
+  menuTitle: string;
+  error?: string;
+  menuKeys: string[];
+  linkCount: number;
+  hasNextPage: boolean;
+  matchedByDepth: number[];
+  ambiguousByDepth: number[];
+  unmatchedLinks: number;
+}
+
+interface MenuProbeSweep {
+  error?: string;
+  total: number;
+  pages: number;
+  truncated: boolean;
+  lookupByDepth: Array<{ depth: number; items: number; unique: number; ambiguous: number; absent: number }>;
+  deepHits: Array<{ title: string; depth: number; menuItemId: string; linkId: string }>;
+}
+
+interface MenuProbeDerivation {
+  checked: number;
+  aligned: number;
+  sample?: { menuItemId: string; linkId: string };
+  probes: Array<{
+    menuItemId: string;
+    title: string;
+    depth: number;
+    derivedLinkId: string;
+    resolved: boolean;
+    keys: string[];
+    valueMatchesTitle: boolean;
+    error?: string;
+  }>;
+}
+
+interface MenuProbeVersion {
+  apiVersion: string;
+  fatalError?: string;
+  structures: MenuProbeStructure[];
+  nested: MenuProbeNested[];
+  sweep: MenuProbeSweep;
+  derivation: MenuProbeDerivation;
+}
+
+interface MenuProbeWrite {
+  attempted: boolean;
+  skipReason?: string;
+  apiVersion?: string;
+  locale?: string;
+  linkId?: string;
+  title?: string;
+  depth?: number;
+  attemptedValue?: string;
+  registerEcho?: string | null;
+  readBack?: string | null;
+  result?: "confirmed" | "silent-noop" | "failure";
+  removed?: boolean;
+  errors?: string[];
+}
+
+interface MenuTranslationProbeReport {
+  generatedAt: string;
+  shop: string;
+  pinnedApiVersion: string;
+  primaryLocale: string | null;
+  writeLocale: string | null;
+  versions: MenuProbeVersion[];
+  writeProbe: MenuProbeWrite;
+  verdict: string[];
+}
+
+function formatMenuProbeMarkdown(r: MenuTranslationProbeReport): string {
+  const lines: string[] = [];
+  lines.push(`# Menu Translation Probe — ${r.shop}`);
+  lines.push("");
+  lines.push(`- Generated: ${r.generatedAt}`);
+  lines.push(`- Pinned API version: \`${r.pinnedApiVersion}\``);
+  lines.push(`- Primary locale: \`${r.primaryLocale ?? "unknown"}\``);
+  lines.push(`- Write locale: \`${r.writeLocale ?? "none published"}\``);
+  lines.push("");
+  lines.push("## Verdict");
+  for (const v of r.verdict) lines.push(`- ${v}`);
+
+  for (const version of r.versions) {
+    lines.push("");
+    lines.push(`## API ${version.apiVersion}`);
+    if (version.fatalError) {
+      lines.push(`Not measured: ${version.fatalError}`);
+      continue;
+    }
+
+    lines.push("");
+    lines.push("### A. Menu structure");
+    lines.push("| Menu | Handle | Items per depth (1 → n) |");
+    lines.push("|---|---|---|");
+    for (const s of version.structures) {
+      lines.push(`| ${s.title} | \`${s.handle}\` | ${s.itemsByDepth.map((c, i) => `d${i + 1}=${c ?? 0}`).join(", ") || "(none)"} |`);
+    }
+
+    lines.push("");
+    lines.push("### B. nestedTranslatableResources(LINK) per menu");
+    lines.push("| Menu | Menu keys | Links returned | More pages | Matched per depth | Ambiguous | Unmatched links |");
+    lines.push("|---|---|---|---|---|---|---|");
+    for (const n of version.nested) {
+      if (n.error) {
+        lines.push(`| ${n.menuTitle} | — | — | — | ERROR: ${n.error} | — | — |`);
+        continue;
+      }
+      lines.push(
+        `| ${n.menuTitle} | ${n.menuKeys.join(", ") || "(none)"} | ${n.linkCount} | ${n.hasNextPage ? "⚠️ yes" : "no"} | ` +
+          `${n.matchedByDepth.map((c, i) => `d${i + 1}=${c ?? 0}`).join(", ") || "(none)"} | ` +
+          `${n.ambiguousByDepth.map((c, i) => `d${i + 1}=${c ?? 0}`).join(", ") || "(none)"} | ${n.unmatchedLinks} |`,
+      );
+    }
+
+    lines.push("");
+    lines.push("### C. Flat translatableResources(LINK) sweep");
+    if (version.sweep.error) {
+      lines.push(`ERROR: ${version.sweep.error}`);
+    } else {
+      lines.push(`${version.sweep.total} Link resources over ${version.sweep.pages} page(s)${version.sweep.truncated ? " — ⚠️ page cap hit, absences below are unproven" : ""}.`);
+      lines.push("");
+      lines.push("| Depth | Menu items | Unique match | Ambiguous title | Absent |");
+      lines.push("|---|---|---|---|---|");
+      for (const l of version.sweep.lookupByDepth) {
+        lines.push(`| ${l.depth} | ${l.items} | ${l.unique} | ${l.ambiguous} | ${l.absent} |`);
+      }
+      if (version.sweep.deepHits.length) {
+        lines.push("");
+        lines.push("Sub-level items found as Link resources:");
+        for (const h of version.sweep.deepHits) {
+          lines.push(`- d${h.depth} "${h.title}" — MenuItem \`${h.menuItemId}\` → Link \`${h.linkId}\``);
+        }
+      }
+    }
+
+    lines.push("");
+    lines.push("### D. Is a Link GID derivable from a MenuItem GID?");
+    lines.push(`Top-level pairs with equal numeric ids: ${version.derivation.aligned}/${version.derivation.checked}.`);
+    if (version.derivation.sample) {
+      lines.push(`Sample: \`${version.derivation.sample.menuItemId}\` ↔ \`${version.derivation.sample.linkId}\``);
+    }
+    lines.push("");
+    lines.push("| Depth | Title | Derived Link GID | Resolved | Keys | Title matches |");
+    lines.push("|---|---|---|---|---|---|");
+    for (const p of version.derivation.probes) {
+      lines.push(
+        `| ${p.depth} | ${p.title} | \`${p.derivedLinkId || "—"}\` | ${p.resolved ? "✅" : `❌${p.error ? ` (${p.error})` : ""}`} | ` +
+          `${p.keys.join(", ") || "—"} | ${p.valueMatchesTitle ? "✅" : "—"} |`,
+      );
+    }
+  }
+
+  lines.push("");
+  lines.push("## E. Write probe");
+  if (!r.writeProbe.attempted) {
+    lines.push(r.writeProbe.skipReason ? `Not attempted: ${r.writeProbe.skipReason}` : "Not attempted.");
+  } else {
+    lines.push(`- Target: d${r.writeProbe.depth} "${r.writeProbe.title}" (\`${r.writeProbe.linkId}\`) on API ${r.writeProbe.apiVersion}`);
+    lines.push(`- Locale: \`${r.writeProbe.locale}\``);
+    lines.push(`- Value written: "${r.writeProbe.attemptedValue}"`);
+    lines.push(`- Mutation echo: ${r.writeProbe.registerEcho === null ? "(nothing echoed)" : `"${r.writeProbe.registerEcho}"`}`);
+    lines.push(`- Fresh read-back: ${r.writeProbe.readBack === null ? "(nothing stored)" : `"${r.writeProbe.readBack}"`}`);
+    lines.push(`- Result: ${r.writeProbe.result}`);
+    lines.push(`- Probe value removed again: ${r.writeProbe.removed ? "yes" : "⚠️ NO — remove it manually"}`);
+    if (r.writeProbe.errors?.length) {
+      lines.push("- Errors:");
+      for (const e of r.writeProbe.errors) lines.push(`  - ${e}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function MenuTranslationProbeCard() {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<MenuTranslationProbeReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [includeWriteTest, setIncludeWriteTest] = useState(false);
+
+  const runProbe = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      if (includeWriteTest) fd.set("writeTest", "true");
+      const r = await fetch("/api/menu-translation-probe", { method: "POST", body: fd });
+      const j = (await r.json()) as { report?: MenuTranslationProbeReport; error?: string };
+      if (!r.ok || !j.report) {
+        throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
+      }
+      setReport(j.report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [includeWriteTest]);
+
+  const markdown = useMemo(() => (report ? formatMenuProbeMarkdown(report) : ""), [report]);
+
+  const tone = (() => {
+    if (!report) return "info" as const;
+    if (report.verdict.some((v) => v.includes("ANSWER: NO") || v.includes("silent no-op"))) return "warning" as const;
+    if (report.verdict.some((v) => v.includes("ARE translatable"))) return "success" as const;
+    return "info" as const;
+  })();
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm">Menu sub-item translations</Text>
+        <Text as="p" tone="subdued">
+          Separates the two explanations for the long-standing symptom that a top-level menu item
+          translates while its children do not: either Shopify never hands out the child links
+          (<code>nestedTranslatableResources</code> covers one level of nesting), or the child links
+          have no translatable resource at all. Reads the menu tree, both enumeration paths, and
+          tries a <code>gid://shopify/Link/…</code> derived from a child&apos;s MenuItem id. Runs the
+          whole measurement against the pinned API version <em>and</em> 2026-07, so &quot;does the new
+          version change this&quot; is answered rather than argued.
+        </Text>
+        <Banner tone="info">
+          <Text as="p">
+            Read-only unless the write test is ticked. That step registers one uniquely tagged
+            translation on a single sub-item, re-reads it (an accepted mutation is not proof) and
+            removes it again. It refuses any item that already has a translation, so nothing of
+            yours can be overwritten.
+          </Text>
+        </Banner>
+        <Checkbox
+          label="Also run the write test (one tagged translation on one sub-item, removed again)"
+          checked={includeWriteTest}
+          onChange={(checked) => setIncludeWriteTest(checked)}
+        />
+        <InlineStack gap="200">
+          <Button onClick={runProbe} loading={loading}>{report ? "Re-run menu probe" : "Run menu probe"}</Button>
+        </InlineStack>
+        {error && <Banner tone="critical"><Text as="p">Probe failed: {error}</Text></Banner>}
+        {report && (
+          <BlockStack gap="200">
+            <Banner tone={tone}>
+              <BlockStack gap="100">
+                {report.verdict.map((v, i) => <Text as="p" key={i}>{v}</Text>)}
+              </BlockStack>
+            </Banner>
+            <textarea
+              readOnly
+              value={markdown}
+              style={{
+                width: "100%",
+                minHeight: "320px",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: "12px",
+                padding: "12px",
+                border: "1px solid #c9cccf",
+                borderRadius: "8px",
+                background: "#fafbfb",
+                resize: "vertical",
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </BlockStack>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 function IndexNowProbeCard() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<IndexNowProbeReport | null>(null);
@@ -744,6 +1029,8 @@ export function SettingsTranslationProbeTab() {
       <IndexNowProbeCard />
 
       <RedirectLocaleProbeCard />
+
+      <MenuTranslationProbeCard />
 
       {report?.imageAltDiag && (
         <Card>

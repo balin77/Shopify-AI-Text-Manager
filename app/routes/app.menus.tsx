@@ -1,8 +1,23 @@
 /**
  * Menus Management - View store navigation menus
  *
- * Note: Menus are READ-ONLY because Shopify API doesn't support
- * translating menu items via GraphQL API
+ * Read-only, and the reason written here for a long time — "Shopify does not
+ * support translating menu items" — is an ASSUMPTION that was never measured.
+ * MENU and LINK have been TranslatableResourceType values since 2021-10, and
+ * the reported symptom is narrower than the claim: a TOP-LEVEL item takes a
+ * translation, its CHILDREN do not. Two very different things produce that,
+ * and only one of them is the platform's fault:
+ *
+ *   - the child links are never ENUMERATED (a menu's
+ *     nestedTranslatableResources(resourceType: LINK) is documented as
+ *     covering one level of nesting), or
+ *   - the child links have no translatable resource at all.
+ *
+ * /api/menu-translation-probe (Settings → Probes → Translation) settles it on
+ * a live shop in one click, across the pinned API version and 2026-07. Do not
+ * build a write path here, and do not re-word the banner, before that report
+ * exists — this comment is exactly how the unmeasured version of the answer
+ * survived in the first place.
  */
 
 import { useState, useEffect, type ReactElement } from "react";

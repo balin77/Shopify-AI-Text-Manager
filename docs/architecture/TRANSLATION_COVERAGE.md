@@ -45,7 +45,7 @@ Die Info-Architektur (5 Rubriken unter „Inhalte") ist die T&A-Struktur, gefalt
 
 T&A **exponiert nicht**: `PACKING_SLIP_TEMPLATE`, `PAYMENT_GATEWAY`, `SELLING_PLAN*`, `SELLING_PLAN_GROUP` — hier haben wir Coverage-Vorsprung.
 
-Shopify-API-**limitiert**: `MENU` / `LINK` können nur teilweise übersetzt werden. Hint in der UI.
+`MENU` / `LINK`: **ungemessen, nicht limitiert** — bis ein Probe-Report vorliegt. Beobachtet wurde ausschließlich, dass ein Menüpunkt der **obersten Ebene** eine Übersetzung annimmt und seine **Unterpunkte** nicht; daraus wurde „die API kann keine Menüs übersetzen" gemacht, was so nicht folgt (`MENU`/`LINK` sind seit 2021-10 im Enum). Zwei Erklärungen mit gegensätzlichen Konsequenzen: entweder werden die Child-Links nie **aufgezählt** (`nestedTranslatableResources(resourceType: LINK)` ist als „1 level of nesting" dokumentiert) — dann ist das unser Bug — oder sie haben gar keine translatable Resource — dann ist es Shopifys Grenze. [`/api/menu-translation-probe`](../../app/routes/api.menu-translation-probe.tsx) (Settings → Probes → Translation) entscheidet das auf einem Live-Shop, gegen die gepinnte API-Version **und** 2026-07. Erst danach wird hier ein Ergebnis eingetragen und der Hint in der UI angefasst.
 
 ## `translationsRegister`-Mechanik
 
