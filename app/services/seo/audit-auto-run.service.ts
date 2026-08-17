@@ -44,6 +44,7 @@
  */
 
 import { db } from "../../db.server";
+import { createAdminClientFromShop } from "../../utils/admin-client.server";
 import { logger } from "../../utils/logger.server";
 import { canUseScheduledSeoAudit } from "../../utils/planUtils";
 import { seoTitleEffectiveLimit } from "../../utils/seo-score";
@@ -81,6 +82,29 @@ export interface SeoAuditAutoRunTickStats {
   candidates: number;
   scanned: number;
   errored: number;
+}
+
+const SHOP_NAME_QUERY = `#graphql
+  query seoAuditAutoRunShopName {
+    shop { name }
+  }
+`;
+
+/**
+ * Shop display name for computeHeadDrift's suffix stripping. Falls back to the
+ * myshopify subdomain (what the manual runner does) and finally to "" — a
+ * throttled Admin call must not cost the shop its nightly snapshot.
+ */
+async function fetchShopName(shop: string): Promise<string> {
+  const fallback = shop.replace(/\.myshopify\.com$/, "");
+  try {
+    const admin = await createAdminClientFromShop(shop);
+    const res = await admin.graphql(SHOP_NAME_QUERY);
+    const body: any = await res.json();
+    return body?.data?.shop?.name || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export class SeoAuditAutoRunService {
@@ -216,9 +240,13 @@ export class SeoAuditAutoRunService {
     seoTitleSuffix: string | null;
     seoLimits: unknown;
   }): Promise<void> {
-    // No Admin client needed: analyzeStore reads the DB content cache only.
-    // The manual runner fetches the shop name for display; an unattended scan
-    // has no display to fill, and analyzeStore defaults it to "".
+    // The shop name is NOT cosmetic: computeHeadDrift strips the theme's
+    // "– Shop Name" title suffix before comparing the crawled <title> against
+    // the stored SEO title. Without it every suffixed page looks like drift,
+    // and the nightly snapshot would fill the dashboard with findings that
+    // disappear again on the next manual rescan. Best-effort — a failed lookup
+    // degrades to "" (same as before), it never skips the scan.
+    const shopName = await fetchShopName(settings.shop);
     const suffix =
       settings.seoTitleSuffixEnabled && settings.seoTitleSuffix ? settings.seoTitleSuffix : "";
     const seoLimits = (settings.seoLimits ?? null) as Record<string, number> | null;
@@ -228,6 +256,7 @@ export class SeoAuditAutoRunService {
       seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix, seoLimits),
       seoLimits,
       plan: (settings.subscriptionPlan || "free") as Plan,
+      shopName,
     });
     await saveAuditSnapshot(db, settings.shop, audit, "");
     logger.info(

@@ -315,6 +315,15 @@ export interface AnalyzeStoreDeps {
    */
   shopName?: string;
   /**
+   * Cap on the item refs collected per "fix with AI" bucket. Defaults to
+   * MAX_PROBLEM_BUCKET_ITEMS, which is what the DASHBOARD needs (it renders a
+   * list, and the snapshot payload must stay small). The bulk-fix handler
+   * raises it to the plan's `seo.bulkBatchSize` — without that the per-plan
+   * batch size was inert above 100, i.e. Pro's 500 and Max's 2500 could never
+   * happen no matter what the plan card promised.
+   */
+  maxBucketItems?: number;
+  /**
    * Foreign locale to score against (empty/undefined = primary locale, the
    * historic behavior). When set, every scoring input (`title`, `description`,
    * `seoTitle`, `metaDescription`) is sourced from ContentTranslation rows
@@ -853,7 +862,15 @@ async function buildOnPageProblemBuckets(
 
 export async function analyzeStore(
   shop: string,
-  { db, seoTitleEffectiveLimit, plan, locale, seoLimits = null, shopName = "" }: AnalyzeStoreDeps,
+  {
+    db,
+    seoTitleEffectiveLimit,
+    plan,
+    locale,
+    seoLimits = null,
+    shopName = "",
+    maxBucketItems,
+  }: AnalyzeStoreDeps,
 ): Promise<AuditAggregate> {
   // Normalize "" / undefined to "primary". Consumers pass the sentinel "" for
   // primary snapshots so the audit + snapshot table share one call shape.
@@ -1326,6 +1343,8 @@ export async function analyzeStore(
   // typed item refs, same as every other bucket.
   const typeById = new Map<string, AuditType>();
   const titleById = new Map<string, string>();
+  // Dashboard default; the bulk-fix caller raises it to its plan batch size.
+  const bucketCap = maxBucketItems ?? MAX_PROBLEM_BUCKET_ITEMS;
   let scoreSum = 0;
 
   // `missingTranslations` rides along on EVERY bucket's item refs, not just
@@ -1344,7 +1363,7 @@ export async function analyzeStore(
       items = [];
       bucketItems.set(code, items);
     }
-    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) {
+    if (items.length < bucketCap) {
       items.push({
         type,
         id,
@@ -1502,13 +1521,19 @@ function finalizeStat(stat: MutStat): void {
 // instead of re-scanning synchronously.
 
 /**
- * Hard row ceiling per (shop, locale) — a history, not an unbounded log. The
- * PLAN also bounds the history by AGE (`scoreHistoryDays`: Free/Basic current
- * state only, Pro 30 days, Max 365 — see §Plan-Matrix); whichever bound bites
- * first wins. The newest snapshot is never pruned, so the dashboard always has
- * something to show.
+ * Row floor per (shop, locale) — enough history for a shop that only ever
+ * rescans by hand, on any plan.
+ *
+ * The effective cap is `max(this, scoreHistoryDays)`: with the nightly sweep a
+ * snapshot lands once a DAY, so a flat 30 rows would have capped Max's
+ * advertised 365-day trend at 30 points — the age prune below would never have
+ * fired for it. Both bounds apply, whichever bites first, and the newest
+ * snapshot is never pruned so the dashboard always has something to show.
  */
-export const MAX_SNAPSHOTS_PER_SHOP = 30;
+export const MIN_SNAPSHOTS_PER_SHOP = 30;
+
+/** @deprecated Kept as the old name for callers/tests; use MIN_SNAPSHOTS_PER_SHOP. */
+export const MAX_SNAPSHOTS_PER_SHOP = MIN_SNAPSHOTS_PER_SHOP;
 
 export interface AuditSnapshot {
   audit: AuditAggregate;
@@ -1545,6 +1570,16 @@ export async function saveAuditSnapshot(
     },
   });
 
+  // The plan decides how much history is worth keeping; the row cap is only a
+  // floor so a hand-rescanning shop on any tier still gets a short trend.
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const historyDays = getSeoScoreHistoryDays(plan);
+  const rowCap = Math.max(MIN_SNAPSHOTS_PER_SHOP, historyDays);
+
   // Prune: find the id of the Nth-newest row (for this locale) and delete
   // everything older. Two small queries beat a single DELETE ... OFFSET
   // (not portable in Prisma) and keep the cap exact even under concurrent
@@ -1553,25 +1588,18 @@ export async function saveAuditSnapshot(
     where: { shop, locale },
     select: { id: true },
     orderBy: { createdAt: "desc" },
-    take: MAX_SNAPSHOTS_PER_SHOP,
+    take: rowCap,
   });
-  if (keep.length === MAX_SNAPSHOTS_PER_SHOP) {
+  if (keep.length === rowCap) {
     await db.seoScoreSnapshot.deleteMany({
       where: { shop, locale, id: { notIn: keep.map((r) => r.id) } },
     });
   }
 
-  // Plan retention on top of the row cap: trends are an entitlement, so a
-  // tier without history keeps only what it needs to render "today". The row
-  // just written is always excluded from the age prune (notIn newest), which
-  // is what makes scoreHistoryDays === 0 mean "current state, no trend"
-  // instead of "empty dashboard".
-  const settings = await db.aISettings.findUnique({
-    where: { shop },
-    select: { subscriptionPlan: true },
-  });
-  const plan = (settings?.subscriptionPlan || "free") as Plan;
-  const historyDays = getSeoScoreHistoryDays(plan);
+  // Age prune on top of the row cap: trends are an entitlement, so a tier
+  // without history keeps only what it needs to render "today". The newest row
+  // is always excluded, which is what makes scoreHistoryDays === 0 mean
+  // "current state, no trend" instead of "empty dashboard".
   const newest = keep[0]?.id;
   const cutoff = new Date(Date.now() - historyDays * 24 * 60 * 60 * 1000);
   await db.seoScoreSnapshot.deleteMany({

@@ -1251,6 +1251,10 @@ export default function SeoKeywords() {
     if (d.ok && d.kind === "keywordCreated") {
       setEditKeywordError(null);
       setEditingKeywordId(d.keywordId);
+    } else if (!d.ok && d.error === "planLimit") {
+      // The quota can run out between the loader's snapshot and the click (a
+      // second tab, an import). Without this the button just did nothing.
+      setEditKeywordError(k.keywordPlanLimitShort);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keywordCreateFetcher.state, keywordCreateFetcher.data]);

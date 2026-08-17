@@ -104,13 +104,28 @@ export function KeywordImportModal({
           </InlineStack>
 
           {imported && (
-            <Banner tone={imported.csvErrors.length ? "warning" : "success"}>
+            <Banner
+              tone={
+                imported.csvErrors.length || imported.skippedOverQuota > 0 ? "warning" : "success"
+              }
+            >
               <BlockStack gap="100">
                 <Text as="p" variant="bodyMd">
                   {k.csvResult
                     .replace("{added}", String(imported.added))
                     .replace("{existing}", String(imported.alreadyInGroup))}
                 </Text>
+                {/* A file larger than the remaining plan quota is imported
+                    PARTIALLY — saying nothing here would read as a complete
+                    import that silently lost rows. */}
+                {imported.skippedOverQuota > 0 && (
+                  <Text as="p" variant="bodyMd">
+                    {k.keywordImportSkippedOverQuota.replace(
+                      "{count}",
+                      String(imported.skippedOverQuota),
+                    )}
+                  </Text>
+                )}
                 {imported.csvErrors.map((e) => (
                   <Text key={`${e.row}:${e.keyword}`} as="p" variant="bodySm">
                     {k.csvErrorRow

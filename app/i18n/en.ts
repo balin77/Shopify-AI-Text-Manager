@@ -2854,6 +2854,7 @@ export const en: Translation = {
       nothingToSubmit: "There is nothing to submit right now.",
       cooldown: "The full catalog was submitted recently. IndexNow asks you not to resubmit unchanged URLs — available again in {minutes} min. Individual changes are still reported independently.",
       quotaExhausted: "This month's IndexNow quota is used up ({used} of {limit} URLs). Changed URLs stay queued and go out at the start of next month — or right away after an upgrade.",
+      submitTruncated: "{count} URLs were not sent because the monthly quota ran out.",
       provisioned: "IndexNow enabled.",
       deprovisioned: "IndexNow disabled.",
       errorGeneric: "Action failed.",

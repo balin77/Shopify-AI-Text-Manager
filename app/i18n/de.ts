@@ -2860,6 +2860,7 @@ export const de = {
       nothingToSubmit: "Es gibt gerade nichts zu senden.",
       cooldown: "Der ganze Katalog wurde vor Kurzem gesendet. IndexNow bittet darum, unveränderte URLs nicht erneut zu melden — in {minutes} Min. wieder möglich. Einzelne Änderungen werden davon unabhängig gemeldet.",
       quotaExhausted: "Das IndexNow-Kontingent dieses Monats ist aufgebraucht ({used} von {limit} URLs). Geänderte URLs bleiben in der Warteschlange und gehen zum Monatswechsel raus — oder sofort nach einem Upgrade.",
+      submitTruncated: "{count} URLs wurden wegen des Monats-Kontingents nicht mehr gesendet.",
       provisioned: "IndexNow aktiviert.",
       deprovisioned: "IndexNow deaktiviert.",
       errorGeneric: "Aktion fehlgeschlagen.",

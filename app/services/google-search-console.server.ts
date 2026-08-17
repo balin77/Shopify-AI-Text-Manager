@@ -658,6 +658,13 @@ export function summarizeInspection(inspectionResult: any): UrlInspectionSummary
 // ── Keyword enrichment ───────────────────────────────────────────────────────
 
 /** Default trailing window for analytics (GSC has 2–3 day latency). */
+/**
+ * How far back Search Console keeps Search-Analytics data (~16 months). Any
+ * window that starts before this returns nothing, so callers that need TWO
+ * consecutive windows (period-over-period deltas) must fit both inside it.
+ */
+export const GSC_RETENTION_DAYS = 480;
+
 export function defaultDateRange(now: Date, days = 28): { startDate: string; endDate: string } {
   const end = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000); // 3d lag
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);

@@ -25,6 +25,14 @@ vi.mock("~/db.server", () => ({
     },
   },
 }));
+// The sweep resolves the shop's display name so computeHeadDrift can strip the
+// theme's title suffix — a missing name would fill the snapshot with phantom
+// head-drift findings.
+vi.mock("~/utils/admin-client.server", () => ({
+  createAdminClientFromShop: async () => ({
+    graphql: async () => ({ json: async () => ({ data: { shop: { name: "Kumiko Store" } } }) }),
+  }),
+}));
 vi.mock("~/services/seo/audit.service", () => ({
   analyzeStore: (shop: any, deps: any) => analyzeStore(shop, deps),
   saveAuditSnapshot: (db: any, shop: any, audit: any, locale: any) =>
@@ -101,6 +109,9 @@ describe("SeoAuditAutoRunService.tick", () => {
     // Primary locale only — the manual run fans out over every published
     // locale, the unattended one must not multiply the cost by locale count.
     expect(analyzeStore.mock.calls[0][1].locale).toBeUndefined();
+    // Head-drift comparison needs the shop name; "" would flag every suffixed
+    // page as drift in the unattended snapshot only.
+    expect(analyzeStore.mock.calls[0][1].shopName).toBe("Kumiko Store");
     expect(saveAuditSnapshot).toHaveBeenCalledWith(
       expect.anything(),
       "a.myshopify.com",

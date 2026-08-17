@@ -200,7 +200,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionResult =
   | { ok: true; kind: "provisioned" | "deprovisioned" }
-  | { ok: true; kind: "submitted"; submitted: number; failed: number; failureKind: SubmitStatusKind | null }
+  | {
+      ok: true;
+      kind: "submitted";
+      submitted: number;
+      failed: number;
+      failureKind: SubmitStatusKind | null;
+      /** URLs left out because the monthly quota ran out mid-catalog. */
+      skippedOverQuota?: number;
+    }
   | { ok: true; kind: "empty" }
   | { ok: true; kind: "cooldown"; retryAfterMinutes: number }
   /** This month's plan submission quota is used up — nothing was sent. */
@@ -301,6 +309,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       submitted: outcome.result.submitted,
       failed: outcome.result.failed,
       failureKind: firstFailureKind(outcome.result),
+      skippedOverQuota: outcome.skippedOverQuota,
     });
   }
   if (actionType === "submitPending") {
@@ -371,6 +380,17 @@ export default function SeoIndexNow() {
             n.submittedPartial.replace("{ok}", String(submitted)).replace("{failed}", String(failed))
             + " "
             + failureText(failureKind),
+        };
+      }
+      const skipped = fetcher.data.skippedOverQuota ?? 0;
+      if (skipped > 0) {
+        // A truncated push must not read as a complete one.
+        return {
+          tone: "warning" as const,
+          text:
+            n.submitted.replace("{count}", String(submitted)) +
+            " " +
+            n.submitTruncated.replace("{count}", String(skipped)),
         };
       }
       return { tone: "success" as const, text: n.submitted.replace("{count}", String(submitted)) };

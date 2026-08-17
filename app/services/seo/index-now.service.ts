@@ -577,15 +577,25 @@ async function recordSubmissions(
 ): Promise<void> {
   if (count <= 0) return;
   const period = currentImageOpPeriod(now);
-  const config = await db.seoIndexNowConfig.findUnique({
-    where: { shop },
-    select: { submitPeriod: true, submitCount: true },
+  // Atomic increment, scoped to rows already in this period: a sweep drain and
+  // a manual submit can overlap, and a read-modify-write would let one of them
+  // overwrite the other's count — under-charging the quota, which is exactly
+  // the direction we must not be wrong in.
+  const bumped = await db.seoIndexNowConfig.updateMany({
+    where: { shop, submitPeriod: period },
+    data: { submitCount: { increment: count } },
   });
-  const base = config?.submitPeriod === period ? config.submitCount : 0;
-  await db.seoIndexNowConfig.updateMany({
-    where: { shop },
-    data: { submitPeriod: period, submitCount: base + count },
-  });
+  if (bumped.count === 0) {
+    // First submission of the month (or the row still carries last month's
+    // period): start a fresh counter. Two racers can both land here; the loser
+    // overwrites with its own count, which can under-count by one batch at a
+    // month boundary — bounded, self-correcting on the next increment, and not
+    // worth a transaction on a config row.
+    await db.seoIndexNowConfig.updateMany({
+      where: { shop },
+      data: { submitPeriod: period, submitCount: count },
+    });
+  }
 }
 
 export async function drainQueue(
@@ -728,7 +738,7 @@ export async function collectStoreUrls(
  * always has something to send even on a brand-new shop.
  */
 export type SubmitAllOutcome =
-  | { status: "submitted"; result: SubmitResult }
+  | { status: "submitted"; result: SubmitResult; skippedOverQuota: number }
   | { status: "disabled" }
   | { status: "cooldown"; retryAfterMs: number }
   /** This month's plan submission quota is used up (or too small for the catalog). */
@@ -781,6 +791,7 @@ export async function submitAll(
   // was left out.
   const quota = await getSubmitQuota(db, shop, now);
   const urls = allUrls.slice(0, quota.remaining);
+  const skippedOverQuota = allUrls.length - urls.length;
   const result = await submitUrls(config.host, config.key, config.keyLocation, urls);
 
   if (result.submitted > 0) {
@@ -794,5 +805,9 @@ export async function submitAll(
     await db.seoIndexNowConfig.updateMany({ where: { shop }, data });
     await recordSubmissions(db, shop, result.submitted, now);
   }
-  return { status: "submitted", result };
+  // Truncated URLs are NOT queued: the queue is for incremental webhook
+  // changes, and refilling it with a whole catalog would make the next drain
+  // resubmit pages nothing happened to. The count is reported so the section
+  // can say what was left out instead of claiming a full push.
+  return { status: "submitted", result, skippedOverQuota };
 }

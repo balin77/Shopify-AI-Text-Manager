@@ -444,6 +444,8 @@ describe("saveAuditSnapshot", () => {
   });
 
   it("prunes down to the newest MAX_SNAPSHOTS_PER_SHOP rows per shop", async () => {
+    // Pro: scoreHistoryDays (30) equals the row floor, so the row cap is the
+    // bound that bites — which is what this case is about.
     const now = Date.now();
     const existing = Array.from({ length: MAX_SNAPSHOTS_PER_SHOP }, (_, i) => ({
       id: `old-${i}`,
@@ -455,13 +457,35 @@ describe("saveAuditSnapshot", () => {
       capped: false,
       payload: "{}",
     }));
-    const { db, rows } = makeSnapshotDb(existing);
+    const { db, rows } = makeSnapshotDb(existing, "pro");
 
     await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
 
     expect(rows).toHaveLength(MAX_SNAPSHOTS_PER_SHOP);
     // The oldest pre-existing row must be the one pruned away.
     expect(rows.find((r) => r.id === "old-0")).toBeUndefined();
+  });
+
+  it("lets Max keep more than the row floor — its 365-day trend needs one point per night", async () => {
+    const now = Date.now();
+    // 40 nightly snapshots, all inside Max's 365-day window.
+    const existing = Array.from({ length: 40 }, (_, i) => ({
+      id: `old-${i}`,
+      shop: "shop.myshopify.com",
+      createdAt: new Date(now - (40 - i) * 24 * 60 * 60 * 1000),
+      averageScore: 50,
+      totalScanned: 1,
+      totalAvailable: 1,
+      capped: false,
+      payload: "{}",
+    }));
+    const { db, rows } = makeSnapshotDb(existing, "max");
+
+    await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
+
+    // 40 kept + the new one. A flat 30-row cap would have thrown away the
+    // oldest 11 and capped the advertised trend at 30 points.
+    expect(rows).toHaveLength(41);
   });
 
   it("does not touch another shop's snapshots when pruning", async () => {

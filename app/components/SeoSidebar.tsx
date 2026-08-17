@@ -741,7 +741,11 @@ export function SeoSidebar({
                             String(MAX_KEYWORDS_PER_ITEM),
                           )
                         : keywordOpError === "planLimit"
-                          ? t.seo?.keywordPlanLimit ||
+                          ? // The Short variant carries no {used}/{limit}
+                            // placeholders — the sidebar has no quota numbers
+                            // to substitute, and printing the raw tokens is
+                            // worse than saying less.
+                            t.seo?.keywordPlanLimitShort ||
                             "Your plan's keyword limit is reached. Upgrade or remove a keyword to add another."
                           : t.seo?.keywordOpError ||
                             "Could not update keywords. Please reload and try again."}

@@ -2855,6 +2855,7 @@ export const es: Translation = {
       nothingToSubmit: "Ahora mismo no hay nada que enviar.",
       cooldown: "El catálogo completo se envió hace poco. IndexNow pide no reenviar URLs sin cambios: disponible de nuevo en {minutes} min. Los cambios individuales se siguen notificando igualmente.",
       quotaExhausted: "La cuota de IndexNow de este mes se ha agotado ({used} de {limit} URLs). Las URLs modificadas siguen en cola y se enviarán al empezar el mes — o de inmediato tras mejorar el plan.",
+      submitTruncated: "{count} URLs no se enviaron porque se agotó la cuota mensual.",
       provisioned: "IndexNow activado.",
       deprovisioned: "IndexNow desactivado.",
       errorGeneric: "La acción falló.",

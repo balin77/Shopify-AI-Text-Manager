@@ -156,12 +156,17 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
     return json({ success: false, error: localeResolution.error }, { status: 400 });
   }
 
+  const planBatchSize = Math.min(MAX_BULK_FIX_ITEMS, getSeoBulkBatchSize(plan));
   const audit = await analyzeStore(session.shop, {
     db,
     seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix, auditSeoLimits),
     seoLimits: auditSeoLimits,
     plan,
     locale: localeResolution.foreignLocale || undefined,
+    // The bucket must be able to HOLD a full batch — its default cap (100) is
+    // sized for the dashboard list and would silently truncate Pro's 500 and
+    // Max's 2500 to 100.
+    maxBucketItems: planBatchSize,
   });
 
   const bucket: AuditProblemBucket | undefined = audit.problems.find((p) => p.code === problemCode);
@@ -171,7 +176,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
   // server-derived bucket is what makes a POSTed GID safe to trust.
   const items = singleItemId
     ? bucketItems.filter((it) => it.id === singleItemId && it.type === singleItemType).slice(0, 1)
-    : bucketItems.slice(0, Math.min(MAX_BULK_FIX_ITEMS, getSeoBulkBatchSize(plan)));
+    : bucketItems.slice(0, planBatchSize);
 
   if (items.length === 0) {
     return json(
