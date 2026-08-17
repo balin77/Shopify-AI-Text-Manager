@@ -89,11 +89,19 @@ const LINK_PAGE_SIZE = 250;
 const LINK_PAGE_CAP = 8;
 /** How many depth-2 items the derived-GID lookup tries. */
 const DERIVED_GID_SAMPLES = 3;
+/** How many sub-level Links the existing-translation scan reads (one call each). */
+const SUB_ITEM_SCAN_LIMIT = 12;
 
 // ── Queries ────────────────────────────────────────────────────────────────
 // No backticks inside these comments: a backtick ends the template literal
 // and the resulting TS1005 points at innocent code (CLAUDE.md, four rounds).
 
+// FOUR levels of items, although Shopify documents three as the maximum. A
+// query that reads exactly as deep as the docs promise cannot tell "there is
+// no fourth level" from "we did not look" — and the whole point of this route
+// is that the depth is where the answer lives. A level that does not exist
+// costs one empty selection; a level that exists and is not read would drop
+// silently out of every count below it.
 const MENUS_QUERY = `#graphql
   query menuProbeMenus($first: Int!) {
     menus(first: $first) {
@@ -107,7 +115,11 @@ const MENUS_QUERY = `#graphql
           items {
             id
             title
-            items { id title }
+            items {
+              id
+              title
+              items { id title }
+            }
           }
         }
       }
@@ -291,6 +303,29 @@ interface WriteProbeReport {
   errors?: string[];
 }
 
+/**
+ * F. What is ALREADY stored on sub-level Links, in the write locale.
+ *
+ * Read-only, and close to as strong as the write test: a child Link that
+ * already carries a foreign value is a resource something has successfully
+ * written to. The first run of this probe found exactly that by accident —
+ * it refused to write because the sampled item already had one — so the
+ * observation is promoted to its own measurement instead of surviving as a
+ * skip reason. It doubles as the write step's target list: only a sample with
+ * no existing value may be written to.
+ */
+interface SubItemTranslationScan {
+  apiVersion: string;
+  locale: string;
+  samples: Array<{
+    linkId: string;
+    title: string;
+    depth: number;
+    existing: string | null;
+    error?: string;
+  }>;
+}
+
 export interface MenuTranslationProbeReport {
   generatedAt: string;
   shop: string;
@@ -298,6 +333,7 @@ export interface MenuTranslationProbeReport {
   primaryLocale: string | null;
   writeLocale: string | null;
   versions: VersionReport[];
+  existingTranslations?: SubItemTranslationScan;
   writeProbe: WriteProbeReport;
   verdict: string[];
 }
@@ -568,7 +604,27 @@ async function measureVersion(run: GqlRunner, apiVersion: string): Promise<Versi
   // Try the derived id on DEPTH-2 items regardless of the alignment count:
   // a failed derivation that was never attempted is not a measurement, and
   // when alignment holds this is the exact id an implementation would use.
-  const deepItems = allItems.filter((i) => i.depth >= 2).slice(0, DERIVED_GID_SAMPLES);
+  // One probe per DEPTH first, then fill up to the sample budget. Taking the
+  // first N items instead made the coverage an accident of menu order: on the
+  // measured shop that happened to land one depth-2 and two depth-3 items, but
+  // a shop whose first sub-items are all depth-2 would have left depth 3
+  // unprobed while the report still read as a full answer. Every nesting level
+  // that exists gets an id-based lookup, even if that exceeds the budget —
+  // "and what about one level deeper" must never need a second run.
+  const deepItems = (() => {
+    const deep = allItems.filter((i) => i.depth >= 2);
+    const depths = [...new Set(deep.map((i) => i.depth))].sort((a, b) => a - b);
+    const picked: MenuItemRef[] = [];
+    for (const depth of depths) {
+      const first = deep.find((i) => i.depth === depth);
+      if (first) picked.push(first);
+    }
+    for (const item of deep) {
+      if (picked.length >= Math.max(DERIVED_GID_SAMPLES, depths.length)) break;
+      if (!picked.includes(item)) picked.push(item);
+    }
+    return picked;
+  })();
   for (const item of deepItems) {
     const numeric = gidNumeric(item.menuItemId);
     const derivedLinkId = numeric ? `gid://shopify/Link/${numeric}` : "";
@@ -611,6 +667,54 @@ async function measureVersion(run: GqlRunner, apiVersion: string): Promise<Versi
  * diagnostic must never overwrite merchant content, and restoring it
  * afterwards would be a second thing that can fail.
  */
+interface SubItemCandidate {
+  linkId: string;
+  title: string;
+  depth: number;
+}
+
+/**
+ * Every depth>=2 Link this version could name, from both paths that can name
+ * one: the derived-GID probes (id-based, no title matching) first, then the
+ * sweep's unique title hits. Deduped by GID — the two paths overlap by design.
+ */
+function collectSubItemCandidates(version: VersionReport): SubItemCandidate[] {
+  const byId = new Map<string, SubItemCandidate>();
+  for (const probe of version.derivation.probes) {
+    if (probe.resolved && probe.valueMatchesTitle && probe.derivedLinkId) {
+      byId.set(probe.derivedLinkId, { linkId: probe.derivedLinkId, title: probe.title, depth: probe.depth });
+    }
+  }
+  for (const hit of version.sweep.deepHits) {
+    if (!byId.has(hit.linkId)) {
+      byId.set(hit.linkId, { linkId: hit.linkId, title: hit.title, depth: hit.depth });
+    }
+  }
+  return [...byId.values()].slice(0, SUB_ITEM_SCAN_LIMIT);
+}
+
+/** F. Read-only: what each candidate already holds in the write locale. */
+async function scanSubItemTranslations(
+  run: GqlRunner,
+  apiVersion: string,
+  locale: string,
+  candidates: SubItemCandidate[],
+): Promise<SubItemTranslationScan> {
+  const scan: SubItemTranslationScan = { apiVersion, locale, samples: [] };
+  for (const candidate of candidates) {
+    const result = await run(SINGLE_LINK_QUERY, { resourceId: candidate.linkId, locale });
+    if (result.errors?.length) {
+      scan.samples.push({ ...candidate, existing: null, error: result.errors.map((e) => e.message).join(" | ") });
+      continue;
+    }
+    const translations = ((result.data as {
+      translatableResource?: { translations?: Array<{ key: string; value: string | null }> };
+    })?.translatableResource?.translations) ?? [];
+    scan.samples.push({ ...candidate, existing: translations.find((t) => t.key === "title")?.value ?? null });
+  }
+  return scan;
+}
+
 async function probeWrite(
   run: GqlRunner,
   apiVersion: string,
@@ -831,6 +935,27 @@ function buildVerdict(report: MenuTranslationProbeReport): string[] {
     lines.push(`[${version.apiVersion}] not measured: ${version.fatalError}`);
   }
 
+  // F. Read-only, and nearly as decisive as the write: a value that is ALREADY
+  // stored on a child Link is proof that something wrote one successfully.
+  const scan = report.existingTranslations;
+  if (scan) {
+    const withValue = scan.samples.filter((s) => s.existing !== null);
+    const readable = scan.samples.filter((s) => !s.error).length;
+    if (withValue.length > 0) {
+      const example = withValue[0];
+      lines.push(
+        `ALREADY TRANSLATED: ${withValue.length} of ${readable} sampled sub-level Links carry a "${scan.locale}" value ` +
+          `(e.g. d${example.depth} "${example.title}" → "${example.existing}"). These resources do not merely READ — ` +
+          "they hold stored translations, so the write path exists and something has already used it.",
+      );
+    } else if (readable > 0) {
+      lines.push(
+        `ALREADY TRANSLATED: none of the ${readable} sampled sub-level Links carry a "${scan.locale}" value yet — ` +
+          "an empty slot, not a refusal. Only the write test can tell those two apart.",
+      );
+    }
+  }
+
   if (report.writeProbe.attempted) {
     if (report.writeProbe.result === "confirmed") {
       lines.push(
@@ -931,40 +1056,55 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  // ── E. Optional write, on the newest version that produced a target ──────
+  // ── F. What sub-level Links already hold, and E. the optional write ──────
+  //
+  // Newest version first — SORTED, not reversed. The list is
+  // [pinned, ...compare] deduped, so with the pin already at the newest
+  // version reversing would hand the scan to the OLDEST one. YYYY-MM sorts
+  // correctly as a string.
+  const newestFirst = [...report.versions].sort((a, b) => b.apiVersion.localeCompare(a.apiVersion));
+  const scanVersion = newestFirst.find((v) => !v.fatalError && collectSubItemCandidates(v).length > 0);
+
+  if (report.writeLocale && scanVersion) {
+    report.existingTranslations = await scanSubItemTranslations(
+      rawRunner(session.shop, accessToken, scanVersion.apiVersion),
+      scanVersion.apiVersion,
+      report.writeLocale,
+      collectSubItemCandidates(scanVersion),
+    );
+  }
+
   if (wantsWriteTest) {
     if (!report.writeLocale) {
       report.writeProbe = {
         attempted: false,
         skipReason: "This shop has no published non-primary language — there is nothing to translate INTO.",
       };
+    } else if (!report.existingTranslations) {
+      report.writeProbe = {
+        attempted: false,
+        skipReason: "No sub-level Link resource was found to write to, so there is nothing to test the write against.",
+      };
     } else {
-      // Prefer a target proven by the derived GID (no title matching involved),
-      // fall back to a unique sweep hit. Later versions first: if they differ,
-      // the newer behaviour is the one worth measuring the write against.
-      let chosen: { apiVersion: string; linkId: string; title: string; depth: number } | null = null;
-      // Newest first — SORTED, not reversed. The list is [pinned, ...compare]
-      // deduped, so with the pin already at the newest version reversing would
-      // hand the write to the OLDEST one. YYYY-MM sorts correctly as a string.
-      const newestFirst = [...report.versions].sort((a, b) => b.apiVersion.localeCompare(a.apiVersion));
-      for (const version of newestFirst) {
-        if (version.fatalError) continue;
-        const derived = version.derivation.probes.find((p) => p.resolved && p.valueMatchesTitle);
-        if (derived) {
-          chosen = { apiVersion: version.apiVersion, linkId: derived.derivedLinkId, title: derived.title, depth: derived.depth };
-          break;
-        }
-        const hit = version.sweep.deepHits[0];
-        if (hit) {
-          chosen = { apiVersion: version.apiVersion, linkId: hit.linkId, title: hit.title, depth: hit.depth };
-          break;
-        }
-      }
-      report.writeProbe = chosen
-        ? await probeWrite(rawRunner(session.shop, accessToken, chosen.apiVersion), chosen.apiVersion, chosen, report.writeLocale)
+      // The first candidate is the wrong target whenever it already carries a
+      // translation — which is what the first run of this probe hit, ending in
+      // a skip that measured nothing. So the whole scanned set is searched for
+      // a FREE slot, and only an all-occupied set is reported as a skip.
+      const free = report.existingTranslations.samples.find((s) => !s.error && s.existing === null);
+      const occupied = report.existingTranslations.samples.filter((s) => s.existing !== null).length;
+      report.writeProbe = free
+        ? await probeWrite(
+            rawRunner(session.shop, accessToken, report.existingTranslations.apiVersion),
+            report.existingTranslations.apiVersion,
+            { linkId: free.linkId, title: free.title, depth: free.depth },
+            report.writeLocale,
+          )
         : {
             attempted: false,
-            skipReason: "No sub-level Link resource was found to write to, so there is nothing to test the write against.",
+            skipReason:
+              `All ${report.existingTranslations.samples.length} scanned sub-items already carry a "${report.writeLocale}" translation ` +
+              `(${occupied} of them), so there is no free slot to write into without overwriting merchant content. ` +
+              "That every one of them is already translated is itself the answer the write test was meant to give.",
           };
     }
   }
