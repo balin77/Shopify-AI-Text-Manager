@@ -274,6 +274,26 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${productCollectionsDeleted.count} product-collection memberships`);
 
+    // PLAN_CONTENT_CREATION Phase 4 — the commerce tables. Same reasoning as
+    // ProductCollection above: they cascade through Product / ProductVariant,
+    // and are deleted explicitly anyway because they are shop-scoped in their
+    // own right and a purge that leans on the FK misses rows whose parent was
+    // already gone. InventoryLevel first — it references Location.
+    const inventoryLevelsDeleted = await tx.inventoryLevel.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${inventoryLevelsDeleted.count} inventory levels`);
+
+    const publicationsDeleted = await tx.productPublication.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${publicationsDeleted.count} product publications`);
+
+    const locationsDeleted = await tx.location.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${locationsDeleted.count} locations`);
+
     const productsDeleted = await tx.product.deleteMany({
       where: { shop: shop_domain },
     });

@@ -16,7 +16,20 @@
  *   ProductVariant.price/compareAtPrice goes through it.
  * - A missing `variants` block (query error, partial response) syncs NOTHING
  *   and deletes NOTHING — never wipe cached rows on uncertainty.
+ * - PLAN_CONTENT_CREATION Phase 4: the COMMERCE block (cost, tax, shipping,
+ *   stock) follows the same rule one level down. `variantCommerceColumns`
+ *   returns `{}` for a response that did not carry it, so a narrower query
+ *   cannot overwrite what a full sync established — and cannot stamp
+ *   `commerceSyncedAt`, which every reader takes as "this is real data".
+ *   Inventory levels are rebuilt per variant only when the block WAS
+ *   delivered; `null` from `inventoryLevelRows` means skip, never wipe.
  */
+
+import {
+  inventoryLevelRows,
+  variantCommerceColumns,
+  type ShopifyVariantCommerce,
+} from "./commerce-sync.shared";
 
 /** Variant node shape of the sync queries (getProductsBulk / getProduct). */
 export interface ShopifySyncVariant {
@@ -30,6 +43,10 @@ export interface ShopifySyncVariant {
   position: number;
   barcode: string | null;
   image?: { url: string } | null;
+  /** PLAN Phase 4 — present only when the query selected the commerce block. */
+  taxable?: boolean | null;
+  inventoryPolicy?: string | null;
+  inventoryItem?: ShopifyVariantCommerce["inventoryItem"];
 }
 
 /**
@@ -59,6 +76,17 @@ export interface VariantSyncTx {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     deleteMany(args: any): Promise<unknown>;
   };
+  /** PLAN Phase 4 — absent on callers that do not sync the commerce block. */
+  location?: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    upsert(args: any): Promise<unknown>;
+  };
+  inventoryLevel?: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    deleteMany(args: any): Promise<unknown>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    createMany(args: any): Promise<unknown>;
+  };
 }
 
 /**
@@ -81,6 +109,9 @@ export async function syncProductVariantRows(
   productId: string,
   variants: ShopifySyncVariant[] | null | undefined,
   hasNextPage: boolean = false,
+  /** PLAN Phase 4 — required to write the shop-scoped stock rows. Omitted by
+   *  callers whose query does not select the commerce block. */
+  shop?: string,
 ): Promise<void> {
   if (!variants) return;
 
@@ -89,6 +120,9 @@ export async function syncProductVariantRows(
     if (!variant?.id) continue;
     keptGids.push(variant.id);
     const numericId = variant.id.replace("gid://shopify/ProductVariant/", "");
+    // `{}` when the query did not select the block — so this spread adds
+    // nothing and the existing columns (and `commerceSyncedAt`) survive.
+    const commerce = variantCommerceColumns(variant as ShopifyVariantCommerce);
     const shared = {
       title: variant.title,
       sku: variant.sku ?? null,
@@ -96,6 +130,7 @@ export async function syncProductVariantRows(
       price: moneyToDecimalString(variant.price),
       compareAtPrice: moneyToDecimalString(variant.compareAtPrice),
       barcode: variant.barcode ?? null,
+      ...commerce,
     };
     await tx.productVariant.upsert({
       where: { shopifyGid: variant.id },
@@ -110,6 +145,35 @@ export async function syncProductVariantRows(
       // manager data must survive every sync (§5.1/§10.3).
       update: { productId, ...shared },
     });
+
+    // ── PLAN Phase 4 — stock per location ────────────────────────────────
+    // Only when the block was delivered AND the caller gave us a shop to
+    // scope the rows by. `null` from the mapper is "not delivered": skipping
+    // keeps the cached snapshot, wiping would report stock that vanished.
+    if (!shop || !tx.location || !tx.inventoryLevel) continue;
+    const levels = inventoryLevelRows(shop, numericId, variant as ShopifyVariantCommerce);
+    if (!levels) continue;
+
+    // Locations first: the levels reference them, and the FK would reject a
+    // row whose location is not there yet.
+    for (const location of levels.locations) {
+      await tx.location.upsert({
+        where: { shop_id: { shop, id: location.id } },
+        create: location,
+        // `syncedAt` refreshes through @default only on create, so it is set
+        // explicitly — a location list that never ages cannot be told from a
+        // fresh one.
+        update: { name: location.name, isActive: location.isActive, position: location.position, syncedAt: new Date() },
+      });
+    }
+
+    // Delete-then-create, exactly like the membership rows: the response IS
+    // the complete window for this variant (truncation is reported through
+    // `hasMore`), so a diff against it would only reintroduce drift.
+    await tx.inventoryLevel.deleteMany({ where: { variantId: numericId } });
+    if (levels.rows.length > 0) {
+      await tx.inventoryLevel.createMany({ data: levels.rows, skipDuplicates: true });
+    }
   }
 
   // Targeted removal of vanished variants only. An empty keptGids list means

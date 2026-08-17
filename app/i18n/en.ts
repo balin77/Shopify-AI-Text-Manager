@@ -357,6 +357,7 @@ export const en: Translation = {
     selectItem: "Select item",
     // Field labels
     fieldLabels: {
+      commerce: "Stock and sales channels",
       category: "Product category",
       collections: "Collections",
       productTitle: "Product Title",
@@ -496,6 +497,47 @@ export const en: Translation = {
     // app ships in three languages.
     attributeWarnings: {
       collectionsAutomatedKept: "A rule-based collection was kept — its own rules decide who belongs to it. Everything else was saved.",
+    },
+    // PLAN Phase 4 — stock and sales channels. Saved on their own, because a
+    // volatile number carried in the editor's value map would be stale by the
+    // time the merchant pressed save.
+    commerce: {
+      loading: "Loading",
+      loadFailed: "Stock and channels could not be loaded.",
+      saveFailed: "The change could not be saved.",
+      retry: "Try again",
+      reload: "Reload",
+      save: "Save stock and channels",
+      separateSaveHint: "Stock and channels are saved separately from the text — they are not part of the content save.",
+      planRequired: "Stock and sales channels are part of the Pro plan.",
+      foreignLocale: "Stock and sales channels exist once per product, not per language.",
+      channelsHeading: "Sales channels",
+      noChannel: "On no channel — invisible",
+      noChannels: "This shop has no sales channels installed.",
+      channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
+      scheduled: "Scheduled for {date}",
+      stockHeading: "Stock",
+      variantsTruncated: "This product has more variants than were loaded. Edit the rest in the Shopify admin.",
+      stockUnknown: "Not loaded yet — reload to see this variant's stock.",
+      stockUntracked: "Stock is not tracked for this variant — it can be sold without limit.",
+      stockNoItem: "This variant has no inventory record, so its stock cannot be edited here.",
+      levelsTruncated: "This variant has stock at more locations than were loaded.",
+      noLevels: "No location holds stock of this variant.",
+      locationInactive: "inactive",
+      onHand: "On hand",
+      availableLabel: "available: {n}",
+    },
+    // Codes from the stock and channel write paths. A quantity is money, so
+    // "not confirmed" is a distinct answer from "failed": only one of them
+    // means the merchant should look again before retrying.
+    commerceWarnings: {
+      stockChangedMeanwhile: "The stock changed while you were editing, so nothing was written. Reload to see the current number.",
+      stockNotConfirmed: "Shopify did not confirm the new stock, so it was not saved locally either. Reload to see what it holds.",
+      stockFailed: "The stock could not be saved.",
+      stockUntracked: "This variant does not track stock, so no quantity was written.",
+      stockNoInventoryItem: "This variant has no inventory record, so its stock could not be written.",
+      channelsNotConfirmed: "Shopify did not confirm every channel change. Reload to see which ones landed.",
+      channelsFailed: "The sales channels could not be changed.",
     },
     priceWarnings: {
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
@@ -644,6 +686,18 @@ export const en: Translation = {
       IS_NOT_SET: "is not set",
       INCLUDES: "includes",
     },
+  },
+
+  // PLAN Phase 4, step 6 — why the app now asks for stock and channel access.
+  // A scope change puts every installed merchant through Shopify's re-consent
+  // dialog, which lists permissions and explains nothing.
+  commerceNotice: {
+    title: "ContentPilot now asks to see stock and sales channels",
+    intro: "So you can manage a product completely here instead of switching to the Shopify admin, the app needs three more permissions:",
+    inventory: "Inventory — to show stock per location and let you correct it.",
+    locations: "Locations — stock is always per location, so the names have to come from somewhere.",
+    publications: "Sales channels — an active product published to no channel is invisible, and nothing tells you today.",
+    reassurance: "The app never changes stock on its own. It only writes what you enter, and only after Shopify confirms the new number.",
   },
 
   // Direct translations content type

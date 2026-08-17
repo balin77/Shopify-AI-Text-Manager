@@ -354,6 +354,7 @@ export const de = {
     selectItem: "Eintrag auswählen",
     // Field labels
     fieldLabels: {
+      commerce: "Bestand und Vertriebskanäle",
       category: "Produktkategorie",
       collections: "Kategorien",
       productTitle: "Produkttitel",
@@ -493,6 +494,47 @@ export const de = {
     // App in drei Sprachen ausgeliefert wird.
     attributeWarnings: {
       collectionsAutomatedKept: "Eine regelbasierte Kategorie wurde beibehalten — ihre eigenen Regeln entscheiden, wer dazugehört. Alles andere wurde gespeichert.",
+    },
+    // PLAN Phase 4 — Bestand und Vertriebskanäle. Werden separat gespeichert,
+    // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
+    // längst veraltet wäre.
+    commerce: {
+      loading: "Wird geladen",
+      loadFailed: "Bestand und Kanäle konnten nicht geladen werden.",
+      saveFailed: "Die Änderung konnte nicht gespeichert werden.",
+      retry: "Nochmal versuchen",
+      reload: "Neu laden",
+      save: "Bestand und Kanäle speichern",
+      separateSaveHint: "Bestand und Kanäle werden getrennt vom Text gespeichert — sie sind nicht Teil des Inhalts-Speicherns.",
+      planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
+      foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
+      channelsHeading: "Vertriebskanäle",
+      noChannel: "Auf keinem Kanal — unsichtbar",
+      noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
+      channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
+      scheduled: "Geplant für {date}",
+      stockHeading: "Bestand",
+      variantsTruncated: "Dieses Produkt hat mehr Varianten, als geladen wurden. Den Rest bearbeitest du im Shopify-Admin.",
+      stockUnknown: "Noch nicht geladen — lade neu, um den Bestand dieser Variante zu sehen.",
+      stockUntracked: "Für diese Variante wird kein Bestand geführt — sie kann unbegrenzt verkauft werden.",
+      stockNoItem: "Diese Variante hat keinen Bestandsdatensatz, ihr Bestand lässt sich hier nicht bearbeiten.",
+      levelsTruncated: "Diese Variante hat Bestand an mehr Lagerorten, als geladen wurden.",
+      noLevels: "Kein Lagerort führt Bestand dieser Variante.",
+      locationInactive: "inaktiv",
+      onHand: "Vorhanden",
+      availableLabel: "verfügbar: {n}",
+    },
+    // Codes aus den Schreibpfaden für Bestand und Kanäle. Eine Menge ist Geld,
+    // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
+    // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
+    commerceWarnings: {
+      stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",
+      stockNotConfirmed: "Shopify hat den neuen Bestand nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Lade neu, um zu sehen, was dort steht.",
+      stockFailed: "Der Bestand konnte nicht gespeichert werden.",
+      stockUntracked: "Diese Variante führt keinen Bestand, es wurde keine Menge geschrieben.",
+      stockNoInventoryItem: "Diese Variante hat keinen Bestandsdatensatz, ihr Bestand konnte nicht geschrieben werden.",
+      channelsNotConfirmed: "Shopify hat nicht jede Kanaländerung bestätigt. Lade neu, um zu sehen, welche angekommen sind.",
+      channelsFailed: "Die Vertriebskanäle konnten nicht geändert werden.",
     },
     priceWarnings: {
       priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
@@ -641,6 +683,18 @@ export const de = {
       INCLUDES: "enthält",
     },
   },
+  // PLAN Phase 4, Schritt 6 — warum die App jetzt Bestand und Kanäle sehen will.
+  // Eine Scope-Änderung schickt jeden installierten Merchant durch Shopifys
+  // Re-Consent-Dialog, der Berechtigungen auflistet und nichts erklärt.
+  commerceNotice: {
+    title: "ContentPilot möchte jetzt Bestand und Vertriebskanäle sehen",
+    intro: "Damit du ein Produkt vollständig hier verwalten kannst statt im Shopify-Admin, braucht die App drei zusätzliche Berechtigungen:",
+    inventory: "Bestand — um den Lagerbestand pro Lagerort zu zeigen und dich korrigieren zu lassen.",
+    locations: "Lagerorte — Bestand ist immer pro Lagerort, die Namen müssen also irgendwoher kommen.",
+    publications: "Vertriebskanäle — ein aktives Produkt ohne Kanal ist unsichtbar, und heute sagt dir das niemand.",
+    reassurance: "Die App ändert nie von sich aus den Bestand. Sie schreibt nur, was du eingibst — und erst, wenn Shopify die neue Zahl bestätigt hat.",
+  },
+
   directTranslations: {
     title: "Direktübersetzungen",
     resourceSingular: "Direktübersetzung",

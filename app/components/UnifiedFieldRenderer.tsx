@@ -14,6 +14,7 @@ import { AttributeField } from "./unified/AttributeField";
 import { CollectionRulesField } from "./unified/CollectionRulesField";
 import { TaxonomyField } from "./unified/TaxonomyField";
 import { CollectionsField } from "./unified/CollectionsField";
+import { CommerceField } from "./unified/CommerceField";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
@@ -369,6 +370,24 @@ export function UnifiedFieldRenderer(
           // locale — greying every box with no reason is the "DISABLE +
           // tooltip, don't hide" rule half-applied.
           ...(isPrimaryLocale ? {} : { foreignLocale: t.content?.attributesForeignLocale }),
+        }}
+      />
+    );
+  }
+
+  // ── PLAN Phase 4 — stock and sales channels ──────────────────────────────
+  // Deliberately NOT wired to `value`/`onChange`: it loads live and saves
+  // through its own endpoint, because a stock number carried in the editor's
+  // flat value map would be stale by the time the merchant pressed save.
+  if (field.type === "commerce") {
+    return (
+      <CommerceField
+        productId={String(selectedItem?.id ?? "")}
+        label={translatedFieldLabel}
+        isPrimaryLocale={isPrimaryLocale}
+        t={{
+          ...((t.content?.commerce ?? {}) as Record<string, string>),
+          warnings: (t.content?.commerceWarnings ?? {}) as Record<string, string>,
         }}
       />
     );

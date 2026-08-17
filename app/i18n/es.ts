@@ -356,6 +356,7 @@ export const es: Translation = {
     selectItem: "Seleccionar elemento",
     // Field labels
     fieldLabels: {
+      commerce: "Inventario y canales de venta",
       category: "Categoría de producto",
       collections: "Colecciones",
       productTitle: "Título del producto",
@@ -492,6 +493,47 @@ export const es: Translation = {
     // la app se distribuye en tres idiomas.
     attributeWarnings: {
       collectionsAutomatedKept: "Se mantuvo una colección basada en reglas: sus propias reglas deciden quién pertenece a ella. Todo lo demás se guardó.",
+    },
+    // PLAN Phase 4 — inventario y canales de venta. Se guardan aparte, porque
+    // un número volátil dentro del mapa de valores del editor estaría obsoleto
+    // para cuando el comerciante pulsara guardar.
+    commerce: {
+      loading: "Cargando",
+      loadFailed: "No se pudieron cargar el inventario y los canales.",
+      saveFailed: "No se pudo guardar el cambio.",
+      retry: "Reintentar",
+      reload: "Recargar",
+      save: "Guardar inventario y canales",
+      separateSaveHint: "El inventario y los canales se guardan aparte del texto: no forman parte del guardado de contenido.",
+      planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
+      foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
+      channelsHeading: "Canales de venta",
+      noChannel: "En ningún canal: invisible",
+      noChannels: "Esta tienda no tiene canales de venta instalados.",
+      channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
+      scheduled: "Programado para el {date}",
+      stockHeading: "Inventario",
+      variantsTruncated: "Este producto tiene más variantes de las que se cargaron. Edita el resto en el admin de Shopify.",
+      stockUnknown: "Aún no se ha cargado: recarga para ver el inventario de esta variante.",
+      stockUntracked: "Esta variante no lleva control de inventario: se puede vender sin límite.",
+      stockNoItem: "Esta variante no tiene registro de inventario, así que su stock no se puede editar aquí.",
+      levelsTruncated: "Esta variante tiene inventario en más ubicaciones de las que se cargaron.",
+      noLevels: "Ninguna ubicación tiene inventario de esta variante.",
+      locationInactive: "inactiva",
+      onHand: "Disponible físicamente",
+      availableLabel: "disponible: {n}",
+    },
+    // Códigos de los caminos de escritura de inventario y canales. Una cantidad
+    // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
+    // solo una de las dos merece una comprobación antes de reintentar.
+    commerceWarnings: {
+      stockChangedMeanwhile: "El inventario cambió mientras editabas, así que no se escribió nada. Recarga para ver la cifra actual.",
+      stockNotConfirmed: "Shopify no confirmó el nuevo inventario, así que tampoco se guardó localmente. Recarga para ver lo que tiene.",
+      stockFailed: "No se pudo guardar el inventario.",
+      stockUntracked: "Esta variante no lleva control de inventario, así que no se escribió ninguna cantidad.",
+      stockNoInventoryItem: "Esta variante no tiene registro de inventario, así que no se pudo escribir su stock.",
+      channelsNotConfirmed: "Shopify no confirmó todos los cambios de canal. Recarga para ver cuáles se aplicaron.",
+      channelsFailed: "No se pudieron cambiar los canales de venta.",
     },
     priceWarnings: {
       priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. Todo lo demás se guardó.",
@@ -641,6 +683,18 @@ export const es: Translation = {
   },
 
   // Direct translations content type
+  // PLAN Phase 4, paso 6 — por qué la app ahora pide ver inventario y canales.
+  // Un cambio de permisos hace pasar a cada comerciante instalado por el
+  // diálogo de reconsentimiento de Shopify, que los enumera y no explica nada.
+  commerceNotice: {
+    title: "ContentPilot ahora pide ver el inventario y los canales de venta",
+    intro: "Para que puedas gestionar un producto por completo aquí en vez de ir al admin de Shopify, la app necesita tres permisos más:",
+    inventory: "Inventario — para mostrar el stock por ubicación y dejarte corregirlo.",
+    locations: "Ubicaciones — el stock siempre es por ubicación, así que los nombres tienen que venir de algún sitio.",
+    publications: "Canales de venta — un producto activo sin ningún canal es invisible, y hoy nadie te lo dice.",
+    reassurance: "La app nunca cambia el inventario por su cuenta. Solo escribe lo que tú introduces, y únicamente después de que Shopify confirme la nueva cifra.",
+  },
+
   directTranslations: {
     title: "Traducciones directas",
     resourceSingular: "Traducción directa",

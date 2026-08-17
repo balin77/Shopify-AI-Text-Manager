@@ -188,6 +188,15 @@ model AISettings {
   // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
   seoFreshnessDismissed Json?
 
+  /// PLAN_CONTENT_CREATION Phase 4 — when the merchant dismissed the notice
+  /// explaining WHY the app now asks to see stock and sales channels.
+  ///
+  /// A scope change forces every installed merchant to re-consent, and a
+  /// permission dialog that arrives with no explanation is what makes people
+  /// decline. Stored as a TIMESTAMP rather than a boolean so a future notice
+  /// can be told apart from this one without a second column.
+  commerceNoticeDismissedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -454,20 +463,20 @@ model Product {
   // `attributesSyncedAt` is the discriminator and the ONLY thing that tells
   // them apart: null ⇒ every column in this block is UNKNOWN, not "missing".
   // The attribute sidebar (§Phase 2) must gate on it before it shows a red dot.
-  vendor         String?
+  vendor             String?
   // Shopify product tags, verbatim and in Shopify's order. A scalar list can
   // never be null in Prisma, so [] alone says nothing — read it together with
   // `attributesSyncedAt`. The explicit @default([]) is what the migration's
   // `DEFAULT ARRAY[]::TEXT[]` needs to be declared as, or `migrate diff` reports
   // permanent drift against every deployed database.
-  tags           String[] @default([])
+  tags               String[]  @default([])
   // Shopify's product taxonomy. `categoryName` mirrors `fullName`
   // ("Apparel & Accessories > Clothing"), so the UI can label the category
   // without a second lookup.
-  categoryId     String?
-  categoryName   String?
-  templateSuffix String?
-  publishedAt    DateTime?
+  categoryId         String?
+  categoryName       String?
+  templateSuffix     String?
+  publishedAt        DateTime?
   // Collection membership window of the sync: true when the product belongs to
   // MORE collections than `collections(first: N)` fetched. Same reason as
   // hasMoreVariants — "N memberships" must not read as complete when it is a
@@ -481,11 +490,12 @@ model Product {
 
   // Relations
   // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
-  images      ProductImage[]
-  options     ProductOption[]
-  metafields  ProductMetafield[]
-  variants    ProductVariant[]
-  collections ProductCollection[]
+  images       ProductImage[]
+  options      ProductOption[]
+  metafields   ProductMetafield[]
+  variants     ProductVariant[]
+  collections  ProductCollection[]
+  publications ProductPublication[]
 
   @@unique([shop, id])
   @@index([shop])
@@ -623,7 +633,125 @@ model ProductVariant {
   compareAtPrice Decimal? @db.Decimal(12, 2)
   barcode        String?
 
+  // ── PLAN_CONTENT_CREATION Phase 4 — the commerce block ────────────────────
+  //
+  // `inventoryItemId` is the KEY to all of it: quantities, cost and the
+  // shipping fields live on InventoryItem, not on the variant, and every write
+  // below addresses that GID. A variant without one cannot have its stock
+  // edited — which is a fact to SHOW, not to guess around.
+  inventoryItemId      String?
+  // Cost per item (`InventoryItem.unitCost`). Decimal for the same reason
+  // `price` is: money as Float is a rounding error waiting to happen.
+  cost                 Decimal?  @db.Decimal(12, 2)
+  // These four are `InventoryItem` fields, not variant fields. Nullable
+  // because "not fetched" and "the merchant left it empty" must stay
+  // distinguishable — `commerceSyncedAt` is the discriminator.
+  taxable              Boolean?
+  requiresShipping     Boolean?
+  weight               Decimal?  @db.Decimal(12, 3)
+  weightUnit           String?
+  harmonizedSystemCode String?
+  countryCodeOfOrigin  String?
+  // `tracked` on InventoryItem; `inventoryPolicy` on the variant. Together
+  // they decide whether a quantity means anything at all — an untracked
+  // variant has no stock to show, and showing 0 for one is a lie.
+  inventoryTracked     Boolean?
+  inventoryPolicy      String?
+  /// THE discriminator for the block above (same rule as
+  /// `Product.attributesSyncedAt`): unset ⇒ every field in it is UNKNOWN, not
+  /// "empty". Without it a variant row written by an older sync would report
+  /// cost 0, untaxed and untracked — confident and wrong.
+  commerceSyncedAt     DateTime?
+
+  inventoryLevels InventoryLevel[]
+
   @@index([productId])
+}
+
+/// A location that can hold stock (PLAN_CONTENT_CREATION Phase 4).
+///
+/// Cached for LABELS and ordering only. Stock itself is volatile and the truth
+/// is always Shopify's — this table exists so the inventory UI can say
+/// "Warehouse Berlin" instead of a GID, and so the location list survives a
+/// throttled lookup.
+model Location {
+  id       String  @id // gid://shopify/Location/...
+  shop     String
+  name     String
+  /// A deactivated location keeps its stock but accepts no writes. Shown
+  /// greyed rather than hidden: its quantity is still part of the total, and a
+  /// location that silently vanishes reads as stock that disappeared.
+  isActive Boolean @default(true)
+  /// Shopify's own primary/fulfilment ordering, mirrored so the UI does not
+  /// have to invent one.
+  position Int     @default(0)
+
+  syncedAt DateTime @default(now())
+
+  levels InventoryLevel[]
+
+  @@unique([shop, id])
+  @@index([shop])
+}
+
+/// On-hand and available stock of ONE variant at ONE location.
+///
+/// ── This cache is a DISPLAY, never a base for arithmetic ────────────────────
+/// Stock changes from orders, returns and other apps between two page loads.
+/// Computing `new = cached + delta` and writing that back is the classic
+/// source of inventory drift, and it is why the write path uses
+/// `inventorySetQuantities` with an ABSOLUTE value and a compareQuantity —
+/// never a delta over anything stored here.
+model InventoryLevel {
+  id              String         @id @default(cuid())
+  shop            String
+  /// gid://shopify/InventoryItem/... — the address every write uses.
+  inventoryItemId String
+  variantId       String
+  variant         ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId      String
+  location        Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  /// Physically present. The number a merchant counts in the room.
+  onHand    Int?
+  /// On hand minus what is committed to unfulfilled orders. The number a
+  /// storefront sells against. Both nullable: an untracked item reports
+  /// neither, and 0 would be a different claim.
+  available Int?
+
+  syncedAt DateTime @default(now())
+
+  @@unique([variantId, locationId])
+  @@index([shop])
+  @@index([inventoryItemId])
+}
+
+/// A sales channel a product is published to (PLAN_CONTENT_CREATION Phase 4).
+///
+/// §2.3's trap made concrete: `status: ACTIVE` is NOT visibility. A product
+/// that is active but published to no channel is invisible everywhere, and
+/// nothing in the Shopify admin says so on the product page either. This table
+/// is what lets the editor say it.
+model ProductPublication {
+  id        String  @id @default(cuid())
+  shop      String
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// gid://shopify/Publication/...
+  publicationId   String
+  /// Mirrored so a publication the shop later loses still renders as a name.
+  publicationName String
+  /// Published AND its publish date has passed. A future date is `false` with
+  /// `publishDate` set — "scheduled" is not "live", and collapsing the two
+  /// makes a scheduled launch look like a mistake.
+  isPublished     Boolean   @default(false)
+  publishDate     DateTime?
+
+  syncedAt DateTime @default(now())
+
+  @@unique([productId, publicationId])
+  @@index([shop])
 }
 
 model OptionValueMemory {
@@ -766,7 +894,7 @@ model Article {
   // `author` is the one field here that is not merely a gap: ArticleCreateInput
   // requires it, so article creation is impossible without it (§1.4).
   author         String?
-  tags           String[] @default([]) // see Product.tags for why the default is explicit
+  tags           String[]  @default([]) // see Product.tags for why the default is explicit
   templateSuffix String?
   isPublished    Boolean   @default(true)
   publishedAt    DateTime?
@@ -1332,17 +1460,17 @@ model GoogleSearchConsoleConnection {
 // design (it is served at keyLocation for verification), so it is intentionally
 // stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
 model SeoIndexNowConfig {
-  shop        String @id
-  key         String // public IndexNow token (plaintext by design)
+  shop             String    @id
+  key              String // public IndexNow token (plaintext by design)
   // URL where the key file is served: `https://<host>/<key>.txt` — the ROOT of
   // the storefront, because a key under a sub-path only verifies that sub-path
   // (measured; see the service header). A Shopify URL redirect maps that root
   // path onto the app proxy, which does the actual serving.
-  keyLocation String
+  keyLocation      String
   // GID of that `urlRedirect`, so it can be updated/removed instead of
   // orphaned in the merchant's admin. null = not created yet (every row the
   // migration backfilled) — the section loader and the sweep repair it.
-  keyRedirectId String?
+  keyRedirectId    String?
   // Storefront host every submission uses for `host`, `urlList` AND
   // `keyLocation` — the shop's PRIMARY domain, not `*.myshopify.com`. Shopify
   // 301s the myshopify host to the primary domain, which would make both the
@@ -1351,24 +1479,24 @@ model SeoIndexNowConfig {
   // from the config row they already loaded; `syncIndexNowHost` refreshes it
   // whenever the merchant opens the section, so adding a custom domain later
   // fixes itself WITHOUT minting a new key.
-  host        String
+  host             String
   // Last time `host` was checked against the shop's actual primary domain.
   // null = never verified (the migration backfill, or a provision whose lookup
   // failed) — the background sweep refreshes those first, so a shop that never
   // reopens the section still stops submitting myshopify URLs.
-  hostCheckedAt DateTime?
-  enabled       Boolean   @default(true)
+  hostCheckedAt    DateTime?
+  enabled          Boolean   @default(true)
   // Last successful submission of ANY kind (queue drain or full catalog).
-  lastSubmittedAt DateTime?
+  lastSubmittedAt  DateTime?
   // Last successful FULL-catalog submit — separate from lastSubmittedAt so the
   // "submit everything" cooldown isn't reset by every queue drain.
   lastFullSubmitAt DateTime?
   // Stamped by the background sweep on EVERY path (success, skip, error) so an
   // ineligible shop can't win the "due" query forever — same guard the
   // llms/GSC sweeps document. NOT a lock.
-  lastAutoRunAt DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  lastAutoRunAt    DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Drives the sweep's due-query (index-now-auto-submit.service.ts).
   @@index([enabled, lastAutoRunAt])
@@ -1505,32 +1633,32 @@ model SeoCrawlSnapshot {
 // `resolvePathsToResources` (seo/url-resolver.server.ts) — null when the path
 // doesn't map to a known content type (theme/metaobject pages, §3.8).
 model SeoCrawlPage {
-  id            String  @id @default(cuid())
-  shop          String
-  snapshotId    String
-  url           String // normalized URL (query params stripped, §3.2)
-  statusCode    Int
-  redirectedTo  String? // final URL, if a 3xx chain was followed
-  responseMs    Int
-  title         String? // <title> from the rendered HTML
-  metaDesc      String?
-  canonical     String?
-  h1Count       Int     @default(0)
-  wordCount     Int     @default(0)
-  resourceType  String? // "product" | "collection" | "article" | "page" | "unknown"
-  resourceId    String? // Shopify GID, when resolvable (editor deep-link)
-  locale        String  @default("") // from the URL prefix (/fr/...) — "" = primary
-  inboundCount  Int     @default(0) // internal links pointing HERE
-  outboundCount Int     @default(0)
+  id             String  @id @default(cuid())
+  shop           String
+  snapshotId     String
+  url            String // normalized URL (query params stripped, §3.2)
+  statusCode     Int
+  redirectedTo   String? // final URL, if a 3xx chain was followed
+  responseMs     Int
+  title          String? // <title> from the rendered HTML
+  metaDesc       String?
+  canonical      String?
+  h1Count        Int     @default(0)
+  wordCount      Int     @default(0)
+  resourceType   String? // "product" | "collection" | "article" | "page" | "unknown"
+  resourceId     String? // Shopify GID, when resolvable (editor deep-link)
+  locale         String  @default("") // from the URL prefix (/fr/...) — "" = primary
+  inboundCount   Int     @default(0) // internal links pointing HERE
+  outboundCount  Int     @default(0)
   // schema.org @type values found in the page's <script type="application/ld+json">
   // blocks, comma-separated, REPEATS PRESERVED ("Product,Product" = two blocks,
   // which is what makes duplicate markup detectable). "" = none found, which is
   // also what every row written before this column existed reports.
-  jsonLdTypes   String  @default("")
+  jsonLdTypes    String  @default("")
   // Subset of jsonLdTypes emitted by THIS app's storefront block, identified by
   // its data-contentpilot attribute. Lets the report say which copy of a
   // duplicated type is ours — the delivered HTML tells nobody otherwise.
-  jsonLdAppTypes String @default("")
+  jsonLdAppTypes String  @default("")
 
   // PLAN_SEO_CRAWL_EXPANSION §1.1 / §2.1-§2.2 — indexability, stored RAW and
   // never pre-interpreted: `deriveIndexability` (onpage.service.ts) is a pure

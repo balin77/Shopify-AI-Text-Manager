@@ -255,7 +255,12 @@ export type FieldType =
   // §Phase 3.1 — two lookups the cache cannot answer alone. `taxonomy` is
   // Shopify's own ~10k-node category tree (searched live); `collections` is
   // the shop's collection list, read from this app's own cache.
-  | 'taxonomy' | 'collections';
+  | 'taxonomy' | 'collections'
+  // Phase 4 — stock per location and sales channels. Its own type because it
+  // loads LIVE and saves through its own endpoint: stock is volatile, so a
+  // number carried in the editor's flat value map would be stale by the time
+  // the merchant pressed save.
+  | 'commerce';
 
 export interface FieldRenderProps {
   value: string;

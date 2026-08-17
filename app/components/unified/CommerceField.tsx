@@ -1,0 +1,434 @@
+/**
+ * PLAN_CONTENT_CREATION Phase 4 — stock and sales channels in the editor.
+ *
+ * ── It loads LIVE, and it says when ─────────────────────────────────────────
+ * Stock is volatile: orders, returns and other apps move it between two page
+ * loads. So this fetches on open rather than reading the cache, and the number
+ * next to each input is the one the save COMPARES against. If it moved in the
+ * meantime, Shopify refuses the write and the merchant is told the number
+ * changed instead of overwriting someone else's arithmetic.
+ *
+ * ── Three states, not two ───────────────────────────────────────────────────
+ *   tracked === true  → a number, editable
+ *   tracked === false → Shopify keeps no count. Not zero. Showing 0 would tell
+ *                       a merchant they are sold out of something they can
+ *                       sell without limit.
+ *   tracked === null  → never synced. Neither of the above is known, so it says
+ *                       so and offers the reload.
+ *
+ * ── §2.3, made visible ──────────────────────────────────────────────────────
+ * `status: ACTIVE` is not visibility. A product active but published to no
+ * channel is invisible everywhere, and the Shopify admin does not say so on the
+ * product page either. The channel list is the whole reason that trap has a
+ * cure here.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Badge,
+  Banner,
+  BlockStack,
+  Box,
+  Button,
+  Checkbox,
+  InlineStack,
+  Spinner,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import type { CommerceChannelView, CommerceVariantView } from "../../routes/api.product-commerce";
+
+export interface CommerceFieldProps {
+  /** The product GID. "" while nothing is selected. */
+  productId: string;
+  label: string;
+  /** False in a foreign locale — stock and channels exist once per product. */
+  isPrimaryLocale: boolean;
+  /** Strings for this panel, plus the warning CODES the endpoint returns. */
+  t: CommerceTexts;
+}
+
+export interface CommerceTexts {
+  [key: string]: string | Record<string, string> | undefined;
+  /** Keyed by `CommerceWarning`. */
+  warnings?: Record<string, string>;
+}
+
+interface LoadedState {
+  variants: CommerceVariantView[];
+  variantsTruncated: boolean;
+  channels: CommerceChannelView[];
+  channelsTruncated: boolean;
+}
+
+export function CommerceField({ productId, label, isPrimaryLocale, t }: CommerceFieldProps) {
+  const [data, setData] = useState<LoadedState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [planBlocked, setPlanBlocked] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [notices, setNotices] = useState<string[]>([]);
+
+  /** Edited on-hand values, keyed `variantId::locationId`. */
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  /** Ticked channels. Seeded from the load, then owned by the merchant. */
+  const [channelState, setChannelState] = useState<Record<string, boolean>>({});
+
+  const load = useCallback(() => {
+    if (!productId) return;
+    setLoadError(null);
+    setPlanBlocked(false);
+    setData(null);
+    let cancelled = false;
+    fetch(`/api/product-commerce?productId=${encodeURIComponent(productId)}`)
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled) return;
+        if (!body?.success) {
+          // A plan refusal is not a failure — it is a different message, and
+          // showing "could not be loaded" for it would send the merchant
+          // looking for a bug.
+          if (body?.error === "planRequired") setPlanBlocked(true);
+          else setLoadError((t.loadFailed as string) || "Stock and channels could not be loaded.");
+          return;
+        }
+        setData({
+          variants: body.variants ?? [],
+          variantsTruncated: body.variantsTruncated === true,
+          channels: body.channels ?? [],
+          channelsTruncated: body.channelsTruncated === true,
+        });
+        setEdits({});
+        setChannelState(
+          Object.fromEntries((body.channels ?? []).map((c: CommerceChannelView) => [c.publicationId, c.isPublished])),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError((t.loadFailed as string) || "Stock and channels could not be loaded.");
+      });
+    return () => { cancelled = true; };
+  }, [productId, t.loadFailed]);
+
+  useEffect(() => {
+    if (!isPrimaryLocale) return;
+    const cleanup = load();
+    return cleanup;
+  }, [load, isPrimaryLocale]);
+
+  /** The loaded on-hand for a cell — also the value the save compares against. */
+  const loadedOnHand = useCallback(
+    (variantId: string, locationId: string): number | null => {
+      const variant = data?.variants.find((v) => v.id === variantId);
+      return variant?.levels.find((l) => l.locationId === locationId)?.onHand ?? null;
+    },
+    [data],
+  );
+
+  const dirtyStock = useMemo(
+    () =>
+      Object.entries(edits).filter(([key, value]) => {
+        const [variantId, locationId] = key.split("::");
+        const loaded = loadedOnHand(variantId, locationId);
+        return value.trim() !== "" && String(loaded ?? "") !== value.trim();
+      }),
+    [edits, loadedOnHand],
+  );
+
+  const dirtyChannels = useMemo(() => {
+    if (!data) return { toPublish: [] as string[], toUnpublish: [] as string[] };
+    const toPublish: string[] = [];
+    const toUnpublish: string[] = [];
+    for (const channel of data.channels) {
+      const next = channelState[channel.publicationId];
+      if (next === channel.isPublished) continue;
+      if (next) toPublish.push(channel.publicationId);
+      else toUnpublish.push(channel.publicationId);
+    }
+    return { toPublish, toUnpublish };
+  }, [data, channelState]);
+
+  const post = useCallback(async (body: Record<string, string>): Promise<string[]> => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(body)) form.set(key, value);
+    const response = await fetch("/api/product-commerce", { method: "POST", body: form });
+    const json = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!json || json.success !== true) {
+      throw new Error(typeof json?.error === "string" ? json.error : "failed");
+    }
+    return Array.isArray(json.warnings) ? (json.warnings as string[]) : [];
+  }, []);
+
+  const save = useCallback(async () => {
+    if (!data) return;
+    setSaving(true);
+    setNotices([]);
+    const collected: string[] = [];
+    try {
+      // Grouped per VARIANT: `inventorySetQuantities` is atomic per call, so a
+      // merchant editing three locations of one variant cannot end up with one
+      // written and two not.
+      const byVariant = new Map<string, Array<{ locationId: string; quantity: number; compare: number }>>();
+      for (const [key, value] of dirtyStock) {
+        const [variantId, locationId] = key.split("::");
+        const compare = loadedOnHand(variantId, locationId);
+        // No loaded value ⇒ nothing to compare against, and a write without a
+        // comparison is exactly the silent overwrite this feature avoids.
+        if (compare === null) continue;
+        const list = byVariant.get(variantId) ?? [];
+        list.push({ locationId, quantity: Number.parseInt(value, 10), compare });
+        byVariant.set(variantId, list);
+      }
+
+      for (const [variantId, list] of byVariant) {
+        const variant = data.variants.find((v) => v.id === variantId);
+        if (!variant?.inventoryItemId) {
+          collected.push(t.warnings?.stockNoInventoryItem || "stockNoInventoryItem");
+          continue;
+        }
+        const warnings = await post({
+          intent: "stock",
+          productId,
+          variantId,
+          changes: JSON.stringify(
+            list.map((entry) => ({
+              inventoryItemId: variant.inventoryItemId,
+              locationId: entry.locationId,
+              quantity: String(entry.quantity),
+              compareQuantity: String(entry.compare),
+            })),
+          ),
+        });
+        collected.push(...warnings.map((code) => t.warnings?.[code] || code));
+      }
+
+      if (dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0) {
+        const warnings = await post({
+          intent: "channels",
+          productId,
+          channels: JSON.stringify({
+            ...dirtyChannels,
+            names: Object.fromEntries(data.channels.map((c) => [c.publicationId, c.name])),
+          }),
+        });
+        collected.push(...warnings.map((code) => t.warnings?.[code] || code));
+      }
+    } catch {
+      collected.push((t.saveFailed as string) || "The change could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+    setNotices(collected);
+    // Reload either way. On success it confirms; on a refused write it shows
+    // the number that actually moved, which is the only useful next step.
+    load();
+  }, [data, dirtyStock, dirtyChannels, loadedOnHand, post, productId, load, t]);
+
+  if (!isPrimaryLocale) {
+    return (
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd">{label}</Text>
+        <Banner tone="info">
+          <p>{(t.foreignLocale as string) || "Stock and sales channels exist once per product, not per language."}</p>
+        </Banner>
+      </BlockStack>
+    );
+  }
+
+  if (planBlocked) {
+    return (
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd">{label}</Text>
+        <Banner tone="info">
+          <p>{(t.planRequired as string) || "Stock and sales channels are part of the Pro plan."}</p>
+        </Banner>
+      </BlockStack>
+    );
+  }
+
+  const hasChanges = dirtyStock.length > 0 || dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0;
+  const publishedCount = data ? data.channels.filter((c) => channelState[c.publicationId]).length : 0;
+
+  return (
+    <BlockStack gap="300">
+      <Text as="p" variant="bodyMd">{label}</Text>
+
+      {loadError && (
+        <Banner tone="warning">
+          <BlockStack gap="200">
+            <Text as="p">{loadError}</Text>
+            <Box><Button onClick={load}>{(t.retry as string) || "Try again"}</Button></Box>
+          </BlockStack>
+        </Banner>
+      )}
+
+      {!data && !loadError && <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />}
+
+      {notices.length > 0 && (
+        <Banner tone="warning" onDismiss={() => setNotices([])}>
+          <BlockStack gap="100">
+            {notices.map((notice, index) => (
+              <Text as="p" key={index}>{notice}</Text>
+            ))}
+          </BlockStack>
+        </Banner>
+      )}
+
+      {data && (
+        <>
+          {/* ── Sales channels ─────────────────────────────────────────── */}
+          <BlockStack gap="200">
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="h3" variant="headingSm">{(t.channelsHeading as string) || "Sales channels"}</Text>
+              {/* §2.3 — the trap this feature exists for. Not a subtle hint:
+                  a product on no channel is invisible everywhere. */}
+              {publishedCount === 0 && (
+                <Badge tone="critical">{(t.noChannel as string) || "On no channel — invisible"}</Badge>
+              )}
+            </InlineStack>
+
+            {data.channelsTruncated && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.channelsTruncated as string) || "More channels exist than were loaded. Manage the rest in the Shopify admin."}
+              </Text>
+            )}
+
+            {data.channels.length === 0 ? (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.noChannels as string) || "This shop has no sales channels installed."}
+              </Text>
+            ) : (
+              data.channels.map((channel) => (
+                <Checkbox
+                  key={channel.publicationId}
+                  label={channel.name || channel.publicationId}
+                  checked={channelState[channel.publicationId] === true}
+                  disabled={saving}
+                  // A future publish date is NOT "live". Saying "scheduled"
+                  // rather than showing it as published is what keeps a
+                  // planned launch from looking like a mistake.
+                  helpText={
+                    channel.publishDate && !channel.isPublished
+                      ? ((t.scheduled as string) || "Scheduled for {date}").replace(
+                          "{date}",
+                          new Date(channel.publishDate).toLocaleDateString(),
+                        )
+                      : undefined
+                  }
+                  onChange={(checked) =>
+                    setChannelState((prev) => ({ ...prev, [channel.publicationId]: checked }))
+                  }
+                />
+              ))
+            )}
+          </BlockStack>
+
+          {/* ── Stock ──────────────────────────────────────────────────── */}
+          <BlockStack gap="200">
+            <Text as="h3" variant="headingSm">{(t.stockHeading as string) || "Stock"}</Text>
+
+            {data.variantsTruncated && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.variantsTruncated as string) || "This product has more variants than were loaded. Edit the rest in the Shopify admin."}
+              </Text>
+            )}
+
+            {data.variants.map((variant) => (
+              <Box key={variant.id} background="bg-surface-secondary" padding="300" borderRadius="200">
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">
+                    {variant.title}{variant.sku ? ` · ${variant.sku}` : ""}
+                  </Text>
+
+                  {variant.inventoryTracked === null && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(t.stockUnknown as string) || "Not loaded yet — reload to see this variant's stock."}
+                    </Text>
+                  )}
+
+                  {variant.inventoryTracked === false && (
+                    // NOT zero. Shopify keeps no count for this variant, and a
+                    // 0 here would read as "sold out".
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(t.stockUntracked as string) || "Stock is not tracked for this variant — it can be sold without limit."}
+                    </Text>
+                  )}
+
+                  {variant.inventoryTracked === true && !variant.inventoryItemId && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(t.stockNoItem as string) || "This variant has no inventory record, so its stock cannot be edited here."}
+                    </Text>
+                  )}
+
+                  {variant.inventoryTracked === true && variant.inventoryItemId && (
+                    <BlockStack gap="200">
+                      {variant.levelsTruncated && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {(t.levelsTruncated as string) || "This variant has stock at more locations than were loaded."}
+                        </Text>
+                      )}
+                      {variant.levels.length === 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {(t.noLevels as string) || "No location holds stock of this variant."}
+                        </Text>
+                      )}
+                      {variant.levels.map((level) => {
+                        const key = `${variant.id}::${level.locationId}`;
+                        return (
+                          <InlineStack key={key} gap="300" blockAlign="center" wrap>
+                            <Box minWidth="180px">
+                              <Text as="span" variant="bodySm" tone={level.locationActive ? undefined : "subdued"}>
+                                {level.locationName || level.locationId}
+                                {/* Deactivated locations keep their stock but
+                                    take no writes. Greyed, never hidden — a
+                                    location that vanishes reads as stock that
+                                    disappeared. */}
+                                {!level.locationActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
+                              </Text>
+                            </Box>
+                            <Box minWidth="140px">
+                              <TextField
+                                label={(t.onHand as string) || "On hand"}
+                                labelHidden
+                                type="number"
+                                value={edits[key] ?? String(level.onHand ?? "")}
+                                onChange={(value) => setEdits((prev) => ({ ...prev, [key]: value }))}
+                                autoComplete="off"
+                                disabled={saving || !level.locationActive}
+                              />
+                            </Box>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {/* `available` is DERIVED (on hand minus open
+                                  commitments), so it is shown and never
+                                  edited — writing it would contradict the
+                                  commitments it is computed from. */}
+                              {((t.availableLabel as string) || "available: {n}").replace(
+                                "{n}",
+                                level.available == null ? "—" : String(level.available),
+                              )}
+                            </Text>
+                          </InlineStack>
+                        );
+                      })}
+                    </BlockStack>
+                  )}
+                </BlockStack>
+              </Box>
+            ))}
+          </BlockStack>
+
+          <InlineStack gap="200">
+            <Button variant="primary" disabled={!hasChanges || saving} loading={saving} onClick={save}>
+              {(t.save as string) || "Save stock and channels"}
+            </Button>
+            <Button disabled={saving} onClick={load}>{(t.reload as string) || "Reload"}</Button>
+          </InlineStack>
+          <Text as="p" variant="bodySm" tone="subdued">
+            {/* Says WHY there is a separate button: this is not part of the
+                content save, and a merchant who expects it to be would
+                otherwise leave the page with stock unchanged. */}
+            {(t.separateSaveHint as string) || "Stock and channels are saved separately from the text — they are not part of the content save."}
+          </Text>
+        </>
+      )}
+    </BlockStack>
+  );
+}

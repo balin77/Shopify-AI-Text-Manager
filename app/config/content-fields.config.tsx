@@ -43,6 +43,7 @@ const ATTRIBUTE_LABELS = {
   isPublished: "Visible in the online store",
   category: "Product category",
   collections: "Collections",
+  commerce: "Stock and sales channels",
 } as const;
 
 /** Shared by products and articles — same control, different suggestion pool. */
@@ -244,6 +245,21 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsTranslation: false,
       attributeNote:
         "Rule-based collections are managed by their own rules — removing the product here would not stick.",
+    },
+    {
+      // Phase 4 — stock per location and sales channels. NOT part of the
+      // content save: it loads live and writes through its own endpoint, so a
+      // volatile number never travels in the editor's flat value map where it
+      // would be stale by the time the merchant pressed save.
+      key: "commerce",
+      type: "commerce",
+      label: ATTRIBUTE_LABELS.commerce,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      attributeNote:
+        "Stock and channels are saved on their own — the buttons in this section, not the main save.",
     },
     TEMPLATE_SUFFIX_FIELD,
   ],
