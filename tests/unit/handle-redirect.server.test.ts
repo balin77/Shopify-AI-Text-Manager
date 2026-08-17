@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { applyHandleRedirect } from "~/services/seo/handle-redirect.server";
+import { applyHandleRedirect, applyTranslatedHandleRedirect } from "~/services/seo/handle-redirect.server";
 
 const createRedirect = vi.fn();
 const listRedirects = vi.fn();
@@ -245,5 +245,101 @@ describe("repeated renames", () => {
     expect(updateRedirect).not.toHaveBeenCalled();
     expect(deleteRedirect).not.toHaveBeenCalled();
     expect(createRedirect).toHaveBeenCalledWith(admin, { path: "/products/old", target: "/products/new" });
+  });
+});
+
+/**
+ * The foreign-locale twin. The decision itself is covered in the shared test;
+ * what matters here is that it reuses the SAME Shopify half — one diff, one
+ * echo rule — and that its two article refusals reach the merchant as two
+ * different sentences rather than one.
+ */
+describe("applyTranslatedHandleRedirect", () => {
+  const translated = {
+    resource: "product" as const,
+    marketId: "",
+    previousTranslatedHandle: "caja-vieja",
+    nextTranslatedHandle: "caja-nueva",
+    primaryHandle: "kumikobox",
+    otherLocaleHandles: [],
+    wanted: true,
+  };
+
+  it("writes ONE unprefixed row", async () => {
+    // The measured behaviour is what makes this correct: Shopify matches the
+    // path under every locale prefix and carries the prefix onto the target.
+    createRedirect.mockResolvedValue({ redirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] });
+
+    const result = await applyTranslatedHandleRedirect(admin, "test.myshopify.com", translated);
+
+    expect(createRedirect).toHaveBeenCalledWith(admin, {
+      path: "/products/caja-vieja",
+      target: "/products/caja-nueva",
+    });
+    expect(result.created).toBe(true);
+    expect(result.noteCode).toBe("created");
+  });
+
+  it("touches nothing when the locale had no translated handle", async () => {
+    // The bulk-translate case. It must not cost a lookup either — this runs
+    // per row on a path that writes hundreds.
+    const result = await applyTranslatedHandleRedirect(admin, "test.myshopify.com", {
+      ...translated,
+      previousTranslatedHandle: "",
+    });
+
+    expect(listRedirects).not.toHaveBeenCalled();
+    expect(createRedirect).not.toHaveBeenCalled();
+    expect(result.skippedReason).toBe("notTranslatedBefore");
+  });
+
+  it("repoints an older row instead of building a chain", async () => {
+    // Same diff as the primary path: renaming a translated handle twice must
+    // repoint the first redirect, not stack a second one behind it.
+    listRedirects.mockResolvedValue({
+      redirects: [{ id: "gid://shopify/UrlRedirect/7", path: "/products/caja-antigua", target: "/products/caja-vieja" }],
+      hasNextPage: false,
+      endCursor: null,
+    });
+    createRedirect.mockResolvedValue({ redirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] });
+
+    await applyTranslatedHandleRedirect(admin, "test.myshopify.com", translated);
+
+    expect(updateRedirect).toHaveBeenCalledWith(admin, "gid://shopify/UrlRedirect/7", {
+      path: "/products/caja-antigua",
+      target: "/products/caja-nueva",
+    });
+  });
+
+  it("tells the merchant WHY an article was skipped, and the two reasons differ", async () => {
+    const unknownBlog = await applyTranslatedHandleRedirect(admin, "test.myshopify.com", {
+      ...translated,
+      resource: "article",
+      blogHandle: null,
+    });
+    const translatedBlog = await applyTranslatedHandleRedirect(admin, "test.myshopify.com", {
+      ...translated,
+      resource: "article",
+      blogHandle: "news",
+      blogHandleTranslatedInLocale: true,
+    });
+
+    expect(unknownBlog.noteCode).toBe("missingBlogHandle");
+    // A known blog with an uncertain spelling is a different fact — folding it
+    // into "its blog is unknown" would send the merchant looking for a blog
+    // that is right there.
+    expect(translatedBlog.noteCode).toBe("localeBlogHandleUnknown");
+    expect(createRedirect).not.toHaveBeenCalled();
+  });
+
+  it("never throws when Shopify does", async () => {
+    // The translation is already written. An error here would read as a failed
+    // save and invite the merchant to make the edit twice.
+    listRedirects.mockRejectedValue(new Error("429 Too Many Requests"));
+
+    const result = await applyTranslatedHandleRedirect(admin, "test.myshopify.com", translated);
+
+    expect(result.created).toBe(false);
+    expect(result.noteCode).toBe("failed");
   });
 });

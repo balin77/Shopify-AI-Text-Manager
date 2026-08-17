@@ -61,10 +61,10 @@ export async function handleUpdateContent(
 
   // ── PLAN §Phase 3.3 / §A1 — a handle change breaks the old URL ───────────
   // Read BEFORE the write, because afterwards the old handle is gone and with
-  // it any chance of preserving the address it served. Only for the primary
-  // locale: a translated handle is a different URL, and covering it is a scope
-  // decision left open — see the measured locale-prefix note in
-  // handle-redirect.shared.ts.
+  // it any chance of preserving the address it served. Everything under this
+  // heading is the PRIMARY locale's half; a translated handle is a different
+  // URL with its own set of things that must not happen, and it runs through
+  // `finishTranslatedHandleRedirect` further down.
   // The per-save form field wins where it is sent, so a future per-edit
   // checkbox needs no server change; otherwise the shop's preference decides.
   const wantsHandleRedirect = resolveRedirectPreference(
@@ -229,6 +229,84 @@ export async function handleUpdateContent(
     }
   };
 
+  /**
+   * §Phase 3.3, foreign half — the same courtesy for a TRANSLATED handle.
+   *
+   * A foreign save carries only CHANGED fields (`buildFieldsForSave`), so
+   * `formData.has("handle")` is both the gate and the cheap common case: a save
+   * that did not touch the handle does none of the reads below.
+   *
+   * The target is the SUBMITTED handle, not an echoed one — unlike the primary
+   * write, which normalises the slug on Shopify's side, a translation is stored
+   * verbatim, so `sanitizeSlug`'s output IS what gets served.
+   *
+   * Never throws: the translation is already written.
+   */
+  const finishTranslatedHandleRedirect = async (): Promise<HandleRedirectNote | undefined> => {
+    if (isPrimarySave || !redirectResource || !wantsHandleRedirect || !formData.has("handle")) return undefined;
+    try {
+      const handleRows = await db.contentTranslation.findMany({
+        where: { shop: session.shop, resourceId: itemId, key: "handle", marketId: "" },
+        select: { locale: true, value: true },
+      });
+      const previous = handleRows.find((r) => r.locale === locale)?.value?.trim() ?? "";
+      // No previous translation ⇒ this locale was served under the primary
+      // handle, which stays live. Nothing broke; bail before the other reads.
+      if (!previous) return undefined;
+
+      const snapshot =
+        redirectResource === "blog"
+          ? { handle: await loadBlogHandle(admin, itemId), isPublished: null, status: null, attributesKnown: true }
+          : await loadCachedSnapshot(db, session.shop, contentConfig.resourceType, itemId);
+
+      let blogHandle: string | null = null;
+      let blogHandleTranslatedInLocale = false;
+      if (redirectResource === "article") {
+        blogHandle = await loadArticleBlogHandle(admin, db, session.shop, itemId);
+        const article = await db.article.findFirst({
+          where: { shop: session.shop, id: itemId },
+          select: { blogId: true },
+        });
+        if (article?.blogId) {
+          const translated = await db.contentTranslation.findFirst({
+            where: { shop: session.shop, resourceId: article.blogId, key: "handle", locale, marketId: "" },
+            select: { value: true },
+          });
+          blogHandleTranslatedInLocale = !!translated?.value?.trim();
+        }
+      }
+
+      const { applyTranslatedHandleRedirect } = await import("~/services/seo/handle-redirect.server");
+      const result = await applyTranslatedHandleRedirect(admin, session.shop, {
+        resource: redirectResource,
+        marketId,
+        previousTranslatedHandle: previous,
+        // Empty ⇒ the merchant cleared the translation; the decision then sends
+        // the dead URL back to the primary handle.
+        nextTranslatedHandle: submittedHandle,
+        primaryHandle: snapshot.handle,
+        otherLocaleHandles: handleRows.filter((r) => r.locale !== locale).map((r) => r.value),
+        wanted: wantsHandleRedirect,
+        previouslyLive: wasEverLive(redirectResource, {
+          status: snapshot.status,
+          isPublished: snapshot.isPublished,
+          attributesKnown: snapshot.attributesKnown,
+        }),
+        blogHandle,
+        blogHandleTranslatedInLocale,
+      });
+      return result.noteCode ? { code: result.noteCode, fromPath: result.fromPath } : undefined;
+    } catch (error) {
+      logger.warn("[UnifiedContent] Translated handle redirect failed after a successful save", {
+        context: "UnifiedContent",
+        itemId,
+        locale,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { code: "failed" };
+    }
+  };
+
   try {
     // Special handling for Products - use dedicated product update handler
     if (contentConfig.resourceType === "Product") {
@@ -302,10 +380,14 @@ export async function handleUpdateContent(
       // Only after a SUCCESSFUL save: redirecting to a handle that was never
       // written would point the old URL at a 404. The handle Shopify echoed
       // back wins over the one we sent — see finishHandleRedirect.
+      // The two are mutually exclusive by construction — one returns early for
+      // a foreign save, the other for a primary one — so at most one note comes
+      // back and the response shape stays a single `redirectNote`.
       const productRedirectNote =
         productBody?.success === false
           ? undefined
-          : await finishHandleRedirect(echoedHandle(productBody));
+          : (await finishHandleRedirect(echoedHandle(productBody))) ??
+            (await finishTranslatedHandleRedirect());
       // Products have their own webhook, so `finishIndexNow` is a no-op here —
       // it is called anyway so the two return paths stay identical and a future
       // creatable type on this branch is covered without anyone remembering.
@@ -693,7 +775,8 @@ export async function handleUpdateContent(
 
     const savedOk = (result as { success?: boolean })?.success !== false;
     const redirectNote = savedOk
-      ? await finishHandleRedirect(echoedHandle(result as Record<string, unknown>))
+      ? (await finishHandleRedirect(echoedHandle(result as Record<string, unknown>))) ??
+        (await finishTranslatedHandleRedirect())
       : undefined;
     // §3.4 — the ONLY moment a page/article/blog publish can reach IndexNow:
     // Shopify emits no webhook for any of them.

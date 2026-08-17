@@ -17,7 +17,12 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { logger } from "~/utils/logger.server";
 import { createRedirect, deleteRedirect, listRedirects, updateRedirect } from "./redirects.service";
-import { decideHandleRedirect, type HandleRedirectRequest } from "./handle-redirect.shared";
+import {
+  decideHandleRedirect,
+  decideTranslatedHandleRedirect,
+  type HandleRedirectRequest,
+  type TranslatedHandleRedirectRequest,
+} from "./handle-redirect.shared";
 
 /**
  * What the merchant should be told, as a CODE — never as a sentence. This app
@@ -33,7 +38,11 @@ export type HandleRedirectNoteCode =
   /** The blog's own URL was redirected; its ARTICLES' URLs were not. */
   | "blogArticlesUncovered"
   /** The new URL had a redirect sitting on it, which had to be removed. */
-  | "shadowRemoved";
+  | "shadowRemoved"
+  /** Foreign locales only: the article sits under a blog whose OWN handle is
+   *  translated, so its path has two translatable segments and this app does
+   *  not know which spelling the storefront serves. */
+  | "localeBlogHandleUnknown";
 
 export interface HandleRedirectResult {
   created: boolean;
@@ -170,6 +179,69 @@ export async function applyRedirectPair(
     shadowRemoved,
   });
   return { ok: true, shadowRemoved };
+}
+
+/**
+ * The foreign-locale twin. Same Shopify work, a different decision — the rules
+ * that make a translated handle's redirect safe live in
+ * `decideTranslatedHandleRedirect`, and everything below the decision is shared
+ * with the primary path (repoint the chain, clear a shadowing row, echo-check).
+ *
+ * The row it writes is UNPREFIXED on purpose: measured, one row serves every
+ * locale. The accepted cost is that it also answers the PRIMARY-locale path
+ * carrying the old translated slug — a path that normally 404s, so redirecting
+ * it costs nothing and occasionally helps.
+ *
+ * A renamed blog handle carries its articles' foreign URLs with it and Shopify
+ * redirects have no wildcards, so that case reports `blogArticlesUncovered`
+ * exactly as the primary one does. Unlike the primary one it does NOT sweep the
+ * articles afterwards: each article's foreign URL depends on its own
+ * translation, and the blog-handle case is precisely the one the decision
+ * refuses to guess at.
+ */
+export async function applyTranslatedHandleRedirect(
+  admin: AdminApiContext,
+  shop: string,
+  request: TranslatedHandleRedirectRequest,
+): Promise<HandleRedirectResult> {
+  const decision = decideTranslatedHandleRedirect(request);
+
+  if (!decision.redirect) {
+    // Both mean the article's old URL is NOT covered, and the merchant would
+    // otherwise assume it is — but they are different facts, so they get
+    // different sentences: one blog is unknown, the other is known and has two
+    // possible spellings.
+    if (decision.reason === "missingBlogHandle" || decision.reason === "localeBlogHandleUnknown") {
+      return { created: false, skippedReason: decision.reason, noteCode: decision.reason };
+    }
+    return { created: false, skippedReason: decision.reason };
+  }
+
+  const okCode: HandleRedirectNoteCode =
+    request.resource === "blog" ? "blogArticlesUncovered" : "created";
+
+  try {
+    const outcome = await applyRedirectPair(admin, shop, decision.fromPath, decision.toPath);
+    if (!outcome.ok) {
+      return {
+        created: false,
+        skippedReason: outcome.reason ?? "notConfirmed",
+        noteCode: "notConfirmed",
+        fromPath: decision.fromPath,
+      };
+    }
+    return {
+      created: true,
+      noteCode: outcome.shadowRemoved && okCode === "created" ? "shadowRemoved" : okCode,
+      fromPath: decision.fromPath,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("[HandleRedirect] Failed on a translated handle", {
+      context: "HandleRedirect", shop, resource: request.resource, error: message,
+    });
+    return { created: false, skippedReason: "error", noteCode: "failed", fromPath: decision.fromPath };
+  }
 }
 
 export async function applyHandleRedirect(

@@ -256,6 +256,7 @@ export const es: Translation = {
     redirectBlogArticlesUncovered: "La URL antigua del blog {path} ahora redirige a la nueva, pero las URLs de los artículos también cambiaron y no están cubiertas.",
     redirectShadowRemoved: "La URL antigua {path} ahora redirige a la nueva. Se eliminó una redirección existente en la URL nueva — habría ocultado la página.",
     redirectMissingBlog: "La URL antigua del artículo no se pudo redirigir porque su blog es desconocido — crea la redirección manualmente si el enlace antiguo te importa.",
+    redirectLocaleBlogUnknown: "La URL antigua del artículo no se redirigió: el identificador de este blog también está traducido, así que la dirección del artículo en este idioma no es segura — crea la redirección manualmente si el enlace antiguo te importa.",
     reload: "Recargar",
     reloadSuccess: "¡Datos recargados de Shopify correctamente!",
     reloadItemTooltip: "Recargar solo los datos de esta entrada desde Shopify",

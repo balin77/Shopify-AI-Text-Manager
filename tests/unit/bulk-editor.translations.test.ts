@@ -672,3 +672,174 @@ describe("estimateCalls", () => {
     expect(estimateCalls(diff, BULK_COLUMNS_BY_TYPE.page)).toBe(2);
   });
 });
+
+/**
+ * §3.3, foreign half — a TRANSLATED handle is a real storefront URL, and
+ * editing it in the grid breaks that URL exactly as a primary rename does.
+ *
+ * The measurement behind it (see handle-redirect.shared.ts) says one UNPREFIXED
+ * row covers every locale, which is what these tests check for: the write path
+ * must not invent a `/fr/` row, and it must not fire at all in the case that
+ * looks the most like a rename but is not one — a translation being FILLED,
+ * which is every row bulk-translate ever writes.
+ */
+describe("applyBulkDiff — redirect on a TRANSLATED handle change", () => {
+  const HANDLE_COL = "field.handle";
+
+  /** The db double plus the two reads the capture makes. `handleRows` is what
+   *  ContentTranslation holds for this product before the write. */
+  function redirectDb(handleRows: Array<{ locale: string; value: string }>) {
+    return {
+      ...mockDb(),
+      contentTranslation: {
+        upsert: vi.fn(async (_args: unknown) => ({})),
+        deleteMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
+        findMany: vi.fn(async (_args: unknown) => handleRows),
+        findFirst: vi.fn(async (_args: unknown) => null),
+      },
+      product: {
+        findUnique: vi.fn(async (_args: unknown) => ({ handle: "kumikobox", status: "ACTIVE" })),
+      },
+      aISettings: { findUnique: vi.fn(async (_args: unknown) => ({ seoAutoHandleRedirect: true })) },
+    };
+  }
+
+  /** Responds to the digest + register calls and records redirect mutations. */
+  function redirectAdmin(created: Array<Record<string, unknown>>) {
+    return mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "handle", locale: LOCALE, value: "boite-neuve", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return {
+          data: { urlRedirectCreate: { urlRedirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] } },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+  }
+
+  it("redirects the OLD translated URL to the new one, with no locale prefix", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(result.failures).toHaveLength(0);
+    expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/boite-neuve" }]);
+  });
+
+  it("creates NOTHING when the translation is being filled for the first time", async () => {
+    // Every row bulk-translate writes. The locale was served under the PRIMARY
+    // handle, which stays live — nothing broke, and a redirect here would sit
+    // on the shop's own primary product URL.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(created).toEqual([]);
+  });
+
+  it("creates nothing when Shopify did not echo the handle back", async () => {
+    // The echo rule reaches the redirect too: an unconfirmed write leaves the
+    // OLD translated handle in place, so its URL is not dead.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRegister")) {
+        return { data: { translationsRegister: { translations: [], userErrors: [] } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return { data: { urlRedirectCreate: { urlRedirect: null, userErrors: [] } } };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(result.failures).toHaveLength(1);
+    expect(created).toEqual([]);
+  });
+
+  it("sends a CLEARED handle translation back to the primary handle", async () => {
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRemove")) {
+        return {
+          data: {
+            translationsRemove: {
+              translations: [{ key: "handle", locale: LOCALE, value: null, market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return {
+          data: { urlRedirectCreate: { urlRedirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] } },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "")],
+    );
+
+    // Without the translation the locale is served under the primary handle
+    // again — the only address the dead URL can point at.
+    expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/kumikobox" }]);
+  });
+
+  it("leaves a market-scoped translation alone", async () => {
+    // A redirect row is shop-wide; a market override is not.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve", "gid://shopify/Market/7")],
+    );
+
+    expect(created).toEqual([]);
+    // Not even the lookup: the market case is refused before the reads.
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+});

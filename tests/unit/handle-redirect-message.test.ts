@@ -39,7 +39,7 @@ describe("buildRedirectMessage", () => {
   it("treats every non-success outcome as a WARNING", () => {
     // The merchant has just changed an address and cannot tell from the editor
     // whether their links still resolve. A footnote tone would bury that.
-    for (const code of ["notConfirmed", "failed", "missingBlogHandle", "blogArticlesUncovered"]) {
+    for (const code of ["notConfirmed", "failed", "missingBlogHandle", "blogArticlesUncovered", "localeBlogHandleUnknown"]) {
       expect(buildRedirectMessage({ code, fromPath: "/products/old" }, t)?.tone).toBe("warning");
     }
   });

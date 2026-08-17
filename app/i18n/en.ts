@@ -257,6 +257,7 @@ export const en: Translation = {
     redirectBlogArticlesUncovered: "The old blog URL {path} now redirects to the new one — but the articles' own URLs changed too and are not covered.",
     redirectShadowRemoved: "The old URL {path} now redirects to the new one. An existing redirect on the new URL was removed — it would have hidden the page.",
     redirectMissingBlog: "The old article URL could not be redirected because its blog is unknown — set the redirect up manually if the old link matters.",
+    redirectLocaleBlogUnknown: "The old article URL was not redirected: this blog's handle is translated too, so the article's address in this language is not certain — set the redirect up manually if the old link matters.",
     reload: "Reload",
     reloadSuccess: "Data reloaded from Shopify successfully!",
     reloadItemTooltip: "Reload only this entry's data from Shopify",

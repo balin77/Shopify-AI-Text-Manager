@@ -15,6 +15,7 @@
 import { describe, it, expect } from "vitest";
 import {
   decideHandleRedirect,
+  decideTranslatedHandleRedirect,
   redirectResourceFor,
   resolveRedirectPreference,
   storefrontPathFor,
@@ -211,5 +212,158 @@ describe("decideHandleRedirect", () => {
 
   it("checks 'wanted' before anything else, so an opt-out is never overridden", () => {
     expect(decideHandleRedirect({ ...base, wanted: false, isNew: true })).toEqual({ redirect: false, reason: "notWanted" });
+  });
+});
+
+/**
+ * The FOREIGN half (§3.3, built once the locale-prefix question was measured).
+ *
+ * The measurement — a prefixed path matches the redirect table and the prefix
+ * is carried onto the target — is what makes one unprefixed row cover every
+ * locale. It is also what makes this delicate: that row fires under EVERY
+ * prefix, including locales nobody edited. So almost every test here is again
+ * about a redirect that must NOT be created, and each of them is a live URL
+ * that would otherwise be hijacked.
+ */
+describe("decideTranslatedHandleRedirect", () => {
+  const base = {
+    resource: "product" as const,
+    marketId: "",
+    previousTranslatedHandle: "caja-vieja",
+    nextTranslatedHandle: "caja-nueva",
+    primaryHandle: "kumikobox",
+    otherLocaleHandles: [],
+    wanted: true,
+  };
+
+  it("redirects the old translated URL to the new one, UNPREFIXED", () => {
+    // No `/es/` anywhere: Shopify carries the prefix onto the target itself,
+    // so one row serves every locale. A prefixed row would be redundant.
+    expect(decideTranslatedHandleRedirect(base)).toEqual({
+      redirect: true,
+      fromPath: "/products/caja-vieja",
+      toPath: "/products/caja-nueva",
+    });
+  });
+
+  it("does NOTHING when the locale had no translated handle before", () => {
+    // The rule that keeps bulk-translate out of this entirely: filling an
+    // empty translation breaks no URL, because the locale was being served
+    // under the PRIMARY handle and that address stays live. Acting anyway
+    // would put a redirect on the shop's primary product URL.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, previousTranslatedHandle: "" }),
+    ).toEqual({ redirect: false, reason: "notTranslatedBefore" });
+    expect(
+      decideTranslatedHandleRedirect({ ...base, previousTranslatedHandle: null }),
+    ).toEqual({ redirect: false, reason: "notTranslatedBefore" });
+  });
+
+  it("sends a CLEARED translation back to the primary handle", () => {
+    // The case where the URL genuinely dies: without the translation the
+    // locale is served under the primary handle again, so that is the only
+    // address the dead one can point at.
+    expect(decideTranslatedHandleRedirect({ ...base, nextTranslatedHandle: "" })).toEqual({
+      redirect: true,
+      fromPath: "/products/caja-vieja",
+      toPath: "/products/kumikobox",
+    });
+  });
+
+  it("refuses when the old handle is the PRIMARY one", () => {
+    // The row is unprefixed and would therefore answer the primary locale's
+    // own URL — the single most important address on the shop.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, previousTranslatedHandle: "kumikobox" }),
+    ).toEqual({ redirect: false, reason: "pathStillLive" });
+  });
+
+  it("refuses when the old handle is ANOTHER locale's live handle", () => {
+    // The realistic collision: two similar languages translating one product
+    // to the same slug. `/it/products/caja-vieja` is a live page, and an
+    // unprefixed row would redirect it to a Spanish handle that does not
+    // exist in Italian.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, otherLocaleHandles: ["caja-vieja"] }),
+    ).toEqual({ redirect: false, reason: "pathStillLive" });
+  });
+
+  it("compares the collision the way the PATH is built", () => {
+    // Trimmed, unslashed, lowercased — otherwise " Caja-Vieja " reads as a
+    // different handle and the hijack goes through.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, otherLocaleHandles: [" Caja-Vieja "] }).redirect,
+    ).toBe(false);
+  });
+
+  it("refuses a market-scoped translation", () => {
+    // A market override is served to one market; a redirect row is shop-wide.
+    // Neither can express the other.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, marketId: "gid://shopify/Market/1" }),
+    ).toEqual({ redirect: false, reason: "marketScoped" });
+  });
+
+  it("does nothing for an object whose URL was never reachable", () => {
+    expect(decideTranslatedHandleRedirect({ ...base, previouslyLive: false })).toEqual({
+      redirect: false,
+      reason: "neverLive",
+    });
+  });
+
+  it("reports 'unchanged' rather than a collision for a no-op edit", () => {
+    // Order matters: with the collision check first, re-saving the same
+    // handle would be reported as `pathStillLive` — the right outcome for
+    // the wrong reason, and a misleading one in a log.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, nextTranslatedHandle: "caja-vieja" }),
+    ).toEqual({ redirect: false, reason: "unchanged" });
+  });
+
+  it("builds an article path from the blog's own handle", () => {
+    expect(
+      decideTranslatedHandleRedirect({
+        ...base,
+        resource: "article",
+        blogHandle: "news",
+        primaryHandle: "spring-sale",
+      }),
+    ).toEqual({
+      redirect: true,
+      fromPath: "/blogs/news/caja-vieja",
+      toPath: "/blogs/news/caja-nueva",
+    });
+  });
+
+  it("refuses an article whose BLOG handle is translated too", () => {
+    // Two translatable segments and no measurement of which spelling the
+    // storefront serves for the outer one. A guessed path would redirect a
+    // URL that never existed and leave the real one broken.
+    expect(
+      decideTranslatedHandleRedirect({
+        ...base,
+        resource: "article",
+        blogHandle: "news",
+        blogHandleTranslatedInLocale: true,
+      }),
+    ).toEqual({ redirect: false, reason: "localeBlogHandleUnknown" });
+  });
+
+  it("refuses an article with no blog handle at all", () => {
+    expect(
+      decideTranslatedHandleRedirect({ ...base, resource: "article", blogHandle: null }),
+    ).toEqual({ redirect: false, reason: "missingBlogHandle" });
+  });
+
+  it("has nowhere to send a cleared translation with no primary handle", () => {
+    expect(
+      decideTranslatedHandleRedirect({ ...base, nextTranslatedHandle: "", primaryHandle: null }),
+    ).toEqual({ redirect: false, reason: "missingHandle" });
+  });
+
+  it("checks 'wanted' before anything else", () => {
+    expect(
+      decideTranslatedHandleRedirect({ ...base, wanted: false, marketId: "gid://shopify/Market/1" }),
+    ).toEqual({ redirect: false, reason: "notWanted" });
   });
 });

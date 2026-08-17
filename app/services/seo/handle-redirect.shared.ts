@@ -1,14 +1,14 @@
 /**
  * PLAN_CONTENT_CREATION §Phase 3.3 / §A1 — a handle change breaks the old URL.
  *
- * This app changes handles in three places today — the single editor, the bulk
- * editor's `field.handle` column, and bulk-translate — and creates a redirect
- * in NONE of them. Every one of those edits silently 404s whatever linked to
- * the old address: search results, the merchant's own newsletter, other shops.
- * Shopify's admin offers a checkbox for exactly this; going through the API
- * removed the checkbox and, with it, the redirect.
+ * This app changes handles in three places — the single editor, the bulk
+ * editor's `field.handle` column, and bulk-translate — and before §3.3 created
+ * a redirect in NONE of them. Every one of those edits silently 404s whatever
+ * linked to the old address: search results, the merchant's own newsletter,
+ * other shops. Shopify's admin offers a checkbox for exactly this; going
+ * through the API removed the checkbox and, with it, the redirect.
  *
- * The decision is pure and lives here so all three write paths can share it and
+ * The decision is pure and lives here so all the write paths can share it and
  * so the cases that must NOT redirect are testable. Those cases are the whole
  * reason this is not a one-liner:
  *
@@ -38,9 +38,9 @@
  * therefore serves every locale, and a per-locale row would be redundant rather
  * than necessary — the opposite of what the pessimistic reading assumed.
  *
- * The foreign-handle write paths still create nothing, but that is now a scope
- * decision and not an unknown: extending them is a behaviour change on a
- * URL-affecting write path, so it gets asked for rather than assumed.
+ * `decideTranslatedHandleRedirect` at the bottom of this file is what that
+ * measurement bought: the foreign-locale half of the same feature, with its own
+ * set of things that must NOT happen.
  */
 
 /** The types whose storefront URL is derived from a handle. */
@@ -161,7 +161,18 @@ export type HandleRedirectDecision =
         | "unchanged"
         | "missingHandle"
         | "missingBlogHandle"
-        | "wouldLoop";
+        | "wouldLoop"
+        // ── foreign-locale only, see decideTranslatedHandleRedirect ──────────
+        /** This locale had no translated handle before, so it was served under
+         *  the PRIMARY one — an address that is still live. */
+        | "notTranslatedBefore"
+        /** A market override is not a shop-wide path. */
+        | "marketScoped"
+        /** The old translated handle is still somebody's live address. */
+        | "pathStillLive"
+        /** An article under a blog whose OWN handle is translated: which
+         *  spelling of the blog segment the storefront serves is unmeasured. */
+        | "localeBlogHandleUnknown";
     };
 
 /** Trim, strip surrounding slashes, lowercase — what Shopify does to a handle. */
@@ -214,6 +225,117 @@ export function decideHandleRedirect(request: HandleRedirectRequest): HandleRedi
   // one step later as a loop: the same outcome, reported as the wrong reason.
   // Shopify normalises handles this way too.
   if (normalizeHandle(previous) === normalizeHandle(next)) return { redirect: false, reason: "unchanged" };
+
+  const fromPath = storefrontPathFor(request.resource, previous, request.blogHandle);
+  const toPath = storefrontPathFor(request.resource, next, request.blogHandle);
+  if (!fromPath || !toPath) {
+    return {
+      redirect: false,
+      reason: request.resource === "article" ? "missingBlogHandle" : "missingHandle",
+    };
+  }
+  if (fromPath.toLowerCase() === toPath.toLowerCase()) return { redirect: false, reason: "wouldLoop" };
+
+  return { redirect: true, fromPath, toPath };
+}
+
+// ── The foreign-locale half ──────────────────────────────────────────────────
+
+export interface TranslatedHandleRedirectRequest {
+  resource: RedirectableResource;
+  /** `""` = global. Anything else is a market override — see below. */
+  marketId: string;
+  /** The handle translation this locale held BEFORE the write. */
+  previousTranslatedHandle: string | null | undefined;
+  /** The one it holds now. Empty ⇒ the merchant CLEARED it. */
+  nextTranslatedHandle: string | null | undefined;
+  /**
+   * The resource's own PRIMARY handle. Two jobs: it is the address the locale
+   * falls back to when the translation is cleared, and it is the one path this
+   * decision must never redirect.
+   */
+  primaryHandle: string | null | undefined;
+  /**
+   * The SAME resource's handle translations in every OTHER locale. A redirect
+   * row is unprefixed and therefore fires in all of them, so a path that is
+   * another locale's live address is not available as a source.
+   */
+  otherLocaleHandles?: string[];
+  wanted: boolean;
+  previouslyLive?: boolean | null;
+  /** The blog's PRIMARY handle — the article path's first segment. */
+  blogHandle?: string | null;
+  /** Does the blog carry a handle translation in THIS locale? */
+  blogHandleTranslatedInLocale?: boolean;
+}
+
+/**
+ * Does a change to a TRANSLATED handle owe the old URL a redirect?
+ *
+ * Same feature as above, one locale over, and it exists because the measurement
+ * at the top of this file says one unprefixed row covers every locale. That is
+ * also what makes it delicate: the row this returns fires under EVERY prefix,
+ * including locales that were not edited, so the source path has to be one that
+ * nothing else answers. Five rules do that work, and each of them is a URL that
+ * would otherwise break:
+ *
+ *  1. **No previous translation ⇒ nothing to redirect.** Before the first
+ *     translation the locale served the object under its PRIMARY handle, and
+ *     that address stays live afterwards (Shopify answers 200 for it behind a
+ *     prefix and canonicalises to the translated URL). Nothing broke, so there
+ *     is nothing to preserve — and acting anyway would put a redirect on the
+ *     primary path, i.e. on the shop's most important live URL. This is also
+ *     why bulk-translate produces no redirects at all: it only ever FILLS empty
+ *     translations, which is exactly this case.
+ *  2. **The old handle must not still be somebody's address.** If it equals the
+ *     primary handle, or another locale's translation of the same resource, the
+ *     unprefixed row would hijack a live page. (Only the same RESOURCE is
+ *     checked — see the residual note below.)
+ *  3. **Market overrides are out.** A `marketId` translation is served to one
+ *     market, while a redirect row is shop-wide; one cannot express the other.
+ *  4. **A cleared translation redirects BACK to the primary handle**, which is
+ *     what the locale falls back to serving. This is the case where the old URL
+ *     genuinely dies, so it is the one that most needs the row.
+ *  5. **Articles under a blog with a translated handle are skipped.** The path
+ *     has two translatable segments and which spelling the storefront serves
+ *     for the outer one is not measured. A guessed path is worse than none: it
+ *     redirects a URL that never existed and leaves the real one broken. With
+ *     no blog-handle translation there is only one possible spelling, so those
+ *     articles ARE covered.
+ *
+ * Residual, stated rather than hidden: a collision with a DIFFERENT resource's
+ * handle in some other locale is not checked. `ContentTranslation.value` has no
+ * index, so the check would be a per-row scan of the shop's translations on a
+ * path that renames hundreds of rows at a time. The realistic collision — the
+ * same object under two similar languages — is rule 2 and is cheap.
+ */
+export function decideTranslatedHandleRedirect(
+  request: TranslatedHandleRedirectRequest,
+): HandleRedirectDecision {
+  if (!request.wanted) return { redirect: false, reason: "notWanted" };
+  if (request.previouslyLive === false) return { redirect: false, reason: "neverLive" };
+  if (request.marketId !== "") return { redirect: false, reason: "marketScoped" };
+
+  const previous = normalizeHandle(request.previousTranslatedHandle ?? "");
+  if (!previous) return { redirect: false, reason: "notTranslatedBefore" };
+
+  const primary = normalizeHandle(request.primaryHandle ?? "");
+  // Cleared ⇒ the locale is served under the primary handle again, so that is
+  // where the dead translated URL should point.
+  const next = normalizeHandle(request.nextTranslatedHandle ?? "") || primary;
+  if (!next) return { redirect: false, reason: "missingHandle" };
+
+  if (previous === next) return { redirect: false, reason: "unchanged" };
+
+  // Rule 2. Checked AFTER "unchanged" so a no-op edit reports the reason it
+  // actually had, and before the paths are built because it is a fact about the
+  // handle rather than about the URL shape.
+  const live = new Set([primary, ...(request.otherLocaleHandles ?? []).map(normalizeHandle)].filter(Boolean));
+  if (live.has(previous)) return { redirect: false, reason: "pathStillLive" };
+
+  if (request.resource === "article" && request.blogHandleTranslatedInLocale) {
+    return { redirect: false, reason: "localeBlogHandleUnknown" };
+  }
 
   const fromPath = storefrontPathFor(request.resource, previous, request.blogHandle);
   const toPath = storefrontPathFor(request.resource, next, request.blogHandle);

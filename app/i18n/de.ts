@@ -254,6 +254,7 @@ export const de = {
     redirectBlogArticlesUncovered: "Die alte Blog-URL {path} leitet jetzt auf die neue weiter — die URLs der Artikel in diesem Blog haben sich aber ebenfalls geändert und sind nicht abgedeckt.",
     redirectShadowRemoved: "Die alte URL {path} leitet jetzt auf die neue weiter. Eine bestehende Weiterleitung auf der neuen URL wurde entfernt — sie hätte die Seite verdeckt.",
     redirectMissingBlog: "Die alte Artikel-URL konnte nicht weitergeleitet werden, weil der Blog unbekannt ist — lege die Weiterleitung bei Bedarf selbst an.",
+    redirectLocaleBlogUnknown: "Die alte Artikel-URL wurde nicht weitergeleitet: Der Handle dieses Blogs ist ebenfalls übersetzt, dadurch ist die Adresse des Artikels in dieser Sprache nicht eindeutig — lege die Weiterleitung bei Bedarf selbst an.",
     reload: "Neu laden",
     reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
     reloadItemTooltip: "Nur die Daten dieses Eintrags von Shopify neu laden",

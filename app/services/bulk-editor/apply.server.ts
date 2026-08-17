@@ -1711,13 +1711,16 @@ async function loadPrimaryHandle(
 // go. The shop-level setting is a shop-level promise, so it has to hold on this
 // path as well — through the SAME decision module, never a second rule.
 //
-// Bulk-TRANSLATE is deliberately not covered — a scope decision, no longer an
-// unknown. The locale-prefix question was measured 2026-08 on a live shop (see
-// the header of handle-redirect.shared.ts): a prefixed path DOES match a
-// path-based redirect and the prefix is carried onto the target, so one
-// unprefixed row would serve every locale. Extending this to translated handles
-// is therefore possible; it is a behaviour change on a URL-affecting write path
-// and is asked for rather than assumed.
+// Since the locale prefix was measured (see the header of
+// handle-redirect.shared.ts), the FOREIGN half is covered too: a translated
+// handle is a real storefront URL and editing it breaks that URL exactly the
+// same way. `captureTranslatedHandleForRedirect` below is that path, and it is
+// deliberately narrower — the rules live in `decideTranslatedHandleRedirect`.
+//
+// Note what this does NOT change: bulk-TRANSLATE only ever fills EMPTY
+// translations, and a locale that had no translated handle was being served
+// under the primary one, which stays live. Nothing breaks there, so nothing is
+// redirected — the decision reports `notTranslatedBefore` and stops.
 
 interface CapturedHandle {
   resource: RedirectableResource;
@@ -1808,6 +1811,121 @@ async function finishBulkHandleRedirect(
       previouslyLive: captured.previouslyLive,
       blogHandle:
         captured.resource === "article" ? await loadArticleBlogHandleForRedirect(deps, group.rowId) : undefined,
+    });
+  } catch {
+    // Best effort by design — see the block comment above.
+  }
+}
+
+interface CapturedTranslatedHandle {
+  resource: RedirectableResource;
+  previousHandle: string;
+  primaryHandle: string | null;
+  otherLocaleHandles: string[];
+  previouslyLive: boolean | null;
+  blogHandle: string | null;
+  blogHandleTranslatedInLocale: boolean;
+}
+
+/**
+ * Everything the foreign-locale decision needs, read BEFORE the write.
+ *
+ * Returns null for every case that could not produce a redirect anyway, so the
+ * overwhelmingly common one — a translation row group with no handle cell —
+ * costs nothing. The two ContentTranslation reads it does make are one indexed
+ * query each: this runs per ROW, and bulk-translate hands it hundreds.
+ */
+async function captureTranslatedHandleForRedirect(
+  group: BulkDiffRowGroup,
+  hasHandleCell: boolean,
+  deps: PersistDeps,
+): Promise<CapturedTranslatedHandle | null> {
+  // marketId: a market override is served to one market while a redirect row is
+  // shop-wide. The decision refuses it too; skipping the reads here means the
+  // common market-scoped save does not pay for a refusal.
+  if (!deps.autoHandleRedirect || !hasHandleCell || group.locale === "" || group.marketId !== "") return null;
+  const resource = redirectResourceFor(bulkRowTypeToResourceType(group.rowType), group.rowId);
+  if (!resource) return null;
+
+  try {
+    // One query for BOTH halves of rule 2: this locale's own previous value and
+    // every other locale's, which the unprefixed row would also answer for.
+    const handleRows = await deps.db.contentTranslation.findMany({
+      where: { shop: deps.shop, resourceId: group.rowId, key: "handle", marketId: "" },
+      select: { locale: true, value: true },
+    });
+    const previousHandle = handleRows.find((r) => r.locale === group.locale)?.value?.trim() ?? "";
+    // Nothing was translated before ⇒ the locale was served under the primary
+    // handle, which stays live. Bail before the remaining reads.
+    if (!previousHandle) return null;
+
+    const before =
+      group.rowType === "blog"
+        ? { handle: await loadBlogHandleForRedirect(deps, group.rowId), state: {} }
+        : await loadRedirectStateForRow(deps, group).catch(() => ({ handle: null, state: {} }));
+
+    let blogHandle: string | null = null;
+    let blogHandleTranslatedInLocale = false;
+    if (resource === "article") {
+      const article = await deps.db.article.findUnique({
+        where: { shop_id: { shop: deps.shop, id: group.rowId } },
+        select: { blogId: true },
+      });
+      if (article?.blogId) {
+        blogHandle = await loadBlogHandleForRedirect(deps, article.blogId);
+        const translatedBlogHandle = await deps.db.contentTranslation.findFirst({
+          where: {
+            shop: deps.shop,
+            resourceId: article.blogId,
+            key: "handle",
+            locale: group.locale,
+            marketId: "",
+          },
+          select: { value: true },
+        });
+        blogHandleTranslatedInLocale = !!translatedBlogHandle?.value?.trim();
+      }
+    }
+
+    return {
+      resource,
+      previousHandle,
+      primaryHandle: before.handle,
+      otherLocaleHandles: handleRows.filter((r) => r.locale !== group.locale).map((r) => r.value),
+      previouslyLive: wasEverLive(resource, before.state),
+      blogHandle,
+      blogHandleTranslatedInLocale,
+    };
+  } catch {
+    // A redirect is a courtesy on a write that has to happen either way.
+    return null;
+  }
+}
+
+/** Applies a captured translated-handle change. `nextHandle` is `""` for a
+ *  CLEARED translation, which the decision reads as "back to the primary
+ *  handle". Never throws and never fails a cell — the translation is already
+ *  written, and a redirect failure must not read as a failed save. */
+async function finishTranslatedHandleRedirect(
+  captured: CapturedTranslatedHandle | null,
+  nextHandle: string | undefined,
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<void> {
+  if (!captured || nextHandle === undefined) return;
+  try {
+    const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
+    await applyTranslatedHandleRedirect(deps.gateway as never, deps.shop, {
+      resource: captured.resource,
+      marketId: group.marketId,
+      previousTranslatedHandle: captured.previousHandle,
+      nextTranslatedHandle: nextHandle,
+      primaryHandle: captured.primaryHandle,
+      otherLocaleHandles: captured.otherLocaleHandles,
+      wanted: true,
+      previouslyLive: captured.previouslyLive,
+      blogHandle: captured.blogHandle,
+      blogHandleTranslatedInLocale: captured.blogHandleTranslatedInLocale,
     });
   } catch {
     // Best effort by design — see the block comment above.
@@ -1965,6 +2083,18 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
     }
   }
 
+  // §3.3 foreign half — captured BEFORE the write, because afterwards the old
+  // translated handle is gone. `writes` is re-scanned rather than reusing
+  // `handleIndex`: the duplicate-slug guard above may just have removed it.
+  const capturedTranslatedHandle = await captureTranslatedHandleForRedirect(
+    group,
+    writes.some((w) => w.key === "handle") || clears.some((c) => c.key === "handle"),
+    deps,
+  );
+  /** The handle translation Shopify CONFIRMED — `""` for a confirmed clear,
+   *  `undefined` while nothing is confirmed. */
+  let confirmedHandle: string | undefined;
+
   // ── Digest rule (§6.3, ONE strict rule): no digest ⇒ one re-fetch of the
   // resource ⇒ still none ⇒ cell error. No Shopify write, NO DB write.
   let digestsForResource = deps.digests.get(resourceId);
@@ -2027,6 +2157,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
+        if (write.key === "handle") confirmedHandle = write.value;
         if (group.rowType === "image") {
           // PRODUCT media mirror into ProductImageAltTranslation (keyed by the
           // ProductImage CACHE row) — the store the single editor and the SEO
@@ -2152,6 +2283,9 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
+        // A cleared handle: the locale is served under the PRIMARY handle
+        // again, so the dead translated URL gets a redirect there.
+        if (clear.key === "handle") confirmedHandle = "";
         if (group.rowType === "image") {
           // Cleared alt translation — the row goes only because Shopify already
           // confirmed the removal above (CLAUDE.md).
@@ -2180,6 +2314,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       for (const clear of clears) failures.push(failureOf(group, message, clear.columnId));
     }
   }
+
+  // AFTER both loops: only a translation Shopify confirmed changed a URL, and
+  // an unconfirmed write leaves the old translated handle in place.
+  await finishTranslatedHandleRedirect(capturedTranslatedHandle, confirmedHandle, group, deps);
 
   return failures;
 }

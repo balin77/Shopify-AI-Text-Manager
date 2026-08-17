@@ -71,6 +71,19 @@ export function buildRedirectMessage(
         text: s("redirectMissingBlog", "The old article URL could not be redirected because its blog is unknown."),
         tone: "warning",
       };
+    // Foreign locales only. The blog IS known — but its own handle is
+    // translated as well, so the article's URL has two translatable segments
+    // and this app does not know which spelling the storefront serves. A
+    // guessed redirect would cover a URL that never existed and leave the real
+    // one broken, so none is created and the merchant is told why.
+    case "localeBlogHandleUnknown":
+      return {
+        text: s(
+          "redirectLocaleBlogUnknown",
+          "The old article URL was not redirected: this blog's handle is translated too, so the article's address in this language is not certain.",
+        ),
+        tone: "warning",
+      };
     default:
       // An unknown code is a newer server talking to an older client. Saying
       // nothing beats inventing a claim about the merchant's URLs.
