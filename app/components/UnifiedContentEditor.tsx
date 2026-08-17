@@ -221,15 +221,36 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
 
-  // Resizable SEO/bulk sidebar
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const sidebarWidthRef = useRef(320);
+  // Resizable SEO/bulk sidebar. `null` means "not dragged yet" and renders the
+  // DEFAULT width straight from --app-editor-sidebar-width (responsive.css
+  // :root) — so the default, like every other width in the app, is stated in
+  // exactly one place and this panel can be reused elsewhere without carrying a
+  // number along. Once dragged, the state holds real pixels.
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
+  const sidebarWidthRef = useRef<number | null>(null);
+  const sidebarElRef = useRef<HTMLDivElement | null>(null);
   const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    const el = sidebarElRef.current;
+    if (!el) return;
     const startX = e.clientX;
-    const startWidth = sidebarWidthRef.current;
+    // Before the first drag there is no state to start from — measure what the
+    // CSS default actually rendered as, rather than restating the number.
+    const startWidth = sidebarWidthRef.current ?? el.getBoundingClientRect().width;
+    // Drag bounds come from the same :root tokens. Read per drag (cheap, and
+    // picks up a breakpoint override); a token that isn't a px value simply
+    // drops its half of the clamp instead of producing NaN.
+    const styles = getComputedStyle(el);
+    const readPx = (name: string) => {
+      const parsed = parseFloat(styles.getPropertyValue(name));
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const minWidth = readPx("--app-editor-sidebar-min-width");
+    const maxWidth = readPx("--app-editor-sidebar-max-width");
     const onMouseMove = (ev: MouseEvent) => {
-      const newWidth = Math.max(200, Math.min(600, startWidth + (startX - ev.clientX)));
+      let newWidth = startWidth + (startX - ev.clientX);
+      if (maxWidth !== null) newWidth = Math.min(maxWidth, newWidth);
+      if (minWidth !== null) newWidth = Math.max(minWidth, newWidth);
       sidebarWidthRef.current = newWidth;
       setSidebarWidth(newWidth);
     };
@@ -639,7 +660,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         // would otherwise hide the editor for a frame while the sidebar column
         // is already unrendered — a blank content area until the effect below
         // resets `open` after paint.
-        className={`unified-content-editor-layout${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
+        // app-page-width-full states the width choice rather than leaving it
+        // implicit: the editor is a three-column workbench, so it takes the
+        // whole width (responsive.css :root owns the token).
+        className={`unified-content-editor-layout app-page-width-full${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
@@ -1296,7 +1320,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             it is reachable through the nav toggle, which makes this column
             replace the editor instead (`.sidebar-panel-open`). */}
         {selectedItem && config.showSeoSidebar && (
-          <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div
+            ref={sidebarElRef}
+            className="seo-sidebar-container"
+            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+          >
             {/* Way back to the content. `open` can survive a resize past the
                 breakpoint, where the sidebar is shown normally and this row
                 would be meaningless — the class hides it there. */}

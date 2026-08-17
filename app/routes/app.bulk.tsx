@@ -1949,8 +1949,11 @@ export default function BulkEditor() {
         : b.saveSuccess.replace("{count}", String(lastSavedCount))
       : "";
 
+  // Uncapped by design (.app-page-width-full, responsive.css :root): the grid is
+  // a spreadsheet — every extra pixel goes into the value columns (BulkGrid
+  // gives uncapped columns 1fr), so a margin here would be width thrown away.
   return (
-    <div style={{ padding: "1rem", maxWidth: "1600px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+    <div className="app-page-width-full" style={{ padding: "1rem" }}>
       <PlanAccessGate minPlan="basic">
         {gated ? null : (
           <BlockStack gap="400">

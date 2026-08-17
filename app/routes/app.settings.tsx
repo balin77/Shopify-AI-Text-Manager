@@ -1294,11 +1294,17 @@ export default function SettingsPage() {
       {/* Page padding is owned globally by .Polaris-Page (responsive.css,
           --app-page-padding); .app-page-content zeroes Polaris' own
           Page__Content inset so the gutter is even on all sides (incl. top
-          and bottom), matching the content page. */}
-      <div className="app-page-content">
+          and bottom), matching the content page.
+
+          .app-page-width-full is explicit, not the absence of a cap: this is a
+          sidebar+content layout, not reading-width content, so it keeps the
+          full width the SEO sections and Tasks give up. */}
+      <div className="app-page-content app-page-width-full">
         <div style={{ display: "flex", gap: "1rem" }}>
-          {/* Left Sidebar - Hidden on mobile */}
-          <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
+          {/* Left Sidebar - Hidden on mobile. Width from
+              --app-list-column-width: the tab nav is a "pick an item" column
+              like the content pages' item list, and now matches it. */}
+          <div className="settings-desktop-nav" style={{ width: "var(--app-list-column-width)", flexShrink: 0 }}>
             <Card padding="0">
               <button
                 onClick={() => handleSectionChange("setup")}
