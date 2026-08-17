@@ -27,7 +27,17 @@ RUN npm run build
 # ── Stage 2: Production ──────────────────────────────────────────
 FROM node:22-alpine
 
-RUN apk add --no-cache openssl libc6-compat
+# postgresql-client supplies pg_dump/pg_restore/psql for the "Db Backup" cron
+# service (scripts/db-backup.mjs). All Railway services here build from this
+# one Dockerfile (see RAILWAY-SETUP.md §0), so the client ships in the web
+# image too — a few MB, in exchange for not maintaining a second build path.
+#
+# The unversioned package tracks Alpine's current default major. pg_dump
+# REFUSES to dump from a server newer than itself, so if Railway's Postgres is
+# ever upgraded past it, db-backup.mjs fails its version check with the exact
+# package to pin here (e.g. postgresql17-client) instead of silently producing
+# an unusable backup.
+RUN apk add --no-cache openssl libc6-compat postgresql-client
 
 WORKDIR /app
 

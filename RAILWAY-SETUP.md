@@ -15,13 +15,14 @@ je Service unter Settings → Config-as-Code hinterlegt.
 |---|---|---|
 | Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
+| Db Backup (Cron, nur production) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
 Beide Web-Environments sind identisch konfiguriert — deshalb braucht `railway.json`
 keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Block
 `"environments": { "development": { "deploy": { … } } }` dazu, statt die Abweichung
 nur im Dashboard zu machen.
 
-**Alle drei Services bauen mit dem [Dockerfile](Dockerfile).** Der `CMD` darin
+**Alle vier Services bauen mit dem [Dockerfile](Dockerfile).** Der `CMD` darin
 (`npm run start`, **ohne** Migrationen) wird vom `startCommand` oben überschrieben —
 der Dockerfile ist also nicht die Antwort darauf, wie die App startet.
 
@@ -68,6 +69,65 @@ Im Cron-Modus postet das Skript nur bei Überschreitung und beendet sich dann mi
 Exit-Code 2 — der Lauf erscheint in Railway also absichtlich als fehlgeschlagen.
 Genau deshalb steht die Restart-Policy auf `NEVER`: bei `ON_FAILURE` würde Railway
 den Container nach jedem Alarm neu starten und der Webhook liefe in eine Schleife.
+
+### Env-Variablen des Cron-Service `Db Backup`
+
+[scripts/db-backup.mjs](scripts/db-backup.mjs) zieht nachts einen `pg_dump` und
+legt ihn in einem Cloudflare-R2-Bucket ab. Railways eigene Snapshots bleiben als
+Grundsicherung bestehen — sie sind aber ein Service-Rollback: kein frei wählbarer
+Zeitpunkt und kein Weg, eine *einzelne* Tabelle zurückzuholen. Genau das braucht
+man vor einer destruktiven Migration, und dafür ist dieser Service da.
+
+| Variable | Bedeutung |
+|---|---|
+| `DATABASE_URL` | von Railway injiziert (`${{Postgres.DATABASE_URL}}`) |
+| `R2_ACCOUNT_ID` | Cloudflare-Account-ID; daraus wird der Endpoint gebaut |
+| `R2_ENDPOINT` | optional, überschreibt `R2_ACCOUNT_ID` (z. B. für einen Jurisdiction-Endpoint) |
+| `R2_BUCKET` | Ziel-Bucket |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2-API-Token. **Nur „Object Read & Write" auf genau diesen Bucket** — der Token liegt in einem Container, der sonst nichts mit R2 zu tun hat |
+| `BACKUP_PREFIX` | Key-Präfix und Dateiname-Stamm, Default `contentpilot` |
+| `BACKUP_RETENTION_DAYS` | ältere Dumps werden gelöscht, Default `30`, `0` = nie löschen |
+| `BACKUP_KEEP_MINIMUM` | die N neuesten Dumps werden **nie** gelöscht, Default `3` |
+| `ALERT_WEBHOOK_URL` | derselbe Slack-/Discord-Webhook wie beim Space Checker; fehlt er, wird nur geloggt |
+
+Der Ablauf bricht bei jedem Schritt ab, statt ein halbes Backup als Erfolg zu
+melden: Versionscheck → `pg_dump -Fc` → **`pg_restore --list` auf das Ergebnis**
+→ Upload → Retention. Der Verifikationsschritt ist der Punkt, an dem ein
+abgeschnittener oder leerer Dump auffällt — im Backup-Fenster, nicht in dem
+Moment, in dem man ihn unter Druck zurückspielen will.
+
+Zwei Sicherheitseigenschaften der Retention, die bewusst so gebaut sind: die
+`BACKUP_KEEP_MINIMUM` neuesten Dumps überleben **jedes** Alter (läuft der Cron
+monatelang nicht, darf der nächste Lauf nicht „alle sind alt" als „alle löschen"
+lesen), und gelöscht wird nur, was auf `.dump` endet — was sonst noch unter dem
+Präfix liegt, gehört der Retention nicht. Beides ist in
+[tests/unit/db-backup.test.ts](tests/unit/db-backup.test.ts) festgenagelt.
+
+**Postgres-Client-Version.** `pg_dump` verweigert den Dump eines *neueren*
+Servers. Das [Dockerfile](Dockerfile) installiert Alpines Default-`postgresql-client`;
+wird Railways Postgres später hochgezogen, scheitert der Lauf mit genau dem
+Paketnamen, den man dort pinnen muss (`postgresql17-client` o. ä.) — statt still
+ein unbrauchbares Backup abzulegen.
+
+Erste Inbetriebnahme, in dieser Reihenfolge:
+
+```bash
+# 1. Nur Dump + Verifikation, ohne Bucket und ohne Credentials:
+node scripts/db-backup.mjs --dry-run
+# 2. Vollständiger Lauf, der auch bei Erfolg in den Webhook postet:
+node scripts/db-backup.mjs --test
+```
+
+Im Cron-Modus meldet sich der Service **nur bei Fehlern** (Exit-Code 1 plus
+Webhook-Post). Restart-Policy `NEVER` aus demselben Grund wie beim Space Checker.
+
+Ein Backup, das nie zurückgespielt wurde, ist kein Backup — der Restore-Weg:
+
+```bash
+pg_restore -d "$ZIEL_URL" --no-owner --no-privileges backup.dump
+# nur eine einzelne Tabelle (das ist der Grund fuer das custom format):
+pg_restore -d "$ZIEL_URL" --no-owner --no-privileges -t Shop backup.dump
+```
 
 ## 1. Railway Project Setup
 
