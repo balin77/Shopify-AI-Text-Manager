@@ -69,8 +69,15 @@ export function indexNowUrlsForPublishChange(host: string, change: PublishChange
       // existed. Same rule as the handle redirect.
       return blog ? articleUrl(host, blog, clean) : null;
     }
-    // A blog's index page and a page share the "flat" URL shape.
-    return storefrontUrl(host, change.resource === "blog" ? "page" : change.resource, clean);
+    // A blog's INDEX is `/blogs/<handle>` — not a "flat" type at all.
+    // `storefrontUrl` knows only product/collection/page, so the blog case is
+    // built here rather than borrowed from the page shape, which would have
+    // submitted `/pages/<blog-handle>`: a URL that does not exist, for a
+    // resource that does.
+    if (change.resource === "blog") {
+      return `https://${host.replace(/^https?:\/\//, "").replace(/\/+$/, "")}/blogs/${clean}`;
+    }
+    return storefrontUrl(host, change.resource, clean);
   };
 
   if (shouldEnqueuePublishChange(change.previousPublished, change.nextPublished)) {

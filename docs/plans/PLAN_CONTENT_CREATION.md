@@ -9,7 +9,7 @@
 | 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts` (im Create-Modal; Einbindung in den **Editor** bestehender Collections steht noch aus) |
 | 1b | ✅ `SeoSidebar` → `ItemSidebar` |
 | 2 | ✅ Attribut-Tab; Loader liefern den Attributblock (nachgezogen in Phase 3) |
-| 3.1/3.2/3.5 | ✅ `status`, `vendor`, `tags`, `author`, `sortOrder`, `templateSuffix`, `isPublished` editierbar, nicht übersetzbar markiert. **Offen:** `taxonomy` (Kategorie), `collections` (Mitgliedschafts-Picker), `money` (Preis der Standardvariante), `collectionRules` im Editor |
+| 3.1/3.2/3.5 | ✅ `status`, `vendor`, `tags`, `author`, `sortOrder`, `templateSuffix`, `isPublished`, `money` (Preis der Standardvariante) editierbar, nicht übersetzbar markiert. **Offen:** `taxonomy` (Kategorie), `collections` (Mitgliedschafts-Picker), `collectionRules` im Editor |
 | 3.3 | ✅ Redirect bei Handle-Wechsel (Einzel- **und** Bulk-Editor), als Diff über bestehende Redirects |
 | 3.4 | ✅ IndexNow am Publish-Übergang für Pages/Artikel/Blogs (die drei ohne Webhook) |
 | 3.6 | ✅ `vendor`/`tags` als Bulk-Spalten |

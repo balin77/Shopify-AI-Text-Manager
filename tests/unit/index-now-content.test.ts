@@ -63,6 +63,21 @@ describe("indexNowUrlsForPublishChange", () => {
     ).toEqual(["https://shop.example/blogs/news/hello"]);
   });
 
+  it("uses /blogs/<handle> for a blog INDEX, not the page shape", () => {
+    // A blog is not a "flat" type: `storefrontUrl` knows only
+    // product/collection/page, so borrowing the page shape would submit
+    // `/pages/news` — a URL that does not exist for a resource that does.
+    expect(
+      indexNowUrlsForPublishChange(host, {
+        resource: "blog",
+        previousPublished: true,
+        nextPublished: true,
+        previousHandle: "news",
+        nextHandle: "news",
+      }),
+    ).toEqual(["https://shop.example/blogs/news"]);
+  });
+
   it("says nothing about an article whose blog it does not know", () => {
     // A guessed path would ask an engine to crawl an address that never
     // existed — the same rule the handle redirect applies.
