@@ -1133,7 +1133,7 @@ async function updatePrimaryProduct(
   // after the product write and reports as a warning rather than a failure —
   // the text edits above already landed, and telling the merchant the whole
   // save failed would invite them to make it twice.
-  let priceWarning: string | undefined;
+  let priceWarning: string | undefined; // a CODE under t.content.priceWarnings
   if (params.price !== undefined && changedAttributeFields.includes("price")) {
     priceWarning = await updateDefaultVariantPrice(gateway, db, productId, params.price, shop);
   }
@@ -1403,14 +1403,17 @@ async function updatePrimaryProduct(
     // A price that could not be written is a warning on a save that otherwise
     // worked — never a silent drop, which for a money field is the worst
     // possible outcome.
-    ...(priceWarning ? { warning: priceWarning } : {}),
+    // A code, not a sentence — the client phrases it (see the helper below).
+    ...(priceWarning ? { priceWarning } : {}),
   });
 }
 
 /**
  * Writes the DEFAULT variant's price (PLAN_CONTENT_CREATION §Phase 3.2).
  *
- * Returns a human-readable WARNING or undefined. Never throws: the product save
+ * Returns a warning CODE (never prose) or undefined. The app ships in three
+ * languages and only the client knows which one the merchant is reading, so the
+ * wording lives in `t.content.priceWarnings.*`. Never throws: the product save
  * this accompanies has already landed, so a failure here must not be reported
  * as a failed save.
  *
@@ -1435,15 +1438,11 @@ async function updateDefaultVariantPrice(
 ): Promise<string | undefined> {
   const parsed = parseMoney(rawPrice);
   if (!parsed.ok) {
-    return parsed.error === "ambiguous"
-      ? `The price "${rawPrice}" is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.`
-      : `The price "${rawPrice}" could not be read as an amount. Everything else was saved.`;
+    return parsed.error === "ambiguous" ? "priceAmbiguous" : "priceInvalid";
   }
   // Shopify's price is not nullable — an emptied field is not "remove the
   // price", it is an unfinished edit.
-  if (parsed.value === null) {
-    return "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.";
-  }
+  if (parsed.value === null) return "priceEmpty";
 
   try {
     const variant = await db.productVariant.findFirst({
@@ -1451,9 +1450,7 @@ async function updateDefaultVariantPrice(
       orderBy: { position: "asc" },
       select: { id: true, shopifyGid: true },
     });
-    if (!variant?.shopifyGid) {
-      return "The price could not be saved because this product's variants are not in the local cache yet — resync the product. Everything else was saved.";
-    }
+    if (!variant?.shopifyGid) return "priceNoVariant";
 
     const response = await gateway.graphql(
       `#graphql
@@ -1478,24 +1475,22 @@ async function updateDefaultVariantPrice(
     // A SCHEMA-level error arrives as a top-level `errors` array with
     // `data: null` and never reaches `userErrors` — checking only the latter
     // would read this as a success and mirror a price Shopify never stored.
-    if (body.errors?.length) {
-      return `The price could not be saved (${body.errors[0]?.message ?? "GraphQL error"}). Everything else was saved.`;
-    }
+    if (body.errors?.length) return "priceFailed";
     const payload = body.data?.productVariantsBulkUpdate;
-    if (payload?.userErrors?.length) {
-      return `The price could not be saved (${payload.userErrors[0].message}). Everything else was saved.`;
-    }
+    if (payload?.userErrors?.length) return "priceFailed";
 
     const echoed = payload?.productVariants?.find((v) => v.id === variant.shopifyGid);
-    if (!echoed?.price) {
-      return "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.";
-    }
+    if (!echoed?.price) return "priceNotConfirmed";
 
     await db.productVariant
       .update({ where: { id: variant.id }, data: { price: echoed.price } })
       .catch(() => undefined);
     return undefined;
   } catch (error) {
-    return `The price could not be saved (${error instanceof Error ? error.message : String(error)}). Everything else was saved.`;
+    loggers.product("warn", "Variant price write failed", {
+      productId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "priceFailed";
   }
 }

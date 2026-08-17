@@ -49,6 +49,14 @@ export interface PublishChange {
   nextHandle: string | null | undefined;
   /** Articles live under their blog; without it their URL is not derivable. */
   blogHandle?: string | null;
+  /**
+   * Lazy alternative to `blogHandle`, for callers whose lookup is expensive.
+   * Resolving an article's blog costs a DB read plus a GraphQL call, and this
+   * module returns early for every shop with IndexNow switched off — so an
+   * eagerly-passed value would put that round-trip in the critical path of
+   * every article save on every shop, including the ones that cannot use it.
+   */
+  loadBlogHandle?: () => Promise<string | null>;
 }
 
 /**
@@ -123,7 +131,12 @@ export async function enqueuePublishChange(
     // precisely so this path needs no lookup. A myshopify URL published
     // outwards is a non-canonical redirect and fails IndexNow's ownership
     // check — see the note at the top of index-now.service.ts.
-    const urls = indexNowUrlsForPublishChange(config.host, normalizeChange(change));
+    // Only NOW, past the config check, is the blog handle worth resolving.
+    const resolved = change.loadBlogHandle
+      ? { ...change, blogHandle: await change.loadBlogHandle() }
+      : change;
+
+    const urls = indexNowUrlsForPublishChange(config.host, normalizeChange(resolved));
     if (urls.length === 0) return;
 
     for (const url of urls) await enqueueIndexNowUrl(db, shop, url);

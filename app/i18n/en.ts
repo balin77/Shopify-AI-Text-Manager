@@ -377,6 +377,7 @@ export const en: Translation = {
       sortOrder: "Sort order",
       templateSuffix: "Theme template",
       isPublished: "Visible in the online store",
+      price: "Price (default variant)",
     },
     // Resource names
     resourceNames: {
@@ -449,6 +450,17 @@ export const en: Translation = {
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
     rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
     addTag: "Add tag",
+    // PLAN §3.2 — the price is a SECOND mutation, so it can fail on its own
+    // while the rest of the save lands. Each ends with what DID work, because
+    // a warning that only says "failed" invites the merchant to save again.
+    priceWarnings: {
+      priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
+      priceInvalid: "The price could not be read as an amount. Everything else was saved.",
+      priceEmpty: "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.",
+      priceNoVariant: "The price could not be saved because this product's variants are not in the local cache yet — reload the product. Everything else was saved.",
+      priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.",
+      priceFailed: "The price could not be saved. Everything else was saved.",
+    },
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     duplicateModal: {

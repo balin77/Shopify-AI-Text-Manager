@@ -46,6 +46,16 @@ export async function handleUpdateContent(
   // primary content — so the marketId only applies to foreign-locale saves.
   const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
 
+  // §Phase 3 — which MERCHANDISING attributes the merchant actually touched.
+  // Its own list, separate from `changedFields`: that one answers "which
+  // translations went stale" and the accept-and-translate flow withholds it,
+  // which would otherwise take attribute edits down with it. Read once here —
+  // both branches below and the IndexNow hook need it.
+  const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+  const changedAttributeFields: string[] | undefined = changedAttributesStr
+    ? safeJsonParse<string[]>(changedAttributesStr, [])
+    : undefined;
+
   logger.debug('[UnifiedContent] updateContent', { resourceType: contentConfig.resourceType, itemId, locale, primaryLocale });
 
   // ── PLAN §Phase 3.3 / §A1 — a handle change breaks the old URL ───────────
@@ -78,10 +88,15 @@ export async function handleUpdateContent(
   const isPrimarySave = locale === primaryLocale;
   const beforeSave =
     isPrimarySave && redirectResource
-      ? // A blog CONTAINER has no cache model, so its old handle is fetched
-        // live — the same one call `loadBlogHandle` already makes for articles.
-        redirectResource === "blog"
-        ? { handle: await loadBlogHandle(admin, itemId), isPublished: null }
+      ? redirectResource === "blog"
+        ? // A blog CONTAINER has no cache model, so its old handle can only
+          // come from Shopify. Fetched ONLY when a handle was actually
+          // submitted — otherwise this would be one Admin round-trip on every
+          // save of every blog, in the request's critical path, for a value
+          // nothing downstream can use.
+          submittedHandle
+          ? { handle: await loadBlogHandle(admin, itemId), isPublished: null }
+          : { handle: null, isPublished: null }
         : await loadCachedSnapshot(db, session.shop, contentConfig.resourceType, itemId)
       : null;
   const previousHandle = wantsHandleRedirect ? beforeSave?.handle ?? null : null;
@@ -103,18 +118,36 @@ export async function handleUpdateContent(
         ? redirectResource
         : null;
     if (!resource) return;
+    // The submitted value is trusted ONLY when the merchant actually touched
+    // the toggle. Otherwise it is whatever the editor read out of the cache —
+    // and for an article that cache column is `isPublished`, which defaults to
+    // TRUE and says nothing at all on a row an older sync wrote. Trusting it
+    // would let a hidden article report itself as published and put a 404 URL
+    // in front of a search engine: the very failure the `previousPublished`
+    // gate exists to prevent, on the other half of the comparison.
+    const publishTouched = changedAttributeFields?.includes("isPublished") ?? false;
     const submittedPublished = getFormString(formData, "isPublished");
+    const nextPublished =
+      publishTouched && submittedPublished !== ""
+        ? submittedPublished !== "false"
+        : beforeSave.isPublished;
+
     const { enqueuePublishChange } = await import("~/services/seo/index-now-content.server");
     await enqueuePublishChange(db, session.shop, {
       resource,
       previousPublished: beforeSave.isPublished,
-      // Absent ⇒ unchanged. Only the transition is interesting, and treating a
-      // missing field as "now published" would ping every draft.
-      nextPublished: submittedPublished === "" ? beforeSave.isPublished : submittedPublished !== "false",
+      nextPublished,
       previousHandle: beforeSave.handle,
       nextHandle: storedHandle || submittedHandle || beforeSave.handle,
-      blogHandle:
-        resource === "article" ? await loadArticleBlogHandle(admin, db, session.shop, itemId) : undefined,
+      // A THUNK, not a value: resolving an article's blog handle costs a DB
+      // read plus a GraphQL call, and `enqueuePublishChange` returns early for
+      // every shop that has IndexNow switched off. Passed eagerly it would put
+      // that round-trip in the critical path of every article save on every
+      // shop, including the ones that can never use the result.
+      loadBlogHandle:
+        resource === "article"
+          ? () => loadArticleBlogHandle(admin, db, session.shop, itemId)
+          : undefined,
     });
   };
 
@@ -210,11 +243,7 @@ export async function handleUpdateContent(
       if (changedFieldsStr && locale === primaryLocale) {
         productFormData.set("changedFields", changedFieldsStr);
       }
-      // §Phase 3 — which merchandising attributes the merchant actually
-      // touched. Separate from `changedFields` because that one is withheld by
-      // the accept-and-translate flow, and an attribute edit must not be
-      // silently dropped just because the save also starts a translation.
-      const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+      // §Phase 3 — see the hoisted declaration at the top of this handler.
       if (changedAttributesStr && locale === primaryLocale) {
         productFormData.set("changedAttributeFields", changedAttributesStr);
       }
@@ -588,11 +617,6 @@ export async function handleUpdateContent(
     // Get changed fields (for translation deletion when saving primary locale)
     const changedFieldsStr = getFormString(formData, "changedFields");
     const changedFields: string[] | undefined = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : undefined;
-    // §Phase 3 — see the product branch above for why this is its own list.
-    const changedAttributesStr = getFormString(formData, "changedAttributeFields");
-    const changedAttributeFields: string[] | undefined = changedAttributesStr
-      ? safeJsonParse<string[]>(changedAttributesStr, [])
-      : undefined;
 
     // Extract policyType for ShopPolicy primary locale updates
     const policyType = contentConfig.resourceType === "ShopPolicy"

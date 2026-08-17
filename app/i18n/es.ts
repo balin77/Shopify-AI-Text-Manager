@@ -376,6 +376,7 @@ export const es: Translation = {
       sortOrder: "Orden",
       templateSuffix: "Plantilla del tema",
       isPublished: "Visible en la tienda online",
+      price: "Precio (variante predeterminada)",
     },
     // Resource names
     resourceNames: {
@@ -448,6 +449,16 @@ export const es: Translation = {
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
     rulesNeedApiUpgrade: "Las colecciones automatizadas necesitan la API {version} de Shopify. Hasta que esta aplicación se actualice, puedes crear colecciones y elegir sus productos manualmente.",
     addTag: "Añadir etiqueta",
+    // PLAN §3.2 — el precio es una SEGUNDA mutación y puede fallar por su
+    // cuenta mientras el resto sí se guarda. Cada mensaje lo dice.
+    priceWarnings: {
+      priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. Todo lo demás se guardó.",
+      priceInvalid: "El precio no se pudo interpretar como un importe. Todo lo demás se guardó.",
+      priceEmpty: "El precio se dejó vacío y no se guardó — Shopify exige un precio en cada variante. Todo lo demás se guardó.",
+      priceNoVariant: "El precio no se pudo guardar porque las variantes de este producto aún no están en la caché local — recarga el producto. Todo lo demás se guardó.",
+      priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Todo lo demás se guardó.",
+      priceFailed: "El precio no se pudo guardar. Todo lo demás se guardó.",
+    },
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     duplicateModal: {

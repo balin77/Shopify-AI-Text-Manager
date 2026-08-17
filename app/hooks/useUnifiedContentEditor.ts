@@ -1859,20 +1859,34 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         return [`${text} ${redirectMessage.text}`, merged];
       };
 
+      // A server warning (a price that could not be written, a DB mirror that
+      // failed) is APPENDED rather than replaced by the alt-text message: a
+      // merchant who edits price and alt-text in one save would otherwise hear
+      // only about the images and never learn the price did not land, which on
+      // a money field is the worst possible outcome.
+      const priceWarnings = (t.content?.priceWarnings ?? {}) as Record<string, string>;
+      const priceWarningCode =
+        "priceWarning" in fetcher.data ? String(fetcher.data.priceWarning ?? "") : "";
+      const serverWarning =
+        // A CODE from the price path (localized here), or a plain string from
+        // the older warning paths. Both end up in the same box.
+        (priceWarningCode && (priceWarnings[priceWarningCode] || priceWarningCode)) ||
+        ("warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "");
+
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
+        const altMessage = String(
+          t.content?.altTextSavePartialImages ||
+            "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
+        ).replace("{failedImages}", failedList);
         showInfoBox(
-          ...withRedirect(
-            String(t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
-              .replace("{failedImages}", failedList),
-            "warning",
-          ),
+          ...withRedirect(serverWarning ? `${altMessage} ${serverWarning}` : altMessage, "warning"),
           t.common?.warning || "Warning"
         );
-      } else if ("warning" in fetcher.data && fetcher.data.warning) {
+      } else if (serverWarning) {
         // Server returned success but with a warning (e.g. Shopify saved, DB cache failed)
         showInfoBox(
-          ...withRedirect(String(fetcher.data.warning), "warning"),
+          ...withRedirect(serverWarning, "warning"),
           t.common?.warning || "Warning"
         );
       } else if (wasCopySave) {

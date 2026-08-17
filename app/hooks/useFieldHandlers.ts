@@ -7,6 +7,7 @@
  */
 
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
+import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
@@ -347,7 +348,7 @@ const handleSave = () => {
     // flow deliberately withholds `changedFields` (see useEditorAutoSave).
     const changedAttributes = changedFields.filter((fieldKey) => {
       const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
-      return field && field.supportsTranslation === false && !field.translationKey;
+      return !!field && isAttributeField(field);
     });
     if (changedAttributes.length > 0) {
       formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);

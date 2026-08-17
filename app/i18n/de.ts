@@ -374,6 +374,7 @@ export const de = {
       sortOrder: "Sortierung",
       templateSuffix: "Theme-Template",
       isPublished: "Im Onlineshop sichtbar",
+      price: "Preis (Standardvariante)",
     },
     // Resource names
     resourceNames: {
@@ -446,6 +447,17 @@ export const de = {
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
     rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
     addTag: "Tag hinzufügen",
+    // PLAN §3.2 — der Preis ist eine ZWEITE Mutation und kann für sich
+    // fehlschlagen, während der Rest gespeichert wurde. Jede Meldung sagt das
+    // dazu, sonst speichert der Händler ein zweites Mal.
+    priceWarnings: {
+      priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
+      priceInvalid: "Der Preis konnte nicht als Betrag gelesen werden. Alles Übrige wurde gespeichert.",
+      priceEmpty: "Der Preis war leer und wurde nicht gespeichert — Shopify verlangt für jede Variante einen Preis. Alles Übrige wurde gespeichert.",
+      priceNoVariant: "Der Preis konnte nicht gespeichert werden, weil die Varianten dieses Produkts noch nicht im lokalen Cache sind — lade das Produkt neu. Alles Übrige wurde gespeichert.",
+      priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
+      priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
+    },
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
     duplicateModal: {

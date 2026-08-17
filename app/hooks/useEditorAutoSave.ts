@@ -7,6 +7,7 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
+import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useRef } from "react";
 import { getItemFieldValue } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -295,7 +296,7 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
 
       const changedAttributes = changedFields.filter((fieldKey) => {
         const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
-        return field && field.supportsTranslation === false && !field.translationKey;
+        return !!field && isAttributeField(field);
       });
       if (changedAttributes.length > 0) {
         formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);
