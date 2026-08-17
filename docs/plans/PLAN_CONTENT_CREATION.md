@@ -13,7 +13,7 @@
 | 3.3 | ✅ Redirect bei Handle-Wechsel (Einzel- **und** Bulk-Editor), als Diff über bestehende Redirects |
 | 3.4 | ✅ IndexNow am Publish-Übergang für Pages/Artikel/Blogs (die drei ohne Webhook) |
 | 3.6 | ✅ `vendor`/`tags` als Bulk-Spalten |
-| 4 | ✅ Scopes in beiden TOMLs, Schema + Sync (`commerce-sync.shared.ts`), `inventorySetQuantities` mit `compareQuantity`, `publishablePublish`/`Unpublish`, eigene Route + Panel, Merchant-Hinweis zum Scope-Change. **Offen:** `inventoryItemUpdate` (Kosten, Steuerpflicht, Gewicht, Zolltarif, Ursprungsland) — synchronisiert, aber noch nicht schreibbar |
+| 4 | ✅ Scopes in beiden TOMLs, Schema + Sync (`commerce-sync.shared.ts`), `inventorySetQuantities` mit `compareQuantity`, `inventoryItemUpdate` (Kosten, Gewicht, Zolltarif, Ursprungsland), `publishablePublish`/`Unpublish`, eigene Route + Panel, Merchant-Hinweis zum Scope-Change. `taxable` bewusst nur lesend (liegt bei uns auf der Variante, nicht am InventoryItem) |
 
 §2.5 ist vollständig umgesetzt (KI-Extras: Rest generieren, Live-SEO-Score im Modal, Auto-Alt-Text, danach übersetzen, Glossar in `generate*`). Ebenfalls offen: §8.2–§8.4.
 
