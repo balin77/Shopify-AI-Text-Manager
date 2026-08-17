@@ -224,6 +224,16 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
       // Create AI service with shop and taskId for queue management
       const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
 
+      // §2.5e — the glossary applies to the ORIGINAL, not only to its
+      // translations. Same block as the `/api/ai` generation handler: this
+      // action is the OTHER entrance to the same feature, and a house term
+      // honoured on one of them only is worse than on neither.
+      const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
+      const glossary = {
+        contextTexts: [sanitizedContextTitle, sanitizedContextDescription, currentValue],
+        locale: await resolveWrittenLocale(admin, session.shop, formData),
+      };
+
       let generatedContent = "";
 
       // Update task to queued (queue will update to running)
@@ -303,7 +313,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
         // Merchant's per-request instruction — last word, outranks everything above.
         prompt = withUserInstruction(prompt, formData);
-        generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
+        generatedContent = await aiServiceWithTask.generateProductTitle(prompt, undefined, glossary);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
 
         if (field.type === "slug") {
@@ -372,7 +382,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Do NOT wrap the output in markdown code fences (\`\`\`). Output in ${mainLanguage}.`;
         // Merchant's per-request instruction — last word, outranks everything above.
         prompt = withUserInstruction(prompt, formData);
-        generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
+        generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt, undefined, glossary);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
       }
 
@@ -417,6 +427,14 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   // ============================================================================
   // FORMAT AI TEXT
   // ============================================================================
+  //
+  // NO glossary directive here, deliberately (§2.5e). Both prompts below are
+  // preserve-only — "Do NOT add new information or rewrite the text", "Keep all
+  // words, sentences, and information intact" — and a terminology rule saying
+  // "refer to X as Y" is an instruction to change words. Two contradicting
+  // instructions in one prompt is how a formatting pass starts rewriting.
+  // The `/api/ai` improve path DOES get the glossary, because that one rewords
+  // on purpose; the difference is the prompt, not the button's name.
 
   if (action === "formatAIText") {
     const fieldType = getFormString(formData, "fieldType");

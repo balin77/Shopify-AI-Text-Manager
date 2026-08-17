@@ -20,6 +20,7 @@ import {
   keywordRequirementLines,
   loadTrackedKeywords,
   resolveKeywordLocale,
+  resolveWrittenLocale,
   stuffingRetryWarning,
 } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
@@ -183,6 +184,11 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
     fieldType,
   );
 
+  // §2.5e — the glossary is keyed by real locale codes, so it needs the
+  // language actually being WRITTEN. `keywordLocale` says "" for the primary
+  // one, which is right for the keyword rows and useless here.
+  const writtenLocale = await resolveWrittenLocale(ctx.admin, session.shop, formData);
+
   // Build field-type-aware prompt
   let prompt = `Create an improved ${genFieldLabel} for the following content.`;
 
@@ -284,10 +290,20 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
 
     // Use appropriate method based on field type
     const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
+    // §2.5e — the glossary applies to the ORIGINAL, not only to its
+    // translations. Until now a merchant who forced "Sneaker" over "Turnschuh"
+    // got "Sneaker" in every translation and "Turnschuh" in the German source:
+    // the glossary working on exactly the half they are least likely to check.
+    // The context decides which rules are relevant, so a 200-term glossary
+    // does not dilute the rest of the prompt.
+    const glossary = {
+      contextTexts: [sanitizedContextTitle, sanitizedContextDescription, currentValue],
+      locale: writtenLocale,
+    };
     const generate = (p: string) =>
       isGenLongContent
-        ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend)
-        : aiService.generateProductTitle(p, imageUrlToSend);
+        ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend, glossary)
+        : aiService.generateProductTitle(p, imageUrlToSend, glossary);
     let generatedContent = await generate(appendUserInstruction(prompt, userInstruction));
 
     // Stuffing guard (§3.2): hard-enforced in the handler, not just the
@@ -568,10 +584,17 @@ Do NOT:
 
     // Use appropriate method based on field type
     const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
+    // §2.5e — a reformat rewrites the merchant's own words, which is exactly
+    // where a house term gets replaced by a synonym. The context is the text
+    // being reworked, so only the rules it actually touches are sent.
+    const glossary = {
+      contextTexts: [currentValue, sanitizedContextTitle],
+      locale: await resolveWrittenLocale(ctx.admin, session.shop, formData),
+    };
     const runFormat = (p: string) =>
       isLongContent
-        ? aiService.generateProductDescription(currentValue, p, imageUrlToSend)
-        : aiService.generateProductTitle(p, imageUrlToSend);
+        ? aiService.generateProductDescription(currentValue, p, imageUrlToSend, glossary)
+        : aiService.generateProductTitle(p, imageUrlToSend, glossary);
     let formattedValue = await runFormat(prompt);
 
     // Stuffing guard — the same one generation uses, and now needed here for

@@ -238,6 +238,24 @@ export class AIService {
   }
 
   /**
+   * The glossary directive for GENERATING primary text (PLAN §2.5e).
+   *
+   * The bug this closes: the translation paths have consulted the glossary
+   * since it existed, the generation paths never did. A merchant who forces
+   * "Sneaker" over "Turnschuh" got "Sneaker" in every translation and
+   * "Turnschuh" in the German original — the glossary working on exactly the
+   * half where the merchant is least likely to look.
+   *
+   * `locale` is the language being WRITTEN, not a translation target.
+   */
+  private async getGlossaryGenerationDirective(contextTexts: string[], locale: string): Promise<string> {
+    const rules = await this.loadGlossaryRules();
+    if (rules.length === 0) return '';
+    const { buildGlossaryGenerationDirective } = await import('./glossary.service');
+    return buildGlossaryGenerationDirective(rules, contextTexts, locale);
+  }
+
+  /**
    * True when the whole trimmed text IS a doNotTranslate glossary term (e.g. a
    * title that is exactly the brand name). Callers then skip the AI call and
    * keep the source verbatim — both because that is the correct result and
@@ -1306,6 +1324,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     const isTitle = fieldType === 'title';
     const fieldLabel = isTitle ? 'Title' : 'Description';
 
+    // §2.5e — the glossary applies to the ORIGINAL too, not only to its
+    // translations. Filtered by the context the model is writing about, so a
+    // 200-term glossary does not dilute the instructions.
+    const glossaryDirective = await this.getGlossaryGenerationDirective(
+      [sanitizedContext.productTitle, sanitizedContext.productDescription, sanitizedContext.productType, sanitizedCurrentValue],
+      sanitizedContext.locale,
+    );
+
     let prompt = '';
 
     if (!sanitizedCurrentValue || sanitizedCurrentValue.trim().length === 0) {
@@ -1335,7 +1361,7 @@ Respond in the following JSON format:
   "reasoning": "Brief explanation of the strategy"
 }
 
-Output the result in ${language}.`;
+Output the result in ${language}.${glossaryDirective ? `\n\n${glossaryDirective}` : ''}`;
     } else {
       // Improve existing content
       prompt = `You are an e-commerce expert and content writer. Improve the following ${fieldLabel}.
@@ -1366,7 +1392,7 @@ Respond in the following JSON format:
   "reasoning": "Brief explanation of the improvements made"
 }
 
-Output the result in ${language}.`;
+Output the result in ${language}.${glossaryDirective ? `\n\n${glossaryDirective}` : ''}`;
     }
 
     const responseText = await this.askAI(prompt);
@@ -2139,19 +2165,60 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
-  async generateProductTitle(prompt: string, imageUrl?: string): Promise<string> {
-    // The prompt is already built by the caller with AI Instructions
-    // Just execute it directly without adding additional instructions
-    return await this.askAI(prompt, imageUrl);
+  /**
+   * §2.5e — the glossary block for a caller-built prompt.
+   *
+   * `generateProductTitle`/`Description` take a prompt the CALLER assembled
+   * (AI instructions, keywords, context), so the glossary cannot be woven in
+   * the way `generateContent` does it. It is appended instead — after the
+   * caller's instructions, which is where a terminology rule belongs: it
+   * constrains the wording, it does not describe the task.
+   *
+   * Silent when the shop has no glossary, so the prompt is byte-identical for
+   * everyone who does not use one.
+   */
+  private async appendGlossary(prompt: string, contextTexts: string[], locale?: string): Promise<string> {
+    if (!locale) return prompt;
+    const directive = await this.getGlossaryGenerationDirective(contextTexts, locale);
+    return directive ? `${prompt}\n\n${directive}` : prompt;
   }
 
-  async generateProductDescription(title: string, prompt: string, imageUrl?: string): Promise<string> {
+  async generateProductTitle(
+    prompt: string,
+    imageUrl?: string,
+    glossary?: { contextTexts: string[]; locale: string },
+  ): Promise<string> {
     // The prompt is already built by the caller with AI Instructions
     // Just execute it directly without adding additional instructions
-    return await this.askAI(prompt, imageUrl);
+    return await this.askAI(
+      glossary ? await this.appendGlossary(prompt, glossary.contextTexts, glossary.locale) : prompt,
+      imageUrl,
+    );
   }
 
-  async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string, sendImageToAI: boolean = false): Promise<string> {
+  async generateProductDescription(
+    title: string,
+    prompt: string,
+    imageUrl?: string,
+    glossary?: { contextTexts: string[]; locale: string },
+  ): Promise<string> {
+    // The prompt is already built by the caller with AI Instructions
+    // Just execute it directly without adding additional instructions
+    return await this.askAI(
+      glossary ? await this.appendGlossary(prompt, [title, ...glossary.contextTexts], glossary.locale) : prompt,
+      imageUrl,
+    );
+  }
+
+  /**
+   * §2.5e — alt text is short, and a product name is most of it. A shop that
+   * forces "Kumiko" as a do-not-translate term gets it spelled that way in
+   * every translation and paraphrased in the original alt text without this.
+   *
+   * `glossary` is optional so the many call sites that have no locale to hand
+   * stay byte-identical rather than guessing one.
+   */
+  async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string, sendImageToAI: boolean = false, glossary?: { contextTexts: string[]; locale: string }): Promise<string> {
     // Sanitize product title if provided
     const sanitizedTitle = productTitle
       ? sanitizePromptInput(productTitle, { fieldType: 'title' })
@@ -2172,7 +2239,10 @@ The alt text should:
 Return only the alt text, without additional explanations. Output the result in the same language as the product title.`;
 
     // Send image to vision-capable AI models if sendImageToAI is enabled
-    return await this.askAI(prompt, sendImageToAI ? imageUrl : undefined);
+    return await this.askAI(
+      glossary ? await this.appendGlossary(prompt, [sanitizedTitle, ...glossary.contextTexts], glossary.locale) : prompt,
+      sendImageToAI ? imageUrl : undefined,
+    );
   }
 
   /**

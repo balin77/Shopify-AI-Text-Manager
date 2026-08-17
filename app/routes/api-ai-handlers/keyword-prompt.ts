@@ -17,6 +17,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { analyzeOnPage, getItemKeywords } from "~/services/seo/keywords.service";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { getFormString } from "~/utils/form-data.utils";
@@ -44,6 +45,35 @@ export function isKeywordAwareField(fieldType: string): boolean {
  */
 export function resolveKeywordLocale(formData: FormData): string {
   return getFormString(formData, "keywordLocale") || "";
+}
+
+/**
+ * The locale the generated text will actually be IN (PLAN §2.5e).
+ *
+ * `resolveKeywordLocale` returns "" for the primary locale, which is exactly
+ * right for a keyword lookup — the keyword rows for the primary locale are
+ * stored under "". It is useless for the glossary, because a glossary rule's
+ * translations are keyed by real locale codes, and "" is not one: "" means
+ * "the primary locale", not "no language". Resolving it is a lookup, so it is
+ * done once, here, rather than in each generation handler.
+ *
+ * Returns "" only when the lookup itself failed. `getCachedShopLocales`
+ * resolves with `[]` on a swallowed error (never `catch` around it — it
+ * re-throws 401 on purpose so the request can re-authenticate). An empty
+ * locale degrades rather than breaks: the generation directive drops the
+ * house-term half, which is keyed by locale and would otherwise be guessed,
+ * and keeps the do-not-translate names, which hold in every language.
+ */
+export async function resolveWrittenLocale(
+  admin: AdminApiContext,
+  shop: string,
+  formData: FormData,
+): Promise<string> {
+  const requested = resolveKeywordLocale(formData);
+  if (requested) return requested;
+  const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
+  const locales = await getCachedShopLocales(admin, shop);
+  return locales.find((l) => l.primary)?.locale ?? "";
 }
 
 /** Sanitized, role-split view of an item's tracked keywords for prompt use. */

@@ -215,6 +215,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
           admin,
           items,
           foreignLocale: localeResolution.foreignLocale,
+          writtenLocale: localeResolution.writtenLocale,
           targetLanguageName: localeResolution.targetLanguageName,
         })
       : runSeoBulkFix(task.id, {
@@ -228,6 +229,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
           seoTitleMaxChars,
           seoLimits,
           foreignLocale: localeResolution.foreignLocale,
+          writtenLocale: localeResolution.writtenLocale,
           targetLanguageName: localeResolution.targetLanguageName,
         });
   void runner.catch(async (err: unknown) => {
@@ -394,6 +396,7 @@ async function handleFixAllForItem(
     seoTitleMaxChars,
     seoLimits,
     foreignLocale: localeResolution.foreignLocale,
+    writtenLocale: localeResolution.writtenLocale,
     targetLanguageName: localeResolution.targetLanguageName,
   }).catch(async (err: unknown) => {
     logger.error("[API-AI] SEO fixAllForItem crashed", {
@@ -461,6 +464,11 @@ interface RunArgs {
    * mutations, and the prompt asks the AI to translate the primary value into
    * this locale while adapting to the SEO constraint. */
   foreignLocale: string;
+  /** The language the generated text will actually be IN — the foreign locale
+   *  when translating, the shop's primary one otherwise. `foreignLocale: ""`
+   *  cannot answer that: "" means primary, not "no language". §2.5e's glossary
+   *  directive needs the real code. */
+  writtenLocale: string;
   /** Human-readable target language name, e.g. "Spanish" — passed through to
    * the prompt. Falls back to the locale code if the name lookup returned
    * nothing. */
@@ -488,6 +496,7 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
     seoTitleMaxChars,
     seoLimits,
     foreignLocale,
+    writtenLocale,
     targetLanguageName,
   } = args;
   const isDuplicateBucket =
@@ -665,8 +674,14 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
           // how text-generation.handler.ts routes single-item generation.
           const generated = (
             field === "description"
-              ? await aiService.generateProductDescription(row.title, prompt)
-              : await aiService.generateProductTitle(prompt)
+              ? await aiService.generateProductDescription(row.title, prompt, undefined, {
+                  contextTexts: [row.title],
+                  locale: writtenLocale,
+                })
+              : await aiService.generateProductTitle(prompt, undefined, {
+                  contextTexts: [row.title],
+                  locale: writtenLocale,
+                })
           ).trim();
 
           // Guard against a silent clobber: a provider glitch that returns
@@ -779,11 +794,16 @@ interface AltTextRunArgs {
   items: { type: AuditType; id: string }[];
   /** See RunArgs.foreignLocale. */
   foreignLocale: string;
+  /** The language the generated text will actually be IN — the foreign locale
+   *  when translating, the shop's primary one otherwise. `foreignLocale: ""`
+   *  cannot answer that: "" means primary, not "no language". §2.5e's glossary
+   *  directive needs the real code. */
+  writtenLocale: string;
   targetLanguageName: string;
 }
 
 async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<void> {
-  const { db, settings, shop, admin, items, foreignLocale, targetLanguageName } = args;
+  const { db, settings, shop, admin, items, foreignLocale, writtenLocale, targetLanguageName } = args;
   const isForeign = foreignLocale.length > 0;
 
   const gateway = new ShopifyApiGateway(admin, shop);
@@ -970,7 +990,12 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
         prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${outputLanguage}.`;
 
         const altText = (
-          await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt)
+          // §2.5e — the merchant's forced terms apply to the original alt
+          // text as much as to its translations.
+          await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt, false, {
+            contextTexts: [sanitizedTitle],
+            locale: writtenLocale,
+          })
         ).trim();
 
         if (isForeign) {
@@ -1547,6 +1572,11 @@ interface FixAllRunArgs {
   seoLimits: SeoLimits;
   /** See RunArgs.foreignLocale. */
   foreignLocale: string;
+  /** The language the generated text will actually be IN — the foreign locale
+   *  when translating, the shop's primary one otherwise. `foreignLocale: ""`
+   *  cannot answer that: "" means primary, not "no language". §2.5e's glossary
+   *  directive needs the real code. */
+  writtenLocale: string;
   targetLanguageName: string;
 }
 
@@ -1569,6 +1599,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
     seoTitleMaxChars,
     seoLimits,
     foreignLocale,
+    writtenLocale,
     targetLanguageName,
   } = args;
   const isForeign = foreignLocale.length > 0;
@@ -1635,6 +1666,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
           mainLanguage,
           outputLanguage,
           foreignLocale,
+          writtenLocale,
           aiService,
           contentService,
           gateway,
@@ -1681,8 +1713,14 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
 
         const generated = (
           field === "description"
-            ? await aiService.generateProductDescription(row.title, prompt)
-            : await aiService.generateProductTitle(prompt)
+            ? await aiService.generateProductDescription(row.title, prompt, undefined, {
+                contextTexts: [row.title],
+                locale: writtenLocale,
+              })
+            : await aiService.generateProductTitle(prompt, undefined, {
+                contextTexts: [row.title],
+                locale: writtenLocale,
+              })
         ).trim();
 
         if (generated.length === 0) {
@@ -1782,6 +1820,9 @@ interface AltTextForOneItemArgs {
   /** Language the AI writes the output in — equals mainLanguage for primary
    * runs, the target language name for foreign runs. */
   outputLanguage: string;
+  /** The locale CODE of that language (§2.5e). `outputLanguage` is a display
+   *  name and cannot key a glossary lookup. */
+  writtenLocale: string;
   /** "" (primary) or a foreign locale code. When non-empty, alt-text is saved
    * via translationsRegister on the MediaImage GID + a
    * ProductImageAltTranslation upsert, mirroring the alt-text bulk-translate
@@ -1806,6 +1847,7 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
     aiInstructions,
     outputLanguage,
     foreignLocale,
+    writtenLocale,
     aiService,
     contentService,
     gateway,
@@ -1939,7 +1981,12 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
       }
       prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${outputLanguage}.`;
 
-      const altText = (await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt)).trim();
+      const altText = (
+        await aiService.generateImageAltText(job.imageUrl, sanitizedTitle, prompt, false, {
+          contextTexts: [sanitizedTitle],
+          locale: writtenLocale,
+        })
+      ).trim();
       if (altText.length === 0) throw new Error("AI returned an empty alt text");
 
       // Drop productTitle before handing off — persistImageAltText's
@@ -2092,15 +2139,24 @@ async function resolveTargetLocale(
   shop: string,
   requestedLocale: string,
 ): Promise<
-  | { error: null; foreignLocale: string; targetLanguageName: string }
-  | { error: string; foreignLocale: never; targetLanguageName: never }
+  // `writtenLocale` is the language the text will actually be IN — the
+  // foreign one when translating, the shop's primary one otherwise. §2.5e's
+  // glossary directive needs that, and `foreignLocale: ""` deliberately does
+  // not say it: "" means "primary", not "no language".
+  | { error: null; foreignLocale: string; targetLanguageName: string; writtenLocale: string }
+  | { error: string; foreignLocale: never; targetLanguageName: never; writtenLocale: never }
 > {
-  if (!requestedLocale) return { error: null, foreignLocale: "", targetLanguageName: "" };
+  const locales = await getCachedShopLocales(admin, shop).catch(() => []);
+  const primaryLocale = locales.find((l) => l.primary)?.locale ?? "";
 
-  const shopLocales = await getCachedShopLocales(admin, shop).catch(() => []);
+  if (!requestedLocale) {
+    return { error: null, foreignLocale: "", targetLanguageName: "", writtenLocale: primaryLocale };
+  }
+
+  const shopLocales = locales;
   const primary = shopLocales.find((l) => l.primary);
   if (primary?.locale === requestedLocale) {
-    return { error: null, foreignLocale: "", targetLanguageName: primary.name ?? "" };
+    return { error: null, foreignLocale: "", targetLanguageName: primary.name ?? "", writtenLocale: primaryLocale };
   }
 
   const match = shopLocales.find(
@@ -2109,12 +2165,13 @@ async function resolveTargetLocale(
   if (!match) {
     return {
       error: `Locale "${requestedLocale}" isn't a published foreign locale for this shop — refusing to run to avoid rewriting primary content.`,
-    } as { error: string; foreignLocale: never; targetLanguageName: never };
+    } as { error: string; foreignLocale: never; targetLanguageName: never; writtenLocale: never };
   }
   return {
     error: null,
     foreignLocale: match.locale,
     targetLanguageName: match.name ?? match.locale,
+    writtenLocale: match.locale,
   };
 }
 

@@ -103,6 +103,7 @@ import {
   saveGlossaryEntries,
   loadGlossaryRules,
   buildGlossaryDirective,
+  buildGlossaryGenerationDirective,
   matchesVerbatimDoNotTranslate,
   parseGlossaryCsv,
   serializeGlossaryCsv,
@@ -225,6 +226,78 @@ describe("saveGlossaryEntries", () => {
 });
 
 // ── Directive builder ────────────────────────────────────────────────────────
+
+// ── Generation directive (PLAN_CONTENT_CREATION §2.5e) ───────────────────────
+
+describe("buildGlossaryGenerationDirective", () => {
+  const rules: GlossaryRule[] = [
+    rule({ sourceTerm: "Acme", doNotTranslate: true }),
+    rule({ sourceTerm: "Turnschuh", translations: { de: "Sneaker", fr: "basket" } }),
+    rule({ sourceTerm: "Zelt", translations: { de: "Zelt" } }),
+  ];
+
+  it("phrases the rules as WRITING instructions, never as translation ones", () => {
+    // The whole reason this is not `buildGlossaryDirective`: nothing is being
+    // translated here, and "Always translate X as Y" is an instruction the
+    // model cannot follow — it can only be read as "the glossary is about
+    // translation", which is how the brand name gets localised anyway.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "de");
+    expect(block).not.toContain("Always translate");
+    expect(block).not.toContain("Do NOT translate");
+    expect(block).toContain('"Acme"');
+    expect(block).toContain('Refer to "Turnschuh" as "Sneaker"');
+  });
+
+  it("uses only the language being WRITTEN", () => {
+    // A French value dropped into German copy is a foreign word, not a rule.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Turnschuh"], "de");
+    expect(block).toContain("Sneaker");
+    expect(block).not.toContain("basket");
+  });
+
+  it("is silent when the written locale has no value for a term", () => {
+    const block = buildGlossaryGenerationDirective(rules, ["Der Turnschuh"], "es");
+    expect(block).toBe("");
+  });
+
+  it("keeps the do-not-translate half when the locale is unknown", () => {
+    // "" is what a failed locale lookup yields. The house-term half is
+    // unusable then — a value is keyed by locale, and guessing one would put
+    // another language's words into the text. The NAME half is not: "write
+    // Acme exactly as given" holds in every language, so it still ships.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "");
+    expect(block).toContain('"Acme"');
+    expect(block).not.toContain("Sneaker");
+  });
+
+  it("still emits do-not-translate names even with no translations at all", () => {
+    const onlyNames = [rule({ sourceTerm: "Acme", doNotTranslate: true })];
+    const block = buildGlossaryGenerationDirective(onlyNames, ["Acme sells tents"], "en");
+    expect(block).toContain('"Acme"');
+  });
+
+  it("only injects terms that occur in the context", () => {
+    expect(buildGlossaryGenerationDirective(rules, ["nothing relevant"], "de")).toBe("");
+  });
+
+  it("is empty with no context and with no rules", () => {
+    expect(buildGlossaryGenerationDirective(rules, [], "de")).toBe("");
+    expect(buildGlossaryGenerationDirective([], ["Der Acme Turnschuh"], "de")).toBe("");
+  });
+
+  it("says the entries are data, not instructions", () => {
+    // Same M1 hardening as the translation directive: a merchant's glossary
+    // term is untrusted text interpolated into a prompt.
+    const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "de");
+    expect(block).toContain("never instructions");
+  });
+
+  it("respects the case-sensitive flag", () => {
+    const cs = [rule({ sourceTerm: "IT", caseSensitive: true, doNotTranslate: true })];
+    expect(buildGlossaryGenerationDirective(cs, ["it is nice"], "de")).toBe("");
+    expect(buildGlossaryGenerationDirective(cs, ["IT department"], "de")).toContain('"IT"');
+  });
+});
 
 describe("buildGlossaryDirective", () => {
   const rules: GlossaryRule[] = [
