@@ -123,9 +123,11 @@ export default function MenusPage() {
           no definite height here). It therefore has to subtract the bottom
           inset itself — the app shell's padding-bottom does not reach a box
           sized off the viewport. */}
-      <div style={{ height: `calc(var(--app-shell-height) - ${getTotalNavHeight()}px - var(--app-bottom-inset))`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
-        {/* Left Sidebar - Menus List */}
-        <div style={{ width: "350px", flexShrink: 0 }}>
+      <div className="app-page-width-full" style={{ height: `calc(var(--app-shell-height) - ${getTotalNavHeight()}px - var(--app-bottom-inset))`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+        {/* Left Sidebar - Menus List. Width from --app-list-column-width
+            (responsive.css :root), the same token every other item column of
+            the app spends — do not hardcode a width here. */}
+        <div style={{ width: "var(--app-list-column-width)", flexShrink: 0 }}>
           <Card padding="0">
             <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
               <Text as="h2" variant="headingMd">

@@ -83,20 +83,27 @@ Shopify embedded app (Remix + Vite + Prisma + Polaris) for AI content generation
   - Unmapped resource types silently drop from the Shopify push while still writing the DB — that's a false-success bug pattern.
 - **Autofix-normalized richtext: mirror the PUSHED value to DB, not the raw one.** If autofix rewrites a richtext value (`test<p></p>` → `<p>test</p>`) before writing `config/settings_data.json`, STEP 2b of the update handler must mirror the normalized value into `ContentTranslation`. Mirroring the raw value diverges DB from file → next save can't find the old value → save appears to no-op.
 
-## Page width — every new page picks one of three, none invents its own
+## Layout widths — every page and column spends a token, none invents a number
 
-The outer width of a page is app-wide state, not a per-route decision: pages of the same kind that disagree by a few hundred pixels make the app look like it was assembled from parts. The values live ONCE, in the `:root` block of [responsive.css](app/styles/responsive.css) next to `--app-page-padding`, and are spent by three classes. A route picks a class and NEVER writes a `maxWidth` of its own — that is what made "make the SEO pages 10% wider" a hunt through routes.
+How wide a page or a column is is app-wide state, not a per-route decision: surfaces of the same kind that disagree by a few hundred pixels make the app look like it was assembled from parts, and "make the SEO pages 10% wider" turns into a hunt through routes. Every width lives ONCE, in the `:root` block of [responsive.css](app/styles/responsive.css) next to `--app-page-padding` — the same single-source pattern that variable already established. **No route, component or stylesheet hardcodes a page or column width.**
 
-- `.app-page-width` (`--app-page-width-content`) — reading-width pages: prose, forms, report tables. SEO sections ([app.seo.tsx](app/routes/app.seo.tsx)) and Tasks ([app.tasks.tsx](app/routes/app.tasks.tsx)) use it, and both are deliberately the same width.
+**Page width** — pick one of three classes for the route's outermost content wrapper:
+
+- `.app-page-width` (`--app-page-width-content`) — reading-width pages: prose, forms, report tables. SEO sections ([app.seo.tsx](app/routes/app.seo.tsx)) and Tasks ([app.tasks.tsx](app/routes/app.tasks.tsx)) use it, deliberately at the same width.
 - `.app-page-width-narrow` (`--app-page-width-narrow`) — focused single-task pages that are mostly one list of checkboxes or fields ([app.bulk_.translate.tsx](app/routes/app.bulk_.translate.tsx)).
-- `.app-page-width-full` (`--app-page-width-full`, currently `none`) — data grids that turn every extra pixel into column width ([app.bulk.tsx](app/routes/app.bulk.tsx): `BulkGrid` gives uncapped columns `1fr`, so any margin is width thrown away).
+- `.app-page-width-full` (`--app-page-width-full`, currently `none`) — data grids that turn every extra pixel into column width ([app.bulk.tsx](app/routes/app.bulk.tsx): `BulkGrid` gives uncapped columns `1fr`, so any margin is width thrown away), and sidebar+content layouts that are not reading-width content ([app.settings.tsx](app/routes/app.settings.tsx)). Stated explicitly rather than left off, so "uncapped" reads as a decision.
 
-Two mechanics that are easy to get wrong:
+**Column width** — spent as `width: var(--…)` in the component's inline style (the way `--app-page-padding` is already used):
+
+- `--app-list-column-width` — every "pick an item" column: the item list on the content pages and direct translations ([UnifiedItemList.tsx](app/components/unified/UnifiedItemList.tsx)), the Settings tab nav, the Menus list. They were 330/250/350px; the content list was the one that was right, so it set the token.
+- `--app-editor-sidebar-width` + `-min-width` / `-max-width` — the content editor's right-hand SEO/bulk panel. The user drags it, so the token is only the DEFAULT it opens at plus the drag bounds; they live here anyway so the panel can be recycled elsewhere without re-deriving them.
+
+Four mechanics that are easy to get wrong:
 
 - **On a Polaris page the class goes on the `.app-page-content` frame**, alongside it — capping the FRAME keeps its `--app-page-padding` gutter and its inner scroll container (`.app-page-content > *`) intact, while an extra wrapper div would break the single-child scroll rule. `<Page fullWidth>` must stay: without it Polaris' own ~1000px cap wins before ours is reached.
 - **The width classes carry no padding on purpose.** `.app-page-content` already owns its gutter, and a second `padding` declaration on the same element would win or lose by rule order. Non-Polaris routes keep their own `padding` in the inline style.
-
-Settings is deliberately NOT capped: it is a sidebar+content layout, not reading-width content.
+- **A resizable width starts as `null`, not as the number.** [UnifiedContentEditor.tsx](app/components/UnifiedContentEditor.tsx) renders `sidebarWidth ?? "var(--app-editor-sidebar-width)"` and, on the first drag, measures what that rendered as (`getBoundingClientRect`) instead of restating it. Seeding the state with `useState(320)` would put the default in a second place, which is exactly what drifts.
+- **The drag bounds are read off the tokens per drag** (`getComputedStyle().getPropertyValue`), and a value that doesn't parse as px drops its half of the clamp rather than becoming `NaN` — `Math.max(NaN, …)` would make the panel unresizable.
 
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 

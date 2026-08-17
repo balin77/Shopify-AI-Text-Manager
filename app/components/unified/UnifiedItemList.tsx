@@ -578,8 +578,11 @@ export function UnifiedItemList({
 
   const itemRenderer = renderItem || defaultRenderItem;
 
+  // Width from --app-list-column-width (responsive.css :root) — the same token
+  // the Settings tab nav and the Menus list spend, so every "pick an item"
+  // column of the app is one number. Never hardcode it here.
   return (
-    <div ref={wrapperRef} style={{ width: "330px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
+    <div ref={wrapperRef} style={{ width: "var(--app-list-column-width)", flexShrink: 0, height: "100%", overflow: "hidden" }}>
       <style dangerouslySetInnerHTML={{ __html: `
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {

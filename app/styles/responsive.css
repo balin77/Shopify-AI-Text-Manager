@@ -35,6 +35,27 @@
   --app-page-width-narrow: 1200px;
   --app-page-width-full: none;
 
+  /* …and how wide the COLUMNS inside a page are. Same rule: the numbers live
+     here, components spend them as `width: var(--…)` in their inline style —
+     the pattern --app-page-padding already uses. No component hardcodes one.
+
+     --app-list-column-width  the left "pick an item" column, wherever it
+                              appears: the item list on the content pages
+                              (UnifiedItemList) and direct translations, the
+                              Settings tab nav, the Menus list. They used to be
+                              330/250/350px; the content list was the one that
+                              was right, so it set the number.
+     --app-editor-sidebar-*   the right-hand panel of the content editor (SEO /
+                              bulk). The user drags it, so this is only the
+                              DEFAULT it opens at, plus the drag bounds — kept
+                              here so the panel can be reused elsewhere without
+                              re-deriving them. The drag reads the bounds off
+                              these variables (UnifiedContentEditor.tsx). */
+  --app-list-column-width: 330px;
+  --app-editor-sidebar-width: 320px;
+  --app-editor-sidebar-min-width: 200px;
+  --app-editor-sidebar-max-width: 600px;
+
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
      100vh shell is taller than what is actually visible and its last rows can
