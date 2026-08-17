@@ -300,6 +300,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       .map((entry) => entry.label);
   }, [items]);
 
+  // PLAN §2.4 — the SAME discriminator the sidebar checklist gates on, applied
+  // to the editable controls. `undefined` (a type with no attribute block, or a
+  // loader that does not carry the stamp) reads as known: only an explicit
+  // absence of the stamp means "these are the migration's defaults".
+  const itemAttributesKnown =
+    selectedItem && "attributesSyncedAt" in (selectedItem as unknown as Record<string, unknown>)
+      ? !!(selectedItem as unknown as { attributesSyncedAt?: unknown }).attributesSyncedAt
+      : undefined;
+
   const { plan, getMaxProducts, getNextPlanUpgrade } = usePlan();
   const { showInfoBox } = useInfoBox();
   const { registerItems, clearItems } = useItemSelector();
@@ -1357,6 +1366,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           fetcherFormData={fetcherFormData}
                           validationOverlays={validationOverlays}
                           tagSuggestions={tagSuggestions}
+                          attributesKnown={itemAttributesKnown}
+                          onReloadAttributes={() => { void handleSyncAll(); }}
                         />
                         );
                       });

@@ -317,6 +317,27 @@ export function useUiDataLoader(
       translationKey: string,
       locale: string
     ): ResolvedField => {
+      // ---- NOT TRANSLATABLE AT ALL (PLAN §Phase 3 attributes) ----
+      // An empty `translationKey` means Shopify stores ONE value for this
+      // field, not one per locale — status, vendor, tags, author, sort order.
+      // Sent down the foreign chain below it would match no market row, no
+      // override and no translation, and come back "" — so a foreign locale
+      // would show an ACTIVE product as DRAFT (a Polaris Select with value ""
+      // renders its first option) and a hidden page as visible. The control is
+      // read-only there and correctly says the value exists once per item; the
+      // one thing it must not do is show a value the item does not have.
+      if (!translationKey) {
+        const savedOverride = savedPrimaryValuesRef.current[item.id];
+        if (savedOverride && savedOverride[fieldKey] !== undefined) {
+          return { value: savedOverride[fieldKey], source: "savedPrimaryCache", isFallback: false };
+        }
+        return {
+          value: getItemFieldValue(item, fieldKey, primaryLocale, config),
+          source: "itemField",
+          isFallback: false,
+        };
+      }
+
       // ---- PRIMARY LOCALE ----
       if (locale === primaryLocale) {
         // 1. Check savedPrimaryCache

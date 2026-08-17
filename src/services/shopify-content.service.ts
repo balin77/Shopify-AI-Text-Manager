@@ -1032,6 +1032,10 @@ export class ShopifyContentService {
       const { rejected: rejectedAttributes, ...attributeInput } = buildAttributeInput(
         resourceType as Parameters<typeof buildAttributeInput>[0],
         updates,
+        // Presence is not intent — see the module's own note. A primary save
+        // carries every field, so without this a title edit would rewrite the
+        // merchandising block from whatever the cache happened to hold.
+        changedFields,
       );
 
       /**

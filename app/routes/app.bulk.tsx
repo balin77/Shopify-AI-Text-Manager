@@ -2267,6 +2267,7 @@ export default function BulkEditor() {
                       translationStatus={cellTranslationStatus}
                       translationTooltip={cellTranslationTooltip}
                       notTranslatableTooltip={b.notTranslatableTooltip}
+                      unknownAttributeGhost={b.unknownAttributeGhost}
                       failuresByCell={cellFailuresForGrid}
                       rowLevelFailures={rowLevelFailures}
                       sort={sort}

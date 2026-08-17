@@ -344,6 +344,10 @@ const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
     supportsTranslation: true,
     aiInstructionsKey: "blogMetaDesc",
   },
+  // A blog container's one merchandising attribute. Without it the write path
+  // (`attributeInputFor("Blog", …)`) and the mutation's `templateSuffix` echo
+  // would be code no surface can reach.
+  TEMPLATE_SUFFIX_FIELD,
 ];
 
 /** Field definitions for Articles (full set) */

@@ -81,8 +81,24 @@ export function isValidSortOrder(value: string): boolean {
 export function attributeInputFor(
   resource: AttributeResource,
   updates: Record<string, string>,
+  changedFields?: string[],
 ): AttributeInput & { rejected?: string[] } {
-  const allowed = ATTRIBUTES_BY_RESOURCE[resource] ?? [];
+  // ── Presence is NOT intent ────────────────────────────────────────────────
+  // A primary-locale save carries EVERY field, changed or not — only foreign
+  // saves are filtered client-side. So "the client sent `tags`" says nothing
+  // about whether the merchant touched them, and acting on presence alone
+  // means editing a TITLE also writes the attributes. On an item whose row
+  // predates the attribute sync those arrive as the migration's defaults —
+  // empty — and Shopify REPLACES rather than merges, so the title edit would
+  // delete every tag, clear the author and publish a hidden article.
+  //
+  // Undefined `changedFields` ⇒ write nothing. A caller that does not say what
+  // changed is indistinguishable from one where nothing did, and only one of
+  // those two readings is safe.
+  const touched = (key: keyof AttributeInput) => !!changedFields?.includes(key);
+
+  const declared = ATTRIBUTES_BY_RESOURCE[resource] ?? [];
+  const allowed = declared.filter(touched);
   const input: AttributeInput & { rejected?: string[] } = {};
   const rejected: string[] = [];
 

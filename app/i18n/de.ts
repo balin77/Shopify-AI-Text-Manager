@@ -254,6 +254,7 @@ export const de = {
     redirectBlogArticlesUncovered: "Die alte Blog-URL {path} leitet jetzt auf die neue weiter — die URLs der Artikel in diesem Blog haben sich aber ebenfalls geändert und sind nicht abgedeckt.",
     redirectShadowRemoved: "Die alte URL {path} leitet jetzt auf die neue weiter. Eine bestehende Weiterleitung auf der neuen URL wurde entfernt — sie hätte die Seite verdeckt.",
     redirectMissingBlog: "Die alte Artikel-URL konnte nicht weitergeleitet werden, weil der Blog unbekannt ist — lege die Weiterleitung bei Bedarf selbst an.",
+    reload: "Neu laden",
     reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
     reloadItemTooltip: "Nur die Daten dieses Eintrags von Shopify neu laden",
     reloadAllTooltip: "Alle Einträge von Shopify neu laden",
@@ -445,6 +446,7 @@ export const de = {
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
     rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
     addTag: "Tag hinzufügen",
+    attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
     duplicateModal: {
       title: "\u201e{name}\u201c duplizieren",
@@ -2933,6 +2935,9 @@ export const de = {
       summary: "Zusammenfassung",
       productType: "Produkttyp",
       status: "Status",
+      // PLAN §3.6 — `tags` ist EINE Zelle mit einer LISTE, das sagt die Spalte.
+      vendor: "Hersteller",
+      tags: "Tags (kommagetrennt)",
       handle: "Handle",
       seoTitle: "SEO-Titel",
       seoDescription: "Meta-Description",
@@ -3054,6 +3059,10 @@ export const de = {
     allMarkets: "Alle Märkte",
     primaryLocaleSuffix: "(Primär)",
     notTranslatableTooltip: "Dieses Feld ist nicht übersetzbar — es kann nur in der Primärsprache bearbeitet werden.",
+    // PLAN §3.6 — in einer Hersteller-/Tags-Zelle, deren Zeile vor dem
+    // Attribut-Sync geschrieben wurde. Leer heißt dort "noch nicht geladen",
+    // nicht "der Händler hat nichts eingetragen".
+    unknownAttributeGhost: "noch nicht synchronisiert",
     unsavedOtherLocales: "Ungespeicherte Änderungen in {count} weiteren Sprachen/Märkten — Speichern schreibt alle.",
     budgetExceeded: "Diese Änderung braucht ca. {calls} Shopify-Aufrufe (Limit {max}). Bitte in mehreren Schritten speichern oder den Filter enger ziehen.",
     cellLimitExceeded: "{cells} geänderte Zellen — Maximum {max} pro Speichervorgang. Bitte in mehreren Schritten speichern oder den Filter enger ziehen.",

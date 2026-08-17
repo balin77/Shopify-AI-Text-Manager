@@ -31,7 +31,6 @@ import {
   Tag,
   Text,
   TextField,
-  Tooltip,
 } from "@shopify/polaris";
 import { InfoIcon } from "@shopify/polaris-icons";
 import type { FieldDefinition } from "../../types/content-editor.types";
@@ -44,10 +43,24 @@ export interface AttributeFieldProps {
   label: string;
   /** False ⇒ read-only with the not-translatable explanation. */
   isPrimaryLocale: boolean;
-  /** Read-only for a reason of its own (plan gate, unsynced item, …). */
+  /** Read-only for a reason of its own (plan gate, …). */
   readOnly?: boolean;
   /** Shown instead of the generic reason when the field is locked. */
   readOnlyHint?: string;
+  /**
+   * False ⇒ this item's attribute block has never been fetched, so the value
+   * below is the migration's default (null / [] / true) and NOT the merchant's
+   * data — the `attributesSyncedAt` rule, applied to an editable control.
+   *
+   * The control is disabled and says so rather than showing an empty vendor as
+   * if the merchant had left it blank: this is the field they would "fix",
+   * and the fix would write over what is actually in the shop. `undefined`
+   * means the caller cannot tell, which is treated as known — the four types
+   * that HAVE an attribute block all supply the flag.
+   */
+  attributesKnown?: boolean;
+  /** The way out of the unknown state: reload this item from Shopify. */
+  onReloadAttributes?: () => void;
   /** Tags already used in the shop, for the autocomplete. */
   suggestions?: string[];
   t: {
@@ -56,16 +69,29 @@ export interface AttributeFieldProps {
     add?: string;
     yes?: string;
     no?: string;
+    notSyncedYet?: string;
+    reload?: string;
   };
 }
 
 /** Shopify trims tags and ignores empty ones — mirror that so a save does not
  *  report a change the shop would never store. */
 export function parseTags(value: string): string[] {
-  return value
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+  // De-duplicated on the way IN as well as out. A cached list can hold "Sale"
+  // and "sale" (Shopify collapses them, an older cache row may not), and two
+  // chips whose text matches would collide as React keys — removing one would
+  // remove both.
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value.split(",")) {
+    const tag = raw.trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+  }
+  return out;
 }
 
 export function serializeTags(tags: string[]): string {
@@ -91,6 +117,8 @@ export function AttributeField({
   isPrimaryLocale,
   readOnly,
   readOnlyHint,
+  attributesKnown,
+  onReloadAttributes,
   suggestions = [],
   t,
 }: AttributeFieldProps) {
@@ -99,10 +127,15 @@ export function AttributeField({
   // §2.4 / §3.5 — the field exists once per item, so a foreign locale can only
   // look at it. Saying so beats a control that accepts input and discards it.
   const notTranslatable = !isPrimaryLocale;
-  const locked = readOnly || notTranslatable;
+  // §2.4 — "we have not fetched this" is its own state, not an empty value.
+  const unknown = attributesKnown === false;
+  const locked = readOnly || notTranslatable || unknown;
   const lockedHint = notTranslatable
     ? t.notTranslatable ||
       "This detail exists once per item, not per language. Switch to the main language to change it."
+    : unknown
+    ? t.notSyncedYet ||
+      "This item's details have not been loaded from Shopify yet — reload it to see and edit them."
     : readOnlyHint;
 
   const tags = useMemo(() => parseTags(value), [value]);
@@ -161,7 +194,15 @@ export function AttributeField({
               </InlineStack>
             )}
             {!locked && (
-              <InlineStack gap="200" blockAlign="end" wrap={false}>
+              // Enter is how anyone types a list of tags; Polaris TextField
+              // exposes no key handler, so it is caught on the wrapper.
+              <div
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  addTag(draftTag);
+                }}
+              >
                 <Box width="100%">
                   <TextField
                     label={t.addTag || "Add tag"}
@@ -170,9 +211,10 @@ export function AttributeField({
                     onChange={setDraftTag}
                     placeholder={t.addTag || "Add tag"}
                     autoComplete="off"
-                    // Enter is how anyone types a list of tags. Without it the
-                    // merchant reaches for the button on every single one.
-                    onBlur={() => addTag(draftTag)}
+                    // Deliberately NOT committed on blur. Tabbing away from a
+                    // half-typed tag would add it and mark the item dirty —
+                    // and the merchant would not see why. Enter (below) and
+                    // the button are the two explicit ways in.
                     connectedRight={
                       <Button onClick={() => addTag(draftTag)} disabled={!draftTag.trim()}>
                         {t.add || "Add"}
@@ -180,7 +222,7 @@ export function AttributeField({
                     }
                   />
                 </Box>
-              </InlineStack>
+              </div>
             )}
             {!locked && openSuggestions.length > 0 && (
               <InlineStack gap="100" wrap>
@@ -211,20 +253,17 @@ export function AttributeField({
         </InlineStack>
       )}
       {locked && lockedHint && (
-        <Text as="p" variant="bodySm" tone="subdued">{lockedHint}</Text>
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          <Text as="p" variant="bodySm" tone="subdued">{lockedHint}</Text>
+          {/* The unknown state is the ONE lock with a way out, so it offers it
+              right here instead of leaving the merchant to find the sidebar. */}
+          {unknown && onReloadAttributes && (
+            <Button variant="plain" size="micro" onClick={onReloadAttributes}>
+              {t.reload || "Reload"}
+            </Button>
+          )}
+        </InlineStack>
       )}
     </BlockStack>
-  );
-}
-
-/** Wraps a locked control so the reason is reachable on hover too — a disabled
- *  control dispatches no pointer events, so a bare Polaris Tooltip never opens
- *  (the same rule as DisabledActionTooltip). */
-export function AttributeTooltip({ hint, children }: { hint?: string; children: React.ReactNode }) {
-  if (!hint) return <>{children}</>;
-  return (
-    <Tooltip content={hint} dismissOnMouseOut preferredPosition="above">
-      <div>{children}</div>
-    </Tooltip>
   );
 }

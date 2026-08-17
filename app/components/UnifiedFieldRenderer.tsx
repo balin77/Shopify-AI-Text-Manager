@@ -66,6 +66,13 @@ export interface FieldRendererProps {
    *  autocomplete. Derived from the loaded list, so it costs no extra query and
    *  is naturally scoped to the resource the merchant is editing. */
   tagSuggestions?: string[];
+  /** PLAN §2.4 — false ⇒ the item's attribute block has never been fetched, so
+   *  the values in it are the migration's defaults and not the merchant's data.
+   *  The attribute controls lock and say so instead of inviting an edit that
+   *  would overwrite what is actually in the shop. */
+  attributesKnown?: boolean;
+  /** The way out of that state. */
+  onReloadAttributes?: () => void;
 }
 
 export function UnifiedFieldRenderer(
@@ -111,6 +118,8 @@ export function UnifiedFieldRenderer(
     fetcherFormData,
     validationOverlays,
     tagSuggestions = [],
+    attributesKnown,
+    onReloadAttributes,
   } = props;
 
   const currentAction = fetcherFormData?.get("action");
@@ -298,14 +307,30 @@ export function UnifiedFieldRenderer(
   // reason of its own that the generic hint would get wrong.
   if (field.type === "select" || field.type === "tags" || field.type === "toggle") {
     const suggestions: string[] = field.suggestionsKey ? tagSuggestions : [];
+    // Enum labels are shared with the create modal (`t.create.options`, keyed
+    // `"status.DRAFT"`) rather than duplicated: the two surfaces offer the same
+    // values, and a status the modal calls "Draft" while the editor calls it
+    // "DRAFT" reads as two different things.
+    const optionLabels: Record<string, string> = t.create?.options || {};
+    const localizedField = field.options
+      ? {
+          ...field,
+          options: field.options.map((o) => ({
+            ...o,
+            label: (o.labelKey && optionLabels[o.labelKey]) || optionLabels[`${field.key}.${o.value}`] || o.label,
+          })),
+        }
+      : field;
     return (
       <AttributeField
-        field={field}
+        field={localizedField}
         value={value}
         onChange={onChange}
         label={translatedFieldLabel}
         isPrimaryLocale={isPrimaryLocale}
         readOnly={readOnly}
+        attributesKnown={attributesKnown}
+        onReloadAttributes={onReloadAttributes}
         readOnlyHint={
           t.content?.primaryReadOnlyHint ||
           "This field can't be edited in the main language here — manage the original in your Shopify admin."
@@ -317,6 +342,8 @@ export function UnifiedFieldRenderer(
           add: t.common?.add,
           yes: t.common?.yes,
           no: t.common?.no,
+          notSyncedYet: t.content?.attributesNotSyncedYet,
+          reload: t.common?.reload,
         }}
       />
     );

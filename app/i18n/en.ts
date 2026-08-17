@@ -257,6 +257,7 @@ export const en: Translation = {
     redirectBlogArticlesUncovered: "The old blog URL {path} now redirects to the new one — but the articles' own URLs changed too and are not covered.",
     redirectShadowRemoved: "The old URL {path} now redirects to the new one. An existing redirect on the new URL was removed — it would have hidden the page.",
     redirectMissingBlog: "The old article URL could not be redirected because its blog is unknown — set the redirect up manually if the old link matters.",
+    reload: "Reload",
     reloadSuccess: "Data reloaded from Shopify successfully!",
     reloadItemTooltip: "Reload only this entry's data from Shopify",
     reloadAllTooltip: "Reload all entries from Shopify",
@@ -448,6 +449,7 @@ export const en: Translation = {
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
     rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
     addTag: "Add tag",
+    attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     duplicateModal: {
       title: "Duplicate \u201c{name}\u201d",
@@ -2933,6 +2935,9 @@ export const en: Translation = {
       summary: "Summary",
       productType: "Product type",
       status: "Status",
+      // PLAN §3.6 — `tags` is one cell holding a LIST, so the heading says so.
+      vendor: "Vendor",
+      tags: "Tags (comma-separated)",
       handle: "Handle",
       seoTitle: "SEO title",
       seoDescription: "Meta description",
@@ -3054,6 +3059,9 @@ export const en: Translation = {
     allMarkets: "All markets",
     primaryLocaleSuffix: "(Primary)",
     notTranslatableTooltip: "This field is not translatable — it can only be edited in the primary language.",
+    // PLAN §3.6 — shown in a vendor/tags cell whose row predates the attribute
+    // sync. Empty there means "not fetched yet", not "the merchant left it blank".
+    unknownAttributeGhost: "not synced yet",
     unsavedOtherLocales: "Unsaved changes in {count} other languages/markets — saving writes all of them.",
     budgetExceeded: "This change needs about {calls} Shopify calls (limit {max}). Please save in several steps or narrow the filter.",
     cellLimitExceeded: "{cells} changed cells — maximum {max} per save. Please save in several steps or narrow the filter.",

@@ -55,72 +55,109 @@ describe("enum validation", () => {
   });
 });
 
+describe("attributeInputFor — presence is not intent", () => {
+  /**
+   * THE load-bearing rule of this module, and the one whose absence was a data
+   * loss bug rather than a cosmetic one.
+   *
+   * A primary-locale save carries EVERY field, changed or not — only foreign
+   * saves are filtered client-side. So "the client sent `tags`" says nothing
+   * about whether the merchant touched them. Acting on presence alone meant
+   * editing a TITLE also rewrote the merchandising block from whatever the
+   * cache happened to hold, and on any shop that had not run the attribute
+   * sync that cache holds the migration's defaults: empty.
+   *
+   * Shopify REPLACES rather than merges. The result was a title edit deleting
+   * every tag, clearing the author and PUBLISHING a hidden article.
+   */
+  it("writes nothing when the field was not among the changed ones", () => {
+    const updates = { title: "New title", tags: "sale, new", author: "Ada", isPublished: "true" };
+    expect(attributeInputFor("Article", updates, ["title"])).toEqual({});
+  });
+
+  it("writes only the attributes that actually changed", () => {
+    const updates = { title: "New title", tags: "sale", author: "Ada", templateSuffix: "wide" };
+    expect(attributeInputFor("Article", updates, ["title", "tags"])).toEqual({ tags: ["sale"] });
+  });
+
+  it("writes nothing at all when the caller does not say what changed", () => {
+    // A caller that omits `changedFields` is indistinguishable from one where
+    // nothing changed. Of the two readings, only this one is safe.
+    expect(attributeInputFor("Article", { tags: "sale", author: "Ada" })).toEqual({});
+    expect(attributeInputFor("Article", { tags: "sale" }, undefined)).toEqual({});
+  });
+});
+
 describe("attributeInputFor", () => {
+  /** Every case below assumes the merchant DID touch the field — the gate
+   *  above is tested separately, so these pass the key explicitly. */
+  const touched = (...keys: string[]) => keys;
+
   it("gives each resource ONLY the attributes it has", () => {
     // A `sortOrder` on a page is not a harmless extra — Shopify rejects the
     // whole input, so the merchant's text edits are lost with it.
-    expect(attributeInputFor("Page", { sortOrder: "BEST_SELLING", isPublished: "true" }))
+    expect(attributeInputFor("Page", { sortOrder: "BEST_SELLING", isPublished: "true" }, touched("sortOrder", "isPublished")))
       .toEqual({ isPublished: true });
-    expect(attributeInputFor("Collection", { isPublished: "false", sortOrder: "BEST_SELLING" }))
+    expect(attributeInputFor("Collection", { isPublished: "false", sortOrder: "BEST_SELLING" }, touched("isPublished", "sortOrder")))
       .toEqual({ sortOrder: "BEST_SELLING" });
-    expect(attributeInputFor("Blog", { author: "Ada", templateSuffix: "wide" }))
+    expect(attributeInputFor("Blog", { author: "Ada", templateSuffix: "wide" }, touched("author", "templateSuffix")))
       .toEqual({ templateSuffix: "wide" });
   });
 
   it("leaves a field the client never sent completely alone", () => {
     // Absent means "not changed". Writing a default here would silently
     // overwrite whatever the merchant set in the Shopify admin.
-    expect(attributeInputFor("Article", { title: "Anything" })).toEqual({});
+    expect(attributeInputFor("Article", { title: "Anything" }, touched("title"))).toEqual({});
   });
 
   it("distinguishes CLEARED from absent for the template suffix", () => {
     // "" is a real instruction: put the item back on the theme's default
     // template, which Shopify expresses as null.
-    expect(attributeInputFor("Page", { templateSuffix: "" })).toEqual({ templateSuffix: null });
-    expect(attributeInputFor("Page", { templateSuffix: "   " })).toEqual({ templateSuffix: null });
-    expect(attributeInputFor("Page", {})).toEqual({});
+    expect(attributeInputFor("Page", { templateSuffix: "" }, touched("templateSuffix"))).toEqual({ templateSuffix: null });
+    expect(attributeInputFor("Page", { templateSuffix: "   " }, touched("templateSuffix"))).toEqual({ templateSuffix: null });
+    expect(attributeInputFor("Page", {}, touched("templateSuffix"))).toEqual({});
   });
 
   it("treats anything but an explicit 'false' as published", () => {
     // Matches the column's own default. An item written before the attribute
     // sync existed must not be silently unpublished by a save.
-    expect(attributeInputFor("Page", { isPublished: "true" }).isPublished).toBe(true);
-    expect(attributeInputFor("Page", { isPublished: "" }).isPublished).toBe(true);
-    expect(attributeInputFor("Page", { isPublished: "false" }).isPublished).toBe(false);
+    expect(attributeInputFor("Page", { isPublished: "true" }, touched("isPublished")).isPublished).toBe(true);
+    expect(attributeInputFor("Page", { isPublished: "" }, touched("isPublished")).isPublished).toBe(true);
+    expect(attributeInputFor("Page", { isPublished: "false" }, touched("isPublished")).isPublished).toBe(false);
   });
 
   it("DROPS an unrecognised sort order and names it, instead of sending it", () => {
     // Sent, it would fail at the schema level and the save would report
     // success while nothing was written.
-    const input = attributeInputFor("Collection", { sortOrder: "RANDOM" });
+    const input = attributeInputFor("Collection", { sortOrder: "RANDOM" }, touched("sortOrder"));
     expect(input.sortOrder).toBeUndefined();
     expect(input.rejected).toEqual(["sortOrder"]);
   });
 
   it("treats an empty sort order as 'nothing to write', not as an error", () => {
-    const input = attributeInputFor("Collection", { sortOrder: "" });
+    const input = attributeInputFor("Collection", { sortOrder: "" }, touched("sortOrder"));
     expect(input.sortOrder).toBeUndefined();
     expect(input.rejected).toBeUndefined();
   });
 
   it("normalises a valid enum's case", () => {
-    expect(attributeInputFor("Collection", { sortOrder: "best_selling" }).sortOrder).toBe("BEST_SELLING");
+    expect(attributeInputFor("Collection", { sortOrder: "best_selling" }, touched("sortOrder")).sortOrder).toBe("BEST_SELLING");
   });
 
   it("refuses to empty an article's author", () => {
     // `ArticleCreateInput.author` is REQUIRED, so an article always has one —
     // an emptied field is a mistake, not an instruction to remove it.
-    const input = attributeInputFor("Article", { author: "  " });
+    const input = attributeInputFor("Article", { author: "  " }, touched("author"));
     expect(input.author).toBeUndefined();
     expect(input.rejected).toEqual(["author"]);
   });
 
   it("lets an empty tag list clear every tag", () => {
     // Unlike author, tags ARE removable, and Shopify replaces the whole list.
-    expect(attributeInputFor("Article", { tags: "" })).toEqual({ tags: [] });
+    expect(attributeInputFor("Article", { tags: "" }, touched("tags"))).toEqual({ tags: [] });
   });
 
   it("returns nothing at all for a resource with no attribute block", () => {
-    expect(attributeInputFor("ShopPolicy" as never, { isPublished: "false" })).toEqual({});
+    expect(attributeInputFor("ShopPolicy" as never, { isPublished: "false" }, touched("isPublished"))).toEqual({});
   });
 });

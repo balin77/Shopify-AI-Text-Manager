@@ -110,7 +110,11 @@ export async function handleUpdateProduct(
     // §Phase 3 attributes. Read on EVERY save and filtered by locale at the
     // write, not here: an attribute arriving on a foreign-locale save is a
     // client bug, and dropping it silently at parse time would hide it.
-    status: getFormStringOrNull(formData, "status") ?? undefined,
+    // `|| undefined`, not `?? undefined`: `getFormStringOrNull` returns "" for
+    // a present-but-empty field, and "" is not a status. Kept as "" it would
+    // fail the enum check and 400 the ENTIRE save — title, description and SEO
+    // with it — over a field the merchant never touched.
+    status: getFormStringOrNull(formData, "status") || undefined,
     vendor: getFormStringOrNull(formData, "vendor") ?? undefined,
     tags: getFormStringOrNull(formData, "tags") ?? undefined,
     templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
@@ -951,13 +955,28 @@ async function updatePrimaryProduct(
   }
 
   // ── PLAN §Phase 3 merchandising attributes ────────────────────────────────
-  // An unrecognised status is REFUSED rather than sent: `status` is the one
-  // attribute whose bad value fails at the GraphQL SCHEMA level, which comes
-  // back as a top-level `errors` array with `data: null` and never reaches
-  // `userErrors` — so the whole save would read as a success while nothing was
-  // written (the false-success pattern in CLAUDE.md). Reachable in practice:
-  // UNLISTED against a pre-2025-10 `SHOPIFY_API_VERSION` pin.
-  if (params.status !== undefined) {
+  //
+  // Gated on `changedFields`, NOT on "the client sent it". A primary save
+  // carries EVERY field (buildFieldsForSave only filters for foreign locales),
+  // so writing on presence alone means editing a title also writes vendor,
+  // tags and template suffix — and on a shop whose products predate the
+  // attribute sync those arrive as "" because the cache holds the migration's
+  // defaults. The result is not a no-op: `productUpdate` REPLACES the tag
+  // list, so a title edit would delete every tag, clear the vendor and reset
+  // the theme template. `productType` two blocks up has carried exactly this
+  // guard for the same reason since long before these fields existed.
+  //
+  // No `changedFields` at all ⇒ write no attributes. A caller that does not
+  // say what changed cannot be distinguished from one that changed nothing,
+  // and of the two readings only this one is safe.
+  const attributeChanged = (key: string) => changedFields.includes(key);
+
+  if (params.status !== undefined && attributeChanged("status")) {
+    // An unrecognised status is REFUSED rather than sent: `status` is the one
+    // attribute whose bad value fails at the GraphQL SCHEMA level, which comes
+    // back as a top-level `errors` array with `data: null` and never reaches
+    // `userErrors` — so the whole save would read as a success while nothing
+    // was written (the false-success pattern in CLAUDE.md).
     const status = params.status.trim().toUpperCase();
     if (!isValidProductStatus(status)) {
       return json(
@@ -967,13 +986,15 @@ async function updatePrimaryProduct(
     }
     mutationInput.status = status;
   }
-  if (params.vendor !== undefined) mutationInput.vendor = params.vendor;
-  if (params.templateSuffix !== undefined) {
+  if (params.vendor !== undefined && attributeChanged("vendor")) {
+    mutationInput.vendor = params.vendor;
+  }
+  if (params.templateSuffix !== undefined && attributeChanged("templateSuffix")) {
     // "" is meaningful here: it puts the product back on the theme's default
     // template. Shopify accepts the empty string for exactly that.
     mutationInput.templateSuffix = params.templateSuffix || null;
   }
-  if (params.tags !== undefined) {
+  if (params.tags !== undefined && attributeChanged("tags")) {
     // Shopify REPLACES the whole tag list on productUpdate, so this is a
     // complete list, not an addition. Trimmed and emptied-dropped to match how
     // Shopify itself stores them — otherwise a stray comma becomes a tag.
@@ -1054,16 +1075,19 @@ async function updatePrimaryProduct(
     const echoed = data.data.productUpdate.product as {
       status?: string; vendor?: string; tags?: string[]; templateSuffix?: string | null;
     } | null;
-    if (params.status !== undefined && echoed?.status) updateData.status = echoed.status;
-    if (params.vendor !== undefined) updateData.vendor = echoed?.vendor ?? params.vendor ?? null;
-    if (params.templateSuffix !== undefined) {
+    // Mirrored only for what was actually WRITTEN — same gate as the mutation
+    // input above, or a title edit would mirror the cache's own defaults back
+    // over themselves and, worse, look like a real value afterwards.
+    if (mutationInput.status !== undefined && echoed?.status) updateData.status = echoed.status;
+    if (mutationInput.vendor !== undefined) updateData.vendor = echoed?.vendor ?? params.vendor ?? null;
+    if (mutationInput.templateSuffix !== undefined) {
       updateData.templateSuffix = echoed?.templateSuffix ?? null;
     }
     // A scalar list, so it is written whole. Only when Shopify echoed one:
     // mirroring `[]` because the echo was missing would WIPE the product's
     // tags in the cache and light up the attribute checklist for a change the
     // merchant never made.
-    if (params.tags !== undefined && Array.isArray(echoed?.tags)) {
+    if (mutationInput.tags !== undefined && Array.isArray(echoed?.tags)) {
       updateData.tags = echoed.tags;
     }
 

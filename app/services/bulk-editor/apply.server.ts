@@ -56,7 +56,9 @@ import {
 } from "./translations.server";
 import { logger } from "../../utils/logger.server";
 import { redirectResourceFor, type RedirectableResource } from "../seo/handle-redirect.shared";
-import { sanitizeSlug } from "../../utils/slug.utils";
+// The single editor parses tags with exactly this function — one rule, so the
+// two surfaces cannot disagree about what a tag list is.
+import { parseTagList } from "../content-attributes.shared";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
@@ -460,7 +462,6 @@ async function persistProductBaseFields(
       fields.status = s;
     }
   }
-  normalizeHandleCell(group, fields, failures);
 
   // Partial SEO clobber guard: productUpdate treats `seo` as a unit —
   // sending only `title` wipes the existing description (and vice versa).
@@ -511,6 +512,12 @@ async function persistProductBaseFields(
     if (fields.descriptionHtml !== undefined) input.descriptionHtml = fields.descriptionHtml;
     if (fields.productType !== undefined) input.productType = fields.productType;
     if (fields.status !== undefined) input.status = fields.status;
+    // §Phase 3.6. `tags` goes through the SAME parser as the single editor —
+    // trimmed, empties dropped, case-insensitively de-duplicated — because
+    // Shopify stores them that way and a grid cell full of stray commas would
+    // otherwise report a change on every subsequent save.
+    if (fields.vendor !== undefined) input.vendor = fields.vendor;
+    if (fields.tags !== undefined) input.tags = parseTagList(fields.tags);
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
       input.seo = {
         title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
@@ -522,13 +529,26 @@ async function persistProductBaseFields(
       `#graphql
         mutation seoBulkMetaProductUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
+            # The echo the mirror and the redirect read. Shopify normalises
+            # both of these — tags are trimmed and case-collapsed, and a handle
+            # is slugified ("Summer Sale" is stored as "summer-sale") — so the
+            # value this app SENT is not the value the shop holds. Mirroring or
+            # redirecting to the sent one records a handle that does not exist,
+            # and (per §Phase 3.3) a redirect onto a live page's own path makes
+            # that page unreachable.
+            product { id handle tags }
             userErrors { field message }
           }
         }`,
       { variables: { input } },
     );
     const data = (await response.json()) as {
-      data?: { productUpdate?: { userErrors?: { field?: string[] | string; message: string }[] } };
+      data?: {
+        productUpdate?: {
+          product?: { id: string; handle?: string; tags?: string[] } | null;
+          userErrors?: { field?: string[] | string; message: string }[];
+        };
+      };
       errors?: { message?: string }[];
     };
     // A SCHEMA-level GraphQL error (unknown enum value, wrong variable type)
@@ -548,8 +568,22 @@ async function persistProductBaseFields(
     const userErrors = data.data.productUpdate.userErrors ?? [];
     if (userErrors.length > 0) throw new Error(userErrors[0].message);
 
+    const echoedProduct = data.data.productUpdate.product ?? null;
+
     const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
     for (const key of Object.keys(fields)) dbData[key] = fields[key];
+    // The handle Shopify STORED, not the cell that was typed: Shopify
+    // slugifies it, so mirroring the raw cell would leave the cache claiming a
+    // handle the shop does not serve — and the grid reads that cache back.
+    if (fields.handle !== undefined && echoedProduct?.handle) dbData.handle = echoedProduct.handle;
+    // §Phase 3.6 — `tags` is a Prisma scalar LIST, not a string: the 1:1 copy
+    // above would hand Prisma the comma-joined cell and fail the whole row.
+    // Taken from Shopify's ECHO where there is one, because Shopify normalises
+    // tags (trim, case-collapse) and the cache is what the grid reads back.
+    if (fields.tags !== undefined) {
+      const echoedTags = echoedProduct?.tags;
+      dbData.tags = Array.isArray(echoedTags) ? echoedTags : parseTagList(fields.tags);
+    }
     await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
 
     // Phase 4b: the changed primary fields' foreign translations are now stale.
@@ -557,7 +591,7 @@ async function persistProductBaseFields(
 
     // §Phase 3.3 — only now, with the write confirmed: a redirect to a handle
     // Shopify never stored would point the old URL at a 404.
-    await finishBulkHandleRedirect(capturedHandle, fields.handle, group, deps);
+    await finishBulkHandleRedirect(capturedHandle, echoedProduct?.handle ?? fields.handle, group, deps);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // productUpdate is one atomic mutation over every base cell — attribute
@@ -1282,29 +1316,27 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
     throw new Error("Title cannot be empty.");
   }
 
-  // Same normalisation as the product path and the single editor — Shopify
-  // stores the slugified handle, so sending the raw cell drifts the cache and
-  // fabricates a handle "change" that never happened. These rows fail whole
-  // (single mutation), so this throws where the product path fails one cell.
-  if (fields.handle !== undefined) {
-    const clean = sanitizeSlug(fields.handle);
-    if (!clean) {
-      throw new Error(
-        `"${fields.handle}" cannot be used as a URL handle — it must contain at least one letter or digit that survives conversion to a URL slug.`,
-      );
-    }
-    fields.handle = clean;
-  }
-
   // Build the DB patch mirror. Every editable field maps 1:1 to its Prisma
   // column with the same name — no renames — so a single loop is enough.
   const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
   for (const key of Object.keys(fields)) {
     dbData[key] = fields[key];
   }
+  /** Applied AFTER the write, because only then is Shopify's own value known.
+   *  Same reason as the product path: a slugified handle differs from the cell
+   *  that produced it, and the grid reads this cache back. */
+  const withEchoedHandle = () =>
+    fields.handle !== undefined && echoedResource?.handle
+      ? { ...dbData, handle: echoedResource.handle }
+      : dbData;
 
   // §Phase 3.3 — read the old handle before the mutation below replaces it.
   const capturedHandle = await captureHandleForRedirect(group, fields.handle, deps);
+  // What Shopify ECHOED back. Every one of these mutations returns the
+  // resource with its handle, and Shopify slugifies a handle it is given —
+  // so the stored value is the only safe basis for both the cache mirror and
+  // the redirect target.
+  let echoedResource: { handle?: string } | null = null;
 
   switch (type) {
     case "collection": {
@@ -1338,7 +1370,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
               : untouched?.seoDescription ?? "",
         };
       }
-      await contentService.updateCollection(id, {
+      echoedResource = await contentService.updateCollection(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.descriptionHtml !== undefined ? { descriptionHtml: fields.descriptionHtml } : {}),
@@ -1347,25 +1379,25 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         // call the single editor makes (shopify-content.service updateContent).
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
       });
-      await db.collection.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.collection.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
       break;
     }
     case "page": {
-      await contentService.updatePage(id, {
+      echoedResource = await contentService.updatePage(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
       });
-      await db.page.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.page.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
       break;
     }
     case "article": {
       // Article SEO title/description are stored as global.title_tag /
       // description_tag metafields, written inline by updateArticle() (see
       // ShopifyContentService.updateArticle) — same as Page/Blog.
-      await contentService.updateArticle(id, {
+      echoedResource = await contentService.updateArticle(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
@@ -1375,7 +1407,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         // See the collection branch — same inline alt write.
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
       });
-      await db.article.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.article.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
       break;
     }
     case "blog": {
@@ -1387,7 +1419,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
       // path as the single editor (app.blog.tsx → updateContent → updateBlog).
       // NO DB mirror: blog containers have no cache model — the grid's
       // post-save revalidation live-fetches the fresh state from Shopify.
-      await contentService.updateBlog(id, {
+      echoedResource = await contentService.updateBlog(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
@@ -1445,7 +1477,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
 
   // §Phase 3.3 — the write is confirmed (every branch above throws otherwise),
   // so the old URL can now be pointed at the new one.
-  await finishBulkHandleRedirect(capturedHandle, fields.handle, group, deps);
+  await finishBulkHandleRedirect(capturedHandle, echoedResource?.handle ?? fields.handle, group, deps);
 }
 
 /**
@@ -1683,43 +1715,6 @@ async function loadPrimaryHandle(
 // locale-prefixed URL (`/es/products/…`) and how Shopify's path-based redirects
 // interact with the locale prefix is unmeasured. Guessing there would produce
 // redirects nobody can verify, which is worse than the honest gap.
-
-/**
- * Sanitises a `field.handle` cell in place, exactly as the single editor does
- * (`sanitizeSlug` in content-update.action.ts).
- *
- * Not cosmetic. Shopify normalises a handle it is given — `Summer Sale` is
- * stored as `summer-sale` — so sending the raw cell meant two things went
- * wrong at once: the DB mirror recorded a handle the shop does not hold, and
- * the redirect comparison saw a change where there was none, producing a
- * redirect FROM the live page's own path TO a path that does not exist. By
- * this module's own rule (Shopify serves a redirect in preference to the page)
- * that makes the item unreachable at its own URL.
- *
- * An unusable handle fails the CELL rather than being written as "": that is
- * what `sanitizeSlug` returns for input it cannot turn into an ASCII slug
- * (CJK, Cyrillic, punctuation only), and "" would clear the handle.
- */
-function normalizeHandleCell(
-  group: BulkDiffRowGroup,
-  fields: Partial<Record<string, string>>,
-  failures: BulkFailure[],
-): void {
-  if (fields.handle === undefined) return;
-  const clean = sanitizeSlug(fields.handle);
-  if (!clean) {
-    failures.push(
-      failureOf(
-        group,
-        `"${fields.handle}" cannot be used as a URL handle — it must contain at least one letter or digit that survives conversion to a URL slug.`,
-        "field.handle",
-      ),
-    );
-    delete fields.handle;
-    return;
-  }
-  fields.handle = clean;
-}
 
 interface CapturedHandle {
   resource: RedirectableResource;

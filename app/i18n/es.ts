@@ -256,6 +256,7 @@ export const es: Translation = {
     redirectBlogArticlesUncovered: "La URL antigua del blog {path} ahora redirige a la nueva, pero las URLs de los artículos también cambiaron y no están cubiertas.",
     redirectShadowRemoved: "La URL antigua {path} ahora redirige a la nueva. Se eliminó una redirección existente en la URL nueva — habría ocultado la página.",
     redirectMissingBlog: "La URL antigua del artículo no se pudo redirigir porque su blog es desconocido — crea la redirección manualmente si el enlace antiguo te importa.",
+    reload: "Recargar",
     reloadSuccess: "¡Datos recargados de Shopify correctamente!",
     reloadItemTooltip: "Recargar solo los datos de esta entrada desde Shopify",
     reloadAllTooltip: "Recargar todas las entradas desde Shopify",
@@ -447,6 +448,7 @@ export const es: Translation = {
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
     rulesNeedApiUpgrade: "Las colecciones automatizadas necesitan la API {version} de Shopify. Hasta que esta aplicación se actualice, puedes crear colecciones y elegir sus productos manualmente.",
     addTag: "Añadir etiqueta",
+    attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     duplicateModal: {
       title: "Duplicar \u201c{name}\u201d",
@@ -2932,6 +2934,9 @@ export const es: Translation = {
       summary: "Resumen",
       productType: "Tipo de producto",
       status: "Estado",
+      // PLAN §3.6 — `tags` es UNA celda con una LISTA; el encabezado lo dice.
+      vendor: "Proveedor",
+      tags: "Etiquetas (separadas por comas)",
       handle: "Handle",
       seoTitle: "Título SEO",
       seoDescription: "Meta descripción",
@@ -3053,6 +3058,9 @@ export const es: Translation = {
     allMarkets: "Todos los mercados",
     primaryLocaleSuffix: "(Principal)",
     notTranslatableTooltip: "Este campo no es traducible — solo puede editarse en el idioma principal.",
+    // PLAN §3.6 — en una celda de proveedor/etiquetas cuya fila es anterior a la
+    // sincronización de atributos. Vacío ahí significa "aún no cargado".
+    unknownAttributeGhost: "aún no sincronizado",
     unsavedOtherLocales: "Cambios sin guardar en {count} otros idiomas/mercados — al guardar se escriben todos.",
     budgetExceeded: "Este cambio necesita unas {calls} llamadas a Shopify (límite {max}). Guarda en varios pasos o acota el filtro.",
     cellLimitExceeded: "{cells} celdas modificadas — máximo {max} por guardado. Guarda en varios pasos o acota el filtro.",

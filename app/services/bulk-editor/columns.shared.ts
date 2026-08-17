@@ -431,6 +431,20 @@ const COL_TITLE = fieldColumn("title", { translatable: true, inputType: "text", 
 const COL_DESCRIPTION_HTML = fieldColumn("descriptionHtml", { translatable: true, inputType: "textarea", minWidth: 280 });
 const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 200, sortKey: "productType" });
 const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "select", minWidth: 130, sortKey: "status" });
+// PLAN_CONTENT_CREATION §Phase 3.6 — the two merchandising attributes the
+// single editor gained in §3.1, pulled through to the grid where they are
+// worth most: vendor and tags are the fields a merchant fixes across a whole
+// catalogue, not one product at a time.
+//
+// Neither is translatable — Shopify stores one value per product — so they
+// carry `translatable: false` like `status`, which keeps them out of every
+// foreign-locale group by the same rule that already governs it.
+//
+// `tags` is a LIST behind one cell, comma-separated in the grid the same way
+// the single editor's chips serialise. Written whole, because that is what
+// `productUpdate` does with it: a cell edit REPLACES the product's tags.
+const COL_VENDOR = fieldColumn("vendor", { translatable: false, inputType: "text", minWidth: 160, sortKey: "vendor" });
+const COL_TAGS = fieldColumn("tags", { translatable: false, inputType: "text", minWidth: 220 });
 const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 220, sortKey: "handle" });
 const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200, group: "seo" });
 const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280, group: "seo" });
@@ -484,6 +498,8 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_DESCRIPTION_HTML,
     COL_PRODUCT_TYPE,
     COL_STATUS,
+    COL_VENDOR,
+    COL_TAGS,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -1051,6 +1067,13 @@ export interface BulkRow {
   descriptionHtml?: string;
   productType?: string;
   status?: string;
+  // §Phase 3.6. `tags` is a LIST behind one cell — comma-separated, written
+  // whole (productUpdate replaces the list rather than appending to it).
+  vendor?: string;
+  tags?: string;
+  /** False ⇒ `vendor`/`tags` above are the migration's defaults, not the
+   *  merchant's data (§2.4). The grid shows them as unknown, never as empty. */
+  attributesKnown?: boolean;
   body?: string;
   summary?: string;
   // Read-only display fields.
