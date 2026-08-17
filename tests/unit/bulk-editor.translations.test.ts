@@ -695,10 +695,13 @@ describe("applyBulkDiff — redirect on a TRANSLATED handle change", () => {
         upsert: vi.fn(async (_args: unknown) => ({})),
         deleteMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
         findMany: vi.fn(async (_args: unknown) => handleRows),
-        findFirst: vi.fn(async (_args: unknown) => null),
+        findFirst: vi.fn(async (_args: unknown): Promise<{ id: string } | null> => null),
       },
       product: {
         findUnique: vi.fn(async (_args: unknown) => ({ handle: "kumikobox", status: "ACTIVE" })),
+        // The cross-resource collision check: no OTHER product answers the old
+        // translated handle as its primary one.
+        findFirst: vi.fn(async (_args: unknown): Promise<{ id: string } | null> => null),
       },
       aISettings: { findUnique: vi.fn(async (_args: unknown) => ({ seoAutoHandleRedirect: true })) },
     };
@@ -825,6 +828,66 @@ describe("applyBulkDiff — redirect on a TRANSLATED handle change", () => {
     // Without the translation the locale is served under the primary handle
     // again — the only address the dead URL can point at.
     expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/kumikobox" }]);
+  });
+
+  it("refuses when another product already answers the old handle", async () => {
+    // The collision the primary path cannot have: Shopify enforces uniqueness
+    // among PRIMARY handles, so a renamed-away one is free — a translated one
+    // can be another product's live address, and the row would 301 it away in
+    // every locale, permanently.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = redirectAdmin(created);
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+    db.product.findFirst = vi.fn(async (_args: unknown) => ({ id: "gid://shopify/Product/2" }));
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [foreignEntry(HANDLE_COL, "boite-neuve")],
+    );
+
+    expect(created).toEqual([]);
+  });
+
+  it("builds the redirect from the value Shopify ECHOED, not the one sent", async () => {
+    // The repo's echo rule reaches the target, not just the decision to act:
+    // this column is not slug-sanitised, so what Shopify stores is the only
+    // honest basis for a URL. The DB mirror follows the same value.
+    const created: Array<Record<string, unknown>> = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) return batchDigestResponse(variables, { handle: "d-handle" });
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "handle", locale: LOCALE, value: "boite-neuve", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("urlRedirects")) {
+        return { data: { urlRedirects: { edges: [], pageInfo: { hasNextPage: false, endCursor: null } } } };
+      }
+      if (query.includes("urlRedirectCreate")) {
+        created.push((variables?.urlRedirect as Record<string, unknown>) ?? {});
+        return {
+          data: { urlRedirectCreate: { urlRedirect: { id: "gid://shopify/UrlRedirect/1" }, userErrors: [] } },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = redirectDb([{ locale: LOCALE, value: "boite-ancienne" }]);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      // What the merchant typed differs from what Shopify stored.
+      [foreignEntry(HANDLE_COL, "Boite Neuve")],
+    );
+
+    expect(created).toEqual([{ path: "/products/boite-ancienne", target: "/products/boite-neuve" }]);
+    expect(db.contentTranslation.upsert.mock.calls[0][0]).toMatchObject({
+      create: { value: "boite-neuve" },
+    });
   });
 
   it("leaves a market-scoped translation alone", async () => {

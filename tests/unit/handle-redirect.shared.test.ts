@@ -355,10 +355,28 @@ describe("decideTranslatedHandleRedirect", () => {
     ).toEqual({ redirect: false, reason: "missingBlogHandle" });
   });
 
-  it("has nowhere to send a cleared translation with no primary handle", () => {
+  it("refuses outright when the primary handle could not be read", () => {
+    // Not just "nowhere to send a cleared translation": without the primary
+    // handle the check that keeps a redirect OFF that handle cannot be made at
+    // all, so a cache miss or a throttled lookup would put one on the shop's
+    // most important live URL. "Unknown proceeds" governs whether an object was
+    // LIVE — never what its address is.
     expect(
-      decideTranslatedHandleRedirect({ ...base, nextTranslatedHandle: "", primaryHandle: null }),
-    ).toEqual({ redirect: false, reason: "missingHandle" });
+      decideTranslatedHandleRedirect({ ...base, primaryHandle: null }),
+    ).toEqual({ redirect: false, reason: "primaryHandleUnknown" });
+    expect(
+      decideTranslatedHandleRedirect({ ...base, nextTranslatedHandle: "", primaryHandle: "  " }),
+    ).toEqual({ redirect: false, reason: "primaryHandleUnknown" });
+  });
+
+  it("refuses when the old handle is ANOTHER resource's primary handle", () => {
+    // No counterpart on the primary path: Shopify enforces primary-handle
+    // uniqueness, so a renamed-away primary handle is free by construction. A
+    // translated one can sit on a live product's own address, and the row
+    // would 301 it away in every locale, permanently.
+    expect(
+      decideTranslatedHandleRedirect({ ...base, previousHandleTakenElsewhere: true }),
+    ).toEqual({ redirect: false, reason: "pathStillLive" });
   });
 
   it("checks 'wanted' before anything else", () => {

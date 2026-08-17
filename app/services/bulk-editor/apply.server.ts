@@ -1825,6 +1825,7 @@ interface CapturedTranslatedHandle {
   previouslyLive: boolean | null;
   blogHandle: string | null;
   blogHandleTranslatedInLocale: boolean;
+  previousHandleTakenElsewhere: boolean;
 }
 
 /**
@@ -1832,8 +1833,11 @@ interface CapturedTranslatedHandle {
  *
  * Returns null for every case that could not produce a redirect anyway, so the
  * overwhelmingly common one — a translation row group with no handle cell —
- * costs nothing. The two ContentTranslation reads it does make are one indexed
- * query each: this runs per ROW, and bulk-translate hands it hundreds.
+ * costs nothing, and the next commonest — a handle being translated for the
+ * FIRST time, which is every row bulk-translate writes — costs exactly one
+ * indexed read before bailing. Only a real rename pays the rest: the cache
+ * read, the collision lookup, and for articles the blog handle (a GraphQL
+ * round-trip) plus one more translation read. This runs per ROW.
  */
 async function captureTranslatedHandleForRedirect(
   group: BulkDiffRowGroup,
@@ -1887,9 +1891,21 @@ async function captureTranslatedHandleForRedirect(
       }
     }
 
+    // Only reachable on a real rename, which is what makes an unindexed lookup
+    // affordable here — see handleTakenByOtherResource.
+    const { handleTakenByOtherResource } = await import("../seo/handle-redirect.server");
+    const previousHandleTakenElsewhere = await handleTakenByOtherResource(
+      deps.db as never,
+      deps.shop,
+      resource,
+      previousHandle,
+      group.rowId,
+    );
+
     return {
       resource,
       previousHandle,
+      previousHandleTakenElsewhere,
       primaryHandle: before.handle,
       otherLocaleHandles: handleRows.filter((r) => r.locale !== group.locale).map((r) => r.value),
       previouslyLive: wasEverLive(resource, before.state),
@@ -1922,6 +1938,7 @@ async function finishTranslatedHandleRedirect(
       nextTranslatedHandle: nextHandle,
       primaryHandle: captured.primaryHandle,
       otherLocaleHandles: captured.otherLocaleHandles,
+      previousHandleTakenElsewhere: captured.previousHandleTakenElsewhere,
       wanted: true,
       previouslyLive: captured.previouslyLive,
       blogHandle: captured.blogHandle,
@@ -2140,7 +2157,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       ...(marketId ? { marketId } : {}),
     }));
     try {
-      const { confirmedKeys, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
+      const { confirmedKeys, confirmedValues, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
       for (const write of ready) {
         if (!confirmedKeys.has(write.key)) {
           failures.push(
@@ -2157,7 +2174,12 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
-        if (write.key === "handle") confirmedHandle = write.value;
+        // What Shopify ECHOED, not what was sent. The same rule the theme path
+        // already follows for autofix-normalised richtext: mirroring the raw
+        // value diverges the DB from the storefront, and for `handle` it would
+        // point the redirect at an address nobody serves.
+        const storedValue = confirmedValues.get(write.key) ?? write.value;
+        if (write.key === "handle") confirmedHandle = storedValue;
         if (group.rowType === "image") {
           // PRODUCT media mirror into ProductImageAltTranslation (keyed by the
           // ProductImage CACHE row) — the store the single editor and the SEO
@@ -2168,8 +2190,8 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           if (cacheId) {
             await db.productImageAltTranslation.upsert({
               where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
-              update: { altText: write.value },
-              create: { imageId: cacheId, locale, marketId, altText: write.value },
+              update: { altText: storedValue },
+              create: { imageId: cacheId, locale, marketId, altText: storedValue },
             });
           } else {
             await db.contentTranslation.upsert({
@@ -2182,13 +2204,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                   marketId,
                 },
               },
-              update: { value: write.value, digest: write.digest, resourceType: "MediaImage" },
+              update: { value: storedValue, digest: write.digest, resourceType: "MediaImage" },
               create: {
                 shop,
                 resourceId,
                 resourceType: "MediaImage",
                 key: write.key,
-                value: write.value,
+                value: storedValue,
                 locale,
                 marketId,
                 digest: write.digest,
@@ -2215,13 +2237,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                 marketId,
               },
             },
-            update: { value: write.value, outdated: false },
+            update: { value: storedValue, outdated: false },
             create: {
               shop,
               metaobjectId: resourceId,
               type: cached?.type ?? "",
               key: write.key,
-              value: write.value,
+              value: storedValue,
               locale,
               marketId,
               outdated: false,
@@ -2238,13 +2260,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                 marketId,
               },
             },
-            update: { value: write.value, digest: write.digest, resourceType },
+            update: { value: storedValue, digest: write.digest, resourceType },
             create: {
               shop,
               resourceId,
               resourceType,
               key: write.key,
-              value: write.value,
+              value: storedValue,
               locale,
               marketId,
               digest: write.digest,

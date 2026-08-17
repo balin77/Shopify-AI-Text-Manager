@@ -170,6 +170,9 @@ export type HandleRedirectDecision =
         | "marketScoped"
         /** The old translated handle is still somebody's live address. */
         | "pathStillLive"
+        /** The resource's own primary handle could not be read, so the check
+         *  that keeps a redirect OFF that handle cannot be made. */
+        | "primaryHandleUnknown"
         /** An article under a blog whose OWN handle is translated: which
          *  spelling of the blog segment the storefront serves is unmeasured. */
         | "localeBlogHandleUnknown";
@@ -261,6 +264,14 @@ export interface TranslatedHandleRedirectRequest {
    * another locale's live address is not available as a source.
    */
   otherLocaleHandles?: string[];
+  /**
+   * Does ANOTHER resource of the same type already answer the old handle as its
+   * PRIMARY one? Resolved by the caller (it is a DB question). The primary
+   * redirect path needs no such check — Shopify enforces primary-handle
+   * uniqueness, so a renamed-away handle is free by construction. A TRANSLATED
+   * handle has no such guarantee and can sit on a live product's own address.
+   */
+  previousHandleTakenElsewhere?: boolean;
   wanted: boolean;
   previouslyLive?: boolean | null;
   /** The blog's PRIMARY handle — the article path's first segment. */
@@ -288,9 +299,14 @@ export interface TranslatedHandleRedirectRequest {
  *     why bulk-translate produces no redirects at all: it only ever FILLS empty
  *     translations, which is exactly this case.
  *  2. **The old handle must not still be somebody's address.** If it equals the
- *     primary handle, or another locale's translation of the same resource, the
- *     unprefixed row would hijack a live page. (Only the same RESOURCE is
- *     checked — see the residual note below.)
+ *     primary handle, another locale's translation of the same resource, or —
+ *     via `previousHandleTakenElsewhere`, which the caller resolves — another
+ *     resource's PRIMARY handle, the unprefixed row would hijack a live page.
+ *     That last one has no counterpart on the primary path: Shopify enforces
+ *     primary-handle uniqueness, so a renamed-away primary handle is free by
+ *     construction, while nothing stops a TRANSLATED handle from being another
+ *     product's live address. An unknown primary handle refuses outright, since
+ *     the check cannot be made at all without it.
  *  3. **Market overrides are out.** A `marketId` translation is served to one
  *     market, while a redirect row is shop-wide; one cannot express the other.
  *  4. **A cleared translation redirects BACK to the primary handle**, which is
@@ -303,11 +319,17 @@ export interface TranslatedHandleRedirectRequest {
  *     no blog-handle translation there is only one possible spelling, so those
  *     articles ARE covered.
  *
- * Residual, stated rather than hidden: a collision with a DIFFERENT resource's
- * handle in some other locale is not checked. `ContentTranslation.value` has no
- * index, so the check would be a per-row scan of the shop's translations on a
- * path that renames hundreds of rows at a time. The realistic collision — the
- * same object under two similar languages — is rule 2 and is cheap.
+ * Two residuals, stated rather than hidden:
+ *
+ *  - A collision with a different resource's TRANSLATED handle in some other
+ *    locale is not checked. `ContentTranslation.value` has no index, so that
+ *    check would be a per-row scan of the shop's translations on a path that
+ *    renames hundreds of rows at a time. Its PRIMARY-handle sibling is checked
+ *    (rule 2), because that one is a single lookup on the resource's own table.
+ *  - Two locales that share a slug are decided by whoever writes last: rule 2
+ *    only sees the other locale's row while it still exists, so clearing `fr`'s
+ *    handle and THEN renaming `de`'s identical one repoints the row `fr` just
+ *    created. Both rows are the same path, and one path can hold one redirect.
  */
 export function decideTranslatedHandleRedirect(
   request: TranslatedHandleRedirectRequest,
@@ -320,6 +342,14 @@ export function decideTranslatedHandleRedirect(
   if (!previous) return { redirect: false, reason: "notTranslatedBefore" };
 
   const primary = normalizeHandle(request.primaryHandle ?? "");
+  // Unknown primary handle ⇒ refuse. Rule 2's most important half is "the old
+  // handle must not BE the primary one", and without the primary handle that
+  // check silently passes — turning a cache miss or a throttled lookup into a
+  // redirect on the shop's most important live URL. The primary path refuses
+  // an unknown handle for the same reason; "unknown proceeds" applies to
+  // whether an object was LIVE, never to what its address is.
+  if (!primary) return { redirect: false, reason: "primaryHandleUnknown" };
+
   // Cleared ⇒ the locale is served under the primary handle again, so that is
   // where the dead translated URL should point.
   const next = normalizeHandle(request.nextTranslatedHandle ?? "") || primary;
@@ -331,7 +361,9 @@ export function decideTranslatedHandleRedirect(
   // actually had, and before the paths are built because it is a fact about the
   // handle rather than about the URL shape.
   const live = new Set([primary, ...(request.otherLocaleHandles ?? []).map(normalizeHandle)].filter(Boolean));
-  if (live.has(previous)) return { redirect: false, reason: "pathStillLive" };
+  if (live.has(previous) || request.previousHandleTakenElsewhere) {
+    return { redirect: false, reason: "pathStillLive" };
+  }
 
   if (request.resource === "article" && request.blogHandleTranslatedInLocale) {
     return { redirect: false, reason: "localeBlogHandleUnknown" };

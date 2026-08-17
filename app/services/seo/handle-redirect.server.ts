@@ -21,6 +21,7 @@ import {
   decideHandleRedirect,
   decideTranslatedHandleRedirect,
   type HandleRedirectRequest,
+  type RedirectableResource,
   type TranslatedHandleRedirectRequest,
 } from "./handle-redirect.shared";
 
@@ -182,15 +183,82 @@ export async function applyRedirectPair(
 }
 
 /**
+ * Does another resource of the same type already serve this handle as its
+ * PRIMARY one?
+ *
+ * Only the foreign path needs this, and the reason is worth keeping in view:
+ * Shopify enforces primary-handle uniqueness, so a handle a merchant renames
+ * AWAY from is free by construction — which is why `applyHandleRedirect` needs
+ * no collision check at all. A TRANSLATED handle carries no such guarantee, so
+ * `/products/kiste` can be product A's old Spanish URL and product B's live
+ * primary URL at the same time. Redirecting it would 301 product B's own
+ * address, in every locale, permanently.
+ *
+ * `handle` is not indexed (only `shop` is), so this is one scan of the shop's
+ * rows for that type. It runs ONLY where a redirect would otherwise be created
+ * — a real foreign rename — never on the fill-an-empty-translation path.
+ *
+ * Errs toward "taken" on any failure: not creating a redirect costs a link, and
+ * creating a wrong one costs a live product page.
+ */
+export async function handleTakenByOtherResource(
+  db: {
+    product: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
+    collection: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
+    page: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
+    article: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
+  },
+  shop: string,
+  resource: RedirectableResource,
+  handle: string,
+  selfId: string,
+): Promise<boolean> {
+  // A blog's index path (`/blogs/<handle>`) shares its prefix with article
+  // paths but never collides with one — an article path always has a second
+  // segment. There is no Blog cache model to query anyway.
+  const model =
+    resource === "product" ? db.product
+    : resource === "collection" ? db.collection
+    : resource === "page" ? db.page
+    : resource === "article" ? db.article
+    : null;
+  if (!model) return false;
+  try {
+    const row = await model.findFirst({
+      where: { shop, handle, id: { not: selfId } },
+      select: { id: true },
+    });
+    return !!row;
+  } catch (error) {
+    logger.warn("[HandleRedirect] Could not check the old handle for a collision — refusing the redirect", {
+      context: "HandleRedirect", shop, resource, error: error instanceof Error ? error.message : String(error),
+    });
+    return true;
+  }
+}
+
+/**
  * The foreign-locale twin. Same Shopify work, a different decision — the rules
  * that make a translated handle's redirect safe live in
  * `decideTranslatedHandleRedirect`, and everything below the decision is shared
  * with the primary path (repoint the chain, clear a shadowing row, echo-check).
  *
  * The row it writes is UNPREFIXED on purpose: measured, one row serves every
- * locale. The accepted cost is that it also answers the PRIMARY-locale path
- * carrying the old translated slug — a path that normally 404s, so redirecting
- * it costs nothing and occasionally helps.
+ * locale. That reach has two accepted costs, both stated here because neither
+ * is visible from the call site:
+ *
+ *  - It also answers the PRIMARY-locale path carrying the old translated slug.
+ *    Whether Shopify serves a translated handle without a prefix is NOT
+ *    measured (the probe answered the prefixed direction), so this is an
+ *    assumption: if that path 404s the row is harmless, and if it serves, the
+ *    row sends it where the translated URL now lives. The decision's rule 2 is
+ *    what keeps that path from being someone ELSE's live address.
+ *  - `applyRedirectPair` deletes a redirect sitting on the TARGET path, because
+ *    Shopify serves a redirect in preference to a live page. On this path that
+ *    row may be one an earlier PRIMARY rename created, so a merchant who
+ *    recycles an old primary handle as a translated one can lose it. There is
+ *    no way to keep both: one path holds one redirect. The single editor
+ *    reports `shadowRemoved`; the bulk path cannot, and does not claim to.
  *
  * A renamed blog handle carries its articles' foreign URLs with it and Shopify
  * redirects have no wildcards, so that case reports `blogArticlesUncovered`
