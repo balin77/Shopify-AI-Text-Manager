@@ -483,6 +483,94 @@ function formatIndexNowMarkdown(r: IndexNowProbeReport): string {
   return lines.join("\n");
 }
 
+// ── Redirect × locale-prefix probe ───────────────────────────────────────────
+// PLAN_CONTENT_CREATION §Phase 3.3, open question 3: does a path-based Shopify
+// redirect also apply under a locale prefix (`/es/products/old`)? Unanswerable
+// from the docs or the code, and the answer decides whether bulk-translate's
+// foreign-handle column may create redirects at all — which is why that path
+// creates none today.
+
+interface RedirectLocaleHop {
+  url: string;
+  status: number | null;
+  location: string | null;
+  error?: string;
+}
+
+interface RedirectLocaleProbeReport {
+  generatedAt: string;
+  shop: string;
+  primaryDomain: string;
+  locale: string | null;
+  probePath: string;
+  redirectCreated: boolean;
+  control: RedirectLocaleHop;
+  prefixed: RedirectLocaleHop | null;
+  verdict: string[];
+}
+
+function RedirectLocaleProbeCard() {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<RedirectLocaleProbeReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runProbe = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/redirect-locale-probe", { method: "POST" });
+      const j = (await r.json()) as { report?: RedirectLocaleProbeReport; error?: string };
+      if (!r.ok || !j.report) {
+        throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
+      }
+      setReport(j.report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const hopRow = (label: string, hop: RedirectLocaleHop | null) =>
+    hop ? (
+      <Text as="p" variant="bodySm">
+        <strong>{label}:</strong> <code>{hop.url}</code> → {hop.status ?? "no response"}
+        {hop.location ? ` → ${hop.location}` : ""}
+        {hop.error ? ` (${hop.error})` : ""}
+      </Text>
+    ) : null;
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm">Redirect under a locale prefix</Text>
+        <Text as="p" tone="subdued">
+          Creates a throwaway redirect, fetches it once plain and once behind a published
+          language prefix, then deletes it again. Answers whether a translated handle can be
+          redirected at all. Nothing is left behind.
+        </Text>
+        <InlineStack gap="200" blockAlign="center">
+          <Button onClick={runProbe} loading={loading}>Run redirect probe</Button>
+        </InlineStack>
+        {error && (
+          <Banner tone="critical"><Text as="p">Probe failed: {error}</Text></Banner>
+        )}
+        {report && (
+          <BlockStack gap="200">
+            <Banner tone={report.verdict.some((v) => v.startsWith("ANSWER: YES")) ? "success" : "info"}>
+              <BlockStack gap="100">
+                {report.verdict.map((v, i) => <Text as="p" key={i}>{v}</Text>)}
+              </BlockStack>
+            </Banner>
+            {hopRow("Control", report.control)}
+            {hopRow(`Prefixed (${report.locale ?? "no second language"})`, report.prefixed)}
+          </BlockStack>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 function IndexNowProbeCard() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<IndexNowProbeReport | null>(null);
@@ -648,6 +736,8 @@ export function SettingsTranslationProbeTab() {
       </Card>
 
       <IndexNowProbeCard />
+
+      <RedirectLocaleProbeCard />
 
       {report?.imageAltDiag && (
         <Card>
