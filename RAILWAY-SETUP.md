@@ -81,8 +81,8 @@ man vor einer destruktiven Migration, und dafür ist dieser Service da.
 | Variable | Bedeutung |
 |---|---|
 | `DATABASE_URL` | von Railway injiziert (`${{Postgres.DATABASE_URL}}`) |
-| `R2_ACCOUNT_ID` | Cloudflare-Account-ID; daraus wird der Endpoint gebaut |
-| `R2_ENDPOINT` | optional, überschreibt `R2_ACCOUNT_ID` (z. B. für einen Jurisdiction-Endpoint) |
+| `R2_ACCOUNT_ID` | Cloudflare-Account-ID; daraus wird `https://<id>.r2.cloudflarestorage.com` gebaut |
+| `R2_ENDPOINT` | optional, überschreibt `R2_ACCOUNT_ID`. **Pflicht bei EU-Jurisdiction** (siehe unten) |
 | `R2_BUCKET` | Ziel-Bucket |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2-API-Token. **Nur „Object Read & Write" auf genau diesen Bucket** — der Token liegt in einem Container, der sonst nichts mit R2 zu tun hat |
 | `BACKUP_PREFIX` | Key-Präfix und Dateiname-Stamm, Default `contentpilot` |
@@ -127,6 +127,17 @@ monatelang nicht, darf der nächste Lauf nicht „alle sind alt" als „alle lö
 lesen), und gelöscht wird nur, was auf `.dump` endet — was sonst noch unter dem
 Präfix liegt, gehört der Retention nicht. Beides ist in
 [tests/unit/db-backup.test.ts](tests/unit/db-backup.test.ts) festgenagelt.
+
+**EU-Jurisdiction ändert den Endpoint.** Die Dumps enthalten Shop-Daten und
+Session-PII, EU-Residenz ist also naheliegend — aber Cloudflare trennt zwei
+Dinge, die im Anlege-Dialog nebeneinander stehen: ein *Location Hint* ist eine
+unverbindliche Platzierungs-Empfehlung und lässt den Endpoint unverändert, eine
+*Jurisdiction* `European Union` ist die harte Zusage und verschiebt den
+S3-Endpoint auf `https://<account>.eu.r2.cloudflarestorage.com`. Für einen
+Jurisdiction-Bucket reicht `R2_ACCOUNT_ID` daher **nicht** — das Skript würde
+den Endpoint ohne `.eu` zusammenbauen und ins Leere greifen. Dann `R2_ENDPOINT`
+explizit setzen. Die Jurisdiction ist beim Anlegen zu wählen und später nicht
+mehr änderbar.
 
 **Postgres-Client-Version.** `pg_dump` verweigert den Dump eines *neueren*
 Servers. Das [Dockerfile](Dockerfile) installiert Alpines Default-`postgresql-client`;
