@@ -15,7 +15,7 @@ je Service unter Settings → Config-as-Code hinterlegt.
 |---|---|---|
 | Web (production **und** development) | [railway.json](railway.json) | Dockerfile-Builder, `npm run start:production`, Healthcheck `/health` |
 | Db Space Checker (Cron, nur production) | [railway.dbalert.json](railway.dbalert.json) | Dockerfile-Builder, `node scripts/db-alert.mjs`, alle 15 Min, kein Restart |
-| Db Backup (Cron, nur production) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
+| Db Backup (Cron, production **und** development) | [railway.dbbackup.json](railway.dbbackup.json) | Dockerfile-Builder, `node scripts/db-backup.mjs`, täglich 02:00 UTC, kein Restart |
 
 Beide Web-Environments sind identisch konfiguriert — deshalb braucht `railway.json`
 keine `environments`-Überschreibungen. Weichen sie irgendwann ab, kommt ein Block
@@ -89,6 +89,31 @@ man vor einer destruktiven Migration, und dafür ist dieser Service da.
 | `BACKUP_RETENTION_DAYS` | ältere Dumps werden gelöscht, Default `30`, `0` = nie löschen |
 | `BACKUP_KEEP_MINIMUM` | die N neuesten Dumps werden **nie** gelöscht, Default `3` |
 | `ALERT_WEBHOOK_URL` | derselbe Slack-/Discord-Webhook wie beim Space Checker; fehlt er, wird nur geloggt |
+
+**Zwei Environments, zwei Buckets, zwei Tokens.** Production und development
+haben je eine eigene Postgres — also läuft der Backup-Service in beiden, und
+jedes Environment schreibt in seinen **eigenen** Bucket mit einem Token, das
+**nur** auf diesen Bucket berechtigt ist:
+
+| | production | development |
+|---|---|---|
+| Bucket | `contentpilot-backups-prod` | `contentpilot-backups-dev` |
+| `R2_BUCKET` | `contentpilot-backups-prod` | `contentpilot-backups-dev` |
+| `BACKUP_RETENTION_DAYS` | `30` | `7` |
+| `BACKUP_KEEP_MINIMUM` | `3` | `2` |
+| R2-Token | eigenes, nur auf den prod-Bucket | eigenes, nur auf den dev-Bucket |
+
+Der Punkt der Trennung ist der **Token**, nicht der Bucket: ein einziges Token
+über beide Buckets würde bedeuten, dass ein Leak aus der Dev-Umgebung — die
+naturgemäß mehr angefasst und weniger streng behandelt wird — die
+Produktions-Backups löschen kann. Genau davor schützt die Aufteilung. Ein
+gemeinsamer Bucket mit zwei `BACKUP_PREFIX`-Werten wäre billiger, gäbe diese
+Eigenschaft aber auf.
+
+`railway.dbbackup.json` bleibt für beide dieselbe Datei — die Unterschiede oben
+sind ausschließlich Environment-Variablen, und die sind in Railway ohnehin pro
+Environment gesetzt. Es braucht also keine zweite Config-Datei und keinen
+`environments`-Block.
 
 Der Ablauf bricht bei jedem Schritt ab, statt ein halbes Backup als Erfolg zu
 melden: Versionscheck → `pg_dump -Fc` → **`pg_restore --list` auf das Ergebnis**
