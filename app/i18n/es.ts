@@ -498,6 +498,17 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      cost: "Coste por artículo",
+      costHint: "Lo que pagas tú. Nunca se muestra a los clientes.",
+      weight: "Peso",
+      weightUnit: "Unidad",
+      hsCode: "Código arancelario",
+      countryOfOrigin: "País de origen",
+      countryHint: "Dos letras, p. ej. ES",
+      requiresShipping: "Requiere envío",
+      taxableLabel: "Sujeto a impuestos: {v}",
+      yes: "sí",
+      no: "no",
       loading: "Cargando",
       loadFailed: "No se pudieron cargar el inventario y los canales.",
       saveFailed: "No se pudo guardar el cambio.",
@@ -527,6 +538,9 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      itemFieldsInvalid: "Un coste, un peso o un código de país no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
+      itemFieldsNotConfirmed: "Shopify no confirmó los ajustes del artículo, así que tampoco se guardaron localmente.",
+      itemFieldsFailed: "No se pudieron guardar los ajustes del artículo.",
       stockChangedMeanwhile: "El inventario cambió mientras editabas, así que no se escribió nada. Recarga para ver la cifra actual.",
       stockNotConfirmed: "Shopify no confirmó el nuevo inventario, así que tampoco se guardó localmente. Recarga para ver lo que tiene.",
       stockFailed: "No se pudo guardar el inventario.",

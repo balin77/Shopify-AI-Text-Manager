@@ -40,10 +40,12 @@ import {
   variantCommerceColumns,
 } from "~/services/commerce-sync.shared";
 import {
+  applyInventoryItemFields,
   applyPublicationChanges,
   applyStockChanges,
   parseQuantity,
   type CommerceWarning,
+  type InventoryItemFields,
   type StockChange,
 } from "~/services/commerce-write.server";
 
@@ -58,6 +60,14 @@ export interface CommerceVariantView {
   inventoryItemId: string | null;
   /** null ⇒ never synced. false ⇒ Shopify keeps no count for this variant. */
   inventoryTracked: boolean | null;
+  /** The InventoryItem's own settings. All nullable — see the sync's header. */
+  cost: string | null;
+  taxable: boolean | null;
+  requiresShipping: boolean | null;
+  weight: string | null;
+  weightUnit: string | null;
+  harmonizedSystemCode: string | null;
+  countryCodeOfOrigin: string | null;
   levels: Array<{
     locationId: string;
     locationName: string;
@@ -178,6 +188,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
         sku: (node.sku as string | null) ?? null,
         inventoryItemId: columns.inventoryItemId ?? null,
         inventoryTracked: columns.inventoryTracked ?? null,
+        cost: columns.cost ?? null,
+        taxable: columns.taxable ?? null,
+        requiresShipping: columns.requiresShipping ?? null,
+        weight: columns.weight ?? null,
+        weightUnit: columns.weightUnit ?? null,
+        harmonizedSystemCode: columns.harmonizedSystemCode ?? null,
+        countryCodeOfOrigin: columns.countryCodeOfOrigin ?? null,
         levels: (levels?.rows ?? []).map((row) => ({
           locationId: row.locationId,
           locationName: locationNames.get(row.locationId)?.name ?? "",
@@ -275,6 +292,46 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const warning = await applyStockChanges(admin, db, session.shop, { variantId, changes });
+    if (warning) warnings.push(warning);
+    return json({ success: true, warnings });
+  }
+
+  if (intent === "itemFields") {
+    const variantId = getFormString(formData, "variantId");
+    const inventoryItemId = getFormString(formData, "inventoryItemId");
+    // The InventoryItem GID is the address of every one of these fields. A
+    // variant without one has nothing to write to, which is a state to report
+    // rather than a request to guess at.
+    if (!inventoryItemId.startsWith("gid://shopify/InventoryItem/")) {
+      return json({ success: true, warnings: ["stockNoInventoryItem"] });
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(getFormString(formData, "fields") || "{}");
+    } catch {
+      return json({ success: false, error: "The item fields could not be read." }, { status: 400 });
+    }
+    const raw = (parsed ?? {}) as Record<string, unknown>;
+
+    // Only keys the client actually SENT — the write module distinguishes
+    // "absent" (leave alone) from "" (clear), and rebuilding every key here
+    // would collapse the two.
+    const fields: InventoryItemFields = {};
+    if ("cost" in raw) fields.cost = String(raw.cost ?? "");
+    if ("requiresShipping" in raw) fields.requiresShipping = raw.requiresShipping === true;
+    if ("harmonizedSystemCode" in raw) fields.harmonizedSystemCode = String(raw.harmonizedSystemCode ?? "");
+    if ("countryCodeOfOrigin" in raw) fields.countryCodeOfOrigin = String(raw.countryCodeOfOrigin ?? "");
+    if ("weight" in raw && raw.weight && typeof raw.weight === "object") {
+      const weight = raw.weight as Record<string, unknown>;
+      fields.weight = { value: String(weight.value ?? ""), unit: String(weight.unit ?? "") };
+    }
+
+    const warning = await applyInventoryItemFields(admin, db, session.shop, {
+      variantId,
+      inventoryItemId,
+      fields,
+    });
     if (warning) warnings.push(warning);
     return json({ success: true, warnings });
   }

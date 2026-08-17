@@ -36,6 +36,9 @@ import { logger } from "~/utils/logger.server";
 
 /** Codes resolved to sentences by the client (`t.content.commerceWarnings`). */
 export type CommerceWarning =
+  | "itemFieldsNotConfirmed"
+  | "itemFieldsFailed"
+  | "itemFieldsInvalid"
   | "stockChangedMeanwhile"
   | "stockNotConfirmed"
   | "stockFailed"
@@ -367,5 +370,212 @@ export async function applyPublicationChanges(
       error: error instanceof Error ? error.message : String(error),
     });
     return "channelsFailed";
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// The InventoryItem's own fields — cost, tax, and what customs wants
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * These do NOT live on the variant.
+ *
+ * Cost, taxability, weight, the HS code and the country of origin are fields of
+ * `InventoryItem`, which is why the sync stores `inventoryItemId` at all: it is
+ * the address every one of these writes uses. A variant without one cannot have
+ * them edited, and the UI says so rather than offering a control that fails.
+ *
+ * Separate from the quantity write on purpose. A quantity is a claim about a
+ * moment and is guarded by `compareQuantity`; these are settings, and guarding
+ * them the same way would make a merchant fight a race that does not exist.
+ */
+export interface InventoryItemFields {
+  /** Money as the merchant typed it. Parsed here, once. */
+  cost?: string;
+  /**
+   * NOT here. This app READS `taxable` off the variant (that is where its
+   * sync selects it from), and writing it would mean a second mutation
+   * (`productVariantsBulkUpdate`) against a different object. Offering it as
+   * an editable field whose read and write disagree about where it lives is
+   * how a setting starts reverting on the next sync. It is displayed and left
+   * to the Shopify admin until the read side moves too.
+   */
+  requiresShipping?: boolean;
+  /** Value + unit travel TOGETHER: a number with no unit is not a weight. */
+  weight?: { value: string; unit: string };
+  harmonizedSystemCode?: string;
+  countryCodeOfOrigin?: string;
+}
+
+/** Shopify's `WeightUnit` enum. A bad enum fails at the SCHEMA level. */
+const WEIGHT_UNITS = new Set(["GRAMS", "KILOGRAMS", "OUNCES", "POUNDS"]);
+
+/**
+ * A non-negative decimal, or null.
+ *
+ * Money and weight are the two places in this module where a comma is as
+ * likely as a dot — the merchant types what their keyboard and locale give
+ * them, and this app already learned that lesson on the price field.
+ */
+export function parseDecimal(value: string): string | null {
+  const trimmed = value.trim().replace(",", ".");
+  if (!trimmed) return null;
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** A two-letter ISO country code, uppercased, or null. */
+export function parseCountryCode(value: string): string | null {
+  const trimmed = value.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(trimmed) ? trimmed : null;
+}
+
+export async function applyInventoryItemFields(
+  admin: AdminApiContext,
+  db: PrismaClient,
+  shop: string,
+  params: { variantId: string; inventoryItemId: string; fields: InventoryItemFields },
+): Promise<CommerceWarning | undefined> {
+  const input: Record<string, unknown> = {};
+  const mirror: Record<string, unknown> = {};
+
+  if (params.fields.cost !== undefined) {
+    // "" is meaningful: it CLEARS the cost. Anything else that is not a
+    // number is refused rather than forwarded — a bad scalar fails at the
+    // schema level, which never reaches `userErrors`.
+    if (params.fields.cost.trim() === "") {
+      input.cost = null;
+      mirror.cost = null;
+    } else {
+      const cost = parseDecimal(params.fields.cost);
+      if (cost === null) return "itemFieldsInvalid";
+      input.cost = cost;
+      mirror.cost = cost;
+    }
+  }
+  if (params.fields.requiresShipping !== undefined) {
+    input.requiresShipping = params.fields.requiresShipping;
+    mirror.requiresShipping = params.fields.requiresShipping;
+  }
+  if (params.fields.weight !== undefined) {
+    const value = parseDecimal(params.fields.weight.value);
+    const unit = params.fields.weight.unit.trim().toUpperCase();
+    // Both or neither. A weight with no unit is not a weight, and Shopify's
+    // WeightUnit is an ENUM — a bad one fails at the schema level.
+    if (value === null || !WEIGHT_UNITS.has(unit)) return "itemFieldsInvalid";
+    input.measurement = { weight: { value: Number(value), unit } };
+    mirror.weight = value;
+    mirror.weightUnit = unit;
+  }
+  if (params.fields.harmonizedSystemCode !== undefined) {
+    const code = params.fields.harmonizedSystemCode.trim();
+    input.harmonizedSystemCode = code || null;
+    mirror.harmonizedSystemCode = code || null;
+  }
+  if (params.fields.countryCodeOfOrigin !== undefined) {
+    const raw = params.fields.countryCodeOfOrigin.trim();
+    if (raw === "") {
+      input.countryCodeOfOrigin = null;
+      mirror.countryCodeOfOrigin = null;
+    } else {
+      const code = parseCountryCode(raw);
+      // `CountryCode` is an enum too — same reasoning as the weight unit.
+      if (code === null) return "itemFieldsInvalid";
+      input.countryCodeOfOrigin = code;
+      mirror.countryCodeOfOrigin = code;
+    }
+  }
+
+  if (Object.keys(input).length === 0) return undefined;
+
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        mutation updateInventoryItem($id: ID!, $input: InventoryItemInput!) {
+          inventoryItemUpdate(id: $id, input: $input) {
+            inventoryItem {
+              # The echo. Selected in full rather than as a bare id: these are
+              # settings a merchant sets once and trusts, so the cache must
+              # mirror what Shopify STORED, not what this app sent.
+              id
+              tracked
+              requiresShipping
+              countryCodeOfOrigin
+              harmonizedSystemCode
+              unitCost { amount }
+              measurement { weight { value unit } }
+            }
+            userErrors { field message }
+          }
+        }`,
+      { variables: { id: params.inventoryItemId, input } },
+    );
+
+    const body = (await response.json()) as {
+      data?: {
+        inventoryItemUpdate?: {
+          inventoryItem?: {
+            id?: string;
+            requiresShipping?: boolean | null;
+            countryCodeOfOrigin?: string | null;
+            harmonizedSystemCode?: string | null;
+            unitCost?: { amount?: string | null } | null;
+            measurement?: { weight?: { value?: number | null; unit?: string | null } | null } | null;
+          } | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+
+    if (body.errors?.length) {
+      logger.warn("[Commerce] Item fields schema-level error", {
+        context: "Commerce", shop, error: body.errors[0]?.message,
+      });
+      return "itemFieldsFailed";
+    }
+    const payload = body.data?.inventoryItemUpdate;
+    if (payload?.userErrors?.length) {
+      logger.warn("[Commerce] Item fields userErrors", {
+        context: "Commerce", shop, error: payload.userErrors[0].message,
+      });
+      return "itemFieldsFailed";
+    }
+    const item = payload?.inventoryItem;
+    if (!item?.id) return "itemFieldsNotConfirmed";
+
+    // Mirror from the ECHO, not from `mirror` — Shopify normalises (a cost of
+    // "4.5" comes back "4.50", a weight in grams may be rebased). Writing the
+    // sent value would leave the cache claiming a number the shop does not
+    // hold, and the panel reads that cache.
+    await db.productVariant
+      .updateMany({
+        where: { id: params.variantId },
+        data: {
+          ...("cost" in mirror ? { cost: item.unitCost?.amount ?? null } : {}),
+          ...("requiresShipping" in mirror ? { requiresShipping: item.requiresShipping ?? null } : {}),
+          ...("weight" in mirror
+            ? {
+                weight: item.measurement?.weight?.value != null ? String(item.measurement.weight.value) : null,
+                weightUnit: item.measurement?.weight?.unit ?? null,
+              }
+            : {}),
+          ...("harmonizedSystemCode" in mirror ? { harmonizedSystemCode: item.harmonizedSystemCode ?? null } : {}),
+          ...("countryCodeOfOrigin" in mirror ? { countryCodeOfOrigin: item.countryCodeOfOrigin ?? null } : {}),
+        },
+      })
+      .catch(() => undefined);
+
+    logger.info("[Commerce] Item fields applied", {
+      context: "Commerce", shop, variantId: params.variantId, fields: Object.keys(input).length,
+    });
+    return undefined;
+  } catch (error) {
+    logger.warn("[Commerce] Item field write failed", {
+      context: "Commerce",
+      shop,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "itemFieldsFailed";
   }
 }

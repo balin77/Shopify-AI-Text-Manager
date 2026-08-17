@@ -499,6 +499,17 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      cost: "Einkaufspreis",
+      costHint: "Was du bezahlst. Wird Kundinnen nie angezeigt.",
+      weight: "Gewicht",
+      weightUnit: "Einheit",
+      hsCode: "Zolltarifnummer",
+      countryOfOrigin: "Ursprungsland",
+      countryHint: "Zwei Buchstaben, z. B. DE",
+      requiresShipping: "Muss versendet werden",
+      taxableLabel: "Steuerpflichtig: {v}",
+      yes: "ja",
+      no: "nein",
       loading: "Wird geladen",
       loadFailed: "Bestand und Kanäle konnten nicht geladen werden.",
       saveFailed: "Die Änderung konnte nicht gespeichert werden.",
@@ -528,6 +539,9 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
+      itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
+      itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",
       stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",
       stockNotConfirmed: "Shopify hat den neuen Bestand nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Lade neu, um zu sehen, was dort steht.",
       stockFailed: "Der Bestand konnte nicht gespeichert werden.",

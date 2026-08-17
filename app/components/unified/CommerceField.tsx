@@ -32,10 +32,14 @@ import {
   Button,
   Checkbox,
   InlineStack,
+  Select,
   Spinner,
   Text,
   TextField,
 } from "@shopify/polaris";
+
+/** Shopify's `WeightUnit` enum — an unknown value fails at the SCHEMA level. */
+const WEIGHT_UNITS = ["GRAMS", "KILOGRAMS", "OUNCES", "POUNDS"] as const;
 import type { CommerceChannelView, CommerceVariantView } from "../../routes/api.product-commerce";
 
 export interface CommerceFieldProps {
@@ -72,6 +76,14 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
   const [edits, setEdits] = useState<Record<string, string>>({});
   /** Ticked channels. Seeded from the load, then owned by the merchant. */
   const [channelState, setChannelState] = useState<Record<string, boolean>>({});
+  /**
+   * Edited InventoryItem settings, keyed `variantId::field`.
+   *
+   * Kept as a sparse map rather than a full copy of every field, because the
+   * write module distinguishes "absent" (leave alone) from "" (clear) — a full
+   * copy would collapse the two and clear whatever the merchant did not touch.
+   */
+  const [itemEdits, setItemEdits] = useState<Record<string, string>>({});
 
   const load = useCallback(() => {
     if (!productId) return;
@@ -98,6 +110,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           channelsTruncated: body.channelsTruncated === true,
         });
         setEdits({});
+        setItemEdits({});
         setChannelState(
           Object.fromEntries((body.channels ?? []).map((c: CommerceChannelView) => [c.publicationId, c.isPublished])),
         );
@@ -145,6 +158,26 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     }
     return { toPublish, toUnpublish };
   }, [data, channelState]);
+
+  /** The loaded value of an InventoryItem setting — the baseline for "changed". */
+  const loadedItemField = useCallback(
+    (variantId: string, field: string): string => {
+      const variant = data?.variants.find((v) => v.id === variantId);
+      if (!variant) return "";
+      const value = (variant as unknown as Record<string, unknown>)[field];
+      return value == null ? "" : String(value);
+    },
+    [data],
+  );
+
+  const dirtyItemFields = useMemo(
+    () =>
+      Object.entries(itemEdits).filter(([key, value]) => {
+        const [variantId, field] = key.split("::");
+        return value !== loadedItemField(variantId, field);
+      }),
+    [itemEdits, loadedItemField],
+  );
 
   const post = useCallback(async (body: Record<string, string>): Promise<string[]> => {
     const form = new FormData();
@@ -200,6 +233,41 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
         collected.push(...warnings.map((code) => t.warnings?.[code] || code));
       }
 
+      // InventoryItem settings, grouped per variant — one mutation each.
+      const itemsByVariant = new Map<string, Record<string, unknown>>();
+      for (const [key, value] of dirtyItemFields) {
+        const [variantId, field] = key.split("::");
+        const fields = itemsByVariant.get(variantId) ?? {};
+        if (field === "weight" || field === "weightUnit") {
+          // Value and unit travel TOGETHER: a number with no unit is not a
+          // weight, so the untouched half is taken from the loaded value.
+          fields.weight = {
+            value: field === "weight" ? value : itemEdits[`${variantId}::weight`] ?? loadedItemField(variantId, "weight"),
+            unit:
+              field === "weightUnit"
+                ? value
+                : itemEdits[`${variantId}::weightUnit`] ?? (loadedItemField(variantId, "weightUnit") || "KILOGRAMS"),
+          };
+        } else if (field === "requiresShipping") {
+          fields.requiresShipping = value === "true";
+        } else {
+          fields[field] = value;
+        }
+        itemsByVariant.set(variantId, fields);
+      }
+
+      for (const [variantId, fields] of itemsByVariant) {
+        const variant = data.variants.find((v) => v.id === variantId);
+        const warnings = await post({
+          intent: "itemFields",
+          productId,
+          variantId,
+          inventoryItemId: variant?.inventoryItemId ?? "",
+          fields: JSON.stringify(fields),
+        });
+        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
+      }
+
       if (dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0) {
         const warnings = await post({
           intent: "channels",
@@ -220,7 +288,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     // Reload either way. On success it confirms; on a refused write it shows
     // the number that actually moved, which is the only useful next step.
     load();
-  }, [data, dirtyStock, dirtyChannels, loadedOnHand, post, productId, load, t]);
+  }, [data, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, post, productId, load, t]);
 
   if (!isPrimaryLocale) {
     return (
@@ -244,7 +312,11 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     );
   }
 
-  const hasChanges = dirtyStock.length > 0 || dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0;
+  const hasChanges =
+    dirtyStock.length > 0 ||
+    dirtyItemFields.length > 0 ||
+    dirtyChannels.toPublish.length > 0 ||
+    dirtyChannels.toUnpublish.length > 0;
   const publishedCount = data ? data.channels.filter((c) => channelState[c.publicationId]).length : 0;
 
   return (
@@ -337,6 +409,99 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
                     {variant.title}{variant.sku ? ` · ${variant.sku}` : ""}
                   </Text>
+
+                  {/* The InventoryItem's own settings. Shown for EVERY
+                      variant, tracked or not: a cost and a customs code are
+                      facts about the item, not about whether Shopify counts
+                      it. Locked when there is no InventoryItem to write to. */}
+                  {variant.inventoryItemId ? (
+                    <InlineStack gap="300" blockAlign="start" wrap>
+                      <Box minWidth="140px">
+                        <TextField
+                          label={(t.cost as string) || "Cost per item"}
+                          value={itemEdits[`${variant.id}::cost`] ?? (variant.cost ?? "")}
+                          onChange={(value) => setItemEdits((prev) => ({ ...prev, [`${variant.id}::cost`]: value }))}
+                          autoComplete="off"
+                          inputMode="decimal"
+                          disabled={saving}
+                          helpText={(t.costHint as string) || "What you pay. Never shown to customers."}
+                        />
+                      </Box>
+                      <Box minWidth="120px">
+                        <TextField
+                          label={(t.weight as string) || "Weight"}
+                          value={itemEdits[`${variant.id}::weight`] ?? (variant.weight ?? "")}
+                          onChange={(value) => setItemEdits((prev) => ({ ...prev, [`${variant.id}::weight`]: value }))}
+                          autoComplete="off"
+                          inputMode="decimal"
+                          disabled={saving}
+                        />
+                      </Box>
+                      <Box minWidth="140px">
+                        <Select
+                          label={(t.weightUnit as string) || "Unit"}
+                          options={WEIGHT_UNITS.map((unit) => ({ value: unit, label: unit }))}
+                          value={itemEdits[`${variant.id}::weightUnit`] ?? (variant.weightUnit || "KILOGRAMS")}
+                          onChange={(value) => setItemEdits((prev) => ({ ...prev, [`${variant.id}::weightUnit`]: value }))}
+                          disabled={saving}
+                        />
+                      </Box>
+                      <Box minWidth="140px">
+                        <TextField
+                          label={(t.hsCode as string) || "HS code"}
+                          value={itemEdits[`${variant.id}::harmonizedSystemCode`] ?? (variant.harmonizedSystemCode ?? "")}
+                          onChange={(value) =>
+                            setItemEdits((prev) => ({ ...prev, [`${variant.id}::harmonizedSystemCode`]: value }))
+                          }
+                          autoComplete="off"
+                          disabled={saving}
+                        />
+                      </Box>
+                      <Box minWidth="120px">
+                        <TextField
+                          label={(t.countryOfOrigin as string) || "Country of origin"}
+                          value={itemEdits[`${variant.id}::countryCodeOfOrigin`] ?? (variant.countryCodeOfOrigin ?? "")}
+                          onChange={(value) =>
+                            setItemEdits((prev) => ({ ...prev, [`${variant.id}::countryCodeOfOrigin`]: value }))
+                          }
+                          autoComplete="off"
+                          maxLength={2}
+                          disabled={saving}
+                          helpText={(t.countryHint as string) || "Two letters, e.g. DE"}
+                        />
+                      </Box>
+                      <Box minWidth="180px">
+                        <Checkbox
+                          label={(t.requiresShipping as string) || "Needs shipping"}
+                          checked={
+                            (itemEdits[`${variant.id}::requiresShipping`] ??
+                              String(variant.requiresShipping ?? true)) === "true"
+                          }
+                          disabled={saving}
+                          onChange={(checked) =>
+                            setItemEdits((prev) => ({ ...prev, [`${variant.id}::requiresShipping`]: String(checked) }))
+                          }
+                        />
+                      </Box>
+                      {/* Read-only on purpose: this app reads `taxable` off the
+                          VARIANT, and writing it would mean a second mutation
+                          against a different object. A field whose read and
+                          write disagree about where it lives is a field that
+                          reverts on the next sync. */}
+                      <Box minWidth="160px">
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {((t.taxableLabel as string) || "Taxable: {v}").replace(
+                            "{v}",
+                            variant.taxable == null
+                              ? "—"
+                              : variant.taxable
+                                ? (t.yes as string) || "yes"
+                                : (t.no as string) || "no",
+                          )}
+                        </Text>
+                      </Box>
+                    </InlineStack>
+                  ) : null}
 
                   {variant.inventoryTracked === null && (
                     <Text as="p" variant="bodySm" tone="subdued">

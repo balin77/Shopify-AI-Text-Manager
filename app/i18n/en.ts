@@ -502,6 +502,17 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      cost: "Cost per item",
+      costHint: "What you pay. Never shown to customers.",
+      weight: "Weight",
+      weightUnit: "Unit",
+      hsCode: "HS code",
+      countryOfOrigin: "Country of origin",
+      countryHint: "Two letters, e.g. DE",
+      requiresShipping: "Needs shipping",
+      taxableLabel: "Taxable: {v}",
+      yes: "yes",
+      no: "no",
       loading: "Loading",
       loadFailed: "Stock and channels could not be loaded.",
       saveFailed: "The change could not be saved.",
@@ -531,6 +542,9 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
+      itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
+      itemFieldsFailed: "The item settings could not be saved.",
       stockChangedMeanwhile: "The stock changed while you were editing, so nothing was written. Reload to see the current number.",
       stockNotConfirmed: "Shopify did not confirm the new stock, so it was not saved locally either. Reload to see what it holds.",
       stockFailed: "The stock could not be saved.",

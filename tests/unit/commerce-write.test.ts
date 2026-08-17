@@ -8,7 +8,13 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { applyStockChanges, parseQuantity } from "../../app/services/commerce-write.server";
+import {
+  applyInventoryItemFields,
+  applyStockChanges,
+  parseCountryCode,
+  parseDecimal,
+  parseQuantity,
+} from "../../app/services/commerce-write.server";
 
 const ITEM = "gid://shopify/InventoryItem/1";
 const LOC_A = "gid://shopify/Location/1";
@@ -169,5 +175,156 @@ describe("applyStockChanges", () => {
     expect(
       await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] }),
     ).toBe("stockFailed");
+  });
+});
+
+// ── The InventoryItem's own settings ────────────────────────────────────────
+
+describe("parseDecimal", () => {
+  it("accepts a comma as a decimal separator", () => {
+    // The merchant types what their keyboard and locale give them; this app
+    // already learned that lesson on the price field.
+    expect(parseDecimal("4,50")).toBe("4.50");
+    expect(parseDecimal("4.5")).toBe("4.5");
+  });
+
+  it("refuses anything that is not a non-negative number", () => {
+    expect(parseDecimal("-1")).toBeNull();
+    expect(parseDecimal("4.5.1")).toBeNull();
+    expect(parseDecimal("free")).toBeNull();
+    expect(parseDecimal("")).toBeNull();
+  });
+});
+
+describe("parseCountryCode", () => {
+  it("uppercases a two-letter code and refuses the rest", () => {
+    expect(parseCountryCode(" de ")).toBe("DE");
+    expect(parseCountryCode("Germany")).toBeNull();
+    expect(parseCountryCode("D")).toBeNull();
+  });
+});
+
+describe("applyInventoryItemFields", () => {
+  const ITEM_ID = "gid://shopify/InventoryItem/1";
+  const itemEcho = (overrides: Record<string, unknown> = {}) => ({
+    data: {
+      inventoryItemUpdate: {
+        inventoryItem: {
+          id: ITEM_ID,
+          requiresShipping: true,
+          countryCodeOfOrigin: "DE",
+          harmonizedSystemCode: "610910",
+          unitCost: { amount: "4.50" },
+          measurement: { weight: { value: 0.35, unit: "KILOGRAMS" } },
+          ...overrides,
+        },
+        userErrors: [],
+      },
+    },
+  });
+
+  function variantRecorder() {
+    const updates: Array<Record<string, unknown>> = [];
+    return {
+      updates,
+      db: {
+        productVariant: {
+          updateMany: vi.fn(async (args: Record<string, unknown>) => {
+            updates.push(args);
+            return { count: 1 };
+          }),
+        },
+      } as never,
+    };
+  }
+
+  it("writes only the keys the caller SENT", async () => {
+    // "absent" means leave alone and "" means clear — rebuilding every key
+    // would collapse the two and wipe what the merchant did not touch.
+    const admin = adminWith(itemEcho());
+    const { db } = variantRecorder();
+    await applyInventoryItemFields(admin, db, "s", {
+      variantId: "42",
+      inventoryItemId: ITEM_ID,
+      fields: { cost: "4,50" },
+    });
+    const input = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables.input;
+    expect(Object.keys(input)).toEqual(["cost"]);
+    expect(input.cost).toBe("4.50");
+  });
+
+  it("reads an empty cost as a deliberate CLEAR", async () => {
+    const admin = adminWith(itemEcho({ unitCost: null }));
+    const { db, updates } = variantRecorder();
+    const warning = await applyInventoryItemFields(admin, db, "s", {
+      variantId: "42",
+      inventoryItemId: ITEM_ID,
+      fields: { cost: "" },
+    });
+    expect(warning).toBeUndefined();
+    expect(updates[0].data).toMatchObject({ cost: null });
+  });
+
+  it("REFUSES an invalid enum rather than forwarding it", async () => {
+    // WeightUnit and CountryCode are enums, and a bad one fails at the SCHEMA
+    // level — which never reaches `userErrors`, so the call would read as a
+    // success while nothing was written.
+    const admin = adminWith(itemEcho());
+    const { db } = variantRecorder();
+    expect(
+      await applyInventoryItemFields(admin, db, "s", {
+        variantId: "42",
+        inventoryItemId: ITEM_ID,
+        fields: { weight: { value: "1", unit: "STONES" } },
+      }),
+    ).toBe("itemFieldsInvalid");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
+  it("refuses a weight with no unit", async () => {
+    const admin = adminWith(itemEcho());
+    const { db } = variantRecorder();
+    expect(
+      await applyInventoryItemFields(admin, db, "s", {
+        variantId: "42",
+        inventoryItemId: ITEM_ID,
+        fields: { weight: { value: "", unit: "KILOGRAMS" } },
+      }),
+    ).toBe("itemFieldsInvalid");
+  });
+
+  it("mirrors what Shopify NORMALISED, not what was sent", async () => {
+    // "4.5" comes back "4.50". Writing the sent value would leave the cache
+    // claiming a number the shop does not hold, and the panel reads the cache.
+    const admin = adminWith(itemEcho());
+    const { db, updates } = variantRecorder();
+    await applyInventoryItemFields(admin, db, "s", {
+      variantId: "42",
+      inventoryItemId: ITEM_ID,
+      fields: { cost: "4.5" },
+    });
+    expect(updates[0].data).toMatchObject({ cost: "4.50" });
+  });
+
+  it("does nothing when no field was sent", async () => {
+    const admin = adminWith(itemEcho());
+    const { db } = variantRecorder();
+    expect(
+      await applyInventoryItemFields(admin, db, "s", { variantId: "42", inventoryItemId: ITEM_ID, fields: {} }),
+    ).toBeUndefined();
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
+  it("treats a missing echo as NOT CONFIRMED", async () => {
+    const admin = adminWith({ data: { inventoryItemUpdate: { inventoryItem: null, userErrors: [] } } });
+    const { db, updates } = variantRecorder();
+    expect(
+      await applyInventoryItemFields(admin, db, "s", {
+        variantId: "42",
+        inventoryItemId: ITEM_ID,
+        fields: { cost: "4.50" },
+      }),
+    ).toBe("itemFieldsNotConfirmed");
+    expect(updates).toHaveLength(0);
   });
 });
