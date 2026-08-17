@@ -444,7 +444,12 @@ export function ItemSidebar({
             readOnlyReason={attributes.readOnlyReason}
             onJumpToField={attributes.onJumpToField}
             adminUrl={attributes.adminUrl}
-            t={(t.seo as unknown as { attributes?: Record<string, unknown> }).attributes as never}
+            // The checklist prints raw values, so it needs the shared enum
+            // vocabulary — its own block has no place for it.
+            t={{
+              ...((t.seo as unknown as { attributes?: Record<string, unknown> }).attributes as object),
+              enumLabels: (t.content as { enumLabels?: Record<string, string> } | undefined)?.enumLabels,
+            } as never}
           />
         )}
 

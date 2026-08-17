@@ -1135,26 +1135,49 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               ? value.toUpperCase() === "ACTIVE"
                               : value !== "false";
                           const foreign = state.currentLanguage !== primaryLocale;
+                          // The SAME discriminator as the desktop control. An
+                          // article cached before the attribute sync reads
+                          // `isPublished: true` from the schema default, and a
+                          // menu row saying "✓ Visible" would be that default
+                          // presented as an answer — one tap from unpublishing
+                          // an article whose state nobody ever measured.
+                          const known =
+                            statusControl.kind === "status" ||
+                            (selectedItem as { attributesSyncedAt?: string | null }).attributesSyncedAt != null;
                           // UNLISTED / ARCHIVED are real states, and a two-way
                           // menu row would overwrite them on one tap.
                           const lockedStatus =
                             statusControl.kind === "status" &&
                             !["ACTIVE", "DRAFT"].includes(value.toUpperCase());
                           const toggle = (t.content?.statusToggle ?? {}) as Record<string, string>;
+                          const enums = (t.content?.enumLabels ?? {}) as Record<string, string>;
+                          // The row NAMES the state rather than showing a
+                          // generic "Active" with a tick: on a phone there is
+                          // no second control to disambiguate it, and UNLISTED
+                          // rendered as unticked-Active is a lie.
+                          const stateWord =
+                            statusControl.kind === "status"
+                              ? enums[`status.${(value || "DRAFT").toUpperCase()}`] ?? value
+                              : checked
+                                ? toggle.published || "Visible"
+                                : toggle.hidden || "Hidden";
                           return {
-                            statusLabel:
-                              statusControl.kind === "status"
-                                ? toggle.active || "Active"
-                                : toggle.published || "Visible",
-                            statusChecked: checked,
-                            statusDisabled: foreign || lockedStatus,
+                            statusLabel: known ? stateWord : toggle.unknown || "Status not loaded",
+                            statusChecked: known && checked,
+                            // Only the two-state half can be toggled from a
+                            // menu row; a four-value enum needs the Select in
+                            // the desktop bar, and the row says so instead of
+                            // pretending otherwise.
+                            statusDisabled: foreign || !known || lockedStatus,
                             statusHelp: foreign
                               ? t.content?.attributesForeignLocale
-                              : lockedStatus
-                                ? toggle.archivedHint
-                                : checked
-                                  ? statusControl.kind === "status" ? toggle.activeHint : toggle.publishedHint
-                                  : statusControl.kind === "status" ? toggle.draftHint : toggle.unpublishedHint,
+                              : !known
+                                ? toggle.unknown
+                                : lockedStatus
+                                  ? enums[`status.${value.toUpperCase()}`]
+                                  : checked
+                                    ? statusControl.kind === "status" ? toggle.activeHint : toggle.publishedHint
+                                    : statusControl.kind === "status" ? toggle.draftHint : toggle.unpublishedHint,
                             onToggleStatus: () =>
                               handlers.handleValueChange(
                                 statusControl.fieldKey,
@@ -1342,6 +1365,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             statusControl.kind === "status" ||
                             (selectedItem as { attributesSyncedAt?: string | null }).attributesSyncedAt != null
                           }
+                          optionLabels={(t.content?.enumLabels ?? {}) as Record<string, string>}
                           t={(t.content?.statusToggle ?? {}) as Record<string, string>}
                         />
                       )}
@@ -1513,8 +1537,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         // hides it too: showing a single price for a product
                         // that may have twenty is the misleading direction.
                         if (field.key === "price" && config.contentType === "products") {
+                          // Exactly ONE is the only case this field can
+                          // describe. `0` is not "no variants" — every product
+                          // has at least one on Shopify — it is a row whose
+                          // variants were never cached (they used to appear
+                          // only after opening the image manager), and showing
+                          // an empty price there ends in a refused save.
                           const count = (selectedItem as { variantCount?: number | null } | null)?.variantCount;
-                          if (typeof count !== "number" || count > 1) return false;
+                          if (count !== 1) return false;
                         }
                         return true;
                       }).map((field) => {

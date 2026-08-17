@@ -377,11 +377,17 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
    * The variant whose box is rendered. Falls back to the FIRST one rather than
    * to nothing: a selection that points at a variant a reload no longer
    * returns would otherwise leave the stock section empty with no explanation.
+   *
+   * Deliberately NOT a hook. It sits below two early returns (foreign locale,
+   * plan-blocked), and a hook there changes the hook COUNT between renders of
+   * the same instance — React throws and the whole editor drops to its error
+   * boundary. It shipped that way once: switching locale on any product, and
+   * every non-Pro shop on every product, crashed the editor. A `find` over at
+   * most a page of variants needs no memo anyway.
    */
-  const shownVariant = useMemo(() => {
-    if (!data?.variants.length) return null;
-    return data.variants.find((v) => v.id === selectedVariantId) ?? data.variants[0];
-  }, [data, selectedVariantId]);
+  const shownVariant = !data?.variants.length
+    ? null
+    : data.variants.find((v) => v.id === selectedVariantId) ?? data.variants[0];
 
   const hasChanges =
     dirtyStock.length > 0 ||
@@ -467,6 +473,18 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           {/* ── Stock ──────────────────────────────────────────────────── */}
           <BlockStack gap="200">
             <Text as="h3" variant="headingSm">{(t.stockHeading as string) || "Stock"}</Text>
+
+            {/* The one sentence that says where multi-variant prices live. It
+                used to be the price field's own note — and disappeared with
+                the field, leaving a merchant on a 12-variant product with no
+                price and no route to one. This panel owns stock, weight and
+                channels, NOT price, so it has to point rather than offer. */}
+            {data.variants.length > 1 && (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(t.variantPricesHint as string) ||
+                  "Prices of several variants are edited in the bulk editor."}
+              </Text>
+            )}
 
             {data.variantsTruncated && (
               <Text as="p" variant="bodySm" tone="subdued">

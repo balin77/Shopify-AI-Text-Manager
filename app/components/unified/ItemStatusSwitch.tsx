@@ -1,49 +1,59 @@
 /**
- * The "is this item visible in the shop?" switch, in the editor's action bar.
+ * The control that decides whether an item is visible in the shop, in the
+ * editor's action bar.
  *
  * It sits next to Translate All rather than among the fields because it is the
  * question merchants open the editor to answer, and because Delete and
  * Duplicate now live there too: one row for what happens to the ITEM, the
  * fields below for what it SAYS.
  *
- * ── Why it is not just a checkbox ───────────────────────────────────────────
- * Three things make this control less trivial than it looks, and each of them
- * is a way the naive version lies to the merchant:
+ * ── Why it is a Select and not a toggle ─────────────────────────────────────
+ * A product has FOUR statuses. UNLISTED (reachable by direct link, hidden from
+ * listings) and ARCHIVED are real states in real catalogues, so a two-state
+ * switch has to do something with them — and every option is bad: render them
+ * as "not active" and the first click silently overwrites a state nobody asked
+ * to change; lock the control and the merchant can neither enter nor leave
+ * those states from the product page at all. The first cut of this shipped the
+ * lock, which quietly removed "archive a product" from the single editor. A
+ * Select has none of that problem and is no bigger on screen.
  *
- *   1. A product has FOUR statuses, not two. UNLISTED (reachable by direct
- *      link, hidden from listings) and ARCHIVED are real states in real
- *      catalogues. A two-state switch would render both as "not active" and
- *      then, on the first click, overwrite them — so the switch LOCKS on
- *      those two and names the state instead.
- *   2. `isPublished` defaults to TRUE in the schema on a row an older sync
- *      wrote, so on an un-synced item it is not data. `known` is the
- *      discriminator: unknown renders as unknown and offers a reload, never as
- *      a confident "visible".
- *   3. ACTIVE is not the same as VISIBLE. A product on no sales channel is
+ * `isPublished` (pages, articles) genuinely is two-valued, so that half is a
+ * two-option Select for consistency of shape rather than a third widget.
+ *
+ * ── Two things the control must not do ──────────────────────────────────────
+ *   1. `isPublished` defaults to TRUE in the schema, so on a row an older sync
+ *      wrote it is not data. `known` is the discriminator: unknown renders as
+ *      unknown, never as a confident "visible". (A product's `status` is NOT
+ *      part of that attribute block — it is non-null and predates it — so it is
+ *      trustworthy on every row.)
+ *   2. ACTIVE is not the same as VISIBLE. A product on no sales channel is
  *      invisible everywhere and Shopify's own admin does not say so on the
- *      product page either — which is why the hint under "Active" mentions the
+ *      product page either — which is why the hint beside "Active" mentions the
  *      channel rather than promising a live page.
  *
- * The switch writes through the SAME value map as the field it replaced, so
- * the change lands in the ordinary save (and the ordinary save bar) rather
- * than firing a write of its own.
+ * It writes through the SAME value map as the field it replaced, so the change
+ * lands in the ordinary save (and the ordinary save bar) rather than firing a
+ * write of its own.
  */
 
-import { Badge, Button, InlineStack, Text, Tooltip } from "@shopify/polaris";
+import { InlineStack, Select, Text } from "@shopify/polaris";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 
-/** The four values Shopify's ProductStatus can hold. */
-const TOGGLEABLE_STATUSES = new Set(["ACTIVE", "DRAFT"]);
+/** Shopify's ProductStatus, in the order the admin lists them. */
+const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"] as const;
 
 export interface ItemStatusSwitchTexts {
   active?: string;
   activeHint?: string;
   draftHint?: string;
+  unlistedHint?: string;
+  archivedHint?: string;
   published?: string;
   publishedHint?: string;
   unpublishedHint?: string;
+  hidden?: string;
   unknown?: string;
-  archivedHint?: string;
-  reload?: string;
+  statusLabel?: string;
 }
 
 export interface ItemStatusSwitchProps {
@@ -59,9 +69,10 @@ export interface ItemStatusSwitchProps {
    * value below is a migration default, not an answer.
    */
   known?: boolean;
-  onReload?: () => void;
   /** Reason the control is disabled, shown as a tooltip. */
   disabledHint?: string;
+  /** Shopify ENUM → the merchant's word, keyed "status.ACTIVE". */
+  optionLabels?: Record<string, string>;
   t: ItemStatusSwitchTexts;
 }
 
@@ -71,119 +82,79 @@ export function ItemStatusSwitch({
   onChange,
   disabled,
   known = true,
-  onReload,
   disabledHint,
+  optionLabels,
   t,
 }: ItemStatusSwitchProps) {
   // Unknown is its own state. Rendering the schema default as an answer is the
   // trap `attributesSyncedAt` exists to close, and here it would show a hidden
-  // page as visible.
+  // page as visible. The action bar's own reload button is the way out, which
+  // is why this offers no second one.
   if (!known) {
     return (
-      <InlineStack gap="200" blockAlign="center">
-        <Badge tone="attention">{t.unknown || "Status not loaded"}</Badge>
-        {onReload && (
-          <Button size="slim" onClick={onReload}>
-            {t.reload || "Reload"}
-          </Button>
-        )}
-      </InlineStack>
+      <Text as="span" variant="bodySm" tone="subdued">
+        {t.unknown || "Status not loaded — reload this item to change it."}
+      </Text>
     );
   }
 
-  if (kind === "status") {
-    const status = (value || "").toUpperCase();
-    // UNLISTED / ARCHIVED: shown, named, and NOT toggled. A switch that turned
-    // an unlisted product into a draft on one click would be a data loss the
-    // merchant never asked for.
-    if (!TOGGLEABLE_STATUSES.has(status)) {
-      return (
-        <Tooltip content={t.archivedHint || "Change this in the Shopify admin."}>
-          <Badge tone="info">{status || "—"}</Badge>
-        </Tooltip>
-      );
-    }
-    const isActive = status === "ACTIVE";
-    return (
-      <Switch
-        label={t.active || "Active"}
-        hint={isActive ? t.activeHint : t.draftHint}
-        checked={isActive}
-        disabled={disabled}
-        disabledHint={disabledHint}
-        onChange={(next) => onChange(next ? "ACTIVE" : "DRAFT")}
-      />
+  const control =
+    kind === "status" ? (
+      <div style={{ minWidth: "160px" }}>
+        <Select
+          label={t.statusLabel || t.active || "Status"}
+          labelHidden
+          options={PRODUCT_STATUSES.map((status) => ({
+            value: status,
+            // A raw `UNLISTED` is not a word in any of the three languages
+            // this app ships in.
+            label: optionLabels?.[`status.${status}`] ?? status,
+          }))}
+          value={PRODUCT_STATUSES.includes((value || "").toUpperCase() as never) ? value.toUpperCase() : "DRAFT"}
+          onChange={onChange}
+          disabled={disabled}
+        />
+      </div>
+    ) : (
+      <div style={{ minWidth: "140px" }}>
+        <Select
+          label={t.published || "Visible"}
+          labelHidden
+          options={[
+            { value: "true", label: t.published || "Visible" },
+            { value: "false", label: t.hidden || "Hidden" },
+          ]}
+          // Anything other than an explicit "false" reads as on, matching the
+          // column default (`isPublished` defaults to true on both sides).
+          value={value === "false" ? "false" : "true"}
+          onChange={onChange}
+          disabled={disabled}
+        />
+      </div>
     );
-  }
 
-  // `isPublished` is stored as a string in the editor's flat value map, and
-  // anything other than an explicit "false" reads as true — the same rule the
-  // attribute field applied, because the column defaults to true on both sides.
-  const isPublished = value !== "false";
   return (
-    <Switch
-      label={t.published || "Visible"}
-      hint={isPublished ? t.publishedHint : t.unpublishedHint}
-      checked={isPublished}
-      disabled={disabled}
-      disabledHint={disabledHint}
-      onChange={(next) => onChange(next ? "true" : "false")}
-    />
+    <InlineStack gap="200" blockAlign="center">
+      {/* A disabled control dispatches no pointer events, so a bare Tooltip
+          around it never opens — the reason this wrapper exists at all. */}
+      <DisabledActionTooltip hint={disabled ? disabledHint : undefined}>{control}</DisabledActionTooltip>
+      <Text as="span" variant="bodySm" tone="subdued">
+        {hintFor(kind, value, t)}
+      </Text>
+    </InlineStack>
   );
 }
 
-/**
- * Polaris has no inline switch that reads well in a button row, so this is a
- * pressed-state Button plus the state in words.
- *
- * A pressed Button rather than a Checkbox on purpose: the row it lives in is a
- * row of buttons, and a lone checkbox among them reads as a setting for the
- * buttons rather than a state of the item. The hint carries the meaning —
- * "Active" alone is exactly the word merchants over-read.
- */
-function Switch({
-  label,
-  hint,
-  checked,
-  disabled,
-  disabledHint,
-  onChange,
-}: {
-  label: string;
-  hint?: string;
-  checked: boolean;
-  disabled?: boolean;
-  disabledHint?: string;
-  onChange: (next: boolean) => void;
-}) {
-  const button = (
-    <Button
-      size="slim"
-      pressed={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      accessibilityLabel={label}
-    >
-      {label}
-    </Button>
-  );
-  return (
-    <InlineStack gap="200" blockAlign="center">
-      {/* A disabled control dispatches no pointer events, so the tooltip has to
-          wrap something that does — the same reason DisabledActionTooltip
-          exists for the AI actions. */}
-      {disabled && disabledHint ? (
-        <Tooltip content={disabledHint}>
-          <span>{button}</span>
-        </Tooltip>
-      ) : (
-        button
-      )}
-      {hint && (
-        <Text as="span" variant="bodySm" tone="subdued">
-          {hint}
-        </Text>
-      )}
-    </InlineStack>
-  );
+/** The sentence under the control. Each state gets its OWN, because the whole
+ *  point of the line is that "Active" and "visible" are not the same claim. */
+function hintFor(kind: "status" | "published", value: string, t: ItemStatusSwitchTexts): string {
+  if (kind === "published") {
+    return (value === "false" ? t.unpublishedHint : t.publishedHint) ?? "";
+  }
+  switch ((value || "").toUpperCase()) {
+    case "ACTIVE":   return t.activeHint ?? "";
+    case "UNLISTED": return t.unlistedHint ?? "";
+    case "ARCHIVED": return t.archivedHint ?? "";
+    default:         return t.draftHint ?? "";
+  }
 }

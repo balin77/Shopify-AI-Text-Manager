@@ -33,6 +33,14 @@ export interface AttributeChecklistTexts {
   rows?: Record<string, string>;
   /** Status words for the value column when there is no value to show. */
   statuses?: Partial<Record<AttributeStatus, string>>;
+  /**
+   * Shopify ENUM → the merchant's word, keyed "<field>.<VALUE>".
+   *
+   * The checklist prints a row's VALUE verbatim, and for status and sort order
+   * that value is a wire format: this line read `DRAFT` and `ALPHA_ASC` in all
+   * three languages, right beside the control that spells them properly.
+   */
+  enumLabels?: Record<string, string>;
 }
 
 export interface AttributeChecklistProps {
@@ -115,7 +123,9 @@ export function AttributeChecklist({
                 <Text as="span" variant="bodySm" truncate>{label}</Text>
               </div>
               {row.value !== undefined && (
-                <Text as="span" variant="bodySm" tone="subdued">{row.value}</Text>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  {t.enumLabels?.[`${row.key}.${row.value}`] ?? row.value}
+                </Text>
               )}
               {row.value === undefined && row.status === "unknown" && (
                 <Text as="span" variant="bodySm" tone="subdued">

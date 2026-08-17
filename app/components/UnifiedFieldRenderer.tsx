@@ -435,12 +435,13 @@ export function UnifiedFieldRenderer(
   // reason of its own that the generic hint would get wrong.
   if (isAttributeField(field)) {
     const suggestions: string[] = field.suggestionsKey ? tagSuggestions : [];
-    // Enum labels are shared with the create modal
-    // (`t.content.createModal.options`, keyed `"status.DRAFT"`) rather than
-    // duplicated: the two surfaces offer the same values, and a status the
-    // modal calls "Draft" while the editor calls it "DRAFT" reads as two
-    // different things.
-    const optionLabels: Record<string, string> = t.content?.createModal?.options || {};
+    // Enum labels are shared with the create modal (`t.content.enumLabels`,
+    // keyed `"status.DRAFT"`) rather than duplicated: the two surfaces offer
+    // the same values, and a status the modal calls "Draft" while the editor
+    // calls it "DRAFT" reads as two different things. This read used to name
+    // `createModal.options`, which the move left pointing at nothing —
+    // silently `{}`, because `t` is typed `any` here.
+    const optionLabels: Record<string, string> = t.content?.enumLabels || {};
     const localizedField = {
       ...field,
       ...(field.type === "money" ? { currencyCode } : {}),

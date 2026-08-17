@@ -531,9 +531,9 @@ export const en: Translation = {
       noChannels: "This shop has no sales channels installed.",
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
       scheduled: "Scheduled for {date}",
+      variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
       stockHeading: "Stock",
       variantSelectLabel: "Variant",
-      oneVariant: "This product has one variant.",
       variantsTruncated: "This product has more variants than were loaded. Edit the rest in the Shopify admin.",
       stockUnknown: "Not loaded yet — reload to see this variant's stock.",
       stockUntracked: "Stock is not tracked for this variant — it can be sold without limit.",
@@ -570,10 +570,15 @@ export const en: Translation = {
     },
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
-    // ONE enum vocabulary, at the top level because THREE surfaces render the
-    // same values: the create modal, the editor's attribute fields and the
-    // bulk grid. Keyed "<field>.<VALUE>" — a Shopify enum is never shown raw
-    // ("ALPHA_ASC" is not a sentence in any language).
+    // ONE enum vocabulary, at the top level because several surfaces render
+    // the same values: the create modal, the editor's attribute fields, its
+    // sidebar checklist and the commerce panel's weight unit. Keyed
+    // "<field>.<VALUE>" — a Shopify enum is never shown raw ("ALPHA_ASC" is
+    // not a sentence in any language).
+    //
+    // NOT yet the only one: the item list (`statusLabels`) and the bulk grid's
+    // status column still carry their own. Folding those in is worth doing,
+    // and until it happens this comment says so rather than claiming it.
     enumLabels: {
       "status.DRAFT": "Draft", "status.ACTIVE": "Active",
       "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
@@ -598,16 +603,17 @@ export const en: Translation = {
     },
     templateSuffixHelp: "Empty = the theme's default template.",
     statusToggle: {
-      reload: "Reload",
+      statusLabel: "Status",
+      hidden: "Hidden",
+      unlistedHint: "Unlisted — reachable by direct link, hidden from listings and search.",
+      unknown: "Status not loaded — reload this item to change it.",
       active: "Active",
       activeHint: "Visible in your shop — as long as the product is on a sales channel.",
       draftHint: "Draft — not visible in your shop.",
       published: "Visible",
       publishedHint: "Published and reachable in your shop.",
       unpublishedHint: "Not published — the address returns a 404.",
-      unavailable: "This status cannot be changed here: {reason}",
-      unknown: "Not loaded from Shopify yet — reload this item to change its status.",
-      archivedHint: "Archived. Change it in the Shopify admin.",
+      archivedHint: "Archived — out of the catalogue and not for sale.",
     },
     duplicateModal: {
       title: "Duplicate \u201c{name}\u201d",

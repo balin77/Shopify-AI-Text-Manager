@@ -528,9 +528,9 @@ export const de = {
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
+      variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
-      oneVariant: "Dieses Produkt hat eine Variante.",
       variantsTruncated: "Dieses Produkt hat mehr Varianten, als geladen wurden. Den Rest bearbeitest du im Shopify-Admin.",
       stockUnknown: "Noch nicht geladen — lade neu, um den Bestand dieser Variante zu sehen.",
       stockUntracked: "Für diese Variante wird kein Bestand geführt — sie kann unbegrenzt verkauft werden.",
@@ -567,10 +567,15 @@ export const de = {
     },
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
-    // EIN Enum-Vokabular, auf oberster Ebene, weil DREI Oberflächen dieselben
-    // Werte rendern: das Anlege-Modal, die Attributfelder im Editor und das
-    // Bulk-Grid. Schlüssel "<feld>.<WERT>" — ein Shopify-Enum wird nie roh
-    // angezeigt ("ALPHA_ASC" ist in keiner Sprache ein Satz).
+    // EIN Enum-Vokabular, auf oberster Ebene, weil mehrere Oberflächen
+    // dieselben Werte rendern: das Anlege-Modal, die Attributfelder im Editor,
+    // dessen Sidebar-Checkliste und die Gewichtseinheit im Handelsbereich.
+    // Schlüssel "<feld>.<WERT>" — ein Shopify-Enum wird nie roh angezeigt
+    // ("ALPHA_ASC" ist in keiner Sprache ein Satz).
+    //
+    // Noch NICHT das einzige: die Item-Liste (`statusLabels`) und die
+    // Status-Spalte im Bulk-Grid haben eigene. Das zusammenzuführen lohnt sich
+    // — bis dahin sagt dieser Kommentar es, statt es zu behaupten.
     enumLabels: {
       "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
       "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
@@ -595,16 +600,17 @@ export const de = {
     },
     templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
     statusToggle: {
-      reload: "Neu laden",
+      statusLabel: "Status",
+      hidden: "Versteckt",
+      unlistedHint: "Nicht gelistet — über den direkten Link erreichbar, aus Listen und Suche ausgeblendet.",
+      unknown: "Status nicht geladen — lade diesen Eintrag neu, um ihn zu ändern.",
       active: "Aktiv",
       activeHint: "In deinem Shop sichtbar — sofern das Produkt auf einem Vertriebskanal liegt.",
       draftHint: "Entwurf — in deinem Shop nicht sichtbar.",
       published: "Sichtbar",
       publishedHint: "Veröffentlicht und in deinem Shop erreichbar.",
       unpublishedHint: "Nicht veröffentlicht — die Adresse liefert einen 404.",
-      unavailable: "Dieser Status lässt sich hier nicht ändern: {reason}",
-      unknown: "Noch nicht von Shopify geladen — lade diesen Eintrag neu, um den Status zu ändern.",
-      archivedHint: "Archiviert. Änderbar im Shopify-Admin.",
+      archivedHint: "Archiviert — aus dem Katalog genommen und nicht verkäuflich.",
     },
     duplicateModal: {
       title: "\u201e{name}\u201c duplizieren",

@@ -527,9 +527,9 @@ export const es: Translation = {
       noChannels: "Esta tienda no tiene canales de venta instalados.",
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
+      variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
-      oneVariant: "Este producto tiene una variante.",
       variantsTruncated: "Este producto tiene más variantes de las que se cargaron. Edita el resto en el admin de Shopify.",
       stockUnknown: "Aún no se ha cargado: recarga para ver el inventario de esta variante.",
       stockUntracked: "Esta variante no lleva control de inventario: se puede vender sin límite.",
@@ -566,10 +566,15 @@ export const es: Translation = {
     },
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
-    // UN solo vocabulario de enums, en el nivel superior porque TRES
+    // UN solo vocabulario de enums, en el nivel superior porque varias
     // superficies muestran los mismos valores: el modal de creación, los
-    // campos de atributos del editor y la cuadrícula masiva. Clave
-    // "<campo>.<VALOR>" — un enum de Shopify nunca se muestra en crudo.
+    // campos de atributos del editor, su lista lateral y la unidad de peso del
+    // panel de comercio. Clave "<campo>.<VALOR>" — un enum de Shopify nunca se
+    // muestra en crudo.
+    //
+    // Todavía NO es el único: la lista de elementos (`statusLabels`) y la
+    // columna de estado de la cuadrícula masiva llevan el suyo. Unificarlos
+    // vale la pena; hasta entonces este comentario lo dice.
     enumLabels: {
       "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
       "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
@@ -594,16 +599,17 @@ export const es: Translation = {
     },
     templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
     statusToggle: {
-      reload: "Recargar",
+      statusLabel: "Estado",
+      hidden: "Oculto",
+      unlistedHint: "No listado — accesible por enlace directo, oculto en listados y búsqueda.",
+      unknown: "Estado no cargado — recarga este elemento para cambiarlo.",
       active: "Activo",
       activeHint: "Visible en tu tienda — siempre que el producto esté en un canal de venta.",
       draftHint: "Borrador — no visible en tu tienda.",
       published: "Visible",
       publishedHint: "Publicado y accesible en tu tienda.",
       unpublishedHint: "Sin publicar — la dirección devuelve un 404.",
-      unavailable: "Este estado no se puede cambiar aquí: {reason}",
-      unknown: "Aún no se ha cargado desde Shopify — recarga este elemento para cambiar su estado.",
-      archivedHint: "Archivado. Cámbialo en el admin de Shopify.",
+      archivedHint: "Archivado — fuera del catálogo y no a la venta.",
     },
     duplicateModal: {
       title: "Duplicar \u201c{name}\u201d",
