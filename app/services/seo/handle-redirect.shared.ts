@@ -75,15 +75,72 @@ export interface HandleRedirectRequest {
   wanted: boolean;
   /** True while creating — there is no old URL to preserve. */
   isNew?: boolean;
+  /**
+   * Was the OLD URL ever reachable? `false` ⇒ no redirect: a draft's address is
+   * one no visitor bookmarked and no engine indexed, so a redirect from it is
+   * clutter in the merchant's list and a loop waiting to happen the moment they
+   * reuse the handle. `isNew` covers only the create path; this covers the far
+   * commoner case of a draft that has existed for weeks.
+   *
+   * `null`/`undefined` means NOT KNOWN, and unknown proceeds. The two failure
+   * directions are not symmetric: a redirect too many is one row a merchant can
+   * delete, a redirect too few is traffic nobody notices losing. (IndexNow
+   * resolves the same uncertainty the other way, and for the mirror-image
+   * reason — there, acting on a guess would publish a draft's URL.)
+   */
+  previouslyLive?: boolean | null;
   /** Articles live under their blog: `/blogs/<blog>/<article>`. */
   blogHandle?: string | null;
+}
+
+/**
+ * Was this object's storefront URL reachable, from what the cache holds?
+ *
+ * Deliberately per-type, because the four types answer it with different
+ * columns — and two of them cannot answer it at all:
+ *
+ *   product     `status`. ACTIVE is live; UNLISTED is TOO — it is reachable by
+ *               direct link, which is exactly the kind of URL someone has in a
+ *               newsletter. DRAFT and ARCHIVED are not.
+ *   page,       `isPublished` — but only once `attributesSyncedAt` is set. The
+ *   article     column defaults to true, so on an older row it is not data.
+ *   collection  Visibility lives in publications, which this app has no scope
+ *               for. Unknown.
+ *   blog        A blog index exists as soon as the blog does.
+ */
+export function wasEverLive(
+  resource: RedirectableResource,
+  state: { status?: string | null; isPublished?: boolean | null; attributesKnown?: boolean },
+): boolean | null {
+  switch (resource) {
+    case "product": {
+      const status = (state.status ?? "").trim().toUpperCase();
+      if (!status) return null;
+      return status === "ACTIVE" || status === "UNLISTED";
+    }
+    case "page":
+    case "article":
+      if (state.attributesKnown === false) return null;
+      return state.isPublished ?? null;
+    case "blog":
+      return true;
+    case "collection":
+      return null;
+  }
 }
 
 export type HandleRedirectDecision =
   | { redirect: true; fromPath: string; toPath: string }
   | {
       redirect: false;
-      reason: "notWanted" | "isNew" | "unchanged" | "missingHandle" | "missingBlogHandle" | "wouldLoop";
+      reason:
+        | "notWanted"
+        | "isNew"
+        | "neverLive"
+        | "unchanged"
+        | "missingHandle"
+        | "missingBlogHandle"
+        | "wouldLoop";
     };
 
 /** Trim, strip surrounding slashes, lowercase — what Shopify does to a handle. */
@@ -122,6 +179,9 @@ export function decideHandleRedirect(request: HandleRedirectRequest): HandleRedi
   if (!request.wanted) return { redirect: false, reason: "notWanted" };
   // A brand-new object has no old URL to preserve.
   if (request.isNew) return { redirect: false, reason: "isNew" };
+  // Neither has one that was never reachable. Checked BEFORE the handles,
+  // because it is a fact about the object rather than about the edit.
+  if (request.previouslyLive === false) return { redirect: false, reason: "neverLive" };
 
   const previous = (request.previousHandle ?? "").trim();
   const next = (request.nextHandle ?? "").trim();

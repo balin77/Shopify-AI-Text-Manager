@@ -19,6 +19,7 @@ import {
   normalizeHandle,
   redirectResourceFor,
   resolveRedirectPreference,
+  wasEverLive,
 } from "~/services/seo/handle-redirect.shared";
 import type { HandleRedirectNoteCode } from "~/services/seo/handle-redirect.server";
 
@@ -95,11 +96,23 @@ export async function handleUpdateContent(
           // save of every blog, in the request's critical path, for a value
           // nothing downstream can use.
           submittedHandle
-          ? { handle: await loadBlogHandle(admin, itemId), isPublished: null }
-          : { handle: null, isPublished: null }
+          ? { handle: await loadBlogHandle(admin, itemId), isPublished: null, status: null, attributesKnown: true }
+          : { handle: null, isPublished: null, status: null, attributesKnown: true }
         : await loadCachedSnapshot(db, session.shop, contentConfig.resourceType, itemId)
       : null;
   const previousHandle = wantsHandleRedirect ? beforeSave?.handle ?? null : null;
+  // §Phase 3.3 — a draft's URL was never reachable, so a redirect from it is
+  // clutter in the merchant's list and a loop waiting to happen once they reuse
+  // the handle. Unknown proceeds; see `wasEverLive` for why that asymmetry is
+  // deliberate.
+  const previouslyLive =
+    beforeSave && redirectResource
+      ? wasEverLive(redirectResource, {
+          status: beforeSave.status,
+          isPublished: beforeSave.isPublished,
+          attributesKnown: beforeSave.attributesKnown,
+        })
+      : null;
   const handleChanged =
     !!previousHandle && !!submittedHandle && normalizeHandle(previousHandle) !== normalizeHandle(submittedHandle);
 
@@ -171,6 +184,7 @@ export async function handleUpdateContent(
         previousHandle,
         nextHandle: storedHandle || submittedHandle,
         wanted: wantsHandleRedirect,
+        previouslyLive,
         // An article's URL contains its BLOG's handle, which this app does not
         // cache (no Blog model). Fetched on demand — one call, and only when an
         // article handle actually changed — because without it the redirect
@@ -180,6 +194,26 @@ export async function handleUpdateContent(
             ? await loadArticleBlogHandle(admin, db, session.shop, itemId)
             : undefined,
       });
+      // §Phase 3.3 — a renamed BLOG moves every article under it, and Shopify
+      // redirects have no wildcards, so each needs its own row. That is bounded
+      // but not small (a 200-article blog is 200 lookups + 200 creates), so it
+      // runs as a background Task: the blog's OWN redirect is already done and
+      // is the URL most likely to be linked, and holding the merchant's save
+      // open for minutes to finish the rest would risk a request timeout for
+      // work that is not urgent.
+      if (result.created && redirectResource === "blog" && previousHandle) {
+        const nextBlogHandle = storedHandle || submittedHandle;
+        void import("~/services/seo/blog-article-redirects.server")
+          .then(({ redirectBlogArticles }) =>
+            redirectBlogArticles(admin, db, session.shop, {
+              blogId: itemId,
+              previousBlogHandle: previousHandle,
+              nextBlogHandle,
+            }),
+          )
+          .catch(() => undefined);
+      }
+
       // A code plus its one variable, never a sentence: the three UI languages
       // are the client's to build.
       return result.noteCode ? { code: result.noteCode, fromPath: result.fromPath } : undefined;
@@ -697,17 +731,31 @@ async function loadCachedSnapshot(
   shop: string,
   resourceType: string,
   itemId: string,
-): Promise<{ handle: string | null; isPublished: boolean | null }> {
-  const empty = { handle: null, isPublished: null };
+): Promise<{
+  handle: string | null;
+  isPublished: boolean | null;
+  /** Products only — the four-value ProductStatus, verbatim. */
+  status: string | null;
+  /** False ⇒ `isPublished` above is the migration's default, not data. */
+  attributesKnown: boolean;
+}> {
+  const empty = { handle: null, isPublished: null, status: null, attributesKnown: true };
   try {
     switch (resourceType) {
       case "Product": {
-        const row = await db.product.findFirst({ where: { shop, id: itemId }, select: { handle: true } });
-        return { handle: row?.handle ?? null, isPublished: null };
+        // `status` is NOT part of the attribute block — it is non-null in the
+        // schema and predates it — so it is trustworthy on every row.
+        const row = await db.product.findFirst({
+          where: { shop, id: itemId },
+          select: { handle: true, status: true },
+        });
+        return { handle: row?.handle ?? null, isPublished: null, status: row?.status ?? null, attributesKnown: true };
       }
       case "Collection": {
+        // A collection's visibility lives in publications, which this app has
+        // no scope for — so "was it live" is genuinely unknown here.
         const row = await db.collection.findFirst({ where: { shop, id: itemId }, select: { handle: true } });
-        return { handle: row?.handle ?? null, isPublished: null };
+        return { handle: row?.handle ?? null, isPublished: null, status: null, attributesKnown: true };
       }
       case "Page": {
         const row = await db.page.findFirst({
@@ -721,6 +769,8 @@ async function loadCachedSnapshot(
           // as "was visible", which would make every first save look like a
           // publish transition and ping IndexNow for drafts.
           isPublished: row?.attributesSyncedAt ? row.isPublished : null,
+          status: null,
+          attributesKnown: !!row?.attributesSyncedAt,
         };
       }
       case "Article": {
@@ -731,6 +781,8 @@ async function loadCachedSnapshot(
         return {
           handle: row?.handle ?? null,
           isPublished: row?.attributesSyncedAt ? row.isPublished : null,
+          status: null,
+          attributesKnown: !!row?.attributesSyncedAt,
         };
       }
       default:

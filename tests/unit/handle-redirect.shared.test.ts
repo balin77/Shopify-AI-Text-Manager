@@ -18,7 +18,50 @@ import {
   redirectResourceFor,
   resolveRedirectPreference,
   storefrontPathFor,
+  wasEverLive,
 } from "~/services/seo/handle-redirect.shared";
+
+/**
+ * "Was the old URL ever reachable?" — the question that decides whether a
+ * rename owes anything at all.
+ *
+ * The asymmetry here is deliberate and worth stating: UNKNOWN proceeds. A
+ * redirect too many is one row a merchant can delete; a redirect too few is
+ * traffic nobody notices losing. IndexNow resolves the same uncertainty the
+ * OTHER way, because there acting on a guess would publish a draft's URL.
+ */
+describe("wasEverLive", () => {
+  it("counts UNLISTED as live, not just ACTIVE", () => {
+    // An unlisted product is reachable by direct link — exactly the kind of
+    // URL that sits in someone's newsletter. Treating it as a draft is the
+    // three-value assumption that has bitten this app before.
+    expect(wasEverLive("product", { status: "ACTIVE" })).toBe(true);
+    expect(wasEverLive("product", { status: "UNLISTED" })).toBe(true);
+    expect(wasEverLive("product", { status: "DRAFT" })).toBe(false);
+    expect(wasEverLive("product", { status: "ARCHIVED" })).toBe(false);
+  });
+
+  it("reads a page or article off isPublished — but only once it is known", () => {
+    expect(wasEverLive("page", { isPublished: true, attributesKnown: true })).toBe(true);
+    expect(wasEverLive("page", { isPublished: false, attributesKnown: true })).toBe(false);
+    // §2.4 — before the attribute sync the column is the migration's default.
+    // Null, not false: refusing the redirect here would silently cost every
+    // un-synced shop its redirects.
+    expect(wasEverLive("article", { isPublished: false, attributesKnown: false })).toBeNull();
+  });
+
+  it("answers UNKNOWN where the app genuinely cannot tell", () => {
+    // A collection's visibility lives in publications, which this app has no
+    // scope for. Guessing "draft" would drop redirects a shop needs.
+    expect(wasEverLive("collection", {})).toBeNull();
+    expect(wasEverLive("product", { status: "" })).toBeNull();
+  });
+
+  it("treats a blog index as always live", () => {
+    // It exists as soon as the blog does — there is no draft state to read.
+    expect(wasEverLive("blog", {})).toBe(true);
+  });
+});
 
 describe("redirectResourceFor", () => {
   it("maps each handled type", () => {
@@ -149,6 +192,21 @@ describe("decideHandleRedirect", () => {
     // the loop as a defect — a bug reporting a bug it created.
     const decision = decideHandleRedirect({ ...base, previousHandle: "/same/", nextHandle: "same" });
     expect(decision).toEqual({ redirect: false, reason: "unchanged" });
+  });
+
+  it("does nothing for an object whose URL was never reachable", () => {
+    // The commonest real case, and the one `isNew` does NOT cover: a product
+    // that has sat in DRAFT for weeks and is now being renamed. Its old
+    // address was never live, so a redirect from it is clutter — and a loop
+    // waiting to happen the moment the merchant reuses that handle.
+    expect(decideHandleRedirect({ ...base, previouslyLive: false }))
+      .toEqual({ redirect: false, reason: "neverLive" });
+  });
+
+  it("proceeds when it cannot tell whether the URL was live", () => {
+    // Unknown is not "no". Losing a redirect costs traffic nobody notices.
+    expect(decideHandleRedirect({ ...base, previouslyLive: null }).redirect).toBe(true);
+    expect(decideHandleRedirect({ ...base, previouslyLive: undefined }).redirect).toBe(true);
   });
 
   it("checks 'wanted' before anything else, so an opt-out is never overridden", () => {

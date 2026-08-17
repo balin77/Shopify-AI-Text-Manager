@@ -55,7 +55,7 @@ import {
   type TranslationInput,
 } from "./translations.server";
 import { logger } from "../../utils/logger.server";
-import { redirectResourceFor, type RedirectableResource } from "../seo/handle-redirect.shared";
+import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../seo/handle-redirect.shared";
 // The single editor parses tags with exactly this function — one rule, so the
 // two surfaces cannot disagree about what a tag list is.
 import { parseTagList } from "../content-attributes.shared";
@@ -1719,6 +1719,9 @@ async function loadPrimaryHandle(
 interface CapturedHandle {
   resource: RedirectableResource;
   previousHandle: string;
+  /** Was the OLD URL ever reachable? `false` ⇒ no redirect (a draft's address
+   *  is one nobody holds); `null` ⇒ unknown, which proceeds. */
+  previouslyLive: boolean | null;
 }
 
 /** The old handle, read BEFORE the write — afterwards it is gone. Returns null
@@ -1732,12 +1735,54 @@ async function captureHandleForRedirect(
   const resource = redirectResourceFor(bulkRowTypeToResourceType(group.rowType), group.rowId);
   if (!resource) return null;
   // Blog containers have no cache model — their handle is only on Shopify.
-  const previousHandle =
+  const before =
     group.rowType === "blog"
-      ? await loadBlogHandleForRedirect(deps, group.rowId)
-      : await loadPrimaryHandle(deps.db, deps.shop, group).catch(() => null);
-  if (!previousHandle) return null;
-  return { resource, previousHandle };
+      ? { handle: await loadBlogHandleForRedirect(deps, group.rowId), state: {} }
+      : await loadRedirectStateForRow(deps, group).catch(() => ({ handle: null, state: {} }));
+  if (!before.handle) return null;
+  return { resource, previousHandle: before.handle, previouslyLive: wasEverLive(resource, before.state) };
+}
+
+/** The row's pre-write handle plus what says whether its URL was reachable —
+ *  one query, since both come off the same cache row. */
+async function loadRedirectStateForRow(
+  deps: PersistDeps,
+  group: BulkDiffRowGroup,
+): Promise<{ handle: string | null; state: { status?: string | null; isPublished?: boolean | null; attributesKnown?: boolean } }> {
+  const where = { shop_id: { shop: deps.shop, id: group.rowId } };
+  switch (group.rowType) {
+    case "product": {
+      const row = await deps.db.product.findUnique({ where, select: { handle: true, status: true } });
+      return { handle: row?.handle ?? null, state: { status: row?.status ?? null } };
+    }
+    case "page": {
+      const row = await deps.db.page.findUnique({
+        where,
+        select: { handle: true, isPublished: true, attributesSyncedAt: true },
+      });
+      return {
+        handle: row?.handle ?? null,
+        state: { isPublished: row?.isPublished ?? null, attributesKnown: !!row?.attributesSyncedAt },
+      };
+    }
+    case "article": {
+      const row = await deps.db.article.findUnique({
+        where,
+        select: { handle: true, isPublished: true, attributesSyncedAt: true },
+      });
+      return {
+        handle: row?.handle ?? null,
+        state: { isPublished: row?.isPublished ?? null, attributesKnown: !!row?.attributesSyncedAt },
+      };
+    }
+    case "collection": {
+      const row = await deps.db.collection.findUnique({ where, select: { handle: true } });
+      // Visibility lives in publications — no scope, genuinely unknown.
+      return { handle: row?.handle ?? null, state: {} };
+    }
+    default:
+      return { handle: null, state: {} };
+  }
 }
 
 /** Applies a captured handle change. Never throws and never fails a cell: the
@@ -1757,6 +1802,7 @@ async function finishBulkHandleRedirect(
       previousHandle: captured.previousHandle,
       nextHandle,
       wanted: true,
+      previouslyLive: captured.previouslyLive,
       blogHandle:
         captured.resource === "article" ? await loadArticleBlogHandleForRedirect(deps, group.rowId) : undefined,
     });

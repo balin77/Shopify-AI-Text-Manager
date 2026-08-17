@@ -80,6 +80,98 @@ async function findRedirects(
   return [...seen.values()];
 }
 
+/**
+ * Applies ONE path→path redirect as a DIFF over the shop's existing ones.
+ *
+ * Split out from `applyHandleRedirect` because a second caller needs exactly
+ * this and nothing above it: when a BLOG is renamed, every article under it
+ * moves too, and each needs its own redirect from a pair of paths that no
+ * handle comparison would produce (the article's own handle did not change —
+ * the segment above it did).
+ *
+ * Returns `null` on success, or a short reason for the log.
+ */
+export async function applyRedirectPair(
+  admin: AdminApiContext,
+  shop: string,
+  fromPath: string,
+  toPath: string,
+): Promise<{ ok: boolean; shadowRemoved: boolean; reason?: string }> {
+  // ── Never manufacture a chain or a loop ──────────────────────────────────
+  // Renaming a→b→c would otherwise leave `/a→/b` AND `/b→/c`: a chain this
+  // app's OWN crawler reports as a finding. Renaming a→b→a would leave
+  // `/a→/b` and `/b→/a`: a two-member cycle that `redirect-chains.ts`
+  // explicitly refuses to auto-fix, because there is no end target to pick.
+  // Both are avoided by repointing what already exists instead of adding to
+  // it — the redirects are looked up by PATH, so this costs one small query,
+  // not a sweep of the shop's redirect list.
+  const existing = await findRedirects(admin, [fromPath, toPath]);
+
+  // Anything that pointed AT the old path now points at the new one. This is
+  // the a→b→c case: `/a→/b` becomes `/a→/c`.
+  const stale = existing.filter((r) => samePath(r.target, fromPath) && !samePath(r.path, toPath));
+  for (const redirect of stale) {
+    const repointed = await updateRedirect(admin, redirect.id, { path: redirect.path, target: toPath });
+    if (!repointed.redirect?.id) {
+      logger.warn("[HandleRedirect] Could not repoint an older redirect", {
+        context: "HandleRedirect", shop, path: redirect.path, to: toPath,
+      });
+    }
+  }
+
+  // A redirect sitting ON the new path has to go, and not only because
+  // `/a→/b` plus `/b→/a` is a cycle: the new path is a LIVE page again, and
+  // Shopify serves the redirect in preference to it. Leaving the row would
+  // make the very object the merchant just renamed unreachable at its own
+  // URL. This is the rename-back case (a→b, then b→a).
+  //
+  // It is deleted whatever its target was, including a redirect the merchant
+  // set up themselves: a redirect on a live path is not a redirect the shop
+  // can keep. But it is THEIR row, so it is reported and logged with both
+  // halves, never removed in silence.
+  let shadowRemoved = false;
+  for (const shadowing of existing.filter((r) => samePath(r.path, toPath))) {
+    const removed = await deleteRedirect(admin, shadowing.id);
+    if (!removed.deletedId) {
+      logger.warn("[HandleRedirect] A redirect still shadows the new URL", {
+        context: "HandleRedirect", shop, path: shadowing.path, target: shadowing.target,
+      });
+      continue;
+    }
+    shadowRemoved = true;
+    logger.info("[HandleRedirect] Removed a redirect that shadowed the new URL", {
+      context: "HandleRedirect", shop, path: shadowing.path, target: shadowing.target,
+    });
+  }
+
+  // Shopify rejects a second redirect on the same path, so an existing one
+  // for `fromPath` is UPDATED rather than re-created.
+  const onSamePath = existing.find((r) => samePath(r.path, fromPath));
+  const result = onSamePath
+    ? await updateRedirect(admin, onSamePath.id, { path: fromPath, target: toPath })
+    : await createRedirect(admin, { path: fromPath, target: toPath });
+
+  // Echo, same rule as everywhere else: userErrors alone is not the answer.
+  if (!result.redirect?.id) {
+    const detail = result.userErrors?.map((e) => e.message).join("; ") || "no redirect returned";
+    logger.warn("[HandleRedirect] Shopify did not confirm the redirect", {
+      context: "HandleRedirect", shop, from: fromPath, to: toPath, detail,
+    });
+    return { ok: false, shadowRemoved, reason: "notConfirmed" };
+  }
+
+  logger.info("[HandleRedirect] Created", {
+    context: "HandleRedirect",
+    shop,
+    from: fromPath,
+    to: toPath,
+    reused: !!onSamePath,
+    repointed: stale.length,
+    shadowRemoved,
+  });
+  return { ok: true, shadowRemoved };
+}
+
 export async function applyHandleRedirect(
   admin: AdminApiContext,
   shop: string,
@@ -88,10 +180,11 @@ export async function applyHandleRedirect(
   const decision = decideHandleRedirect(request);
 
   if (!decision.redirect) {
-    // Most reasons are entirely routine (not wanted, unchanged) and deserve no
-    // noise. One is worth surfacing: an article whose blog handle we do not
-    // know CANNOT get a redirect, and the merchant would otherwise assume the
-    // old URL is covered when it is not.
+    // Most reasons are entirely routine (not wanted, unchanged, a draft whose
+    // URL was never reachable) and deserve no noise. One is worth surfacing:
+    // an article whose blog handle we do not know CANNOT get a redirect, and
+    // the merchant would otherwise assume the old URL is covered when it is
+    // not.
     if (decision.reason === "missingBlogHandle") {
       return { created: false, skippedReason: decision.reason, noteCode: "missingBlogHandle" };
     }
@@ -102,88 +195,20 @@ export async function applyHandleRedirect(
     request.resource === "blog" ? "blogArticlesUncovered" : "created";
 
   try {
-    // ── Never manufacture a chain or a loop ────────────────────────────────
-    // Renaming a→b→c would otherwise leave `/a→/b` AND `/b→/c`: a chain this
-    // app's OWN crawler reports as a finding. Renaming a→b→a would leave
-    // `/a→/b` and `/b→/a`: a two-member cycle that `redirect-chains.ts`
-    // explicitly refuses to auto-fix, because there is no end target to pick.
-    // Both are avoided by repointing what already exists instead of adding to
-    // it — the redirects are looked up by PATH, so this costs one small query,
-    // not a sweep of the shop's redirect list.
-    const existing = await findRedirects(admin, [decision.fromPath, decision.toPath]);
-
-    // Anything that pointed AT the old path now points at the new one. This is
-    // the a→b→c case: `/a→/b` becomes `/a→/c`.
-    const stale = existing.filter(
-      (r) => samePath(r.target, decision.fromPath) && !samePath(r.path, decision.toPath),
-    );
-    for (const redirect of stale) {
-      const repointed = await updateRedirect(admin, redirect.id, { path: redirect.path, target: decision.toPath });
-      if (!repointed.redirect?.id) {
-        logger.warn("[HandleRedirect] Could not repoint an older redirect", {
-          context: "HandleRedirect", shop, path: redirect.path, to: decision.toPath,
-        });
-      }
+    const outcome = await applyRedirectPair(admin, shop, decision.fromPath, decision.toPath);
+    if (!outcome.ok) {
+      return {
+        created: false,
+        skippedReason: outcome.reason ?? "notConfirmed",
+        noteCode: "notConfirmed",
+        fromPath: decision.fromPath,
+      };
     }
-
-    // A redirect sitting ON the new path has to go, and not only because
-    // `/a→/b` plus `/b→/a` is a cycle: the new path is a LIVE page again, and
-    // Shopify serves the redirect in preference to it. Leaving the row would
-    // make the very object the merchant just renamed unreachable at its own
-    // URL. This is the rename-back case (a→b, then b→a).
-    // It is deleted whatever its target was, including a redirect the merchant
-    // set up themselves: a redirect on a live path is not a redirect the shop
-    // can keep. But it is THEIR row, so it is reported (`shadowRemoved`) and
-    // logged with both halves, never removed in silence.
-    let shadowRemoved = false;
-    for (const shadowing of existing.filter((r) => samePath(r.path, decision.toPath))) {
-      const removed = await deleteRedirect(admin, shadowing.id);
-      if (!removed.deletedId) {
-        logger.warn("[HandleRedirect] A redirect still shadows the new URL", {
-          context: "HandleRedirect", shop, path: shadowing.path, target: shadowing.target,
-        });
-        continue;
-      }
-      shadowRemoved = true;
-      logger.info("[HandleRedirect] Removed a redirect that shadowed the new URL", {
-        context: "HandleRedirect", shop, path: shadowing.path, target: shadowing.target,
-      });
-    }
-
-    // Shopify rejects a second redirect on the same path, so an existing one
-    // for `fromPath` is UPDATED rather than re-created.
-    const onSamePath = existing.find((r) => samePath(r.path, decision.fromPath));
-    const result = onSamePath
-      ? await updateRedirect(admin, onSamePath.id, { path: decision.fromPath, target: decision.toPath })
-      : await createRedirect(admin, { path: decision.fromPath, target: decision.toPath });
-
-    // Echo, same rule as everywhere else: userErrors alone is not the answer.
-    if (!result.redirect?.id) {
-      const detail = result.userErrors?.map((e) => e.message).join("; ") || "no redirect returned";
-      logger.warn("[HandleRedirect] Shopify did not confirm the redirect", {
-        context: "HandleRedirect",
-        shop,
-        from: decision.fromPath,
-        to: decision.toPath,
-        detail,
-      });
-      return { created: false, skippedReason: "notConfirmed", noteCode: "notConfirmed", fromPath: decision.fromPath };
-    }
-
-    logger.info("[HandleRedirect] Created", {
-      context: "HandleRedirect",
-      shop,
-      from: decision.fromPath,
-      to: decision.toPath,
-      reused: !!onSamePath,
-      repointed: stale.length,
-      shadowRemoved,
-    });
     // Removing someone's redirect outranks the good news — the blog case
     // aside, which is a warning of its own and already the stronger claim.
     return {
       created: true,
-      noteCode: shadowRemoved && okCode === "created" ? "shadowRemoved" : okCode,
+      noteCode: outcome.shadowRemoved && okCode === "created" ? "shadowRemoved" : okCode,
       fromPath: decision.fromPath,
     };
   } catch (error) {
