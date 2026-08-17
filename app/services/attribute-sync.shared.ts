@@ -73,6 +73,14 @@ export const PRODUCT_COLLECTIONS_SELECTION = `
  * When the API pin moves (PLAN Phase −1), add the `sources` selection here and
  * pass the new shape to `collectionAttributeColumns`; nothing else changes.
  */
+import { readConditionFragments, rulesAvailableOn } from "../config/collection-rules.shared";
+
+/** Generated from the kind specs, never hand-written: a read selection that
+ *  drifts from the write mapping makes collections read as "unrenderable" for
+ *  no reason, and the editor then refuses to touch rules it understands. */
+const INCLUSION_CONDITION_FRAGMENTS = readConditionFragments("inclusion");
+const EXCLUSION_CONDITION_FRAGMENTS = readConditionFragments("exclusion");
+
 export const COLLECTION_ATTRIBUTE_SELECTION = `
             sortOrder
             templateSuffix
@@ -84,6 +92,57 @@ export const COLLECTION_ATTRIBUTE_SELECTION = `
                 condition
               }
             }`;
+
+/**
+ * The 2026-07 rule model. Selected INSTEAD of `ruleSet`, never alongside it:
+ * `ruleSet` is a lossy back-projection of this (CLAUDE.md — exclusions, extra
+ * sources and variant targeting simply vanish from it), so a row that can have
+ * the real tree must not also carry the flattened one and leave a reader to
+ * pick.
+ *
+ * `sources` and `ruleSet` are BOTH selected as `...` fragments on the same
+ * type, so a query carrying `sources` against 2025-10 fails at the SCHEMA
+ * level — a top-level `errors` array with `data: null`, which the sync would
+ * read as "no collections". That is why this is a separate constant behind
+ * `collectionAttributeSelection()` and never concatenated blindly.
+ */
+export const COLLECTION_SOURCES_SELECTION = `
+            sortOrder
+            templateSuffix
+            sources {
+              id
+              title
+              description
+              targetType
+              inclusion {
+                matchType
+                selections { __typename }
+                conditions {
+                  __typename
+${INCLUSION_CONDITION_FRAGMENTS}
+                }
+              }
+              exclusion {
+                matchType
+                selections { __typename }
+                conditions {
+                  __typename
+${EXCLUSION_CONDITION_FRAGMENTS}
+                }
+              }
+            }`;
+
+/**
+ * Which rule model to ask for, decided by the API version the app is pinned to.
+ *
+ * The whole point of this indirection: asking 2025-10 for `sources` does not
+ * degrade, it fails the entire query. A sync that "returned no collections"
+ * because of a field it should never have requested is exactly the kind of
+ * silent, total failure this codebase keeps guarding against.
+ */
+export function collectionAttributeSelection(apiVersion: string): string {
+  return rulesAvailableOn(apiVersion) ? COLLECTION_SOURCES_SELECTION : COLLECTION_ATTRIBUTE_SELECTION;
+}
 
 /** Article attribute fields. `author` is required by ArticleCreateInput (§1.4). */
 export const ARTICLE_ATTRIBUTE_SELECTION = `
@@ -128,6 +187,9 @@ export interface ShopifyCollectionRuleSet {
 }
 
 export interface ShopifyCollectionAttributes {
+  /** 2026-07 and up. Mutually exclusive with `ruleSet` by selection, never by
+   *  accident — see `collectionAttributeSelection`. */
+  sources?: unknown[] | null;
   sortOrder?: string | null;
   templateSuffix?: string | null;
   ruleSet?: ShopifyCollectionRuleSet | null;
@@ -288,14 +350,32 @@ export function productCollectionRows(
   return { rows, hasMore: collections.pageInfo?.hasNextPage ?? false };
 }
 
+/** The keys every version delivers. The rule tree is the version-dependent
+ *  one and is checked separately. */
 const COLLECTION_ATTRIBUTE_KEYS: Array<keyof ShopifyCollectionAttributes> = [
   "sortOrder",
   "templateSuffix",
-  "ruleSet",
 ];
 
-export function hasCollectionAttributes(data: ShopifyCollectionAttributes | null | undefined): boolean {
-  return hasEveryKey(data, COLLECTION_ATTRIBUTE_KEYS);
+/**
+ * Was the collection attribute block delivered?
+ *
+ * The rule tree arrives under DIFFERENT keys per API version — `ruleSet` up to
+ * 2025-10, `sources` from 2026-07 — and the block is only complete when the one
+ * this version actually asks for is present. Demanding `ruleSet` on 2026-07
+ * would make every response look incomplete and quietly stop the whole
+ * attribute sync; accepting either without looking would let a genuinely
+ * narrow query through, which is the exact "half-delivered block written as
+ * defaults" failure the rest of this module exists to prevent.
+ */
+export function hasCollectionAttributes(
+  data: ShopifyCollectionAttributes | null | undefined,
+  apiVersion?: string,
+): boolean {
+  if (!hasEveryKey(data, COLLECTION_ATTRIBUTE_KEYS)) return false;
+  const treeKey: keyof ShopifyCollectionAttributes =
+    apiVersion && rulesAvailableOn(apiVersion) ? "sources" : "ruleSet";
+  return hasEveryKey(data, [treeKey]);
 }
 
 export function collectionAttributeColumns(
@@ -303,21 +383,34 @@ export function collectionAttributeColumns(
   apiVersion: string,
   now: Date = new Date(),
 ): CollectionAttributeColumns {
-  if (!hasCollectionAttributes(data)) return {};
+  if (!hasCollectionAttributes(data, apiVersion)) return {};
   const d = data as ShopifyCollectionAttributes;
+  // Which model this response actually carries. Decided by the API version, not
+  // by which key happens to be present: an empty `sources` on 2026-07 means "no
+  // rules", while a missing one on 2025-10 means "this version has no such
+  // field" — reading them the same way would call every new-model collection
+  // manual.
+  const hasSources = rulesAvailableOn(apiVersion);
   return {
     sortOrder: nullableText(d.sortOrder),
     templateSuffix: nullableText(d.templateSuffix),
-    isSmart: !!d.ruleSet,
+    // From 2026-07 on a collection is rule-based when it HAS sources; below
+    // that `ruleSet` is the only signal. Reading `ruleSet` on the newer version
+    // would answer "manual" for every collection using the new model, because
+    // the projection drops what it cannot express (CLAUDE.md).
+    isSmart: hasSources ? (d.sources?.length ?? 0) > 0 : !!d.ruleSet,
     // Stored even when null-ish so a collection that STOPPED being rule-based
-    // does not keep a stale tree. The envelope always names its shape.
-    sourcesJson: {
-      shape: "ruleSet",
-      apiVersion,
-      // The rule tree is stored VERBATIM, never flattened (PLAN §2.4): the
-      // editor has to be able to hand back a structure it cannot render.
-      data: (d.ruleSet ?? null) as JsonValue,
-    },
+    // does not keep a stale tree. The envelope always names its shape, because
+    // the two models are not interchangeable and a reader must never guess.
+    sourcesJson: hasSources
+      ? { shape: "sources", apiVersion, data: (d.sources ?? null) as JsonValue }
+      : {
+          shape: "ruleSet",
+          apiVersion,
+          // The rule tree is stored VERBATIM, never flattened (PLAN §2.4): the
+          // editor has to be able to hand back a structure it cannot render.
+          data: (d.ruleSet ?? null) as JsonValue,
+        },
     attributesSyncedAt: now,
   };
 }

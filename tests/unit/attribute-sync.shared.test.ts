@@ -198,13 +198,47 @@ describe("collectionAttributeColumns", () => {
     expect(columns.attributesSyncedAt).toBe(NOW);
   });
 
-  it("names the API version it read, so a 2026-07 'sources' row is never mistaken for a ruleSet row", () => {
-    const columns = collectionAttributeColumns(
+  it("names the API version AND the model it read, so the two are never confused", () => {
+    // The envelope's whole job. `ruleSet` is a LOSSY back-projection of
+    // `sources` (CLAUDE.md) — exclusions, extra sources and variant targeting
+    // vanish from it — so a reader that could not tell which model a row holds
+    // would have to guess, and guessing wrong changes a collection's
+    // membership.
+    const legacy = collectionAttributeColumns(
       { sortOrder: "MANUAL", templateSuffix: null, ruleSet: null },
+      "2025-10",
+      NOW,
+    );
+    expect(legacy.sourcesJson).toMatchObject({ shape: "ruleSet", apiVersion: "2025-10" });
+
+    // From 2026-07 the sync asks for `sources` INSTEAD of `ruleSet`, so the
+    // envelope says so. Storing this as a "ruleSet" row would hand the rule
+    // editor a tree in the wrong shape.
+    const modern = collectionAttributeColumns(
+      { sortOrder: "MANUAL", templateSuffix: null, sources: [] },
       "2026-07",
       NOW,
     );
-    expect(columns.sourcesJson).toMatchObject({ shape: "ruleSet", apiVersion: "2026-07" });
+    expect(modern.sourcesJson).toMatchObject({ shape: "sources", apiVersion: "2026-07" });
+  });
+
+  it("reads 'is this rule-based' off the model the version actually delivers", () => {
+    // On 2026-07 a collection is rule-based when it HAS sources. Asking
+    // `ruleSet` there would answer "manual" for every collection using the new
+    // model, because the projection drops what it cannot express.
+    const smart = collectionAttributeColumns(
+      { sortOrder: "MANUAL", templateSuffix: null, sources: [{ id: "s1" }] },
+      "2026-07",
+      NOW,
+    );
+    expect(smart.isSmart).toBe(true);
+
+    const manual = collectionAttributeColumns(
+      { sortOrder: "MANUAL", templateSuffix: null, sources: [] },
+      "2026-07",
+      NOW,
+    );
+    expect(manual.isSmart).toBe(false);
   });
 
   it("requires EVERY key of the selection", () => {

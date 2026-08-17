@@ -346,3 +346,200 @@ export function newCondition(side: ConditionSide, kind: string, localId: string)
     definitionId: spec?.needsDefinition ? "" : undefined,
   };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Reading Shopify's tree back, and turning an edit into a DIFF
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ── Why reading is harder than writing ──────────────────────────────────────
+ * Writing is an INPUT object: `{ productTag: { relation, values, matchType } }`,
+ * one measured shape per kind (§1.2a). Reading is a UNION — Shopify returns
+ * `conditions[]` whose members are distinct object types, and a client must
+ * name each one in an inline fragment to see its fields.
+ *
+ * The member type NAMES are the one thing §1.2a did not measure: the probe
+ * introspected the input side. So `readConditionTypename` derives them from the
+ * kinds this module already knows, and the collection probe VERIFIES that
+ * derivation against a live 2026-07 shop (Settings → Collection Probe). Until
+ * it does, the derivation is a hypothesis — which is why a condition whose
+ * `__typename` this module does not recognise makes its whole SOURCE
+ * `unrenderable` instead of being dropped. §2.4's rule, doing real work: a
+ * source carried unchanged cannot lose a condition nobody could read.
+ */
+
+/** `productTag` (inclusion) → `CollectionRuleProductTagCondition`. */
+export function readConditionTypename(side: ConditionSide, kind: string): string {
+  const capitalized = kind.charAt(0).toUpperCase() + kind.slice(1);
+  return side === "inclusion"
+    ? `CollectionRule${capitalized}Condition`
+    : `CollectionRuleExclusion${capitalized}Condition`;
+}
+
+/** The inline fragments for one side, generated from the kind specs so the read
+ *  selection can never drift from the write mapping. */
+export function readConditionFragments(side: ConditionSide): string {
+  return conditionKinds(side)
+    .map((spec) => {
+      const value = spec.list ? "values" : "value";
+      const matchType = spec.list ? "\n                    matchType" : "";
+      const relation = spec.relations.length > 0 ? "\n                    relation" : "";
+      const definition = spec.needsDefinition ? "\n                    definitionId" : "";
+      return `                  ... on ${readConditionTypename(side, spec.key)} {${relation}
+                    ${value}${matchType}${definition}
+                  }`;
+    })
+    .join("\n");
+}
+
+interface RawCondition {
+  __typename?: string;
+  relation?: string | null;
+  value?: unknown;
+  values?: unknown;
+  matchType?: string | null;
+  definitionId?: string | null;
+}
+
+interface RawSide {
+  matchType?: string | null;
+  conditions?: RawCondition[] | null;
+  /** Hand-picked products/variants. The editor does not render these, and a
+   *  source that has any is carried unchanged rather than flattened. */
+  selections?: unknown[] | null;
+}
+
+export interface RawSource {
+  id?: string | null;
+  title?: string | null;
+  description?: string | null;
+  targetType?: string | null;
+  inclusion?: RawSide | null;
+  exclusion?: RawSide | null;
+  /** The two target branches this editor deliberately does not render (§2.4). */
+  subCollections?: unknown;
+  shareableSource?: unknown;
+}
+
+function matchTypeOf(raw: string | null | undefined): (typeof CONDITION_MATCH_TYPES)[number] {
+  return raw === "ANY" ? "ANY" : "ALL";
+}
+
+/** `__typename` → the kind key this module knows, or null. */
+function kindForTypename(side: ConditionSide, typename: string | undefined): ConditionKindSpec | null {
+  if (!typename) return null;
+  return conditionKinds(side).find((spec) => readConditionTypename(side, spec.key) === typename) ?? null;
+}
+
+function readSide(side: ConditionSide, raw: RawSide | null | undefined): { parsed: RuleSide; readable: boolean } {
+  const conditions: RuleCondition[] = [];
+  let readable = true;
+  // A hand-picked selection has no representation in this editor. Rendering
+  // the conditions and dropping the selections would silently change which
+  // products the collection contains — the §2.4 failure exactly.
+  if (Array.isArray(raw?.selections) && raw.selections.length > 0) readable = false;
+
+  for (const [index, condition] of (raw?.conditions ?? []).entries()) {
+    const spec = kindForTypename(side, condition.__typename);
+    if (!spec) {
+      readable = false;
+      continue;
+    }
+    const values = Array.isArray(condition.values) ? condition.values.map((v) => String(v)) : null;
+    conditions.push({
+      localId: `read-${side}-${index}`,
+      kind: spec.key,
+      relation: String(condition.relation ?? spec.relations[0] ?? ""),
+      value: values ? values.join(", ") : String(condition.value ?? ""),
+      ...(spec.list ? { matchType: matchTypeOf(condition.matchType) } : {}),
+      ...(spec.needsDefinition && condition.definitionId ? { definitionId: condition.definitionId } : {}),
+    });
+  }
+
+  return { parsed: { matchType: matchTypeOf(raw?.matchType), conditions }, readable };
+}
+
+/**
+ * Shopify's `sources[]` → the editor's model.
+ *
+ * A source this editor cannot fully represent keeps its raw tree and is marked
+ * `unrenderable`. It is then DISPLAYED but never submitted as an update, so
+ * passing through this app cannot cost a collection a rule it depends on.
+ */
+export function fromShopifySources(raw: RawSource[] | null | undefined): RuleSource[] {
+  return (raw ?? []).map((source, index) => {
+    const base: RuleSource = {
+      ...(source.id ? { id: source.id } : {}),
+      title: source.title ?? `Source ${index + 1}`,
+      ...(source.description ? { description: source.description } : {}),
+      ...(source.targetType === "VARIANTS" ? { targetType: "VARIANTS" as const } : {}),
+      inclusion: { matchType: "ALL", conditions: [] },
+    };
+
+    // The two target branches with no editor at all (§2.4). Checked first —
+    // their conditions are not the point, their SHAPE is.
+    if (source.subCollections) {
+      return { ...base, unrenderable: { reason: "subCollections", raw: source } };
+    }
+    if (source.shareableSource) {
+      return { ...base, unrenderable: { reason: "shareableSource", raw: source } };
+    }
+
+    const inclusion = readSide("inclusion", source.inclusion);
+    const exclusion = source.exclusion ? readSide("exclusion", source.exclusion) : null;
+    if (!inclusion.readable || (exclusion && !exclusion.readable)) {
+      return { ...base, unrenderable: { reason: "unknownCondition", raw: source } };
+    }
+
+    return {
+      ...base,
+      inclusion: inclusion.parsed,
+      ...(exclusion && exclusion.parsed.conditions.length > 0 ? { exclusion: exclusion.parsed } : {}),
+    };
+  });
+}
+
+export interface RuleSourcesDiff {
+  sourcesToCreate: Array<Record<string, unknown>>;
+  sourcesToUpdate: Array<Record<string, unknown>>;
+  sourcesToDelete: string[];
+}
+
+/**
+ * Turns "what the editor now holds" into the three lists `collectionUpdate`
+ * takes. A REPLACE would be the obvious implementation and the wrong one:
+ * Shopify keys sources by id, and re-creating them all would churn every
+ * membership on every save.
+ *
+ * Two rules carry the §2.4 guarantee:
+ *
+ *   - An UNRENDERABLE source is never created, never updated and never
+ *     deleted. It is invisible to this diff in every direction, so a
+ *     collection using a feature the editor does not speak survives a save
+ *     untouched.
+ *   - A source is only DELETED when it was read as renderable and the editor
+ *     no longer holds it. An id that vanished because it could not be parsed
+ *     must not be read as "the merchant removed it".
+ */
+export function diffRuleSources(before: RuleSource[], after: RuleSource[]): RuleSourcesDiff {
+  const renderableBefore = before.filter((s) => !s.unrenderable && s.id);
+  const keptIds = new Set(after.filter((s) => !s.unrenderable && s.id).map((s) => s.id as string));
+
+  const sourcesToCreate: Array<Record<string, unknown>> = [];
+  const sourcesToUpdate: Array<Record<string, unknown>> = [];
+
+  for (const source of after) {
+    // Untouched by definition — see the rule above.
+    if (source.unrenderable) continue;
+    const [input] = toSourcesInput([source]);
+    if (!input) continue;
+    if (source.id) sourcesToUpdate.push({ id: source.id, ...input });
+    else sourcesToCreate.push(input);
+  }
+
+  const sourcesToDelete = renderableBefore
+    .map((s) => s.id as string)
+    .filter((id) => !keptIds.has(id));
+
+  return { sourcesToCreate, sourcesToUpdate, sourcesToDelete };
+}

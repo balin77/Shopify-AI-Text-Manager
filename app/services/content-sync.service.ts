@@ -19,7 +19,7 @@ import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarket
 import { resolveApiVersionString } from '../utils/api-version';
 import {
   ARTICLE_ATTRIBUTE_SELECTION,
-  COLLECTION_ATTRIBUTE_SELECTION,
+  collectionAttributeSelection,
   articleAttributeColumns,
   collectionAttributeColumns,
   type ShopifyArticleAttributes,
@@ -344,7 +344,7 @@ export class ContentSyncService {
             title
             handle
             descriptionHtml
-            updatedAt${COLLECTION_ATTRIBUTE_SELECTION}
+            updatedAt${collectionAttributeSelection(resolveApiVersionString())}
             image {
               id
               url
