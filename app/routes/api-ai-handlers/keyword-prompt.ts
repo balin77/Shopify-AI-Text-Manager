@@ -91,6 +91,26 @@ export interface TrackedKeywords {
 const EMPTY: TrackedKeywords = { primary: null, secondaries: [], primaryIntent: null, all: [] };
 
 /**
+ * The keyword set for a generation that has NO item yet (PLAN §2.5d).
+ *
+ * The create modal is the moment the merchant decides what the thing is
+ * ABOUT, and it is exactly the moment `loadTrackedKeywords` is blind: it keys
+ * off a `resourceId` that will not exist until the object is created. So the
+ * modal sends the keyword EXPLICITLY and this turns it into the same shape the
+ * DB path produces, so `keywordRequirementLines` and the stuffing guard behave
+ * identically on both entrances.
+ *
+ * Sanitized here, not at the caller: it is client-supplied text that ends up
+ * interpolated into a prompt, and one call site forgetting that is all it
+ * takes.
+ */
+export function explicitPrimaryKeyword(raw: string): TrackedKeywords {
+  const primary = sanitizePromptInput(raw.trim(), { fieldType: "general" });
+  if (!primary) return EMPTY;
+  return { primary, secondaries: [], primaryIntent: null, all: [primary] };
+}
+
+/**
  * Load an item's tracked keywords for one locale, sanitized for prompt
  * interpolation. Returns the empty set for fields that aren't keyword-aware, so
  * callers can call unconditionally and skip their own gate.

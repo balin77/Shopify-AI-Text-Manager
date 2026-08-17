@@ -484,10 +484,27 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // help (§1.2).
   const createResources = (config.createSupport?.resources ?? []) as CreatableResource[];
   const [chooserOpen, setChooserOpen] = useState(false);
+  /**
+   * §2.5a — the shop's published locales minus the primary one.
+   *
+   * `state.enabledLanguages` is the merchant's per-session SELECTION and can be
+   * narrower; the create dialog's promise is "into all languages", so it uses
+   * the shop's own list. An empty result means the shop has one locale, which
+   * is what disables the checkbox rather than hiding it.
+   */
+  const createTargetLocales = useMemo(
+    () => shopLocales.filter((l) => !l.primary).map((l) => l.locale),
+    [shopLocales],
+  );
+
   const createItem = useCreateItem({
     plan,
     resources: createResources,
     atLimit: finalPlanLimit.isAtLimit,
+    targetLocales: createTargetLocales,
+    // The chained translation lands in the DB after the create's own
+    // revalidation has already run, so the list needs a second look.
+    onTranslated: () => revalidator?.revalidate(),
     onCreated: (info) => {
       // §1.6: select the new item and refresh. When the cache sync failed the
       // item is NOT in the list yet — the banner says so and offers a reload
@@ -1739,6 +1756,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               });
             }}
             undoLabel={t.content?.undoCreate}
+            translating={createItem.translating}
             onReload={
               createItem.created.synced
                 ? undefined
@@ -1753,6 +1771,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               createdNotSyncedBody: t.content?.createdNotSyncedBody,
               handleChanged: t.content?.createdHandle,
               reload: t.content?.reloadAllTooltip,
+              translating: t.content?.createModal?.translatingAfterCreate,
             }}
           />
         </div>
@@ -1817,7 +1836,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           // The rule builder's strings live at the top level because the
           // editor's own rule FIELD renders the same builder — one block, two
           // surfaces, no drift.
-          t={{ ...(t.content?.createModal ?? {}), rules: t.collectionRules }}
+          t={{
+            ...(t.content?.createModal ?? {}),
+            rules: t.collectionRules,
+            // §2.5b — the SCORE strings come from the sidebar's own block, not
+            // a second copy: the two show the same findings, and a wording
+            // that differs between them reads as two different measurements.
+            seoScore: {
+              heading: t.content?.createModal?.seoScoreHeading,
+              outOf: t.content?.createModal?.seoScoreOutOf,
+              issues: t.seo?.issues,
+            },
+          }}
+          // §2.5b/§2.5c — the AI prompts need a language NAME, and the modal
+          // has no locale state of its own. The shop's primary one, because
+          // that is the only language a create writes.
+          mainLanguage={shopLocales.find((l) => l.primary)?.name || primaryLocale}
+          hasSecondLocale={createTargetLocales.length > 0}
+          requiresSecondLanguageHint={t.common?.requiresSecondLanguage}
         />
       )}
     </Page>

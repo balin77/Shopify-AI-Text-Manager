@@ -20,6 +20,7 @@ import type { CreateValidationError, CreateFieldDef } from "../config/create-fie
 type CreateOption = { value: string; label: string; disabled?: boolean; helpText?: string };
 type CreateValidationExtraFields = CreateFieldDef[];
 import { evaluateCreateGates, type CreateGateResult } from "../utils/create-gate";
+import { translatableCreateFields } from "../config/create-ai.shared";
 import { createSpecFor } from "../config/create-fields.config";
 import { getMaxForResource } from "../utils/planUtils";
 import type { Plan, ResourceType } from "../utils/planUtils";
@@ -52,9 +53,31 @@ export interface UseCreateItemOptions {
   atLimit?: boolean;
   /** Called once a create succeeded, so the caller can select + revalidate. */
   onCreated?: (info: CreatedItemInfo) => void;
+  /**
+   * §2.5a — the shop's published locales MINUS the primary one.
+   *
+   * Passed in rather than derived: an empty list here means "nothing to
+   * translate into", and the caller is the only place that can tell that apart
+   * from a locale lookup that failed (`getCachedShopLocales` resolves with []
+   * on a swallowed error). With no targets the chained call is skipped and the
+   * create still reports success.
+   */
+  targetLocales?: string[];
+  /** Fired when the chained translate-all finishes, so the caller can
+   *  revalidate a SECOND time — the translations land in the DB after the
+   *  create's own revalidation has already run. */
+  onTranslated?: () => void;
 }
 
-export function useCreateItem({ plan, resources, counts = {}, atLimit = false, onCreated }: UseCreateItemOptions) {
+export function useCreateItem({
+  plan,
+  resources,
+  counts = {},
+  atLimit = false,
+  onCreated,
+  targetLocales = [],
+  onTranslated,
+}: UseCreateItemOptions) {
   // useFetcher rather than a bare fetch: posting to a route action goes through
   // React Router's own protocol, and hand-rolling that would break the moment
   // single-fetch encoding changes under us.
@@ -167,8 +190,25 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     setFieldErrors([]);
   }, []);
 
+  /**
+   * §2.5a — the chained translate-all runs on its OWN fetcher.
+   *
+   * Sharing the create fetcher would overwrite the create's answer with the
+   * translation's before the effect below has read it — and the two answers
+   * are read by different rules. A second fetcher also keeps "the item was
+   * created" and "its translations are running" as the two separate facts they
+   * are: the first is already true when the second is still in flight.
+   */
+  const translateFetcher = useFetcher<Record<string, unknown>>();
+  const [translating, setTranslating] = useState(false);
+
   // Resolved by the effect below once the action answers.
-  const pendingPayload = useRef<{ resource: CreatableResource } | null>(null);
+  const pendingPayload = useRef<{
+    resource: CreatableResource;
+    /** The form values, kept so the chained translate-all can carry them. */
+    values: Record<string, string>;
+    translateAfterwards: boolean;
+  } | null>(null);
 
   const create = useCallback(
     (payload: {
@@ -178,12 +218,17 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
       imageAlt: string;
       ruleSources?: unknown[];
       requestId: string;
+      translateAfterwards?: boolean;
     }) => {
       setSubmitting(true);
       setError(null);
       setFieldErrors([]);
       setPendingNotice(null);
-      pendingPayload.current = { resource: payload.resource };
+      pendingPayload.current = {
+        resource: payload.resource,
+        values: payload.values,
+        translateAfterwards: !!payload.translateAfterwards,
+      };
 
       const formData = new FormData();
       formData.set("action", "createContent");
@@ -245,7 +290,60 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     setCreated(info);
     setOpenResource(null);
     onCreated?.(info);
-  }, [fetcher.data, fetcher.state, onCreated]);
+
+    /**
+     * §2.5a — create, then translate. In that order, and from HERE.
+     *
+     * The create handler writes the primary language only. Translating is a
+     * chained call of the ONE existing translate-all action on the new id, so
+     * it gets the usual `bulkTranslation` task row and the usual progress UI
+     * rather than becoming a second translation write path.
+     *
+     * Skipped when the sync failed: without a cache row the action has no item
+     * to write translations against, and the create is still a success.
+     */
+    if (
+      payload.translateAfterwards &&
+      info.synced &&
+      targetLocales.length > 0 &&
+      translatableCreateFields(payload.resource).length > 0
+    ) {
+      const translateData = new FormData();
+      translateData.set("action", "translateAll");
+      translateData.set("itemId", info.id);
+      translateData.set("targetLocales", JSON.stringify(targetLocales));
+      // Values come from the FORM, not from the freshly synced cache: the
+      // action reads them off the request, and the merchant's own words are
+      // the same ones that were just written to Shopify.
+      for (const field of translatableCreateFields(payload.resource)) {
+        const value = payload.values[field.createKey];
+        if (value?.trim()) translateData.set(field.editorKey, value);
+      }
+      setTranslating(true);
+      translateFetcher.submit(translateData, { method: "POST" });
+    }
+    // `translateFetcher` is stable across renders (useFetcher), so leaving it
+    // out keeps this effect from re-running on every render of the editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.data, fetcher.state, onCreated, targetLocales]);
+
+  // The chained translation's own answer. Its failure is reported as a NOTE on
+  // the created item, never as a create failure — the object exists either way,
+  // and saying otherwise is what produces the duplicate this file guards
+  // against everywhere else.
+  useEffect(() => {
+    if (!translating || translateFetcher.state !== "idle" || !translateFetcher.data) return;
+    setTranslating(false);
+    const failed = translateFetcher.data.success !== true;
+    if (failed) {
+      setCreated((prev) =>
+        prev
+          ? { ...prev, notes: [...prev.notes, "The item was created, but translating it did not finish. Use \"Translate all\" on the item."] }
+          : prev,
+      );
+    }
+    onTranslated?.();
+  }, [translating, translateFetcher.state, translateFetcher.data, onTranslated]);
 
   // A non-createContent error response (validation rejected before the action
   // tagged it) still has to stop the spinner.
@@ -280,6 +378,8 @@ export function useCreateItem({ plan, resources, counts = {}, atLimit = false, o
     optionsLoading,
     /** §1.7 — an article needs a blog, and this shop has none yet. */
     needsBlogFirst,
+    /** §2.5a — the chained translate-all is still running. */
+    translating,
     /** The post-create box. Its shape leaves room for the §1.8 undo button. */
     created,
     dismissCreated: useCallback(() => setCreated(null), []),

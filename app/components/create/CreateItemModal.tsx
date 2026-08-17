@@ -26,14 +26,20 @@ import {
   TextField,
   Select,
   Button,
+  Checkbox,
   Text,
   Banner,
+  Spinner,
   Thumbnail,
   Collapsible,
   Box,
 } from "@shopify/polaris";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
+import { CreateSeoScore } from "./CreateSeoScore";
+import { useCreateAiAssist } from "./useCreateAiAssist";
+import { createAiSpecFor, LONG_TEXT_KEY_BY_RESOURCE } from "~/config/create-ai.shared";
 import {
   conditionKinds,
   newCondition,
@@ -63,6 +69,22 @@ export interface CreateItemModalTexts {
   /** Option labels, keyed like `"status.DRAFT"`. */
   options?: Record<string, string>;
   shopifyDefault?: string;
+  altText?: string;
+  /** §2.5c — shown while the alt text writes itself. */
+  altTextGenerating?: string;
+  /** §2.5d — says that the keyword does two things, which is the whole point. */
+  keywordHint?: string;
+  /** §2.5a-d — the AI block. */
+  generateRest?: string;
+  generateRestHint?: string;
+  generatingField?: string;
+  sendImageToAI?: string;
+  keywordStuffed?: string;
+  generateFailed?: string;
+  translateAfterwards?: string;
+  translateAfterwardsHint?: string;
+  /** §2.5b — the live score panel. */
+  seoScore?: { heading?: string; outOf?: string; issues?: Record<string, string> };
   collectionTypeLabel?: string;
   collectionManual?: string;
   collectionAutomated?: string;
@@ -107,6 +129,15 @@ export interface CreateItemModalProps {
   pendingNotice?: string | null;
   /** Field-level errors the SERVER rejected, so the two validators agree visibly. */
   fieldErrors?: CreateValidationError[];
+  /** §2.5b/§2.5c — display name of the shop's primary language, for the AI
+   *  prompts. The modal has no editor locale state of its own. */
+  mainLanguage?: string;
+  /** §2.5a — the shop publishes more than its primary locale. False makes the
+   *  "translate afterwards" checkbox DISABLED with a reason, never hidden:
+   *  hiding it is what makes merchants think the feature is missing. */
+  hasSecondLocale?: boolean;
+  /** Tooltip for that disabled state (`t.common.requiresSecondLanguage`). */
+  requiresSecondLanguageHint?: string;
   t?: CreateItemModalTexts;
 }
 
@@ -119,6 +150,15 @@ export interface CreateSubmitPayload {
   ruleSources?: RuleSource[];
   /** Minted per attempt — the server de-duplicates on it (§1.7). */
   requestId: string;
+  /**
+   * §2.5a — chain `translateAll` onto the new item once it exists.
+   *
+   * The create handler translates NOTHING itself: it creates, syncs, and the
+   * CLIENT then fires the existing translate-all action on the returned id.
+   * That keeps this a chained call of the one translation write path rather
+   * than a second one, task row and progress UI included.
+   */
+  translateAfterwards: boolean;
 }
 
 /** Crypto-free unique enough for a per-click dedup key. */
@@ -143,6 +183,9 @@ export function CreateItemModal({
   error,
   pendingNotice,
   fieldErrors = [],
+  mainLanguage = "English",
+  hasSecondLocale = false,
+  requiresSecondLanguageHint,
   t = {},
 }: CreateItemModalProps) {
   const spec = createSpecFor(resource);
@@ -166,10 +209,24 @@ export function CreateItemModal({
    */
   const [requestId, setRequestId] = useState(mintRequestId);
 
+  // §2.5a — off by default. Translating every field of every new object is a
+  // real cost in AI calls, so it is an opt-in the merchant sees and ticks.
+  const [translateAfterwards, setTranslateAfterwards] = useState(false);
+  // §0.5 — the editor's own "send the image to the AI" toggle is not reachable
+  // from here, so the dialog owns one. Off by default: sending an image costs
+  // more and not every provider is vision-capable.
+  const [sendImageToAI, setSendImageToAI] = useState(false);
+
   const [ruleSources, setRuleSources] = useState<RuleSource[]>([]);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [rulesAdvanced, setRulesAdvanced] = useState(false);
   const ruleErrors = useMemo(() => (rulesOpen ? validateRuleSources(ruleSources) : []), [rulesOpen, ruleSources]);
+
+  const ai = useCreateAiAssist({ mainLanguage, sendImageToAI });
+  // Null for blogs and metaobjects — see `create-ai.shared.ts` for why those
+  // two are deliberately not offered an AI button.
+  const aiSpec = createAiSpecFor(resource);
+  const longTextKey = resource ? LONG_TEXT_KEY_BY_RESOURCE[resource] ?? "" : "";
 
   // A metaobject's own fields appear only once its definition is chosen —
   // rendering them before that would ask for values against no schema.
@@ -191,6 +248,9 @@ export function CreateItemModal({
       setValues(initialValues ?? {});
       // A NEW dialog is a new create; only here does a fresh id belong.
       setRequestId(mintRequestId());
+      // A generation still in flight from the previous opening must not write
+      // its answers into this form.
+      ai.cancel();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, resource]);
@@ -276,14 +336,83 @@ export function CreateItemModal({
       imageUrl: image?.url ?? "",
       imageAlt: image?.alt ?? "",
       requestId,
+      // Only when the shop CAN translate. A stale `true` from a shop that
+      // dropped to one locale would chain a call with no targets.
+      translateAfterwards: translateAfterwards && hasSecondLocale,
     });
-  }, [localErrors, onSubmit, resource, values, image, withSelectDefaults, rulesOpen, ruleSources, requestId]);
+  }, [
+    localErrors,
+    onSubmit,
+    resource,
+    values,
+    image,
+    withSelectDefaults,
+    rulesOpen,
+    ruleSources,
+    requestId,
+    translateAfterwards,
+    hasSecondLocale,
+  ]);
+
+  /**
+   * §2.5a/§2.5d — "write the rest for me".
+   *
+   * Only the EMPTY fields, in the order the spec lists them, each result
+   * feeding the next one's context (see `useCreateAiAssist`). The keyword goes
+   * into the prompt explicitly: there is no item yet, so the usual DB lookup
+   * would come back empty at exactly the moment the merchant has just said
+   * what the thing is about.
+   */
+  const handleGenerateRest = useCallback(async () => {
+    if (!resource) return;
+    const result = await ai.generateRest(resource, values, image?.url ?? "");
+    if (!result) return;
+    if (Object.keys(result.filled).length > 0) {
+      setValues((prev) => {
+        const next = { ...prev };
+        for (const [key, value] of Object.entries(result.filled)) {
+          // Re-checked against the LIVE state, not the snapshot the run
+          // started from: the merchant may have typed into a field while the
+          // generation was running, and their words outrank the model's.
+          if (!(next[key] ?? "").trim()) next[key] = value;
+        }
+        return next;
+      });
+      // Generated values fill fields the merchant has not looked at, so any
+      // validation error still on screen is about the form as it WAS.
+      setTouched(false);
+    }
+  }, [ai, resource, values, image]);
 
   /**
    * The picker can return video and 3D as well. Swallowing those silently is
    * not an option (§1.4), and this dialog only knows how to attach ONE image —
    * so a non-image pick is refused with a reason rather than ignored.
    */
+  /**
+   * §2.5c — the alt text, right after the image is attached.
+   *
+   * Shopify creates images with no alt text and nothing later reminds anyone,
+   * so this is the only moment it is free. Two rules: it fills only an EMPTY
+   * alt (the library picker returns the file's existing one, and overwriting
+   * that would discard someone's work), and a failure is silent — the field
+   * simply stays empty and editable, because nobody asked for this.
+   */
+  const autoAltText = useCallback(
+    (attached: { url: string; preview: string; alt: string }) => {
+      if (!resource || attached.alt.trim()) return;
+      const title = (values.title ?? "").trim();
+      if (!title) return;
+      void ai.generateAltText(resource, attached.url, title).then((altText) => {
+        if (!altText) return;
+        // Against the LIVE state: the merchant may have typed an alt text, or
+        // swapped the image, while the call was running.
+        setImage((prev) => (prev && prev.url === attached.url && !prev.alt.trim() ? { ...prev, alt: altText } : prev));
+      });
+    },
+    [ai, resource, values.title],
+  );
+
   const handlePicked = useCallback((items: AddedItem[]) => {
     const first = items[0];
     setPickerOpen(false);
@@ -293,7 +422,9 @@ export function CreateItemModal({
         window.alert("Only images can be attached here. Add video or 3D from the item's media manager after creating it.");
         return;
       }
-      setImage({ url: first.resourceUrl, preview: first.previewUrl, alt: "" });
+      const attached = { url: first.resourceUrl, preview: first.previewUrl, alt: "" };
+      setImage(attached);
+      autoAltText(attached);
       return;
     }
     if (first.source === "library") {
@@ -301,12 +432,14 @@ export function CreateItemModal({
         window.alert("Only images can be attached here. Add video or 3D from the item's media manager after creating it.");
         return;
       }
-      setImage({ url: first.assetUrl, preview: first.previewUrl, alt: first.alt ?? "" });
+      const attached = { url: first.assetUrl, preview: first.previewUrl, alt: first.alt ?? "" };
+      setImage(attached);
+      autoAltText(attached);
       return;
     }
     // external_url is a video embed — not an image, and not attachable here.
     window.alert("An external video link cannot be used as an item image.");
-  }, []);
+  }, [autoAltText]);
 
   if (!spec) return null;
 
@@ -335,10 +468,13 @@ export function CreateItemModal({
             </InlineStack>
             {image && (
               <TextField
-                label="Alt text"
+                label={t.altText || "Alt text"}
                 value={image.alt}
                 onChange={(v) => setImage((prev) => (prev ? { ...prev, alt: v } : prev))}
                 autoComplete="off"
+                // §2.5c — says WHY the field is about to fill itself. A value
+                // appearing with no explanation reads as a glitch.
+                helpText={ai.altBusy ? t.altTextGenerating || "Writing alt text…" : undefined}
               />
             )}
           </BlockStack>
@@ -413,6 +549,23 @@ export function CreateItemModal({
             // reports the handle that actually came BACK.
             placeholder={suggestHandle(values.title ?? "")}
             helpText={t.handleHint}
+          />
+        );
+
+      // §2.5d — the keyword is not just another text field: it goes into the
+      // generation prompt AND becomes the item's primary keyword after the
+      // create. Saying so is what makes anyone fill it in.
+      case "keyword":
+        return (
+          <TextField
+            key={field.key}
+            label={label(field)}
+            value={value}
+            onChange={(v) => setValue(field.key, v)}
+            autoComplete="off"
+            maxLength={field.maxLength}
+            error={errorText}
+            helpText={t.keywordHint}
           />
         );
 
@@ -546,6 +699,86 @@ export function CreateItemModal({
                   />
                 )}
               </BlockStack>
+            )}
+
+            {/* §2.5a-d — the AI block. Below the basic fields and the rule
+                editor, above "more fields": it works on what has been typed so
+                far, and offering it first would ask the merchant to press a
+                button before saying what the item is. */}
+            {!blocked && aiSpec && (
+              <BlockStack gap="200">
+                <InlineStack gap="300" blockAlign="center">
+                  <Button
+                    onClick={handleGenerateRest}
+                    loading={ai.generating}
+                    // A title is the ONLY input every prompt here builds on.
+                    // Without one the model would be inventing the product.
+                    disabled={!values.title?.trim() || submitting}
+                  >
+                    {t.generateRest || "Write the rest with AI"}
+                  </Button>
+                  {ai.generating && (
+                    <InlineStack gap="200" blockAlign="center">
+                      <Spinner size="small" />
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {(t.generatingField || "Writing {field}…").replace(
+                          "{field}",
+                          t.fields?.[ai.busyField ?? ""] ?? ai.busyField ?? "",
+                        )}
+                      </Text>
+                    </InlineStack>
+                  )}
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {t.generateRestHint || "Only empty fields are filled — anything you wrote stays."}
+                </Text>
+                {/* §0.5 — the editor's toggle is not reachable from here. Only
+                    offered once an image exists; there is nothing to send
+                    otherwise. */}
+                {image && (
+                  <Checkbox
+                    label={t.sendImageToAI || "Let the AI look at the image"}
+                    checked={sendImageToAI}
+                    onChange={setSendImageToAI}
+                  />
+                )}
+                {ai.aiError && (
+                  <Banner tone="warning" onDismiss={ai.dismissAiError}>
+                    <p>{ai.aiError}</p>
+                  </Banner>
+                )}
+              </BlockStack>
+            )}
+
+            {/* §2.5b — the same scorer, the same shop limits and the same
+                suffix the sidebar will use, so the number does not change by
+                itself the moment the item is created. */}
+            {!blocked && aiSpec && (
+              <CreateSeoScore
+                title={values.title ?? ""}
+                description={longTextKey ? values[longTextKey] ?? "" : ""}
+                seoTitle={values.seoTitle ?? ""}
+                metaDescription={values.metaDescription ?? ""}
+                hasImage={!!image}
+                imageHasAlt={!!image?.alt.trim()}
+                hasDescriptionField={!!longTextKey}
+                t={t.seoScore ?? {}}
+              />
+            )}
+
+            {/* §2.5a — the biggest thing this dialog does that Shopify's
+                cannot. Single-language shops see it DISABLED with a reason,
+                never hidden. */}
+            {!blocked && (
+              <DisabledActionTooltip hint={hasSecondLocale ? undefined : requiresSecondLanguageHint}>
+                <Checkbox
+                  label={t.translateAfterwards || "Translate into all languages afterwards"}
+                  checked={translateAfterwards && hasSecondLocale}
+                  onChange={setTranslateAfterwards}
+                  disabled={!hasSecondLocale || submitting}
+                  helpText={hasSecondLocale ? t.translateAfterwardsHint : undefined}
+                />
+              </DisabledActionTooltip>
             )}
 
             {!blocked && advancedFields.length > 0 && (

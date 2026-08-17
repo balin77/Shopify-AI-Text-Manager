@@ -16,7 +16,7 @@
  * rather than the banner having to be rebuilt around it later.
  */
 
-import { Banner, BlockStack, Text, InlineStack, Button } from "@shopify/polaris";
+import { Banner, BlockStack, Text, InlineStack, Button, Spinner } from "@shopify/polaris";
 import type { CreatedItemInfo } from "~/hooks/useCreateItem";
 
 export interface CreateResultBannerProps {
@@ -29,6 +29,8 @@ export interface CreateResultBannerProps {
    *  confirmed id to remove) means the action is simply not offered. */
   onUndo?: () => void;
   undoLabel?: string;
+  /** §2.5a — the chained translate-all has not answered yet. */
+  translating?: boolean;
   t?: {
     createdTitle?: string;
     createdNotSyncedTitle?: string;
@@ -36,10 +38,11 @@ export interface CreateResultBannerProps {
     handleChanged?: string;
     reload?: string;
     undo?: string;
+    translating?: string;
   };
 }
 
-export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabel, t = {} }: CreateResultBannerProps) {
+export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabel, translating = false, t = {} }: CreateResultBannerProps) {
   const name = info.title || info.id;
 
   return (
@@ -60,6 +63,20 @@ export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabe
           </Text>
         )}
 
+        {/* §2.5a — the chained translate-all. Said here rather than nowhere:
+            the item is already created and selectable, so without a line the
+            merchant sees an item whose foreign fields fill in by themselves
+            some seconds later. Undo stays hidden while it runs — deleting the
+            item mid-translation would leave the task writing into nothing. */}
+        {translating && (
+          <InlineStack gap="200" blockAlign="center">
+            <Spinner size="small" />
+            <Text as="span" tone="subdued">
+              {t.translating || "Translating into your other languages…"}
+            </Text>
+          </InlineStack>
+        )}
+
         {info.handle && (
           <Text as="p" tone="subdued">
             {(t.handleChanged || "Handle: {handle}").replace("{handle}", info.handle)}
@@ -75,7 +92,7 @@ export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabe
             {!info.synced && onReload && (
               <Button onClick={onReload}>{t.reload || "Reload"}</Button>
             )}
-            {onUndo && (
+            {onUndo && !translating && (
               <Button tone="critical" variant="plain" onClick={onUndo}>
                 {undoLabel || t.undo || "Undo this create"}
               </Button>

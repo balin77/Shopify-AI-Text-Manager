@@ -15,9 +15,11 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import {
+  explicitPrimaryKeyword,
   findStuffedKeyword,
   keywordPreservationLine,
   keywordRequirementLines,
+  isKeywordAwareField,
   loadTrackedKeywords,
   resolveKeywordLocale,
   resolveWrittenLocale,
@@ -176,13 +178,23 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   // the editor's current locale as `keywordLocale` (already collapsed to "" for
   // the primary locale), so generating French copy pulls the French keyword set
   // instead of the primary one. Field gating lives in the helper.
-  const trackedKeywords = await loadTrackedKeywords(
-    db,
-    session.shop,
-    itemId,
-    resolveKeywordLocale(formData),
-    fieldType,
-  );
+  //
+  // §2.5d — the CREATE modal has no item yet, so the DB lookup would come back
+  // empty at exactly the moment the merchant has just said what the thing is
+  // about. It sends the keyword explicitly instead. The explicit value wins
+  // when present: it is what the merchant is looking at, and for a create
+  // there is nothing in the DB to lose to it.
+  const explicitKeyword = getFormString(formData, "explicitKeyword") || "";
+  const trackedKeywords =
+    explicitKeyword && isKeywordAwareField(fieldType)
+      ? explicitPrimaryKeyword(explicitKeyword)
+      : await loadTrackedKeywords(
+          db,
+          session.shop,
+          itemId,
+          resolveKeywordLocale(formData),
+          fieldType,
+        );
 
   // §2.5e — the glossary is keyed by real locale codes, so it needs the
   // language actually being WRITTEN. `keywordLocale` says "" for the primary
