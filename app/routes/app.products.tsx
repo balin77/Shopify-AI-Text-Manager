@@ -118,6 +118,12 @@ export const loader = createContentLoader({
           : false,
         options: { orderBy: { position: "asc" } },
         metafields: true,
+        // §2.2 attribute checklist. Both are narrowed on purpose: this loader
+        // runs over the whole (bounded) catalogue, so pulling full variant and
+        // membership rows for a count and one price would multiply its cost for
+        // nothing.
+        collections: { select: { collectionId: true, collectionTitle: true } },
+        variants: { select: { price: true }, orderBy: { position: "asc" }, take: 1 },
       },
       orderBy: { title: "asc" },
       take: effectiveTake,
@@ -248,6 +254,29 @@ export const loader = createContentLoader({
         }
         return result;
       })(),
+      // ── PLAN_CONTENT_CREATION §2.2/§2.3 — the attribute checklist ────────
+      // Without these the sidebar has nothing to judge and renders every row
+      // "unknown" forever. `attributesSyncedAt` is THE discriminator and must
+      // travel with them: shipped alone, the values below are the migration's
+      // defaults (null / []), which the checklist would otherwise read as
+      // "the merchant left it empty" — a screen full of confident, wrong red.
+      attributesSyncedAt: p.attributesSyncedAt ?? null,
+      vendor: p.vendor ?? null,
+      tags: Array.isArray(p.tags) ? p.tags : null,
+      categoryName: p.categoryName ?? null,
+      templateSuffix: p.templateSuffix ?? null,
+      featuredImageUrl: p.featuredImageUrl || null,
+      // Membership count comes from the Phase-0 join rows. `hasMoreCollections`
+      // marks the window Shopify truncated, so "3" never reads as "exactly 3".
+      collections: (p.collections || []).map((c: any) => ({
+        id: c.collectionId,
+        title: c.collectionTitle || "",
+      })),
+      hasMoreCollections: p.hasMoreCollections === true,
+      // §2.3: the price lives on ProductVariant, NOT in the attribute block —
+      // it is therefore NOT gated on attributesSyncedAt. Decimal has no place
+      // in a loader payload, so it goes over as a string.
+      defaultVariantPrice: p.variants?.[0]?.price != null ? String(p.variants[0].price) : null,
     }));
 
     return {

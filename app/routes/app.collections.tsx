@@ -111,6 +111,14 @@ export const loader = createContentLoader({
           : undefined,
         images: [],
         seo: { title: c.seoTitle, description: c.seoDescription },
+        // §2.2 attribute checklist — `attributesSyncedAt` travels WITH the
+        // values it discriminates; without it every row below reads as the
+        // migration's defaults rather than the merchant's data.
+        attributesSyncedAt: c.attributesSyncedAt ?? null,
+        sortOrder: c.sortOrder ?? null,
+        templateSuffix: c.templateSuffix ?? null,
+        featuredImageUrl: c.imageUrl || null,
+        isSmart: c.isSmart === true,
       })),
       ids: collections.map((c: any) => c.id),
     };

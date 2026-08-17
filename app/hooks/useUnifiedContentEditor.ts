@@ -35,6 +35,7 @@ import type {
   AltTextResponse,
   TranslatedAltTextResponse,
   TranslatedAltTextsResponse,
+  InfoBoxTone,
 } from "../types/content-editor.types";
 import { debugLog } from "../utils/debug";
 import type { ValidationOverlays } from "../utils/field-validation.utils";
@@ -43,6 +44,7 @@ import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { readLastSelectedId } from "../utils/last-selected-item";
+import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -1624,8 +1626,24 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         }
       }
 
+      // PLAN §Phase 3.3 — computed BEFORE the branch below, because that branch
+      // returns early. It is a primary save like any other, so it can carry a
+      // handle change; leaving the note behind the return meant a FAILED
+      // redirect after "Accept & Translate" was swallowed and the merchant went
+      // on believing the old URL still resolved.
+      const pendingRedirectMessage = buildRedirectMessage(redirectNoteOf(fetcher.data), t);
+
       // Check if there's a pending translation to start after this save
       if (pendingTranslationAfterSaveRef.current) {
+        if (pendingRedirectMessage) {
+          showInfoBox(
+            pendingRedirectMessage.text,
+            pendingRedirectMessage.tone,
+            pendingRedirectMessage.tone === "warning"
+              ? t.common?.warning || "Warning"
+              : t.common?.success || "Success",
+          );
+        }
         const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
         pendingTranslationAfterSaveRef.current = null;
 
@@ -1824,33 +1842,59 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const wasTranslateSave = isSaveFromTranslateRef.current;
       isSaveFromTranslateRef.current = false;
 
+      // PLAN §Phase 3.3 — the handle changed, so the old URL either got a
+      // redirect or did not. Both outcomes are news: the merchant cannot see
+      // from the editor whether their existing links still work. The wording
+      // lives in ONE helper because this response is handled in two places.
+      const redirectMessage = pendingRedirectMessage;
+
+      // One box, one outcome — the redirect line is APPENDED to whichever
+      // message the save itself produced instead of competing with it, so a
+      // failed alt-text write is never replaced by redirect news.
+      const withRedirect = (text: string, tone: InfoBoxTone): [string, InfoBoxTone] => {
+        if (!redirectMessage) return [text, tone];
+        // A failed redirect outranks a plain success: something the merchant
+        // has to act on beats "saved".
+        const merged = redirectMessage.tone === "warning" || tone === "warning" ? "warning" : tone;
+        return [`${text} ${redirectMessage.text}`, merged];
+      };
+
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");
         showInfoBox(
-          String(t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
-            .replace("{failedImages}", failedList),
-          "warning",
+          ...withRedirect(
+            String(t.content?.altTextSavePartialImages || "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
+              .replace("{failedImages}", failedList),
+            "warning",
+          ),
           t.common?.warning || "Warning"
         );
       } else if ("warning" in fetcher.data && fetcher.data.warning) {
         // Server returned success but with a warning (e.g. Shopify saved, DB cache failed)
         showInfoBox(
-          String(fetcher.data.warning),
-          "warning",
+          ...withRedirect(String(fetcher.data.warning), "warning"),
           t.common?.warning || "Warning"
         );
       } else if (wasCopySave) {
         // Copy ("Übertragen") confirmed persisted to Shopify.
-        showInfoBox(
-          t.common?.copiedToShopify || "Successfully transferred to Shopify",
+        const [text, tone] = withRedirect(
+          String(t.common?.copiedToShopify || "Successfully transferred to Shopify"),
           "success",
-          t.common?.success || "Success"
         );
+        showInfoBox(text, tone, tone === "warning" ? t.common?.warning || "Warning" : t.common?.success || "Success");
       } else if (!wasTranslateSave) {
-        showInfoBox(
-          t.common?.changesSaved || "Changes saved successfully!",
+        const [text, tone] = withRedirect(
+          String(t.common?.changesSaved || "Changes saved successfully!"),
           "success",
-          t.common?.success || "Success"
+        );
+        showInfoBox(text, tone, tone === "warning" ? t.common?.warning || "Warning" : t.common?.success || "Success");
+      } else if (redirectMessage) {
+        // A translate-triggered save shows no message of its own — but the
+        // redirect outcome still has to reach the merchant.
+        showInfoBox(
+          redirectMessage.text,
+          redirectMessage.tone,
+          redirectMessage.tone === "warning" ? t.common?.warning || "Warning" : t.common?.success || "Success",
         );
       }
 

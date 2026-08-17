@@ -19,6 +19,8 @@ import { meetsPlan, type Plan } from "../utils/planUtils";
 interface Settings {
   seoTitleSuffixEnabled: boolean;
   seoTitleSuffix: string;
+  /** PLAN §Phase 3.3 — redirect the old URL when a handle changes. */
+  seoAutoHandleRedirect?: boolean;
   /** Stored merchant overrides; `null` = defaults from character-limits.ts. */
   seoLimits: Partial<SeoLimits> | null;
 }
@@ -128,6 +130,13 @@ export function SettingsSEOTab({
     settings.seoTitleSuffixEnabled ?? false,
   );
   const [seoTitleSuffix, setSeoTitleSuffix] = useState(settings.seoTitleSuffix || "");
+  // Defaults to ON — see the toggle's comment below. `?? true` is not a
+  // fallback for a failed load here: the column has the same default, so an
+  // undefined value means "shop row predates the column", which is exactly the
+  // state that should behave as on.
+  const [autoHandleRedirect, setAutoHandleRedirect] = useState(
+    settings.seoAutoHandleRedirect ?? true,
+  );
   const [limits, setLimits] = useState<Record<keyof SeoLimits, string>>(initialDraft);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -136,13 +145,14 @@ export function SettingsSEOTab({
       seoTitleSuffixEnabled !== (settings.seoTitleSuffixEnabled ?? false) ||
       seoTitleSuffix !== (settings.seoTitleSuffix || "");
     const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
-    const changed = suffixChanged || limitsChanged;
+    const redirectChanged = autoHandleRedirect !== (settings.seoAutoHandleRedirect ?? true);
+    const changed = suffixChanged || limitsChanged || redirectChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
     // initialDraft is derived from `settings` — including it in deps would
     // create a new object each render and loop indefinitely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seoTitleSuffixEnabled, seoTitleSuffix, limits, settings, onHasChangesChange]);
+  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, limits, settings, onHasChangesChange]);
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -157,6 +167,7 @@ export function SettingsSEOTab({
         actionType: "saveSeoSettings",
         seoTitleSuffixEnabled: String(seoTitleSuffixEnabled),
         seoTitleSuffix,
+        seoAutoHandleRedirect: String(autoHandleRedirect),
         ...(limitsChanged ? { seoLimits: JSON.stringify(coerceLimits(limits)) } : {}),
       },
       { method: "POST" },
@@ -166,6 +177,7 @@ export function SettingsSEOTab({
   const handleDiscard = () => {
     setSeoTitleSuffixEnabled(settings.seoTitleSuffixEnabled ?? false);
     setSeoTitleSuffix(settings.seoTitleSuffix || "");
+    setAutoHandleRedirect(settings.seoAutoHandleRedirect ?? true);
     setLimits(toDraft(settings.seoLimits ?? null));
   };
 
@@ -206,6 +218,25 @@ export function SettingsSEOTab({
         </Text>
 
         <BlockStack gap="400">
+          {/* PLAN §Phase 3.3 / §A1 — until now, changing a handle in this app
+              silently 404'd every existing link to the old address. On by
+              default: a stray redirect is untidy, a broken URL costs traffic. */}
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.autoHandleRedirect || "Weiterleitung bei Handle-Änderung"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.autoHandleRedirectHint ||
+                  "Ändert sich der Handle eines Eintrags, wird die alte URL automatisch auf die neue weitergeleitet."}
+              </Text>
+            </BlockStack>
+            <ToggleSwitch
+              checked={autoHandleRedirect}
+              onChange={setAutoHandleRedirect}
+            />
+          </InlineStack>
+
           <InlineStack align="space-between" blockAlign="center">
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">

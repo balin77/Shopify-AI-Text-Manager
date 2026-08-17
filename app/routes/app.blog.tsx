@@ -172,6 +172,14 @@ export const loader = createContentLoader({
       imageAltText: string | null;
       seoTitle: string | null;
       seoDescription: string | null;
+      // PLAN §2.2 attribute block. `attributesSyncedAt` is the discriminator —
+      // without it the defaults below (null / [] / true) would be read as the
+      // merchant's own data instead of "never fetched".
+      attributesSyncedAt: Date | null;
+      author: string | null;
+      tags: string[];
+      templateSuffix: string | null;
+      isPublished: boolean;
     }
 
     // Build Blog container items (appear as section headers in the list)
@@ -237,6 +245,14 @@ export const loader = createContentLoader({
         : undefined,
       images: [],
       seo: { title: a.seoTitle, description: a.seoDescription },
+      // §2.2 attribute checklist (articles only — a Blog CONTAINER has no
+      // attribute block and gets no tab).
+      attributesSyncedAt: a.attributesSyncedAt ?? null,
+      author: a.author ?? null,
+      tags: Array.isArray(a.tags) ? a.tags : null,
+      templateSuffix: a.templateSuffix ?? null,
+      isPublished: a.isPublished,
+      featuredImageUrl: a.imageUrl || null,
     }));
 
     // Combine: blog containers first, then articles (sorted by blog title)

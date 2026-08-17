@@ -15,6 +15,18 @@ import { findMetaobjectLabelField } from "../../constants/shopifyFields";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 import { readDataPayload, readDataStatus } from "~/utils/data-response";
+import {
+  normalizeHandle,
+  redirectResourceFor,
+  resolveRedirectPreference,
+} from "~/services/seo/handle-redirect.shared";
+import type { HandleRedirectNoteCode } from "~/services/seo/handle-redirect.server";
+
+/** What the client needs to phrase the redirect outcome in its own language. */
+interface HandleRedirectNote {
+  code: HandleRedirectNoteCode;
+  fromPath?: string;
+}
 
 // ============================================================================
 // UPDATE CONTENT
@@ -35,6 +47,82 @@ export async function handleUpdateContent(
   const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
 
   logger.debug('[UnifiedContent] updateContent', { resourceType: contentConfig.resourceType, itemId, locale, primaryLocale });
+
+  // ── PLAN §Phase 3.3 / §A1 — a handle change breaks the old URL ───────────
+  // Read BEFORE the write, because afterwards the old handle is gone and with
+  // it any chance of preserving the address it served. Only for the primary
+  // locale: a translated handle is a different URL and a different question.
+  // The per-save form field wins where it is sent, so a future per-edit
+  // checkbox needs no server change; otherwise the shop's preference decides.
+  const wantsHandleRedirect = resolveRedirectPreference(
+    getFormString(formData, "createHandleRedirect"),
+    ctx.aiSettings?.seoAutoHandleRedirect,
+  );
+  // The SANITIZED handle, because that is the one that reaches Shopify: both
+  // write paths below run it through `sanitizeSlug` first (this handler for the
+  // generic types, handleUpdateProduct for products). Redirecting to the raw
+  // input would point the old URL at a 404 — "My Handle!" is stored as
+  // "my-handle" — which is worse than not redirecting at all. An empty result
+  // means the input was unusable; that save throws further down anyway.
+  const submittedHandle = sanitizeSlug(getFormString(formData, "handle"));
+  const redirectResource = redirectResourceFor(contentConfig.resourceType, itemId);
+  // A PRIMARY save carries every field, changed or not (buildFieldsForSave only
+  // filters for foreign locales), so `handle` is present on practically every
+  // save. Everything below therefore has to be cheap in the common case: the
+  // cache read happens only when a redirect could actually come of it, and the
+  // blog lookup only once the handle is known to have changed.
+  const previousHandle =
+    wantsHandleRedirect && redirectResource && locale === primaryLocale && submittedHandle
+      ? // A blog CONTAINER has no cache model, so its old handle is fetched
+        // live — the same one call `loadBlogHandle` already makes for articles.
+        redirectResource === "blog"
+        ? await loadBlogHandle(admin, itemId)
+        : await loadCachedHandle(db, session.shop, contentConfig.resourceType, itemId)
+      : null;
+  const handleChanged =
+    !!previousHandle && !!submittedHandle && normalizeHandle(previousHandle) !== normalizeHandle(submittedHandle);
+
+  /**
+   * Runs AFTER the save. `storedHandle` is the handle Shopify ECHOED back where
+   * the write path exposes one — the repo's echo rule applied to the redirect
+   * target: trusting `sanitizeSlug` to reproduce Shopify's own normalisation
+   * byte-for-byte is an assumption, and a redirect built on a wrong assumption
+   * points a live URL at a 404 while telling the merchant it is covered.
+   *
+   * Never throws. The content update it accompanies has already happened, so a
+   * failure here must not reach the caller's catch and be reported as a failed
+   * save — that would invite the merchant to make the same edit twice.
+   */
+  const finishHandleRedirect = async (storedHandle?: string | null): Promise<HandleRedirectNote | undefined> => {
+    if (!handleChanged || !redirectResource || !previousHandle) return undefined;
+    try {
+      const { applyHandleRedirect } = await import("~/services/seo/handle-redirect.server");
+      const result = await applyHandleRedirect(admin, session.shop, {
+        resource: redirectResource,
+        previousHandle,
+        nextHandle: storedHandle || submittedHandle,
+        wanted: wantsHandleRedirect,
+        // An article's URL contains its BLOG's handle, which this app does not
+        // cache (no Blog model). Fetched on demand — one call, and only when an
+        // article handle actually changed — because without it the redirect
+        // simply cannot be built and the old URL stays broken.
+        blogHandle:
+          redirectResource === "article"
+            ? await loadArticleBlogHandle(admin, db, session.shop, itemId)
+            : undefined,
+      });
+      // A code plus its one variable, never a sentence: the three UI languages
+      // are the client's to build.
+      return result.noteCode ? { code: result.noteCode, fromPath: result.fromPath } : undefined;
+    } catch (error) {
+      logger.warn("[UnifiedContent] Handle redirect failed after a successful save", {
+        context: "UnifiedContent",
+        itemId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { code: "failed" };
+    }
+  };
 
   try {
     // Special handling for Products - use dedicated product update handler
@@ -96,7 +184,17 @@ export async function handleUpdateContent(
       const productResult = await handleUpdateProduct(context, productFormData, itemId);
       // Inject actionType into the response for discriminated union matching
       const productBody = await readDataPayload<Record<string, unknown>>(productResult);
-      return json({ ...productBody, actionType: "updateContent" }, { status: readDataStatus(productResult) ?? 200 });
+      // Only after a SUCCESSFUL save: redirecting to a handle that was never
+      // written would point the old URL at a 404. The handle Shopify echoed
+      // back wins over the one we sent — see finishHandleRedirect.
+      const productRedirectNote =
+        productBody?.success === false
+          ? undefined
+          : await finishHandleRedirect(echoedHandle(productBody));
+      return json(
+        { ...productBody, actionType: "updateContent", ...(productRedirectNote ? { redirectNote: productRedirectNote } : {}) },
+        { status: readDataStatus(productResult) ?? 200 },
+      );
     }
 
     // Special handling for Metaobjects
@@ -456,7 +554,11 @@ export async function handleUpdateContent(
       marketId,
     });
 
-    return json({ ...result, actionType: "updateContent" });
+    const redirectNote =
+      (result as { success?: boolean })?.success === false
+        ? undefined
+        : await finishHandleRedirect(echoedHandle(result as Record<string, unknown>));
+    return json({ ...result, actionType: "updateContent", ...(redirectNote ? { redirectNote } : {}) });
   } catch (error: unknown) {
     const errorMsg = getFullErrorMessage(error);
     logger.error('Unified content update error', {
@@ -467,5 +569,88 @@ export async function handleUpdateContent(
       stack: error instanceof Error ? error.stack : undefined
     });
     return json({ success: false, error: errorMsg }, { status: 500 });
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Handle-redirect helpers (PLAN §Phase 3.3)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The handle Shopify actually STORED, dug out of whichever shape the write path
+ * returned: the product path answers `{ product }`, the generic one `{ item }`.
+ * Every one of those mutations already selects `handle`.
+ *
+ * The echo rule, applied to the redirect target. Without it the target is the
+ * value this app SENT, and that is only right for as long as `sanitizeSlug`
+ * matches Shopify's own normalisation exactly — an assumption, and one whose
+ * failure mode is a redirect pointing a live URL at a 404 while the merchant is
+ * told the old address is covered. Undefined when the path exposes nothing, in
+ * which case the caller falls back to the submitted handle.
+ */
+function echoedHandle(body: Record<string, unknown> | null | undefined): string | null {
+  if (!body) return null;
+  for (const key of ["product", "item"]) {
+    const resource = body[key] as { handle?: unknown } | null | undefined;
+    if (resource && typeof resource.handle === "string" && resource.handle) return resource.handle;
+  }
+  return null;
+}
+
+/** The handle currently in the cache — i.e. the one about to be replaced. */
+async function loadCachedHandle(
+  db: ContentActionHandlerContext["db"],
+  shop: string,
+  resourceType: string,
+  itemId: string,
+): Promise<string | null> {
+  try {
+    switch (resourceType) {
+      case "Product":    return (await db.product.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
+      case "Collection": return (await db.collection.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
+      case "Page":       return (await db.page.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
+      case "Article":    return (await db.article.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
+      default:           return null;
+    }
+  } catch {
+    // A cache miss is not a reason to fail the save — it only means no
+    // redirect can be offered for this edit.
+    return null;
+  }
+}
+
+/** A blog's handle, straight from Shopify. There is no Blog cache model, so
+ *  this is the only way to learn either an article's URL prefix or the blog
+ *  container's OWN pre-rename handle. */
+async function loadBlogHandle(
+  admin: ContentActionHandlerContext["admin"],
+  blogId: string,
+): Promise<string | null> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query blogHandleForRedirect($id: ID!) { blog(id: $id) { handle } }`,
+      { variables: { id: blogId } },
+    );
+    const data = await response.json();
+    return data?.data?.blog?.handle ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The blog handle that prefixes an ARTICLE's URL. */
+async function loadArticleBlogHandle(
+  admin: ContentActionHandlerContext["admin"],
+  db: ContentActionHandlerContext["db"],
+  shop: string,
+  articleId: string,
+): Promise<string | null> {
+  try {
+    const article = await db.article.findFirst({ where: { shop, id: articleId }, select: { blogId: true } });
+    if (!article?.blogId) return null;
+    return await loadBlogHandle(admin, article.blogId);
+  } catch {
+    return null;
   }
 }

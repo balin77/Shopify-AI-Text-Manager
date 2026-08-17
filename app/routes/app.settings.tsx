@@ -536,6 +536,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
 
+        // PLAN §Phase 3.3 — redirect the old URL when a handle changes.
+        seoAutoHandleRedirect: settings.seoAutoHandleRedirect ?? true,
+
         // Merchant-editable SEO character limits (Pro+). null = defaults
         // from character-limits.ts — no need to widen the client bundle with
         // the full default set, the SettingsSEOTab reads them from there.
@@ -755,6 +758,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
 
+      // PLAN §Phase 3.3 — auto-redirect on handle change. Read as
+      // present-or-absent, NOT as `=== "true"` on a possibly-missing field:
+      // this setting defaults to ON, so a payload that simply does not carry
+      // it (an older client, another caller of this action) would otherwise
+      // switch it off without anyone asking.
+      const rawAutoRedirect = formData.get("seoAutoHandleRedirect");
+      const autoRedirectUpdate =
+        rawAutoRedirect === null ? undefined : String(rawAutoRedirect) === "true";
+
       // Merchant-editable SEO character limits (Pro+). Parse first, then
       // decide whether the plan gate needs to fire — a payload that would
       // NOT change the stored value (e.g. a stale "{}" reset from a
@@ -816,12 +828,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         update: {
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
+          ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
         },
         create: {
           shop: session.shop,
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
+          ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
         },
       });

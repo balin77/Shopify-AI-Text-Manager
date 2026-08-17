@@ -52,6 +52,17 @@ model AISettings {
   //   "error"     — never rewrite merchant HTML; surface a clear instruction.
   themeRichtextMode String @default("autofix")
 
+  // PLAN_CONTENT_CREATION §Phase 3.3 / §A1 — create a URL redirect when a
+  // handle changes.
+  //
+  // Default ON, deliberately: changing a handle silently 404s every existing
+  // link to the old address (search results, the merchant's own newsletter,
+  // other sites), and this app changed handles in three places while creating
+  // a redirect in none of them. A stray redirect is untidy; a broken URL costs
+  // traffic. Off is for merchants still shaping their handles, where the
+  // redirects would only be noise.
+  seoAutoHandleRedirect Boolean @default(true)
+
   // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
   // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
   // ("gid://shopify/OnlineStoreTheme/<id>"). null = automatically use the
