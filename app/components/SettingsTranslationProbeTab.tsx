@@ -654,6 +654,12 @@ interface MenuProbeWrite {
   errors?: string[];
 }
 
+interface MenuProbeExistingScan {
+  apiVersion: string;
+  locale: string;
+  samples: Array<{ linkId: string; title: string; depth: number; existing: string | null; error?: string }>;
+}
+
 interface MenuTranslationProbeReport {
   generatedAt: string;
   shop: string;
@@ -661,6 +667,7 @@ interface MenuTranslationProbeReport {
   primaryLocale: string | null;
   writeLocale: string | null;
   versions: MenuProbeVersion[];
+  existingTranslations?: MenuProbeExistingScan;
   writeProbe: MenuProbeWrite;
   verdict: string[];
 }
@@ -744,6 +751,21 @@ function formatMenuProbeMarkdown(r: MenuTranslationProbeReport): string {
         `| ${p.depth} | ${p.title} | \`${p.derivedLinkId || "—"}\` | ${p.resolved ? "✅" : `❌${p.error ? ` (${p.error})` : ""}`} | ` +
           `${p.keys.join(", ") || "—"} | ${p.valueMatchesTitle ? "✅" : "—"} |`,
       );
+    }
+  }
+
+  lines.push("");
+  lines.push("## F. Existing translations on sub-level Links");
+  if (!r.existingTranslations) {
+    lines.push("Not scanned (no write locale, or no sub-level Link resource found).");
+  } else {
+    lines.push(`Read on API ${r.existingTranslations.apiVersion}, locale \`${r.existingTranslations.locale}\`.`);
+    lines.push("");
+    lines.push("| Depth | Title | Link GID | Existing translation |");
+    lines.push("|---|---|---|---|");
+    for (const s of r.existingTranslations.samples) {
+      const cell = s.error ? `ERROR: ${s.error}` : s.existing === null ? "— (empty slot)" : `"${s.existing}"`;
+      lines.push(`| ${s.depth} | ${s.title} | \`${s.linkId}\` | ${cell} |`);
     }
   }
 

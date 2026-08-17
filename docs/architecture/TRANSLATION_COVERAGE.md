@@ -45,7 +45,13 @@ Die Info-Architektur (5 Rubriken unter „Inhalte") ist die T&A-Struktur, gefalt
 
 T&A **exponiert nicht**: `PACKING_SLIP_TEMPLATE`, `PAYMENT_GATEWAY`, `SELLING_PLAN*`, `SELLING_PLAN_GROUP` — hier haben wir Coverage-Vorsprung.
 
-`MENU` / `LINK`: **ungemessen, nicht limitiert** — bis ein Probe-Report vorliegt. Beobachtet wurde ausschließlich, dass ein Menüpunkt der **obersten Ebene** eine Übersetzung annimmt und seine **Unterpunkte** nicht; daraus wurde „die API kann keine Menüs übersetzen" gemacht, was so nicht folgt (`MENU`/`LINK` sind seit 2021-10 im Enum). Zwei Erklärungen mit gegensätzlichen Konsequenzen: entweder werden die Child-Links nie **aufgezählt** (`nestedTranslatableResources(resourceType: LINK)` ist als „1 level of nesting" dokumentiert) — dann ist das unser Bug — oder sie haben gar keine translatable Resource — dann ist es Shopifys Grenze. [`/api/menu-translation-probe`](../../app/routes/api.menu-translation-probe.tsx) (Settings → Probes → Translation) entscheidet das auf einem Live-Shop, gegen die gepinnte API-Version **und** 2026-07. Erst danach wird hier ein Ergebnis eingetragen und der Hint in der UI angefasst.
+`MENU` / `LINK`: **gemessen (2026-08) — Shopify limitiert hier nichts, die Aufzählung war der Fehler.** Auf einem Live-Shop, identisch auf `2025-10` und `2026-07`: `nestedTranslatableResources(resourceType: LINK)` liefert **0 Links pro Menü** (nicht „nur die erste Ebene" — gar nichts), während der flache `translatableResources(resourceType: LINK)`-Sweep **59 Links zu 59 Menüpunkten über die Ebenen 1–3** zurückgibt, `absent: 0` auf jeder Ebene. Jede geprüfte `gid://shopify/MenuItem/<n>` löst als `gid://shopify/Link/<n>` auf — **gleiche Nummer** — mit passendem `title`; die ID ist also ableitbar, Aufzählung unnötig. Unterpunkte tragen bereits Übersetzungen aus Shopifys eigenem Editor (`Design-Vasen` → `Designer Vases`, Ebene 2). Einziger Key: `title`. **Offen bleibt der eigene Write-Echo** — der Write-Test hat auf dem Testshop noch keinen freien Slot gefunden; „lesbar und von anderen beschrieben" ist nicht „unser Write-Pfad trägt". Bis das gemessen ist, bleibt `/app/menus` read-only. Re-messbar in einem Klick: [`/api/menu-translation-probe`](../../app/routes/api.menu-translation-probe.tsx) (Settings → Probes → Translation).
+
+<details><summary>Frühere, falsche Fassung dieser Zeile</summary>
+
+„Shopify-API-limitiert: `MENU` / `LINK` können nur teilweise übersetzt werden." — abgeleitet aus der Beobachtung, dass ein Menüpunkt der obersten Ebene eine Übersetzung annahm und seine Unterpunkte nicht. Das folgte nicht: gemessen wurde nie, und die Ursache lag in der Aufzählung, nicht in der Plattform.
+
+</details>
 
 ## `translationsRegister`-Mechanik
 

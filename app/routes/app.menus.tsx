@@ -1,23 +1,29 @@
 /**
  * Menus Management - View store navigation menus
  *
- * Read-only, and the reason written here for a long time — "Shopify does not
- * support translating menu items" — is an ASSUMPTION that was never measured.
- * MENU and LINK have been TranslatableResourceType values since 2021-10, and
- * the reported symptom is narrower than the claim: a TOP-LEVEL item takes a
- * translation, its CHILDREN do not. Two very different things produce that,
- * and only one of them is the platform's fault:
+ * Read-only — but NOT for the reason this comment used to give. "Shopify does
+ * not support translating menu items" was an assumption, and it has since been
+ * measured to be wrong (2026-08, live shop, /api/menu-translation-probe under
+ * Settings → Probes → Translation; identical on 2025-10 and 2026-07):
  *
- *   - the child links are never ENUMERATED (a menu's
- *     nestedTranslatableResources(resourceType: LINK) is documented as
- *     covering one level of nesting), or
- *   - the child links have no translatable resource at all.
+ *   - Every menu item at EVERY depth has its own Link resource with the key
+ *     title. 59 links for 59 items across depths 1-3, none absent.
+ *   - gid://shopify/MenuItem/<n> corresponds to gid://shopify/Link/<n> — the
+ *     SAME number — so a child is addressable without any enumeration.
+ *   - Sub-items already carry translations written by Shopify's own editor.
+ *   - What does NOT work is the documented enumeration:
+ *     nestedTranslatableResources(resourceType: LINK) returns ZERO links for
+ *     every menu, at every depth. Reading menus as untranslatable is what that
+ *     empty answer looks like from the inside — which is how the wrong claim
+ *     got here in the first place.
  *
- * /api/menu-translation-probe (Settings → Probes → Translation) settles it on
- * a live shop in one click, across the pinned API version and 2026-07. Do not
- * build a write path here, and do not re-word the banner, before that report
- * exists — this comment is exactly how the unmeasured version of the answer
- * survived in the first place.
+ * So this page stays read-only for ONE remaining reason: this app has never
+ * registered a translation on such a Link and verified the echo. Readable, and
+ * written by somebody else, is not the same claim as "our write path works" —
+ * that gap is precisely the silent-no-op pattern the translation invariants in
+ * CLAUDE.md exist for. Close it with the probe's write step first; the banner
+ * text (t.content.menuLimitation) is wrong today and must be rewritten in the
+ * same change that ships the write path.
  */
 
 import { useState, useEffect, type ReactElement } from "react";
