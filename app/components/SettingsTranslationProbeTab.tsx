@@ -503,6 +503,8 @@ interface RedirectLocaleProbeReport {
   primaryDomain: string;
   locale: string | null;
   probePath: string;
+  /** Where the throwaway redirect points — the Location is read against it. */
+  target: string;
   redirectCreated: boolean;
   control: RedirectLocaleHop;
   prefixed: RedirectLocaleHop | null;
@@ -546,8 +548,9 @@ function RedirectLocaleProbeCard() {
         <Text as="h3" variant="headingSm">Redirect under a locale prefix</Text>
         <Text as="p" tone="subdued">
           Creates a throwaway redirect, fetches it once plain and once behind a published
-          language prefix, then deletes it again. Answers whether a translated handle can be
-          redirected at all. Nothing is left behind.
+          language prefix, then deletes it again. Answers TWO things: whether a translated
+          handle can be redirected at all, and whether the target keeps the prefix — the
+          second decides whether one row covers every locale. Nothing is left behind.
         </Text>
         <InlineStack gap="200" blockAlign="center">
           <Button onClick={runProbe} loading={loading}>Run redirect probe</Button>
@@ -562,6 +565,9 @@ function RedirectLocaleProbeCard() {
                 {report.verdict.map((v, i) => <Text as="p" key={i}>{v}</Text>)}
               </BlockStack>
             </Banner>
+            <Text as="p" variant="bodySm" tone="subdued">
+              <strong>Redirect under test:</strong> <code>{report.probePath}</code> → <code>{report.target}</code>
+            </Text>
             {hopRow("Control", report.control)}
             {hopRow(`Prefixed (${report.locale ?? "no second language"})`, report.prefixed)}
           </BlockStack>

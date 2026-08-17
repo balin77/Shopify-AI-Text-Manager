@@ -25,6 +25,11 @@
  *                                                anything and the probe says so.
  *   2. `https://<host>/<locale><probePath>`    — the actual question.
  *
+ * TWO questions, not one: does a prefixed path match a redirect at all, and
+ * does the TARGET keep the prefix. The second decides whether one unprefixed
+ * row can serve every locale or whether each locale needs its own, so the
+ * target is a distinctive path — with "/" the two answers are indistinguishable.
+ *
  * Redirects are NOT followed: the interesting evidence is the first response's
  * status and `Location`, and following would hide a 404 behind a 200.
  *
@@ -101,7 +106,15 @@ export const action = async (args: ActionFunctionArgs) => {
   // is to test the redirect table, not to collide with a real resource whose
   // own 200 would mask the answer.
   const probePath = `/contentpilot-redirect-probe-${Math.random().toString(36).slice(2, 10)}`;
-  const target = "/";
+  // The target must be DISTINCTIVE, and "/" is the one value that cannot be.
+  //
+  // The first run used "/", and the prefixed hop came back `Location: /en/`.
+  // That looks like "Shopify carried the prefix onto the target" — but it is
+  // exactly what a plain locale-root normalisation would look like too, so the
+  // run proved the redirect MATCHES under a prefix and left the target
+  // question open. A path nothing else could produce settles it: the Location
+  // is either `/<locale><target>` or `<target>`, and nothing else.
+  const target = `/contentpilot-redirect-target-${Math.random().toString(36).slice(2, 10)}`;
 
   const report: RedirectLocaleProbeReport = {
     generatedAt: new Date().toISOString(),
@@ -150,8 +163,29 @@ export const action = async (args: ActionFunctionArgs) => {
     } else if (report.prefixed && redirects(report.prefixed)) {
       report.verdict.push(
         `ANSWER: YES — \`/${locale}${probePath}\` also redirects (status ${report.prefixed.status}, Location \`${report.prefixed.location ?? "none"}\`).`,
-        "Shopify applies a path-based redirect underneath the locale prefix, so bulk-translate's foreign handles CAN be redirected — check whether the Location keeps the prefix, because that decides whether the target needs one.",
+        "Shopify applies a path-based redirect underneath the locale prefix, so a translated handle CAN be redirected.",
       );
+
+      // The second half, decided here rather than by eye. It is what picks the
+      // design: if the prefix is CARRIED, one unprefixed row covers every
+      // locale. If it is DROPPED, an unprefixed row would send a Spanish
+      // visitor from /es/alt to the PRIMARY-locale /neu — kicking them out of
+      // their own language — and each locale would need its own prefixed row.
+      const location = report.prefixed.location ?? "";
+      const prefixedTarget = `/${locale}${target}`;
+      if (location === prefixedTarget) {
+        report.verdict.push(
+          `The prefix is CARRIED onto the target (\`${location}\`). Store the redirect UNPREFIXED — Shopify covers every locale from the one row.`,
+        );
+      } else if (location === target) {
+        report.verdict.push(
+          `The prefix is DROPPED (\`${location}\`, not \`${prefixedTarget}\`). An unprefixed row would send a visitor out of their language, so each locale needs its OWN prefixed row — and whether Shopify even matches a prefixed PATH is then the next thing to measure.`,
+        );
+      } else {
+        report.verdict.push(
+          `INCONCLUSIVE on the target: expected \`${prefixedTarget}\` or \`${target}\`, got \`${location || "no Location header"}\`. Do not design against this run.`,
+        );
+      }
     } else {
       report.verdict.push(
         `ANSWER: NO — the control redirects but \`/${locale}${probePath}\` returned ${report.prefixed?.status ?? "no response"}.`,
