@@ -5,7 +5,7 @@
  * Handles: generateAltText, generateAllAltTexts, translateAltText, translateAltTextToAllLocales
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
@@ -18,10 +18,13 @@ import { getFormInt, getFormJSON, getFormString } from "../../utils/form-data.ut
 import { isValidLocale } from "../../utils/validation";
 import { sanitizePromptInput } from "../../utils/prompt-sanitizer";
 import { getFullErrorMessage } from "../../utils/error-handler";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { AISettings, AIInstructions } from "@prisma/client";
+import type { SeoLimits } from "../../utils/character-limits";
+import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
+import type { DataResponse } from "~/types/data-response";
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -32,6 +35,11 @@ export interface ContentActionHandlerContext {
   aiInstructions: AIInstructions | null;
   itemId: string;
   seoTitleMaxChars: number;
+  /** Fully-resolved merchant SEO character limits (defaults filled in). */
+  seoLimits: SeoLimits;
+  /** Merchant translation policy — "exact" preserves source length,
+   * "seo_optimized" appends per-field caps to the translate prompt. */
+  translationMode: TranslationMode;
   shopifyContentService: ShopifyContentService;
   provider: ReturnType<typeof toValidProvider>;
   serviceConfig: {
@@ -46,20 +54,107 @@ export interface ContentActionHandlerContext {
 }
 
 // ============================================================================
+// SHARED BUILDING BLOCKS
+// Also used by the SEO performance page's alt-text bridge
+// (app.seo.performance.tsx, accessibility plan §7) — keep them the single
+// source of truth for the alt-text prompt and the primary-locale save, so the
+// two entry points cannot drift apart.
+// ============================================================================
+
+/**
+ * The alt-text generation prompt. Sanitizes the product title and returns it
+ * alongside the prompt because `AIService.generateImageAltText` wants the
+ * sanitized title as its own argument too.
+ */
+export function buildProductAltTextPrompt(opts: {
+  productTitle: string;
+  imageUrl: string;
+  aiInstructions: Pick<AIInstructions, "productAltTextFormat" | "productAltTextInstructions"> | null;
+  /** Output language, e.g. the shop's main language. */
+  language: string;
+}): { prompt: string; sanitizedTitle: string } {
+  const sanitizedTitle = sanitizePromptInput(opts.productTitle || "", { fieldType: "title" });
+  let prompt = `Create an optimized alt text for a product image.
+Product: ${sanitizedTitle}
+Image URL: ${opts.imageUrl}`;
+
+  if (opts.aiInstructions?.productAltTextFormat) {
+    prompt += `\n\nFormat Example:\n${opts.aiInstructions.productAltTextFormat}`;
+  }
+  if (opts.aiInstructions?.productAltTextInstructions) {
+    prompt += `\n\nInstructions:\n${opts.aiInstructions.productAltTextInstructions}`;
+  }
+  prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${opts.language}.`;
+  return { prompt, sanitizedTitle };
+}
+
+/**
+ * Primary-locale alt-text save: `fileUpdate` with userErrors check, then the
+ * shop-scoped ProductImage cache write (R4-DI7: per-shop-unique media GIDs can
+ * collide across tenants, so the write is always scoped by the owning
+ * product's shop). The DB write is best-effort — Shopify is the source of
+ * truth — but logged so a real failure stays observable.
+ *
+ * `apiError` is set when the mutation itself failed (network/GraphQL error);
+ * `userErrors` carries Shopify's validation messages. `saved` is true only
+ * when Shopify accepted the update.
+ */
+export async function saveImageAltTextPrimary(opts: {
+  admin: AdminApiContext;
+  db: PrismaClient;
+  shop: string;
+  mediaId: string;
+  altText: string;
+}): Promise<{ saved: boolean; userErrors: string[]; apiError?: string }> {
+  const { admin, db, shop, mediaId, altText } = opts;
+  try {
+    const r = await admin.graphql(
+      `#graphql
+        mutation fileUpdate($files: [FileUpdateInput!]!) {
+          fileUpdate(files: $files) { userErrors { field message } }
+        }`,
+      { variables: { files: [{ id: mediaId, alt: altText }] } }
+    );
+    const d = await r.json() as any;
+    const userErrors: Array<{ message: string }> = d.data?.fileUpdate?.userErrors ?? [];
+    if (userErrors.length > 0) {
+      return { saved: false, userErrors: userErrors.map((e) => e.message) };
+    }
+  } catch (err: unknown) {
+    logger.error("[saveImageAltText] fileUpdate error", { error: String(err) });
+    return { saved: false, userErrors: [], apiError: String(err) };
+  }
+
+  await db.productImage.updateMany({
+    where: { mediaId, product: { shop } },
+    data: { altText: altText || null, altTextModifiedAt: new Date() },
+  }).catch((e) => {
+    logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
+  });
+
+  return { saved: true, userErrors: [] };
+}
+
+// ============================================================================
 // GENERATE ALT-TEXT (single image)
 // ============================================================================
 
 export async function handleGenerateAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
   const imageUrl = getFormString(formData, "imageUrl");
   const productTitle = getFormString(formData, "productTitle");
-  const sanitizedProductTitle = sanitizePromptInput(productTitle || "", { fieldType: "title" });
   const mainLanguage = getFormString(formData, "mainLanguage");
+  const { prompt, sanitizedTitle: sanitizedProductTitle } = buildProductAltTextPrompt({
+    productTitle,
+    imageUrl,
+    aiInstructions,
+    language: mainLanguage,
+  });
 
   // Create task entry
   const task = await db.task.create({
@@ -83,20 +178,6 @@ export async function handleGenerateAltText(
       where: { id: task.id },
       data: { status: "queued", progress: 10 },
     });
-
-    let prompt = `Create an optimized alt text for a product image.
-Product: ${sanitizedProductTitle}
-Image URL: ${imageUrl}`;
-
-    if (aiInstructions?.productAltTextFormat) {
-      prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
-    }
-
-    if (aiInstructions?.productAltTextInstructions) {
-      prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
-    }
-
-    prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
 
     const altText = await aiServiceWithTask.generateImageAltText(imageUrl, sanitizedProductTitle, prompt);
 
@@ -132,7 +213,7 @@ Image URL: ${imageUrl}`;
 export async function handleGenerateAllAltTexts(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
 
   const imagesData = getFormJSON<Array<{ url: string }>>(formData, "imagesData");
@@ -174,20 +255,12 @@ export async function handleGenerateAllAltTexts(
     for (let i = 0; i < imagesData.length; i++) {
       const image = imagesData[i];
       try {
-        let prompt = `Create an optimized alt text for a product image.
-Product: ${sanitizedProductTitle}
-Image URL: ${image.url}`;
-
-        if (aiInstructions?.productAltTextFormat) {
-          prompt += `\n\nFormat Example:\n${aiInstructions.productAltTextFormat}`;
-        }
-
-        if (aiInstructions?.productAltTextInstructions) {
-          prompt += `\n\nInstructions:\n${aiInstructions.productAltTextInstructions}`;
-        }
-
-        prompt += `\n\nReturn ONLY the alt text, without explanations. Output the result in ${mainLanguage}.`;
-
+        const { prompt } = buildProductAltTextPrompt({
+          productTitle,
+          imageUrl: image.url,
+          aiInstructions,
+          language: mainLanguage,
+        });
         const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt);
         generatedAltTexts[i] = altText;
 
@@ -237,7 +310,7 @@ Image URL: ${image.url}`;
 export async function handleTranslateAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { session, contentConfig, db, itemId, provider, serviceConfig } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
@@ -318,7 +391,7 @@ export async function handleTranslateAltText(
 export async function handleTranslateAltTextToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, session, contentConfig, db, itemId, provider, serviceConfig, shopifyContentService } = ctx;
 
   const imageIndex = getFormInt(formData, "imageIndex") ?? 0;
@@ -659,7 +732,7 @@ export async function handleGenerateAltTextFromSku(
 export async function handleSaveImageAltText(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, db, session } = ctx;
   const mediaId = getFormString(formData, "mediaId");
   const altText = getFormString(formData, "altText") ?? "";
@@ -673,34 +746,12 @@ export async function handleSaveImageAltText(
   let shopifySaved = false;
 
   if (!locale || locale === primaryLocale) {
-    // Primary locale: update media alt text via fileUpdate
-    try {
-      const r = await admin.graphql(
-        `#graphql
-          mutation fileUpdate($files: [FileUpdateInput!]!) {
-            fileUpdate(files: $files) { userErrors { field message } }
-          }`,
-        { variables: { files: [{ id: mediaId, alt: altText }] } }
-      );
-      const d = await r.json() as any;
-      shopifySaved = (d.data?.fileUpdate?.userErrors ?? []).length === 0;
-    } catch (err: unknown) {
-      logger.error("[saveImageAltText] fileUpdate error", { error: String(err) });
+    // Primary locale: fileUpdate + shop-scoped cache write (shared helper).
+    const result = await saveImageAltTextPrimary({ admin, db, shop: session.shop, mediaId, altText });
+    if (result.apiError) {
       return json({ success: false, error: "Shopify API error" }, { status: 500 });
     }
-
-    if (shopifySaved) {
-      // R4-DI7: shop-scoped (see note above) so a cross-shop media-GID
-      // collision can't overwrite another tenant's row.
-      await db.productImage.updateMany({
-        where: { mediaId, product: { shop: session.shop } },
-        data: { altText: altText || null, altTextModifiedAt: new Date() },
-      }).catch((e) => {
-        // Best-effort cache write (Shopify is source of truth) — but log
-        // instead of fully swallowing, so a real failure is observable.
-        logger.warn("[saveImageAltText] DB cache update failed", { error: e instanceof Error ? e.message : String(e) });
-      });
-    }
+    shopifySaved = result.saved;
   } else {
     // Foreign locale: use translationsRegister (needs digest from Shopify)
     let altDigest: string | undefined;
@@ -783,7 +834,7 @@ export async function handleSaveImageAltText(
 export async function handleLoadImageAltTranslations(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
+): Promise<DataResponse> {
   const { db } = ctx;
   const productId = getFormString(formData, "productId") || ctx.itemId;
   const locale = getFormString(formData, "locale");

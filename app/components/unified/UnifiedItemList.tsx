@@ -173,6 +173,11 @@ interface UnifiedItemListProps {
     filterTooltip?: string;
     /** Title inside the type-filter popover */
     filterTitle?: string;
+    /** Labels for the hover status badge, keyed by the raw Shopify
+     *  ProductStatus (ACTIVE / DRAFT / UNLISTED / ARCHIVED). Optional and
+     *  looked up leniently: a caller that passes nothing, or a status with no
+     *  entry, still renders the raw enum rather than an empty badge. */
+    statusLabels?: Record<string, string | undefined>;
   };
 }
 
@@ -388,6 +393,20 @@ export function UnifiedItemList({
     setCurrentPage(1);
   };
 
+  /** Badge tone for a product status. Uppercases first, exactly like
+   *  `getStatusColor` below — the stripe and the badge must not disagree
+   *  because one normalized the case and the other didn't. */
+  const statusTone = (status: string): "success" | "attention" | "info" => {
+    switch (status.toUpperCase()) {
+      case "ACTIVE":
+        return "success";
+      case "UNLISTED":
+        return "attention";
+      default:
+        return "info";
+    }
+  };
+
   // Get status color for stripe
   const getStatusColor = (status?: string) => {
     if (!status) return "#babfc3";
@@ -395,6 +414,11 @@ export function UnifiedItemList({
     switch (status.toUpperCase()) {
       case "ACTIVE":
         return "#00a047"; // Success green
+      case "UNLISTED":
+        // A real Shopify status: the product IS live, it just needs a direct
+        // link. Given its own amber rather than falling through to the default
+        // gray, which read as "not published" — the opposite of the truth.
+        return "#b98900"; // Polaris caution/amber
       case "DRAFT":
         return "#8c9196"; // Gray
       case "ARCHIVED":
@@ -524,8 +548,13 @@ export function UnifiedItemList({
                   borderRadius: "8px",
                 }}
               >
-                <Badge tone={item.status === "ACTIVE" ? "success" : "info"}>
-                  {item.status}
+                {/* Translated where a label exists, raw enum otherwise — the
+                    badge must never render empty just because a status has no
+                    translation yet. UNLISTED gets the same caution tone as its
+                    stripe: the product IS live, it just needs a direct link,
+                    so "info" (which reads like DRAFT/ARCHIVED) understates it. */}
+                <Badge tone={statusTone(item.status)}>
+                  {t.statusLabels?.[item.status.toUpperCase()] || item.status}
                 </Badge>
               </div>
             )}
@@ -549,8 +578,11 @@ export function UnifiedItemList({
 
   const itemRenderer = renderItem || defaultRenderItem;
 
+  // Width from --app-list-column-width (responsive.css :root) — the same token
+  // the Settings tab nav and the Menus list spend, so every "pick an item"
+  // column of the app is one number. Never hardcode it here.
   return (
-    <div ref={wrapperRef} style={{ width: "330px", flexShrink: 0, height: "100%", overflow: "hidden" }}>
+    <div ref={wrapperRef} style={{ width: "var(--app-list-column-width)", flexShrink: 0, height: "100%", overflow: "hidden" }}>
       <style dangerouslySetInnerHTML={{ __html: `
         /* UnifiedItemList - Full height card with scrollable list */
         .unified-item-list-wrapper {

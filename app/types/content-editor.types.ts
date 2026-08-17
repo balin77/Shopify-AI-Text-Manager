@@ -4,7 +4,7 @@
  * Shared types for the unified content editor system
  */
 
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
 
@@ -195,7 +195,14 @@ export type FetcherData =
 // TRANSLATION STRINGS TYPE
 // ============================================================================
 
-export type TranslationValue = string | Record<string, string> | undefined;
+// Recursive so i18n blocks may nest beyond a single level (e.g. the SEO tab's
+// `seo.sections.<id>.label` and `seo.dashboard.problems.*`). Only used as the
+// loose structural target for TranslationStrings; the precise per-locale type
+// remains `typeof de` (Translation), so this never weakens real key checking.
+// `string[]` because some blocks are genuinely lists — e.g. the per-embed
+// activation steps in settings, which are numbered in the UI and must stay one
+// translatable unit rather than step1/step2/step3 keys.
+export type TranslationValue = string | string[] | { [key: string]: TranslationValue } | undefined;
 
 export interface HelpContent {
   title: string;
@@ -245,7 +252,8 @@ export interface FieldRenderProps {
   isTranslated?: boolean;
   isLoading?: boolean;
   sourceTextAvailable?: boolean;
-  onGenerateAI?: () => void;
+  /** Receives the merchant's ad-hoc instruction from the AIInstructionPrompt box (undefined = generate as before). */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
@@ -389,8 +397,12 @@ export interface EditorState {
 export interface EditorHandlers {
   handleSave: () => void;
   handleDiscard: () => void;
-  handleGenerateAI: (fieldKey: string) => void;
+  handleGenerateAI: (fieldKey: string, userInstruction?: string) => void;
   handleFormatAI: (fieldKey: string) => void;
+  /** Work the active language's tracked keywords into every field missing them. */
+  handleInsertKeywords: () => void;
+  /** True while that multi-field run is in flight. */
+  isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
   handleCopyField: (fieldKey: string) => void;
@@ -413,7 +425,7 @@ export interface EditorHandlers {
   handleClearAllForLocaleConfirm: () => void;
   handleTranslateAllForLocale: () => void;
   handleAltTextChange: (imageIndex: number, value: string) => void;
-  handleGenerateAltText: (imageIndex: number) => void;
+  handleGenerateAltText: (imageIndex: number, userInstruction?: string) => void;
   handleGenerateAllAltTexts: () => void;
   handleCopyAltText: (imageIndex: number) => void;
   handleCopyAltTextToAllLocales: (imageIndex: number) => void;
@@ -459,6 +471,14 @@ export interface UseContentEditorProps {
 
   /** Optional initial item ID to select on mount (e.g. from URL params) */
   initialItemId?: string;
+
+  /**
+   * Optional locale to open in, from `?locale=xx` on a deep link (the SEO
+   * dashboard links here with the locale it was showing). Ignored unless it is
+   * a published foreign locale of this shop — an unknown or stale code falls
+   * back to the primary language rather than opening an empty editor.
+   */
+  initialLocale?: string;
 }
 
 export interface UseContentEditorReturn {

@@ -16,6 +16,35 @@ export const TRANSLATE_CONTENT = `#graphql
   }
 `;
 
+/**
+ * TRANSLATE_CONTENT with the FULL echo selection required for verified saves
+ * (Plan §14 no. 7): `market` is an OBJECT on the Translation type — a flat
+ * `marketId` does not exist in the response, so market-aware callers must
+ * select `market { id }`. Kept as a separate document (instead of widening
+ * TRANSLATE_CONTENT) so the many existing callers keep their exact response
+ * shape. Used by registerAndVerify (bulk-editor translations.server.ts) — the
+ * echo (`translations`) is the ONLY proof a key was actually stored;
+ * `userErrors: []` alone is not (CLAUDE.md invariant).
+ */
+export const TRANSLATE_CONTENT_VERIFIED = `#graphql
+  mutation translateContentVerified($resourceId: ID!, $translations: [TranslationInput!]!) {
+    translationsRegister(resourceId: $resourceId, translations: $translations) {
+      userErrors {
+        field
+        message
+      }
+      translations {
+        key
+        locale
+        value
+        market {
+          id
+        }
+      }
+    }
+  }
+`;
+
 // $marketIds is optional: omit (or pass null) to remove the GLOBAL translation
 // (all markets); pass [gid://shopify/Market/<id>] to remove only that market's
 // override while the global translation survives. Existing callers that don't
@@ -106,6 +135,8 @@ export const UPDATE_ARTICLE = `#graphql
           altText
           url
         }
+        seoTitle: metafield(namespace: "global", key: "title_tag") { value }
+        seoDescription: metafield(namespace: "global", key: "description_tag") { value }
       }
       userErrors {
         field
@@ -149,6 +180,25 @@ export const UPDATE_SHOP_POLICY = `#graphql
  *       Do NOT remove it — it will be activated once the exemption is granted.
  *       See ENABLE_THEME_PRIMARY_EDIT in app/config/constants.ts for details.
  */
+/**
+ * Delete theme files. Needed to undo a file the app CREATED — an upsert can't
+ * express "put it back to not existing", and leaving a broken generated
+ * template behind is worse than never having written it.
+ */
+export const DELETE_THEME_FILES = `#graphql
+  mutation deleteThemeFiles($themeId: ID!, $files: [String!]!) {
+    themeFilesDelete(themeId: $themeId, files: $files) {
+      deletedThemeFiles {
+        filename
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
 export const UPSERT_THEME_FILES = `#graphql
   mutation upsertThemeFiles($themeId: ID!, $files: [OnlineStoreThemeFilesUpsertFileInput!]!) {
     themeFilesUpsert(themeId: $themeId, files: $files) {
@@ -331,6 +381,53 @@ export const METAOBJECT_UPDATE = `#graphql
           type
         }
       }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+// SEO tab Phase 3: native URL redirect CRUD (Online Store navigation).
+// Requires the `write_online_store_navigation` access scope. Always read
+// `userErrors` — Shopify reports loops/duplicates/invalid paths there.
+export const URL_REDIRECT_CREATE = `#graphql
+  mutation urlRedirectCreate($urlRedirect: UrlRedirectInput!) {
+    urlRedirectCreate(urlRedirect: $urlRedirect) {
+      urlRedirect {
+        id
+        path
+        target
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const URL_REDIRECT_UPDATE = `#graphql
+  mutation urlRedirectUpdate($id: ID!, $urlRedirect: UrlRedirectInput!) {
+    urlRedirectUpdate(id: $id, urlRedirect: $urlRedirect) {
+      urlRedirect {
+        id
+        path
+        target
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export const URL_REDIRECT_DELETE = `#graphql
+  mutation urlRedirectDelete($id: ID!) {
+    urlRedirectDelete(id: $id) {
+      deletedUrlRedirectId
       userErrors {
         field
         message

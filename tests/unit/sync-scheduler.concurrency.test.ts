@@ -98,7 +98,14 @@ async function waitForSyncAll() {
   throw new Error('syncAll() was never reached');
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Warm the module registry BEFORE the first cycle. runSyncCycle reaches
+  // syncAll() through `await import("../db.server")`, and paying that
+  // resolution inside the first cycle blew the 2s poll below (and then the
+  // 10s test timeout) — while every later test found the module cached and
+  // passed. That made the file order-dependent: green in a full run, red on
+  // its own, and red again once the suite's composition shifted.
+  await import('~/db.server');
   vi.clearAllMocks();
   // Reset the singleton's private scheduling state between tests.
   sched.activeTimers.clear();

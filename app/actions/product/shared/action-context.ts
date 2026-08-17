@@ -11,7 +11,7 @@ import type { Session } from "@shopify/shopify-api";
 import { AIService, type AIProvider, toValidProvider } from "../../../../src/services/ai.service";
 import { TranslationService } from "../../../../src/services/translation.service";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 
 interface AIConfig {

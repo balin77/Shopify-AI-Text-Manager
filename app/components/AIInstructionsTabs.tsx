@@ -1,15 +1,17 @@
 import { useState, useEffect } from "react";
-import { BlockStack, Text, Button, InlineStack, Card, TextField } from "@shopify/polaris";
+import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { ToggleSwitch } from "./ToggleSwitch";
 import { HelpTooltip } from "./HelpTooltip";
+import { SettingsGlossaryTab, type GlossaryEntryDto, type GlossaryShopLocale } from "./SettingsGlossaryTab";
 import {
   getDefaultInstructions,
   getDefaultForField,
   DEFAULT_GENERAL_INSTRUCTIONS,
   type EntityType
 } from "../constants/aiInstructionsDefaults";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 
 interface Instructions {
@@ -80,12 +82,42 @@ interface AIInstructionsTabsProps {
   fetcher: FetcherWithComponents<any>;
   readOnly?: boolean;
   onHasChangesChange?: (hasChanges: boolean) => void;
+  // Glossary — rendered inside the "Übersetzungen" sub-section.
+  glossaryEntries: GlossaryEntryDto[];
+  shopLocales: GlossaryShopLocale[];
+  primaryShopLocale: string;
+  onGlossaryHasChangesChange?: (hasChanges: boolean) => void;
+  // AISettings.translationMode — "exact" preserves source length,
+  // "seo_optimized" tells the AI to paraphrase within SEO caps. Saved as part
+  // of the same "saveInstructions" submit so a single button covers the
+  // entire Translations sub-section.
+  translationMode: "exact" | "seo_optimized";
+  /**
+   * AISettings.keywordAwareTranslation — whether a translation is phrased so
+   * the TARGET locale's own tracked keyword survives, instead of being a
+   * literal rendering of the primary text.
+   */
+  keywordAwareTranslation: boolean;
 }
 
-export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, onHasChangesChange }: AIInstructionsTabsProps) {
+export function AIInstructionsTabs({
+  instructions,
+  fetcher,
+  readOnly = false,
+  onHasChangesChange,
+  glossaryEntries,
+  shopLocales,
+  primaryShopLocale,
+  onGlossaryHasChangesChange,
+  translationMode,
+  keywordAwareTranslation,
+}: AIInstructionsTabsProps) {
   const { t } = useI18n();
+  const [subSection, setSubSection] = useState<"content" | "translations">("content");
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
+  const [localTranslationMode, setLocalTranslationMode] = useState<"exact" | "seo_optimized">(translationMode);
+  const [localKeywordAware, setLocalKeywordAware] = useState(keywordAwareTranslation);
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -168,6 +200,11 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
       formData.append(key, value);
     });
 
+    // Translation mode piggybacks on the same save so one button covers the
+    // entire Translations sub-section (radio + custom instructions).
+    formData.append("translationMode", localTranslationMode);
+    formData.append("keywordAwareTranslation", String(localKeywordAware));
+
     fetcher.submit(formData, { method: "POST" });
   };
 
@@ -178,8 +215,11 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
     }));
   };
 
-  // Check if there are unsaved changes
-  const hasChanges = JSON.stringify(localInstructions) !== JSON.stringify(instructions);
+  // Check if there are unsaved changes (instructions OR translation mode)
+  const hasChanges =
+    JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
+    localTranslationMode !== translationMode ||
+    localKeywordAware !== keywordAwareTranslation;
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -190,9 +230,12 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
 
   const handleDiscard = () => {
     setLocalInstructions(instructions);
+    setLocalTranslationMode(translationMode);
+    setLocalKeywordAware(keywordAwareTranslation);
   };
 
   return (
+    <BlockStack gap="400">
     <Card>
       <BlockStack gap="500">
         {/* Header with Title and Save/Discard Buttons */}
@@ -222,7 +265,45 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
           }
         </Text>
 
-        {/* Custom Tab Navigation */}
+        {/* Top-level sub-section switch: "Inhalte erstellen" | "Übersetzungen".
+            Content generation shows the entity tab strip; translations shows
+            only the Translate Instructions block (and Glossary below the card). */}
+        <div style={{ borderBottom: "1px solid #e1e3e5" }}>
+          <InlineStack gap="0">
+            {(["content", "translations"] as const).map((section) => {
+              const isActive = subSection === section;
+              const label = section === "content"
+                ? (t.settings.subtabContentGeneration || "Inhalte erstellen")
+                : (t.settings.subtabTranslations || "Übersetzungen");
+              return (
+                <button
+                  key={section}
+                  onClick={() => setSubSection(section)}
+                  style={{
+                    padding: "0.75rem 1.25rem",
+                    background: "none",
+                    border: "none",
+                    borderBottom: isActive ? "3px solid #008060" : "3px solid transparent",
+                    marginBottom: "-1px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Text
+                    as="span"
+                    variant="bodyMd"
+                    fontWeight={isActive ? "bold" : "regular"}
+                    tone={isActive ? "base" : "subdued"}
+                  >
+                    {label}
+                  </Text>
+                </button>
+              );
+            })}
+          </InlineStack>
+        </div>
+
+        {/* Custom Tab Navigation — only visible in "content" sub-section */}
+        {subSection === "content" && (
         <div style={{
           background: "#f6f6f7",
           borderRadius: "8px",
@@ -259,12 +340,123 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
           })}
         </InlineStack>
       </div>
+      )}
 
       {/* Tab Content */}
       <div style={{ opacity: readOnly ? 0.6 : 1, pointerEvents: readOnly ? "none" : "auto" }}>
         <BlockStack gap="400" inlineAlign="stretch">
-            {/* GENERAL TAB */}
-            {selectedTab === 0 && (
+            {/* TRANSLATIONS SUB-SECTION — mode picker + Translate Instructions block */}
+            {subSection === "translations" && (
+              <BlockStack gap="400">
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="400">
+                  <InlineStack gap="100" blockAlign="center">
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.translationModeLabel || 'Übersetzungsstrategie'}
+                    </Text>
+                  </InlineStack>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {t.settings.translationModeDescription ||
+                      'Steuert, wie die KI Übersetzungen an die SEO-Zeichenlimits anpasst. Die Limits selbst pflegst du unter SEO.'}
+                  </Text>
+                  <ChoiceList
+                    title={t.settings.translationModeLabel || 'Übersetzungsstrategie'}
+                    titleHidden
+                    selected={[localTranslationMode]}
+                    onChange={(selected) => {
+                      const next = selected[0];
+                      if (next === 'exact' || next === 'seo_optimized') {
+                        setLocalTranslationMode(next);
+                      }
+                    }}
+                    disabled={readOnly}
+                    choices={[
+                      {
+                        label: t.settings.translationModeExact || 'Exakte Übersetzung (empfohlen)',
+                        value: 'exact',
+                        helpText:
+                          t.settings.translationModeExactHelp ||
+                          'Der Ausgangstext wird 1:1 übersetzt. Länge bleibt erhalten — wichtig für Rechtstexte, AGB, Widerruf.',
+                      },
+                      {
+                        label: t.settings.translationModeSeo || 'SEO-optimierte Übersetzung',
+                        value: 'seo_optimized',
+                        helpText:
+                          t.settings.translationModeSeoHelp ||
+                          'Bei SEO-Titel, Meta-Beschreibung, Titel und Alt-Text darf die KI kürzen/umschreiben, um die SEO-Limits einzuhalten. Bodies bleiben unverändert.',
+                      },
+                    ]}
+                  />
+                  {localTranslationMode === 'seo_optimized' && (
+                    <Banner tone="info">
+                      <Text as="p" variant="bodySm">
+                        {t.settings.translationModeSeoNote ||
+                          'Aktiv nur für SEO-kritische Felder. Beschreibungen/Bodies werden weiterhin exakt übersetzt.'}
+                      </Text>
+                    </Banner>
+                  )}
+                </BlockStack>
+              </div>
+              {/* Keyword-aware translation. Sits between the strategy picker
+                  and the free-text instructions because it is the same kind of
+                  knob: it changes HOW the AI translates, not what it is told
+                  about the shop. Saved with the rest of this tab. */}
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {t.settings.keywordAwareTranslation}
+                  </Text>
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                    <ToggleSwitch
+                      checked={localKeywordAware}
+                      onChange={setLocalKeywordAware}
+                      disabled={readOnly}
+                    />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.settings.keywordAwareTranslationHelp}
+                    </Text>
+                  </InlineStack>
+                </BlockStack>
+              </div>
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="400">
+                  <InlineStack gap="100" blockAlign="center">
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.translateInstructionsLabel || 'Translate Instructions'}
+                    </Text>
+                    <HelpTooltip helpKey="translateInstructions" />
+                  </InlineStack>
+                  <div>
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="p" variant="bodyMd" fontWeight="medium">
+                        {t.settings.instructionsLabel || 'Instructions'}
+                      </Text>
+                      <Button
+                        size="slim"
+                        onClick={() => handleFieldChange('translateInstructions', DEFAULT_GENERAL_INSTRUCTIONS.translateInstructions)}
+                        tone="critical"
+                        variant="plain"
+                      >
+                        {t.settings?.resetField || "Reset"}
+                      </Button>
+                    </InlineStack>
+                    <TextField
+                      label=""
+                      value={localInstructions.translateInstructions || ''}
+                      onChange={(v) => handleFieldChange('translateInstructions', v)}
+                      multiline={8}
+                      placeholder={t.settings.translateInstructionsPlaceholder || 'Instructions for the Translate function...'}
+                      helpText={`${(localInstructions.translateInstructions || '').length} ${t.products.characters}`}
+                      autoComplete="off"
+                    />
+                  </div>
+                </BlockStack>
+              </div>
+              </BlockStack>
+            )}
+
+            {/* CONTENT GENERATION SUB-SECTION — original entity tabs */}
+            {subSection === "content" && selectedTab === 0 && (
               <>
                 <Text as="p" variant="bodyMd" tone="subdued">
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
@@ -341,47 +533,11 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
                     </div>
                   </BlockStack>
                 </div>
-
-                {/* Translate Instructions */}
-                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                  <BlockStack gap="400">
-                    <InlineStack gap="100" blockAlign="center">
-                      <Text as="h3" variant="headingMd">
-                        {t.settings.translateInstructionsLabel || 'Translate Instructions'}
-                      </Text>
-                      <HelpTooltip helpKey="translateInstructions" />
-                    </InlineStack>
-                    <div>
-                      <InlineStack align="space-between" blockAlign="center">
-                        <Text as="p" variant="bodyMd" fontWeight="medium">
-                          {t.settings.instructionsLabel || 'Instructions'}
-                        </Text>
-                        <Button
-                          size="slim"
-                          onClick={() => handleFieldChange('translateInstructions', DEFAULT_GENERAL_INSTRUCTIONS.translateInstructions)}
-                          tone="critical"
-                          variant="plain"
-                        >
-                          {t.settings?.resetField || "Reset"}
-                        </Button>
-                      </InlineStack>
-                      <TextField
-                        label=""
-                        value={localInstructions.translateInstructions || ''}
-                        onChange={(v) => handleFieldChange('translateInstructions', v)}
-                        multiline={8}
-                        placeholder={t.settings.translateInstructionsPlaceholder || 'Instructions for the Translate function...'}
-                        helpText={`${(localInstructions.translateInstructions || '').length} ${t.products.characters}`}
-                        autoComplete="off"
-                      />
-                    </div>
-                  </BlockStack>
-                </div>
               </>
             )}
 
             {/* PRODUCTS TAB */}
-            {selectedTab === 1 && (
+            {subSection === "content" && selectedTab === 1 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldAltText}
@@ -485,7 +641,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* COLLECTIONS TAB */}
-            {selectedTab === 2 && (
+            {subSection === "content" && selectedTab === 2 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldTitle}
@@ -573,7 +729,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* BLOGS TAB */}
-            {selectedTab === 3 && (
+            {subSection === "content" && selectedTab === 3 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldTitle}
@@ -661,7 +817,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* PAGES TAB */}
-            {selectedTab === 4 && (
+            {subSection === "content" && selectedTab === 4 && (
               <>
                 <AIInstructionFieldGroup
                   fieldName={t.settings.fieldTitle}
@@ -717,7 +873,7 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
             )}
 
             {/* POLICIES TAB */}
-            {selectedTab === 5 && (
+            {subSection === "content" && selectedTab === 5 && (
               <>
                 <Text as="p" variant="bodyMd" tone="subdued">
                   {t.settings.policyNotice}
@@ -746,8 +902,8 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
         </BlockStack>
       </div>
 
-      {/* Reset All Button at bottom */}
-      {!readOnly && (
+      {/* Reset All Button — only meaningful for the entity-tab strip. */}
+      {!readOnly && subSection === "content" && (
         <div style={{ paddingTop: "1rem", borderTop: "1px solid #e1e3e5" }}>
           <InlineStack align="start">
             <Button onClick={handleResetAll} tone="critical">
@@ -758,5 +914,19 @@ export function AIInstructionsTabs({ instructions, fetcher, readOnly = false, on
       )}
     </BlockStack>
     </Card>
+
+    {/* Glossary sits in the "translations" sub-section, below the AI instructions
+        card. It has its own save (via useFetcher inside the component) — separate
+        from the AI instructions save button above. */}
+    {subSection === "translations" && (
+      <SettingsGlossaryTab
+        entries={glossaryEntries}
+        shopLocales={shopLocales}
+        primaryShopLocale={primaryShopLocale}
+        t={t}
+        onHasChangesChange={onGlossaryHasChangesChange}
+      />
+    )}
+    </BlockStack>
   );
 }

@@ -5,7 +5,7 @@
  * Also handles updates to metaobject translations
  */
 
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { AIService, type AIProvider, toValidProvider } from "../../src/services/ai.service";
 import { TRANSLATE_CONTENT, METAOBJECT_UPDATE, REMOVE_TRANSLATIONS } from "../graphql/content.mutations";

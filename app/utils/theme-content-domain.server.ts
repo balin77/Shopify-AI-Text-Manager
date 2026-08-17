@@ -7,7 +7,7 @@
  * route is a thin, declarative wrapper instead of a 1000-line copy.
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { createContentLoader } from "./loader-factory.server";
 import { getFormString } from "./form-data.utils";

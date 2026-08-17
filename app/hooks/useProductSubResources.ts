@@ -16,8 +16,8 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useFetcher } from "@remix-run/react";
-import type { FetcherWithComponents } from "@remix-run/react";
+import { useFetcher } from "react-router";
+import type { FetcherWithComponents } from "react-router";
 import {
   markSubResourceActive,
   markSubResourceCompleted,

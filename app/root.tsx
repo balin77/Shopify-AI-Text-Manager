@@ -1,7 +1,7 @@
-import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "@remix-run/react";
+import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
 import "@shopify/polaris/build/esm/styles.css";
-import type { LinksFunction, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import type { LinksFunction, LoaderFunctionArgs } from "react-router";
+import { data as json } from "react-router";
 import { Sentry } from "~/utils/sentry.client";
 import { sentryEnabled } from "~/utils/sentry-scrub.cjs";
 

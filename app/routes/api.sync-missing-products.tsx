@@ -8,8 +8,8 @@
  * This is MUCH faster than the old approach (1 request vs 20+ per product).
  */
 
-import { json } from "@remix-run/node";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { data as json } from "react-router";
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { withDbRaceRetry } from "../utils/db-retry.server";

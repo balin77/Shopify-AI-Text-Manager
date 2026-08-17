@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { AIQueueService } from './ai-queue.service';
 import { sanitizePromptInput, isValidFieldType } from '../../app/utils/prompt-sanitizer';
+import type { GlossaryRule } from './glossary.service';
 import { loggers } from '../../app/utils/logger.server';
 import { DEFAULT_MODELS } from '../../app/config/ai-models.config';
 import { TRANSLATION_BATCH } from '../../app/config/constants';
@@ -43,7 +44,7 @@ const LOCALE_NAMES: Record<string, string> = {
  * a prompt never ships an opaque code like "pt-AO" when a usable name exists.
  * English is the conceptual default fallback locale; we never default to German.
  */
-function localeName(code: string): string {
+export function localeName(code: string): string {
   if (!code) return code;
   if (LOCALE_NAMES[code]) return LOCALE_NAMES[code];
   const base = code.split('-')[0];
@@ -177,6 +178,14 @@ export class AIService {
    * cell, hammering the provider and the queue.
    */
   private authError: InvalidAIKeyError | null = null;
+  /**
+   * Shop glossary (Glossar/Terminologie), lazily loaded ONCE per instance —
+   * one AIService instance = one request/task, so a bulk translate reads the
+   * glossary a single time. Injection happens here (not at the call sites) so
+   * EVERY translation path — editors, theme content, direct translations,
+   * alt-texts, SEO — is covered automatically.
+   */
+  private glossaryRulesPromise?: Promise<GlossaryRule[]>;
 
   constructor(provider: AIProvider = 'claude', config: AIServiceConfig = {}, shop?: string, taskId?: string) {
     this.provider = provider;
@@ -189,6 +198,56 @@ export class AIService {
 
   private getModel(): string {
     return this.config.selectedModel || DEFAULT_MODELS[this.provider];
+  }
+
+  private loadGlossaryRules(): Promise<GlossaryRule[]> {
+    // No shop context (unit tests, ad-hoc usage) -> no glossary.
+    if (!this.shop) return Promise.resolve([]);
+    if (!this.glossaryRulesPromise) {
+      const shop = this.shop;
+      this.glossaryRulesPromise = (async () => {
+        try {
+          // Dynamic import: keeps db.server out of this module's static graph
+          // (same pattern as savePromptToTask).
+          const { loadGlossaryRules } = await import('./glossary.service');
+          return await loadGlossaryRules(shop);
+        } catch (error) {
+          // A broken glossary must never block translations — warn and proceed.
+          loggers.ai('warn', '[AI-SERVICE] Failed to load glossary; translating without it', {
+            shop,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      })();
+    }
+    return this.glossaryRulesPromise;
+  }
+
+  /**
+   * The sanitized glossary directive block for this shop, filtered to terms
+   * that actually occur in `sourceTexts`, or '' when nothing applies. Appended
+   * to translation prompts between the requirements and the response-format
+   * section. Empty `targetLocales` = all locales in play.
+   */
+  private async getGlossaryDirective(sourceTexts: string[], targetLocales: string[]): Promise<string> {
+    const rules = await this.loadGlossaryRules();
+    if (rules.length === 0) return '';
+    const { buildGlossaryDirective } = await import('./glossary.service');
+    return buildGlossaryDirective(rules, sourceTexts, targetLocales);
+  }
+
+  /**
+   * True when the whole trimmed text IS a doNotTranslate glossary term (e.g. a
+   * title that is exactly the brand name). Callers then skip the AI call and
+   * keep the source verbatim — both because that is the correct result and
+   * because the echo guard would otherwise reject the unchanged output.
+   */
+  private async isVerbatimGlossaryTerm(text: string): Promise<boolean> {
+    const rules = await this.loadGlossaryRules();
+    if (rules.length === 0) return false;
+    const { matchesVerbatimDoNotTranslate } = await import('./glossary.service');
+    return matchesVerbatimDoNotTranslate(rules, text);
   }
 
   private initializeProvider() {
@@ -294,10 +353,20 @@ ${languageInstruction}`;
       allowNewlines: true
     });
 
+    // Glossary short-circuit: a field that IS a doNotTranslate term (e.g.
+    // title = brand name) must stay verbatim — skip the AI call entirely
+    // (correct result, zero tokens, and the echo guard below would otherwise
+    // reject the unchanged output).
+    if (fromLang !== toLang && await this.isVerbatimGlossaryTerm(sanitizedContent)) {
+      return sanitizedContent.trim();
+    }
+
+    const glossaryDirective = await this.getGlossaryDirective([sanitizedContent], [toLang]);
+
     const prompt = `Translate the following text from ${fromLang} to ${toLang}. Keep HTML tags.
 
 Text: ${sanitizedContent}
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Return ONLY the translated text. Do NOT wrap it in XML tags, quotes, or any other formatting. No explanations.`;
 
     const response = await this.askAI(prompt);
@@ -597,6 +666,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       }
     }
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(sanitizedAltTexts),
+      targetLocales,
+    );
+
     const prompt = `Translate these ${contentType} image alt-texts from ${localeName(fromLang)} to: ${targetLanguages}.
 
 ${altTextsText}
@@ -605,7 +679,7 @@ Requirements:
 - Keep translations concise and descriptive
 - Maintain similar character length
 - Preserve any product-specific terminology
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -715,7 +789,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     fields: Record<string, string>,
     fromLang: string,
     targetLocales: string[],
-    contentType: string = 'product'
+    contentType: string = 'product',
+    /**
+     * Merchant translate-instructions (incl. the SEO-mode length caps). The
+     * caller has always passed these; the parameter simply did not exist, so
+     * they were silently dropped for short fields while long fields honoured
+     * them — a title could ignore a cap its own description respected.
+     */
+    customInstructions?: string,
+    /** Keyword-aware translation clause — one line per target language. */
+    keywordDirective?: string
   ): Promise<Record<string, Record<string, string>>> {
     // Only allow short fields
     const shortFieldKeys = ['title', 'seoTitle', 'handle', 'productType'];
@@ -767,6 +850,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? `\n- URL slugs (handle) must be valid: only lowercase a-z, 0-9, hyphens. No special characters, umlauts, or accents.`
       : '';
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(filteredFields),
+      targetLocales,
+    );
+
     const prompt = `Translate these ${contentType} fields from ${localeName(fromLang)} to: ${targetLanguages}.
 
 ${fieldsText}
@@ -774,7 +862,9 @@ ${fieldsText}
 Requirements:
 - Keep translations concise and natural
 - Maintain similar character length${handleInstructions}
-
+${customInstructions ? `\n${customInstructions}\n` : ''}
+${keywordDirective ? `\n${keywordDirective}\n` : ''}
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -827,6 +917,8 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? `For each ${context} value, detect its source language and translate it to ${toName} (${toLang}). If a value is already written in ${toName}, return it UNCHANGED (1:1 copy).`
       : `Translate these ${context} values from ${fromName} to ${toName} (${toLang}).`;
 
+    const glossaryDirective = await this.getGlossaryDirective(values, [toLang]);
+
     const prompt = `${sourceClause}
 
 ${numberedValues}
@@ -836,7 +928,7 @@ Requirements:
 - Maintain similar character length
 - Inside translated strings, escape any straight double-quote as \\" so the JSON array stays valid
 - Return ONLY a JSON array of translated strings in the same order
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format: ["translated1", "translated2", ...]`;
 
     // R3-M10 scope note: these two are DEBUG level (not error). The winston
@@ -951,6 +1043,174 @@ Respond in JSON format: ["title1", "title2", ...]`;
   }
 
   /**
+   * Up to `maxCount` synonyms / close alternative phrases per term for a batch
+   * of product/collection titles or primary keywords — extra anchor candidates
+   * for the internal-linking matcher (PLAN_SEO_SUITE_COMPLETION.md §4.1/§4.3,
+   * internal-links.service.ts).
+   *
+   * BATCHED ON PURPOSE: the first implementation issued one request per target
+   * item, so a single "Vorschläge generieren" click cost up to
+   * MAX_SYNONYM_TARGETS (200) tiny AI requests. The matcher only needs a short
+   * word list per term, so N terms fit in ONE prompt — the caller chunks its
+   * targets (SYNONYM_BATCH_SIZE) and this returns one synonym list per term,
+   * positionally aligned with `terms`.
+   *
+   * `avoid[i]` are anchor texts the merchant already rejected for `terms[i]`
+   * (dismissed SeoInternalLinkSuggestion rows) — passed into the prompt so the
+   * model stops re-proposing wordings that were turned down. The caller ALSO
+   * filters them out of the result, so this is a cost/quality hint, not the
+   * guarantee (the guarantee is the caller's + the DB's, never the model's).
+   *
+   * Results are used once and never persisted (§4.4 "ephemeral-per-run"
+   * decision — see internal-links.service.ts's header). Never throws, and
+   * never returns a mis-aligned array: any provider/parse/length problem
+   * degrades to empty lists for that batch (matching still works on
+   * title/keyword anchors) instead of failing the whole run or silently
+   * pairing synonyms with the wrong target.
+   */
+  async generateSynonymsBatch(
+    terms: string[],
+    locale: string,
+    options: { maxCount?: number; avoid?: string[][] } = {},
+  ): Promise<string[][]> {
+    const { maxCount = 3, avoid = [] } = options;
+    const empty = terms.map(() => [] as string[]);
+    if (terms.length === 0) return [];
+
+    const sanitizedTerms = terms.map((term) => sanitizePromptInput(term, { maxLength: 200 }));
+    if (sanitizedTerms.every((t) => !t)) return empty;
+
+    const language = localeName(locale) || 'English';
+    const numbered = sanitizedTerms
+      .map((term, i) => {
+        const rejected = (avoid[i] ?? [])
+          .map((a) => sanitizePromptInput(a, { maxLength: 200 }))
+          .filter(Boolean)
+          .slice(0, 10);
+        const suffix = rejected.length > 0 ? ` — already rejected, do not repeat: ${rejected.map((r) => `"${r}"`).join(', ')}` : '';
+        return `${i + 1}. "${term || '(empty)'}"${suffix}`;
+      })
+      .join('\n');
+
+    const prompt = `For each numbered term below, list up to ${maxCount} short synonyms or close alternative phrases a shopper might realistically use instead of it in ${language}, for finding mentions of that same product/topic in other text (blog articles, page content). Single words or short phrases only — no full sentences.
+
+Terms:
+${numbered}
+
+Requirements:
+- Output language: ${language}
+- Return ONLY a JSON array of arrays of strings, in the same order, with exactly ${terms.length} entries — one inner array per numbered term
+- Use an empty inner array [] for a term you have no good synonym for
+- Never repeat a term's own wording, and never repeat a wording listed as already rejected for that term
+
+Respond in JSON format: [["synonym one", "synonym two"], [], ...]`;
+
+    try {
+      const responseText = await this.askAI(prompt);
+      const parsed: unknown = this.parseJSONResponse(responseText);
+      if (!Array.isArray(parsed) || parsed.length !== terms.length) {
+        loggers.ai('warn', '[AI-SERVICE] generateSynonymsBatch: unexpected response shape — continuing with zero synonyms', {
+          expected: terms.length,
+          got: Array.isArray(parsed) ? parsed.length : typeof parsed,
+        });
+        return empty;
+      }
+      return parsed.map((entry) =>
+        (Array.isArray(entry) ? entry : [])
+          .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+          .map((s) => s.trim())
+          .slice(0, maxCount),
+      );
+    } catch (err) {
+      loggers.ai('warn', '[AI-SERVICE] generateSynonymsBatch failed — continuing with zero synonyms', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return empty;
+    }
+  }
+
+  /**
+   * The wording each TRANSLATED text actually uses for `anchor` — the internal
+   * linking "carry translations" step
+   * (app/services/seo/internal-links-translate.server.ts).
+   *
+   * Deliberately NOT a plain translation of the anchor. A context-free
+   * translation of "Stifthalter" is "portalápiz", while the Spanish text most
+   * likely says "portalápices" (or "lapicero") — close enough for a human,
+   * useless for the exact whole-word insertion that follows, which would then
+   * find nothing and leave that language unlinked. So the model gets the
+   * translated text itself and must copy a substring OUT of it.
+   *
+   * That also makes the answer verifiable: the caller inserts the returned
+   * phrase with the same matcher used everywhere else, so a hallucinated or
+   * inflected wording simply fails to insert — it can never end up in the
+   * merchant's content.
+   *
+   * One request for ALL locales. Never throws, never returns a locale it was
+   * not asked about: any provider/parse problem degrades to "no wording for
+   * that language", which costs a link, not a translation.
+   */
+  async findLocalizedAnchors(
+    anchor: string,
+    fromLocale: string,
+    samples: { locale: string; text: string }[],
+    options: { maxTextChars?: number } = {},
+  ): Promise<Record<string, string>> {
+    const { maxTextChars = 3000 } = options;
+    const cleanAnchor = sanitizePromptInput(anchor, { maxLength: 200 });
+    if (!cleanAnchor || samples.length === 0) return {};
+
+    const blocks = samples
+      .map((sample) => {
+        // Truncated per locale: only the wording matters, and a long body would
+        // push several languages past the context window in one request.
+        const text = sanitizePromptInput(sample.text, { allowNewlines: true }).slice(0, maxTextChars);
+        return `### ${sample.locale}\n${text || '(empty)'}`;
+      })
+      .join('\n\n');
+
+    const jsonStructure: Record<string, string> = {};
+    for (const sample of samples) jsonStructure[sample.locale] = '...';
+
+    const prompt = `A phrase from a ${localeName(fromLocale) || fromLocale} text is going to be turned into a link. Below are translations of that same text in other languages. For each one, find the wording IT uses for that phrase.
+
+Phrase: "${cleanAnchor}"
+
+${blocks}
+
+Requirements:
+- Copy the wording EXACTLY as it appears in that language's text, character for character, including its inflection, capitalization and any accents. Do not translate the phrase yourself and do not normalize it to a dictionary form.
+- Pick the shortest wording that clearly refers to the same thing, and prefer its first occurrence.
+- If a text does not mention the thing at all, return an empty string "" for that language. An empty string is the correct answer — never guess.
+- One entry per language code below, no extra keys.
+
+Respond with ONLY this JSON shape:
+${JSON.stringify(jsonStructure, null, 2)}`;
+
+    try {
+      const responseText = await this.askAI(prompt);
+      const parsed: unknown = this.parseJSONResponse(responseText);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        loggers.ai('warn', '[AI-SERVICE] findLocalizedAnchors: unexpected response shape — no localized anchors', {
+          got: Array.isArray(parsed) ? 'array' : typeof parsed,
+        });
+        return {};
+      }
+      const out: Record<string, string> = {};
+      for (const sample of samples) {
+        const value = (parsed as Record<string, unknown>)[sample.locale];
+        if (typeof value === 'string' && value.trim().length > 0) out[sample.locale] = value.trim();
+      }
+      return out;
+    } catch (err) {
+      loggers.ai('warn', '[AI-SERVICE] findLocalizedAnchors failed — translations keep their text without a link', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {};
+    }
+  }
+
+  /**
    * Permissive recovery for a malformed `["a", "b", ...]` response when the
    * model forgot to escape a straight " inside one of the values (common with
    * typographic content like German „Foo"). Strict JSON.parse rejects the
@@ -994,13 +1254,18 @@ Respond in JSON format: ["title1", "title2", ...]`;
       jsonStructure[locale] = { seoTitle: '...', metaDescription: '...' };
     }
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      [sanitizedTitle, sanitizedDescription],
+      targetLocales,
+    );
+
     const prompt = `Translate these SEO texts from the source language to ${targetLanguages}.
 
 SEO Title: ${sanitizedTitle}
 Meta Description: ${sanitizedDescription}
 
 Make sure that the character lengths remain similar and the translations sound natural.
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -1123,7 +1388,14 @@ Output the result in ${language}.`;
     fields: Record<string, string>,
     targetLocales: string[],
     contentType: string = 'product',
-    customInstructions?: string
+    customInstructions?: string,
+    /**
+     * Keyword-aware translation clause (keyword-translation-prompt.ts). Kept
+     * SEPARATE from customInstructions so the merchant's own instructions are
+     * never overwritten by it — and so passing one still leaves the default
+     * instructions in place when there are no custom ones.
+     */
+    keywordDirective?: string
   ): Promise<Record<string, Record<string, string>>> {
     // Sanitize all field values
     const sanitizedFields: Record<string, string> = {};
@@ -1173,12 +1445,18 @@ Output the result in ${language}.`;
     // Use custom instructions if provided
     const instructions = customInstructions || defaultInstructions;
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(sanitizedFields),
+      targetLocales,
+    );
+
     const prompt = `Translate these ${contentType === 'product' ? 'product' : contentType === 'collection' ? 'collection' : contentType === 'blog' ? 'blog' : contentType === 'page' ? 'page' : contentType === 'policy' ? 'policy' : 'product'} fields from the source language to ${targetLanguages}.
 
 ${fieldsText}
 
 ${instructions}
-
+${keywordDirective ? `\n${keywordDirective}\n` : ''}
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -1253,6 +1531,11 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       ? '\n- Keep ALL HTML tags, attributes, and structure exactly as in the source; translate only the human-readable text between the tags.'
       : '';
 
+    const glossaryDirective = await this.getGlossaryDirective(
+      Object.values(sanitizedFields),
+      targetLocales,
+    );
+
     const prompt = `Translate the following ${contextLabel} fields from ${localeName(fromLang)} to: ${targetLanguages}.
 
 Each field is introduced by a "### <key>" header followed by its source text.
@@ -1264,7 +1547,7 @@ Requirements:
 - Keep the translation natural and faithful to the source meaning.
 - Maintain a similar length to the source.${htmlRule}
 - Do NOT add explanations or extra fields.
-
+${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond with ONLY this JSON shape (outer keys = locale codes, inner keys = field keys):
 ${JSON.stringify(jsonStructure, null, 2)}`;
 
@@ -1710,22 +1993,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
             ],
           }],
         });
-        const content = message.content[0];
-        if (!content) throw new Error('Claude returned empty response');
-        if (content.type !== 'text') throw new Error(`Claude returned non-text content type: ${content.type}`);
-        if (!content.text.trim()) throw new Error('Claude returned empty text');
-        return content.text;
+        const textBlock = message.content.find((b) => b.type === 'text');
+        if (!textBlock) throw new Error('Claude returned no text block');
+        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
+        return textBlock.text;
       } else {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
           max_tokens: 8192,
           messages: [{ role: 'user', content: prompt }],
         });
-        const content = message.content[0];
-        if (!content) throw new Error('Claude returned empty response');
-        if (content.type !== 'text') throw new Error(`Claude returned non-text content type: ${content.type}`);
-        if (!content.text.trim()) throw new Error('Claude returned empty text');
-        return content.text;
+        const textBlock = message.content.find((b) => b.type === 'text');
+        if (!textBlock) throw new Error('Claude returned no text block');
+        if (!textBlock.text.trim()) throw new Error('Claude returned empty text');
+        return textBlock.text;
       }
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL

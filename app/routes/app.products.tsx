@@ -11,8 +11,8 @@
  * - Minimal code (~150 lines vs 779 lines)
  */
 
-import { type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useNavigation } from "@remix-run/react";
+import { type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useNavigation, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
@@ -34,6 +34,7 @@ import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
+import type { FetcherData } from "~/types/content-editor.types";
 
 // ============================================================================
 // LOADER - Paginated upsert sync + load from database
@@ -127,7 +128,7 @@ export const loader = createContentLoader({
     // (decided design point 1). Run the one-time lazy backfill first so
     // existing shops keep their already-translatable metafields, then load the
     // enabled set used to filter below.
-    const { backfillEnabledMetafieldDefinitionsIfNeeded, getEnabledMetafieldKeySet, metafieldEnableKey } =
+    const { backfillEnabledMetafieldDefinitionsIfNeeded, getEnabledMetafieldKeySet, isEditableProductMetafield } =
       await import("../services/metafield-enablement.server");
     await backfillEnabledMetafieldDefinitionsIfNeeded(ctx.admin as never, ctx.db as never, ctx.session.shop);
     const enabledMetafieldKeys = await getEnabledMetafieldKeySet(ctx.db, ctx.session.shop);
@@ -209,8 +210,10 @@ export const loader = createContentLoader({
         return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetaobjectType: opt.linkedMetafieldKey || undefined };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
-        ["single_line_text_field", "multi_line_text_field", "rich_text_field", "list.single_line_text_field"].includes(mf.type)
-        && enabledMetafieldKeys.has(metafieldEnableKey(mf.namespace, mf.key))
+        // Shared predicate — the bulk editor's metafield columns use the SAME
+        // filter (isEditableProductMetafield), so both surfaces show the same
+        // fields (Plan §4.1).
+        isEditableProductMetafield(mf, enabledMetafieldKeys)
       ).map((mf: any) => ({
         id: mf.id, namespace: mf.namespace, key: mf.key, value: mf.value, type: mf.type,
       })) || [],
@@ -303,7 +306,7 @@ export const action = async (args: ActionFunctionArgs) => {
 export default function ProductsPage() {
   const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
-  const fetcher = useFetcher<typeof action>();
+  const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
   const translationSyncFetcher = useFetcher<{ success: boolean }>();
   const revalidator = useRevalidator();
@@ -322,6 +325,28 @@ export default function ProductsPage() {
   // so we can refresh the editor when fresh data arrives
   const pendingTranslationSyncRefreshRef = useRef(false);
 
+  // Deep-link from the SEO dashboard: ?select=<Shopify GID> preselects the item.
+  const [searchParams] = useSearchParams();
+  const initialItemId = searchParams.get("select") || undefined;
+  // Locale of the deep link (the SEO dashboard passes the language it was
+  // showing). Validated against the shop's locales inside the editor hook.
+  const initialLocale = searchParams.get("locale") || undefined;
+
+  // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
+  // "Mit AI überarbeiten" button on the Freshness panel links here with
+  // ?select=<GID>&preset=refresh. Deliberately NOT a new AI-instructions
+  // plumbing/template system (the plan explicitly rules that out) — just a
+  // one-time hint pointing the merchant at the existing "Generate with AI"
+  // action for the preselected item.
+  const shownRefreshPresetRef = useRef(false);
+  useEffect(() => {
+    if (shownRefreshPresetRef.current) return;
+    if (searchParams.get("preset") === "refresh" && initialItemId) {
+      shownRefreshPresetRef.current = true;
+      showInfoBox(t.seo.dashboard.freshnessPresetHint, "info");
+    }
+  }, [searchParams, initialItemId, showInfoBox, t]);
+
   // Initialize unified content editor - MUST be called before any conditional returns
   const editor = useUnifiedContentEditor({
     config: PRODUCTS_CONFIG,
@@ -332,6 +357,8 @@ export default function ProductsPage() {
     fetcher,
     showInfoBox,
     t,
+    initialItemId,
+    initialLocale,
   });
 
   // Image Manager state (Pro/Max only - always call hook, gated in UI)

@@ -3,7 +3,7 @@ import { Card, Text, BlockStack, Banner, ProgressBar, InlineStack, Button } from
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { usePlan } from "../contexts/PlanContext";
 import type { ResourceType } from "../utils/planUtils";
-import { useNavigate, useFetcher } from "@remix-run/react";
+import { useNavigate, useFetcher } from "react-router";
 import { StoragePieChart, type StorageData } from "./StoragePieChart";
 import { HelpTooltip } from "./HelpTooltip";
 import { useI18n } from "../contexts/I18nContext";

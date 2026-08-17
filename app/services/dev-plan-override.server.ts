@@ -31,7 +31,7 @@
  * enforces the client_id during OAuth, so the public binary structurally
  * cannot present the dev id regardless of how Railway env vars are set. This
  * closes the B2-class weakness (APP_ENV is not Dockerfile/toml-enforced in
- * production) documented in docs/SHOPIFY_COMPLIANCE_AUDIT.md.
+ * production) documented in docs/app-store/SHOPIFY_COMPLIANCE_AUDIT.md.
  */
 
 import type { BillingPlan } from '~/config/billing';

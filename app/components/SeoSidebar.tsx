@@ -1,7 +1,37 @@
-import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar } from "@shopify/polaris";
-import { useState, useMemo } from "react";
+import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
+import { SidebarTabBar } from "./SidebarTabBar";
+import { ActionTooltip } from "./ActionTooltip";
+import {
+  validateJsonLd,
+  renderJsonLdScript,
+  type JsonLd,
+} from "../services/structured-data.service";
+import {
+  computeSeoScore,
+  scoreTone,
+  scoreLabelKey,
+  progressTone,
+  seoTitleEffectiveLimit,
+} from "../utils/seo-score";
+import {
+  analyzeOnPage,
+  analyzeMultiKeyword,
+  MAX_KEYWORDS_PER_ITEM,
+  type KeywordResourceType,
+  type KeywordRole,
+  type DensityBand,
+} from "../services/seo/keywords.service";
+
+/** One tracked keyword row as served by /api/seo-keyword. */
+interface SidebarKeywordEntry {
+  id: string; // assignment id
+  keyword: string;
+  role: KeywordRole;
+}
 
 interface SeoIssue {
   type: "error" | "warning" | "success";
@@ -27,6 +57,49 @@ interface SeoSidebarProps {
   excludeDescription?: boolean;
   /** Skip image alt text from SEO evaluation (e.g. blog containers have no images) */
   excludeImages?: boolean;
+  /**
+   * Optional JSON-LD for the current resource. When provided, a collapsible
+   * "Structured data" section with a copyable code block + schema validation
+   * feedback is shown. Omit it and the sidebar behaves exactly as before.
+   */
+  structuredData?: JsonLd | null;
+  /**
+   * When true, `validateJsonLd` runs in preview mode: warnings that depend on
+   * data the editor can't supply (Offer from variant price, Article.publishedAt,
+   * Organization.logo) are suppressed. The storefront Liquid block emits these
+   * from native/metafield/shop-brand data — flagging them here would be a
+   * false positive. See structured-data.service.ValidateJsonLdOptions.
+   */
+  structuredDataPreviewMode?: boolean;
+  /**
+   * Optional keyword tracking (PLAN_KEYWORDS_EXPANSION.md Phase 1). When BOTH
+   * resourceId and resourceType are provided, the Keywords tab is shown: it
+   * loads/edits the item's tracked keywords (1 primary + secondaries, max 5,
+   * via /api/seo-keyword) and shows live on-page presence/density feedback for
+   * the primary keyword computed from the current edited title/seoTitle/
+   * metaDescription/description as the merchant types. Omit either prop and
+   * the section is not rendered — existing callers are unaffected.
+   */
+  resourceId?: string;
+  resourceType?: KeywordResourceType;
+  /**
+   * Locale the keyword panel reads and writes, following the SeoKeyword
+   * convention ("" = the shop's primary locale). Keywords are per (item,
+   * locale): a French page ranks for French terms, so the panel must follow
+   * the editor's language instead of always showing the primary set. Defaults
+   * to "" so callers that only ever edit the primary locale need not pass it.
+   */
+  keywordLocale?: string;
+  /** Display name of `keywordLocale`, for the scope hint. Optional. */
+  keywordLocaleName?: string;
+  /**
+   * Work the tracked keywords into the item's texts (the `insertKeyword`
+   * pass). Omitted by callers that have no editor behind them — the button is
+   * only rendered when this is supplied.
+   */
+  onInsertKeywords?: () => void;
+  /** True while that multi-field run is in flight. */
+  insertKeywordsLoading?: boolean;
 }
 
 export function SeoSidebar({
@@ -39,184 +112,292 @@ export function SeoSidebar({
   totalImages = 0,
   excludeDescription = false,
   excludeImages = false,
+  structuredData = null,
+  structuredDataPreviewMode = false,
+  resourceId,
+  resourceType,
+  keywordLocale = "",
+  keywordLocaleName,
+  onInsertKeywords,
+  insertKeywordsLoading = false,
 }: SeoSidebarProps) {
   const { t } = useI18n();
-  const { seoTitleSuffix } = useSeoSettings();
+  const [copied, setCopied] = useState(false);
+  const jsonLdString = useMemo(
+    () => (structuredData ? renderJsonLdScript(structuredData) : ""),
+    [structuredData],
+  );
+  const jsonLdWarnings = useMemo(
+    () =>
+      structuredData
+        ? validateJsonLd(structuredData, { previewMode: structuredDataPreviewMode })
+        : [],
+    [structuredData, structuredDataPreviewMode],
+  );
+  const { seoTitleSuffix, seoLimits } = useSeoSettings();
   const [showDetails, setShowDetails] = useState(false);
 
-  // Effective limit accounts for the suffix Shopify appends (e.g., " – Shop Name")
-  const seoTitleEffectiveLimit = seoTitleSuffix ? 60 - seoTitleSuffix.length : 60;
+  // Effective upper limit accounts for the suffix Shopify appends (e.g., " – Shop Name").
+  // Passes the merchant's seoTitleMax override to the helper so a Pro shop
+  // that raised the cap to 70 doesn't get flagged at char 61.
+  const effectiveSeoTitleLimit = seoTitleEffectiveLimit(seoTitleSuffix, seoLimits ?? null);
 
-  const analysis = useMemo((): SeoAnalysis => {
-    const issues: SeoIssue[] = [];
-    let score = 0;
-    let maxScore = 0;
+  // ── Tracked keywords (only when the caller supplies both ids) ──
+  // Since the keywords expansion (PLAN_KEYWORDS_EXPANSION.md Phase 1) an item
+  // tracks up to MAX_KEYWORDS_PER_ITEM keywords: 1 primary + secondaries.
+  const keywordTrackingEnabled = !!resourceId && !!resourceType;
+  const [keywords, setKeywords] = useState<SidebarKeywordEntry[]>([]);
+  const [keywordInput, setKeywordInput] = useState("");
+  const keywordLoadFetcher = useFetcher<{ keywords: SidebarKeywordEntry[] }>();
+  const keywordOpFetcher = useFetcher<{
+    ok: boolean;
+    keywords?: SidebarKeywordEntry[];
+    error?: string;
+    existingItemTitle?: string;
+  }>();
+  // Cross-item cannibalization warning (plan §7.1): the server refused a
+  // primary add because the keyword is primary on another item — stash the
+  // rejected payload so "add anyway" can re-submit with the bypass flag.
+  const [cannibalizationWarning, setCannibalizationWarning] = useState<string | null>(null);
+  // Failed-mutation error code, held in state rather than read off
+  // keywordOpFetcher.data — the fetcher keeps its last response across an item
+  // or language switch, which would leave a red error under the next scope's
+  // freshly loaded list.
+  const [keywordOpError, setKeywordOpError] = useState<string | null>(null);
+  const pendingAddRef = useRef<{ keyword: string; role: KeywordRole } | null>(null);
+  // The (item, locale) a mutation was submitted FOR — a late response must not
+  // overwrite the list after the merchant already switched item OR language
+  // (the response carries no row identity of its own, and since keywords are
+  // per-locale a stale answer would show another language's set).
+  const keywordScope = `${resourceId ?? ""}::${keywordLocale}`;
+  const keywordOpTargetRef = useRef<string | null>(null);
 
-    // 1. Title length (15 points max)
-    maxScore += 15;
-    const titleLength = title.length;
-    if (titleLength >= 30 && titleLength <= 70) {
-      score += 15;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.titleLengthGood,
-        points: 15,
-      });
-    } else if (titleLength < 30) {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.titleTooShort,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.titleTooLong,
-        points: 0,
-      });
+  // Reload the tracked keywords whenever the selected item OR the editor's
+  // language changes. Fetching eagerly (not gated on showKeywordSection) means
+  // the badges below are ready the moment the merchant expands the section.
+  useEffect(() => {
+    // Item/locale switch invalidates any pending cannibalization prompt — "add
+    // anyway" must never fire the stashed payload against the NEW scope — and
+    // any error text left over from the previous scope's mutation.
+    setCannibalizationWarning(null);
+    setKeywordOpError(null);
+    pendingAddRef.current = null;
+    if (!resourceId || !resourceType) {
+      setKeywords([]);
+      setKeywordInput("");
+      return;
     }
+    // Clear first: without this the previous language's keywords stay on
+    // screen until the fetch lands, and a merchant who types during that window
+    // would file them under the wrong locale.
+    setKeywords([]);
+    setKeywordInput("");
+    keywordLoadFetcher.load(
+      `/api/seo-keyword?resourceId=${encodeURIComponent(resourceId)}&locale=${encodeURIComponent(keywordLocale)}`,
+    );
+    // keywordLoadFetcher is intentionally omitted — Remix fetchers are stable,
+    // but including it would re-trigger the effect on every fetcher state change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resourceId, resourceType, keywordLocale]);
 
-    // 2. SEO Title (15 points max) — limit adjusted for shop name suffix
-    maxScore += 15;
-    const seoTitleLength = seoTitle.length;
-    if (seoTitleLength > 0 && seoTitleLength <= seoTitleEffectiveLimit) {
-      score += 15;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.seoTitleGood,
-        points: 15,
-      });
-    } else if (seoTitleLength === 0) {
-      issues.push({
-        type: "error",
-        message: t.seo.issues.seoTitleMissing,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.seoTitleTooLong,
-        points: 0,
-      });
+  useEffect(() => {
+    if (keywordLoadFetcher.state === "idle" && keywordLoadFetcher.data) {
+      setKeywords(keywordLoadFetcher.data.keywords ?? []);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywordLoadFetcher.state, keywordLoadFetcher.data]);
 
-    // 3. Description length (20 points max) — skipped for content without body
-    if (!excludeDescription) {
-      maxScore += 20;
-      const descriptionText = description.replace(/<[^>]*>/g, "");
-      const descriptionLength = descriptionText.length;
-      if (descriptionLength >= 150) {
-        score += 20;
-        issues.push({
-          type: "success",
-          message: t.seo.issues.descriptionGood,
-          points: 20,
-        });
-      } else if (descriptionLength === 0) {
-        issues.push({
-          type: "error",
-          message: t.seo.issues.descriptionMissing,
-          points: 0,
-        });
-      } else {
-        issues.push({
-          type: "warning",
-          message: t.seo.issues.descriptionTooShort,
-          points: 0,
-        });
-      }
+  // Every mutation answers with the fresh list — no follow-up load needed.
+  // Guarded against late responses for a previously selected item (the
+  // merchant may have switched while the request was in flight).
+  useEffect(() => {
+    if (keywordOpFetcher.state !== "idle" || !keywordOpFetcher.data) return;
+    if (keywordOpTargetRef.current !== keywordScope) return;
+    if (keywordOpFetcher.data.ok && keywordOpFetcher.data.keywords) {
+      setKeywords(keywordOpFetcher.data.keywords);
+      setKeywordInput("");
+      setCannibalizationWarning(null);
+      setKeywordOpError(null);
+      pendingAddRef.current = null;
+      return;
     }
-
-    // 4. Meta Description (20 points max)
-    maxScore += 20;
-    const metaDescLength = metaDescription.length;
-    if (metaDescLength >= 120 && metaDescLength <= 160) {
-      score += 20;
-      issues.push({
-        type: "success",
-        message: t.seo.issues.metaDescriptionGood,
-        points: 20,
-      });
-    } else if (metaDescLength === 0) {
-      issues.push({
-        type: "error",
-        message: t.seo.issues.metaDescriptionMissing,
-        points: 0,
-      });
-    } else if (metaDescLength < 120) {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.metaDescriptionTooShort,
-        points: 0,
-      });
-    } else {
-      issues.push({
-        type: "warning",
-        message: t.seo.issues.metaDescriptionTooLong,
-        points: 0,
-      });
+    if (keywordOpFetcher.data.error === "cannibalization") {
+      setCannibalizationWarning(keywordOpFetcher.data.existingItemTitle ?? "");
+      setKeywordOpError(null);
+      return;
     }
+    setKeywordOpError(keywordOpFetcher.data.error ?? "unknown");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keywordOpFetcher.state, keywordOpFetcher.data]);
 
-    // 5. Image Alt Texts (30 points max) — skipped for content without images
-    if (!excludeImages && totalImages > 0) {
-      maxScore += 30;
-      const imageScore = Math.round((imagesWithAlt / totalImages) * 30);
-      score += imageScore;
-      if (imagesWithAlt === totalImages) {
-        issues.push({
-          type: "success",
-          message: t.seo.issues.allImagesHaveAlt,
-          points: 30,
-        });
-      } else {
-        issues.push({
-          type: "warning",
-          message: t.seo.issues.someImagesMissingAlt.replace("{count}", String(totalImages - imagesWithAlt)),
-          points: imageScore,
-        });
-      }
-    }
-
-    // Normalize score to 0-100 based on applicable criteria
-    const normalizedScore = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
-
-    // Generate recommendations
-    const recommendations: string[] = [];
-    if (titleLength < 30) recommendations.push(t.seo.recommendations.expandTitle);
-    if (titleLength > 70) recommendations.push(t.seo.recommendations.shortenTitle);
-    if (seoTitleLength === 0) recommendations.push(t.seo.recommendations.addSeoTitle);
-    if (seoTitleLength > seoTitleEffectiveLimit) recommendations.push(t.seo.recommendations.shortenSeoTitle);
-    if (!excludeDescription) {
-      const descriptionText = description.replace(/<[^>]*>/g, "");
-      if (descriptionText.length < 150) recommendations.push(t.seo.recommendations.expandDescription);
-    }
-    if (metaDescLength === 0) recommendations.push(t.seo.recommendations.addMetaDescription);
-    if (metaDescLength < 120) recommendations.push(t.seo.recommendations.expandMetaDescription);
-    if (metaDescLength > 160) recommendations.push(t.seo.recommendations.shortenMetaDescription);
-    if (!excludeImages && totalImages > 0 && imagesWithAlt < totalImages) recommendations.push(t.seo.recommendations.addImageAlt);
-
-    return {
-      score: normalizedScore,
-      issues,
-      recommendations,
-    };
-  }, [title, description, handle, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, seoTitleEffectiveLimit]);
-
-  const getScoreColor = (scoreValue: number): "success" | "warning" | "critical" => {
-    if (scoreValue >= 70) return "success";
-    if (scoreValue >= 40) return "warning";
-    return "critical";
+  const handleAddKeyword = (acceptCannibalization = false) => {
+    if (!resourceId || !resourceType) return;
+    // "Add anyway" re-submits the REJECTED payload; a fresh add uses the input.
+    const keyword = acceptCannibalization ? pendingAddRef.current?.keyword : keywordInput.trim();
+    if (!keyword) return;
+    // First keyword becomes the primary; everything after joins as secondary
+    // (promote later via the row's "make primary" action).
+    const role = acceptCannibalization
+      ? (pendingAddRef.current?.role ?? "primary")
+      : keywords.some((k) => k.role === "primary")
+        ? "secondary"
+        : "primary";
+    pendingAddRef.current = { keyword, role };
+    setCannibalizationWarning(null);
+    keywordOpTargetRef.current = keywordScope;
+    keywordOpFetcher.submit(
+      {
+        op: "add",
+        resourceId,
+        resourceType,
+        keyword,
+        role,
+        locale: keywordLocale,
+        ...(acceptCannibalization ? { acceptCannibalization: "true" } : {}),
+      },
+      { method: "post", action: "/api/seo-keyword" },
+    );
   };
 
-  const getScoreLabel = (scoreValue: number): string => {
-    if (scoreValue >= 70) return t.seo.scoreLabels.good;
-    if (scoreValue >= 40) return t.seo.scoreLabels.medium;
-    return t.seo.scoreLabels.poor;
+  const handleRemoveKeyword = (id: string) => {
+    if (!resourceId) return;
+    keywordOpTargetRef.current = keywordScope;
+    keywordOpFetcher.submit(
+      { op: "remove", id, resourceId, locale: keywordLocale },
+      { method: "post", action: "/api/seo-keyword" },
+    );
+  };
+
+  const handleMakePrimary = (id: string) => {
+    if (!resourceId) return;
+    keywordOpTargetRef.current = keywordScope;
+    keywordOpFetcher.submit(
+      { op: "makePrimary", id, resourceId, locale: keywordLocale },
+      { method: "post", action: "/api/seo-keyword" },
+    );
+  };
+
+  const primaryKeyword = keywords.find((k) => k.role === "primary")?.keyword ?? null;
+
+  // Live on-page analysis of the PRIMARY keyword against the current edited
+  // field values — so toggling between title/description drafts updates the
+  // badges immediately. Secondaries don't carry their own score (it would
+  // dilute or double-count); the aggregate below guards against stuffing.
+  const keywordAnalysis = useMemo(() => {
+    if (!primaryKeyword) return null;
+    return analyzeOnPage({
+      keyword: primaryKeyword,
+      title,
+      seoTitle,
+      metaDescription,
+      bodyHtml: description,
+      resourceType,
+    });
+  }, [primaryKeyword, title, seoTitle, metaDescription, description, resourceType]);
+
+  // Cross-keyword stuffing aggregate (§3.3): combined density of ALL tracked
+  // keywords > 5 % → warn, even when each keyword individually looks fine.
+  const aggregateStuffing = useMemo(() => {
+    if (keywords.length < 2) return false;
+    return analyzeMultiKeyword(
+      { title, seoTitle, metaDescription, bodyHtml: description, resourceType },
+      keywords.map((k) => k.keyword),
+    ).aggregateStuffing;
+  }, [keywords, title, seoTitle, metaDescription, description, resourceType]);
+
+  const densityTone: Record<DensityBand, "success" | "warning" | "critical" | undefined> = {
+    ok: "success",
+    low: "warning",
+    high: "critical",
+    none: undefined,
+  };
+
+  const kw = t.seo.keywordsPage;
+
+  // Scoring is computed by the shared pure function (app/utils/seo-score.ts) so
+  // the Sidebar and the store-wide Audit-Dashboard never drift. The function
+  // returns i18n *codes*; we map them to the canonical t.seo.* strings here.
+  const analysis = useMemo((): SeoAnalysis => {
+    const result = computeSeoScore({
+      title,
+      description,
+      seoTitle,
+      metaDescription,
+      imagesWithAlt,
+      totalImages,
+      excludeDescription,
+      excludeImages,
+      seoTitleEffectiveLimit: effectiveSeoTitleLimit,
+      limits: seoLimits ?? null,
+    });
+
+    const issues: SeoIssue[] = result.findings.map((f) => {
+      let message = (t.seo.issues as Record<string, string>)[f.code] ?? f.code;
+      if (f.data) {
+        for (const [key, value] of Object.entries(f.data)) {
+          message = message.replace(`{${key}}`, String(value));
+        }
+      }
+      return { type: f.severity, message, points: f.points };
+    });
+
+    const recommendations = result.recommendations.map((rec) => {
+      let message = (t.seo.recommendations as Record<string, string>)[rec.code] ?? rec.code;
+      if (rec.data) {
+        for (const [key, value] of Object.entries(rec.data)) {
+          message = message.replace(`{${key}}`, String(value));
+        }
+      }
+      return message;
+    });
+
+    return { score: result.score, issues, recommendations };
+  }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, effectiveSeoTitleLimit, seoLimits]);
+
+  const getScoreColor = scoreTone;
+
+  const getScoreLabel = (scoreValue: number): string =>
+    t.seo.scoreLabels[scoreLabelKey(scoreValue)];
+
+  // Sub-tabs (Score / Keywords / JSON-LD). Hide a tab entirely when its data
+  // isn't applicable to this caller (theme content has no JSON-LD, foreign
+  // locales have no keyword tracking) — otherwise merchants would land on an
+  // empty pane. With only "score" available, the tab bar is omitted.
+  type SidebarTab = "score" | "keywords" | "jsonld";
+  const availableTabs: SidebarTab[] = ["score"];
+  if (keywordTrackingEnabled) availableTabs.push("keywords");
+  if (structuredData) availableTabs.push("jsonld");
+  const [activeTab, setActiveTab] = useState<SidebarTab>("score");
+  const currentTab = availableTabs.includes(activeTab) ? activeTab : "score";
+  const tabLabels = (t.seo as unknown as { sidebarTabs?: Record<string, string> }).sidebarTabs;
+  const tabLabel = (id: SidebarTab): string => {
+    const key = id === "jsonld" ? "jsonLd" : id;
+    return tabLabels?.[key] ?? (id === "jsonld" ? "JSON-LD" : id === "keywords" ? "Keywords" : "Score");
+  };
+  // Each tab explains itself through the shared "?" popover (t.help.*), so the
+  // panes stay free of permanent explanatory copy in a sidebar this narrow.
+  const TAB_HELP_KEY: Record<SidebarTab, string> = {
+    score: "seoSidebarScore",
+    keywords: "seoSidebarKeywords",
+    jsonld: "seoSidebarJsonLd",
   };
 
   return (
     <Card>
       <BlockStack gap="400">
+        {/* Sub-tab bar (Score / Keywords / JSON-LD) + the current tab's help —
+            the same component the image-processing section uses one level
+            over, so the two halves of the sidebar read as one thing. */}
+        <SidebarTabBar
+          items={availableTabs.map((id) => ({ id, label: tabLabel(id) }))}
+          activeId={currentTab}
+          onSelect={(id) => setActiveTab(id as SidebarTab)}
+          helpKey={TAB_HELP_KEY[currentTab]}
+          containerStyle={{ marginTop: "-0.25rem" }}
+        />
+
+        {currentTab === "score" && (
+        <BlockStack gap="400">
         {/* SEO Score Header */}
         <div style={{ textAlign: "center" }}>
           <div
@@ -248,7 +429,7 @@ export function SeoSidebar({
 
         {/* Progress Bar */}
         <div>
-          <ProgressBar progress={analysis.score} tone={getScoreColor(analysis.score) as any} size="small" />
+          <ProgressBar progress={analysis.score} tone={progressTone(analysis.score)} size="small" />
         </div>
 
         {/* Issues Summary */}
@@ -379,6 +560,252 @@ export function SeoSidebar({
         <Button onClick={() => setShowDetails(!showDetails)} variant="plain" size="slim">
           {showDetails ? t.seo.hideDetails : t.seo.showDetails}
         </Button>
+        </BlockStack>
+        )}
+
+        {/* JSON-LD tab */}
+        {currentTab === "jsonld" && structuredData && (
+          <BlockStack gap="200">
+                {jsonLdWarnings.length === 0 ? (
+                  <Badge tone="success">
+                    {t.seo?.structuredDataValid || "Schema looks valid"}
+                  </Badge>
+                ) : (
+                  <BlockStack gap="100">
+                    {jsonLdWarnings.map((w, i) => {
+                      // Prefer the localized copy via the stable warning code;
+                      // fall back to the validator's English default so a
+                      // future warning without a translation still renders.
+                      const localized =
+                        (t.seo?.structuredDataPage?.warnings as
+                          | Record<string, string>
+                          | undefined
+                        )?.[w.code];
+                      return (
+                        <InlineStack key={i} gap="100" blockAlign="center">
+                          <Badge
+                            tone={w.severity === "error" ? "critical" : "warning"}
+                          >
+                            {w.severity}
+                          </Badge>
+                          <Text as="span" variant="bodySm">
+                            {localized || w.message}
+                          </Text>
+                        </InlineStack>
+                      );
+                    })}
+                  </BlockStack>
+                )}
+                <pre
+                  style={{
+                    maxHeight: "260px",
+                    overflow: "auto",
+                    background: "#f6f6f7",
+                    padding: "8px",
+                    borderRadius: "4px",
+                    fontSize: "11px",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {jsonLdString}
+                </pre>
+                <Button
+                  size="slim"
+                  onClick={() => {
+                    navigator.clipboard
+                      ?.writeText(
+                        `<script type="application/ld+json">\n${jsonLdString}\n</script>`,
+                      )
+                      .then(
+                        () => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        },
+                        () => setCopied(false),
+                      );
+                  }}
+                >
+                  {copied
+                    ? t.seo?.copied || "Copied!"
+                    : t.seo?.copyJsonLd || "Copy <script> tag"}
+                </Button>
+          </BlockStack>
+        )}
+
+        {/* Keywords tab */}
+        {currentTab === "keywords" && keywordTrackingEnabled && (
+              <BlockStack gap="200">
+                {/* Scope hint — only on a secondary locale, where "which
+                    language do these belong to?" is a real question. */}
+                {keywordLocale !== "" && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(
+                      t.seo?.keywordLocaleScopeHint ||
+                      "Keywords for {language} — every language tracks its own."
+                    ).replace("{language}", keywordLocaleName || keywordLocale)}
+                  </Text>
+                )}
+                {/* Tracked keywords (1 primary + secondaries, max 5) */}
+                {keywords.map((entry) => (
+                  <InlineStack key={entry.id} gap="200" blockAlign="center" wrap={false}>
+                    <Badge tone={entry.role === "primary" ? "info" : undefined}>
+                      {entry.role === "primary"
+                        ? `★ ${kw?.role?.primary || "Primary"}`
+                        : kw?.role?.secondary || "Secondary"}
+                    </Badge>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Text as="span" variant="bodyMd" truncate>
+                        {entry.keyword}
+                      </Text>
+                    </div>
+                    {entry.role === "secondary" && (
+                      <Button
+                        variant="plain"
+                        size="micro"
+                        disabled={keywordOpFetcher.state !== "idle"}
+                        onClick={() => handleMakePrimary(entry.id)}
+                      >
+                        {t.seo?.keywordMakePrimary || "Make primary"}
+                      </Button>
+                    )}
+                    <Button
+                      variant="plain"
+                      tone="critical"
+                      size="micro"
+                      disabled={keywordOpFetcher.state !== "idle"}
+                      onClick={() => handleRemoveKeyword(entry.id)}
+                    >
+                      {t.seo?.keywordRemove || "Remove"}
+                    </Button>
+                  </InlineStack>
+                ))}
+
+                {keywords.length < MAX_KEYWORDS_PER_ITEM ? (
+                  <InlineStack gap="200" blockAlign="end" wrap={false}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <TextField
+                        label={t.seo?.targetKeywordLabel || "Target keyword"}
+                        labelHidden={keywords.length > 0}
+                        autoComplete="off"
+                        placeholder={t.seo?.targetKeywordPlaceholder || "e.g. blue running shoes"}
+                        value={keywordInput}
+                        onChange={setKeywordInput}
+                        disabled={keywordLoadFetcher.state !== "idle"}
+                      />
+                    </div>
+                    <Button
+                      size="slim"
+                      onClick={() => handleAddKeyword()}
+                      disabled={!keywordInput.trim()}
+                      loading={keywordOpFetcher.state !== "idle"}
+                    >
+                      {t.seo?.keywordAddButton || "Add"}
+                    </Button>
+                  </InlineStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
+                      "{max}",
+                      String(MAX_KEYWORDS_PER_ITEM),
+                    )}
+                  </Text>
+                )}
+
+                {cannibalizationWarning !== null ? (
+                  <BlockStack gap="150">
+                    <Text as="p" variant="bodySm" tone="caution">
+                      {(t.seo?.keywordCannibalizationWarning ||
+                        'This keyword is already the primary keyword of "{item}" — two items competing for it cannibalize each other in Google.')
+                        .replace("{item}", cannibalizationWarning)}
+                    </Text>
+                    <InlineStack gap="200">
+                      <Button
+                        size="slim"
+                        loading={keywordOpFetcher.state !== "idle"}
+                        onClick={() => handleAddKeyword(true)}
+                      >
+                        {t.seo?.keywordCannibalizationAddAnyway || "Add anyway"}
+                      </Button>
+                      <Button size="slim" variant="plain" onClick={() => setCannibalizationWarning(null)}>
+                        {t.seo?.keywordCannibalizationCancel || "Cancel"}
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                ) : (
+                  keywordOpError && (
+                    <Text as="p" variant="bodySm" tone="critical">
+                      {keywordOpError === "tooMany"
+                        ? (t.seo?.keywordLimitHint || "Maximum of {max} keywords per item.").replace(
+                            "{max}",
+                            String(MAX_KEYWORDS_PER_ITEM),
+                          )
+                        : keywordOpError === "planLimit"
+                          ? // The Short variant carries no {used}/{limit}
+                            // placeholders — the sidebar has no quota numbers
+                            // to substitute, and printing the raw tokens is
+                            // worse than saying less.
+                            t.seo?.keywordPlanLimitShort ||
+                            "Your plan's keyword limit is reached. Upgrade or remove a keyword to add another."
+                          : t.seo?.keywordOpError ||
+                            "Could not update keywords. Please reload and try again."}
+                    </Text>
+                  )
+                )}
+
+                {aggregateStuffing && (
+                  <Text as="p" variant="bodySm" tone="critical">
+                    {t.seo?.keywordAggregateStuffing ||
+                      "Combined keyword density is above 5% — risk of keyword stuffing."}
+                  </Text>
+                )}
+
+                {keywordAnalysis && (
+                  <BlockStack gap="200">
+                    <InlineStack gap="200" blockAlign="center">
+                      <Badge tone={scoreTone(keywordAnalysis.score) as any}>
+                        {`${t.seo?.targetKeywordScoreLabel || "On-page score"}: ${keywordAnalysis.score}`}
+                      </Badge>
+                      <Badge tone={densityTone[keywordAnalysis.densityBand]}>
+                        {`${kw?.density?.[keywordAnalysis.densityBand] ?? keywordAnalysis.densityBand} (${keywordAnalysis.densityPct}%)`}
+                      </Badge>
+                    </InlineStack>
+                    <InlineStack gap="100" wrap>
+                      {(["title", "seoTitle", "metaDescription", "body"] as const).map((key) => (
+                        <Badge key={key} tone={keywordAnalysis.presence[key] ? "success" : undefined}>
+                          {kw?.presence?.[key] ?? key}
+                        </Badge>
+                      ))}
+                    </InlineStack>
+                  </BlockStack>
+                )}
+
+                {/* Last in the tab, directly under the presence badges: those
+                    badges ARE the readout this button acts on — they show
+                    which fields are still missing the keyword. Sitting above
+                    the add-field it was easy to miss, and it read as belonging
+                    to the list rather than to the analysis. */}
+                {onInsertKeywords && keywords.length > 0 && (
+                  <ActionTooltip
+                    content={
+                      t.seo?.insertKeywordsHint ||
+                      "Works the keywords above into title, SEO title, meta description and body — only where they are missing. Nothing else is rewritten."
+                    }
+                    preferredPosition="above"
+                  >
+                    <Button
+                      size="slim"
+                      fullWidth
+                      onClick={onInsertKeywords}
+                      loading={insertKeywordsLoading}
+                      disabled={keywordLoadFetcher.state !== "idle"}
+                    >
+                      {t.seo?.insertKeywords || "Keywords einarbeiten"}
+                    </Button>
+                  </ActionTooltip>
+                )}
+              </BlockStack>
+        )}
       </BlockStack>
     </Card>
   );

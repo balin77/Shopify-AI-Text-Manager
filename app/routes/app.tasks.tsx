@@ -1,5 +1,5 @@
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   Page,
@@ -18,6 +18,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { taskErrorText } from "~/utils/task-error-text";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
 
@@ -303,8 +304,14 @@ export default function TasksPage() {
       {/* Page padding is owned globally by .Polaris-Page (responsive.css,
           --app-page-padding); .app-page-content zeroes Polaris' own
           Page__Content inset so the gutter is even on all sides (incl. top
-          and bottom), matching the content page. */}
-      <div className="app-page-content">
+          and bottom), matching the content page.
+
+          .app-page-width caps and centres the FRAME (same reading width as the
+          SEO sections — the value lives in responsive.css :root, never here),
+          which leaves the frame's padding and its inner scroll container
+          untouched. <Page fullWidth> stays: without it Polaris' own ~1000px
+          cap would win before ours is ever reached. */}
+      <div className="app-page-content app-page-width">
         <BlockStack gap="400">
           {/* Filters */}
           <Card>
@@ -487,7 +494,7 @@ export default function TasksPage() {
                     {task.error && (
                       <div style={{ padding: "0.75rem", background: "#fbeae5", borderRadius: "8px", border: "1px solid #d72c0d" }}>
                         <Text as="p" variant="bodySm" tone="critical">
-                          {task.error}
+                          {taskErrorText(task.error, t)}
                         </Text>
                       </div>
                     )}

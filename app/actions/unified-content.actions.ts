@@ -5,8 +5,8 @@
  * Based on the products implementation with all bug fixes
  */
 
-import { json } from "@remix-run/node";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { data as json } from "react-router";
+import type { ActionFunctionArgs } from "react-router";
 import { AIService, toValidProvider } from "../../src/services/ai.service";
 import { TranslationService } from "../../src/services/translation.service";
 import { ShopifyContentService } from "../../src/services/shopify-content.service";
@@ -19,10 +19,12 @@ import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
 import { getFormString, getFormInt, getFormJSON } from "../utils/form-data.utils";
 import { isValidShopifyGID, isValidLocale, safeJsonParse } from "../utils/validation";
 import { sanitizePromptInput } from "../utils/prompt-sanitizer";
+import { withUserInstruction } from "../utils/ai-user-instruction.server";
 import { getFullErrorMessage } from "../utils/error-handler";
 import { getInstructionWithDefault, getWritingStyleInstructions, getCharacterLimitRequirement } from "~/utils/ai-instructions.utils";
+import { resolveSeoContext } from "../routes/api-ai-handlers/shared";
 import { findMetaobjectLabelField } from "../constants/shopifyFields";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { AISettings, AIInstructions } from "@prisma/client";
@@ -101,10 +103,9 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
   const gateway = new ShopifyApiGateway(admin, session.shop);
   const shopifyContentService = new ShopifyContentService(gateway as any);
 
-  // Effective SEO title limit (accounts for shop name suffix appended by Shopify)
-  const seoTitleMaxChars = aiSettings?.seoTitleSuffixEnabled && aiSettings.seoTitleSuffix
-    ? 60 - aiSettings.seoTitleSuffix.length
-    : 60;
+  // Resolve merchant SEO knobs (title cap + limits blob + translation mode)
+  // in one place so every downstream handler sees the same numbers.
+  const { seoTitleMaxChars, seoLimits, translationMode } = resolveSeoContext(aiSettings);
 
   // Shared context for extracted handler modules
   const ctx: ContentActionHandlerContext = {
@@ -116,6 +117,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     aiInstructions,
     itemId: itemId || "",
     seoTitleMaxChars,
+    seoLimits,
+    translationMode,
     shopifyContentService,
     provider,
     serviceConfig,
@@ -245,7 +248,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimit = getCharacterLimitRequirement(instructionsKey || "", seoTitleMaxChars);
+        const charLimit = getCharacterLimitRequirement(instructionsKey || "", { seoTitleMaxChars, limits: seoLimits });
         if (charLimit) {
           prompt += `\n- Length: ${charLimit}`;
         }
@@ -285,6 +288,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Output in ${mainLanguage}.`;
+        // Merchant's per-request instruction — last word, outranks everything above.
+        prompt = withUserInstruction(prompt, formData);
         generatedContent = await aiServiceWithTask.generateProductTitle(prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
 
@@ -315,7 +320,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         prompt += `\n\nRequirements:`;
 
         // Add character limit if available
-        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "", seoTitleMaxChars);
+        const charLimitHtml = getCharacterLimitRequirement(instructionsKey || "", { seoTitleMaxChars, limits: seoLimits });
         if (charLimitHtml) {
           prompt += `\n- Length: ${charLimitHtml}`;
         }
@@ -352,6 +357,8 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         }
 
         prompt += `\n\nIMPORTANT: Return ONLY the ${field.label}, nothing else. Do NOT wrap the output in markdown code fences (\`\`\`). Output in ${mainLanguage}.`;
+        // Merchant's per-request instruction — last word, outranks everything above.
+        prompt = withUserInstruction(prompt, formData);
         generatedContent = await aiServiceWithTask.generateProductDescription(sanitizedContextTitle, prompt);
         if (!generatedContent || !generatedContent.trim()) throw new Error("AI returned empty response");
       }
@@ -568,144 +575,13 @@ Allowed formatting changes:
   return json({ success: false, error: "Unknown action" }, { status: 400 });
 }
 
-// ============================================================================
-// METAOBJECT TRANSLATION HELPER
-// ============================================================================
-
-/**
- * Translate metaobject entries and save to Shopify + DB.
- * Each metaobject entry is a separate Shopify resource requiring its own digest.
- * Uses short keys (entry_0, entry_1, ...) for the AI prompt, then maps back to GIDs.
- */
-async function translateMetaobjectEntries(params: {
-  admin: AdminApiContext;
-  session: Session;
-  db: PrismaClient;
-  itemId: string; // metaobject type ID
-  metaobjectFields: Record<string, string>; // gid -> primary value
-  targetLocales: string[];
-  translationService: TranslationService;
-  customInstructions?: string;
-}): Promise<{ translations: Record<string, Record<string, string>>; failedLocales: string[] }> {
-  const { admin, session, db, itemId, metaobjectFields, targetLocales, translationService, customInstructions } = params;
-  const { TRANSLATE_CONTENT } = await import("../graphql/content.mutations");
-  const { GET_TRANSLATABLE_CONTENT } = await import("../graphql/content.queries");
-
-  // Build short-key mapping for cleaner AI prompts
-  const gids = Object.keys(metaobjectFields);
-  const gidToShort: Record<string, string> = {};
-  const shortToGid: Record<string, string> = {};
-  const shortFields: Record<string, string> = {};
-
-  gids.forEach((gid, i) => {
-    const short = `entry_${i}`;
-    gidToShort[gid] = short;
-    shortToGid[short] = gid;
-    shortFields[short] = metaobjectFields[gid];
-  });
-
-  // AI translation (all entries × all locales in one request)
-  const aiResult = await translationService.translateProduct(
-    shortFields,
-    targetLocales,
-    "metaobject",
-    customInstructions
-  );
-
-  // Map AI results back to GID keys
-  const allTranslations: Record<string, Record<string, string>> = {};
-  const failedLocales: string[] = [];
-
-  for (const locale of targetLocales) {
-    const localeResult = aiResult[locale];
-    if (!localeResult || Object.keys(localeResult).length === 0) {
-      failedLocales.push(locale);
-      continue;
-    }
-    allTranslations[locale] = {};
-    for (const [shortKey, value] of Object.entries(localeResult)) {
-      const gid = shortToGid[shortKey];
-      if (gid && value) {
-        allTranslations[locale][gid] = String(value);
-      }
-    }
-  }
-
-  // Save translations to Shopify + DB for each metaobject × locale
-  for (const [locale, fieldMap] of Object.entries(allTranslations)) {
-    for (const [gid, translatedValue] of Object.entries(fieldMap)) {
-      try {
-        // Find label field key for this metaobject
-        const moResponse = await admin.graphql(
-          `#graphql
-            query getMetaobject($id: ID!) {
-              metaobject(id: $id) { fields { key type } }
-            }`,
-          { variables: { id: gid } }
-        );
-        const moData = await moResponse.json();
-        const fields = moData.data?.metaobject?.fields || [];
-        const labelField = findMetaobjectLabelField(fields);
-        if (!labelField) continue;
-
-        // Fetch digest
-        const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
-          variables: { resourceId: gid },
-        });
-        const digestData = await digestResponse.json();
-        const tc = digestData.data?.translatableResource?.translatableContent || [];
-        const digestEntry = tc.find((c: any) => c.key === labelField.key);
-        if (!digestEntry?.digest) continue;
-
-        // Register translation
-        await admin.graphql(TRANSLATE_CONTENT, {
-          variables: {
-            resourceId: gid,
-            translations: [{
-              key: labelField.key,
-              value: translatedValue,
-              locale,
-              translatableContentDigest: digestEntry.digest,
-            }],
-          },
-        });
-
-        // Upsert DB
-        await db.metaobjectTranslation.upsert({
-          where: {
-            shop_metaobjectId_key_locale_marketId: {
-              marketId: "",
-              shop: session.shop,
-              metaobjectId: gid,
-              key: labelField.key,
-              locale,
-            },
-          },
-          create: {
-            shop: session.shop,
-            metaobjectId: gid,
-            type: itemId,
-            key: labelField.key,
-            value: translatedValue,
-            locale,
-            outdated: false,
-          },
-          update: {
-            value: translatedValue,
-            outdated: false,
-            updatedAt: new Date(),
-          },
-        });
-      } catch (err: any) {
-        logger.error("[translateMetaobjectEntries] Error saving translation", {
-          context: "Metaobjects",
-          gid,
-          locale,
-          error: err.message,
-        });
-      }
-    }
-  }
-
-  return { translations: allTranslations, failedLocales };
-}
+// The former METAOBJECT TRANSLATION HELPER (translateMetaobjectEntries) was a
+// dead duplicate of the identical function in content/translation.action.ts
+// (extracted there, never un-wired here). Removed in Phase 5 of the bulk
+// editor as the first step of consolidating the metaobject translation write
+// sites (docs/plans/PLAN_BULK_EDITOR.md §7). Remaining writers:
+// content/translation.action.ts (AI translate) and api.metaobjects.$.tsx
+// (single-editor save); the bulk editor writes exclusively through the
+// verified registerAndVerify/removeAndVerify path (bulk-editor/
+// translations.server.ts). Folding the two remaining writers onto that
+// verified path is documented follow-up work.

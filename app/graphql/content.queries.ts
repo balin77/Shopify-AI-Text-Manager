@@ -11,6 +11,28 @@ export const GET_SHOP_LOCALES = `#graphql
   }
 `;
 
+// SEO tab Phase 3: native URL redirect listing (Online Store navigation).
+// `query` supports Shopify search syntax, e.g. "path:/old" or "target:...".
+// Cursor-paginated; `read_online_store_navigation` scope covers this read.
+export const GET_URL_REDIRECTS = `#graphql
+  query getUrlRedirects($first: Int!, $after: String, $query: String) {
+    urlRedirects(first: $first, after: $after, query: $query, sortKey: PATH) {
+      edges {
+        cursor
+        node {
+          id
+          path
+          target
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
 /**
  * MARKETS — enumerate the shop's markets and the locales each one serves.
  *
@@ -398,6 +420,45 @@ export const GET_THEME_TRANSLATIONS = `#graphql
         value
         locale
         outdated
+      }
+    }
+  }
+`;
+
+// SEO tab Phase 3: handle lists used to fuzzy-match 404 hits against real
+// storefront resources. Deliberately narrow — only the handle field — so a
+// single 250-node page stays cheap.
+export const GET_PRODUCT_HANDLES = `#graphql
+  query getProductHandles($first: Int!) {
+    products(first: $first) {
+      edges {
+        node {
+          handle
+        }
+      }
+    }
+  }
+`;
+
+export const GET_COLLECTION_HANDLES = `#graphql
+  query getCollectionHandles($first: Int!) {
+    collections(first: $first) {
+      edges {
+        node {
+          handle
+        }
+      }
+    }
+  }
+`;
+
+export const GET_PAGE_HANDLES = `#graphql
+  query getPageHandles($first: Int!) {
+    pages(first: $first) {
+      edges {
+        node {
+          handle
+        }
       }
     }
   }

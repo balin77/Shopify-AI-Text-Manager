@@ -1,5 +1,7 @@
 import { BlockStack, InlineStack, Text, Button } from "@shopify/polaris";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { useI18n } from "../contexts/I18nContext";
+import { useSingleLocaleHint } from "../contexts/LocaleAvailabilityContext";
 import { sanitizeHTML } from "../utils/sanitizer";
 import { useMemo } from "react";
 
@@ -29,6 +31,9 @@ export function AISuggestionBanner({
   titleLabel
 }: AISuggestionBannerProps) {
   const { t } = useI18n();
+  // "Accept & Translate" degrades to a plain "Accept" in a single-language shop,
+  // so it is greyed out rather than silently doing half of what it promises.
+  const singleLocaleHint = useSingleLocaleHint();
 
   // Sanitize HTML content to prevent XSS attacks
   const sanitizedHTML = useMemo(() =>
@@ -71,9 +76,11 @@ export function AISuggestionBanner({
               {acceptLabel}
             </Button>
             {onAcceptAndTranslate && acceptAndTranslateLabel && (
-              <Button size="slim" onClick={onAcceptAndTranslate}>
-                {acceptAndTranslateLabel}
-              </Button>
+              <DisabledActionTooltip hint={singleLocaleHint}>
+                <Button size="slim" onClick={onAcceptAndTranslate} disabled={!!singleLocaleHint}>
+                  {acceptAndTranslateLabel}
+                </Button>
+              </DisabledActionTooltip>
             )}
             <Button size="slim" onClick={onDecline}>
               {declineLabel}

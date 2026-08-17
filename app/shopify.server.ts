@@ -1,17 +1,17 @@
-import "@shopify/shopify-app-remix/adapters/node";
+import "@shopify/shopify-app-react-router/adapters/node";
 // Defensive: the adapter import above is side-effect-only and
-// @shopify/shopify-app-remix declares no "sideEffects" field, so the Rollup
-// SSR build can drop it — leaving abstractRuntimeString() at its default
-// throw and crashing the Remix build load at boot. Re-invoke the setter
+// @shopify/shopify-app-react-router declares no "sideEffects" field, so the
+// Rollup SSR build can drop it — leaving abstractRuntimeString() at its default
+// throw and crashing the build load at boot. Re-invoke the setter
 // directly so the call is a top-level expression Rollup cannot eliminate.
 import { setAbstractRuntimeString } from "@shopify/shopify-api/runtime";
-setAbstractRuntimeString(() => "Remix (Node)");
+setAbstractRuntimeString(() => "React Router (Node)");
 
 import {
   ApiVersion,
   AppDistribution,
   shopifyApp,
-} from "@shopify/shopify-app-remix/server";
+} from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
 import { logger } from "./utils/logger.server";
@@ -21,17 +21,13 @@ import { checkAndSyncSubscription } from "./services/billing.server";
 /**
  * Map string API version (e.g., "2025-10") to ApiVersion enum
  * Falls back to October25 (2025-10) if not found or not set
+ *
+ * @shopify/shopify-api v13 removed the 2022-10 … 2024-07 enum members, so
+ * those strings now fall through to the default instead of pinning a version
+ * the SDK can no longer talk to.
  */
 function getApiVersion(versionString?: string): ApiVersion {
   const versionMap: Record<string, ApiVersion> = {
-    "2022-10": ApiVersion.October22,
-    "2023-01": ApiVersion.January23,
-    "2023-04": ApiVersion.April23,
-    "2023-07": ApiVersion.July23,
-    "2023-10": ApiVersion.October23,
-    "2024-01": ApiVersion.January24,
-    "2024-04": ApiVersion.April24,
-    "2024-07": ApiVersion.July24,
     "2024-10": ApiVersion.October24,
     "2025-01": ApiVersion.January25,
     "2025-04": ApiVersion.April25,
@@ -39,6 +35,8 @@ function getApiVersion(versionString?: string): ApiVersion {
     "2025-10": ApiVersion.October25,
     "2026-01": ApiVersion.January26,
     "2026-04": ApiVersion.April26,
+    "2026-07": ApiVersion.July26,
+    "2026-10": ApiVersion.October26,
     "unstable": ApiVersion.Unstable,
   };
 
@@ -98,9 +96,11 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new EncryptedPrismaSessionStorage(new PrismaSessionStorage(prisma)),
   distribution: AppDistribution.AppStore,
-  future: {
-    unstable_newEmbeddedAuthStrategy: true,
-  },
+  // `future.unstable_newEmbeddedAuthStrategy: true` used to live here. In
+  // @shopify/shopify-app-react-router v2 the flag is gone because the strategy
+  // it opted into IS the only strategy — the auth-code-flow implementation was
+  // removed and apps are embedded by default. Dropping the flag therefore keeps
+  // this app on exactly the token-exchange behaviour it already had.
   // NOTE (review LOW "no scopes_update handling"): we intentionally do not
   // subscribe to the SCOPES_UPDATE webhook. With unstable_newEmbeddedAuthStrategy
   // (token-exchange/managed install), Shopify re-runs OAuth and fires afterAuth
@@ -177,6 +177,10 @@ logger.info(`[SHOPIFY.SERVER] Shopify App initialized`);
 import { trackActivity } from "./middleware/activity-tracker.middleware";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
+import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
+import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
+import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
+import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -203,6 +207,23 @@ const enhancedAuthenticate = {
     // because the standalone server.js cleanup jobs run under plain node and
     // cannot import this TS service / redactShopData.
     ShopReaperService.getInstance().start();
+
+    // Bootstrap the daily GSC keyword auto-sync sweep once per process (same
+    // idempotent-start reasoning as ShopReaperService above — it also needs
+    // TS imports, here enrichKeywordsFromGsc + planUtils).
+    GscAutoSyncService.getInstance().start();
+
+    // Bootstrap the daily llms.txt refresh sweep (same idempotent-start
+    // reasoning). This is the only path that keeps llms.txt fresh for a shop
+    // nobody opens — the in-session refresh needs someone working in the app.
+    LlmsAutoRefreshService.getInstance().start();
+
+    // Bootstrap the IndexNow auto-submit sweep (same idempotent-start
+    // reasoning). Without it the webhook-fed URL queue only ever drained when
+    // a merchant opened the section and clicked — "instant" indexing that
+    // waited for a human.
+    IndexNowAutoSubmitService.getInstance().start();
+    SeoAuditAutoRunService.getInstance().start();
 
     return { admin, session };
   }

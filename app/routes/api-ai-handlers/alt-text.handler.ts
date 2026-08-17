@@ -1,27 +1,44 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, isPrismaError, isAuthError } from "./shared";
 import type { TranslatableContentItem } from "./shared";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
+import { withUserInstruction } from "~/utils/ai-user-instruction.server";
 import { safeJsonParse, isValidLocale, isValidShopifyGID } from "~/utils/validation";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
+import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale } from "./keyword-prompt";
+import type { DataResponse } from "~/types/data-response";
+
+/**
+ * Alt-text requirement line for the item's primary keyword. The shipped default
+ * `productAltTextInstructions` has always said "Include the main keyword" — but
+ * no keyword was ever passed, so the model had to guess one. Alt text is short
+ * and accessibility-first, so only the PRIMARY keyword is offered and only
+ * "if it genuinely describes the image": stuffing an alt attribute is both an
+ * SEO and an accessibility regression.
+ */
+function altTextKeywordLine(primary: string | null): string {
+  return primary
+    ? `\n- Include the target keyword "${primary}" if it genuinely describes what is visible (never at the cost of accuracy)`
+    : "";
+}
 
 // Reject a malformed productId before it reaches a DB lookup or Shopify
 // mutation. productId is optional in several flows, so an empty value passes
 // (the callers already guard on `if (productId && ...)`); only a non-empty,
 // non-GID value is rejected.
-function invalidProductGidResponse(productId: string): Response | null {
+function invalidProductGidResponse(productId: string): DataResponse | null {
   if (productId && !isValidShopifyGID(productId)) {
     return json({ success: false, error: `Invalid product GID: ${productId}` }, { status: 400 });
   }
   return null;
 }
 
-export async function handleGenerateAltText(ctx: AIActionContext): Promise<Response> {
+export async function handleGenerateAltText(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
@@ -38,6 +55,15 @@ export async function handleGenerateAltText(ctx: AIActionContext): Promise<Respo
   const aiInstructions = await db.aIInstructions.findUnique({
     where: { shop: session.shop },
   });
+
+  // Alt text has no editor field key of its own, so the unfiltered loader is
+  // used; the locale follows the same client-sent contract as generation.
+  const trackedKeywords = await loadTrackedKeywordsUnfiltered(
+    db,
+    session.shop,
+    itemId,
+    resolveKeywordLocale(formData),
+  );
 
   // Create task entry with prompt
   const task = await db.task.create({
@@ -77,13 +103,14 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
 
     // Add requirements
     prompt += `\n\nRequirements:`;
-    const altTextCharLimit = getCharacterLimitRequirement("productAltText");
+    const altTextCharLimit = getCharacterLimitRequirement("productAltText", { limits: ctx.seoLimits });
     if (altTextCharLimit) {
       prompt += `\n- Length: ${altTextCharLimit}`;
     }
     prompt += `\n- Describe what's visible in the image`;
     prompt += `\n- Include product name or key feature`;
     prompt += `\n- Accessible and helpful for screen readers`;
+    prompt += altTextKeywordLine(trackedKeywords.primary);
 
     const altTextFormat = getInstructionWithDefault(aiInstructions, "productAltTextFormat");
     if (altTextFormat) {
@@ -96,6 +123,10 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
     }
 
     prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
+
+    // Ad-hoc instruction from the prompt box on the alt-text field — appended
+    // last and outranking every rule above. No-op when the box was empty.
+    prompt = withUserInstruction(prompt, formData);
 
     const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt, sendImageToAI);
 
@@ -129,7 +160,7 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
   }
 }
 
-export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<Response> {
+export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData, contentType } = ctx;
 
   const productId = getFormString(formData, "productId");
@@ -165,7 +196,19 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
   });
   const sharedFormat = getInstructionWithDefault(altTextInstructions, "productAltTextFormat");
   const sharedInstructions = getInstructionWithDefault(altTextInstructions, "productAltTextInstructions");
-  const charLimit = getCharacterLimitRequirement("productAltText");
+  const charLimit = getCharacterLimitRequirement("productAltText", { limits: ctx.seoLimits });
+  // Resolved ONCE for the whole batch: every image belongs to the same product,
+  // so the tracked keywords are identical — no reason to re-query per image.
+  const keywordLine = altTextKeywordLine(
+    (
+      await loadTrackedKeywordsUnfiltered(
+        db,
+        session.shop,
+        productId,
+        resolveKeywordLocale(formData),
+      )
+    ).primary,
+  );
 
   const bulkTask = await db.task.create({
     data: {
@@ -199,6 +242,7 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<R
     charLimit,
     format: sharedFormat,
     instructions: sharedInstructions,
+    keywordLine,
   }).catch((err) => {
     logger.error("[API-AI] Bulk alt-text generation crashed", {
       context: "AI",
@@ -221,10 +265,12 @@ interface BulkAltTextRunArgs {
   charLimit: string | null;
   format: string;
   instructions: string;
+  /** Pre-rendered target-keyword requirement, "" when the product tracks none. */
+  keywordLine: string;
 }
 
 async function runBulkAltTextGeneration(taskId: string, args: BulkAltTextRunArgs): Promise<void> {
-  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions } = args;
+  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions, keywordLine } = args;
   const totalImages = imagesData.length;
   const aiService = createAIService(settings, shop, taskId);
   const generatedAltTexts: Record<number, string> = {};
@@ -244,6 +290,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
       prompt += `\n- Describe what's visible in the image`;
       prompt += `\n- Include product name or key feature`;
       prompt += `\n- Accessible and helpful for screen readers`;
+      prompt += keywordLine;
 
       if (format) prompt += `\n\nFormat Example:\n${format}`;
       if (instructions) prompt += `\n\nGuidelines:\n${instructions}`;
@@ -299,7 +346,7 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
   });
 }
 
-export async function handleTranslateAltText(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAltText(ctx: AIActionContext): Promise<DataResponse> {
   const { session, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
@@ -382,7 +429,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Resp
   }
 }
 
-export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const imageIndex = parseInt(getFormString(formData, "imageIndex"), 10);
@@ -685,7 +732,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   }
 }
 
-export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const altTextsDataJson = getFormString(formData, "altTextsData");
@@ -971,7 +1018,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
   }
 }
 
-export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext): Promise<Response> {
+export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext): Promise<DataResponse> {
   const { session, admin, db, settings, formData, contentType, itemId } = ctx;
 
   const altTextsDataJson = getFormString(formData, "altTextsData");

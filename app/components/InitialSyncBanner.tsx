@@ -18,7 +18,7 @@
  */
 
 import { useEffect, useRef } from "react";
-import { useLocation, useRevalidator, useRouteLoaderData } from "@remix-run/react";
+import { useLocation, useRevalidator, useRouteLoaderData } from "react-router";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 
 interface SyncStatus {

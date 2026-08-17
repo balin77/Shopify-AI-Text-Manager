@@ -664,6 +664,52 @@ export function isAltTextTranslated(
 }
 
 /**
+ * Whether one image counts as "has alt text" FOR THE GIVEN LOCALE.
+ *
+ * Alt-text coverage is per locale, exactly like every other field the SEO score
+ * judges: in a foreign language an image is only covered when it has an alt
+ * TRANSLATION. Accepting the primary alt as coverage (what the editor sidebar
+ * used to do) makes every foreign locale score its image block identically to
+ * the primary one — a product whose alt texts were never translated still
+ * reports "all images have alt text", while the store-wide audit, which reads
+ * ProductImageAltTranslation for the same locale, reports them as missing.
+ *
+ * `liveValue` is the editor's working value for this image in the ACTIVE locale
+ * (`state.imageAltTexts[index]`, already market-resolved by useEditorAltText).
+ * When present it wins over the persisted rows, so an unsaved edit counts
+ * immediately — and a cleared value counts as missing rather than silently
+ * falling back to the stored one.
+ */
+export function hasAltTextForLocale(
+  image: ContentImage | null | undefined,
+  locale: string,
+  primaryLocale: string,
+  liveValue?: string
+): boolean {
+  if (locale !== primaryLocale) {
+    return isAltTextTranslated(image, locale, primaryLocale, liveValue);
+  }
+  return !isFieldEmpty(liveValue !== undefined ? liveValue : (image?.altText ?? ''));
+}
+
+/**
+ * How many of `images` have an alt text for `locale` — the `imagesWithAlt`
+ * input of computeSeoScore. `liveAltTexts` is `state.imageAltTexts`, keyed by
+ * the image's index in this very list (the editor indexes alt-text state by
+ * gallery position, falling back to the single featured image at index 0).
+ */
+export function countImagesWithAltForLocale(
+  images: ReadonlyArray<ContentImage | null | undefined>,
+  locale: string,
+  primaryLocale: string,
+  liveAltTexts?: Record<number, string>
+): number {
+  return images.filter((image, index) =>
+    hasAltTextForLocale(image, locale, primaryLocale, liveAltTexts?.[index])
+  ).length;
+}
+
+/**
  * Whether the primary alt-text exists but at least one foreign enabled locale
  * is missing its translation. Only meaningful while viewing the primary locale.
  */

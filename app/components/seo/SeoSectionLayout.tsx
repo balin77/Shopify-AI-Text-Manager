@@ -1,0 +1,130 @@
+/**
+ * SeoSectionLayout — the shared shell every SEO section renders inside
+ * (SEO_TAB_IMPLEMENTATION_PLAN.md §0.1b / A1).
+ *
+ * Provides a consistent header (icon + title + description from
+ * `t.seo.sections.<id>`) and enforces the section's `planGate` from
+ * SEO_SECTIONS: a merchant below the required plan sees an upsell card instead
+ * of the section content (the server loader/action must gate too — this is the
+ * client half). Sections without a `planGate` are available on all plans.
+ */
+
+import type { ReactNode } from "react";
+import { useRouteLoaderData } from "react-router";
+import { Card, BlockStack, Text, InlineStack, Button, Banner } from "@shopify/polaris";
+import { usePlan } from "../../contexts/PlanContext";
+import { useI18n } from "../../contexts/I18nContext";
+import { useAppNavigation } from "../../hooks/useAppNavigation";
+import { meetsPlan } from "../../utils/planUtils";
+import { SEO_SECTIONS, SEO_LAYOUT_ROUTE_ID } from "../../config/seo-sections";
+import { PLAN_DISPLAY_NAMES } from "../../config/plans";
+import { SeoHelpProvider, SeoHelpToggle } from "./SeoHelpBanner";
+
+interface SeoSectionLayoutProps {
+  sectionId: string;
+  children: ReactNode;
+  /**
+   * Optional content rendered BELOW the upgrade card when the section is
+   * plan-gated and the merchant is below the required plan (e.g. a static
+   * read-only example — PLAN_SEO_SUITE_COMPLETION.md §3.7, the crawl
+   * section's Free/Basic upsell). Ignored when the section isn't locked.
+   * Every other section leaves this unset and gets the historic
+   * upsell-card-only behavior.
+   */
+  lockedExtra?: ReactNode;
+}
+
+interface SeoSectionStrings {
+  label?: string;
+  title?: string;
+  description?: string;
+}
+
+export function SeoSectionLayout({ sectionId, children, lockedExtra }: SeoSectionLayoutProps) {
+  const { plan } = usePlan();
+  const { t } = useI18n();
+  const { handleNavigate } = useAppNavigation();
+
+  const section = SEO_SECTIONS.find((s) => s.id === sectionId);
+  const sections = (t.seo as { sections?: Record<string, SeoSectionStrings> }).sections;
+  const strings = sections?.[sectionId] ?? {};
+  const title = strings.title || strings.label || sectionId;
+
+  const locked = section?.planGate ? !meetsPlan(plan, section.planGate) : false;
+
+  // Language gate: sections like the hreflang audit compare secondary locales
+  // against the primary one, so on a single-language shop they can only render
+  // an empty report. Show the reason instead. `localeCount` comes from the SEO
+  // layout route (app.seo.tsx); a missing value means "don't gate".
+  const layoutData = useRouteLoaderData(SEO_LAYOUT_ROUTE_ID) as { localeCount?: number } | undefined;
+  const languageLocked =
+    !!section?.requiresMultipleLocales
+    && typeof layoutData?.localeCount === "number"
+    && layoutData.localeCount <= 1;
+
+  const body = (
+    <BlockStack gap="400">
+      <BlockStack gap="100">
+        <InlineStack gap="200" blockAlign="center">
+          {section?.icon && (
+            <Text as="span" variant="headingLg">
+              {section.icon}
+            </Text>
+          )}
+          <Text as="h2" variant="headingLg">
+            {title}
+          </Text>
+          <SeoHelpToggle />
+        </InlineStack>
+        {strings.description && (
+          <Text as="p" variant="bodyMd" tone="subdued">
+            {strings.description}
+          </Text>
+        )}
+      </BlockStack>
+
+      {/* Plan gate first — same priority the nav chips use (app.seo.tsx): an
+          upgrade unlocks the section outright, while the language hint would
+          still apply afterwards, so showing it first would hide the actionable
+          half. */}
+      {!locked && languageLocked ? (
+        <Banner tone="info">
+          <Text as="p" variant="bodyMd">
+            {t.common?.requiresSecondLanguage
+              || "Your shop has only one language. Add another language in your Shopify settings to use this."}
+          </Text>
+        </Banner>
+      ) : locked ? (
+        <BlockStack gap="400">
+          <Card>
+            <div style={{ padding: "1rem", textAlign: "center" }}>
+              <BlockStack gap="300" inlineAlign="center">
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {(t.seo as { upgradeForSection?: string }).upgradeForSection?.replace(
+                    "{plan}",
+                    PLAN_DISPLAY_NAMES[section!.planGate!],
+                  ) || `Upgrade to ${PLAN_DISPLAY_NAMES[section!.planGate!]} to use this feature.`}
+                </Text>
+                <Button
+                  variant="primary"
+                  onClick={() =>
+                    handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "plan" }) })
+                  }
+                >
+                  {(t.settings as { upgradePlan?: string }).upgradePlan || "Upgrade Plan"}
+                </Button>
+              </BlockStack>
+            </div>
+          </Card>
+          {lockedExtra}
+        </BlockStack>
+      ) : (
+        children
+      )}
+    </BlockStack>
+  );
+
+  // The ❓ toggle lives in the header while the help box it reopens is rendered
+  // by `children` — the provider has to span both.
+  return <SeoHelpProvider sectionId={sectionId}>{body}</SeoHelpProvider>;
+}

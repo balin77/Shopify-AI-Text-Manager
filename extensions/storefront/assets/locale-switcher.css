@@ -480,6 +480,28 @@ cp-locale-switcher .cp-locale-merged-divider:first-child {
    small viewport, the common mobile case. Mounting in a cramped header
    icon row on a desktop is rare; merchants who really need that case can
    keep the labels by configuring the layout differently. */
+/* ------------------------------------------------- layout-shift guard (JS) */
+
+/* Set during parse by the inline snippet in locale-switcher.liquid and cleared
+   by _upgradeAll, so the pre-upgrade native-<select> UI is never painted: the
+   switcher appears exactly once, already at the width of the custom trigger
+   buttons and — on phones — already merged into a single dropdown. Without it
+   the browser first laid out the <select>s (sized by their longest option, both
+   selectors side by side) and corrected that a moment later.
+
+   display:none rather than visibility:hidden so no wrongly-sized box is
+   reserved in a header/footer mount either.
+
+   MUST stay last in this file: the mount rules above set display on the same
+   selector at equal specificity (.cp-locale-switcher--header → inline-flex),
+   and both classes are present while _renderAllMounts runs. Source order is
+   what makes this one win.
+
+   No-JS visitors never get the class, so the native selects render normally. */
+cp-locale-switcher.cp-locale-switcher--js-pending {
+  display: none;
+}
+
 @media (max-width: 600px) {
   cp-locale-switcher.cp-locale-switcher--auto-compact .cp-locale-field__button > .cp-locale-field__text {
     display: none;

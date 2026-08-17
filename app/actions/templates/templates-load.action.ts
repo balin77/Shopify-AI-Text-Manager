@@ -1,8 +1,9 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { getFormString } from "~/utils/form-data.utils";
 import type { TemplatesActionContext } from "./shared";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleLoadTranslations(ctx: TemplatesActionContext): Promise<Response> {
+export async function handleLoadTranslations(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { db, session, formData, groupId, domain, selectedThemeId } = ctx;
   const locale = getFormString(formData, "locale");
 

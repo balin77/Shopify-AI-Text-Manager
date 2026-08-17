@@ -1,0 +1,564 @@
+{%- comment -%}
+  App Embed Block (target: body) - emits schema.org JSON-LD for the current
+  page using NATIVE Liquid objects (product / collection / article / shop), so
+  rich-snippet markup is produced automatically with no admin API call. Every
+  dynamic value is passed through the `json` filter, which JSON-encodes the
+  string AND escapes `<` (so a value containing "</script>" cannot break out
+  of the surrounding <script> element). Absolute URLs are built from
+  `shop.url` (canonical, no trailing slash) + the object's root-relative
+  `.url`. Enable once - no placement needed.
+{%- endcomment -%}
+
+{%- liquid
+  assign want_org = block.settings.enable_organization
+  assign want_product = block.settings.enable_product
+  assign want_collection = block.settings.enable_collection
+  assign want_article = block.settings.enable_article
+  assign want_breadcrumb = block.settings.enable_breadcrumb
+  assign want_faq = block.settings.enable_faq
+
+  assign logo_url = ''
+  if block.settings.logo
+    assign logo_url = block.settings.logo | image_url: width: 512
+  elsif shop.brand.logo
+    assign logo_url = shop.brand.logo | image_url: width: 512
+  endif
+  # `image_url` returns a PROTOCOL-RELATIVE URL ("//cdn.shopify.com/..."), and
+  # Google requires an absolute one. Dawn prepends "https:" unconditionally; we
+  # test the first two characters instead, so an already-absolute URL can never
+  # become "https:https://...". Same treatment everywhere an image is emitted.
+  if logo_url != ''
+    assign logo_scheme = logo_url | slice: 0, 2
+    if logo_scheme == '//'
+      assign logo_url = logo_url | prepend: 'https:'
+    endif
+  endif
+-%}
+
+{%- if want_org -%}
+<script type="application/ld+json" data-contentpilot="organization">
+{
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  "name": {{ shop.name | json }},
+  "url": {{ shop.url | json }}
+  {%- if logo_url != '' -%}, "logo": {{ logo_url | json }}{%- endif -%}
+  {%- assign social_lines = block.settings.social_urls | newline_to_br | split: '<br />' -%}
+  {%- assign social_clean = '' -%}
+  {%- for s in social_lines -%}
+    {%- assign st = s | strip -%}
+    {%- if st != '' -%}
+      {%- if social_clean == '' -%}{%- assign social_clean = st -%}{%- else -%}{%- assign social_clean = social_clean | append: '|' | append: st -%}{%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+  {%- if social_clean != '' -%}
+    , "sameAs": [
+    {%- assign parts = social_clean | split: '|' -%}
+    {%- for p in parts -%}{{ p | json }}{%- unless forloop.last -%}, {%- endunless -%}{%- endfor -%}
+    ]
+  {%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  Product. Built to stand ALONE: the theme's own `{{ product | structured_data }}`
+  is expected to be removed later, so this entity has to carry everything Google
+  needs by itself.
+
+  Two invariants worth stating, because both are easy to break:
+
+  1. The output does NOT depend on `?variant=`. Shopify strips the variant
+     parameter from the canonical URL, so a page that emitted a different
+     entity per variant URL would hand Google several identities for one page.
+     `@id` and `url` are therefore always the canonical product URL, and the
+     selected variant's price lives in its own Offer inside the array. That
+     also means `selected_or_first_available_variant` must not be read here.
+  2. `@id` uses Dawn's exact scheme (`/products/<handle>#product`,
+     `...?variant=<id>#offer`) so removing the theme's schema later does not
+     change the identity of anything.
+  3. Nothing in this entity may be INVENTED. Every value has to trace back to
+     a native field or a merchant-set metafield — Shopify App Store
+     requirement 1.1.4 ("use only factual information") applies to structured
+     data just as it does to visible copy, and markup is read by Google and by
+     shoppers alike.
+
+     `priceValidUntil` is the property that broke this rule: it was
+     synthesized as "now + 1 year" on every Offer, i.e. this app told the
+     world that every price in the shop is guaranteed for exactly a year.
+     No store datum says that. It is now read from the merchant's
+     `custom.price_valid_until` product metafield (type `date`/`date_time`)
+     and omitted otherwise — including when the date has already passed,
+     because a stale guarantee is as untrue as an invented one. Omitting it
+     is cheap: Google lists the property as RECOMMENDED, so its absence is a
+     non-critical Search Console warning and costs no rich result.
+     app/services/structured-data.service.ts follows the identical rule.
+{%- endcomment -%}
+{%- if want_product and request.page_type == 'product' and product -%}
+  {%- liquid
+    assign p_url = shop.url | append: product.url
+    # Relative @id, exactly as Dawn emits it — JSON-LD resolves it against the
+    # page URL, and matching Dawn keeps the identity stable across the switch.
+    assign p_id = product.url | append: '#product'
+    # `page_description` is Shopify's own meta description for the CURRENT
+    # page and follows the active locale; the raw `global.description_tag`
+    # metafield does not, so a Spanish page shipped a German description while
+    # its `name` was correctly Spanish. `product.description` is a translated
+    # native field and makes a safe fallback.
+    # The SEO meta description is stored HTML-ENCODED, and `strip_html` only
+    # removes tags — it does not decode entities, so `&quot;` and `&amp;` went
+    # into the JSON verbatim while the native `name` (never encoded) looked
+    # fine. Decode before `| json`, `&amp;` LAST: doing it first would turn the
+    # literal text "&amp;quot;" into a quote character.
+    assign p_desc = page_description | default: product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
+    assign p_currency = cart.currency.iso_code | default: shop.currency
+    # Shopify "rating" metafield value is a rating object: .rating / .scale_max
+    assign r_obj = product.metafields.reviews.rating.value
+    assign r_count = product.metafields.reviews.rating_count.value
+    assign p_mpn = product.metafields.custom.mpn.value
+    # priceValidUntil: merchant metafield only, never synthesized, expired
+    # dates dropped — invariant 3 above has the compliance reasoning.
+    #
+    # Both sides of the comparison run through the SAME `%Y-%m-%d | %s` chain,
+    # and that symmetry is the whole point of the detour:
+    #  - `| date: '%Y-%m-%d'` first reduces both to a calendar DAY, so a
+    #    date_time metafield stays valid for the rest of its last day, and a
+    #    date metafield (UTC midnight) is not compared against a shop-local
+    #    midnight — that mismatch dropped the final valid day west of UTC.
+    #  - `| plus: 0` then forces INTEGER comparison. Liquid would otherwise
+    #    compare the two as strings: `>=` on strings is lexicographic, and an
+    #    unparseable metafield ("soon") survives `date` unchanged and would
+    #    sort ABOVE any ISO date — publishing "soon" as priceValidUntil, i.e.
+    #    the very fabrication this code exists to prevent. As an integer it
+    #    coerces to 0 and is dropped.
+    assign p_valid_until = ''
+    assign pvu_raw = product.metafields.custom.price_valid_until.value
+    if pvu_raw != blank
+      assign pvu_ts = pvu_raw | date: '%Y-%m-%d' | date: '%s' | plus: 0
+      assign pvu_today_ts = 'now' | date: '%Y-%m-%d' | date: '%s' | plus: 0
+      if pvu_ts >= pvu_today_ts
+        assign p_valid_until = pvu_raw | date: '%Y-%m-%d'
+      endif
+    endif
+    assign variant_count = product.variants | size
+    assign max_variant_offers = 25
+
+    # Above the threshold there are no Offers to carry sku/gtin, and Google
+    # Merchant listings need SOME product identifier — so the AggregateOffer
+    # case (like the single-variant case) puts them on the Product. `first`,
+    # never `selected_or_first_available_variant`: the output must not depend
+    # on `?variant=`.
+    assign id_variant = nil
+    if variant_count == 1 or variant_count > max_variant_offers
+      assign id_variant = product.variants | first
+    endif
+    assign id_gtin = ''
+    assign id_gtin_key = ''
+    if id_variant
+      assign id_gtin = id_variant.barcode | default: '' | remove: '-' | remove: ' '
+      assign id_gtin_len = id_gtin | size
+      if id_gtin_len == 8
+        assign id_gtin_key = 'gtin8'
+      elsif id_gtin_len == 12
+        assign id_gtin_key = 'gtin12'
+      elsif id_gtin_len == 13
+        assign id_gtin_key = 'gtin13'
+      elsif id_gtin_len == 14
+        assign id_gtin_key = 'gtin14'
+      elsif id_gtin != ''
+        assign id_gtin_key = 'gtin'
+      endif
+    endif
+
+    # AggregateOffer inputs. Availability has to be aggregated rather than
+    # omitted: a product whose 30 variants are ALL sold out would otherwise
+    # hand Google prices with no availability signal at all — the same false
+    # claim the per-variant branch exists to avoid. lowPrice/highPrice come
+    # from the AVAILABLE variants while there are any, so the advertised price
+    # is one a shopper can actually pay.
+    assign agg_avail_count = 0
+    assign agg_backorder_count = 0
+    assign agg_has_low = false
+    assign agg_low = 0
+    assign agg_high = 0
+    for v in product.variants
+      if v.available
+        assign agg_avail_count = agg_avail_count | plus: 1
+        if v.inventory_management != blank and v.inventory_quantity <= 0 and v.inventory_policy == 'continue'
+          assign agg_backorder_count = agg_backorder_count | plus: 1
+        endif
+        if agg_has_low == false or v.price < agg_low
+          assign agg_low = v.price
+          assign agg_has_low = true
+        endif
+        if v.price > agg_high
+          assign agg_high = v.price
+        endif
+      endif
+    endfor
+    if agg_avail_count == 0
+      assign agg_low = product.price_min
+      assign agg_high = product.price_max
+      assign agg_availability = 'https://schema.org/OutOfStock'
+    elsif agg_backorder_count == agg_avail_count
+      # Every purchasable variant is a backorder — saying InStock here is the
+      # "ships in three weeks" lie in aggregate form.
+      assign agg_availability = 'https://schema.org/BackOrder'
+    else
+      assign agg_availability = 'https://schema.org/InStock'
+    endif
+  -%}
+
+  {%- comment -%}
+    Images as an array (Google prefers several, and 1:1/4:3/16:9 crops of the
+    same shot are explicitly recommended). Capped so a product with 200 media
+    items can't blow up the page.
+  {%- endcomment -%}
+  {%- capture p_images -%}
+    {%- assign img_printed = 0 -%}
+    {%- for p_image in product.images limit: 10 -%}
+      {%- assign img_url = p_image | image_url: width: 1200 -%}
+      {%- assign img_scheme = img_url | slice: 0, 2 -%}
+      {%- if img_scheme == '//' -%}{%- assign img_url = img_url | prepend: 'https:' -%}{%- endif -%}
+      {%- if img_printed > 0 -%},{%- endif -%}{{ img_url | json }}
+      {%- assign img_printed = img_printed | plus: 1 -%}
+    {%- endfor -%}
+  {%- endcapture -%}
+
+  {%- comment -%}
+    One Offer per variant — NOT AggregateOffer. Google derives the price range
+    from an offer array by itself and additionally gets per-variant SKU, GTIN
+    and availability, all of which AggregateOffer throws away. Past the
+    threshold the markup would outweigh the page, so a shop with very many
+    variants falls back to AggregateOffer for size alone.
+
+    `availability` is computed per variant rather than from `product.available`:
+    once the theme's schema is gone this is the only statement Google sees, and
+    "InStock" for something that ships in three weeks is simply false.
+    `inventory_quantity` / `inventory_policy` are used for the decision only and
+    never written into the markup.
+  {%- endcomment -%}
+  {%- capture p_offers -%}
+    {%- if variant_count > max_variant_offers -%}
+      {
+        "@type": "AggregateOffer",
+        "priceCurrency": {{ p_currency | json }},
+        "lowPrice": {{ agg_low | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "highPrice": {{ agg_high | divided_by: 100.0 | round: 2 | append: '' | json }},
+        "offerCount": {{ variant_count }},
+        "availability": {{ agg_availability | json }},
+        "itemCondition": "https://schema.org/NewCondition",
+        "url": {{ p_url | json }}
+        {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json }}{%- endif -%}
+      }
+    {%- else -%}
+    [
+      {%- assign off_printed = 0 -%}
+      {%- for v in product.variants -%}
+        {%- liquid
+          assign v_url = p_url | append: '?variant=' | append: v.id
+          assign v_id = product.url | append: '?variant=' | append: v.id | append: '#offer'
+
+          if v.inventory_management == blank
+            assign v_avail = 'https://schema.org/InStock'
+          elsif v.available == false
+            assign v_avail = 'https://schema.org/OutOfStock'
+          elsif v.inventory_quantity <= 0 and v.inventory_policy == 'continue'
+            assign v_avail = 'https://schema.org/BackOrder'
+          else
+            assign v_avail = 'https://schema.org/InStock'
+          endif
+
+          assign v_gtin = v.barcode | default: '' | remove: '-' | remove: ' '
+          assign v_gtin_len = v_gtin | size
+          assign v_gtin_key = ''
+          if v_gtin_len == 8
+            assign v_gtin_key = 'gtin8'
+          elsif v_gtin_len == 12
+            assign v_gtin_key = 'gtin12'
+          elsif v_gtin_len == 13
+            assign v_gtin_key = 'gtin13'
+          elsif v_gtin_len == 14
+            assign v_gtin_key = 'gtin14'
+          elsif v_gtin != ''
+            assign v_gtin_key = 'gtin'
+          endif
+        -%}
+        {%- if off_printed > 0 -%},{%- endif -%}
+        {
+          "@type": "Offer",
+          "@id": {{ v_id | json }},
+          "price": {{ v.price | divided_by: 100.0 | round: 2 | append: '' | json }},
+          "priceCurrency": {{ p_currency | json }},
+          "availability": {{ v_avail | json }},
+          "itemCondition": "https://schema.org/NewCondition",
+          "url": {{ v_url | json }}
+          {%- if p_valid_until != '' -%}, "priceValidUntil": {{ p_valid_until | json }}{%- endif -%}
+          {%- if v.sku != blank -%}, "sku": {{ v.sku | json }}{%- endif -%}
+          {%- if v_gtin_key != '' -%}, "{{ v_gtin_key }}": {{ v_gtin | json }}{%- endif -%}
+        }
+        {%- assign off_printed = off_printed | plus: 1 -%}
+      {%- endfor -%}
+    ]
+    {%- endif -%}
+  {%- endcapture -%}
+<script type="application/ld+json" data-contentpilot="product">
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "@id": {{ p_id | json }},
+  "name": {{ product.title | json }},
+  "url": {{ p_url | json }}
+  {%- if p_desc != '' -%}, "description": {{ p_desc | json }}{%- endif -%}
+  {%- if img_printed > 0 -%}, "image": [{{ p_images | strip }}]{%- endif -%}
+  {%- comment -%}
+    SKU and GTIN sit on the OFFERS, not here: with several variants a
+    product-level value would have to pick one, and picking the selected
+    variant is exactly the `?variant=`-dependent output invariant 1 rules out.
+    A single-variant product keeps them at product level too, where they are
+    unambiguous and Merchant Center reads them most reliably.
+  {%- endcomment -%}
+  {%- if id_variant -%}
+    {%- if id_variant.sku != blank -%}, "sku": {{ id_variant.sku | json }}{%- endif -%}
+    {%- if id_gtin_key != '' -%}, "{{ id_gtin_key }}": {{ id_gtin | json }}{%- endif -%}
+  {%- endif -%}
+  {%- if p_mpn != blank -%}, "mpn": {{ p_mpn | json }}{%- endif -%}
+  , "brand": { "@type": "Brand", "name": {{ product.vendor | default: shop.name | json }} }
+  , "offers": {{ p_offers | strip }}
+  {%- if r_obj and r_obj.rating and r_count and r_count > 0 -%}
+  , "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": {{ r_obj.rating | plus: 0 }},
+      "bestRating": {{ r_obj.scale_max | default: 5 | plus: 0 }},
+      "reviewCount": {{ r_count | plus: 0 }}
+    }
+  {%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  FAQ (plan §C2): opt-in (`enable_faq`, default false), product pages only.
+  Sourced from the product metafield `custom.faq` (type `json`, a list of
+  `{question, answer}`) via `METAFIELDS_SET` — no admin API call needed here,
+  it's read straight off the native `product` object. Built into a `capture`
+  first so we only emit the <script> block when at least one entry has both a
+  non-blank question and answer (an empty `mainEntity` is invalid FAQPage
+  markup); the comma between entries is placed via a counter (not join/split)
+  since question/answer text can contain any character. Every value goes
+  through `| json` per this block's escaping convention.
+{%- endcomment -%}
+{%- if want_faq and request.page_type == 'product' and product -%}
+  {%- assign faq_items = product.metafields.custom.faq.value -%}
+  {%- capture faq_body -%}
+    {%- assign faq_printed = 0 -%}
+    {%- for faq_item in faq_items -%}
+      {%- if faq_item.question != blank and faq_item.answer != blank -%}
+        {%- if faq_printed > 0 -%},{%- endif -%}
+        {
+          "@type": "Question",
+          "name": {{ faq_item.question | json }},
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": {{ faq_item.answer | json }}
+          }
+        }
+        {%- assign faq_printed = faq_printed | plus: 1 -%}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endcapture -%}
+  {%- if faq_body != blank -%}
+<script type="application/ld+json" data-contentpilot="faq">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {{ faq_body }}
+  ]
+}
+</script>
+  {%- endif -%}
+{%- endif -%}
+
+{%- if want_collection and request.page_type == 'collection' and collection -%}
+  {%- liquid
+    assign c_url = shop.url | append: collection.url
+    # Locale-aware, same reasoning as the product description above.
+    assign c_desc = page_description | default: collection.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
+  -%}
+<script type="application/ld+json" data-contentpilot="collection">
+{
+  "@context": "https://schema.org",
+  "@type": "CollectionPage",
+  "name": {{ collection.title | json }},
+  "url": {{ c_url | json }}
+  {%- if c_desc != '' -%}, "description": {{ c_desc | json }}{%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- if want_article and request.page_type == 'article' and article -%}
+  {%- liquid
+    assign a_url = shop.url | append: article.url
+    assign a_desc = page_description | default: article.excerpt_or_content | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
+    assign a_img = ''
+    if article.image
+      assign a_img = article.image | image_url: width: 1200
+      assign a_img_scheme = a_img | slice: 0, 2
+      if a_img_scheme == '//'
+        assign a_img = a_img | prepend: 'https:'
+      endif
+    endif
+  -%}
+<script type="application/ld+json" data-contentpilot="article">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": {{ article.title | json }},
+  "url": {{ a_url | json }},
+  "mainEntityOfPage": {{ a_url | json }},
+  "datePublished": {{ article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
+  "dateModified": {{ article.updated_at | default: article.published_at | date: '%Y-%m-%dT%H:%M:%S%z' | json }},
+  "author": { "@type": "Person", "name": {{ article.author | default: shop.name | json }} },
+  "publisher": {
+    "@type": "Organization",
+    "name": {{ shop.name | json }}
+    {%- if logo_url != '' -%}, "logo": { "@type": "ImageObject", "url": {{ logo_url | json }} }{%- endif -%}
+  }
+  {%- if a_desc != '' -%}, "description": {{ a_desc | json }}{%- endif -%}
+  {%- if a_img != '' -%}, "image": {{ a_img | json }}{%- endif -%}
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  Breadcrumb: each ListItem is emitted inline (no join/split round-trip) so a
+  title containing a "|" cannot corrupt positions or JSON. Every name/url is
+  `| json`-escaped.
+{%- endcomment -%}
+{%- if want_breadcrumb and request.page_type == 'product' and product -%}
+<script type="application/ld+json" data-contentpilot="breadcrumb">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+    { "@type": "ListItem", "position": 2, "name": {{ product.title | json }}, "item": {{ shop.url | append: product.url | json }} }
+  ]
+}
+</script>
+{%- elsif want_breadcrumb and request.page_type == 'collection' and collection -%}
+<script type="application/ld+json" data-contentpilot="breadcrumb">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+    { "@type": "ListItem", "position": 2, "name": {{ collection.title | json }}, "item": {{ shop.url | append: collection.url | json }} }
+  ]
+}
+</script>
+{%- elsif want_breadcrumb and request.page_type == 'article' and article -%}
+<script type="application/ld+json" data-contentpilot="breadcrumb">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+    { "@type": "ListItem", "position": 2, "name": {{ blog.title | json }}, "item": {{ shop.url | append: blog.url | json }} },
+    { "@type": "ListItem", "position": 3, "name": {{ article.title | json }}, "item": {{ shop.url | append: article.url | json }} }
+  ]
+}
+</script>
+{%- endif -%}
+
+{%- comment -%}
+  SEO tab Phase 3: 404 beacon. Only on 404 pages, reports the missing path +
+  referrer to the app-proxy collector (Seo404Hit) so the merchant can see
+  frequent 404s and one-click a redirect. Best-effort: sendBeacon with a fetch
+  fallback, wrapped in try/catch so it can never disturb the storefront.
+{%- endcomment -%}
+{%- if request.page_type == '404' -%}
+<script>
+  (function () {
+    try {
+      var payload = JSON.stringify({
+        path: window.location.pathname + window.location.search,
+        referrer: document.referrer || ''
+      });
+      var url = '/apps/contentpilot/seo-404';
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+      } else {
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
+      }
+    } catch (e) { /* never break the storefront */ }
+  })();
+</script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "JSON-LD Structured Data",
+  "target": "body",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_organization",
+      "label": "Organization (all pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_product",
+      "label": "Product (product pages)",
+      "info": "Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_collection",
+      "label": "Collection (collection pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_article",
+      "label": "Article (blog post pages)",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_breadcrumb",
+      "label": "Breadcrumb list",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_faq",
+      "label": "FAQ (product pages, from the \"custom.faq\" metafield)",
+      "info": "Off by default - only enable once the product metafield \"custom.faq\" (a list of question/answer pairs) is populated.",
+      "default": false
+    },
+    {
+      "type": "header",
+      "content": "Organization details"
+    },
+    {
+      "type": "image_picker",
+      "id": "logo",
+      "label": "Logo (falls back to your theme brand logo)"
+    },
+    {
+      "type": "textarea",
+      "id": "social_urls",
+      "label": "Social / profile URLs (one per line)",
+      "info": "Added as Organization.sameAs (e.g. your Instagram, Facebook, X)."
+    }
+  ]
+}
+{% endschema %}

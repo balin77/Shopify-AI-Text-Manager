@@ -1,4 +1,4 @@
-import { useLocation, useMatches, useNavigation } from "@remix-run/react";
+import { useLocation, useMatches, useNavigation } from "react-router";
 import { InlineStack, Text, ButtonGroup, Button, Spinner, Popover, Scrollable, Icon } from "@shopify/polaris";
 import { NotificationIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
@@ -7,16 +7,50 @@ import { usePlan } from "../contexts/PlanContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useTaskCount } from "../contexts/TaskCountContext";
+import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
-import { MobileMenu } from "./MobileMenu";
+import { MobileMenu, type MobileNavGroup } from "./MobileMenu";
 import { UnifiedItemSelectorCompact } from "./unified/UnifiedItemSelectorCompact";
 import { RunningTasksPreview } from "./RunningTasksPreview";
 import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
+import { isSeoPath, SEO_RUBRICS } from "../config/seo-sections";
+import { meetsPlan } from "../utils/planUtils";
 import { extractReadableName } from "../utils/templates-field-factory";
+import { taskErrorText } from "../utils/task-error-text";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
+
+/**
+ * Task types that run across the whole shop rather than on one item, and
+ * therefore never write a `resourceTitle`. Each needs its own completion
+ * sentence — the generic "Task completed for {title}" rendered them as
+ * `Task completed for ""`. Keep in sync when a new site-wide task type is
+ * added; the `!resourceTitle` fallback below catches anything missed.
+ */
+const SITE_WIDE_TASK_MESSAGE_KEY: Record<string, string> = {
+  seoCrawl: "crawlCompleted",
+  seoAudit: "auditCompleted",
+  seoJsonLdAudit: "jsonLdAuditCompleted",
+  seoInternalLinks: "internalLinksCompleted",
+  seoRobotsAdvice: "robotsAdviceCompleted",
+  // The bulk editor's write task. Its type stays `seoBulkMeta` for historical
+  // reasons (CLAUDE.md) — the message must not repeat that name at merchants.
+  seoBulkMeta: "bulkEditorSaveCompleted",
+  bulkEditorTranslate: "bulkEditorTranslateCompleted",
+};
+
+/** English fallbacks, mirroring the inline `||` defaults used elsewhere here. */
+const SITE_WIDE_TASK_FALLBACK: Record<string, string> = {
+  seoCrawl: "Website crawl finished",
+  seoAudit: "SEO analysis finished",
+  seoJsonLdAudit: "JSON-LD check finished",
+  seoInternalLinks: "Internal link suggestions ready",
+  seoRobotsAdvice: "robots.txt analysis finished",
+  seoBulkMeta: "Bulk editor: changes saved",
+  bulkEditorTranslate: "Bulk editor: translation finished",
+};
 
 export function MainNavigation() {
   const location = useLocation();
@@ -26,10 +60,13 @@ export function MainNavigation() {
   const { t } = useI18n();
   const { infoBox, hideInfoBox, showInfoBox, isGlobalLoading, messageHistory, unreadCount, markAllRead, clearHistory, syncProgress } = useInfoBox();
   const [popoverActive, setPopoverActive] = useState(false);
-  const { plan, getPlanDisplayName, getMaxProducts } = usePlan();
+  const { plan, getPlanDisplayName, getMaxProducts, canAccessContentType } = usePlan();
   const { setMainNavHeight } = useNavigationHeight();
   const { items, selectedItemId, onItemSelect, resourceName, t: itemSelectorT } = useItemSelector();
   const { runningTaskCount, recentlyCompletedTasks } = useTaskCount();
+  // Narrow screens hide the editor's right-hand sidebar entirely; when one is
+  // registered its toggle takes the plan button's slot (see below).
+  const sidebarPanel = useSidebarPanel();
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const notifiedTaskIds = useRef<Set<string>>(new Set());
@@ -38,6 +75,10 @@ export function MainNavigation() {
   // Get product count from products route loader data
   const productsRouteData = matches.find((match) => match.id === "routes/app.products")?.data as any;
   const productCount = productsRouteData?.productCount;
+  // Published shop locales from the app shell loader — drives the language gate
+  // on SEO sections in the mobile drawer (0 = lookup failed / unknown).
+  const shellLocaleCount =
+    ((matches.find((match) => match.id === "routes/app")?.data as any)?.localeCount as number) ?? 0;
   const maxProducts = getMaxProducts();
 
   // Show notifications for newly completed/failed tasks (from context).
@@ -79,8 +120,37 @@ export function MainNavigation() {
         if (task.type === "altTextTemplateApply") {
           return t.tasks?.altTextTemplateApplied?.replace("{title}", resourceTitle) || `Alt-text templates applied to "${resourceTitle}"`;
         }
+        // Site-wide tasks (every SEO scan, both bulk-editor tasks) have no
+        // resourceTitle — there is no single item they belong to. The generic
+        // message rendered them all as `Task completed for ""`.
+        const siteWideKey = SITE_WIDE_TASK_MESSAGE_KEY[task.type];
+        if (siteWideKey) {
+          const message = (t.tasks as unknown as Record<string, string> | undefined)?.[siteWideKey];
+          return typeof message === "string" ? message : SITE_WIDE_TASK_FALLBACK[task.type];
+        }
+        // seoBulkFix stores a machine string ("metaDescriptionMissing:fr",
+        // "fixAllForItem:product:8123") as its resourceTitle — readable to the
+        // bulk-fix runner, not to a merchant. Name the problem it fixed
+        // instead, using the dashboard's own label for the code.
+        if (task.type === "seoBulkFix") {
+          const code = resourceTitle.startsWith("fixAllForItem:") ? "" : resourceTitle.split(":")[0];
+          const problemLabel = code
+            ? (t.seo?.dashboard?.problems as Record<string, string> | undefined)?.[code]
+            : undefined;
+          const done = t.tasks?.seoBulkFixCompleted || "SEO fix finished";
+          return problemLabel ? `${done}: ${problemLabel}` : done;
+        }
+        // Safety net for any task type that reaches here without a title —
+        // never render the `for ""` form.
+        if (!resourceTitle) {
+          return t.tasks?.taskCompletedGeneric || "Task completed";
+        }
         return t.tasks?.taskCompleted?.replace("{title}", resourceTitle) || `Task completed for "${resourceTitle}"`;
       })();
+
+      // Task.error holds a machine code for the task types that write it
+      // without a locale context; those must never reach the merchant raw.
+      const errorText = taskErrorText(task.error, t);
 
       const total = typeof task.total === "number" ? task.total : null;
       const processed = typeof task.processed === "number" ? task.processed : null;
@@ -93,7 +163,7 @@ export function MainNavigation() {
       if (task.status === "failed") {
         tone = "critical";
         title = t.tasks?.failedTitle || "✗ Failed";
-        const detail = task.error || t.tasks?.taskFailedGeneric || "Task failed — please retry.";
+        const detail = errorText || t.tasks?.taskFailedGeneric || "Task failed — please retry.";
         message = `${baseMessage}: ${detail}`;
       } else if (total != null && processed != null && processed < total) {
         tone = "warning";
@@ -102,12 +172,12 @@ export function MainNavigation() {
           .replace("{processed}", String(processed))
           .replace("{total}", String(total))
           .replace("{failed}", String(failed));
-        message = `${baseMessage} — ${summary}${task.error ? `: ${task.error}` : ""}`;
-      } else if (task.error) {
+        message = `${baseMessage} — ${summary}${errorText ? `: ${errorText}` : ""}`;
+      } else if (errorText) {
         // Completed with a soft error recorded — surface as warning.
         tone = "warning";
         title = t.tasks?.partialTitle || "⚠ Partially saved";
-        message = `${baseMessage} — ${task.error}`;
+        message = `${baseMessage} — ${errorText}`;
       }
 
       if (isMountedRef.current) {
@@ -222,6 +292,8 @@ export function MainNavigation() {
   const navContentLabel = (t.nav as unknown as Record<string, string>).content || t.nav.otherContent;
   const tabs = [
     { id: "content", label: navContentLabel, path: "/app/products" },
+    { id: "bulk", label: t.nav.bulk, path: "/app/bulk" },
+    { id: "seo", label: t.nav.seo, path: "/app/seo" },
     { id: "tasks", label: t.nav.tasks, path: "/app/tasks" },
     { id: "settings", label: t.nav.settings, path: "/app/settings" },
   ];
@@ -252,20 +324,74 @@ export function MainNavigation() {
 
   const plans: Plan[] = ["free", "basic", "pro", "max"];
 
-  // Content types for the mobile drawer (Plan §3.6: Level 2 + Level 3 collapse
-  // into the hamburger menu). Flattened from the shared rubric config so it
-  // stays in sync with the desktop bars.
-  const isOnContentPage = isContentPath(location.pathname);
-
+  // Mobile drawer data (Plan §3.6: Level 2 + Level 3 collapse into the
+  // hamburger menu). Built from the SAME rubric configs the desktop bars read,
+  // and kept GROUPED — a flat list would drop the Level-2 rubric that gives the
+  // Level-3 entries their context, which is exactly what the drawer needs in
+  // order to show the two levels as two levels.
   const mobileContentLabels = t.content as unknown as Record<string, string>;
-  const contentTypes = CONTENT_RUBRICS.flatMap((r) =>
-    r.entries.map((e) => ({
-      id: e.id,
-      label: mobileContentLabels?.[e.labelKey] || e.id,
-      icon: e.icon,
-      path: e.path,
-    }))
-  );
+  const contentRubricLabels = (t as unknown as { rubrics?: Record<string, string> }).rubrics ?? {};
+
+  // Conditional entries (e.g. Abo-Pläne) are dropped on the same terms as the
+  // desktop Level-3 bar: hidden only when the plan is entitled AND the shop has
+  // no such content — otherwise the upsell lock stays.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const appRootData = matches.find((m) => m.id === "routes/app")?.data as any;
+  const conditionalContent: Record<string, boolean> | undefined = appRootData?.conditionalContent;
+
+  const contentGroups: MobileNavGroup[] = CONTENT_RUBRICS.map((r) => ({
+    id: r.id,
+    label: contentRubricLabels[r.id] || r.id,
+    icon: r.icon,
+    entries: r.entries
+      .filter((e) => {
+        if (!e.conditional) return true;
+        const present = conditionalContent?.[e.id];
+        return !(present === false && canAccessContentType(e.planContentType));
+      })
+      .map((e) => ({
+        id: e.id,
+        label: mobileContentLabels?.[e.labelKey] || e.id,
+        icon: e.icon,
+        path: e.path,
+        locked: !canAccessContentType(e.planContentType),
+        count: e.id === "products" ? productCount : undefined,
+        countCritical:
+          e.id === "products" &&
+          productCount !== undefined &&
+          maxProducts !== Infinity &&
+          productCount >= maxProducts,
+      })),
+  })).filter((g) => g.entries.length > 0);
+
+  // SEO rubrics + sections mirror the desktop SubNavBar pair so mobile users can
+  // jump straight to a sub-section (Übersicht, Strukturierte Daten, …).
+  const seoSectionStrings =
+    (t.seo as { sections?: Record<string, { label?: string }> }).sections ?? {};
+  const seoRubricStrings = (t.seo as { rubrics?: Record<string, string> }).rubrics ?? {};
+  // Language gate, mirroring the desktop SubNavBar (app.seo.tsx): a section that
+  // only says something with a second shop language is greyed out with a 🌐
+  // marker — never 🔒, which would read as "upgrade your plan". `localeCount` 0
+  // means the lookup failed → treat as multi-language and gate nothing.
+  const singleLocale = shellLocaleCount > 0 && shellLocaleCount <= 1;
+  const seoGroups: MobileNavGroup[] = SEO_RUBRICS.map((r) => ({
+    id: r.id,
+    label: seoRubricStrings[r.id] || r.id,
+    icon: r.icon,
+    entries: r.entries.map((section) => {
+      const planLocked = section.planGate ? !meetsPlan(plan, section.planGate) : false;
+      const languageLocked = !!section.requiresMultipleLocales && singleLocale;
+      return {
+        id: section.id,
+        label: seoSectionStrings[section.id]?.label || section.id,
+        icon: section.icon,
+        path: section.path,
+        locked: planLocked || languageLocked,
+        // Plan gate wins the marker: an upgrade unlocks the section outright.
+        lockIcon: !planLocked && languageLocked ? "🌐" : undefined,
+      };
+    }),
+  }));
 
   return (
     <>
@@ -291,11 +417,9 @@ export function MainNavigation() {
           {/* Mobile Menu (Hamburger) - nur auf Mobile sichtbar */}
           <div className="mobile-only">
             <MobileMenu
-              activeTab={isContentPath(location.pathname) ? "content" : tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
-              productCount={productCount}
-              maxProducts={maxProducts}
-              contentTypes={contentTypes}
-              showContentTypes={isOnContentPage}
+              activeTab={isContentPath(location.pathname) ? "content" : isSeoPath(location.pathname) ? "seo" : tabs.find(tab => location.pathname.startsWith(tab.path))?.id}
+              contentGroups={contentGroups}
+              seoGroups={seoGroups}
             />
           </div>
 
@@ -319,6 +443,8 @@ export function MainNavigation() {
               // "Inhalte" is active on ANY content page, not just /app/products.
               const isActive = tab.id === "content"
                 ? isContentPath(location.pathname)
+                : tab.id === "seo"
+                ? isSeoPath(location.pathname)
                 : location.pathname.startsWith(tab.path);
               const showTaskCount = tab.id === "tasks" && runningTaskCount > 0;
 
@@ -669,10 +795,33 @@ export function MainNavigation() {
             </div>
           )}
 
-          {/* Plan Buttons - alle Pläne auf Desktop, nur aktiver Plan auf Mobile */}
+          {/* Plan Buttons - alle Pläne auf Desktop, nur aktiver Plan auf Mobile.
+              Unter 1100px ist die rechte Editor-Sidebar ausgeblendet: dort
+              übernimmt ihr Umschalter diesen Platz (der Plan bleibt über
+              Einstellungen → Plan erreichbar). Rein per CSS-Media-Query, damit
+              beim Drehen/Resizen kein Re-Render nötig ist. */}
           <div style={{ marginLeft: "auto" }}>
+            {sidebarPanel.available && (
+              <div className="sidebar-panel-toggle-slot">
+                <Button
+                  onClick={sidebarPanel.toggle}
+                  pressed={sidebarPanel.open}
+                  size="slim"
+                  // The accessible name has to START with the visible label,
+                  // otherwise voice control can't activate the button by what
+                  // it says (WCAG 2.5.3).
+                  accessibilityLabel={`${t.seo?.title || "SEO Score"} — ${
+                    sidebarPanel.open
+                      ? (t.seo?.hidePanel || "Back to content")
+                      : (t.seo?.showPanel || "Show SEO score")
+                  }`}
+                >
+                  {t.seo?.title || "SEO Score"}
+                </Button>
+              </div>
+            )}
             {/* Desktop: alle Pläne als segmented ButtonGroup */}
-            <div className="desktop-only">
+            <div className={`desktop-only plan-buttons-slot${sidebarPanel.available ? " has-sidebar-toggle" : ""}`}>
               <ButtonGroup variant="segmented">
                 {plans.map((p) => (
                   <Button
@@ -688,7 +837,7 @@ export function MainNavigation() {
               </ButtonGroup>
             </div>
             {/* Mobile: nur aktiver Plan */}
-            <div className="mobile-only">
+            <div className={`mobile-only plan-buttons-slot${sidebarPanel.available ? " has-sidebar-toggle" : ""}`}>
               <Button
                 onClick={handlePlanNavigation}
                 pressed

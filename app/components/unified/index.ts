@@ -7,7 +7,7 @@
 export { UnifiedItemList } from "./UnifiedItemList";
 export type { UnifiedItem } from "./UnifiedItemList";
 
-export { UnifiedLanguageBar } from "./UnifiedLanguageBar";
+export { UnifiedLanguageBar, shouldRenderLanguageBar } from "./UnifiedLanguageBar";
 
 export { MobileToolbar } from "./MobileToolbar";
 

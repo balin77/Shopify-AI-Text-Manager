@@ -7,7 +7,7 @@
  * - Stops syncing 5 minutes after last activity
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { BackgroundSyncService } from "./background-sync.service";
 import { isShopActive } from "../middleware/activity-tracker.middleware";
 import { logger } from "~/utils/logger.server";
@@ -35,6 +35,13 @@ const RECONCILE_EVERY_N_CYCLES = Math.max(
 );
 /** Min interval between throttled initial-sync progress writes per shop. */
 const PROGRESS_WRITE_THROTTLE_MS = 3000;
+/**
+ * Cycle on which the llms.txt refresh runs once per active session, before the
+ * slow `RECONCILE_EVERY_N_CYCLES` cadence takes over. Low enough that a short
+ * visit still gets a check, high enough to stay out of the way of the initial
+ * page load and the first sync.
+ */
+const LLMS_REFRESH_FIRST_CYCLE = 3;
 
 class SyncSchedulerService {
   private activeTimers: Map<string, SyncTimer> = new Map();
@@ -208,6 +215,38 @@ class SyncSchedulerService {
                 }
               } catch (err) {
                 logger.warn(`[SyncScheduler] Selected-theme scoped sync failed for ${shop}`, {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+
+            }
+
+            // Keep the theme's llms.txt in step with the catalog. The
+            // products/collections that feed it arrive via webhooks, not
+            // through syncAll(), so there is no completion event to hang this
+            // off and it has to be time-based.
+            //
+            // NOT on the reconcile cadence: cycleCount resets in
+            // startSyncForShop and the scheduler stops after
+            // INACTIVITY_THRESHOLD_MINUTES, so a 30-cycle trigger would need 30
+            // UNINTERRUPTED minutes in the app and would, for most merchants,
+            // never fire at all. Instead: once shortly after the merchant
+            // becomes active, then on the slow cadence while they stay.
+            //
+            // Cost is bounded — a shop with the toggle off is one indexed
+            // lookup and no Shopify call. Failures must not break the cycle.
+            if (
+              syncTimer.cycleCount === LLMS_REFRESH_FIRST_CYCLE ||
+              syncTimer.cycleCount % RECONCILE_EVERY_N_CYCLES === 0
+            ) {
+              try {
+                const { refreshLlmsTxtIfStale } = await import("./seo/aeo.service");
+                const outcome = await refreshLlmsTxtIfStale(admin, db, shop);
+                if (outcome === "updated") {
+                  logger.debug(`[SyncScheduler] llms.txt refreshed for ${shop}`);
+                }
+              } catch (err) {
+                logger.warn(`[SyncScheduler] llms.txt refresh failed for ${shop}`, {
                   error: err instanceof Error ? err.message : String(err),
                 });
               }

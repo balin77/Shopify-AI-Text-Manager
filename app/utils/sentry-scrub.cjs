@@ -7,7 +7,7 @@
  * B1/B2/R2/H2 — one module removes the drift and closes the startup window
  * where server.js sent unscrubbed events.
  *
- * Mirrors the "NIEMALS loggen" list from docs/LOGGING_GUIDE.md and additionally
+ * Mirrors the "NIEMALS loggen" list from docs/architecture/LOGGING_GUIDE.md and additionally
  * strips Shopify embedded-app session material (id_token JWT, hmac, session,
  * shop) that @sentry/node's RequestData integration would otherwise attach via
  * event.request.url / query_string.

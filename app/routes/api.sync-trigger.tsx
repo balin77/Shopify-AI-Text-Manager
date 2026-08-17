@@ -1,4 +1,4 @@
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { requestInitialResync } from "../services/initial-sync.service";
 import { syncScheduler } from "../services/sync-scheduler.service";

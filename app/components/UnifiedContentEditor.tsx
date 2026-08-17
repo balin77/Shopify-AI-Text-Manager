@@ -12,7 +12,7 @@ import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
-import { UnifiedLanguageBar } from "./unified/UnifiedLanguageBar";
+import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLanguageBar";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -22,21 +22,33 @@ import { AppSaveBar } from "./AppSaveBar";
 import type { SubResourceState, SubResourceHandlers } from "../hooks/useProductSubResources";
 import { HelpTooltip } from "./HelpTooltip";
 import { SeoSidebar } from "./SeoSidebar";
+import { SidebarTabBar } from "./SidebarTabBar";
+import {
+  buildProductJsonLd,
+  buildCollectionJsonLd,
+  buildArticleJsonLd,
+  type JsonLd,
+} from "../services/structured-data.service";
+import type { KeywordResourceType } from "../services/seo/keywords.service";
 import { BulkImageUploadPanel } from "./image-manager/BulkImageUploadPanel";
 import { BulkAltTextPanel } from "./image-manager/BulkAltTextPanel";
 import { usePlan } from "../contexts/PlanContext";
 import { getPlanDisplayName as getPlanDisplayNameUtil } from "../utils/planUtils";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
+import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
+import { countImagesWithAltForLocale } from "../utils/field-validation.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
+import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
 import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperationsStore";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
 import "../styles/content-editor-global.css";
-import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale } from "../types/content-editor.types";
+import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale, ContentImage } from "../types/content-editor.types";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
 
@@ -209,15 +221,36 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
 
-  // Resizable SEO/bulk sidebar
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const sidebarWidthRef = useRef(320);
+  // Resizable SEO/bulk sidebar. `null` means "not dragged yet" and renders the
+  // DEFAULT width straight from --app-editor-sidebar-width (responsive.css
+  // :root) — so the default, like every other width in the app, is stated in
+  // exactly one place and this panel can be reused elsewhere without carrying a
+  // number along. Once dragged, the state holds real pixels.
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
+  const sidebarWidthRef = useRef<number | null>(null);
+  const sidebarElRef = useRef<HTMLDivElement | null>(null);
   const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    const el = sidebarElRef.current;
+    if (!el) return;
     const startX = e.clientX;
-    const startWidth = sidebarWidthRef.current;
+    // Before the first drag there is no state to start from — measure what the
+    // CSS default actually rendered as, rather than restating the number.
+    const startWidth = sidebarWidthRef.current ?? el.getBoundingClientRect().width;
+    // Drag bounds come from the same :root tokens. Read per drag (cheap, and
+    // picks up a breakpoint override); a token that isn't a px value simply
+    // drops its half of the clamp instead of producing NaN.
+    const styles = getComputedStyle(el);
+    const readPx = (name: string) => {
+      const parsed = parseFloat(styles.getPropertyValue(name));
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const minWidth = readPx("--app-editor-sidebar-min-width");
+    const maxWidth = readPx("--app-editor-sidebar-max-width");
     const onMouseMove = (ev: MouseEvent) => {
-      const newWidth = Math.max(200, Math.min(600, startWidth + (startX - ev.clientX)));
+      let newWidth = startWidth + (startX - ev.clientX);
+      if (maxWidth !== null) newWidth = Math.min(maxWidth, newWidth);
+      if (minWidth !== null) newWidth = Math.max(minWidth, newWidth);
       sidebarWidthRef.current = newWidth;
       setSidebarWidth(newWidth);
     };
@@ -327,6 +360,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // group with `embedTechnical` (theme-content-domain.server.ts).
   const isEmbedTechnical = !!(selectedItem as any)?.embedTechnical;
 
+  // Single-language shop: every translate / copy-to-all-locales action has no
+  // target and would only ever produce a "no target languages" warning. The
+  // buttons stay visible but greyed out with an explaining tooltip, and the
+  // language bar disappears entirely (nothing to switch between).
+  const hasMultipleLocales = shopLocales.length > 1;
+  const singleLocaleHint = hasMultipleLocales ? undefined : t.common?.requiresSecondLanguage;
+
   // Translated resource names for the item list
   const resourceNames = (t.content?.resourceNames || {}) as Record<string, string>;
   const translatedResourceName = {
@@ -429,22 +469,89 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
     // Calculate image alt text stats for SEO score
     // Include featured image if no gallery images exist (e.g. articles)
-    const images = (item as TranslatableContentItem & { images?: Array<{ altText?: string | null }> }).images ?? [];
-    const featuredImg = (item as TranslatableContentItem & { featuredImage?: { altText?: string | null } }).featuredImage;
-    let totalImages = images.length;
-    let imagesWithAlt = images.filter((img, index) => {
-      const localAltText = state.imageAltTexts?.[index];
-      const originalAltText = img.altText;
-      return !!(localAltText || originalAltText);
-    }).length;
+    const images = (item as TranslatableContentItem & { images?: ContentImage[] }).images ?? [];
+    const featuredImg = (item as TranslatableContentItem & { featuredImage?: ContentImage }).featuredImage;
+    // The same list useEditorAltText indexes its alt-text state by: the gallery
+    // when it has entries, otherwise the single featured image at index 0.
+    const scoredImages: ContentImage[] =
+      images.length > 0 ? images : featuredImg ? [featuredImg] : [];
+    const totalImages = scoredImages.length;
+    // Per LOCALE, not per item: in a foreign language an image only counts as
+    // covered when its alt text is TRANSLATED. Counting the primary alt made
+    // the sidebar's image block score identically in every language, so a
+    // product with no alt translations at all still read "all images have alt
+    // text" — while the SEO dashboard, reading the same locale's
+    // ProductImageAltTranslation rows, reported them as missing.
+    const imagesWithAlt = countImagesWithAltForLocale(
+      scoredImages,
+      state.currentLanguage,
+      primaryLocale,
+      state.imageAltTexts,
+    );
 
-    // Count featured image when no gallery images exist
-    if (totalImages === 0 && featuredImg) {
-      totalImages = 1;
-      const localAltText = state.imageAltTexts?.[0];
-      const originalAltText = featuredImg.altText;
-      imagesWithAlt = !!(localAltText || originalAltText) ? 1 : 0;
+    // JSON-LD preview for the SEO sidebar. The shop's storefront domain is
+    // not available in this translation editor, so URLs are intentionally
+    // omitted by the service (still valid schema.org); the storefront theme
+    // extension emits the absolute-URL version automatically. This makes the
+    // copyable block + schema validation reachable for the SEO-relevant types.
+    const title = editableValues.title || "";
+    const desc = editableValues.description || editableValues.body || "";
+    const handle = editableValues.handle || "";
+    const metaDescription = editableValues.metaDescription || "";
+    const sdShop = { domain: "", name: "" };
+    // Fall back to the first gallery image when Shopify's `featuredImage` is
+    // null (variant-only products, articles synced before featuredImage was
+    // populated). Otherwise the sidebar warns "Product has no image" even
+    // though the storefront Liquid block will render one from the same media.
+    const primaryImageUrl =
+      featuredImg?.url || (images.length > 0 ? images[0]?.url : undefined) || undefined;
+    let structuredData: JsonLd | null = null;
+    if (!isBlogContainer && title) {
+      if (config.contentType === "products") {
+        structuredData = buildProductJsonLd(
+          {
+            title,
+            descriptionHtml: desc,
+            handle,
+            seoDescription: metaDescription,
+            featuredImageUrl: primaryImageUrl,
+          },
+          sdShop,
+        );
+      } else if (config.contentType === "collections") {
+        structuredData = buildCollectionJsonLd(
+          { title, descriptionHtml: desc, handle, seoDescription: metaDescription },
+          sdShop,
+        );
+      } else if (config.contentType === "blogs") {
+        // blogHandle is derived from the article's blog TITLE (slugified),
+        // matching how the standalone Structured Data preview route builds it.
+        // Using `handle` here would produce `/blogs/<article-handle>/<article-handle>`.
+        // Currently masked by `sdShop.domain = ""` (absoluteUrl returns ""), but
+        // keeping the shape correct guards against future domain wiring.
+        const blogTitle =
+          (item as TranslatableContentItem & { blogTitle?: string }).blogTitle || "";
+        const blogHandle = blogTitle
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || handle;
+        structuredData = buildArticleJsonLd(
+          { title, body: desc, handle, blogHandle, imageUrl: primaryImageUrl },
+          sdShop,
+        );
+      }
     }
+
+    // Target-keyword tracking is per (item, locale): a French page ranks for
+    // French terms, so the panel follows the editor's language instead of
+    // disappearing on every locale but the primary — which is what it used to
+    // do, leaving no way to enter foreign-language keywords at all. `""` is the
+    // SeoKeyword convention for the primary locale.
+    const keywordResourceType = !isBlogContainer
+      ? getKeywordResourceType(config.contentType)
+      : undefined;
+    const keywordLocale = state.currentLanguage === primaryLocale ? "" : state.currentLanguage;
 
     return (
       <SeoSidebar
@@ -457,6 +564,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         imagesWithAlt={imagesWithAlt}
         excludeDescription={isBlogContainer}
         excludeImages={isBlogContainer}
+        structuredData={structuredData}
+        structuredDataPreviewMode
+        resourceId={keywordResourceType ? item.id : undefined}
+        resourceType={keywordResourceType}
+        keywordLocale={keywordLocale}
+        keywordLocaleName={
+          shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage
+        }
+        onInsertKeywords={handlers.handleInsertKeywords}
+        insertKeywordsLoading={handlers.isInsertingKeywords}
       />
     );
   };
@@ -486,6 +603,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   useEffect(() => {
     return () => { clearItems(); };
   }, [clearItems]);
+
+  // Below 1100px the sidebar column is hidden by CSS, so its content is only
+  // reachable through the nav toggle. Tell the nav a sidebar exists (and take
+  // the registration back on unmount — the toggle would otherwise survive onto
+  // a page that has no sidebar at all).
+  const hasSidebar = !!selectedItem && !!config.showSeoSidebar;
+  const { open: sidebarPanelOpen, setAvailable: setSidebarPanelAvailable, close: closeSidebarPanel } = useSidebarPanel();
+  useEffect(() => {
+    setSidebarPanelAvailable(hasSidebar);
+  }, [hasSidebar, setSidebarPanelAvailable]);
+  useEffect(() => {
+    return () => { setSidebarPanelAvailable(false); };
+  }, [setSidebarPanelAvailable]);
 
   // Compute which option/value IDs have missing translations in any foreign locale.
   // Used to show blue highlight on primary locale option fields (same pattern as regular fields).
@@ -517,9 +647,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   })();
 
   return (
+    // Tells every nested field/action whether translating is possible at all —
+    // a single-language shop greys out the translate/copy-to-all buttons.
+    <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
     <Page fullWidth>
       <div
-        className="unified-content-editor-layout"
+        // `sidebar-panel-open` only bites below 1100px, where it swaps the item
+        // list + editor for the sidebar column (see UnifiedContentEditor.css).
+        // Above that the class is inert and the normal three-column layout wins.
+        // Gated on `hasSidebar` too: the panel state is context-owned, so an
+        // item that disappears (route change, resync clearing the selection)
+        // would otherwise hide the editor for a frame while the sidebar column
+        // is already unrendered — a blank content area until the effect below
+        // resets `open` after paint.
+        // app-page-width-full states the width choice rather than leaving it
+        // implicit: the editor is a three-column workbench, so it takes the
+        // whole width (responsive.css :root owns the token).
+        className={`unified-content-editor-layout app-page-width-full${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
@@ -585,6 +729,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             reloadAllTooltip: t.content?.reloadAllTooltip,
             filterTooltip: t.content?.filterTooltip,
             filterTitle: t.content?.filterTitle,
+            statusLabels: t.content?.productStatusLabels,
           }}
           />
           </div>
@@ -666,7 +811,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
               {/* Desktop: Language Bar + Operation Buttons (>= 769px) */}
               <div className="toolbar-desktop-only">
-                {/* Language Selection Bar */}
+                {/* Language Selection Bar — skipped entirely for single-language
+                    shops (the bar itself renders null; the Card would stay as an
+                    empty box). */}
+                {shouldRenderLanguageBar({
+                  localeCount: shopLocales.length,
+                  marketCount: state.markets?.length ?? 0,
+                  hasMarketHandler: true,
+                }) && (
                 <Card padding="400">
                   <UnifiedLanguageBar
                     shopLocales={shopLocales}
@@ -700,6 +852,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     }}
                   />
                 </Card>
+                )}
 
                 {/* Operation Buttons */}
                 <div style={{ marginTop: "1rem" }}>
@@ -714,16 +867,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               Hidden for app-embed technical groups — translating
                               CSS selectors / config would break the embed. */}
                           {!isEmbedTechnical && (
-                          <Button
-                            onClick={handlers.handleTranslateAll}
-                            loading={isAllLocalesActionRunning}
-                            disabled={isAllLocalesActionRunning}
-                            size="slim"
-                          >
-                            {isAllLocalesActionRunning
-                              ? (t.content?.translating || "Translating...")
-                              : (t.content?.translateAll || "🌍 Translate All")}
-                          </Button>
+                          <DisabledActionTooltip hint={singleLocaleHint}>
+                            <Button
+                              onClick={handlers.handleTranslateAll}
+                              loading={isAllLocalesActionRunning}
+                              disabled={isAllLocalesActionRunning || !!singleLocaleHint}
+                              size="slim"
+                            >
+                              {isAllLocalesActionRunning
+                                ? (t.content?.translating || "Translating...")
+                                : (t.content?.translateAll || "🌍 Translate All")}
+                            </Button>
+                          </DisabledActionTooltip>
                           )}
                           {/* Clear All: hidden for templates when primary edit is not
                               enabled, and for app-embed technical groups. */}
@@ -939,7 +1094,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           readOnly={isFieldReadOnly}
                           embedTechnical={isEmbedTechnical}
                           selectedMarketId={state.selectedMarketId}
-                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? () => handlers.handleGenerateAI(field.key) : undefined)}
+                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? (userInstruction?: string) => handlers.handleGenerateAI(field.key, userInstruction) : undefined)}
                           onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
                           onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
                           onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
@@ -1161,80 +1316,58 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </div>
         )}
 
-        {/* Right: Optional Sidebar (Fixed) - Hidden on narrow screens via CSS */}
+        {/* Right: Optional Sidebar (Fixed). Hidden below 1100px via CSS — there
+            it is reachable through the nav toggle, which makes this column
+            replace the editor instead (`.sidebar-panel-open`). */}
         {selectedItem && config.showSeoSidebar && (
-          <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {/* Tab-Toggle für Pro/Max Image Manager */}
-            {showImageManager && imageManager && (
-              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 8, flexShrink: 0 }}>
-                <button
-                  style={{
-                    flex: 1,
-                    padding: "8px 4px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeRightTab === "seo" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeRightTab === "seo" ? 600 : 400,
-                    fontSize: 13,
-                    color: imageManager.activeRightTab === "seo" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onTabChange("seo")}
-                >
-                  {t.imageManager?.seoScoreTab ?? "SEO Score"}
-                </button>
-                <button
-                  style={{
-                    flex: 1,
-                    padding: "8px 4px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeRightTab === "images" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeRightTab === "images" ? 600 : 400,
-                    fontSize: 13,
-                    color: imageManager.activeRightTab === "images" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onTabChange("images")}
-                >
-                  {t.imageManager?.imagesTab ?? "Bulk Upload"}
-                </button>
+          <div
+            ref={sidebarElRef}
+            className="seo-sidebar-container"
+            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+          >
+            {/* Way back to the content. `open` can survive a resize past the
+                breakpoint, where the sidebar is shown normally and this row
+                would be meaningless — the class hides it there. */}
+            {sidebarPanelOpen && (
+              <div className="sidebar-panel-back" style={{ marginBottom: 8, flexShrink: 0 }}>
+                <Button icon={ChevronLeftIcon} onClick={closeSidebarPanel} fullWidth textAlign="left">
+                  {t.seo?.hidePanel || "Back to content"}
+                </Button>
               </div>
             )}
-            {/* Sub-Tab bar for Image Processing tab */}
+            {/* Section switch (Pro/Max image manager) */}
+            {showImageManager && imageManager && (
+              <SidebarTabBar
+                size="md"
+                items={[
+                  { id: "seo", label: t.imageManager?.seoScoreTab ?? "SEO Score" },
+                  { id: "images", label: t.imageManager?.imagesTab ?? "Image processing" },
+                ]}
+                activeId={imageManager.activeRightTab}
+                onSelect={(id) => imageManager.onTabChange(id as "seo" | "images")}
+                containerStyle={{ marginBottom: 8 }}
+              />
+            )}
+            {/* Image-processing tabs. Same component and the same trailing "?"
+                as the SEO card's own tab row one level over — the section used
+                to carry a differently-styled bar and no help at all. */}
             {showImageManager && imageManager && imageManager.activeRightTab === "images" && (
-              <div style={{ display: "flex", borderBottom: "1px solid #e1e3e5", marginBottom: 4, flexShrink: 0, paddingLeft: 4 }}>
-                <button
-                  style={{
-                    padding: "6px 10px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeImageSubTab === "bulkUpload" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeImageSubTab === "bulkUpload" ? 600 : 400,
-                    fontSize: 12,
-                    color: imageManager.activeImageSubTab === "bulkUpload" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onImageSubTabChange("bulkUpload")}
-                >
-                  {t.imageManager?.bulkUploadSubTab ?? "Bulk Upload"}
-                </button>
-                <button
-                  style={{
-                    padding: "6px 10px",
-                    border: "none",
-                    background: "none",
-                    borderBottom: imageManager.activeImageSubTab === "bulkAltText" ? "2px solid #005bd3" : "2px solid transparent",
-                    cursor: "pointer",
-                    fontWeight: imageManager.activeImageSubTab === "bulkAltText" ? 600 : 400,
-                    fontSize: 12,
-                    color: imageManager.activeImageSubTab === "bulkAltText" ? "#005bd3" : "#616161",
-                  }}
-                  onClick={() => imageManager.onImageSubTabChange("bulkAltText")}
-                >
-                  {t.imageManager?.bulkAltTextSubTab ?? "Bulk Alt Text"}
-                </button>
-              </div>
+              <SidebarTabBar
+                items={[
+                  { id: "bulkUpload", label: t.imageManager?.bulkUploadSubTab ?? "Bulk Upload" },
+                  { id: "bulkAltText", label: t.imageManager?.bulkAltTextSubTab ?? "Bulk Alt Text" },
+                ]}
+                activeId={imageManager.activeImageSubTab}
+                onSelect={(id) =>
+                  imageManager.onImageSubTabChange(id as "bulkUpload" | "bulkAltText")
+                }
+                helpKey={
+                  imageManager.activeImageSubTab === "bulkAltText"
+                    ? "imageBulkAltText"
+                    : "imageBulkUpload"
+                }
+                containerStyle={{ marginBottom: 4 }}
+              />
             )}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {(!showImageManager || !imageManager || imageManager.activeRightTab === "seo") && (
@@ -1301,6 +1434,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         </Modal.Section>
       </Modal>
     </Page>
+    </LocaleAvailabilityProvider>
   );
 }
 
@@ -1344,6 +1478,19 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
   }
 
   return "";
+}
+
+// Target-keyword tracking (SeoKeyword model) only covers these four content
+// types — everything else (policies, templates, metaobjects, ...) returns
+// undefined so the sidebar's "Target keyword" section stays hidden for them.
+function getKeywordResourceType(contentType: string): KeywordResourceType | undefined {
+  const map: Record<string, KeywordResourceType> = {
+    products: "Product",
+    collections: "Collection",
+    blogs: "Article",
+    pages: "Page",
+  };
+  return map[contentType];
 }
 
 /**

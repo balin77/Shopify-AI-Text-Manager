@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Translation as I18nTranslation } from "~/i18n/de";
-import type { FetcherWithComponents } from "@remix-run/react";
+import type { FetcherWithComponents } from "react-router";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import {
   Card,
@@ -100,44 +100,76 @@ export function SettingsAITab({ settings, fetcher, t, onHasChangesChange }: Sett
   // dropdown so the merchant understands why the choices are limited.
   const [modelsFallbackReason, setModelsFallbackReason] = useState<null | 'no_api_key' | 'api_error' | 'invalid_key' | 'network'>(null);
 
-  // Fetch available models when provider changes
-  const fetchModels = useCallback(async (providerToFetch: string) => {
+  // The model list arrives asynchronously AFTER the page renders, so anything
+  // it writes back into state happens without the merchant touching anything.
+  // Read the current model through a ref instead of a dependency so the
+  // callback stays stable across model changes (a re-created callback would
+  // otherwise be a second reason to re-run the fetch effect).
+  const selectedModelRef = useRef(selectedModel);
+  useEffect(() => {
+    selectedModelRef.current = selectedModel;
+  }, [selectedModel]);
+
+  // Fetch available models when provider changes.
+  // `restoreModel` is the model a selection that the fetched list does NOT
+  // contain falls back to: the SAVED model while the chosen provider is the
+  // saved one (so a plain page load never rewrites the stored pair), and
+  // null while the merchant is on a different provider (there the provider's
+  // own default is the sensible fallback). See the effect below.
+  const fetchModels = useCallback(async (providerToFetch: string, restoreModel: string | null) => {
     setModelsLoading(true);
+    // Keep the model in effect selectable even when the provider's list does
+    // not contain it — otherwise the dropdown would display some other entry
+    // while state still holds the stored value.
+    const withModel = (options: Array<{ label: string; value: string }>, model: string) => {
+      if (!model || options.some(o => o.value === model)) return options;
+      return [...options, { label: model, value: model }];
+    };
     try {
       const response = await fetch(`/api/ai-models?provider=${providerToFetch}`);
       const data = await response.json();
       if (data.success && data.models) {
-        const options = data.models.map((m: { id: string; name: string }) => ({
+        const options: Array<{ label: string; value: string }> = data.models.map((m: { id: string; name: string }) => ({
           label: m.name,
           value: m.id,
         }));
-        setAvailableModels(options);
-        setModelsFallbackReason(data.fromFallback ? (data.reason || 'api_error') : null);
-        // If current model is not in the new list, reset to default
-        const modelIds = data.models.map((m: { id: string }) => m.id);
-        if (selectedModel && !modelIds.includes(selectedModel)) {
-          setSelectedModel(data.defaultModel || '');
+        // A model the list does not offer is replaced — but never with a value
+        // that differs from what is stored while the merchant has not changed
+        // provider. Doing that on mount marked the form as dirty and lit up the
+        // Save button on a page nobody had edited yet.
+        const current = selectedModelRef.current;
+        if (current && !options.some(o => o.value === current)) {
+          const replacement = restoreModel !== null ? restoreModel : (data.defaultModel || '');
+          if (replacement !== current) setSelectedModel(replacement);
+          setAvailableModels(withModel(options, replacement));
+        } else {
+          setAvailableModels(options);
         }
+        setModelsFallbackReason(data.fromFallback ? (data.reason || 'api_error') : null);
       } else {
         // Endpoint responded with success=false (bad provider / auth). Use
         // built-in curated list and tell the merchant why.
         const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
-        setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
+        setAvailableModels(withModel(fallback.map(m => ({ label: m.name, value: m.id })), selectedModelRef.current));
         setModelsFallbackReason('invalid_key');
       }
     } catch {
       const fallback = CURATED_MODELS[providerToFetch as AIProvider] || [];
-      setAvailableModels(fallback.map(m => ({ label: m.name, value: m.id })));
+      setAvailableModels(withModel(fallback.map(m => ({ label: m.name, value: m.id })), selectedModelRef.current));
       setModelsFallbackReason('network');
     } finally {
       setModelsLoading(false);
     }
-  }, [selectedModel]);
+  }, []);
 
-  // Fetch models on mount and when provider changes
+  // Fetch models on mount and when provider changes. While the selected
+  // provider IS the saved one, the saved model is what an unknown selection
+  // falls back to — so opening the page (and switching provider back and
+  // forth) leaves the stored pair untouched.
   useEffect(() => {
-    fetchModels(provider);
-  }, [provider]);
+    const onSavedProvider = provider === settings.preferredProvider;
+    fetchModels(provider, onSavedProvider ? (settings.selectedModel || '') : null);
+  }, [provider, settings.preferredProvider, settings.selectedModel, fetchModels]);
 
   // Rate limit states
   const [hfMaxTokensPerMinute, setHfMaxTokensPerMinute] = useState(String(settings.hfMaxTokensPerMinute));

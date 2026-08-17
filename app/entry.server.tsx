@@ -1,11 +1,15 @@
 import { PassThrough } from "stream";
-import type { EntryContext } from "@remix-run/node";
-import { createReadableStreamFromReadable } from "@remix-run/node";
-import { RemixServer } from "@remix-run/react";
+import type { EntryContext } from "react-router";
+import { createReadableStreamFromReadable } from "@react-router/node";
+import { ServerRouter } from "react-router";
 import { renderToPipeableStream } from "react-dom/server";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { syncScheduler } from "./services/sync-scheduler.service";
 import { ShopReaperService } from "../src/services/shop-reaper.service";
+import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
+import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
+import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
+import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { logger } from "./utils/logger.server";
 import { initSentryServer, captureServerError } from "./utils/sentry.server";
 
@@ -26,19 +30,27 @@ process.on('SIGTERM', () => {
   logger.info('SIGTERM received - stopping sync schedulers (exit owned by server.js)', { context: 'EntryServer' });
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
+  GscAutoSyncService.getInstance().stop();
+  LlmsAutoRefreshService.getInstance().stop();
+  IndexNowAutoSubmitService.getInstance().stop();
+  SeoAuditAutoRunService.getInstance().stop();
 });
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received - stopping sync schedulers (exit owned by server.js)', { context: 'EntryServer' });
   syncScheduler.stopAll();
   ShopReaperService.getInstance().stop();
+  GscAutoSyncService.getInstance().stop();
+  LlmsAutoRefreshService.getInstance().stop();
+  IndexNowAutoSubmitService.getInstance().stop();
+  SeoAuditAutoRunService.getInstance().stop();
 });
 
 export default async function handleRequest(
   request: Request,
   responseStatusCode: number,
   responseHeaders: Headers,
-  remixContext: EntryContext
+  reactRouterContext: EntryContext
 ) {
   const url = new URL(request.url);
   logger.debug('Incoming request', {
@@ -63,10 +75,9 @@ export default async function handleRequest(
   return new Promise((resolve, reject) => {
     let shellRendered = false;
     const { pipe, abort } = renderToPipeableStream(
-      <RemixServer
-        context={remixContext}
+      <ServerRouter
+        context={reactRouterContext}
         url={request.url}
-        abortDelay={ABORT_DELAY}
       />,
       {
         onShellReady() {

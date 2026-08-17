@@ -3,8 +3,8 @@
  */
 
 import { useState } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher } from "react-router";
 import { Page, Card, Text, BlockStack, Button, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 

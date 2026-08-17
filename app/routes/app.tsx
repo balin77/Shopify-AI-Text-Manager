@@ -1,6 +1,6 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLoaderData, useRouteError, useFetcher } from "@remix-run/react";
-import { boundary } from "@shopify/shopify-app-remix/server";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useFetcher } from "react-router";
+import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider, Page, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 import "../styles/responsive.css";
@@ -14,6 +14,7 @@ import { NavigationHeightProvider } from "../contexts/NavigationHeightContext";
 import { ItemSelectorProvider } from "../contexts/ItemSelectorContext";
 import { TaskCountProvider } from "../contexts/TaskCountContext";
 import { AltTextOpsProvider } from "../contexts/AltTextOpsContext";
+import { SidebarPanelProvider } from "../contexts/SidebarPanelContext";
 import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
@@ -96,6 +97,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         preferredProvider: true,
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
+        seoLimits: true,
         extensionSetupHintShownAt: true,
       },
     });
@@ -120,6 +122,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const seoTitleSuffix = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
       ? settings.seoTitleSuffix
       : "";
+    // Sparse merchant overrides for SEO limits (Pro+). null = defaults.
+    const seoLimits = (settings?.seoLimits ?? null) as Record<string, number> | null;
 
     // First-run hint: a shop that just reached Pro/Max still has to enable the
     // ContentPilot theme app extension in their theme editor for the variant
@@ -167,11 +171,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       themeAppEmbeds: themeAppEmbedRows > 0,
     };
 
+    // Published locale count for the navigation's language gate (a section like
+    // the hreflang audit is greyed out on a single-language shop, mobile drawer
+    // included — the drawer is reachable from every page, so the count has to
+    // live in the shell loader, not in a section route).
+    //
+    // Served from the 60s shop-locales cache the content loaders use anyway.
+    // NOT wrapped in a catch: the cache swallows every failure itself and
+    // resolves with `[]` — the one error it does propagate is the 401 Response
+    // it re-throws for re-authentication, which must reach this loader's own
+    // error path instead of being silently turned into a number. An empty list
+    // therefore yields 0, which means "unknown" (a shop always has at least its
+    // primary locale) and the nav reads it as multi-language, so a lookup
+    // hiccup can never grey out a section the merchant can actually use.
+    const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
+    const localeCount = (await getCachedShopLocales(admin, session.shop)).filter(
+      (l) => l.published !== false,
+    ).length;
+
     return json({
       appLanguage,
       subscriptionPlan,
       aiSettings,
       seoTitleSuffix,
+      seoLimits,
+      localeCount,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
       extensionSetupHint,
@@ -198,6 +222,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan: "free" as Plan,
       aiSettings: null,
       seoTitleSuffix: "",
+      seoLimits: null as Record<string, number> | null,
+      // 0 = unknown → the nav's language gate stays off (see the success path).
+      localeCount: 0,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync: null,
       extensionSetupHint: false,
@@ -336,7 +363,24 @@ function AppContent() {
           layout route so it survives sibling navigation instead of being
           remounted on every sub-page. Only the <Outlet /> content swaps.
           ContentTypeNavigation returns null on non-content pages. */}
-      <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div
+        className="app-shell"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "var(--app-shell-height)",
+          // Keep the app clear of the bar the Shopify mobile app draws across
+          // the bottom (see --app-bottom-inset). Shrinking the SHELL rather
+          // than padding the scrolled content is what makes this work for the
+          // fixed-frame routes too: the editor and the .app-page-content pages
+          // scroll INSIDE a frame, so the frame itself has to end above the
+          // bar — trailing padding on the page content would never reach them.
+          // The reserve is its own variable so a route that already ends clear
+          // of the bar can opt out (see .app-shell:has(.seo-layout)).
+          paddingBottom: "var(--app-shell-bottom-reserve, var(--app-bottom-inset))",
+          boxSizing: "border-box",
+        }}
+      >
         <MainNavigation />
         <ContentTypeNavigation />
         {/* Fills the space below the (in-flow) nav bars. overflowY:auto makes
@@ -352,22 +396,24 @@ function AppContent() {
 }
 
 export default function App() {
-  const { appLanguage, subscriptionPlan, seoTitleSuffix, newFeaturesEnabled } = useLoaderData<typeof loader>();
+  const { appLanguage, subscriptionPlan, seoTitleSuffix, seoLimits, newFeaturesEnabled } = useLoaderData<typeof loader>();
 
   return (
     <AppProvider i18n={{}}>
       <I18nProvider locale={appLanguage}>
         <PlanProvider plan={subscriptionPlan} newFeaturesEnabled={newFeaturesEnabled}>
-          <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""}>
+          <SeoSettingsProvider seoTitleSuffix={seoTitleSuffix ?? ""} seoLimits={seoLimits ?? null}>
           <InfoBoxProvider>
             <TaskCountProvider>
             <NavigationHeightProvider>
               <ItemSelectorProvider>
+                <SidebarPanelProvider>
                 <AltTextOpsProvider>
                   <ConfirmProvider>
                     <AppContent />
                   </ConfirmProvider>
                 </AltTextOpsProvider>
+                </SidebarPanelProvider>
               </ItemSelectorProvider>
             </NavigationHeightProvider>
             </TaskCountProvider>

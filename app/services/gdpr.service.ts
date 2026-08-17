@@ -157,16 +157,24 @@ export async function redactCustomerData(
 
   logger.info(`[GDPR] Redacting data for customer ${customer.id} from shop ${shop_domain}`);
 
+  // R5-G2: mirror exportCustomerData's defensive parsing — an unguarded
+  // BigInt(customer.id) throws on an empty/non-numeric/placeholder value
+  // (e.g. Shopify's compliance test payload), which made this handler 500
+  // instead of redacting what it safely can.
+  const userIdBig = toBigIntOrNull(customer?.id);
+  const orConditions: Array<Record<string, unknown>> = [];
+  if (customer?.email) orConditions.push({ email: customer.email });
+  if (userIdBig !== null) orConditions.push({ userId: userIdBig });
+
   // Delete all sessions for this customer
-  const deleted = await db.session.deleteMany({
-    where: {
-      shop: shop_domain,
-      OR: [
-        { email: customer.email },
-        { userId: BigInt(customer.id) },
-      ],
-    },
-  });
+  const deleted = orConditions.length === 0
+    ? { count: 0 }
+    : await db.session.deleteMany({
+      where: {
+        shop: shop_domain,
+        OR: orConditions,
+      },
+    });
 
   logger.info(`[GDPR] Redacted ${deleted.count} sessions for customer ${customer.id}`);
 }
@@ -181,7 +189,7 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 35 models in prisma/schema.prisma:
+ * Coverage of all 57 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
@@ -191,7 +199,16 @@ export async function redactCustomerData(
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings                 (all scoped by `shop`)
+ *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
+ *      SeoKeywordAssignment, SeoKeywordGroup, SeoKeywordGroupMembership,
+ *      SeoKeywordSnapshot,
+ *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
+ *      SeoIndexNowQueue, SeoScoreSnapshot, SeoPageSpeedAudit,
+ *      GlossaryEntry, SeoWebVitalSample, SeoCrawlSnapshot, SeoCrawlPage,
+ *      SeoCrawlBrokenLink, SeoCrawlExternalLink, SeoGscPageStat,
+ *      SeoInternalLinkSuggestion,
+ *      SeoSitemapExclusion, MediaLibraryImage, MediaLibrarySyncState
+ *                                                 (all scoped by `shop`)
  *      ImageManagerSettings                      (scoped by `shopId`)
  *
  *  • Removed transitively via `onDelete: Cascade` — do NOT delete explicitly:
@@ -201,10 +218,12 @@ export async function redactCustomerData(
  *
  *  • Deliberately RETAINED: GdprAuditLog — mandatory 3-year retention
  *    (Art. 5(2) GDPR). Its time-based upper bound is enforced by
- *    GdprAuditLogCleanupService
- *    (src/services/gdpr-audit-cleanup.service.ts; standalone mirror
- *    gdpr-audit-cleanup.service.js, started from server.js, runs daily and
- *    deletes rows where requestedAt < now − 3 years). Never deleted here.
+ *    GdprAuditLogCleanupService — it runs daily and deletes rows where
+ *    requestedAt < now − 3 years. Never deleted here. Two copies exist on
+ *    purpose: gdpr-audit-cleanup.service.js in the repo root is the one
+ *    server.js actually starts (plain JS, loaded by Node without the app
+ *    build), src/services/gdpr-audit-cleanup.service.ts is the typed twin
+ *    covered by tests/unit/gdpr-audit-cleanup.service.test.ts. Change both.
  *
  * A schema-coverage guard in tests/unit/gdpr.service.test.ts parses
  * schema.prisma and fails if a new shop-scoped model is added without being
@@ -357,7 +376,7 @@ export async function redactShopData(
     });
     logger.debug(`[GDPR] Deleted ${metaobjectTranslationsDeleted.count} metaobject translations`);
 
-    // 23. Delete install-state marker (R3) — leaving no residue keeps both the
+    // 24. Delete install-state marker (R3) — leaving no residue keeps both the
     //     shop/redact webhook and the 30-day reaper idempotent (a redelivered
     //     request finds no marker and deletes 0 rows everywhere).
     const shopInstallStateDeleted = await tx.shopInstallState.deleteMany({
@@ -397,6 +416,151 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${directTranslationCandidatesDeleted.count} direct translation candidates`);
+
+    // SEO tab Phase 3: storefront 404-hit collector (shop-scoped usage data).
+    const seo404HitsDeleted = await tx.seo404Hit.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
+
+    // Ranking history for SEO keyword assignments (shop-scoped). Deleted
+    // before the assignment/keyword tables even though it also cascades on
+    // assignmentId, so the count logged here is meaningful rather than
+    // always zero.
+    const seoKeywordSnapshotsDeleted = await tx.seoKeywordSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordSnapshotsDeleted.count} SEO keyword snapshots`);
+
+    // Keywords expansion (PLAN_KEYWORDS_EXPANSION.md §2.3): assignment /
+    // group / membership rows all carry their own shop column and are deleted
+    // explicitly (the schema-coverage guard checks the shop field, not
+    // cascades), children before parents so the logged counts stay meaningful.
+    const seoKeywordAssignmentsDeleted = await tx.seoKeywordAssignment.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordAssignmentsDeleted.count} SEO keyword assignments`);
+
+    const seoKeywordGroupMembershipsDeleted = await tx.seoKeywordGroupMembership.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordGroupMembershipsDeleted.count} SEO keyword group memberships`);
+
+    const seoKeywordGroupsDeleted = await tx.seoKeywordGroup.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordGroupsDeleted.count} SEO keyword groups`);
+
+    // SEO tab Phase 5: tracked keywords (shop-scoped; standalone objects since
+    // the keywords expansion — assignment rows above carry the item linkage).
+    const seoKeywordsDeleted = await tx.seoKeyword.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoKeywordsDeleted.count} SEO keywords`);
+
+    // SEO tab Phase 6: Google Search Console connection (encrypted refresh token).
+    const gscConnectionsDeleted = await tx.googleSearchConsoleConnection.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${gscConnectionsDeleted.count} GSC connections`);
+
+    // SEO tab Phase 8: IndexNow config + submit queue (shop-scoped).
+    const indexNowConfigsDeleted = await tx.seoIndexNowConfig.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${indexNowConfigsDeleted.count} IndexNow configs`);
+
+    const indexNowQueueDeleted = await tx.seoIndexNowQueue.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${indexNowQueueDeleted.count} IndexNow queue rows`);
+
+    // SEO Audit Dashboard: persisted analyzeStore() snapshots (shop-scoped).
+    const seoScoreSnapshotsDeleted = await tx.seoScoreSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoScoreSnapshotsDeleted.count} SEO score snapshots`);
+
+    // PageSpeed audits: cached PSI results incl. storefront screenshots (shop-scoped).
+    const pageSpeedAuditsDeleted = await tx.seoPageSpeedAudit.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${pageSpeedAuditsDeleted.count} PageSpeed audits`);
+
+    // Glossary: merchant terminology (GlossaryEntryTranslation cascades).
+    const glossaryEntriesDeleted = await tx.glossaryEntry.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${glossaryEntriesDeleted.count} glossary entries`);
+
+    // SEO tab Performance section, Phase 2: real-user web-vitals (RUM)
+    // samples beaconed from the storefront (shop-scoped, no visitor
+    // identifiers — see web-vitals.types.ts).
+    const seoWebVitalSamplesDeleted = await tx.seoWebVitalSample.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoWebVitalSamplesDeleted.count} SEO web-vital samples`);
+
+    // Phase 1 (storefront crawler, PLAN_SEO_SUITE_COMPLETION.md §2/§3):
+    // children before the parent so the logged counts stay meaningful, even
+    // though onDelete: Cascade on snapshotId would clean them up either way.
+    const seoCrawlBrokenLinksDeleted = await tx.seoCrawlBrokenLink.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlBrokenLinksDeleted.count} SEO crawl broken links`);
+
+    // PLAN_SEO_CRAWL_EXPANSION §6: outbound links to other domains, found by
+    // the same crawl — another child of the snapshot.
+    const seoCrawlExternalLinksDeleted = await tx.seoCrawlExternalLink.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlExternalLinksDeleted.count} SEO crawl external links`);
+
+    const seoCrawlPagesDeleted = await tx.seoCrawlPage.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlPagesDeleted.count} SEO crawl pages`);
+
+    const seoCrawlSnapshotsDeleted = await tx.seoCrawlSnapshot.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoCrawlSnapshotsDeleted.count} SEO crawl snapshots`);
+
+    // Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1
+    // option b): per-page GSC rollup. The "Ignorieren" dismissed-list itself
+    // is a JSON column on AISettings (already purged above), not a separate
+    // model.
+    const seoGscPageStatsDeleted = await tx.seoGscPageStat.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoGscPageStatsDeleted.count} SEO GSC page stats`);
+
+    // Phase 2 (Internal Linking, PLAN_SEO_SUITE_COMPLETION.md §2/§4):
+    // suggested internal links between DB-cached content.
+    const seoInternalLinkSuggestionsDeleted = await tx.seoInternalLinkSuggestion.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoInternalLinkSuggestionsDeleted.count} SEO internal link suggestions`);
+
+    // Phase 4 (Sitemap / indexation control, PLAN_SEO_SUITE_COMPLETION.md
+    // §2/§6): sitemap-exclusion suggestions + applied/reverted decisions.
+    const seoSitemapExclusionsDeleted = await tx.seoSitemapExclusion.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoSitemapExclusionsDeleted.count} SEO sitemap exclusions`);
+
+    // Delete the media-library cache (Shopify Files / MediaImage) plus its
+    // sync marker. Both are shop-scoped caches with no cascade parent, so
+    // they must be purged explicitly.
+    const mediaLibraryImagesDeleted = await tx.mediaLibraryImage.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${mediaLibraryImagesDeleted.count} media library images`);
+
+    const mediaLibrarySyncStateDeleted = await tx.mediaLibrarySyncState.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${mediaLibrarySyncStateDeleted.count} media library sync state rows`);
   });
 
   logger.info(`[GDPR] Successfully redacted ALL data for shop ${shop_domain}`);
@@ -407,9 +571,10 @@ export async function redactShopData(
  *
  * Persists every GDPR webhook event to the GdprAuditLog table. The mandatory
  * 3-year retention period (Art. 5(2) GDPR) is enforced by
- * GdprAuditLogCleanupService (src/services/gdpr-audit-cleanup.service.ts;
- * standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
- * which runs daily and deletes only rows where requestedAt < now − 3 years.
+ * GdprAuditLogCleanupService (gdpr-audit-cleanup.service.js in the repo root is
+ * what server.js starts; src/services/gdpr-audit-cleanup.service.ts is its
+ * tested twin), which runs daily and deletes only rows where
+ * requestedAt < now − 3 years.
  */
 export async function logGDPRRequest(
   shop: string,

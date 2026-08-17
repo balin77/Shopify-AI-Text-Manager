@@ -5,8 +5,8 @@
  * Tries dynamic fetching via provider APIs, falls back to curated lists.
  */
 
-import type { LoaderFunctionArgs } from '@remix-run/node';
-import { json } from '@remix-run/node';
+import type { LoaderFunctionArgs } from "react-router";
+import { data as json } from "react-router";
 import { authenticate } from '~/shopify.server';
 import { db } from '~/db.server';
 import { tryDecryptApiKey } from '~/utils/encryption.server';

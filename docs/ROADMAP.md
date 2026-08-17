@@ -33,6 +33,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 | Multi-Language Translation | ✅ Complete | All |
 | Bulk Operations | ✅ Complete | All |
 | Custom AI Instructions | ✅ Complete | Pro+ |
+| Glossar/Terminologie (Settings-Tab + AI-Prompt-Injektion) | ✅ Complete (2026-07) | All |
 | Billing System (4 Tiers) | ✅ Complete | - |
 | GDPR Compliance | ✅ Complete | - |
 | Webhook System | ✅ Complete | - |
@@ -123,7 +124,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
 | Feature | Beschreibung | Priorität |
 |---------|--------------|-----------|
 | Scheduled Translations | Zeitgesteuerte Übersetzungen | High |
-| Content Templates | Wiederverwendbare Vorlagen | High |
+| ~~Content Templates~~ | ~~Wiederverwendbare Vorlagen~~ ⛔ **verworfen 2026-07-19** — 2-Tages-Test ergab: `{{variables}}` lieferten der KI keine Info, die sie nicht ohnehin über die Handler-Prompt-Zeilen bekam (siehe `docs/reference/COMPETITIVE_ANALYSIS.md` §3.1 Punkt 5). Re-Einstieg nur bei echten Zusatz-Variablen (`{{brand}}`, `{{price}}`, `{{tags}}` etc. aus Shopify). | — |
 | Version History | Änderungsverlauf für Content | Medium |
 | Content Approval Workflow | Multi-User Freigabe-Prozess | Low |
 
@@ -191,7 +192,7 @@ ContentPilot AI wird die führende KI-gestützte Content-Management-Lösung für
     + Rundungsregeln** reduzieren, klar kommuniziert als „nur Anzeige,
     Abrechnung in Shop-Währung". Keine Doppelung von Shopify-Markets-
     Funktionalität bauen. Siehe auch Hinweise in
-    [docs/COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) §Switcher-Widget.
+    [docs/reference/COMPETITIVE_ANALYSIS.md](reference/COMPETITIVE_ANALYSIS.md) §Switcher-Widget.
 - [ ] **Cultural Adaptation** - Kulturspezifische Anpassungen
 - [ ] **RTL Support** - Arabisch, Hebräisch
 
@@ -442,6 +443,50 @@ keine Kunden).
 
 ---
 
+## Backlog
+
+### JSON-LD: Entscheidung vor dem Ausbau des Theme-Schemas — `Product` vs. `ProductGroup`
+
+Dawn gibt bei Varianten-Produkten `ProductGroup` mit `hasVariant` aus (eine
+eigene Entity je Variante), wir geben `Product` mit einem Offer-Array. Beide
+Modelle sind valide, aber sie sind **nicht gleichwertig**: Wird das
+Theme-Schema entfernt, verliert Google die einzelnen Varianten-Entities.
+Sichtbar wird das erst Wochen später in der Search Console, nicht am Tag des
+Umbaus.
+
+Vor dem Entfernen des Theme-Schemas bewusst entscheiden:
+
+- **Offer-Array behalten** — Google leitet die Preisspanne selbst ab und
+  bekommt Verfügbarkeit + SKU je Variante. Keine eigenständigen
+  Varianten-Entities.
+- **Auf `ProductGroup` + `hasVariant` wechseln** — Varianten bleiben eigene
+  Entities (relevant, wenn einzelne Varianten in der Suche ranken sollen),
+  dafür deutlich größeres Markup.
+
+Nicht nebenbei beim Ausbau entscheiden — der Wechsel ändert die Identität der
+Entities und damit, was Google über die Zeit gelernt hat.
+
+### JSON-LD: `hasMerchantReturnPolicy` + `shippingDetails` (Merchant listings)
+
+Ohne diese beiden Felder meldet die Google Search Console unter "Merchant
+listings" Warnungen zu unserem Product-Markup. Sie fehlen bewusst — die Daten
+existieren nirgends in der App, und die beiden naheliegenden Quellen taugen
+nicht: `shop.refund_policy` ist Fließtext (Parsen wäre Raten), und
+markt-/gewichtsabhängige Versandkosten sind über Liquid nicht verlässlich
+abbildbar.
+
+Entscheidend für die spätere Umsetzung: **Google prüft diese Angaben gegen die
+Merchant-Center-Daten und entzieht bei Abweichung die Rich Results komplett.**
+Falsche Angaben sind also schlechter als gar keine. Wenn wir es bauen, dann
+ausschließlich als explizite Händler-Eingabe im App-Embed (Rückgabefrist,
+Rückgabeart, Versandkosten/-dauer je Zielland) mit **leerem Default** — nie
+geraten, nie geparst, nie aus einer Policy-Seite extrahiert. Bis dahin sind die
+Search-Console-Warnungen der bewusst gewählte Preis.
+
+Betroffene Datei: `extensions/storefront/blocks/structured-data.liquid`.
+
+---
+
 ## Open Questions / Decisions Needed
 
 - [ ] Annual Plans einführen? (20% Rabatt?)
@@ -454,10 +499,10 @@ keine Kunden).
 
 ## Resources & Links
 
-- [App Store Readiness Checklist](APP-STORE-READINESS.md)
-- [Billing System Documentation](BILLING_SYSTEM.md)
-- [Security Documentation](SECURITY_IMPROVEMENTS.md)
-- [Technical Debt & Future Improvements](TECHNICAL_DEBT.md)
+- [App Store Readiness Checklist](app-store/APP-STORE-READINESS.md)
+- [Billing System Documentation](architecture/BILLING_SYSTEM.md)
+- [Security Documentation](architecture/SECURITY_IMPROVEMENTS.md)
+- [Technical Debt & Future Improvements](reference/TECHNICAL_DEBT.md)
 - [Shopify App Store Requirements](https://shopify.dev/docs/apps/store/requirements)
 - [Shopify Partner Dashboard](https://partners.shopify.com/)
 

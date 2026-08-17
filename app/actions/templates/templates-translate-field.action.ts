@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import { getMissingPreferredKey, noAiKeyResponse } from "~/routes/api-ai-handlers/shared";
 import { tryDecryptApiKey } from "~/utils/encryption.server";
@@ -10,8 +10,9 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleTranslateField(ctx: TemplatesActionContext): Promise<Response> {
+export async function handleTranslateField(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const fieldType = getFormString(formData, "fieldType");
   const sourceText = getFormString(formData, "sourceText");
@@ -155,7 +156,7 @@ export async function handleTranslateField(ctx: TemplatesActionContext): Promise
   }
 }
 
-export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionContext): Promise<Response> {
+export async function handleTranslateFieldToAllLocales(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const fieldType = getFormString(formData, "fieldType");
   const sourceText = getFormString(formData, "sourceText");

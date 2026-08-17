@@ -1,29 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
-import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useFetcher, useSearchParams, useRevalidator } from "react-router";
 import {
   Page,
   Card,
   Text,
   BlockStack,
   Banner,
-  Button,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { resolveMerchantLocale } from "../utils/locale.server";
 import { AIInstructionsTabs } from "../components/AIInstructionsTabs";
 import { SettingsSetupTab } from "../components/SettingsSetupTab";
 import { SettingsAITab } from "../components/SettingsAITab";
-import { SettingsLanguageTab } from "../components/SettingsLanguageTab";
-import { SettingsTranslationsTab } from "../components/SettingsTranslationsTab";
-import { SettingsMetafieldsTab } from "../components/SettingsMetafieldsTab";
-import { SettingsSkuTab } from "../components/SettingsSkuTab";
 import { SettingsSEOTab } from "../components/SettingsSEOTab";
-import { SettingsRichtextTab } from "../components/SettingsRichtextTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
-import { SettingsImageManagerTab } from "../components/SettingsImageManagerTab";
+import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
 import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
+import { SettingsPageSpeedProbeTab } from "../components/SettingsPageSpeedProbeTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -31,7 +26,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { confirmNavigation } from "../hooks/useSaveBar";
 import { sanitizeHTML } from "../utils/sanitizer";
-import { AISettingsSchema, AIInstructionsSchema, parseFormData } from "../utils/validation";
+import { AISettingsSchema, AIInstructionsSchema, parseFormData, isValidLocale } from "../utils/validation";
 import { getFormString } from "../utils/form-data.utils";
 import { toSafeErrorResponse } from "../utils/error-handler";
 import { encryptApiKey, decryptApiKeyChecked } from "../utils/encryption.server";
@@ -49,6 +44,25 @@ import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "
 import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
 import { getImageOperationUsage } from "~/utils/imageOperations.server";
 
+/**
+ * Shallow value-equality for the sparse `seoLimits` JSON blob. Used by the
+ * saveSeoSettings action to decide whether a payload would actually change
+ * the DB row — so a no-op submission (e.g. a stale reset from a downgraded
+ * shop) skips the Pro plan gate instead of spuriously 403-ing.
+ */
+function shallowEqualLimits(
+  a: Record<string, number> | null,
+  b: Record<string, number> | null,
+): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return a === b;
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  for (const k of ak) if (a[k] !== b[k]) return false;
+  return true;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
@@ -61,13 +75,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       await checkAndSyncSubscription(admin, session.shop);
     }
 
-    // Fetch shop's primary locale and display name
+    // Fetch shop's locales (incl. name for the glossary locale bar) and display name
     const localesResponse = await admin.graphql(
       `#graphql
         query getShopInfo {
           shopLocales {
             locale
+            name
             primary
+            published
           }
           shop {
             name
@@ -76,7 +92,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
 
     const localesData = await localesResponse.json();
-    const primaryShopLocale = localesData.data.shopLocales.find((l: any) => l.primary)?.locale || "en";
+    const shopLocales: Array<{ locale: string; name?: string; primary: boolean; published: boolean }> =
+      localesData.data.shopLocales || [];
+    const primaryShopLocale = shopLocales.find((l) => l.primary)?.locale || "en";
     const shopDisplayName: string = localesData.data.shop?.name || "";
 
     let settings = await db.aISettings.findUnique({
@@ -409,9 +427,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       subscriptionPlan as Plan,
       newFeaturesEnabled,
     );
-    const showTranslationsTab = true;
     // Dev-only diagnostic surface: only visible when APP_ENV === "development".
     const showTranslationProbeTab = process.env.APP_ENV === "development";
+    // PROBE (accessibility plan §3.3): PageSpeed raw-response probe — same
+    // dev-only gate as the Translation Probe tab (APP_ENV === "development").
+    // Temporary.
+    const showPageSpeedProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -437,6 +458,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       select: { metafieldsLastScanAt: true },
     });
 
+    // Glossary tab: entries incl. per-locale fixed translations.
+    const { listGlossaryEntries } = await import("../../src/services/glossary.service");
+    const glossaryEntries = (await listGlossaryEntries(session.shop)).map((e) => ({
+      id: e.id,
+      sourceTerm: e.sourceTerm,
+      doNotTranslate: e.doNotTranslate,
+      caseSensitive: e.caseSensitive,
+      translations: Object.fromEntries(e.translations.map((tr) => [tr.locale, tr.value])),
+    }));
+
     return json({
       shop: session.shop,
       shopDisplayName,
@@ -457,12 +488,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       imageManagerSettings,
       showImageManagerTab,
       showSkuTab,
-      showTranslationsTab,
       showTranslationProbeTab,
+      showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
       optionValueMemory,
       primaryShopLocale,
+      shopLocales,
+      glossaryEntries,
       corruptedApiKeys,
       enabledMetafieldDefinitions: enabledMetafieldDefs.map((d) => ({
         definitionId: d.definitionId,
@@ -493,9 +526,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
         deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
 
+        // Keyword-aware translation (Übersetzungen card).
+        keywordAwareTranslation: settings.keywordAwareTranslation ?? true,
+
+        // Nightly SEO audit (Max) — merchant switch, see
+        // services/seo/audit-auto-run.service.ts. Shown on every plan but only
+        // editable where the plan grants scheduledAudit.
+        seoAutoAuditEnabled: settings.seoAutoAuditEnabled ?? true,
+
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
+
+        // Merchant-editable SEO character limits (Pro+). null = defaults
+        // from character-limits.ts — no need to widen the client bundle with
+        // the full default set, the SettingsSEOTab reads them from there.
+        seoLimits: (settings.seoLimits ?? null) as Record<string, number> | null,
+
+        // Translation policy: "exact" (default) or "seo_optimized". Piped
+        // into AIInstructionsTabs so the radio pre-selects the stored value.
+        translationMode: (settings.translationMode === 'seo_optimized' ? 'seo_optimized' : 'exact') as 'exact' | 'seo_optimized',
 
         // Theme-settings richtext handling: "autofix" | "normalize" | "error"
         themeRichtextMode: settings.themeRichtextMode || 'autofix',
@@ -671,6 +721,32 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
+      // Translation mode ("exact" | "seo_optimized") is stored on AISettings
+      // and piggybacks on the same submit so the Translations sub-section has
+      // a single Save button covering the radio + custom instructions.
+      // Keyword-aware translation rides along on the same submit, for the same
+      // reason: it is a knob of the Translations sub-section, and that section
+      // has one Save button. Absent (a submit from another sub-section) leaves
+      // the stored value alone rather than defaulting it back on.
+      const rawMode = String(formData.get("translationMode") || "");
+      const rawKeywordAware = formData.get("keywordAwareTranslation");
+      const keywordAwareUpdate =
+        rawKeywordAware === null ? {} : { keywordAwareTranslation: rawKeywordAware === "true" };
+      const modeUpdate =
+        rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
+      if (Object.keys(modeUpdate).length > 0 || Object.keys(keywordAwareUpdate).length > 0) {
+        await db.aISettings.upsert({
+          where: { shop: session.shop },
+          update: { ...modeUpdate, ...keywordAwareUpdate },
+          create: {
+            shop: session.shop,
+            ...modeUpdate,
+            ...keywordAwareUpdate,
+            preferredProvider: "claude",
+          },
+        });
+      }
+
       return json({ success: true, actionType });
     } else if (actionType === "saveAppLanguage") {
       // Narrow update: only touch `appLanguage`. The legacy LanguageTab used to
@@ -693,12 +769,109 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
+      // Nightly audit switch. Only written when the field is present, so a
+      // client that does not know the field cannot reset it. Gated below,
+      // next to the seoLimits gate, on the same "would it change anything"
+      // rule — a no-op payload from an unentitled shop must not 403.
+      const rawAutoAudit = formData.get("seoAutoAuditEnabled");
+      const autoAuditRequested = rawAutoAudit === null ? undefined : rawAutoAudit === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
+
+      // Merchant-editable SEO character limits (Pro+). Parse first, then
+      // decide whether the plan gate needs to fire — a payload that would
+      // NOT change the stored value (e.g. a stale "{}" reset from a
+      // downgraded shop whose DB row is already null) is a no-op regardless
+      // of plan, so it must not 403. The gate stays authoritative for any
+      // payload that would actually write to the seoLimits column.
+      const rawLimits = String(formData.get("seoLimits") || "");
+      let seoLimitsUpdate: Record<string, number> | null | undefined = undefined;
+      if (rawLimits) {
+        let cleaned: Record<string, number> = {};
+        try {
+          const parsed = JSON.parse(rawLimits);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const allowedKeys = new Set([
+              "titleMin", "titleMax", "seoTitleMin", "seoTitleMax",
+              "metaDescMin", "metaDescMax", "descriptionMin",
+              "handleMin", "handleMax", "altTextMin", "altTextMax",
+            ]);
+            for (const [k, v] of Object.entries(parsed)) {
+              if (!allowedKeys.has(k)) continue;
+              const n = typeof v === "number" ? v : parseInt(String(v), 10);
+              if (Number.isFinite(n) && n > 0 && n <= 9999) {
+                cleaned[k] = Math.floor(n);
+              }
+            }
+          }
+        } catch {
+          return json({ success: false, error: "Invalid seoLimits payload", actionType }, { status: 400 });
+        }
+        // Empty object → intentional reset to defaults (write null).
+        const proposed: Record<string, number> | null =
+          Object.keys(cleaned).length > 0 ? cleaned : null;
+
+        // Compare to the current DB row — if the write would be a no-op,
+        // skip both the plan gate AND the update. Prevents a spurious 403
+        // when a downgraded shop's client re-submits stale limits.
+        const currentRow = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoLimits: true },
+        });
+        const currentLimits = (currentRow?.seoLimits ?? null) as Record<string, number> | null;
+        const wouldChange = !shallowEqualLimits(currentLimits, proposed);
+
+        if (wouldChange) {
+          const { meetsPlan } = await import("../utils/planUtils");
+          const plan = (currentRow?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!meetsPlan(plan, "pro")) {
+            return json(
+              { success: false, error: "SEO limits are editable from the Pro plan onwards.", actionType },
+              { status: 403 },
+            );
+          }
+          seoLimitsUpdate = proposed;
+        }
+      }
+
+      let autoAuditUpdate: boolean | undefined = undefined;
+      if (autoAuditRequested !== undefined) {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoAutoAuditEnabled: true },
+        });
+        const current = row?.seoAutoAuditEnabled ?? true;
+        if (current !== autoAuditRequested) {
+          const { canAccessSeoFeature } = await import("../utils/planUtils");
+          const plan = (row?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!canAccessSeoFeature(plan, "scheduledAudit")) {
+            return json(
+              {
+                success: false,
+                error: "The nightly SEO audit is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoAuditUpdate = autoAuditRequested;
+        }
+      }
 
       await db.aISettings.upsert({
         where: { shop: session.shop },
-        update: { seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
-        create: { shop: session.shop, seoTitleSuffixEnabled: enabled, seoTitleSuffix: suffix },
+        update: {
+          seoTitleSuffixEnabled: enabled,
+          seoTitleSuffix: suffix,
+          ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+          ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+        },
+        create: {
+          shop: session.shop,
+          seoTitleSuffixEnabled: enabled,
+          seoTitleSuffix: suffix,
+          ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+          ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+        },
       });
 
       return json({ success: true, actionType });
@@ -715,6 +888,73 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
 
       return json({ success: true, actionType });
+    } else if (actionType === "saveGlossary") {
+      // Glossary is NOT plan-gated (translation itself is ungated — keep
+      // consistent). Full entry set as JSON; server diff-upserts transactional.
+      const payload = getFormString(formData, "entries");
+      const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+      if (!isValidLocale(sourceLocale)) {
+        return json({ success: false, error: "Invalid source locale", actionType }, { status: 400 });
+      }
+      let incoming: Array<{
+        id?: string;
+        sourceTerm: string;
+        doNotTranslate?: boolean;
+        caseSensitive?: boolean;
+        translations?: Record<string, string>;
+      }> = [];
+      try {
+        incoming = payload ? JSON.parse(payload) : [];
+        if (!Array.isArray(incoming)) throw new Error("not an array");
+      } catch {
+        return json({ success: false, error: "Invalid glossary payload", actionType }, { status: 400 });
+      }
+
+      const { saveGlossaryEntries } = await import("../../src/services/glossary.service");
+      try {
+        const result = await saveGlossaryEntries(
+          session.shop,
+          sourceLocale,
+          incoming.map((e) => ({
+            id: e.id || undefined,
+            sourceTerm: String(e.sourceTerm ?? ""),
+            doNotTranslate: !!e.doNotTranslate,
+            caseSensitive: !!e.caseSensitive,
+            translations: e.translations && typeof e.translations === "object" ? e.translations : {},
+          })),
+        );
+        return json({ success: true, actionType, ...result });
+      } catch (err) {
+        // saveGlossaryEntries throws with a merchant-readable message on
+        // validation errors (forbidden chars, duplicates, entry limit).
+        const message = err instanceof Error ? err.message : "Could not save glossary";
+        return json({ success: false, error: message, actionType }, { status: 400 });
+      }
+    } else if (actionType === "importGlossary") {
+      const csv = getFormString(formData, "csv") || "";
+      const sourceLocale = getFormString(formData, "sourceLocale") || "en";
+      if (!isValidLocale(sourceLocale)) {
+        return json({ success: false, error: "Invalid source locale", actionType }, { status: 400 });
+      }
+      const { parseGlossaryCsv, importGlossaryEntries } = await import("../../src/services/glossary.service");
+      const parsed = parseGlossaryCsv(csv);
+      if (parsed.entries.length === 0) {
+        return json(
+          {
+            success: false,
+            actionType,
+            error: parsed.errors.length > 0 ? parsed.errors.slice(0, 5).join(" ") : "No valid rows found in CSV.",
+          },
+          { status: 400 },
+        );
+      }
+      try {
+        const imported = await importGlossaryEntries(session.shop, sourceLocale, parsed.entries);
+        return json({ success: true, actionType, imported, skipped: parsed.errors.length });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not import glossary";
+        return json({ success: false, error: message, actionType }, { status: 400 });
+      }
     } else if (actionType === "scanProductMetafieldDefinitions") {
       // Data-driven scan: sources from the actual product metafields (incl.
       // third-party / definition-less ones like Google & Judge.me), enriched
@@ -904,7 +1144,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationsTab, showTranslationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -917,34 +1157,58 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  const getInitialSection = (): "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext" => {
+  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe" | "pagespeedprobe";
+
+  const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
     const tabParam = searchParams.get("tab");
-    // Don't honor deep-links to prod-gated future tabs (would render blank).
-    if (tabParam === "sku" && !showSkuTab) return "setup";
-    if (tabParam === "translations" && !showTranslationsTab) return "setup";
-    // imagemanager is the deep-link target of the first-run theme-extension
-    // hint; same prod/plan gate as the tab itself so it never renders blank.
-    if (tabParam === "imagemanager" && !showImageManagerTab) return "setup";
+    // Legacy deep-links keep working: language/glossary/feedback landed inside
+    // the Setup / AI-Instructions tabs; translations/sku/metafields/richtext/
+    // recurring/imagemanager all now live inside the "Weiteres" (other) tab.
+    if (tabParam === "language" || tabParam === "feedback") return "setup";
+    if (tabParam === "glossary") return "instructions";
+    if (
+      tabParam === "translations" ||
+      tabParam === "sku" ||
+      tabParam === "recurring" ||
+      tabParam === "metafields" ||
+      tabParam === "richtext" ||
+      tabParam === "imagemanager"
+    ) return "other";
     if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "language", "translations", "metafields", "sku", "seo", "plan", "feedback", "imagemanager", "translationprobe", "richtext"].includes(tabParam)) {
-      return tabParam as "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext";
+    if (tabParam === "pagespeedprobe" && !showPageSpeedProbeTab) return "setup";
+    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe", "pagespeedprobe"].includes(tabParam)) {
+      return tabParam as Section;
     }
     return "setup";
   };
 
-  const [selectedSection, setSelectedSection] = useState<"setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext">(getInitialSection);
+  // Deep-link target inside the "Weiteres" tab. imagemanager only makes sense
+  // when the merchant's plan actually shows the sub-tab; fall back to
+  // metafields otherwise so the tab does not open on a blank panel.
+  const getInitialOtherSubTab = (): OtherSubTab | undefined => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "metafields") return "metafields";
+    if (tabParam === "richtext") return "richtext";
+    if (tabParam === "recurring" || tabParam === "translations" || tabParam === "sku") return "recurring";
+    if (tabParam === "imagemanager") return showImageManagerTab ? "imagemanager" : "metafields";
+    return undefined;
+  };
+
+  const [selectedSection, setSelectedSection] = useState<Section>(getInitialSection);
+  const [initialOtherSubTab] = useState<OtherSubTab | undefined>(getInitialOtherSubTab);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
   const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
+  const [hasGlossaryChanges, setHasGlossaryChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
-  const handleSectionChange = async (newSection: "setup" | "ai" | "instructions" | "language" | "translations" | "metafields" | "sku" | "seo" | "plan" | "feedback" | "imagemanager" | "translationprobe" | "richtext") => {
+  const handleSectionChange = async (newSection: Section) => {
     await confirmNavigation();
     setSelectedSection(newSection);
   };
@@ -997,14 +1261,11 @@ export default function SettingsPage() {
       { id: "setup", title: t.settings.appSetup },
       { id: "ai", title: t.settings.aiApiAccess },
       { id: "instructions", title: t.settings.aiInstructions },
-      { id: "language", title: t.settings.appLanguage },
-      ...(showTranslationsTab ? [{ id: "translations", title: t.settings.translations }] : []),
-      { id: "metafields", title: t.settings.metafields || "Metafields" },      ...(showSkuTab ? [{ id: "sku", title: t.settings.sku }] : []),
       { id: "seo", title: t.settings.seoSettings || "SEO" },
-      { id: "richtext", title: t.settings.richtextFormatting || "Rich-text formatting" },
+      { id: "other", title: t.settings.otherSettings || "Weiteres" },
       { id: "plan", title: t.settings.plan },
-      { id: "feedback", title: t.settings.feedback },
       ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
+      ...(showPageSpeedProbeTab ? [{ id: "pagespeedprobe", title: "PageSpeed Probe" }] : []),
     ];
 
     registerItems({
@@ -1033,11 +1294,17 @@ export default function SettingsPage() {
       {/* Page padding is owned globally by .Polaris-Page (responsive.css,
           --app-page-padding); .app-page-content zeroes Polaris' own
           Page__Content inset so the gutter is even on all sides (incl. top
-          and bottom), matching the content page. */}
-      <div className="app-page-content">
+          and bottom), matching the content page.
+
+          .app-page-width-full is explicit, not the absence of a cap: this is a
+          sidebar+content layout, not reading-width content, so it keeps the
+          full width the SEO sections and Tasks give up. */}
+      <div className="app-page-content app-page-width-full">
         <div style={{ display: "flex", gap: "1rem" }}>
-          {/* Left Sidebar - Hidden on mobile */}
-          <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
+          {/* Left Sidebar - Hidden on mobile. Width from
+              --app-list-column-width: the tab nav is a "pick an item" column
+              like the content pages' item list, and now matches it. */}
+          <div className="settings-desktop-nav" style={{ width: "var(--app-list-column-width)", flexShrink: 0 }}>
             <Card padding="0">
               <button
                 onClick={() => handleSectionChange("setup")}
@@ -1097,86 +1364,6 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("language")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "language" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "language" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "language" ? "semibold" : "regular"}>
-                  {t.settings.appLanguage}
-                </Text>
-              </button>
-              {showTranslationsTab && (
-              <button
-                onClick={() => handleSectionChange("translations")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "translations" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "translations" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translations" ? "semibold" : "regular"}>
-                  {t.settings.translations}
-                </Text>
-              </button>
-              )}
-              <button
-                onClick={() => handleSectionChange("metafields")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "metafields" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "metafields" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "metafields" ? "semibold" : "regular"}>
-                  {t.settings.metafields || "Metafields"}
-                </Text>
-              </button>
-              {showSkuTab && (
-              <button
-                onClick={() => handleSectionChange("sku")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "sku" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "sku" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "sku" ? "semibold" : "regular"}>
-                  {t.settings.sku}
-                </Text>
-              </button>
-              )}
-              <button
                 onClick={() => handleSectionChange("seo")}
                 style={{
                   width: "100%",
@@ -1196,22 +1383,22 @@ export default function SettingsPage() {
                 </Text>
               </button>
               <button
-                onClick={() => handleSectionChange("richtext")}
+                onClick={() => handleSectionChange("other")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "richtext" ? "#f1f8f5" : "white",
+                  background: selectedSection === "other" ? "#f1f8f5" : "white",
                   borderTop: "1px solid #e1e3e5",
                   borderRight: "none",
                   borderBottom: "none",
-                  borderLeft: selectedSection === "richtext" ? "3px solid #008060" : "3px solid transparent",
+                  borderLeft: selectedSection === "other" ? "3px solid #008060" : "3px solid transparent",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "richtext" ? "semibold" : "regular"}>
-                  {t.settings.richtextFormatting || "Rich-text formatting"}
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "other" ? "semibold" : "regular"}>
+                  {t.settings.otherSettings || "Weiteres"}
                 </Text>
               </button>
               <button
@@ -1231,46 +1418,6 @@ export default function SettingsPage() {
               >
                 <Text as="p" variant="bodyMd" fontWeight={selectedSection === "plan" ? "semibold" : "regular"}>
                   {t.settings.plan}
-                </Text>
-              </button>
-              {showImageManagerTab && (
-                <button
-                  onClick={() => handleSectionChange("imagemanager")}
-                  style={{
-                    width: "100%",
-                    padding: "1rem",
-                    background: selectedSection === "imagemanager" ? "#f1f8f5" : "white",
-                    borderTop: "1px solid #e1e3e5",
-                    borderRight: "none",
-                    borderBottom: "none",
-                    borderLeft: selectedSection === "imagemanager" ? "3px solid #008060" : "3px solid transparent",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                  }}
-                >
-                  <Text as="p" variant="bodyMd" fontWeight={selectedSection === "imagemanager" ? "semibold" : "regular"}>
-                    Image Manager
-                  </Text>
-                </button>
-              )}
-              <button
-                onClick={() => handleSectionChange("feedback")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "feedback" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "feedback" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "feedback" ? "semibold" : "regular"}>
-                  {t.settings.feedback}
                 </Text>
               </button>
               {showTranslationProbeTab && (
@@ -1294,6 +1441,27 @@ export default function SettingsPage() {
                 </Text>
               </button>
               )}
+              {showPageSpeedProbeTab && (
+              <button
+                onClick={() => handleSectionChange("pagespeedprobe")}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: selectedSection === "pagespeedprobe" ? "#f1f8f5" : "white",
+                  borderTop: "1px solid #e1e3e5",
+                  borderRight: "none",
+                  borderBottom: "none",
+                  borderLeft: selectedSection === "pagespeedprobe" ? "3px solid #008060" : "3px solid transparent",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+              >
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "pagespeedprobe" ? "semibold" : "regular"}>
+                  PageSpeed Probe
+                </Text>
+              </button>
+              )}
             </Card>
           </div>
 
@@ -1312,6 +1480,9 @@ export default function SettingsPage() {
                   translationCount={translationCount}
                   webhookCount={webhookCount}
                   t={t}
+                  languageSettings={settings}
+                  languageFetcher={fetcher}
+                  onLanguageHasChangesChange={setHasLanguageChanges}
                 />
               )}
 
@@ -1321,7 +1492,8 @@ export default function SettingsPage() {
                   settings={settings}
                   fetcher={fetcher}
                   t={t}
-                  onHasChangesChange={setHasAIChanges}                />
+                  onHasChangesChange={setHasAIChanges}
+                />
               )}
 
               {/* AI Instructions */}
@@ -1341,44 +1513,15 @@ export default function SettingsPage() {
                     instructions={instructions}
                     fetcher={fetcher}
                     readOnly={aiInstructionsReadOnly}
-                    onHasChangesChange={setHasInstructionsChanges}                  />
+                    onHasChangesChange={setHasInstructionsChanges}
+                    glossaryEntries={glossaryEntries}
+                    shopLocales={shopLocales}
+                    primaryShopLocale={primaryShopLocale}
+                    onGlossaryHasChangesChange={setHasGlossaryChanges}
+                    translationMode={settings.translationMode}
+                    keywordAwareTranslation={settings.keywordAwareTranslation}
+                  />
                 </>
-              )}
-
-              {/* Language Settings */}
-              {selectedSection === "language" && (
-                <SettingsLanguageTab
-                  settings={settings}
-                  fetcher={fetcher}
-                  t={t}
-                  onHasChangesChange={setHasLanguageChanges}                />
-              )}
-
-              {/* Translations Mapping (productType) */}
-              {selectedSection === "translations" && showTranslationsTab && (
-                <SettingsTranslationsTab
-                  groupedFieldTranslations={groupedFieldTranslations}
-                  primaryShopLocale={primaryShopLocale}
-                  t={t}
-                />
-              )}
-
-              {/* Metafields — enable third-party / shop metafields for translation */}
-              {selectedSection === "metafields" && (
-                <SettingsMetafieldsTab
-                  enabledMetafieldDefinitions={enabledMetafieldDefinitions}
-                  metafieldsLastScanAt={metafieldsLastScanAt}
-                  t={t}
-                  onHasChangesChange={setHasMetafieldChanges}
-                />
-              )}
-
-              {/* SKU / variant match keys */}
-              {selectedSection === "sku" && showSkuTab && (
-                <SettingsSkuTab
-                  optionValueMemory={optionValueMemory}
-                  t={t}
-                />
               )}
 
               {/* SEO Settings */}
@@ -1388,17 +1531,32 @@ export default function SettingsPage() {
                   fetcher={fetcher}
                   t={t}
                   shopDisplayName={shopDisplayName}
-                  onHasChangesChange={setHasAIChanges}                />
-              )}
-
-              {/* Rich-text formatting (theme-settings richtext handling) */}
-              {selectedSection === "richtext" && (
-                <SettingsRichtextTab
-                  settings={settings}
-                  fetcher={fetcher}
-                  t={t}
+                  subscriptionPlan={subscriptionPlan as Plan}
                   onHasChangesChange={setHasAIChanges}
                 />
+              )}
+
+              {/* Weiteres — horizontal sub-nav bundling Metafields,
+                  Rich-text formatting, Wiederkehrende Werte + (Pro) Image Manager */}
+              {selectedSection === "other" && (
+                <SettingsOtherTab
+                  t={t}
+                  fetcher={fetcher}
+                  initialSubTab={initialOtherSubTab}
+                  enabledMetafieldDefinitions={enabledMetafieldDefinitions}
+                  metafieldsLastScanAt={metafieldsLastScanAt}
+                  onMetafieldHasChangesChange={setHasMetafieldChanges}
+                  richtextSettings={settings}
+                  onRichtextHasChangesChange={setHasAIChanges}
+                  groupedFieldTranslations={groupedFieldTranslations}
+                  optionValueMemory={optionValueMemory}
+                  primaryShopLocale={primaryShopLocale}
+                  showSkuTab={showSkuTab}
+                  showImageManagerTab={showImageManagerTab}
+                  imageManagerSettings={imageManagerSettings ?? { enabled: true, autoAltText: false }}
+                  shop={shop}
+                  onImageManagerHasChangesChange={setHasImageManagerChanges}
+              />
               )}
 
               {/* Plan Settings */}
@@ -1449,40 +1607,12 @@ export default function SettingsPage() {
                 </>
               )}
 
-              {/* Image Manager Settings */}
-              {selectedSection === "imagemanager" && showImageManagerTab && (
-                <SettingsImageManagerTab
-                  settings={{ enabled: imageManagerSettings?.enabled ?? true, autoAltText: imageManagerSettings?.autoAltText ?? false }}
-                  shop={shop}
-                  onHasChangesChange={setHasImageManagerChanges}                />
-              )}
-
-              {/* Feedback */}
-              {selectedSection === "feedback" && (
-                <Card>
-                  <BlockStack gap="400">
-                    <Text as="h2" variant="headingLg">
-                      {t.settings.feedbackTitle}
-                    </Text>
-                    <Text as="p" variant="bodyMd" tone="subdued">
-                      {t.settings.feedbackDescription}
-                    </Text>
-                    <div>
-                      <Button
-                        variant="primary"
-                        url={`mailto:hans.maarhofer@gmail.com?subject=${encodeURIComponent(t.settings.feedbackSubject)}`}
-                        external
-                      >
-                        {t.settings.feedbackButton}
-                      </Button>
-                    </div>
-                  </BlockStack>
-                </Card>
-              )}
-
               {/* Translation Coverage Probe (Phase 0 dev tool) */}
               {selectedSection === "translationprobe" && showTranslationProbeTab && (
                 <SettingsTranslationProbeTab />
+              )}
+              {selectedSection === "pagespeedprobe" && showPageSpeedProbeTab && (
+                <SettingsPageSpeedProbeTab />
               )}
             </BlockStack>
           </div>

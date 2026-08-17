@@ -3,7 +3,7 @@
  *
  * One-shot UI that hits /api/translation-probe and renders a
  * paste-ready markdown report. Use this to populate
- * docs/PLAN_TRANSLATION_COVERAGE.md §12 spike findings before
+ * docs/architecture/TRANSLATION_COVERAGE.md §12 spike findings before
  * starting Phase 1 backend work.
  *
  * Read-only by default. "Run + write test" attempts a single SHOP
@@ -81,6 +81,51 @@ interface ProbeReport {
   writeTest: WriteTestReport;
   themeSelectionDiag?: ThemeSelectionDiag;
   themeFetchWorkaround?: ThemeFetchWorkaround;
+  imageAltDiag?: ImageAltDiag;
+}
+
+/** Mirrors ImageAltDiag in api.translation-probe.tsx — "which images can carry
+ * a translated alt text?", answered with data from this shop. */
+interface ImageAltDiag {
+  enumSupport: Array<{ resourceType: string; supported: boolean; sampleCount: number; error?: string }>;
+  subjects: Array<{
+    kind: string;
+    resourceId: string;
+    label: string;
+    imageProbe?: { hasImage: boolean; imageId: string | null; altText: string | null; idSelectable: boolean };
+    translatableKeys: string[];
+    hasAltKey: boolean;
+    error?: string;
+  }>;
+  fileLink?: Array<{
+    kind: string;
+    ownerLabel: string;
+    sourceImageId: string;
+    sourceUrl: string;
+    sourceBasename: string;
+    arithmetic: { triedId: string; resolved: boolean; typename: string; url: string; urlMatch: boolean; error?: string };
+    byFilename: {
+      query: string;
+      hits: Array<{ id: string; typename: string; url: string; alt: string | null }>;
+      exactMatches: number;
+      error?: string;
+    };
+  }>;
+  ownerLinkage?: {
+    cachedImages: number;
+    groups: Array<{
+      kind: string;
+      sampled: number;
+      withImage: number;
+      unique: number;
+      ambiguous: number;
+      none: number;
+      altDiverges: number;
+      examples: Array<{ title: string; basename: string; matches: number; objectAlt: string; fileAlt: string | null }>;
+    }>;
+    verdict: string;
+  };
+  verdict: string;
 }
 
 function formatMarkdown(report: ProbeReport): string {
@@ -134,6 +179,122 @@ function formatMarkdown(report: ProbeReport): string {
       lines.push(`| \`${r.resourceType}\` | \`${rid.replace(/\|/g, "\\|")}\` | ${r.extractedThemeId === null ? "(none)" : `\`${r.extractedThemeId}\``} |`);
     }
     lines.push(``);
+    lines.push(`---`);
+    lines.push(``);
+  }
+
+  const iad = report.imageAltDiag;
+  if (iad) {
+    lines.push(`## Image alt-text translatability`);
+    lines.push(``);
+    lines.push(`**Verdict:** ${iad.verdict}`);
+    lines.push(``);
+    lines.push(`\`translatableResources(resourceType:)\` enum support:`);
+    lines.push(``);
+    lines.push(`| resourceType | accepted | sample rows | error |`);
+    lines.push(`|---|---|---|---|`);
+    for (const e of iad.enumSupport) {
+      lines.push(
+        `| \`${e.resourceType}\` | ${e.supported ? "yes" : "**no**"} | ${e.sampleCount} | ${(e.error ?? "").replace(/\|/g, "\\|") || "—"} |`,
+      );
+    }
+    lines.push(``);
+    lines.push(`Sample subjects:`);
+    lines.push(``);
+    lines.push(`| subject | GID | image? | primary alt | translatable keys | has \`alt\` |`);
+    lines.push(`|---|---|---|---|---|---|`);
+    for (const s of iad.subjects) {
+      const gid = s.resourceId ? `\`${s.resourceId.length > 60 ? `${s.resourceId.slice(0, 57)}…` : s.resourceId}\`` : "(none)";
+      const img = !s.imageProbe
+        ? "—"
+        : !s.imageProbe.idSelectable
+          ? "**`image { id }` not selectable**"
+          : s.imageProbe.hasImage
+            ? `id ${s.imageProbe.imageId ? `\`${s.imageProbe.imageId}\`` : "**null**"}`
+            : "no image";
+      const keys = s.error ? `_${s.error.replace(/\|/g, "\\|")}_` : s.translatableKeys.join(", ") || "(none)";
+      const alt = s.imageProbe
+        ? s.imageProbe.altText
+          ? `"${s.imageProbe.altText.slice(0, 40).replace(/\|/g, "\\|")}"`
+          : "**(empty)**"
+        : "—";
+      lines.push(
+        `| ${s.kind} — ${s.label.replace(/\|/g, "\\|")} | ${gid} | ${img} | ${alt} | ${keys} | ${s.hasAltKey ? "yes" : "no"} |`,
+      );
+    }
+    lines.push(``);
+
+    if (iad.fileLink?.length) {
+      lines.push(`### Can a CollectionImage/ArticleImage be traced to a MediaImage?`);
+      lines.push(``);
+      lines.push(
+        `A MediaImage IS translatable and the bulk editor already writes it, so a link would mean those alt texts need no new write path.`,
+      );
+      lines.push(``);
+      lines.push(`| subject | source image GID | filename | A) same id → MediaImage | B) found in Files |`);
+      lines.push(`|---|---|---|---|---|`);
+      for (const l of iad.fileLink) {
+        const esc = (v: string) => v.replace(/\|/g, "\\|");
+        const arith = l.arithmetic.error
+          ? `_${esc(l.arithmetic.error)}_`
+          : l.arithmetic.urlMatch
+            ? `**same picture** (\`${esc(l.arithmetic.typename)}\`)`
+            : l.arithmetic.resolved
+              ? `resolves to \`${esc(l.arithmetic.typename)}\` but a **different** picture`
+              : "does not resolve";
+        const files = l.byFilename.error
+          ? `_${esc(l.byFilename.error)}_`
+          : `${l.byFilename.exactMatches} exact / ${l.byFilename.hits.length} hit(s)`;
+        lines.push(
+          `| ${esc(l.kind)} — ${esc(l.ownerLabel)} | ${l.sourceImageId ? `\`${esc(l.sourceImageId)}\`` : "(none)"} | ${esc(l.sourceBasename) || "—"} | ${arith} | ${files} |`,
+        );
+      }
+      lines.push(``);
+      for (const l of iad.fileLink) {
+        if (!l.sourceUrl) continue;
+        lines.push(`- \`${l.kind}\` source URL: ${l.sourceUrl}`);
+        if (l.arithmetic.triedId) lines.push(`  - tried: \`${l.arithmetic.triedId}\` → ${l.arithmetic.url || "(no url)"}`);
+        if (l.byFilename.query) lines.push(`  - files query: \`${l.byFilename.query}\``);
+        for (const hit of l.byFilename.hits) {
+          lines.push(`    - \`${hit.id}\` [${hit.typename}] alt=${hit.alt === null ? "(null)" : `"${hit.alt}"`} — ${hit.url || "(no url)"}`);
+        }
+      }
+      lines.push(``);
+    }
+
+    const ol = iad.ownerLinkage;
+    if (ol) {
+      lines.push(`### Could collection/article images be ATTRIBUTED in the media library?`);
+      lines.push(``);
+      lines.push(`**Verdict:** ${ol.verdict}`);
+      lines.push(``);
+      lines.push(
+        `The only possible link is the filename (a collection's picture is a CollectionImage, not a MediaImage, and \`files()\` has no "used by" facet). Matched from the owner side against the local media cache — what an implementation would do without extra Shopify calls.`,
+      );
+      lines.push(``);
+      lines.push(`| sample | with image | exactly 1 match | ambiguous | not in library | of the unique: alt differs |`);
+      lines.push(`|---|---:|---:|---:|---:|---:|`);
+      for (const g of ol.groups) {
+        lines.push(
+          `| ${g.kind} (${g.sampled} sampled) | ${g.withImage} | ${g.unique} | ${g.ambiguous} | ${g.none} | ${g.altDiverges} |`,
+        );
+      }
+      lines.push(``);
+      for (const g of ol.groups) {
+        if (g.examples.length === 0) continue;
+        lines.push(`\`${g.kind}\` examples:`);
+        for (const e of g.examples) {
+          const esc = (v: string) => v.replace(/\|/g, "\\|");
+          lines.push(
+            `  - ${esc(e.title)} — \`${esc(e.basename)}\` → ${e.matches} match(es); object alt=${
+              e.objectAlt ? `"${esc(e.objectAlt.slice(0, 40))}"` : "**(empty)**"
+            }, file alt=${e.fileAlt === null ? "—" : e.fileAlt ? `"${esc(e.fileAlt.slice(0, 40))}"` : "**(empty)**"}`,
+          );
+        }
+        lines.push(``);
+      }
+    }
+
     lines.push(`---`);
     lines.push(``);
   }
@@ -243,9 +404,173 @@ function formatMarkdown(report: ProbeReport): string {
   lines.push(``);
   lines.push(`---`);
   lines.push(``);
-  lines.push(`_Paste this report back into the assistant to populate \`docs/PLAN_TRANSLATION_COVERAGE.md\` §12 spike findings._`);
+  lines.push(`_Paste this report back into the assistant to populate \`docs/architecture/TRANSLATION_COVERAGE.md\` §12 spike findings._`);
 
   return lines.join("\n");
+}
+
+// ── IndexNow probe ───────────────────────────────────────────────────────────
+// Separate diagnostic sharing this tab (see api.indexnow-probe.tsx): it is the
+// only way to find out whether IndexNow accepts a key file served from the app
+// proxy instead of the storefront root, and whether the key fetch stays on the
+// declared host. Both are unanswerable from the code alone.
+
+interface IndexNowProbeReport {
+  generatedAt: string;
+  shop: string;
+  configured: boolean;
+  enabled: boolean;
+  host: string;
+  primaryDomain: string;
+  hostIsPrimaryDomain: boolean;
+  keyLocation: string;
+  keyPath: string;
+  keyRedirectPresent: boolean;
+  keyFile: {
+    reachable: boolean;
+    finalStatus: number | null;
+    hops: Array<{ url: string; status: number; location: string | null; crossHost: boolean }>;
+    bodyMatchesKey: boolean | null;
+    body: string | null;
+    error?: string;
+  };
+  submitTest: {
+    url: string;
+    status: number | null;
+    kind: string;
+    responseBody: string | null;
+    error?: string;
+  };
+  verdict: string[];
+}
+
+function formatIndexNowMarkdown(r: IndexNowProbeReport): string {
+  const lines: string[] = [];
+  lines.push(`# IndexNow Probe Report`);
+  lines.push(``);
+  lines.push(`- Generated: ${r.generatedAt}`);
+  lines.push(`- Shop: ${r.shop}`);
+  lines.push(`- Configured: ${r.configured ? "yes" : "no"} / enabled: ${r.enabled ? "yes" : "no"}`);
+  lines.push(`- Declared host: \`${r.host || "(none)"}\``);
+  lines.push(`- Primary domain: \`${r.primaryDomain}\` ${r.hostIsPrimaryDomain ? "(match)" : "(MISMATCH)"}`);
+  lines.push(`- keyLocation: \`${r.keyLocation || "(none)"}\` (path \`${r.keyPath || "(none)"}\`)`);
+  lines.push(`- Key-file redirect on record: ${r.keyRedirectPresent ? "yes" : "no"}`);
+  lines.push(``);
+  lines.push(`## Key file fetch`);
+  lines.push(``);
+  lines.push(`- Reachable: ${r.keyFile.reachable ? "yes" : "no"} (final status ${r.keyFile.finalStatus ?? "none"})`);
+  lines.push(`- Content matches key: ${r.keyFile.bodyMatchesKey === null ? "n/a" : r.keyFile.bodyMatchesKey ? "yes" : "NO"}`);
+  if (r.keyFile.error) lines.push(`- Error: ${r.keyFile.error}`);
+  if (r.keyFile.hops.length > 0) {
+    lines.push(``);
+    lines.push(`| # | URL | Status | Location | Cross-host |`);
+    lines.push(`|---|---|---|---|---|`);
+    r.keyFile.hops.forEach((h, i) => {
+      lines.push(`| ${i + 1} | \`${h.url}\` | ${h.status} | ${h.location ? `\`${h.location}\`` : "—"} | ${h.crossHost ? "YES" : "no"} |`);
+    });
+  }
+  lines.push(``);
+  lines.push(`## Live submission test`);
+  lines.push(``);
+  lines.push(`- URL: \`${r.submitTest.url || "(none)"}\``);
+  lines.push(`- Status: ${r.submitTest.status ?? "none"} (${r.submitTest.kind})`);
+  if (r.submitTest.responseBody) lines.push(`- Response body: \`${r.submitTest.responseBody}\``);
+  if (r.submitTest.error) lines.push(`- Error: ${r.submitTest.error}`);
+  lines.push(``);
+  lines.push(`## Verdict`);
+  lines.push(``);
+  for (const v of r.verdict) lines.push(`- ${v}`);
+  return lines.join("\n");
+}
+
+function IndexNowProbeCard() {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<IndexNowProbeReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runProbe = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/indexnow-probe", { method: "POST" });
+      const j = (await r.json()) as { report?: IndexNowProbeReport; error?: string };
+      if (!r.ok || !j.report) {
+        throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
+      }
+      setReport(j.report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const markdown = useMemo(() => (report ? formatIndexNowMarkdown(report) : ""), [report]);
+
+  const tone = (() => {
+    if (!report) return "info" as const;
+    if (report.verdict.some((v) => v.startsWith("❌"))) return "critical" as const;
+    if (report.verdict.some((v) => v.startsWith("⚠️"))) return "warning" as const;
+    return "success" as const;
+  })();
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingMd">IndexNow Probe</Text>
+        <Text as="p" tone="subdued">
+          Verifies the two things about IndexNow that only a live shop can answer: whether the key
+          file served from the app proxy (<code>/apps/contentpilot/indexnow-key</code>) is accepted
+          even though it is not at the storefront root, and whether fetching it stays on the domain
+          we declare. Fetches the key file the way a search engine does, then submits the shop
+          homepage to the real IndexNow endpoint and reports the raw status code.
+        </Text>
+        <Banner tone="info">
+          <Text as="p">
+            Requires IndexNow to be enabled in SEO → IndexNow. The only side effect is one
+            submission of your homepage URL — the same call the section makes.
+          </Text>
+        </Banner>
+        <InlineStack gap="200">
+          <Button onClick={runProbe} loading={loading}>
+            {report ? "Re-run IndexNow probe" : "Run IndexNow probe"}
+          </Button>
+        </InlineStack>
+        {error && (
+          <Banner tone="critical">
+            <Text as="p">IndexNow probe failed: {error}</Text>
+          </Banner>
+        )}
+        {report && (
+          <>
+            <Banner tone={tone}>
+              <BlockStack gap="100">
+                {report.verdict.map((v, i) => (
+                  <Text as="p" key={i}>{v}</Text>
+                ))}
+              </BlockStack>
+            </Banner>
+            <textarea
+              readOnly
+              value={markdown}
+              style={{
+                width: "100%",
+                minHeight: "260px",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: "12px",
+                padding: "12px",
+                border: "1px solid #c9cccf",
+                borderRadius: "8px",
+                background: "#fafbfb",
+                resize: "vertical",
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </>
+        )}
+      </BlockStack>
+    </Card>
+  );
 }
 
 export function SettingsTranslationProbeTab() {
@@ -321,6 +646,23 @@ export function SettingsTranslationProbeTab() {
           )}
         </BlockStack>
       </Card>
+
+      <IndexNowProbeCard />
+
+      {report?.imageAltDiag && (
+        <Card>
+          <BlockStack gap="200">
+            <Text as="h3" variant="headingSm">Image alt-text translatability</Text>
+            <Banner tone="info">
+              <Text as="p">{report.imageAltDiag.verdict}</Text>
+            </Banner>
+            <Text as="p" tone="subdued">
+              Details (enum support per resource type, sample GIDs and their translatable keys) are in
+              the markdown report below.
+            </Text>
+          </BlockStack>
+        </Card>
+      )}
 
       {report && (
         <Card>

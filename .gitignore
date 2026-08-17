@@ -31,9 +31,12 @@ prisma/*.db-journal
 *.sqlite
 
 # Shopify
+# .shopify/ ist CLI-Arbeitsverzeichnis (Deploy-Bundle, zuletzt verlinkte App) — bleibt lokal.
+# shopify.app.dev.toml und shopify.app.prod.toml sind dagegen ABSICHTLICH versioniert:
+# sie sind die Quelle, aus der `shopify app deploy -c <dev|prod>` Scopes, URLs, App-Proxy
+# und Webhooks ins Partner Dashboard schreibt. Ungetrackt hiesse: von einem Rechner oder
+# Branch mit veralteter Datei zu deployen entfernt still Scopes von der Live-App.
 .shopify/
-shopify.app.*.toml
-!shopify.app.toml
 
 # Local development files
 .claude/settings.local.json
@@ -52,3 +55,6 @@ coverage/
 .bfg-report/
 ..bfg-report/
 *.bfg-report/
+
+# React Router generated route types
+.react-router/

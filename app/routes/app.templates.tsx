@@ -12,7 +12,7 @@
  * leak fields from a sibling tab.
  */
 
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";

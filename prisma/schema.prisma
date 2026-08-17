@@ -58,7 +58,31 @@ model AISettings {
   // published (MAIN) theme — backwards compatible with the pre-selection
   // behaviour. Validated against GET_THEMES on every read
   // (resolveSelectedThemeId) so a deleted/deinstalled theme falls back to MAIN.
-  selectedThemeId   String?
+  selectedThemeId String?
+
+  // Keep templates/llms.txt.liquid in step with the catalog automatically
+  // (SEO → AI search, step 2). The background pass only ever UPDATES a file the
+  // merchant already generated — it never creates one — and writes only when
+  // the rebuilt content actually differs, so the default is on: an out-of-date
+  // llms.txt is worse than no llms.txt. Also requires AEO_THEME_WRITES.
+  llmsTxtAutoUpdate Boolean @default(true)
+
+  // When the llms.txt auto-refresh last RAN for this shop (not when it last
+  // wrote — a run that found no difference stamps this too). Drives the daily
+  // shop-independent sweep in seo/llms-auto-refresh.service.ts: it makes the
+  // sweep idempotent across replicas and restarts, and lets a shop refreshed
+  // through the in-app path skip the sweep entirely.
+  llmsTxtLastAutoRunAt DateTime?
+
+  // "Übersetzungen mitführen" on SEO → interne Verlinkung. Accepting a
+  // suggestion only wraps an existing word in an <a>, so the wording is
+  // unchanged and the primary save's stale-translation purge would throw away
+  // hand-written translations for nothing. On (the default), the accept skips
+  // that purge and writes the same link into every translation with its
+  // localized URL; off restores the plain-save behaviour. Persisted per shop so
+  // a merchant who deliberately turns it off does not get it back on the next
+  // page load — see app/services/seo/internal-links-translate.server.ts.
+  seoLinksCarryTranslations Boolean @default(true)
 
   // Dev/test affordance — read ONLY by the custom-app build. The custom-app
   // Shopify distribution has NO Billing API at all, so on that build the plan
@@ -67,7 +91,7 @@ model AISettings {
   // the dev app's client_id (SHOPIFY_API_KEY) AND APP_ENV !== 'production', so
   // this column is provably never consulted by the public App-Store build.
   // null = no override (normal Shopify-derived plan).
-  devForcedPlan     String? // "free" | "basic" | "pro" | "max" | null
+  devForcedPlan String? // "free" | "basic" | "pro" | "max" | null
 
   // Persistent per-shop trial-consumption marker. Set ONCE when a trial-bearing
   // subscription is verified ACTIVE (never optimistically at the mutation call,
@@ -77,7 +101,7 @@ model AISettings {
   // wieder einen Trial bekommen. Der Missbrauchspfad
   // (free → basic[Trial] → cancel → pro OHNE Uninstall/Redact) wird geschlossen,
   // weil die Zeile dabei erhalten bleibt. null = Trial noch nie konsumiert.
-  trialConsumedAt   DateTime?
+  trialConsumedAt DateTime?
 
   // One-shot marker: set the first time a Pro/Max shop is shown the
   // theme-extension setup hint (infobox on app start). Without it the hint
@@ -114,6 +138,48 @@ model AISettings {
   // SEO Title suffix (shop name appended by Shopify theme)
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
+  // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
+  // entitled shop gets the trend without hunting for a checkbox; the sweep
+  // filters on it IN THE QUERY, so switching it off costs nothing per tick.
+  // Independent of the plan gate: both must hold for a scan to happen.
+  seoAutoAuditEnabled Boolean @default(true)
+  // Last automatic (nightly) SEO audit run for this shop — see
+  // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
+  // the sweep's "is this shop due" query and is stamped on every path
+  // (success, skip, error) so a broken shop cannot win it forever. Backoff
+  // stamp, NOT a lock. Only shops on a plan with seo.scheduledAudit are ever
+  // selected.
+  lastAutoAuditAt DateTime?
+
+  // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
+  // after the storefront crawl. Default ON (the report is worth little
+  // without it), but switchable: it is the only part of this app that sends
+  // requests to servers neither the merchant nor we control, and it makes the
+  // crawl take longer.
+  seoCrawlExternalLinks Boolean @default(true)
+
+  // Keyword-aware translation: a translation into a foreign locale is
+  // phrased so THAT locale's own tracked keyword survives, instead of being
+  // a literal rendering of the primary text. Default on — it is what a
+  // merchant who bothered to track per-language keywords expects; the flag
+  // exists for shops whose translations must stay strictly faithful
+  // (legal copy, regulated product text).
+  keywordAwareTranslation Boolean @default(true)
+
+  // Translation length policy. "exact" (default) preserves source length —
+  // legal/rechts pages must not shrink. "seo_optimized" appends per-field
+  // character constraints to the translate prompt for SEO-critical fields
+  // (title, seoTitle, metaDescription, altText), so a long German meta title
+  // gets paraphrased to fit the 60-char SEO limit instead of overflowing.
+  translationMode String @default("exact") // "exact" | "seo_optimized"
+
+  // Merchant-editable SEO character limits (Pro+). null = fall back to the
+  // built-in defaults in app/utils/character-limits.ts. Shape (all optional):
+  //   { titleMin, titleMax, seoTitleMax, metaDescMin, metaDescMax,
+  //     handleMin, handleMax, altTextMin, altTextMax, descriptionMin }
+  // Consumed by getCharacterLimitRequirement() to build the length hint in AI
+  // prompts, and by the seo-optimized translation mode above.
+  seoLimits Json?
 
   // Metafields settings tab: timestamp of the last product metafield-definition
   // scan. Also doubles as the lazy-backfill guard — when null, the loaders run
@@ -121,8 +187,21 @@ model AISettings {
   // EnabledMetafieldDefinition so existing merchants' editors stay populated.
   metafieldsLastScanAt DateTime?
 
+  // Content-Freshness audit (PLAN_SEO_SUITE_COMPLETION.md §5.3/§5.5): the
+  // merchant's "Ignorieren" list for refresh candidates. Deliberately NOT a
+  // separate Prisma model — the plan leaves the store open ("bei Umsetzung
+  // entscheiden") and a dismissed-set has no history/reporting need of its
+  // own, so it rides along on the per-shop settings row that already exists
+  // and is already purged on shop/redact (no separate GDPR entry needed).
+  // JSON array of "<resourceType>:<resourceId>" strings, e.g.
+  // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
+  seoFreshnessDismissed Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Backs the nightly-audit sweep's due-query (audit-auto-run.service.ts).
+  @@index([subscriptionPlan, lastAutoAuditAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the
@@ -132,14 +211,14 @@ model AISettings {
 // the field from the editor again WITHOUT reverting the Shopify-side storefront
 // access change (that would be destructive for the storefront/other tools).
 model EnabledMetafieldDefinition {
-  id        String @id @default(cuid())
-  shop      String
+  id                  String   @id @default(cuid())
+  shop                String
   // Shopify GID of the MetafieldDefinition.
-  definitionId String
-  namespace String
-  key       String
+  definitionId        String
+  namespace           String
+  key                 String
   // "PRODUCT" for now — column exists so later owner types can reuse the model.
-  ownerType String @default("PRODUCT")
+  ownerType           String   @default("PRODUCT")
   // True when ContentPilot had to set the definition's storefront access to
   // PUBLIC_READ to make it translatable (i.e. it was not publicly accessible and
   // shop-owned). False for definitions that were already translatable/public
@@ -180,17 +259,17 @@ model DirectTranslationItem {
 // One translation of a DirectTranslationItem into one locale. Cascade-deleted
 // with its item; the source attaches translations by item FK, never by text.
 model DirectTranslation {
-  id         String   @id @default(cuid())
+  id         String                @id @default(cuid())
   itemId     String
   item       DirectTranslationItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  locale     String   // target language ISO, e.g. "fr"
-  targetText String   @db.Text
+  locale     String // target language ISO, e.g. "fr"
+  targetText String                @db.Text
   // "user" (manually entered / transferred) or "ai" (auto-translated).
-  source     String   @default("user")
-  updatedAt  DateTime @updatedAt
+  source     String                @default("user")
+  updatedAt  DateTime              @updatedAt
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
-  marketId   String   @default("")
+  marketId String @default("")
 
   @@unique([itemId, locale, marketId])
 }
@@ -204,7 +283,7 @@ model DirectTranslationCandidate {
   shop        String
   sourceHash  String
   sourceText  String   @db.Text
-  count       Int      @default(1)   // times seen across visitors/pages
+  count       Int      @default(1) // times seen across visitors/pages
   status      String   @default("new") // "new" | "rejected"
   firstSeenAt DateTime @default(now())
   lastSeenAt  DateTime @default(now())
@@ -221,24 +300,24 @@ model DirectTranslationCandidate {
 // NOTE: `enabled` is gone — the theme app embed is the on/off switch. Scope is
 // gone — direct translations are global (apply on all pages).
 model DirectTranslationSettings {
-  shop      String   @id
+  shop              String   @id
   // Opt-in: when true, the storefront reports untranslated strings it renders
   // (heuristically filtered, capped) so the merchant can review them in the
   // admin. Off by default (privacy/noise). Never auto-applied.
-  collect   Boolean  @default(false)
+  collect           Boolean  @default(false)
   // Opt-in: when true, the storefront walks AND replaces text even inside
   // elements marked `translate="no"`. 3rd-party review/widget apps (Judge.me
   // etc.) set that attribute to fence off browser auto-translate; for direct
   // translations the merchant is in control and usually wants those reached.
-  ignoreTranslateNo Boolean @default(false)
+  ignoreTranslateNo Boolean  @default(false)
   // Opt-in: when true, server-side language detection (franc) drops collected
   // candidates whose language matches the locale they were reported from —
   // i.e. strings that the storefront already serves in the right language and
   // therefore don't need a direct translation.
-  filterByLanguage  Boolean @default(false)
+  filterByLanguage  Boolean  @default(false)
   // Bumped on every dictionary change so the storefront cache invalidates.
-  version   Int      @default(1)
-  updatedAt DateTime @updatedAt
+  version           Int      @default(1)
+  updatedAt         DateTime @updatedAt
 }
 
 model AIInstructions {
@@ -246,11 +325,11 @@ model AIInstructions {
   shop String @unique
 
   // GENERAL - Writing Style Instructions (used by all AI generate/improve operations)
-  writingStyleInstructions String? @db.Text
+  writingStyleInstructions   String? @db.Text
   // GENERAL - Format Instructions (used by the "Format" function)
   formatPreserveInstructions String? @db.Text
   // GENERAL - Translate Instructions (used by the "Translate" function)
-  translateInstructions String? @db.Text
+  translateInstructions      String? @db.Text
 
   // PRODUCTS - All fields available
   productTitleFormat             String? @db.Text
@@ -329,7 +408,7 @@ model Task {
 
   // Queue management
   queuePosition   Int? // Position in queue (null if not queued)
-  retryCount      Int  @default(0) // Number of retries attempted
+  retryCount      Int     @default(0) // Number of retries attempted
   estimatedTokens Int? // Estimated tokens for this task
   provider        String? // AI provider used (huggingface, gemini, claude, openai, grok, deepseek) - for recovery
   aiModel         String? // AI model name used (e.g., gpt-4o, claude-3-5-sonnet-20241022)
@@ -357,12 +436,27 @@ model Product {
   title            String
   descriptionHtml  String? @db.Text
   handle           String
-  status           String // "ACTIVE", "DRAFT", "ARCHIVED"
+  // Shopify ProductStatus, stored verbatim as the sync receives it (no
+  // normalization). FOUR values occur in real data, not three: "ACTIVE",
+  // "DRAFT", "UNLISTED", "ARCHIVED". UNLISTED means "active but reachable only
+  // by direct link" — it exists from API 2025-10 on and DOES appear in
+  // production caches. Code that enumerates statuses must handle it; assuming
+  // three is what made unlisted products invisible to several SEO features.
+  status           String
   productType      String? // Product type for categorization (e.g., "T-Shirt", "Shoes")
   seoTitle         String?
   seoDescription   String? @db.Text
   featuredImageUrl String?
   featuredImageAlt String?
+
+  // Bulk editor Phase 3 (Plan §5.1): true when the product has MORE variants
+  // than the sync's variants(first: 100) window fetched. Stored as an explicit
+  // flag (from pageInfo.hasNextPage) instead of being derived from
+  // "variant count === 100" — a product can legitimately have exactly 100
+  // variants, so the derived form would be ambiguous. The UI shows a hint
+  // that the remainder lives in the Shopify admin; the full sync deliberately
+  // does NOT paginate variants (§5.1).
+  hasMoreVariants Boolean @default(false)
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -370,10 +464,10 @@ model Product {
 
   // Relations
   // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
-  images       ProductImage[]
-  options      ProductOption[]
-  metafields   ProductMetafield[]
-  variants     ProductVariant[]
+  images     ProductImage[]
+  options    ProductOption[]
+  metafields ProductMetafield[]
+  variants   ProductVariant[]
 
   @@unique([shop, id])
   @@index([shop])
@@ -386,11 +480,11 @@ model ProductImage {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  url                String
-  altText            String? // Primary locale alt-text
-  mediaId            String? // Shopify Media ID (gid://shopify/MediaImage/123) for translations
-  position           Int?
-  altTextModifiedAt  DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
+  url                 String
+  altText             String? // Primary locale alt-text
+  mediaId             String? // Shopify Media ID (gid://shopify/MediaImage/123) for translations
+  position            Int?
+  altTextModifiedAt   DateTime? // Timestamp when user last modified alt-text (prevents webhook sync overwrite)
   altTextTranslations ProductImageAltTranslation[]
 
   // Atomic get-or-create keyed on (productId, mediaId) — prevents duplicate
@@ -441,9 +535,9 @@ model ProductOption {
   productId String
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  name     String
-  position Int
-  values   String @db.Text // JSON array
+  name               String
+  position           Int
+  values             String  @db.Text // JSON array
   linkedMetafieldKey String? // Metaobject type key when option is linked (e.g. "color")
 
   @@index([productId])
@@ -463,16 +557,24 @@ model ProductMetafield {
 }
 
 model ProductVariant {
-  id         String  @id           // numerische Shopify ID
-  shopifyGid String  @unique       // gid://shopify/ProductVariant/...
-  productId  String
-  product    Product @relation(fields: [productId], references: [id], onDelete: Cascade)
-  title      String
-  sku        String?
-  imageKey   String?
-  position   Int
-  galleryJson String? @db.Text    // JSON: ["gid://shopify/File/...", ...]
-  updatedAt  DateTime @updatedAt
+  id          String   @id // numerische Shopify ID
+  shopifyGid  String   @unique // gid://shopify/ProductVariant/...
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  title       String
+  sku         String?
+  imageKey    String?
+  position    Int
+  galleryJson String?  @db.Text // JSON: ["gid://shopify/File/...", ...]
+  updatedAt   DateTime @updatedAt
+
+  // Bulk editor Phase 3 (Plan §5.2): pricing mirror from the regular product
+  // sync. Decimal, not Float — money as Float is a rounding error waiting to
+  // happen. Shopify's Money strings are converted in exactly ONE place
+  // (moneyToDecimalString, product-variant-sync.server.ts).
+  price          Decimal? @db.Decimal(12, 2)
+  compareAtPrice Decimal? @db.Decimal(12, 2)
+  barcode        String?
 
   @@index([productId])
 }
@@ -480,8 +582,8 @@ model ProductVariant {
 model OptionValueMemory {
   id          String   @id @default(cuid())
   shop        String
-  optionValue String   // original display name, e.g. "Erdnuss"
-  savedAs     String   // last saved key segment, e.g. "Peanut"
+  optionValue String // original display name, e.g. "Erdnuss"
+  savedAs     String // last saved key segment, e.g. "Peanut"
   updatedAt   DateTime @updatedAt
 
   @@unique([shop, optionValue])
@@ -494,10 +596,10 @@ model OptionValueMemory {
 model GroupedFieldTranslation {
   id              String   @id @default(cuid())
   shop            String
-  fieldKey        String   // "productType" (zukuenftig: "vendor" | "tag")
+  fieldKey        String // "productType" (zukuenftig: "vendor" | "tag")
   sourceLocale    String
-  sourceValueNorm String   // trim + collapsed whitespace + lowercase (Lookup-Key)
-  sourceValue     String   // kanonische Originalform (Casing des ersten Inserts)
+  sourceValueNorm String // trim + collapsed whitespace + lowercase (Lookup-Key)
+  sourceValue     String // kanonische Originalform (Casing des ersten Inserts)
   targetLocale    String
   translatedValue String
   source          String   @default("ai") // "ai" | "user" | "imported"
@@ -509,13 +611,13 @@ model GroupedFieldTranslation {
 }
 
 model ImageManagerSettings {
-  id            String  @id @default(cuid())
-  shopId        String  @unique
-  enabled       Boolean @default(true)
-  firstImageBig Boolean @default(false)
-  showAltTags   Boolean @default(false)
-  autoAltText   Boolean @default(false)
-  thumbSize     Int     @default(80)
+  id            String   @id @default(cuid())
+  shopId        String   @unique
+  enabled       Boolean  @default(true)
+  firstImageBig Boolean  @default(false)
+  showAltTags   Boolean  @default(false)
+  autoAltText   Boolean  @default(false)
+  thumbSize     Int      @default(80)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
@@ -668,7 +770,7 @@ model ContentTranslation {
   // tenant-scoped deletes safe and indexable.
   resourceId   String // The GID of the parent resource
   resourceType String // "Product", "Collection", "Article", "Page", or "ShopPolicy"
-  shop         String  // Defense-in-depth: explicit shop scope for multi-tenant isolation
+  shop         String // Defense-in-depth: explicit shop scope for multi-tenant isolation
 
   key    String // "title", "body_html", "body", "description", "handle", "meta_title", "meta_description"
   value  String  @db.Text
@@ -758,7 +860,7 @@ model ThemeTranslation {
   themeId    String  @default("")
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
-  marketId   String  @default("")
+  marketId String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -781,11 +883,11 @@ model ThemeTranslation {
 // ============================================
 
 model MetaobjectDefinition {
-  id              String @id // Shopify GID (e.g., "gid://shopify/MetaobjectDefinition/123")
-  shop            String
-  type            String // Metaobject type identifier (e.g., "size_guide", "product_spec")
-  name            String // Display name
-  description     String? @db.Text
+  id               String  @id // Shopify GID (e.g., "gid://shopify/MetaobjectDefinition/123")
+  shop             String
+  type             String // Metaobject type identifier (e.g., "size_guide", "product_spec")
+  name             String // Display name
+  description      String? @db.Text
   fieldDefinitions Json // Array of field definitions with keys and types
 
   lastSyncedAt DateTime @default(now())
@@ -797,12 +899,12 @@ model MetaobjectDefinition {
 }
 
 model Metaobject {
-  id              String  @id // Shopify GID (e.g., "gid://shopify/Metaobject/123")
-  shop            String
-  type            String // Links to MetaobjectDefinition.type
-  handle          String
-  displayName     String // Primary locale display name
-  fields          Json // Array of field values {key, value, type}
+  id          String @id // Shopify GID (e.g., "gid://shopify/Metaobject/123")
+  shop        String
+  type        String // Links to MetaobjectDefinition.type
+  handle      String
+  displayName String // Primary locale display name
+  fields      Json // Array of field values {key, value, type}
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -825,7 +927,7 @@ model MetaobjectTranslation {
   outdated     Boolean @default(false)
 
   // Market dimension — see ContentTranslation.marketId. "" = global.
-  marketId     String  @default("")
+  marketId String @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -841,15 +943,51 @@ model AltTextTemplate {
   id            String   @id @default(cuid())
   shop          String
   productId     String
-  position      Int      // image position (1-based: 1 = main image, 2 = first gallery, …); legacy rows may use 0-based
-  positionLabel String?  // optional user-defined label, e.g. "Main Image"
-  locale        String   // "de", "en", "fr", etc.
+  position      Int // image position (1-based: 1 = main image, 2 = first gallery, …); legacy rows may use 0-based
+  positionLabel String? // optional user-defined label, e.g. "Main Image"
+  locale        String // "de", "en", "fr", etc.
   template      String   @db.Text // e.g. "Eleganter {Farbe} Blumentopf"
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@unique([shop, productId, position, locale])
   @@index([shop, productId])
+}
+
+/// Glossar/Terminologie (docs/plans/GLOSSARY_IMPLEMENTATION_PLAN.md): one entry
+/// per source term in the shop's primary locale. Injected into every AI
+/// translation prompt via AIService.getGlossaryDirective().
+///   doNotTranslate = true  -> keep the term verbatim in ALL target languages
+///   translations           -> per-locale fixed ("always exactly this") renderings
+///   no translation row     -> no rule for that locale, the AI translates freely
+model GlossaryEntry {
+  id             String   @id @default(cuid())
+  shop           String
+  sourceTerm     String
+  sourceLocale   String // shop primary locale at creation time
+  doNotTranslate Boolean  @default(false)
+  caseSensitive  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  translations GlossaryEntryTranslation[]
+
+  @@unique([shop, sourceTerm, sourceLocale])
+  @@index([shop])
+}
+
+/// Fixed target-locale rendering of a GlossaryEntry ("always translate exactly
+/// so"). Shop scoping is inherited through the entry (cascade on delete), so
+/// GDPR shop-redact only needs to delete GlossaryEntry rows.
+model GlossaryEntryTranslation {
+  id      String        @id @default(cuid())
+  entryId String
+  entry   GlossaryEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  locale  String
+  value   String
+
+  @@unique([entryId, locale])
+  @@index([entryId])
 }
 
 /// Persistent audit trail for GDPR compliance requests.
@@ -859,19 +997,19 @@ model AltTextTemplate {
 /// standalone mirror gdpr-audit-cleanup.service.js, started from server.js),
 /// which runs daily and deletes only rows where requestedAt < now − 3 years.
 model GdprAuditLog {
-  id              String   @id @default(cuid())
-  shop            String
-  requestType     String   // "data_request" | "customer_redact" | "shop_redact"
-  customerId      BigInt?
-  customerEmail   String?
-  status          String   // "completed" | "failed"
-  dataExported    String?  @db.Text // R5-G1: FULL data_request export JSON (≤1 MB), surfaced in admin
-  error           String?  @db.Text
+  id            String   @id @default(cuid())
+  shop          String
+  requestType   String // "data_request" | "customer_redact" | "shop_redact"
+  customerId    BigInt?
+  customerEmail String?
+  status        String // "completed" | "failed"
+  dataExported  String?  @db.Text // R5-G1: FULL data_request export JSON (≤1 MB), surfaced in admin
+  error         String?  @db.Text
   // R5-G4: Shopify X-Shopify-Webhook-Id — correlates redelivered (non-2xx
   // retried, up to ~48h) compliance attempts in this append-only trail.
-  webhookId       String?
-  requestedAt     DateTime @default(now())
-  completedAt     DateTime @default(now())
+  webhookId     String?
+  requestedAt   DateTime @default(now())
+  completedAt   DateTime @default(now())
 
   @@index([shop])
   @@index([shop, requestType])
@@ -883,8 +1021,8 @@ model GdprAuditLog {
 /// "inactive since" anchor. `uninstalledAt` is set by the APP_UNINSTALLED
 /// webhook and cleared (set null) on every (re)install via afterAuth.
 model ShopInstallState {
-  shop                   String    @id
-  uninstalledAt          DateTime?
+  shop                      String    @id
+  uninstalledAt             DateTime?
   // Set ONCE when the initial full sync (incl. product translations) completes
   // successfully (initial-sync.service). Onboarding (app._index) and the
   // sync-stream products gate key off THIS marker, not db.product.count — a
@@ -892,7 +1030,7 @@ model ShopInstallState {
   // initial sync runs, so a count-based gate would skip translations forever.
   // null = initial sync not yet completed (run onboarding). Deleted together
   // with products on full GDPR wipe (gdpr.service) → reinstall re-onboards.
-  initialSyncCompletedAt DateTime?
+  initialSyncCompletedAt    DateTime?
   // Server-side initial-sync progress, written (throttled) by the sync scheduler
   // so the persistent onboarding banner can poll it without an open SSE stream.
   // initialSyncStartedAt anchors the 3h bypass cap (process-restart safe).
@@ -904,7 +1042,7 @@ model ShopInstallState {
   initialSyncStats          Json?
   initialSyncError          String?
   initialSyncForceRequested Boolean   @default(false)
-  updatedAt              DateTime  @updatedAt
+  updatedAt                 DateTime  @updatedAt
 
   @@index([uninstalledAt])
 }
@@ -923,4 +1061,612 @@ model ImageOperationCounter {
 
   @@unique([shop, period])
   @@index([shop])
+}
+
+// SEO tab Phase 3: storefront 404 hits, reported by the theme app-embed beacon
+// through the /apps/contentpilot/seo-404 app-proxy. Shopify exposes no 404 logs
+// via API, so we collect them ourselves. Mirrors DirectTranslationCandidate:
+// upsert-increment per path, FIFO-pruned per shop (MAX_404_HITS_PER_SHOP), and
+// purged in redactShopData (the GDPR schema-coverage guard requires it).
+model Seo404Hit {
+  id          String   @id @default(cuid())
+  shop        String
+  path        String   @db.Text // requested storefront path (may be long)
+  pathHash    String // sha256 of the normalized path — the upsert key
+  referrer    String?  @db.Text
+  count       Int      @default(1)
+  status      String   @default("new") // "new" | "redirected" | "dismissed"
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, pathHash])
+  @@index([shop, status])
+  // Backs the FIFO-prune query (delete oldest-untouched when a shop exceeds the
+  // cap) and the "most frequent / most recent" admin listing.
+  @@index([shop, lastSeenAt])
+  @@index([shop, count])
+}
+
+// Keywords expansion (PLAN_KEYWORDS_EXPANSION.md §2): a keyword is a
+// standalone shop-scoped object — item linkage lives in SeoKeywordAssignment,
+// group membership in SeoKeywordGroupMembership. keyword is stored lowercased
+// + single-spaced (normalizeKeyword). Shop-scoped; purged in redactShopData
+// (the GDPR schema-coverage guard requires it).
+model SeoKeyword {
+  id       String @id @default(cuid())
+  shop     String
+  keyword  String // lowercased, single-spaced (normalizeKeyword)
+  locale   String @default("") // "" = primary/default locale
+  priority Int    @default(2) // 1 = high, 2 = medium, 3 = low
+
+  assignments SeoKeywordAssignment[]
+  groups      SeoKeywordGroupMembership[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, keyword, locale])
+  @@index([shop, priority])
+  @@index([shop, keyword])
+}
+
+// One keyword ↔ item link with an explicit role. GSC enrichment lives HERE
+// (not on SeoKeyword) because GSC reports (query, page) tuples — the same
+// query can rank on two items with different positions.
+//
+// At most ONE role='primary' per (item, locale) — enforced in the app layer
+// (the locale hangs off the keyword, Prisma can't express it): the assignment
+// writer does check+swap INSIDE a transaction (two parallel writers could
+// otherwise both create a primary). Leftover duplicates are surfaced by the
+// Phase-5 cannibalization card rather than silently kept.
+model SeoKeywordAssignment {
+  id           String @id @default(cuid())
+  shop         String
+  keywordId    String
+  resourceType String // "Product" | "Collection" | "Article" | "Page"
+  resourceId   String // Shopify GID
+  role         String // "primary" | "secondary"
+
+  // GSC enrichment (written by the GSC sync; null until connected).
+  gscPosition    Float?
+  gscClicks      Int?
+  gscImpressions Int?
+  gscCtr         Float?
+  gscUpdatedAt   DateTime?
+
+  keyword   SeoKeyword           @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+  snapshots SeoKeywordSnapshot[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([shop, keywordId, resourceId])
+  @@index([shop, resourceType, resourceId])
+  // The AI-prompt bridge (text-generation.handler.ts) filters on
+  // (shop, resourceId) WITHOUT resourceType — this index backs that query.
+  @@index([shop, resourceId])
+  @@index([shop, keywordId])
+}
+
+// Keyword groups are pure management containers (CSV import target, table
+// facet, AI-distribution entry point). A group is NEVER assigned to an item
+// as a whole — assignment is always per keyword (see the plan §1).
+model SeoKeywordGroup {
+  id          String  @id @default(cuid())
+  shop        String
+  name        String
+  locale      String  @default("") // "" = primary/default locale (SeoKeyword convention)
+  description String?
+
+  memberships SeoKeywordGroupMembership[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, name, locale])
+  @@index([shop, locale])
+}
+
+// M:N keyword ↔ group. Carries its own `shop` column (denormalized) so the
+// GDPR purge can deleteMany({ shop }) directly — the schema-coverage guard
+// checks for a shop field, not for cascades.
+model SeoKeywordGroupMembership {
+  id        String @id @default(cuid())
+  shop      String
+  groupId   String
+  keywordId String
+
+  group   SeoKeywordGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  keyword SeoKeyword      @relation(fields: [keywordId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([groupId, keywordId])
+  @@index([shop])
+}
+
+// Ranking history: one row per (assignment, sync day), so the UI can chart
+// position/clicks/impressions/ctr over time instead of only ever seeing the
+// latest GSC values. Hangs off the ASSIGNMENT (like the live GSC columns)
+// because GSC data is per (query, page). capturedAt is truncated to UTC
+// midnight so a manual sync and the daily auto-sync on the same day collapse
+// into one row (see the unique index). Shop-scoped; purged in redactShopData
+// (GDPR schema-coverage guard) and pruned by enrichKeywordsFromGsc after 400
+// days.
+model SeoKeywordSnapshot {
+  id           String   @id @default(cuid())
+  shop         String
+  assignmentId String
+  capturedAt   DateTime
+  position     Float?
+  clicks       Int?
+  impressions  Int?
+  ctr          Float?
+  createdAt    DateTime @default(now())
+
+  assignment SeoKeywordAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, capturedAt])
+  @@index([shop])
+}
+
+// SEO tab Phase 6: per-shop Google Search Console OAuth connection. The
+// refresh token is stored ENCRYPTED (same AES-256-GCM utility as the AI API
+// keys); access tokens are derived per-request and never persisted. Shop-scoped
+// (shop is the PK) and purged in redactShopData (GDPR schema-coverage guard).
+model GoogleSearchConsoleConnection {
+  shop         String   @id
+  propertyUrl  String // GSC property, e.g. "sc-domain:example.com" or "https://example.com/"
+  refreshToken String   @db.Text // encrypted at rest
+  email        String? // connected Google account (display only)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Last time app/services/seo/gsc-auto-sync.service.ts (or the merchant's
+  // manual "Sync keyword rankings" button) wrote GSC data onto SeoKeyword
+  // rows. Null = never synced. Drives the daily auto-sync's "is this
+  // connection due" query; also stamped (with a backoff, see the service's
+  // doc comment) on plan-gate/no-keywords skips and sync errors so a shop
+  // that can't be synced doesn't get retried on every tick.
+  lastKeywordSyncAt DateTime?
+}
+
+// SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
+// design (it is served at keyLocation for verification), so it is intentionally
+// stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+model SeoIndexNowConfig {
+  shop        String @id
+  key         String // public IndexNow token (plaintext by design)
+  // URL where the key file is served: `https://<host>/<key>.txt` — the ROOT of
+  // the storefront, because a key under a sub-path only verifies that sub-path
+  // (measured; see the service header). A Shopify URL redirect maps that root
+  // path onto the app proxy, which does the actual serving.
+  keyLocation String
+  // GID of that `urlRedirect`, so it can be updated/removed instead of
+  // orphaned in the merchant's admin. null = not created yet (every row the
+  // migration backfilled) — the section loader and the sweep repair it.
+  keyRedirectId String?
+  // Storefront host every submission uses for `host`, `urlList` AND
+  // `keyLocation` — the shop's PRIMARY domain, not `*.myshopify.com`. Shopify
+  // 301s the myshopify host to the primary domain, which would make both the
+  // submitted URLs and the ownership check land on a different host than the
+  // one declared. Persisted (not resolved per call) so webhooks can build URLs
+  // from the config row they already loaded; `syncIndexNowHost` refreshes it
+  // whenever the merchant opens the section, so adding a custom domain later
+  // fixes itself WITHOUT minting a new key.
+  host        String
+  // Last time `host` was checked against the shop's actual primary domain.
+  // null = never verified (the migration backfill, or a provision whose lookup
+  // failed) — the background sweep refreshes those first, so a shop that never
+  // reopens the section still stops submitting myshopify URLs.
+  hostCheckedAt DateTime?
+  enabled       Boolean   @default(true)
+  // Last successful submission of ANY kind (queue drain or full catalog).
+  lastSubmittedAt DateTime?
+  // Last successful FULL-catalog submit — separate from lastSubmittedAt so the
+  // "submit everything" cooldown isn't reset by every queue drain.
+  lastFullSubmitAt DateTime?
+  // Stamped by the background sweep on EVERY path (success, skip, error) so an
+  // ineligible shop can't win the "due" query forever — same guard the
+  // llms/GSC sweeps document. NOT a lock.
+  lastAutoRunAt DateTime?
+  // Rolling monthly submission quota (PlanLimits.seo.monthlyIndexNowSubmissions).
+  // `submitPeriod` is the UTC "YYYY-MM" key the counter belongs to — the same
+  // convention as the image-operation quota, so a new month resets the counter
+  // lazily on the next write instead of needing a cron. Usage data, not
+  // entitlement data: never touched by planCacheCleanup.
+  submitPeriod  String?
+  submitCount   Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Drives the sweep's due-query (index-now-auto-submit.service.ts).
+  @@index([enabled, lastAutoRunAt])
+}
+
+// SEO tab Phase 8: debounced queue of changed storefront URLs to submit to
+// IndexNow (fed by product/collection webhooks, drained on demand). Shop-scoped;
+// purged in redactShopData.
+model SeoIndexNowQueue {
+  id        String   @id @default(cuid())
+  shop      String
+  url       String   @db.Text
+  urlHash   String // dedupe key (sha256 of url)
+  createdAt DateTime @default(now())
+
+  @@unique([shop, urlHash])
+  @@index([shop])
+}
+
+// SEO Audit Dashboard: a point-in-time snapshot of analyzeStore()'s result
+// (audit.service.ts), persisted so the dashboard reads a cached history
+// instead of re-scanning the full content cache on every visit. `payload` is
+// the full JSON.stringify(StoreAudit) (distribution, byType, problems incl.
+// items, worstOffenders) — the averageScore/totalScanned/totalAvailable/capped
+// columns are denormalized copies kept alongside it so the lightweight trend
+// query (getAuditTrend) never has to parse the payload. Written by the
+// detached "seoAudit" Task runner (seo-audit.handler.ts); pruned to the newest
+// 30 rows per shop on every write (see saveAuditSnapshot). Shop-scoped;
+// purged in redactShopData.
+model SeoScoreSnapshot {
+  id             String   @id @default(cuid())
+  shop           String
+  createdAt      DateTime @default(now())
+  averageScore   Int
+  totalScanned   Int
+  totalAvailable Int
+  capped         Boolean
+  payload        String   @db.Text // JSON.stringify(StoreAudit)
+
+  // Per-locale snapshots for the SEO overview language switcher.
+  // "" (sentinel) = primary locale, mirrors ContentTranslation.marketId's
+  // "" = global convention. Non-empty = a shop-locale code like "en", "fr".
+  locale String @default("")
+
+  @@index([shop, locale, createdAt])
+}
+
+// SEO tab Performance section: cached PageSpeed Insights v5 runs, keyed by
+// (shop, url, strategy). `result` is the parsed PageSpeedAuditResult (see
+// app/services/seo/pagespeed.types.ts + pagespeed.service.ts) — `score`,
+// `a11yScore` and `bestPracticesScore` are denormalized copies of the
+// category scores in `result` so the trend/history list (listPageSpeedHistory)
+// never has to parse the JSON blob. Pruned to the newest 10 rows per
+// (shop, url, strategy) on every write (runPageSpeedAudit).
+// Shop-scoped; purged in redactShopData (GDPR schema-coverage guard).
+model SeoPageSpeedAudit {
+  id                 String   @id @default(cuid())
+  shop               String
+  url                String
+  strategy           String // "mobile" | "desktop"
+  score              Int? // Lighthouse performance score 0-100 (denormalized for history lists)
+  a11yScore          Int? // Lighthouse accessibility score 0-100 (denormalized for history lists)
+  bestPracticesScore Int? // Lighthouse best-practices score 0-100 (denormalized for history lists)
+  result             Json // PageSpeedAuditResult
+  createdAt          DateTime @default(now())
+
+  @@index([shop, url, strategy, createdAt])
+  @@index([shop, createdAt])
+}
+
+// SEO tab Performance section, Phase 2: real-user web-vitals (RUM) samples
+// beaconed from the storefront (see extensions/storefront's web-vitals beacon,
+// app/routes/proxy.web-vitals.tsx, app/services/seo/web-vitals.service.ts).
+// One row per page-load beacon. No visitor identifiers are stored — only
+// path/template/device, metric values, and element labels (see
+// web-vitals.types.ts header comment on privacy). Retention is pruned to 45
+// days per shop by recordWebVitalSample. Shop-scoped; purged in
+// redactShopData (GDPR schema-coverage guard).
+model SeoWebVitalSample {
+  id         String   @id @default(cuid())
+  shop       String
+  path       String
+  template   String
+  device     String // "mobile" | "desktop"
+  lcpMs      Float?
+  cls        Float?
+  inpMs      Float?
+  fcpMs      Float?
+  ttfbMs     Float?
+  lcpElement String?
+  clsElement String?
+  inpElement String?
+  createdAt  DateTime @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, template, device, createdAt])
+}
+
+// ── Phase 1 (Storefront crawler / site audit, PLAN_SEO_SUITE_COMPLETION.md
+// §2/§3) ─────────────────────────────────────────────────────────────────
+//
+// One row per "Jetzt scannen" run (seoCrawl Task, seo-crawl.handler.ts /
+// crawl.service.ts). Children (SeoCrawlPage, SeoCrawlBrokenLink) cascade on
+// delete but ALSO carry their own `shop` column — the GDPR schema-coverage
+// guard (tests/unit/gdpr.service.test.ts) checks for a `shop`/`shopId` field
+// per model and expects an explicit deleteMany, not a cascade, so every
+// child needs the column even though the FK alone would clean it up.
+// Retention: on a new crawl start, delete all but the newest 5 snapshots per
+// shop (see pruneOldCrawlSnapshots in crawl.service.ts) — cascade removes the
+// pruned snapshots' pages/brokenLinks with them.
+model SeoCrawlSnapshot {
+  id              String    @id @default(cuid())
+  shop            String
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  status          String // "running" | "completed" | "failed" | "capped"
+  error           String? // short reason on "failed" (e.g. "storefront_password", "bot_blocked")
+  pagesCrawled    Int       @default(0)
+  totalDiscovered Int       @default(0) // URLs found, even beyond the cap
+  pagesOk         Int       @default(0)
+  pagesBroken     Int       @default(0)
+  orphanCount     Int       @default(0)
+  headDriftCount  Int       @default(0)
+
+  pages         SeoCrawlPage[]
+  brokenLinks   SeoCrawlBrokenLink[]
+  externalLinks SeoCrawlExternalLink[]
+
+  @@index([shop, startedAt])
+}
+
+// One row per crawled URL (post query-strip/dedupe normalization, §3.2).
+// `resourceType`/`resourceId` are resolved via the shared
+// `resolvePathsToResources` (seo/url-resolver.server.ts) — null when the path
+// doesn't map to a known content type (theme/metaobject pages, §3.8).
+model SeoCrawlPage {
+  id            String  @id @default(cuid())
+  shop          String
+  snapshotId    String
+  url           String // normalized URL (query params stripped, §3.2)
+  statusCode    Int
+  redirectedTo  String? // final URL, if a 3xx chain was followed
+  responseMs    Int
+  title         String? // <title> from the rendered HTML
+  metaDesc      String?
+  canonical     String?
+  h1Count       Int     @default(0)
+  wordCount     Int     @default(0)
+  resourceType  String? // "product" | "collection" | "article" | "page" | "unknown"
+  resourceId    String? // Shopify GID, when resolvable (editor deep-link)
+  locale        String  @default("") // from the URL prefix (/fr/...) — "" = primary
+  inboundCount  Int     @default(0) // internal links pointing HERE
+  outboundCount Int     @default(0)
+  // schema.org @type values found in the page's <script type="application/ld+json">
+  // blocks, comma-separated, REPEATS PRESERVED ("Product,Product" = two blocks,
+  // which is what makes duplicate markup detectable). "" = none found, which is
+  // also what every row written before this column existed reports.
+  jsonLdTypes   String  @default("")
+  // Subset of jsonLdTypes emitted by THIS app's storefront block, identified by
+  // its data-contentpilot attribute. Lets the report say which copy of a
+  // duplicated type is ours — the delivered HTML tells nobody otherwise.
+  jsonLdAppTypes String @default("")
+
+  // PLAN_SEO_CRAWL_EXPANSION §1.1 / §2.1-§2.2 — indexability, stored RAW and
+  // never pre-interpreted: `deriveIndexability` (onpage.service.ts) is a pure
+  // function over these two columns, so the rule can be corrected without a
+  // re-crawl.
+  //
+  // TRAP (same shape as jsonLdTypes / translatableContent): "" means TWO
+  // indistinguishable things — no tag/header was served, OR the row was written
+  // before these columns existed. `indexabilityKnown` is the discriminator: it
+  // is only true when THIS crawl run actually looked (i.e. a body was parsed).
+  // The UI hides the whole category when the latest snapshot doesn't know,
+  // rather than claiming "everything is fine".
+  metaRobots        String  @default("") // <meta name="robots" content="…"> (+ name="googlebot", appended)
+  xRobotsTag        String  @default("") // X-Robots-Tag of the FINAL response of the redirect chain
+  indexabilityKnown Boolean @default(false)
+
+  // §1.1 / §2.3 — on-page. h1Count above only counts; the text is what makes
+  // "H1 equals the title" and "H1 is empty" checkable at all.
+  h1First       String?
+  imgCount      Int     @default(0)
+  // Images WITHOUT a non-empty alt attribute. `alt=""` is valid HTML for
+  // decorative images and is counted here as missing — the UI must therefore
+  // say "without alt text", never "error" (§2.3).
+  imgMissingAlt Int     @default(0)
+
+  // §2.4 — observed redirect chain length (0 = no redirect). `redirectedTo`
+  // above holds the end of the chain; the hop count is the report value.
+  redirectHops Int @default(0)
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, url])
+  @@index([shop, snapshotId])
+  @@index([shop, snapshotId, statusCode])
+}
+
+// A same-origin link edge whose target failed (>=400, timeout, or a redirect
+// loop/too-many-hops). The link GRAPH itself is not persisted (§2 — would be
+// ~200k rows/crawl on a 2000-page site); only broken edges land here.
+model SeoCrawlBrokenLink {
+  id         String  @id @default(cuid())
+  shop       String
+  snapshotId String
+  fromUrl    String
+  toUrl      String
+  statusCode Int // 404/410/5xx; 0 = timeout, -1 = redirect chain >3 hops / loop
+  anchor     String?
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@index([shop, snapshotId])
+}
+
+// PLAN_SEO_CRAWL_EXPANSION §1.2 / §6 — outbound links to OTHER domains, checked
+// in a second pass after the crawl itself is already persisted.
+//
+// One row per UNIQUE target URL, never per edge: an Instagram link in the footer
+// appears on every page and would otherwise write 2000 identical rows.
+// `sourceCount` keeps how many pages point at it, `sampleSources` up to 5 of
+// them. Dedup is by the FULL url including the query string (unlike the internal
+// crawl, which strips it — on an external target the query usually carries
+// meaning).
+model SeoCrawlExternalLink {
+  id            String   @id @default(cuid())
+  shop          String
+  snapshotId    String
+  url           String
+  statusCode    Int // 0 = timeout/DNS/blocked-by-guard, -1 = redirect loop / too many hops
+  finalUrl      String? // set when the link redirected ("http:// → https://" is a finding in itself)
+  sourceCount   Int      @default(0)
+  sampleSources String   @default("") // up to 5 source URLs, "\n"-separated
+  anchor        String?
+  checkedAt     DateTime @default(now())
+
+  snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, url])
+  @@index([shop, snapshotId])
+  @@index([shop, snapshotId, statusCode])
+}
+
+// Phase 3 (Content-Freshness audit, PLAN_SEO_SUITE_COMPLETION.md §2/§5.1
+// option b): per-page GSC rollup. Written daily by
+// app/services/seo/gsc-auto-sync.service.ts (one extra dimensions:["page"]
+// query, 90d window, alongside the existing per-keyword sync) via
+// enrichPageStatsFromGsc (google-search-console.server.ts). resourceType/
+// resourceId are resolved via the shared resolvePathsToResources
+// (seo/url-resolver.server.ts) — null when the page doesn't map to a known
+// content type. Read by app/services/seo/freshness.service.ts.
+// Retention: the unique (shop, page) key overwrites on every sync — no
+// history table (PLAN §2 "Retention").
+model SeoGscPageStat {
+  id           String   @id @default(cuid())
+  shop         String
+  page         String // full GSC page URL
+  resourceType String? // "Product" | "Collection" | "Article" | "Page" | null
+  resourceId   String? // Shopify GID, when resolved
+  position     Float
+  clicks       Int
+  impressions  Int
+  ctr          Float
+  windowDays   Int      @default(90)
+  syncedAt     DateTime @default(now())
+
+  @@unique([shop, page])
+  @@index([shop, resourceType, resourceId])
+}
+
+// Phase 2 (Internal Linking, PLAN_SEO_SUITE_COMPLETION.md §2/§4): one
+// suggested internal link "source item mentions target item's anchor text
+// → link to it". resourceType uses the SAME capitalized convention as
+// ContentTranslation/SeoKeywordAssignment/SeoGscPageStat ("Product" |
+// "Collection" | "Article" | "Page"), since the matcher's target set is
+// built from SeoKeywordAssignment and the source set includes ContentTranslation-
+// adjacent content — NOT SeoCrawlPage's lowercase convention.
+// locale is always "" (primary) in v1 — Phase 2 explicitly does not match
+// across locales (see internal-links.service.ts header).
+// Idempotent across re-runs via the composite unique key; a `dismissed` row
+// whose dismissedUntil is still in the future is never reactivated by a
+// later run (internal-links.service.ts upsertSuggestions).
+model SeoInternalLinkSuggestion {
+  id               String    @id @default(cuid())
+  shop             String
+  locale           String    @default("") // anchor + target always same locale
+  fromResourceType String
+  fromResourceId   String
+  anchorText       String // the mention found in the source content
+  toResourceType   String
+  toResourceId     String
+  confidence       Float
+  status           String // "pending" | "accepted" | "dismissed"
+  // "Ablehnen" (permanent reject) -> null (never reactivated by a later run).
+  // "90 Tage ignorieren" -> a future date (reactivatable once it has passed).
+  dismissedUntil   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Default Prisma-generated constraint name would exceed Postgres' 63-byte
+  // identifier limit (101 chars) — explicit short `map`, same fix as
+  // ThemeTranslation's shop_resourceId_groupId_key_locale_themeId_marketId
+  // unique key (see CLAUDE.md).
+  @@unique([shop, fromResourceType, fromResourceId, toResourceType, toResourceId, locale], map: "SeoInternalLinkSuggestion_shop_from_to_locale_key")
+  @@index([shop, status])
+}
+
+// Phase 4 (Sitemap / indexation control, PLAN_SEO_SUITE_COMPLETION.md §2/§6):
+// one merchant-facing suggestion (or applied/reverted decision) to exclude a
+// resource from Shopify's platform-generated sitemap via the documented
+// `seo.hidden` metafield lever (namespace "seo", key "hidden") — set/cleared
+// by app/services/seo/sitemap.service.ts's applyExclusion/revertExclusion.
+// resourceType uses SeoCrawlPage's lowercase convention ("product" |
+// "collection" | "page" | "article" | "blog"), NOT SeoInternalLinkSuggestion's
+// capitalized one — sitemap.service.ts builds candidates directly from the
+// same AuditType-shaped buckets crawl.service.ts/audit.service.ts use.
+//
+// Lifecycle: "suggested" (we proposed it) -> "applied" (seo.hidden set via
+// API AND Shopify echoed the write back — userErrors alone is not enough,
+// CLAUDE.md invariant) -> "reverted" (metafieldsDelete echoed back). A
+// re-run of the suggestion sweep upserts idempotently via the unique key
+// below and — same rule as SeoInternalLinkSuggestion — never reactivates a
+// row the merchant (or a prior apply) already moved off "suggested".
+model SeoSitemapExclusion {
+  id           String    @id @default(cuid())
+  shop         String
+  resourceType String // "product" | "collection" | "page" | "article" | "blog"
+  resourceId   String // Shopify GID
+  reason       String? // "emptyCollection" | "thinContent" | "archivedProduct" | "manual" | …
+  status       String    @default("suggested")
+  appliedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@unique([shop, resourceType, resourceId])
+  @@index([shop, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Media-Bibliothek (Shopify Files) — Cache für den Bulk-Editor
+// ─────────────────────────────────────────────────────────────────────────────
+// Der Produkt-Sync cacht Produktmedien bereits in `ProductImage`. Bilder, die an
+// KEINEM Produkt hängen (Dateien-Bibliothek, Metaobjekt-Referenzen, Theme-
+// Bilder) sind dort per Definition nicht enthalten — der Bulk-Editor braucht sie
+// aber, weil jedes MediaImage genau einen übersetzbaren Key (`alt`) hat und
+// `translatableResources(resourceType: MEDIA_IMAGE)` sie alle aufzählt.
+//
+// Quelle: files(query:"media_type:IMAGE") — siehe app/services/media-library/
+// sync.server.ts. Shopify sagt dort NICHT, wo eine Datei verwendet wird; die
+// usage*-Spalten sind eine best-effort-Auflösung aus lokalen Caches und stehen
+// bewusst FLACH (nicht als JSON) hier, weil danach gefiltert und sortiert wird.
+model MediaLibraryImage {
+  id   String @id // gid://shopify/MediaImage/… — zugleich die Übersetzungs-Ressource
+  shop String
+
+  url      String
+  altText  String? // Primärsprachlicher Alt-Text (null = nicht gesetzt)
+  filename String  @default("") // ohne Query-String, "" wenn unbekannt
+  mimeType String?
+
+  // Reihenfolge aus dem Sync-Lauf (files(sortKey: CREATED_AT, reverse: true)),
+  // damit die Liste ohne zusätzliche Sortierspalte stabil "neueste zuerst" ist.
+  position         Int       @default(0)
+  shopifyCreatedAt DateTime?
+
+  // Best-effort-Verwendung. usageKind ist ein MediaImageUsageKind-String
+  // ("product" | "metaobject" | … | "unknown"); "" bei Owner/Label = unbekannt.
+  // NIE geraten: was nicht sicher auflösbar ist, bleibt "unknown".
+  usageKind    String @default("unknown")
+  usageOwnerId String @default("")
+  usageLabel   String @default("")
+
+  lastSyncedAt DateTime @default(now())
+
+  @@unique([shop, id])
+  @@index([shop])
+  @@index([shop, usageKind])
+  @@index([shop, position])
+}
+
+// Ein Marker-Row pro Shop: "der Media-Sync ist mindestens einmal bis zum Ende
+// gelaufen". Ohne ihn wäre ein Shop ganz ohne Bilder nicht von einem nie
+// synchronisierten Shop zu unterscheiden (loadMediaLibraryImages.neverSynced).
+//
+// `truncated` = die Bibliothek war grösser als das Seitenlimit des Syncs, der
+// Cache ist also unvollständig (und wird deshalb auch nie stale-bereinigt).
+model MediaLibrarySyncState {
+  shop         String   @id
+  lastSyncedAt DateTime
+  imageCount   Int      @default(0)
+  truncated    Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
 }

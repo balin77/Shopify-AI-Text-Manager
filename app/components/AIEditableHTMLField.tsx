@@ -1,9 +1,14 @@
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { Text, Button, InlineStack, Banner } from "@shopify/polaris";
+import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
+import { ActionTooltip } from "./ActionTooltip";
+import { aiActionTooltip } from "../utils/ai-action-tooltip";
 import { useI18n } from "../contexts/I18nContext";
+import { useSingleLocaleHint } from "../contexts/LocaleAvailabilityContext";
 import { useHtmlFormatting } from "../hooks/useHtmlFormatting";
 import { sanitizeHTML } from "../utils/sanitizer";
 import "../styles/AIEditableField.css";
@@ -34,7 +39,19 @@ interface AIEditableHTMLFieldProps {
   readOnly?: boolean;
   /** If true, show required indicator (red asterisk) */
   requiredIndicator?: boolean;
-  onGenerateAI?: () => void;
+  /**
+   * Identity of what this field currently edits (item + locale). The component
+   * is reused across items/locales instead of remounted, so an open AI
+   * instruction box would otherwise survive the switch and apply the text
+   * written for one target to another. Changing this closes the box.
+   */
+  aiPromptScopeKey?: string;
+  /**
+   * Runs the generation. The argument is the merchant's ad-hoc instruction from
+   * the AIInstructionPrompt box — `undefined` when the box was submitted empty,
+   * which must behave exactly like the old one-click generation.
+   */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
@@ -67,6 +84,7 @@ export function AIEditableHTMLField({
   isFallbackValue = false,
   readOnly = false,
   requiredIndicator = false,
+  aiPromptScopeKey,
   onGenerateAI,
   onFormatAI,
   onTranslate,
@@ -92,6 +110,19 @@ export function AIEditableHTMLField({
   // sanitized (Liquid-stripped) HTML and corrupt the template.
   const containsLiquid = useMemo(() => /\{\{|\{%/.test(value || ""), [value]);
   const previewReadOnly = readOnly || (mode === "rendered" && containsLiquid);
+
+  // Set in a single-language shop: translate / copy-to-all-locales have no
+  // target, so those buttons are greyed out with this as their tooltip.
+  const singleLocaleHint = useSingleLocaleHint();
+
+  // The generate button no longer fires straight away: it opens the instruction
+  // box first, which then calls onGenerateAI (with or without an instruction).
+  const [instructionPromptOpen, setInstructionPromptOpen] = useState(false);
+  // Drop an open box (and the text in it) when the field switches target —
+  // another item or locale. See aiPromptScopeKey.
+  useEffect(() => {
+    setInstructionPromptOpen(false);
+  }, [fieldKey, aiPromptScopeKey]);
 
   // Cleanup typing timer on unmount
   useEffect(() => {
@@ -297,6 +328,17 @@ export function AIEditableHTMLField({
         />
       )}
 
+      {instructionPromptOpen && onGenerateAI && (
+        <AIInstructionPrompt
+          isLoading={isLoading}
+          onSubmit={(userInstruction) => {
+            setInstructionPromptOpen(false);
+            onGenerateAI(userInstruction);
+          }}
+          onCancel={() => setInstructionPromptOpen(false)}
+        />
+      )}
+
       {suggestion && onAcceptSuggestion && onRejectSuggestion && (
         <AISuggestionBanner
           fieldType={fieldType}
@@ -312,58 +354,80 @@ export function AIEditableHTMLField({
         />
       )}
 
-      <div className="ai-field-footer" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center", justifyContent: "space-between" }}>
+      {/* Wrapping vs. horizontal scrolling of the action row is decided in
+          AIEditableField.css (mobile scrolls) — no inline flex-wrap here. */}
+      <div className="ai-field-footer" style={{ display: "flex", gap: "0.5rem", alignItems: "center", justifyContent: "space-between" }}>
         <div className="ai-field-footer-left" style={{ flex: "0 0 auto" }}>
           <span style={{ fontSize: "0.8125rem", color: "#6d7175" }}>
             {value.replace(/<[^>]*>/g, "").length} {t.products?.characters}
           </span>
         </div>
-        <div className="ai-field-footer-right" style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
+        <div className="ai-field-footer-right" style={{ display: "flex", gap: "0.5rem", flex: "1 1 auto", justifyContent: "flex-end" }}>
           {onGenerateAI && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button size="slim" onClick={onGenerateAI} loading={isLoading} disabled={(disableGeneration && !value) || isLoading}>
-                ✨ {disableGeneration || value
-                  ? (t.products?.aiImprove || "Improve with AI")
-                  : (t.products?.aiGenerateShort || "Generate with AI")}
-              </Button>
+              <ActionTooltip
+                content={aiActionTooltip(t, "generate", { hasValue: !!value, disableGeneration })}
+                disabled={(disableGeneration && !value) || isLoading}
+              >
+                <Button
+                  size="slim"
+                  onClick={() => setInstructionPromptOpen((open) => !open)}
+                  pressed={instructionPromptOpen}
+                  loading={isLoading}
+                  disabled={(disableGeneration && !value) || isLoading}
+                >
+                  ✨ {disableGeneration || value
+                    ? (t.products?.aiImprove || "Improve with AI")
+                    : (t.products?.aiGenerateShort || "Generate with AI")}
+                </Button>
+              </ActionTooltip>
             </div>
           )}
           {onFormatAI && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button
-                size="slim"
-                onClick={onFormatAI}
-                loading={isLoading}
+              <ActionTooltip
+                content={aiActionTooltip(t, "format", { hasValue: !!value, disableGeneration })}
                 disabled={!value || isLoading}
               >
-                🎨 {t.products?.formatWithAI || "Format"}
-              </Button>
+                <Button
+                  size="slim"
+                  onClick={onFormatAI}
+                  loading={isLoading}
+                  disabled={!value || isLoading}
+                >
+                  🎨 {t.products?.formatWithAI || "Format"}
+                </Button>
+              </ActionTooltip>
             </div>
           )}
           {(onTranslate || onTranslateToAllLocales) && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button
-                size="slim"
-                onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
-                loading={isLoading}
-                disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading}
-              >
-                🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
-              </Button>
+              <DisabledActionTooltip hint={singleLocaleHint}>
+                <Button
+                  size="slim"
+                  onClick={isPrimaryLocale ? onTranslateToAllLocales : onTranslate}
+                  loading={isLoading}
+                  disabled={(isPrimaryLocale && !onTranslateToAllLocales) || (!isPrimaryLocale && !sourceTextAvailable) || isLoading || !!singleLocaleHint}
+                >
+                  🌍 {isPrimaryLocale ? (t.products?.translate || "Translate") : t.products?.translateFromPrimary}
+                </Button>
+              </DisabledActionTooltip>
             </div>
           )}
           {(onCopy || onCopyToAllLocales) && (
             <div style={{ flex: "0 0 auto", width: "auto" }}>
-              <Button
-                size="slim"
-                onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
-                loading={isLoading}
-                disabled={isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)}
-              >
-                📋 {isPrimaryLocale
-                  ? (t.products?.copyToAllLocales || "Copy to all")
-                  : (t.products?.copy || "Copy")}
-              </Button>
+              <DisabledActionTooltip hint={singleLocaleHint}>
+                <Button
+                  size="slim"
+                  onClick={isPrimaryLocale ? onCopyToAllLocales : onCopy}
+                  loading={isLoading}
+                  disabled={(isPrimaryLocale ? (!value || isLoading) : (!sourceTextAvailable || isLoading)) || !!singleLocaleHint}
+                >
+                  📋 {isPrimaryLocale
+                    ? (t.products?.copyToAllLocales || "Copy to all")
+                    : (t.products?.copy || "Copy")}
+                </Button>
+              </DisabledActionTooltip>
             </div>
           )}
         </div>

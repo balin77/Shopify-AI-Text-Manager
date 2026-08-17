@@ -5,8 +5,8 @@
  */
 
 import { useState } from "react";
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import {
   Page,
   Card,
@@ -71,7 +71,9 @@ export default function MetadataPage() {
 
   return (
     <Page fullWidth>
-      <div style={{ padding: "2rem" }}>
+      {/* Reading width (.app-page-width, responsive.css :root): this page is a
+          form, not a grid — the same width the SEO sections and Tasks use. */}
+      <div className="app-page-width" style={{ padding: "2rem" }}>
         <BlockStack gap="600">
           {/* Page Header */}
           <BlockStack gap="200">

@@ -7,9 +7,10 @@
  */
 
 import type { Session } from "@shopify/shopify-api";
-import { apiVersion } from "../shopify.server";
+import { apiVersion, sessionStorage } from "../shopify.server";
 import { logger } from "./logger.server";
 import { isValidShopDomain } from "./validation";
+import { isEncrypted } from "./encryption.server";
 
 interface ShopifyGraphQLClient {
   graphql: (query: string, options?: { variables?: any }) => Promise<Response>;
@@ -31,20 +32,39 @@ export async function createAdminClientFromShop(
     throw new Error(`Invalid shop domain: ${shop}`);
   }
 
-  const { db } = await import("../db.server");
+  // Go through the app's sessionStorage (EncryptedPrismaSessionStorage), NOT
+  // db.session directly: access tokens are AES-256-GCM encrypted at rest, so a
+  // raw Prisma read hands back ciphertext. Sending that as X-Shopify-Access-Token
+  // makes every background call fail with 401 "Invalid API key or access token"
+  // — silently breaking product/collection webhooks, the webhook retry queue and
+  // the llms.txt auto-refresh, while the embedded UI kept working (it goes
+  // through authenticate.admin, which decrypts).
+  const sessions = await sessionStorage.findSessionsByShop(shop);
 
-  // Fetch the most recent session for this shop
-  const session = await db.session.findFirst({
-    where: { shop },
-    orderBy: { id: "desc" },
-  });
-
-  if (!session) {
+  if (sessions.length === 0) {
     throw new Error(`No session found for shop: ${shop}`);
   }
 
-  if (!session.accessToken) {
-    throw new Error(`Session for shop ${shop} has no access token`);
+  // Prefer the offline session: it is the only one meant for background work.
+  // Online sessions belong to one logged-in user and expire after ~24h, and the
+  // previous `orderBy: { id: "desc" }` picked between them by string sort — so
+  // whether background jobs got a usable token was down to id ordering.
+  const now = Date.now();
+  const session =
+    sessions.find((s) => !s.isOnline && s.accessToken) ??
+    sessions.find((s) => s.accessToken && (!s.expires || s.expires.getTime() > now));
+
+  if (!session?.accessToken) {
+    throw new Error(`Session for shop ${shop} has no usable access token`);
+  }
+
+  // Belt and braces: never spend a Shopify call on a token we know is ciphertext.
+  // findSessionsByShop logs decryption failures but keeps the raw value, so a
+  // wrong/rotated ENCRYPTION_KEY would otherwise surface as an opaque 401.
+  if (isEncrypted(session.accessToken)) {
+    throw new Error(
+      `Access token for shop ${shop} could not be decrypted — check ENCRYPTION_KEY`
+    );
   }
 
   return createAdminClient(shop, session.accessToken);

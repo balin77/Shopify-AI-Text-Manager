@@ -210,6 +210,20 @@ export const TRANSLATION_BATCH = {
 export const ENABLE_THEME_PRIMARY_EDIT = true;
 
 // ============================================================================
+// AI USER INSTRUCTIONS (per-request, ad-hoc)
+// ============================================================================
+
+/**
+ * Maximum length of the ad-hoc instruction a merchant can type into the
+ * "Improve/Generate with AI" prompt box before the request is sent.
+ *
+ * Enforced on BOTH sides: the input's `maxLength` (AIInstructionPrompt) and the
+ * server-side read in `ai-user-instruction.server.ts` — the AI endpoints are
+ * directly POST-reachable, so the client cap is cosmetic on its own.
+ */
+export const AI_USER_INSTRUCTION_MAX_LENGTH = 1000;
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 

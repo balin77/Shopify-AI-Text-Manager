@@ -6,7 +6,7 @@
  * (gating which metafields show in the editor + one-time lazy backfill).
  */
 
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { ContentService } from "./content.service";
 import { categorizeMetafieldOwner, type MetafieldOwnerCategory } from "../config/known-third-party-apps";
@@ -47,6 +47,23 @@ export interface ScannedMetafield {
 /** Build the `namespace.key` key used to match metafields against enabled defs. */
 export function metafieldEnableKey(namespace: string, key: string): string {
   return `${namespace}.${key}`;
+}
+
+/**
+ * THE editor-visibility predicate for product metafields: translatable text
+ * type AND enabled by the merchant in the settings tab. Shared by the product
+ * editor loader (app.products.tsx) and the bulk editor's column source
+ * (bulk-editor/columns.server.ts) — the two surfaces MUST show the same
+ * fields, so neither may invent its own filter (Plan §4.1).
+ */
+export function isEditableProductMetafield(
+  mf: { namespace: string; key: string; type: string },
+  enabledKeys: Set<string>,
+): boolean {
+  return (
+    TRANSLATABLE_METAFIELD_TYPES.includes(mf.type) &&
+    enabledKeys.has(metafieldEnableKey(mf.namespace, mf.key))
+  );
 }
 
 /**

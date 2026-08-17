@@ -1,0 +1,178 @@
+/*
+ * Keywords section — the few things Polaris has no component for.
+ *
+ * Everything else on the page is plain Polaris; this file only carries the
+ * inline-edit affordance of the keyword table (a text cell that has to LOOK
+ * like text until you hover it) and the selection bar's sticky framing.
+ * Colours come from Polaris design tokens so light/dark and future Polaris
+ * releases stay in sync — no hardcoded hexes.
+ */
+
+/* ── The keyword cell: reads as text, behaves as a button ── */
+.keyword-inline-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  padding: 0.125rem 0.375rem;
+  margin-inline-start: -0.375rem;
+  border: 1px solid transparent;
+  border-radius: var(--p-border-radius-200, 8px);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.keyword-inline-edit:hover,
+.keyword-inline-edit:focus-visible {
+  background: var(--p-color-bg-surface-hover, rgba(0, 0, 0, 0.04));
+  border-color: var(--p-color-border-secondary, #e1e3e5);
+}
+
+.keyword-inline-edit:focus-visible {
+  outline: var(--p-border-width-050, 1px) solid var(--p-color-border-focus, #005bd3);
+  outline-offset: 1px;
+}
+
+/* The pencil is an affordance, not information — it appears on hover/focus
+ * only, so a table at rest stays a clean list of words. */
+.keyword-inline-edit__pencil {
+  opacity: 0;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--p-color-text-secondary, #616161);
+  transition: opacity 120ms ease;
+}
+
+.keyword-inline-edit:hover .keyword-inline-edit__pencil,
+.keyword-inline-edit:focus-visible .keyword-inline-edit__pencil {
+  opacity: 1;
+}
+
+/* Coarse pointers get no hover state, so the affordance is always shown. */
+@media (hover: none) {
+  .keyword-inline-edit__pencil {
+    opacity: 1;
+  }
+}
+
+/* ── Selection bar above the keyword table ── */
+.keyword-selection-bar {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--p-border-radius-200, 8px);
+  background: var(--p-color-bg-surface-secondary, rgba(0, 0, 0, 0.03));
+  border: 1px solid var(--p-color-border-secondary, #e1e3e5);
+}
+
+/* Active selection is a state worth seeing at a glance. */
+.keyword-selection-bar--active {
+  background: var(--p-color-bg-surface-info, rgba(0, 91, 211, 0.06));
+  border-color: var(--p-color-border-emphasis, #005bd3);
+}
+
+/* ── Priority: a Polaris-Badge-looking pill that is actually a <select> ──
+ * The colour carries the severity (1 loudest, 3 quietest); the caret is the
+ * only thing that says it can be changed. Tones mirror Polaris' critical /
+ * warning / neutral badges so the table matches the rest of the admin. */
+.priority-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--p-border-radius-full, 999px);
+  border: 1px solid transparent;
+}
+
+.priority-badge__select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: none;
+  border-radius: inherit;
+  color: inherit;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  font-weight: 500;
+  padding: 0.125rem 1.375rem 0.125rem 0.625rem;
+  cursor: pointer;
+  /* Native option lists inherit nothing useful — keep them readable. */
+  max-width: 11rem;
+}
+
+.priority-badge__select:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.priority-badge__select:focus-visible {
+  outline: var(--p-border-width-050, 1px) solid var(--p-color-border-focus, #005bd3);
+  outline-offset: 1px;
+}
+
+.priority-badge__caret {
+  position: absolute;
+  right: 0.5rem;
+  font-size: 0.625rem;
+  line-height: 1;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* The option list is rendered by the OS and does not inherit the pill's
+ * colours — force readable text so a dark pill doesn't yield dark-on-dark. */
+.priority-badge__select option {
+  color: var(--p-color-text, #303030);
+  background: var(--p-color-bg-surface, #ffffff);
+}
+
+.priority-badge--1 {
+  background: var(--p-color-bg-surface-critical, #fee9e8);
+  border-color: var(--p-color-border-critical-secondary, #f3b6b0);
+  color: var(--p-color-text-critical, #8e1f0b);
+}
+
+.priority-badge--2 {
+  background: var(--p-color-bg-surface-warning, #fff1e3);
+  border-color: var(--p-color-border-warning-secondary, #f0c99a);
+  color: var(--p-color-text-warning, #5e4200);
+}
+
+.priority-badge--3 {
+  background: var(--p-color-bg-surface-secondary, #f1f1f1);
+  border-color: var(--p-color-border-secondary, #e1e3e5);
+  color: var(--p-color-text-secondary, #616161);
+}
+
+/* ── Suggestion review rows ──
+ * Three buckets, three weights: an undecided row is the task (full size, own
+ * surface), a decided row is a record (compact, tinted, recede). */
+.keyword-suggestion {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--p-border-radius-200, 8px);
+  border: 1px solid var(--p-color-border-secondary, #e1e3e5);
+  border-inline-start-width: 4px;
+  transition:
+    background-color 150ms ease,
+    opacity 150ms ease;
+}
+
+.keyword-suggestion--pending {
+  border-inline-start-color: var(--p-color-border-emphasis, #005bd3);
+  background: var(--p-color-bg-surface, transparent);
+}
+
+.keyword-suggestion--accepted {
+  border-inline-start-color: var(--p-color-border-success, #29845a);
+  background: var(--p-color-bg-surface-success, rgba(41, 132, 90, 0.07));
+}
+
+.keyword-suggestion--rejected {
+  border-inline-start-color: var(--p-color-border-disabled, #c9cccf);
+  background: var(--p-color-bg-surface-disabled, rgba(0, 0, 0, 0.03));
+  opacity: 0.7;
+}

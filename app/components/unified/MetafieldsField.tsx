@@ -9,6 +9,8 @@
  */
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge } from "@shopify/polaris";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
+import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import "../../styles/AIEditableField.css";
 
 export interface MetafieldData {
@@ -85,6 +87,9 @@ export function MetafieldsField({
   translatingFieldIds = new Set(),
   t = {},
 }: MetafieldsFieldProps) {
+  // Single-language shop → the metafield translate button has no target locale.
+  const singleLocaleHint = useSingleLocaleHint();
+
   if (!metafields || metafields.length === 0) {
     return null;
   }
@@ -129,13 +134,16 @@ export function MetafieldsField({
                         <div className="ai-field-footer">
                           <div className="ai-field-footer-left" />
                           <div className="ai-field-footer-right">
-                            <Button
-                              size="slim"
-                              onClick={() => onTranslate(mf.id)}
-                              loading={translatingFieldIds.has(fieldId)}
-                            >
-                              🌍 {t.translateButton || "Translate"}
-                            </Button>
+                            <DisabledActionTooltip hint={singleLocaleHint}>
+                              <Button
+                                size="slim"
+                                onClick={() => onTranslate(mf.id)}
+                                loading={translatingFieldIds.has(fieldId)}
+                                disabled={!!singleLocaleHint}
+                              >
+                                🌍 {t.translateButton || "Translate"}
+                              </Button>
+                            </DisabledActionTooltip>
                           </div>
                         </div>
                       )}

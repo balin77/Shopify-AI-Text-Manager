@@ -8,7 +8,7 @@
  * - Handles image alt-text updates for all locales
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import { logger, loggers } from "~/utils/logger.server";
@@ -17,6 +17,8 @@ import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
 import type { PrismaClient } from "@prisma/client";
+import type { DataResponse } from "~/types/data-response";
+import { readDataPayload, readDataStatus } from "~/utils/data-response";
 
 interface UpdateProductParams {
   locale: string;
@@ -40,7 +42,7 @@ export async function handleUpdateProduct(
   context: ActionContext,
   formData: FormData,
   productId: string
-): Promise<Response> {
+): Promise<DataResponse> {
   const { db } = await import("~/db.server");
 
   // Shop-isolation: productId comes straight from the route params and GIDs are
@@ -132,7 +134,7 @@ export async function handleUpdateProduct(
     }
 
     // Check if this is a translation update or primary locale update
-    let response: Response;
+    let response: DataResponse;
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
@@ -141,11 +143,11 @@ export async function handleUpdateProduct(
 
     // If alt-text saves failed, merge warning into the response
     if (failedAltTextIndices.length > 0) {
-      const responseData = await response.json() as any;
+      const responseData = await readDataPayload<Record<string, unknown>>(response);
       return json({
         ...responseData,
         failedAltTextIndices,
-      }, { status: response.status });
+      }, { status: readDataStatus(response) ?? 200 });
     }
 
     return response;
@@ -492,7 +494,7 @@ async function updateTranslatedProduct(
   productId: string,
   params: UpdateProductParams,
   shop: string
-): Promise<Response> {
+): Promise<DataResponse> {
   const marketId = params.marketId || "";
   loggers.product("info", "Updating translated product", {
     productId,
@@ -847,11 +849,16 @@ async function updatePrimaryProduct(
   changedFields: string[] = [],
   changedAltTextIndices: number[] = [],
   shop: string
-): Promise<Response> {
+): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
-  // Validate that title is not empty for primary locale
-  if (!params.title || !params.title.trim()) {
+  // Validate that title is not emptied for the primary locale — but ONLY when
+  // the client actually sent the field. `undefined` means "not sent = leave as
+  // is" (see the getFormStringOrNull note in handleUpdateProduct), so partial
+  // primary saves that touch a single field — e.g. the SEO internal-links
+  // Accept flow, which writes only descriptionHtml — must not be rejected for a
+  // title they never touched. `""` still means "user cleared it" and is blocked.
+  if (params.title !== undefined && !params.title.trim()) {
     return json(
       {
         success: false,
@@ -861,14 +868,13 @@ async function updatePrimaryProduct(
     );
   }
 
-  // Build mutation input - only include productType if it has a value or was explicitly changed
-  // Sending productType: "" to Shopify CLEARS it, so we must omit it when unchanged
-  const mutationInput: Record<string, unknown> = {
-    id: productId,
-    title: params.title,
-    handle: params.handle,
-    descriptionHtml: params.descriptionHtml,
-  };
+  // Build mutation input — every field is omitted unless the client sent it, so
+  // an unsent field is left untouched on Shopify instead of being cleared.
+  // (productType additionally honours changedFields: sending "" CLEARS it.)
+  const mutationInput: Record<string, unknown> = { id: productId };
+  if (params.title !== undefined) mutationInput.title = params.title;
+  if (params.handle !== undefined) mutationInput.handle = params.handle;
+  if (params.descriptionHtml !== undefined) mutationInput.descriptionHtml = params.descriptionHtml;
 
   // Build the SEO object defensively. Shopify's productUpdate treats `seo` as a
   // unit: sending `seo: { title }` without a description CLEARS the existing

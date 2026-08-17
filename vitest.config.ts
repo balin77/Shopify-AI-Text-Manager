@@ -1,5 +1,7 @@
-/// <reference types="vitest" />
-import { defineConfig } from 'vite';
+// `defineConfig` from 'vitest/config' (not 'vite') is what types the `test`
+// block. Until it was imported here, that typing arrived only transitively via
+// a second, unused config file — deleting that file broke `tsc`.
+import { defineConfig } from 'vitest/config';
 import path from 'path';
 
 export default defineConfig({
@@ -32,7 +34,6 @@ export default defineConfig({
         '**/*.d.ts',
         '**/*.config.{ts,js}',
         '**/node_modules/**',
-        'src/examples/**',
       ],
       thresholds: {
         lines: 15,

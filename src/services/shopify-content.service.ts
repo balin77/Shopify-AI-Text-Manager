@@ -7,12 +7,56 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
-import { isAuthError } from './ai.service';
+import { isAuthError, localeName } from './ai.service';
+import {
+  keywordTranslationDirective,
+  keywordTranslationDirectiveMulti,
+  type LocaleKeywords,
+} from '../../app/services/seo/keyword-translation-prompt';
 import type { PrismaClient } from "@prisma/client";
 import type { MarketInfo } from "../../app/types/content-editor.types";
 
 export interface ShopifyAdminClient {
   graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+}
+
+/**
+ * UI field name → Shopify translatable-content key — THE canonical map.
+ *
+ * IMPORTANT — Shopify is inconsistent with body field naming:
+ *   Product, Collection, Page, Article → translation key is "body_html"
+ *   ShopPolicy                         → translation key is "body"
+ *
+ * This is a Shopify API inconsistency: the GraphQL *mutation* input for Page
+ * and Article also uses "body", but the *translatable content* key (used in
+ * translationsRegister and returned by the translatableContent query) is
+ * "body_html". ShopPolicy is the only resource type where both mutation and
+ * translation key use plain "body" — resolve that one exception via
+ * fieldTranslationKeyMap(resourceType).
+ *
+ * This constant used to exist as three inline copies inside this file (Plan
+ * §6.1: "a third copy would be the bug that surfaces later") — every caller,
+ * including the bulk editor (app/services/bulk-editor/translations.server.ts),
+ * must use this export instead of re-declaring the mapping.
+ *
+ * See also: docs/reference/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
+ */
+export const FIELD_TO_TRANSLATION_KEY: Readonly<Record<string, string>> = {
+  title: 'title',
+  description: 'body_html',
+  body: 'body_html',
+  handle: 'handle',
+  seoTitle: 'meta_title',
+  metaDescription: 'meta_description',
+  productType: 'product_type',
+  summary: 'summary_html',
+};
+
+/** The field→key map with the single ShopPolicy exception applied
+ * (description/body → "body" instead of "body_html"). */
+export function fieldTranslationKeyMap(resourceType: string): Readonly<Record<string, string>> {
+  if (resourceType !== 'ShopPolicy') return FIELD_TO_TRANSLATION_KEY;
+  return { ...FIELD_TO_TRANSLATION_KEY, description: 'body', body: 'body' };
 }
 
 export class ShopifyContentService {
@@ -732,30 +776,10 @@ export class ShopifyContentService {
       const translationsToDelete: string[] = [];
       const dbOnlyTranslations: Array<{ key: string; value: string; locale: string }> = [];
 
-      // Map UI field names to Shopify translatable content keys.
-      //
-      // IMPORTANT — Shopify is inconsistent with body field naming:
-      //   Product, Collection, Page, Article → translation key is "body_html"
-      //   ShopPolicy                         → translation key is "body"
-      //
-      // This is a Shopify API inconsistency: the GraphQL *mutation* input for Page
-      // and Article also uses "body", but the *translatable content* key (used in
-      // translationsRegister and returned by translatableContent query) is "body_html".
-      // ShopPolicy is the only resource type where both mutation and translation key
-      // use plain "body".
-      //
-      // See also: docs/SHOPIFY_TRANSLATABLE_CONTENT_TYPES.md
-      const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
-      const keyMapping: Record<string, string> = {
-        title: 'title',
-        description: bodyKey,
-        body: bodyKey,
-        handle: 'handle',
-        seoTitle: 'meta_title',
-        metaDescription: 'meta_description',
-        productType: 'product_type',
-        summary: 'summary_html',
-      };
+      // Map UI field names to Shopify translatable content keys — the ONE
+      // canonical map (see FIELD_TO_TRANSLATION_KEY at the top of this file
+      // for the body/body_html ShopPolicy nuance).
+      const keyMapping = fieldTranslationKeyMap(resourceType);
 
       for (const [field, value] of Object.entries(updates)) {
         const translationKey = keyMapping[field];
@@ -1100,20 +1124,9 @@ export class ShopifyContentService {
 
       // Delete translations for changed fields across ALL foreign locales
       if (changedFields && changedFields.length > 0) {
-        // Map UI field names to Shopify translation keys.
-        // ShopPolicy uses "body", all other resource types use "body_html".
-        // See comment at line ~293 for full explanation of this Shopify inconsistency.
-        const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
-        const keyMapping: Record<string, string> = {
-          title: 'title',
-          description: bodyKey,
-          body: bodyKey,
-          handle: 'handle',
-          seoTitle: 'meta_title',
-          metaDescription: 'meta_description',
-          productType: 'product_type',
-          summary: 'summary_html',
-        };
+        // Map UI field names to Shopify translation keys — the ONE canonical
+        // map (FIELD_TO_TRANSLATION_KEY, top of this file).
+        const keyMapping = fieldTranslationKeyMap(resourceType);
 
         const translationKeysToDelete = changedFields
           .map(field => keyMapping[field])
@@ -1170,8 +1183,8 @@ export class ShopifyContentService {
     shop: string;
     fields: Record<string, string>;
     translationService: {
-      translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
-      translateShortFieldsBatch?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
+      translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string, keywordDirective?: string) => Promise<Record<string, Record<string, string>>>;
+      translateShortFieldsBatch?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], contentType?: string, instructions?: string, keywordDirective?: string) => Promise<Record<string, Record<string, string>>>;
     };
     db: PrismaClient;
     targetLocales?: string[];
@@ -1179,8 +1192,14 @@ export class ShopifyContentService {
     taskId?: string;
     customInstructions?: string;
     sourceLocale?: string;
+    /**
+     * Phrase each locale's translation so THAT locale's own tracked keyword
+     * survives (AISettings.keywordAwareTranslation). Off = the previous
+     * literal behaviour, untouched.
+     */
+    keywordAwareTranslation?: boolean;
   }) {
-    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en' } = params;
+    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en', keywordAwareTranslation = false } = params;
 
     // Fetch digest map once for all translations
     const { digestMap } = await this.loadTranslatableContent(resourceId);
@@ -1200,6 +1219,44 @@ export class ShopifyContentService {
         .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
         .map((l: { locale: string }) => l.locale);
     }
+
+    // Keyword-aware translation: each target locale's OWN tracked keywords, so
+    // the translated text is phrased to carry them instead of being a literal
+    // rendering of the primary value. A locale that tracks nothing gets no
+    // clause and is translated exactly as before.
+    const keywordsByLocale = new Map<string, LocaleKeywords>();
+    if (keywordAwareTranslation && resourceId) {
+      const { getItemKeywords } = await import('../../app/services/seo/keywords.service');
+      await Promise.all(
+        targetLocales.map(async (locale) => {
+          try {
+            const rows = await getItemKeywords(db, shop, resourceId, locale);
+            if (rows.length === 0) return;
+            const primary = rows.find((r) => r.role === 'primary')?.keyword ?? null;
+            if (!primary) return;
+            keywordsByLocale.set(locale, {
+              locale,
+              localeName: localeName(locale),
+              primary,
+              secondaries: rows.filter((r) => r.role === 'secondary').map((r) => r.keyword),
+            });
+          } catch (err) {
+            // A keyword lookup must never cost the merchant the translation —
+            // worst case this locale is translated the old, literal way.
+            loggers.translation('warn', `Keyword lookup failed for ${locale}, translating without it`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }),
+      );
+    }
+
+    /** The clause for ONE locale, empty when it tracks nothing. */
+    const keywordDirectiveFor = (locale: string): string | undefined => {
+      const entry = keywordsByLocale.get(locale);
+      if (!entry) return undefined;
+      return keywordTranslationDirective(entry) || undefined;
+    };
 
     const allTranslations: Record<string, Record<string, string>> = {};
     const failedLocales: string[] = [];
@@ -1231,19 +1288,9 @@ export class ShopifyContentService {
 
     loggers.translation('debug', 'Using hybrid approach', { shortFields: Object.keys(shortFields), longFields: Object.keys(longFields) });
 
-    // ShopPolicy uses "body", all other resource types use "body_html".
-    // See comment in updateContent() (~line 293) for full explanation of this Shopify inconsistency.
-    const bodyKey = resourceType === 'ShopPolicy' ? 'body' : 'body_html';
-    const keyMapping: Record<string, string> = {
-      title: 'title',
-      description: bodyKey,
-      body: bodyKey,
-      handle: 'handle',
-      seoTitle: 'meta_title',
-      metaDescription: 'meta_description',
-      productType: 'product_type',
-      summary: 'summary_html',
-    };
+    // ShopPolicy uses "body", all other resource types use "body_html" — the
+    // ONE canonical map (FIELD_TO_TRANSLATION_KEY, top of this file).
+    const keyMapping = fieldTranslationKeyMap(resourceType);
 
     // Track which translation keys have already had a digest retry to avoid
     // redundant loadTranslatableContent calls for the same missing key.
@@ -1509,7 +1556,8 @@ export class ShopifyContentService {
           sourceLocale,
           targetLocales,
           contentType || 'product',
-          customInstructions
+          customInstructions,
+          keywordTranslationDirectiveMulti(Array.from(keywordsByLocale.values())) || undefined,
         );
 
         // Track new productType translations to persist after the loop.
@@ -1557,7 +1605,7 @@ export class ShopifyContentService {
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
           try {
-            const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions);
+            const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
             const translatedFields = localeTranslations[locale];
             if (translatedFields) {
               const prepared = await collectLocaleTranslations(locale, translatedFields);
@@ -1578,7 +1626,7 @@ export class ShopifyContentService {
       for (const locale of targetLocales) {
         try {
           loggers.translation('debug', `Translating long fields to ${locale}`, { longFields: Object.keys(longFields) });
-          const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions);
+          const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
           const translatedFields = localeTranslations[locale];
 
           if (translatedFields) {

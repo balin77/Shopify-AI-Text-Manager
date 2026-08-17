@@ -1,5 +1,5 @@
-import { json } from "@remix-run/node";
-import type { ActionFunctionArgs } from "@remix-run/node";
+import { data as json } from "react-router";
+import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db, upsertProductMetafields } from "../db.server";
 import { getPlanLimits } from "../utils/planUtils";
@@ -33,32 +33,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const plan = (settings?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
     const planLimits = getPlanLimits(plan);
 
-    // Check if products already exist (skip if not force)
-    if (!force) {
-      const existingCount = await db.product.count({
-        where: { shop },
-      });
-
-      if (existingCount > 0) {
-        return json({
-          success: true,
-          message: `Already synced ${existingCount} products. Use ?force=true to re-sync.`,
-          synced: 0,
-          existing: existingCount,
-        });
-      }
-    }
+    // Snapshot the cached ids BEFORE the pull so we can report how many products
+    // this run actually discovered. This used to be an early return ("already
+    // synced N products, use ?force=true") which made the list-level reload
+    // button a permanent no-op after the first sync — the one path a merchant
+    // has to pull in a product Shopify's products/create webhook missed. The
+    // pass below is a pure upsert, so re-running it is cheap and never
+    // destroys local state; ?force=true stays the explicit delete + re-pull.
+    const knownIds = new Set(
+      (await db.product.findMany({ where: { shop }, select: { id: true } })).map((p) => p.id)
+    );
 
     // If force, delete all existing products first
     if (force) {
-
-      // Get product IDs first for cascade deletes
-      const existingProducts = await db.product.findMany({
-        where: { shop },
-        select: { id: true },
-      });
-
-      const productIds = existingProducts.map(p => p.id);
+      // knownIds is the same snapshot the cascade deletes need
+      const productIds = [...knownIds];
 
       if (productIds.length > 0) {
         // Delete in transaction for consistency
@@ -81,9 +70,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ]);
 
       }
+
+      // Everything below is a fresh create — don't report the wiped rows as
+      // newly discovered products.
+      knownIds.clear();
     }
 
-    // FAST BULK FETCH: Get all products in batches of 250 (GraphQL limit)
+    // FAST BULK FETCH: Get all products in batches of 250 (GraphQL limit).
+    // Sorted UPDATED_AT desc (see the query below): on a catalog larger than the
+    // plan cap the fetch window has to contain the products most likely to be
+    // missing locally. Shopify's default order is ID ascending, which puts newly
+    // created products last — exactly the ones a discovery run needs to find.
     const maxToFetch = planLimits.maxProducts === Infinity ? 10000 : planLimits.maxProducts;
     let allProducts: any[] = [];
     let hasNextPage = true;
@@ -95,7 +92,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const response: Response = await admin.graphql(
         `#graphql
           query getProductsBulk($first: Int!, $after: String) {
-            products(first: $first, after: $after) {
+            products(first: $first, after: $after, sortKey: UPDATED_AT, reverse: true) {
               pageInfo {
                 hasNextPage
                 endCursor
@@ -195,6 +192,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // FAST SAVE: Bulk upsert all products
     let synced = 0;
     let failed = 0;
+    let discovered = 0;
     const errors: string[] = [];
 
     for (const product of allProducts) {
@@ -297,6 +295,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         });
 
         synced++;
+        if (!knownIds.has(product.id)) discovered++;
 
         // Log progress every 50 products
         if (synced % 50 === 0) {
@@ -309,12 +308,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
-    logger.info("[SYNC-PRODUCTS] Complete", { context: "SyncProducts", synced, failed, total: allProducts.length });
+    logger.info("[SYNC-PRODUCTS] Complete", { context: "SyncProducts", synced, discovered, failed, total: allProducts.length });
 
     return json({
       success: true,
-      message: `Synced ${synced} products${failed > 0 ? ` (${failed} failed)` : ""}`,
+      message: `Synced ${synced} products${discovered > 0 ? `, ${discovered} new` : ""}${failed > 0 ? ` (${failed} failed)` : ""}`,
       synced,
+      discovered,
       failed,
       errors: errors.slice(0, 10), // Only return first 10 errors
     });

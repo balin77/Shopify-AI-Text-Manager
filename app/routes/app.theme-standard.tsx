@@ -7,7 +7,7 @@
  * See app.templates.tsx for the shared-factory pattern.
  */
 
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "react-router";
 import { TEMPLATES_CONFIG } from "../config/content-fields.config";
 import { ThemeContentDomainPage } from "../components/ThemeContentDomainPage";
 import { makeThemeDomainLoader, makeThemeContentRouteAction } from "../utils/theme-content-domain.server";

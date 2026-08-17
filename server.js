@@ -1,4 +1,4 @@
-// Initialize the Shopify Node platform adapter BEFORE the Remix build is
+// Initialize the Shopify Node platform adapter BEFORE the React Router build is
 // loaded. The build's module body calls shopifyApp({...}) at top level, which
 // reads abstractRuntimeString — if no adapter has registered a runtime string
 // yet, the call throws "Missing adapter implementation for 'abstractRuntimeString'"
@@ -7,7 +7,7 @@
 //
 // Why here, not in shopify.server.ts: the side-effect-only import in
 // shopify.server.ts gets dropped from the Vite SSR bundle by Rollup
-// (@shopify/shopify-app-remix declares no "sideEffects" field), and even an
+// (@shopify/shopify-app-react-router declares no "sideEffects" field), and even an
 // explicit setAbstractRuntimeString call at module top-level was observed to
 // be ineffective in the production bundle (Rollup reordering / dual module
 // instance suspected). server.js is NOT bundled — Node executes it raw, so
@@ -16,8 +16,7 @@
 import { nodeAdapterInitialized } from "@shopify/shopify-api/adapters/node";
 void nodeAdapterInitialized;
 
-import { createRequestHandler } from "@remix-run/express";
-import { installGlobals } from "@remix-run/node";
+import { createRequestHandler } from "@react-router/express";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
@@ -55,7 +54,9 @@ const {
   bulkOperationRateLimit,
 } = rateLimiters;
 
-installGlobals();
+// installGlobals() is gone in React Router 7: Node 22 (see package.json
+// "engines") provides fetch/Request/Response/FormData natively, which is
+// everything it used to polyfill.
 
 // Defensive process-level error reporting. Only active in real production
 // (APP_ENV === "production" + SENTRY_DSN); otherwise a complete no-op so the
@@ -64,7 +65,7 @@ installGlobals();
 // server-logger fallback pattern above).
 // Shared gate + scrubbing — the SAME module the TS app uses, so events sent
 // from this early window are redacted identically (review R2/H2). Plain .cjs
-// so it loads via require() before the Remix build exists.
+// so it loads via require() before the React Router build exists.
 let sentryScrub;
 try {
   sentryScrub = require("./app/utils/sentry-scrub.cjs");
@@ -256,18 +257,18 @@ app.use(morgan("tiny"));
 // Health check endpoint for Railway deployment
 // This endpoint is called by Railway to determine if the app is ready to receive traffic
 // Returns 503 until the app is fully ready to handle requests
-let remixBuildForHealth = null;
+let reactRouterBuildForHealth = null;
 app.get("/health", async (req, res) => {
   try {
-    // In production, verify the Remix build is loaded and cached
+    // In production, verify the React Router build is loaded and cached
     if (process.env.NODE_ENV === "production") {
-      if (!remixBuildForHealth) {
-        serverLogger.info("[health] Loading Remix build for health check...");
-        remixBuildForHealth = await import("./build/server/index.js");
-        serverLogger.info("[health] Remix build loaded, entry exists: " + !!remixBuildForHealth?.entry);
+      if (!reactRouterBuildForHealth) {
+        serverLogger.info("[health] Loading React Router build for health check...");
+        reactRouterBuildForHealth = await import("./build/server/index.js");
+        serverLogger.info("[health] React Router build loaded, entry exists: " + !!reactRouterBuildForHealth?.entry);
       }
-      if (!remixBuildForHealth || !remixBuildForHealth.entry) {
-        throw new Error("Remix build not fully loaded (entry=" + !!remixBuildForHealth?.entry + ")");
+      if (!reactRouterBuildForHealth || !reactRouterBuildForHealth.entry) {
+        throw new Error("React Router build not fully loaded (entry=" + !!reactRouterBuildForHealth?.entry + ")");
       }
     }
 
@@ -280,15 +281,15 @@ app.get("/health", async (req, res) => {
 });
 
 // handle SSR requests
-serverLogger.info("[server.js] Loading Remix build...");
-let remixServerBuild;
+serverLogger.info("[server.js] Loading React Router build...");
+let reactRouterServerBuild;
 try {
-  remixServerBuild = viteDevServer
+  reactRouterServerBuild = viteDevServer
     ? null
     : await import("./build/server/index.js");
-  serverLogger.info("[server.js] Remix build loaded successfully");
+  serverLogger.info("[server.js] React Router build loaded successfully");
 } catch (e) {
-  serverLogger.error("[server.js] Failed to load Remix build: " + e.message);
+  serverLogger.error("[server.js] Failed to load React Router build: " + e.message);
   serverLogger.error("[server.js] Stack: " + (e.stack || "no stack"));
 }
 
@@ -296,8 +297,8 @@ app.all(
   "*",
   createRequestHandler({
     build: viteDevServer
-      ? () => viteDevServer.ssrLoadModule("virtual:remix/server-build")
-      : remixServerBuild,
+      ? () => viteDevServer.ssrLoadModule("virtual:react-router/server-build")
+      : reactRouterServerBuild,
     mode: process.env.NODE_ENV,
   })
 );
@@ -323,8 +324,11 @@ const server = app.listen(port, host, async () => {
   //     guards resurrect/refund WITHIN one instance, not across replicas;
   //   • duplicated cleanup churn / racing deletes.
   //
-  // This is currently LATENT: the app is deployed as a single `web` process
-  // (Procfile: `web: npm run start:production`; no replica/scale config).
+  // This is currently LATENT: the app is deployed as a single web process
+  // (railway.json: `startCommand: npm run start:production`). NOTE the replica
+  // count is NOT pinned in railway.json — it is a Railway dashboard value, so
+  // this assumption is only as strong as that setting. Scaling the service past
+  // one instance activates every problem listed above.
   //
   // A correct fix needs cluster-wide mutual exclusion, but every safe option
   // is a dedicated piece of infra work, NOT a rider here:
@@ -475,7 +479,7 @@ async function gracefulShutdown(signal) {
       // Stop AI queue dispatch + cancel retry timers, then drain in-flight
       // provider calls BEFORE closing the DB. Otherwise running AI jobs keep
       // writing to a $disconnect()-ed Prisma client and tasks stay "running".
-      // The singleton lives inside the Remix bundle, so it's reached via the
+      // The singleton lives inside the React Router bundle, so it's reached via the
       // process-wide globalThis bridge (set in AIQueueService.getInstance()),
       // not a module import. If no AI request ran yet, __aiQueue is undefined
       // and there is nothing to drain.
@@ -492,7 +496,7 @@ async function gracefulShutdown(signal) {
     }
 
     try {
-      // Close the shared PrismaClient (used by Remix app + background services)
+      // Close the shared PrismaClient (used by the app + background services)
       if (globalThis.__db) {
         await globalThis.__db.$disconnect();
         serverLogger.info("Database connections closed");

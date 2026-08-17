@@ -12,6 +12,7 @@ import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
+import { resolveSeoLimits } from "../utils/character-limits";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import { hasFieldMissingTranslations } from "../utils/field-validation.utils";
 import type { ValidationOverlays } from "../utils/field-validation.utils";
@@ -40,7 +41,8 @@ export interface FieldRendererProps {
   selectedMarketId?: string;
   /** Error message shown below the field (e.g. AI translation failed due to text being too long) */
   fieldError?: string;
-  onGenerateAI?: () => void;
+  /** Receives the merchant's ad-hoc instruction from the AIInstructionPrompt box (undefined = generate as before). */
+  onGenerateAI?: (userInstruction?: string) => void;
   onFormatAI?: () => void;
   onTranslate?: () => void;
   onTranslateToAllLocales?: () => void;
@@ -117,7 +119,8 @@ export function UnifiedFieldRenderer(
         fetcherTargetLocale === currentLanguage));
 
   const { locale: appLocale } = useI18n();
-  const { seoTitleSuffix } = useSeoSettings();
+  const { seoTitleSuffix, seoLimits } = useSeoSettings();
+  const activeLimits = resolveSeoLimits(seoLimits ?? null);
   const localeName = getLocalizedLanguageName(
     currentLanguage,
     appLocale,
@@ -137,14 +140,23 @@ export function UnifiedFieldRenderer(
     const chars = t.content?.characters || "characters";
     const rec = t.content?.recommended || "recommended";
     if (field.key === "seoTitle") {
+      // Upper limit adjusts for Shopify's shop-name suffix; lower limit
+      // comes from the merchant setting (default 30). seoTitleMin === 1
+      // means the merchant disabled the floor — show only the "N / max"
+      // form so the hint stays clean.
+      const cap = activeLimits.seoTitleMax;
       if (seoTitleSuffix) {
         const combined = value.length + seoTitleSuffix.length;
-        helpText = `${combined} / 60 ${chars}`;
+        helpText = `${combined} / ${cap} ${chars}`;
       } else {
-        helpText = `${value.length} / 60 ${chars} (${rec}: 50-60)`;
+        helpText = activeLimits.seoTitleMin > 1
+          ? `${value.length} / ${cap} ${chars} (${rec}: ${activeLimits.seoTitleMin}-${cap})`
+          : `${value.length} / ${cap} ${chars}`;
       }
     } else if (field.key === "metaDescription") {
-      helpText = `${value.length} ${chars} (${rec}: 150-160)`;
+      helpText = `${value.length} ${chars} (${rec}: ${activeLimits.metaDescMin}-${activeLimits.metaDescMax})`;
+    } else if (field.key === "title") {
+      helpText = `${value.length} ${chars} (${rec}: ${activeLimits.titleMin}-${activeLimits.titleMax})`;
     } else {
       helpText = `${value.length} ${chars}`;
     }
@@ -336,6 +348,7 @@ export function UnifiedFieldRenderer(
         isFallbackValue={isFallbackValue}
         readOnly={readOnly}
         requiredIndicator={requiredIndicator}
+        aiPromptScopeKey={`${selectedItem?.id ?? ""}|${currentLanguage}`}
         hasFieldMissingTranslations={fieldHasMissingTranslations}
         onGenerateAI={field.supportsAI !== false ? onGenerateAI : undefined}
         onFormatAI={field.supportsFormatting !== false ? onFormatAI : undefined}
@@ -372,6 +385,7 @@ export function UnifiedFieldRenderer(
       isFallbackValue={isFallbackValue}
       readOnly={effectiveReadOnly}
       requiredIndicator={requiredIndicator}
+      aiPromptScopeKey={`${selectedItem?.id ?? ""}|${currentLanguage}`}
       error={fieldError}
       hasFieldMissingTranslations={fieldHasMissingTranslations}
       seoSuffix={field.key === "seoTitle" && seoTitleSuffix ? seoTitleSuffix : undefined}

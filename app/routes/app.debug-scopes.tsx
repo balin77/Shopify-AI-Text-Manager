@@ -2,8 +2,8 @@
  * Debug page to check current Shopify API scopes
  */
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { data as json, type LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import { Page, Card, Text, BlockStack, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 

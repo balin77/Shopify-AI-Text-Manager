@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../../src/services/ai.service";
 import { tryDecryptApiKey } from "~/utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
@@ -8,11 +8,12 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "~/graphql/content.mutations";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
+import type { DataResponse } from "~/types/data-response";
 
 export async function handleTranslateAll(
   ctx: TemplatesActionContext,
   actionType: "translateAll" | "translateAllForLocale"
-): Promise<Response> {
+): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, firstGroup, themeGroups, resourceId, keyToResourceId } = ctx;
   const targetLocalesJson = getFormString(formData, "targetLocales");
   const targetLocale = getFormString(formData, "targetLocale");

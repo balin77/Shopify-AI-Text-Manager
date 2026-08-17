@@ -9,7 +9,7 @@
  *   ./api-ai-handlers/alt-text.handler.ts
  */
 
-import { json, type ActionFunctionArgs } from "@remix-run/node";
+import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
@@ -22,6 +22,7 @@ import {
   noAiKeyResponse,
   isAuthError,
   aiAuthErrorResponse,
+  resolveSeoContext,
 } from "./api-ai-handlers/shared";
 import type { AIActionContext } from "./api-ai-handlers/shared";
 import {
@@ -41,7 +42,23 @@ import {
   handleTranslateAllAltTextsToAllLocales,
   handleTranslateAllAltTextsForLocale,
 } from "./api-ai-handlers/alt-text.handler";
+import { handleSeoBulkFix } from "./api-ai-handlers/seo-bulk-fix.handler";
+import { handleSeoAudit } from "./api-ai-handlers/seo-audit.handler";
+import { handleSeoBulkMeta } from "./api-ai-handlers/seo-bulk-meta.handler";
+import { handleSeoJsonLdAudit } from "./api-ai-handlers/seo-json-ld-audit.handler";
+import { handleSeoCrawl } from "./api-ai-handlers/seo-crawl.handler";
+import { handleSeoInternalLinks } from "./api-ai-handlers/seo-internal-links.handler";
+import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-translate.handler";
+import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
+import { handleInsertKeyword } from "./api-ai-handlers/keyword-insert.handler";
+import { handleSeoRobotsAdvice } from "./api-ai-handlers/seo-robots-advice.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
+
+// Actions that never call an AI provider — they only read/write the DB
+// content cache and/or Shopify directly — so a shop with no AI key
+// configured yet must still be able to use them. Kept as a Set (rather than
+// growing the single seoAudit ternary below) now that there's more than one.
+const NON_AI_ACTIONS = new Set(["seoAudit", "seoBulkMeta", "seoJsonLdAudit", "seoCrawl"]);
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -74,15 +91,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Compliance gate: never send merchant content to a third-party AI through
     // an operator key. Block early with an actionable code if the shop has no
     // own API key for its preferred provider.
-    const missingKey = getMissingPreferredKey(settings);
+    // NON_AI_ACTIONS are exempt — they only read/write the DB content cache
+    // and/or Shopify directly (no provider call at all), so a shop with no AI
+    // key configured yet must still be able to use them.
+    const missingKey = NON_AI_ACTIONS.has(actionType) ? null : getMissingPreferredKey(settings);
     if (missingKey) {
       return noAiKeyResponse(settings, missingKey);
     }
 
-    // Compute effective SEO title limit (accounts for shop name suffix appended by Shopify)
-    const seoTitleMaxChars = settings?.seoTitleSuffixEnabled && settings.seoTitleSuffix
-      ? 60 - settings.seoTitleSuffix.length
-      : 60;
+    // Resolve merchant SEO knobs once — used across generation, translation
+    // and bulk-fix prompts so limits stay consistent. Includes the effective
+    // SEO title cap (adjusted for the shop-name suffix Shopify appends).
+    const { seoTitleMaxChars, seoLimits, translationMode } = resolveSeoContext(settings);
 
     const ctx: AIActionContext = {
       session,
@@ -91,6 +111,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       formData,
       settings,
       seoTitleMaxChars,
+      seoLimits,
+      translationMode,
       contentType,
       itemId,
     };
@@ -118,8 +140,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleTranslateAllAltTextsToAllLocales(ctx);
       case "translateAllAltTextsForLocale":
         return handleTranslateAllAltTextsForLocale(ctx);
+      case "seoBulkFix":
+        return handleSeoBulkFix(ctx);
+      case "seoAudit":
+        return handleSeoAudit(ctx);
+      case "seoBulkMeta":
+        return handleSeoBulkMeta(ctx);
+      case "seoJsonLdAudit":
+        return handleSeoJsonLdAudit(ctx);
+      case "seoCrawl":
+        return handleSeoCrawl(ctx);
+      case "seoInternalLinks":
+        return handleSeoInternalLinks(ctx);
+      case "bulkEditorTranslate":
+        return handleBulkEditorTranslate(ctx);
+      case "distributeKeywords":
+        return handleDistributeKeywords(ctx);
+      case "insertKeyword":
+        return handleInsertKeyword(ctx);
       case "generateTemplateTitles":
         return handleGenerateTemplateTitles(ctx);
+      case "seoRobotsAdvice":
+        return handleSeoRobotsAdvice(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }

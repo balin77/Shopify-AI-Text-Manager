@@ -20,6 +20,8 @@
 import { useState, useEffect } from "react";
 import { BlockStack, InlineStack, Button, Text, Banner } from "@shopify/polaris";
 import { AIEditableField } from "../AIEditableField";
+import { DisabledActionTooltip } from "../DisabledActionTooltip";
+import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import { isAltTextTranslated, hasAltTextMissingTranslations } from "../../utils/field-validation.utils";
 import type { ShopLocale, AltTextTranslation } from "../../types/content-editor.types";
 
@@ -73,7 +75,7 @@ interface ImageGalleryFieldProps {
   onAltTextChange: (imageIndex: number, value: string) => void;
 
   /** Callback to generate AI alt-text for single image */
-  onGenerateAltText: (imageIndex: number) => void;
+  onGenerateAltText: (imageIndex: number, userInstruction?: string) => void;
 
   /** Callback to generate AI alt-text for all images */
   onGenerateAllAltTexts?: () => void;
@@ -158,6 +160,8 @@ export function ImageGalleryField({
   t = {},
 }: ImageGalleryFieldProps) {
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  // Single-language shop → nothing to translate alt-texts into.
+  const singleLocaleHint = useSingleLocaleHint();
 
   // Reset selected image when images change
   useEffect(() => {
@@ -397,13 +401,16 @@ export function ImageGalleryField({
             </Button>
           )}
           {isPrimaryLocale && onTranslateAllAltTexts && (
-            <Button
-              size="slim"
-              onClick={onTranslateAllAltTexts}
-              loading={isFieldLoading ? isFieldLoading(-1) : false}
-            >
-              🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
-            </Button>
+            <DisabledActionTooltip hint={singleLocaleHint}>
+              <Button
+                size="slim"
+                onClick={onTranslateAllAltTexts}
+                loading={isFieldLoading ? isFieldLoading(-1) : false}
+                disabled={!!singleLocaleHint}
+              >
+                🌍 {t.translateAllAltTexts || "Translate all alt-texts"}
+              </Button>
+            </DisabledActionTooltip>
           )}
           {!isPrimaryLocale && onTranslateAllAltTextsForLocale && (
             <Button
@@ -435,7 +442,7 @@ export function ImageGalleryField({
           hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(images[selectedImageIndex], shopLocales, primaryLocale, altTexts[selectedImageIndex])}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(selectedImageIndex) : false}
-          onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(selectedImageIndex) : undefined}
+          onGenerateAI={isPrimaryLocale ? (userInstruction) => onGenerateAltText(selectedImageIndex, userInstruction) : undefined}
           onCopy={!isPrimaryLocale && onCopyAltText ? () => onCopyAltText(selectedImageIndex) : undefined}
           onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(selectedImageIndex) : undefined}
           onTranslate={() => onTranslateAltText(selectedImageIndex)}
@@ -462,7 +469,7 @@ export function ImageGalleryField({
           hasFieldMissingTranslations={isPrimaryLocale && hasAltTextMissingTranslations(featuredImage, shopLocales, primaryLocale, altTexts[0])}
           placeholder={t.altTextPlaceholder}
           isLoading={isFieldLoading ? isFieldLoading(0) : false}
-          onGenerateAI={isPrimaryLocale ? () => onGenerateAltText(0) : undefined}
+          onGenerateAI={isPrimaryLocale ? (userInstruction) => onGenerateAltText(0, userInstruction) : undefined}
           onCopy={!isPrimaryLocale && onCopyAltText ? () => onCopyAltText(0) : undefined}
           onCopyToAllLocales={isPrimaryLocale && onCopyAltTextToAllLocales ? () => onCopyAltTextToAllLocales(0) : undefined}
           onTranslate={() => onTranslateAltText(0)}

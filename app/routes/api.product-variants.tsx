@@ -1,4 +1,4 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { logger } from "../utils/logger.server";
@@ -284,7 +284,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Acceptable; documented here so the dependency isn't invisible.
   //
   // Deployment note: this is safe on a long-running Node server (see
-  // start.js / nixpacks.toml). On a serverless / edge runtime that freezes
+  // start.js / railway.json). On a serverless / edge runtime that freezes
   // the function after response, dangling upserts may be killed and the
   // affected variants will simply re-upsert on the next product open.
   Promise.allSettled(variants.map((v: any) => {

@@ -76,7 +76,7 @@ interface UseEditorAltTextReturn {
   setSelectedImageIndex: React.Dispatch<React.SetStateAction<number>>;
   // Handlers
   handleAltTextChange: (imageIndex: number, value: string) => void;
-  handleGenerateAltText: (imageIndex: number) => void;
+  handleGenerateAltText: (imageIndex: number, userInstruction?: string) => void;
   handleGenerateAllAltTexts: () => void;
   handleAcceptAltText: (imageIndex: number) => void;
   handleRejectAltText: (imageIndex: number) => void;
@@ -175,7 +175,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     return null;
   };
 
-  const handleGenerateAltText = (imageIndex: number) => {
+  /**
+   * @param userInstruction Ad-hoc instruction from the AIInstructionPrompt box
+   *   on the alt-text field. Undefined/empty generates exactly as before.
+   */
+  const handleGenerateAltText = (imageIndex: number, userInstruction?: string) => {
     if (!selectedItem) return;
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
@@ -194,6 +198,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         productTitle,
         mainLanguage,
         sendImageToAI: sendImageToAI.toString(),
+        ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
       },
       `altText_${imageIndex}`,
       (result) => {

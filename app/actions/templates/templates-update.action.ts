@@ -1,4 +1,4 @@
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { ENABLE_THEME_PRIMARY_EDIT } from "~/config/constants";
 import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { logger } from "~/utils/logger.server";
@@ -9,8 +9,9 @@ import { GET_THEME_FILES, GET_SHOP_LOCALES } from "~/graphql/content.queries";
 import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.utils";
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
+import type { DataResponse } from "~/types/data-response";
 
-export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<Response> {
+export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType, selectedThemeId } = ctx;
   const locale = getFormString(formData, "locale");
   const primaryLocale = getFormString(formData, "primaryLocale");

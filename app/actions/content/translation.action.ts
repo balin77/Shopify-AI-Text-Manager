@@ -5,19 +5,21 @@
  * Handles: translateField, translateAll, translateAllForLocale, translateFieldToAllLocales
  */
 
-import { json } from "@remix-run/node";
+import { data as json } from "react-router";
 import { TranslationService } from "../../../src/services/translation.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "../../utils/validation";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
+import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
 import { findMetaobjectLabelField } from "../../constants/shopifyFields";
-import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
 import type { ContentActionHandlerContext } from "./alt-text.action";
+import type { DataResponse } from "~/types/data-response";
 
 // ============================================================================
 // METAOBJECT TRANSLATION HELPER (local copy)
@@ -176,8 +178,8 @@ function getEffectiveResourceType(itemId: string, configResourceType: string): s
 export async function handleTranslateField(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
-  const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
+): Promise<DataResponse> {
+  const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const fieldType = getFormString(formData, "fieldType");
   const sourceText = getFormString(formData, "sourceText");
@@ -213,14 +215,21 @@ export async function handleTranslateField(
       data: { status: "queued", progress: 10 },
     });
 
-    // Get translate instructions (from DB or default)
-    const translateInstructions = getInstructionWithDefault(aiInstructions, "translateInstructions");
+    // Get translate instructions (from DB or default) and — when the merchant
+    // has SEO-optimized translation mode on — append per-field length caps so
+    // long primary text gets paraphrased to fit the SEO limits.
+    const translateInstructions = buildTranslateInstructions(
+      getInstructionWithDefault(aiInstructions, "translateInstructions"),
+      translationMode,
+      [fieldType],
+      { seoTitleMaxChars, limits: seoLimits },
+    );
 
     const translations = await translationServiceWithTask.translateProduct(
       changedFields,
       [targetLocale],
       contentConfig.contentType,
-      translateInstructions || undefined
+      translateInstructions,
     );
     const translatedValue = translations[targetLocale]?.[fieldType] || "";
     if (!translatedValue || !translatedValue.trim()) {
@@ -262,8 +271,8 @@ export async function handleTranslateField(
 export async function handleTranslateAll(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
-  const { admin, session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig } = ctx;
+): Promise<DataResponse> {
+  const { admin, session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const targetLocalesStr = getFormString(formData, "targetLocales");
   const contextTitle = getFormString(formData, "title");
@@ -326,8 +335,15 @@ export async function handleTranslateAll(
       data: { status: "queued", progress: 10 },
     });
 
-    // Get translate instructions (from DB or default)
-    const translateInstructionsAll = getInstructionWithDefault(aiInstructions, "translateInstructions");
+    // Get translate instructions (from DB or default) + SEO length caps for
+    // the fields being sent, so seo_optimized mode paraphrases oversize
+    // translations instead of overflowing the SEO cap.
+    const translateInstructionsAll = buildTranslateInstructions(
+      getInstructionWithDefault(aiInstructions, "translateInstructions"),
+      translationMode,
+      Object.keys(changedFields),
+      { seoTitleMaxChars, limits: seoLimits },
+    );
 
     // Metaobjects need custom translation flow: each entry is a separate Shopify resource
     if (contentConfig.resourceType === "Metaobject") {
@@ -337,7 +353,7 @@ export async function handleTranslateAll(
         metaobjectFields: changedFields,
         targetLocales,
         translationService: translationServiceWithTask,
-        customInstructions: translateInstructionsAll || undefined,
+        customInstructions: translateInstructionsAll,
       });
 
       await db.task.update({
@@ -367,8 +383,11 @@ export async function handleTranslateAll(
       targetLocales: targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : undefined,
       contentType: contentConfig.contentType,
       taskId: task.id,
-      customInstructions: translateInstructionsAll || undefined,
+      customInstructions: translateInstructionsAll,
       sourceLocale,
+      // Phrase each locale's translation so THAT locale's tracked keyword
+      // survives, instead of translating the primary text literally.
+      keywordAwareTranslation: ctx.aiSettings?.keywordAwareTranslation ?? true,
     });
 
     const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
@@ -411,8 +430,8 @@ export async function handleTranslateAll(
 export async function handleTranslateAllForLocale(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
-  const { admin, session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig } = ctx;
+): Promise<DataResponse> {
+  const { admin, session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const targetLocale = getFormString(formData, "targetLocale");
   const contextTitle = getFormString(formData, "title");
@@ -479,8 +498,13 @@ export async function handleTranslateAllForLocale(
       data: { status: "queued", progress: 10 },
     });
 
-    // Get translate instructions (from DB or default)
-    const translateInstructionsForLocale = getInstructionWithDefault(aiInstructions, "translateInstructions");
+    // Get translate instructions (from DB or default) + SEO length caps.
+    const translateInstructionsForLocale = buildTranslateInstructions(
+      getInstructionWithDefault(aiInstructions, "translateInstructions"),
+      translationMode,
+      Object.keys(changedFields),
+      { seoTitleMaxChars, limits: seoLimits },
+    );
 
     // Metaobjects need custom translation flow
     if (contentConfig.resourceType === "Metaobject") {
@@ -489,7 +513,7 @@ export async function handleTranslateAllForLocale(
         metaobjectFields: changedFields,
         targetLocales: [targetLocale],
         translationService: translationServiceWithTask,
-        customInstructions: translateInstructionsForLocale || undefined,
+        customInstructions: translateInstructionsForLocale,
       });
 
       const translations = result.translations[targetLocale] || {};
@@ -518,8 +542,11 @@ export async function handleTranslateAllForLocale(
       targetLocales: [targetLocale],
       contentType: contentConfig.contentType,
       taskId: task.id,
-      customInstructions: translateInstructionsForLocale || undefined,
+      customInstructions: translateInstructionsForLocale,
       sourceLocale,
+      // Phrase each locale's translation so THAT locale's tracked keyword
+      // survives, instead of translating the primary text literally.
+      keywordAwareTranslation: ctx.aiSettings?.keywordAwareTranslation ?? true,
     });
 
     const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
@@ -566,8 +593,8 @@ export async function handleTranslateAllForLocale(
 export async function handleTranslateFieldToAllLocales(
   ctx: ContentActionHandlerContext,
   formData: FormData,
-): Promise<Response> {
-  const { session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig } = ctx;
+): Promise<DataResponse> {
+  const { session, contentConfig, db, aiInstructions, itemId, shopifyContentService, provider, serviceConfig, seoTitleMaxChars, seoLimits, translationMode } = ctx;
 
   const fieldType = getFormString(formData, "fieldType");
   const sourceText = getFormString(formData, "sourceText");
@@ -619,8 +646,14 @@ export async function handleTranslateFieldToAllLocales(
       data: { status: "queued", progress: 10 },
     });
 
-    // Get translate instructions (from DB or default)
-    const translateInstructionsFieldToAll = getInstructionWithDefault(aiInstructions, "translateInstructions");
+    // Get translate instructions (from DB or default) + SEO length cap for
+    // this specific field (only one field is being translated here).
+    const translateInstructionsFieldToAll = buildTranslateInstructions(
+      getInstructionWithDefault(aiInstructions, "translateInstructions"),
+      translationMode,
+      [fieldType],
+      { seoTitleMaxChars, limits: seoLimits },
+    );
 
     const result = await shopifyContentService.translateAllContent({
       resourceId: itemId,
@@ -632,8 +665,11 @@ export async function handleTranslateFieldToAllLocales(
       targetLocales: targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : undefined,
       contentType: contentConfig.contentType,
       taskId: task.id,
-      customInstructions: translateInstructionsFieldToAll || undefined,
+      customInstructions: translateInstructionsFieldToAll,
       sourceLocale,
+      // Phrase each locale's translation so THAT locale's tracked keyword
+      // survives, instead of translating the primary text literally.
+      keywordAwareTranslation: ctx.aiSettings?.keywordAwareTranslation ?? true,
     });
 
     const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;

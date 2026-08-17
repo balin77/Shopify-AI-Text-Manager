@@ -1,0 +1,97 @@
+{%- comment -%}
+  App Embed Block (target: head) — emits Open Graph + Twitter Card meta tags
+  from NATIVE Liquid objects (page_title/page_description/canonical_url/
+  product/shop), so social-preview cards (Facebook, X/Twitter, LinkedIn,
+  Slack, WhatsApp, and ChatGPT/Perplexity link unfurls) get a title,
+  description and image with no admin API call and no per-item sync.
+
+  Fallback chains (plan §C4):
+    title:       page_title       → product.title           → shop.name
+    description: page_description → shop.description
+    image:       product.featured_image → block default_og_image setting
+                 → shop.brand.logo
+  Product pages may override title/description/image via the metafields
+  `custom.og_description` / `custom.og_image` when present.
+
+  All values are HTML *attribute* content (not JSON), so they use `| escape`
+  rather than `| json`.
+
+  NOTE: app-embed blocks conventionally target "body" in this extension (see
+  structured-data.liquid); OG/Twitter tags need to live in <head>, which this
+  block requests via "target": "head". Verify placement in the theme editor
+  after install — if a theme rejects head-targeted app blocks, this falls
+  back to being included wherever the theme renders app-embed-head content.
+{%- endcomment -%}
+
+{%- liquid
+  assign is_product = false
+  if request.page_type == 'product' and product
+    assign is_product = true
+  endif
+
+  assign og_title = page_title | default: product.title | default: shop.name
+  assign og_description = page_description | default: shop.description
+
+  assign og_image = ''
+  if is_product and product.featured_image
+    assign og_image = product.featured_image | image_url: width: 1200
+  elsif block.settings.default_og_image
+    assign og_image = block.settings.default_og_image | image_url: width: 1200
+  elsif shop.brand.logo
+    assign og_image = shop.brand.logo | image_url: width: 1200
+  endif
+
+  # Metafield overrides (product pages only).
+  if is_product
+    if product.metafields.custom.og_description.value != blank
+      assign og_description = product.metafields.custom.og_description.value
+    endif
+    if product.metafields.custom.og_image.value != blank
+      assign og_image = product.metafields.custom.og_image.value | image_url: width: 1200
+    endif
+  endif
+
+  assign og_type = 'website'
+  if is_product
+    assign og_type = 'product'
+  elsif request.page_type == 'article'
+    assign og_type = 'article'
+  endif
+-%}
+
+<meta property="og:title" content="{{ og_title | escape }}">
+{%- if og_description != blank -%}
+<meta property="og:description" content="{{ og_description | escape }}">
+{%- endif -%}
+<meta property="og:url" content="{{ canonical_url | escape }}">
+<meta property="og:type" content="{{ og_type | escape }}">
+{%- if og_image != blank -%}
+<meta property="og:image" content="{{ og_image | escape }}">
+{%- endif -%}
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{ og_title | escape }}">
+{%- if og_description != blank -%}
+<meta name="twitter:description" content="{{ og_description | escape }}">
+{%- endif -%}
+{%- if og_image != blank -%}
+<meta name="twitter:image" content="{{ og_image | escape }}">
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Open Graph / Twitter",
+  "target": "head",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Adds Open Graph and Twitter Card meta tags so shared links show a title, description and image on Facebook, X/Twitter, LinkedIn, Slack, WhatsApp and AI chat link previews. Enable once - no placement needed."
+    },
+    {
+      "type": "image_picker",
+      "id": "default_og_image",
+      "label": "Default share image (used when a page has no image of its own)"
+    }
+  ]
+}
+{% endschema %}

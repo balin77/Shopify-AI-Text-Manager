@@ -120,12 +120,26 @@ export function UnifiedLanguageBar({
 }: UnifiedLanguageBarProps) {
   const isPrimaryLocale = currentLanguage === primaryLocale;
   const ctrlPressedRef = useRef<Record<string, boolean>>({});
+  // Single-language shop: the locale row would be one permanently-active button
+  // and the Ctrl+click hint would be a lie (the primary locale can't be toggled
+  // off), so both are dropped. See `shouldRenderLanguageBar` for the caller-side
+  // check that keeps an otherwise-empty Card from rendering.
+  const isSingleLocale = shopLocales.length <= 1;
+  const showMarketSelector = shouldRenderMarketSelector(
+    shopLocales.length,
+    markets.length,
+    !!onMarketChange,
+    allowPrimaryLocaleMarket,
+  );
   const { t: i18n, locale: appLocale } = useI18n();
   const tooltipI18n = {
     missingContent: i18n.common.missingContent,
     missingTranslations: i18n.common.missingTranslations,
     fieldLabels: i18n.common.fieldLabels,
   };
+
+  // Nothing left to show (single language, no usable market selector).
+  if (isSingleLocale && !showMarketSelector) return null;
 
   // Map content type to resource type for the API
   const resourceTypeMap: Record<string, string> = {
@@ -139,7 +153,7 @@ export function UnifiedLanguageBar({
 
   return (
     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flex: 1, minWidth: 0, alignItems: "center" }}>
-      {[...shopLocales].sort((a, b) => {
+      {!isSingleLocale && [...shopLocales].sort((a, b) => {
         if (a.primary) return -1;
         if (b.primary) return 1;
         return (a.name || a.locale).localeCompare(b.name || b.locale);
@@ -164,7 +178,7 @@ export function UnifiedLanguageBar({
         />
       ))}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-        {onMarketChange && markets.length > 0 && (
+        {showMarketSelector && onMarketChange && (
           <MarketSelector
             markets={markets}
             selectedMarketId={selectedMarketId}
@@ -181,10 +195,46 @@ export function UnifiedLanguageBar({
             }}
           />
         )}
-        <HelpTooltip helpKey="ctrlClickLanguage" position="below" />
+        {!isSingleLocale && <HelpTooltip helpKey="ctrlClickLanguage" position="below" />}
       </div>
     </div>
   );
+}
+
+/**
+ * Whether the market selector is worth rendering. In a single-language shop the
+ * viewed locale is always the primary one, where Shopify has no market-specific
+ * content — so the selector would be permanently greyed out. The exception is
+ * DirectTranslations (`allowPrimaryLocaleMarket`), a custom storefront
+ * dictionary where a market override is valid in any locale.
+ */
+function shouldRenderMarketSelector(
+  localeCount: number,
+  marketCount: number,
+  hasMarketHandler: boolean,
+  allowPrimaryLocaleMarket: boolean,
+): boolean {
+  if (!hasMarketHandler || marketCount === 0) return false;
+  return localeCount > 1 || allowPrimaryLocaleMarket;
+}
+
+/**
+ * Caller-side twin of the bar's internal emptiness check — use it to skip the
+ * surrounding `<Card>` so a single-language shop doesn't get an empty box.
+ */
+export function shouldRenderLanguageBar({
+  localeCount,
+  marketCount = 0,
+  hasMarketHandler = false,
+  allowPrimaryLocaleMarket = false,
+}: {
+  localeCount: number;
+  marketCount?: number;
+  hasMarketHandler?: boolean;
+  allowPrimaryLocaleMarket?: boolean;
+}): boolean {
+  if (localeCount > 1) return true;
+  return shouldRenderMarketSelector(localeCount, marketCount, hasMarketHandler, allowPrimaryLocaleMarket);
 }
 
 /**

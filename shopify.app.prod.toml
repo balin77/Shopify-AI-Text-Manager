@@ -6,7 +6,7 @@ application_url = "https://contentpilotai.up.railway.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations,write_metaobjects,read_metaobject_definitions,read_markets"
+scopes = "read_legal_policies,write_legal_policies,read_locales,read_online_store_navigation,write_online_store_navigation,read_online_store_pages,write_online_store_pages,read_product_listings,read_products,write_products,read_content,write_content,read_themes,write_themes,read_translations,write_translations,write_metaobjects,read_metaobject_definitions,read_markets,read_files,write_files"
 
 [app_proxy]
 # Storefront /apps/contentpilot/* → forwarded to {url}/* (here: /proxy/*).
@@ -49,5 +49,9 @@ uri = "/webhooks/subscription"
 embedded = false
 
 [build]
-automatically_update_urls_on_dev = true
+# Bewusst false: gegen die Produktiv-App wird nie lokal entwickelt. Bei true würde ein
+# versehentliches `shopify app dev -c prod` die Tunnel-URL in application_url und
+# redirect_urls dieser Datei schreiben — und der naechste Deploy wuerde die Live-App
+# auf eine laengst tote Adresse zeigen lassen.
+automatically_update_urls_on_dev = false
 dev_store_url = "patis-universe-test-shop.myshopify.com"
