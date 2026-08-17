@@ -122,7 +122,10 @@ export const loader = createContentLoader({
         // runs over the whole (bounded) catalogue, so pulling full variant and
         // membership rows for a count and one price would multiply its cost for
         // nothing.
-        collections: { select: { collectionId: true, collectionTitle: true } },
+        // `automated` rides along for §Phase 3.1's membership picker: a
+        // rule-based membership renders locked, because unticking it would be
+        // a save the rule silently undoes.
+        collections: { select: { collectionId: true, collectionTitle: true, automated: true } },
         variants: { select: { price: true }, orderBy: { position: "asc" }, take: 1 },
       },
       orderBy: { title: "asc" },
@@ -264,6 +267,10 @@ export const loader = createContentLoader({
       vendor: p.vendor ?? null,
       tags: Array.isArray(p.tags) ? p.tags : null,
       categoryName: p.categoryName ?? null,
+      // §Phase 3.1 — the picker writes the GID, the checklist shows the name.
+      // Both travel: `categoryName` alone cannot be sent back as a value, and
+      // `categoryId` alone has no label.
+      categoryId: p.categoryId ?? null,
       templateSuffix: p.templateSuffix ?? null,
       featuredImageUrl: p.featuredImageUrl || null,
       // Membership count comes from the Phase-0 join rows. `hasMoreCollections`
@@ -274,7 +281,15 @@ export const loader = createContentLoader({
       // checklist report a confident "missing" while every row beside it says
       // "unknown". Same discriminator, same rule, applied at the source.
       collections: p.attributesSyncedAt
-        ? (p.collections || []).map((c: any) => ({ id: c.collectionId, title: c.collectionTitle || "" }))
+        ? (p.collections || []).map((c: any) => ({
+            id: c.collectionId,
+            title: c.collectionTitle || "",
+            // §Phase 3.1 — the membership picker must show a rule-based
+            // membership as LOCKED. Dropping the flag here would make it
+            // untickable-looking-but-tickable, and the save would appear to do
+            // nothing.
+            automated: c.automated === true,
+          }))
         : null,
       hasMoreCollections: p.hasMoreCollections === true,
       // §2.3: the price lives on ProductVariant, NOT in the attribute block —

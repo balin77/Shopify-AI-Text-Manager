@@ -356,6 +356,8 @@ export const es: Translation = {
     selectItem: "Seleccionar elemento",
     // Field labels
     fieldLabels: {
+      category: "Categoría de producto",
+      collections: "Colecciones",
       productTitle: "Título del producto",
       title: "Título",
       description: "Descripción",
@@ -460,6 +462,32 @@ export const es: Translation = {
     },
     // PLAN §3.2 — el precio es una SEGUNDA mutación y puede fallar por su
     // cuenta mientras el resto sí se guarda. Cada mensaje lo dice.
+    // PLAN §Phase 3.1 — el buscador de categorías del catálogo.
+    taxonomy: {
+      search: "Buscar categorías …",
+      searching: "Buscando …",
+      keepTyping: "Escribe al menos dos caracteres.",
+      noMatches: "Ninguna categoría coincide.",
+      lookupFailed: "No se pudo cargar la lista de categorías. Inténtalo de nuevo en un momento.",
+      none: "Sin definir",
+      clear: "Quitar",
+      broad: "(general)",
+    },
+    // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
+    collectionsField: {
+      filter: "Filtrar colecciones …",
+      loading: "Cargando colecciones",
+      lookupFailed: "No se pudo cargar la lista de colecciones, así que solo se muestran las pertenencias actuales.",
+      automated: "La gestionan las reglas de esa colección",
+      truncated: "Este producto está en más colecciones de las que se cargaron. Gestiona el resto en el admin de Shopify.",
+      unknown: "Aún no se ha cargado: recarga este producto para ver sus colecciones.",
+      none: "Esta tienda todavía no tiene colecciones.",
+    },
+    // PLAN §Phase 3.1 — avisos de atributos. Un código, redactado aquí, porque
+    // la app se distribuye en tres idiomas.
+    attributeWarnings: {
+      collectionsAutomatedKept: "Se mantuvo una colección basada en reglas: sus propias reglas deciden quién pertenece a ella. Todo lo demás se guardó.",
+    },
     priceWarnings: {
       priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. Todo lo demás se guardó.",
       priceInvalid: "El precio no se pudo interpretar como un importe. Todo lo demás se guardó.",

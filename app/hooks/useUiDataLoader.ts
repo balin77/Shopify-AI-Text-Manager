@@ -261,6 +261,15 @@ export function getItemFieldValue(
     // editor may not touch (a `ruleSet` projection, an unsynced collection),
     // and an empty builder over a collection that HAS rules would make its own
     // emptiness true on the first save.
+    // §Phase 3.1 — the category travels as its GID, which is what the write
+    // path needs; the NAME is a label and lives on the item, not in this map.
+    category: typeof row.categoryId === "string" ? row.categoryId : "",
+    // §Phase 3.1 — membership as a comma-joined GID list, like every other
+    // value here. `null` means the row was never attribute-synced, and "" would
+    // read as "in no collections" — which the save would then act on.
+    collections: Array.isArray(row.collections)
+      ? (row.collections as Array<{ id?: string }>).map((c) => c.id ?? "").filter(Boolean).join(",")
+      : "",
     collectionRules: Array.isArray(row.ruleSources)
       ? JSON.stringify(row.ruleSources)
       : RULES_UNREADABLE,

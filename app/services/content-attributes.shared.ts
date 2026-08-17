@@ -159,3 +159,87 @@ export function attributeInputFor(
   if (rejected.length > 0) input.rejected = rejected;
   return input;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// §Phase 3.1 — collection MEMBERSHIP (products only)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Membership is a DIFF, not a list.
+ *
+ * `ProductInput` takes `collectionsToJoin` / `collectionsToLeave`, so sending
+ * "the collections this product is in" is not an option at all — and that is
+ * the right shape anyway: a product can belong to collections whose rows this
+ * shop never cached (the collection cache is capped by the merchant's plan),
+ * and a full-list write would silently drop every one of them.
+ *
+ * Two rules carry the correctness here:
+ *
+ *   - The BEFORE side is the CACHE (`ProductCollection`), never the client. A
+ *     payload that names an id as "left" must not be able to remove a
+ *     membership this editor never showed.
+ *   - An AUTOMATED membership is never left. Its rule would re-add the product
+ *     within seconds, and the merchant would be looking at a save that
+ *     apparently did nothing. The picker says so; this enforces it, because the
+ *     action is reachable by POST.
+ */
+export interface MembershipDiff {
+  toJoin: string[];
+  toLeave: string[];
+  /** Automated memberships the payload asked to leave. Reported, not silent. */
+  refusedAutomated: string[];
+}
+
+export function diffCollectionMembership(
+  before: Array<{ collectionId: string; automated: boolean }>,
+  afterIds: string[],
+): MembershipDiff {
+  const beforeById = new Map(before.map((row) => [row.collectionId, row] as const));
+  const after = new Set(afterIds.filter((id) => id.trim()));
+
+  const toJoin = [...after].filter((id) => !beforeById.has(id));
+
+  const toLeave: string[] = [];
+  const refusedAutomated: string[] = [];
+  for (const row of before) {
+    if (after.has(row.collectionId)) continue;
+    if (row.automated) {
+      refusedAutomated.push(row.collectionId);
+      continue;
+    }
+    toLeave.push(row.collectionId);
+  }
+
+  return { toJoin, toLeave, refusedAutomated };
+}
+
+/**
+ * The editor carries membership as a comma-separated list of collection GIDs,
+ * like every other value in that flat map. Parsed here so the client and the
+ * server read it the same way.
+ */
+export function parseCollectionIds(value: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of value.split(",")) {
+    const id = raw.trim();
+    // Only real GIDs. A stray token would become a `collectionsToJoin` entry
+    // and fail the WHOLE mutation, taking the merchant's text edits with it.
+    if (!id.startsWith("gid://shopify/Collection/")) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/** A taxonomy GID, or null for "cleared". Anything else is refused. */
+export function parseCategoryId(value: string): { id: string | null; valid: boolean } {
+  const trimmed = value.trim();
+  if (!trimmed) return { id: null, valid: true };
+  // Same reasoning as the collection ids: a bad ID fails at the schema level,
+  // which never reaches `userErrors` — the save would read as a success while
+  // nothing was written.
+  if (!trimmed.startsWith("gid://shopify/TaxonomyCategory/")) return { id: null, valid: false };
+  return { id: trimmed, valid: true };
+}

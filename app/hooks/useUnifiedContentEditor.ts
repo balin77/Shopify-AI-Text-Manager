@@ -1870,13 +1870,22 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const ruleWarnings = (t.content?.ruleWarnings ?? {}) as Record<string, string>;
       const ruleWarningCode =
         "ruleWarning" in fetcher.data ? String(fetcher.data.ruleWarning ?? "") : "";
+      // §Phase 3.1 — codes from the attribute path (today: a rule-based
+      // membership the picker asked to remove and the server kept). A LIST,
+      // because more than one can be true of the same save.
+      const attributeWarnings = (t.content?.attributeWarnings ?? {}) as Record<string, string>;
+      const rawAttributeWarnings = (fetcher.data as unknown as Record<string, unknown>).attributeWarnings;
+      const attributeWarningCodes: string[] = Array.isArray(rawAttributeWarnings)
+        ? (rawAttributeWarnings as string[])
+        : [];
       const serverWarning =
-        // A CODE from the price or rule path (localized here), or a plain
-        // string from the older warning paths. All end up in the same box, and
-        // two codes are joined rather than one silently winning.
+        // A CODE from the price, rule or attribute path (localized here), or a
+        // plain string from the older warning paths. All end up in the same
+        // box, and codes are joined rather than one silently winning.
         [
           priceWarningCode && (priceWarnings[priceWarningCode] || priceWarningCode),
           ruleWarningCode && (ruleWarnings[ruleWarningCode] || ruleWarningCode),
+          ...attributeWarningCodes.map((code) => attributeWarnings[code] || code),
           "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",
         ]
           .filter(Boolean)

@@ -357,6 +357,8 @@ export const en: Translation = {
     selectItem: "Select item",
     // Field labels
     fieldLabels: {
+      category: "Product category",
+      collections: "Collections",
       productTitle: "Product Title",
       title: "Title",
       description: "Description",
@@ -462,6 +464,34 @@ export const en: Translation = {
     // PLAN §3.2 — the price is a SECOND mutation, so it can fail on its own
     // while the rest of the save lands. Each ends with what DID work, because
     // a warning that only says "failed" invites the merchant to save again.
+    // PLAN §Phase 3.1 — the product-taxonomy picker. "No matches", "keep
+    // typing" and "the lookup broke" are three different things, and only one
+    // of them means the merchant should try different words.
+    taxonomy: {
+      search: "Search categories …",
+      searching: "Searching …",
+      keepTyping: "Type at least two characters.",
+      noMatches: "No category matches that.",
+      lookupFailed: "The category list could not be loaded. Try again in a moment.",
+      none: "Not set",
+      clear: "Clear",
+      broad: "(broad)",
+    },
+    // PLAN §Phase 3.1 — the membership picker.
+    collectionsField: {
+      filter: "Filter collections …",
+      loading: "Loading collections",
+      lookupFailed: "The collection list could not be loaded, so only the current memberships are shown.",
+      automated: "Managed by this collection's rules",
+      truncated: "This product is in more collections than were loaded. Manage the rest in the Shopify admin.",
+      unknown: "Not loaded yet — reload this product to see its collections.",
+      none: "This shop has no collections yet.",
+    },
+    // PLAN §Phase 3.1 — attribute warnings. A code, phrased here, because the
+    // app ships in three languages.
+    attributeWarnings: {
+      collectionsAutomatedKept: "A rule-based collection was kept — its own rules decide who belongs to it. Everything else was saved.",
+    },
     priceWarnings: {
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
       priceInvalid: "The price could not be read as an amount. Everything else was saved.",

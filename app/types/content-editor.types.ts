@@ -251,7 +251,11 @@ export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'poli
  */
 export type FieldType =
   | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
-  | 'select' | 'tags' | 'toggle' | 'money' | 'collectionRules';
+  | 'select' | 'tags' | 'toggle' | 'money' | 'collectionRules'
+  // §Phase 3.1 — two lookups the cache cannot answer alone. `taxonomy` is
+  // Shopify's own ~10k-node category tree (searched live); `collections` is
+  // the shop's collection list, read from this app's own cache.
+  | 'taxonomy' | 'collections';
 
 export interface FieldRenderProps {
   value: string;

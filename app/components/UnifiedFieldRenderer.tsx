@@ -12,6 +12,8 @@ import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { AttributeField } from "./unified/AttributeField";
 import { CollectionRulesField } from "./unified/CollectionRulesField";
+import { TaxonomyField } from "./unified/TaxonomyField";
+import { CollectionsField } from "./unified/CollectionsField";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
@@ -307,6 +309,52 @@ export function UnifiedFieldRenderer(
           altBadge: t.imageManager?.altBadge || "ALT",
           noAltBadge: t.imageManager?.noAltBadge || "NO ALT",
         }}
+      />
+    );
+  }
+
+  // ── PLAN §Phase 3.1 — the product taxonomy ───────────────────────────────
+  // Its own branch, not a case inside AttributeField: the value is a GID and
+  // the LABEL lives on the item, so it needs a second input the generic
+  // attribute control has no shape for.
+  if (field.type === "taxonomy") {
+    return (
+      <TaxonomyField
+        value={value}
+        onChange={onChange}
+        currentLabel={(selectedItem?.categoryName as string) || ""}
+        label={translatedFieldLabel}
+        // Same rule as every other attribute: one value per product, so a
+        // foreign locale reads it only.
+        disabled={!isPrimaryLocale}
+        t={(t.content?.taxonomy ?? {}) as Record<string, string>}
+      />
+    );
+  }
+
+  // ── PLAN §Phase 3.1 — collection membership ──────────────────────────────
+  if (field.type === "collections") {
+    return (
+      <CollectionsField
+        value={value}
+        onChange={onChange}
+        memberships={
+          Array.isArray(selectedItem?.collections)
+            ? (selectedItem.collections as Array<{ id: string; title?: string; automated?: boolean }>).map((c) => ({
+                collectionId: c.id,
+                collectionTitle: c.title ?? "",
+                automated: c.automated === true,
+              }))
+            : []
+        }
+        truncated={selectedItem?.hasMoreCollections === true}
+        // `collections: null` means the row was never attribute-synced — the
+        // same discriminator every other attribute reads. An empty list would
+        // say "in no collections", which the save would then act on.
+        known={Array.isArray(selectedItem?.collections)}
+        label={translatedFieldLabel}
+        disabled={!isPrimaryLocale}
+        t={(t.content?.collectionsField ?? {}) as Record<string, string>}
       />
     );
   }

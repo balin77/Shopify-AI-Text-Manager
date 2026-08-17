@@ -354,6 +354,8 @@ export const de = {
     selectItem: "Eintrag auswählen",
     // Field labels
     fieldLabels: {
+      category: "Produktkategorie",
+      collections: "Kategorien",
       productTitle: "Produkttitel",
       title: "Titel",
       description: "Beschreibung",
@@ -459,6 +461,34 @@ export const de = {
     // PLAN §3.2 — der Preis ist eine ZWEITE Mutation und kann für sich
     // fehlschlagen, während der Rest gespeichert wurde. Jede Meldung sagt das
     // dazu, sonst speichert der Händler ein zweites Mal.
+    // PLAN §Phase 3.1 — die Kategoriesuche. „Kein Treffer", „weitertippen" und
+    // „die Suche ist fehlgeschlagen" sind drei verschiedene Dinge, und nur
+    // eines davon heißt, dass andere Wörter helfen.
+    taxonomy: {
+      search: "Kategorien durchsuchen …",
+      searching: "Wird gesucht …",
+      keepTyping: "Gib mindestens zwei Zeichen ein.",
+      noMatches: "Keine Kategorie passt dazu.",
+      lookupFailed: "Die Kategorieliste konnte nicht geladen werden. Versuch es gleich noch einmal.",
+      none: "Nicht gesetzt",
+      clear: "Entfernen",
+      broad: "(allgemein)",
+    },
+    // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
+    collectionsField: {
+      filter: "Kategorien filtern …",
+      loading: "Kategorien werden geladen",
+      lookupFailed: "Die Kategorieliste konnte nicht geladen werden — angezeigt werden nur die aktuellen Zuordnungen.",
+      automated: "Wird von den Regeln dieser Kategorie bestimmt",
+      truncated: "Dieses Produkt ist in mehr Kategorien, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
+      unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kategorien zu sehen.",
+      none: "Dieser Shop hat noch keine Kategorien.",
+    },
+    // PLAN §Phase 3.1 — Attribut-Warnungen. Ein Code, hier formuliert, weil die
+    // App in drei Sprachen ausgeliefert wird.
+    attributeWarnings: {
+      collectionsAutomatedKept: "Eine regelbasierte Kategorie wurde beibehalten — ihre eigenen Regeln entscheiden, wer dazugehört. Alles andere wurde gespeichert.",
+    },
     priceWarnings: {
       priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
       priceInvalid: "Der Preis konnte nicht als Betrag gelesen werden. Alles Übrige wurde gespeichert.",

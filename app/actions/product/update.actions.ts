@@ -13,7 +13,14 @@ import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
 // One rule per attribute, shared with the generic content path — the previous
 // generation of this code kept a per-resource copy of each and they drifted.
-import { isValidProductStatus, parseTagList } from "~/services/content-attributes.shared";
+import { PRODUCT_COLLECTIONS_SELECTION, productCollectionRows } from "~/services/attribute-sync.shared";
+import {
+  diffCollectionMembership,
+  isValidProductStatus,
+  parseCategoryId,
+  parseCollectionIds,
+  parseTagList,
+} from "~/services/content-attributes.shared";
 import { parseMoney } from "~/services/bulk-editor/columns.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
@@ -42,6 +49,12 @@ interface UpdateProductParams {
   /** Comma-joined on the wire, split into Shopify's array before the write. */
   tags?: string;
   templateSuffix?: string;
+  /** Shopify taxonomy GID, or "" to clear. §Phase 3.1. */
+  category?: string;
+  /** Comma-joined collection GIDs — the membership the picker now shows. It is
+   *  turned into a JOIN/LEAVE diff against the CACHE, never written as a list
+   *  (see `diffCollectionMembership`). */
+  collections?: string;
   /** Price of the DEFAULT variant, as the merchant typed it. Parsed server-side
    *  with the same `parseMoney` the bulk grid uses — locale-specific money
    *  input is a minefield and one parser is the only way both surfaces agree. */
@@ -129,6 +142,8 @@ export async function handleUpdateProduct(
     vendor: getFormStringOrNull(formData, "vendor") ?? undefined,
     tags: getFormStringOrNull(formData, "tags") ?? undefined,
     templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
+    category: getFormStringOrNull(formData, "category") ?? undefined,
+    collections: getFormStringOrNull(formData, "collections") ?? undefined,
     price: getFormStringOrNull(formData, "price") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
@@ -1016,6 +1031,41 @@ async function updatePrimaryProduct(
     mutationInput.tags = parseTagList(params.tags);
   }
 
+  // §Phase 3.1 — the product taxonomy. A malformed GID is REFUSED rather than
+  // forwarded: an ID of the wrong type fails at the SCHEMA level, which comes
+  // back as a top-level `errors` array with `data: null` and never reaches
+  // `userErrors` — the save would read as a success while nothing was written.
+  if (params.category !== undefined && attributeChanged("category")) {
+    const parsed = parseCategoryId(params.category);
+    if (!parsed.valid) {
+      return json(
+        { success: false, error: `"${params.category}" is not a product category.` },
+        { status: 400 },
+      );
+    }
+    // null is meaningful: it takes the product OUT of the taxonomy.
+    mutationInput.category = parsed.id;
+  }
+
+  // §Phase 3.1 — collection membership, as a DIFF against the cache.
+  //
+  // The BEFORE side never comes from the client: a payload that names an id as
+  // "left" must not be able to remove a membership this editor never showed.
+  // An AUTOMATED membership is refused outright — its rule would re-add the
+  // product within seconds, and the merchant would be looking at a save that
+  // apparently did nothing.
+  const membershipNotes: string[] = [];
+  if (params.collections !== undefined && attributeChanged("collections")) {
+    const cached = await db.productCollection.findMany({
+      where: { shop, productId },
+      select: { collectionId: true, automated: true },
+    });
+    const diff = diffCollectionMembership(cached, parseCollectionIds(params.collections));
+    if (diff.toJoin.length > 0) mutationInput.collectionsToJoin = diff.toJoin;
+    if (diff.toLeave.length > 0) mutationInput.collectionsToLeave = diff.toLeave;
+    if (diff.refusedAutomated.length > 0) membershipNotes.push("collectionsAutomatedKept");
+  }
+
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -1033,6 +1083,15 @@ async function updatePrimaryProduct(
             vendor
             tags
             templateSuffix
+            # §Phase 3.1 — echoed so the cache mirrors what Shopify RESOLVED.
+            # The taxonomy node carries its own full path, which is what the
+            # picker labels the category with; deriving it here would be a
+            # second copy of Shopify's own data.
+            category { id fullName name }
+            # Membership after the join/leave diff. The SHARED selection, not a
+            # copy: the mapper below requires every key of it, and a hand-written
+            # near-copy is how the mirror silently stops writing.
+            ${PRODUCT_COLLECTIONS_SELECTION}
             seo {
               title
               description
@@ -1053,6 +1112,25 @@ async function updatePrimaryProduct(
 
   const data = await response.json() as any;
 
+  // A SCHEMA-level error arrives as a top-level `errors` array with
+  // `data: null` and never as a userError. Before this check the line below
+  // dereferenced `data.data.productUpdate` and threw a TypeError, which the
+  // caller reported as a generic 500 — the merchant learned nothing about
+  // which field Shopify refused.
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    logger.error("Shopify product update schema error", {
+      context: "UpdateProduct",
+      errors: data.errors,
+    });
+    return json(
+      { success: false, error: data.errors[0]?.message || "Shopify refused the update." },
+      { status: 500 },
+    );
+  }
+  if (!data.data?.productUpdate) {
+    return json({ success: false, error: "Shopify returned no result for this update." }, { status: 500 });
+  }
+
   if (data.data.productUpdate.userErrors.length > 0) {
     logger.error("Shopify product update error", {
       context: "UpdateProduct",
@@ -1070,7 +1148,7 @@ async function updatePrimaryProduct(
   // Update local database
   try {
     // `string[]` is in the union for `tags` — a Prisma scalar list column.
-    const updateData: Record<string, string | string[] | Date | null> = {};
+    const updateData: Record<string, string | string[] | boolean | Date | null> = {};
     if (params.title) updateData.title = params.title;
     if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml || null;
     if (params.handle !== undefined) updateData.handle = params.handle || null;
@@ -1089,6 +1167,11 @@ async function updatePrimaryProduct(
     // hold — and the attribute checklist reads that cache.
     const echoed = data.data.productUpdate.product as {
       status?: string; vendor?: string; tags?: string[]; templateSuffix?: string | null;
+      category?: { id?: string; fullName?: string | null; name?: string | null } | null;
+      collections?: {
+        nodes?: Array<{ id: string; title?: string | null; ruleSet?: unknown | null }> | null;
+        pageInfo?: { hasNextPage?: boolean } | null;
+      } | null;
     } | null;
     // Mirrored only for what was actually WRITTEN — same gate as the mutation
     // input above, or a title edit would mirror the cache's own defaults back
@@ -1106,13 +1189,46 @@ async function updatePrimaryProduct(
       updateData.tags = echoed.tags;
     }
 
+    // §Phase 3.1 — the taxonomy. `fullName` is the whole path and is what the
+    // picker labels the category with; storing only the leaf would make the
+    // sidebar say "Shirts & Tops" for a category the merchant chose under
+    // "Apparel". Cleared to null when the merchant cleared it, which the echo
+    // reports as a missing category rather than an empty one.
+    if (mutationInput.category !== undefined) {
+      updateData.categoryId = echoed?.category?.id ?? null;
+      updateData.categoryName = echoed?.category?.fullName ?? echoed?.category?.name ?? null;
+    }
+
     // Always update lastSyncedAt
     updateData.lastSyncedAt = new Date();
+
+    // §Phase 3.1 — membership, rebuilt from the ECHO.
+    //
+    // `productCollectionRows` returns null when the block was not delivered,
+    // which is the caller's signal to SKIP the rebuild rather than wipe the
+    // memberships — the same rule the sync follows. It is also why the
+    // truncation flag rides along: "in N collections" must not read as
+    // complete when it is a cut-off list.
+    const membership =
+      mutationInput.collectionsToJoin !== undefined || mutationInput.collectionsToLeave !== undefined
+        ? productCollectionRows(shop, productId, echoed?.collections as never)
+        : null;
+    if (membership) updateData.hasMoreCollections = membership.hasMore;
 
     await db.product.update({
       where: { shop_id: { shop, id: productId } },
       data: updateData,
     });
+
+    if (membership) {
+      // Delete-by-product then createMany, exactly as the sync does: the echo
+      // is the complete window, so a diff against it would only reintroduce
+      // the drift this rebuild exists to remove.
+      await db.productCollection.deleteMany({ where: { shop, productId } });
+      if (membership.rows.length > 0) {
+        await db.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+      }
+    }
 
     loggers.product("info", "Updated product in DB", {
       productId,
@@ -1405,6 +1521,10 @@ async function updatePrimaryProduct(
     // possible outcome.
     // A code, not a sentence — the client phrases it (see the helper below).
     ...(priceWarning ? { priceWarning } : {}),
+    // §Phase 3.1 — a rule-based membership the picker asked to remove was
+    // kept. Reported rather than silent: the merchant unticked a box and the
+    // product is still in the collection, and only this line explains why.
+    ...(membershipNotes.length > 0 ? { attributeWarnings: membershipNotes } : {}),
   });
 }
 

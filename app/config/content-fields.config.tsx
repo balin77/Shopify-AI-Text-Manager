@@ -41,6 +41,8 @@ const ATTRIBUTE_LABELS = {
   sortOrder: "Sort order",
   templateSuffix: "Theme template",
   isPublished: "Visible in the online store",
+  category: "Product category",
+  collections: "Collections",
 } as const;
 
 /** Shared by products and articles — same control, different suggestion pool. */
@@ -214,6 +216,34 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: false,
       supportsTranslation: false,
       attributeNote: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+    },
+    {
+      // §Phase 3.1 — Shopify's product taxonomy. Not a free-text field: the
+      // value is a TaxonomyCategory GID, and a wrong one fails at the schema
+      // level, which never reaches `userErrors`.
+      key: "category",
+      type: "taxonomy",
+      label: ATTRIBUTE_LABELS.category,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      attributeNote:
+        "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
+    },
+    {
+      // §Phase 3.1 — membership. Written as a JOIN/LEAVE diff against the
+      // cache, never as a list: a product can belong to collections whose rows
+      // this shop never cached, and a full-list write would drop them.
+      key: "collections",
+      type: "collections",
+      label: ATTRIBUTE_LABELS.collections,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      attributeNote:
+        "Rule-based collections are managed by their own rules — removing the product here would not stick.",
     },
     TEMPLATE_SUFFIX_FIELD,
   ],
