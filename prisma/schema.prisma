@@ -146,6 +146,14 @@ model AISettings {
   // crawl take longer.
   seoCrawlExternalLinks Boolean @default(true)
 
+  // Keyword-aware translation: a translation into a foreign locale is
+  // phrased so THAT locale's own tracked keyword survives, instead of being
+  // a literal rendering of the primary text. Default on — it is what a
+  // merchant who bothered to track per-language keywords expects; the flag
+  // exists for shops whose translations must stay strictly faithful
+  // (legal copy, regulated product text).
+  keywordAwareTranslation Boolean @default(true)
+
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
   // character constraints to the translate prompt for SEO-critical fields

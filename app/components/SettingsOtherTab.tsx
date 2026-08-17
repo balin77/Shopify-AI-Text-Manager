@@ -60,6 +60,7 @@ interface Props {
   groupedFieldTranslations: GroupedFieldTranslationEntry[];
   optionValueMemory: OptionValueMemoryEntry[];
   primaryShopLocale: string;
+  keywordAwareTranslation: boolean;
   showSkuTab: boolean;
 
   // Image manager (only rendered when showImageManagerTab is true)
@@ -86,6 +87,7 @@ export function SettingsOtherTab({
   groupedFieldTranslations,
   optionValueMemory,
   primaryShopLocale,
+  keywordAwareTranslation,
   showSkuTab,
   showImageManagerTab,
   imageManagerSettings,
@@ -167,6 +169,7 @@ export function SettingsOtherTab({
 
       {selected === "recurring" && (
         <SettingsRecurringValuesTab
+          keywordAwareTranslation={keywordAwareTranslation}
           groupedFieldTranslations={groupedFieldTranslations}
           optionValueMemory={optionValueMemory}
           primaryShopLocale={primaryShopLocale}

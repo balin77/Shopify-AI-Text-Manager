@@ -24,6 +24,7 @@ interface Props {
   groupedFieldTranslations: GroupedFieldTranslationEntry[];
   optionValueMemory: OptionValueMemoryEntry[];
   primaryShopLocale: string;
+  keywordAwareTranslation: boolean;
   showSkuTab: boolean;
   t: I18nTranslation;
 }
@@ -35,6 +36,7 @@ export function SettingsRecurringValuesTab({
   groupedFieldTranslations,
   optionValueMemory,
   primaryShopLocale,
+  keywordAwareTranslation,
   showSkuTab,
   t,
 }: Props) {
@@ -54,6 +56,7 @@ export function SettingsRecurringValuesTab({
       <SettingsTranslationsTab
         groupedFieldTranslations={groupedFieldTranslations}
         primaryShopLocale={primaryShopLocale}
+        keywordAwareTranslation={keywordAwareTranslation}
         t={t}
       />
 

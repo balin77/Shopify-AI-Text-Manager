@@ -457,6 +457,8 @@ export const de = {
     aiInstructions: "KI-Anweisungen",
     appLanguage: "App-Sprache",
     translations: "Übersetzungen",
+    keywordAwareTranslation: "Keywords in Übersetzungen einarbeiten",
+    keywordAwareTranslationHelp: "Beim Übersetzen wird der Text so formuliert, dass das für die jeweilige Zielsprache hinterlegte Keyword darin vorkommt — statt den Ausgangstext wörtlich zu übertragen. Sprachen ohne eigene Keywords werden unverändert übersetzt. Abschalten, wenn Übersetzungen streng wortgetreu bleiben müssen.",
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",

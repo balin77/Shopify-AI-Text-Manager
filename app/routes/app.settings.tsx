@@ -526,6 +526,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
         deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
 
+        // Keyword-aware translation (Übersetzungen card).
+        keywordAwareTranslation: settings.keywordAwareTranslation ?? true,
+
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
@@ -744,6 +747,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         create: { shop: session.shop, appLanguage, preferredProvider: "claude" },
       });
 
+      return json({ success: true, actionType });
+    } else if (actionType === "saveTranslationSettings") {
+      // Whether a translation is phrased to carry the TARGET locale's own
+      // tracked keyword. Off = the previous literal behaviour.
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: { keywordAwareTranslation: formData.get("keywordAwareTranslation") === "true" },
+        create: {
+          shop: session.shop,
+          keywordAwareTranslation: formData.get("keywordAwareTranslation") === "true",
+        },
+      });
       return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
@@ -1495,7 +1510,8 @@ export default function SettingsPage() {
                   imageManagerSettings={imageManagerSettings ?? { enabled: true, autoAltText: false }}
                   shop={shop}
                   onImageManagerHasChangesChange={setHasImageManagerChanges}
-                />
+                keywordAwareTranslation={settings.keywordAwareTranslation ?? true}
+              />
               )}
 
               {/* Plan Settings */}

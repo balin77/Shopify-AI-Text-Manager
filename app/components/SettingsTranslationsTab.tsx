@@ -5,6 +5,7 @@ import {
   Text,
   BlockStack,
   InlineStack,
+  Divider,
   TextField,
   Button,
   Badge,
@@ -12,6 +13,7 @@ import {
   EmptyState,
 } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
+import { ToggleSwitch } from "./ToggleSwitch";
 
 interface GroupedFieldTranslationEntry {
   id: string;
@@ -28,6 +30,8 @@ interface GroupedFieldTranslationEntry {
 interface Props {
   groupedFieldTranslations: GroupedFieldTranslationEntry[];
   primaryShopLocale: string;
+  /** AISettings.keywordAwareTranslation — see the toggle below. */
+  keywordAwareTranslation: boolean;
   t: I18nTranslation;
 }
 
@@ -64,6 +68,7 @@ export function SettingsTranslationsTab({
   groupedFieldTranslations,
   primaryShopLocale,
   t,
+  keywordAwareTranslation,
 }: Props) {
   const fetcher = useFetcher<{ ok: boolean; synced?: number; failed?: number; total?: number; error?: string }>();
   const [filter, setFilter] = useState("");
@@ -88,6 +93,18 @@ export function SettingsTranslationsTab({
         Object.values(row.byLocale).some((e) => e.translatedValue.toLowerCase().includes(f)),
     );
   }, [rows, filter]);
+
+  // Optimistic local mirror so the pill moves on click; the settings action is
+  // the source of truth on the next load.
+  const [keywordAware, setKeywordAware] = useState(keywordAwareTranslation);
+  const settingsFetcher = useFetcher();
+  const toggleKeywordAware = (checked: boolean) => {
+    setKeywordAware(checked);
+    settingsFetcher.submit(
+      { actionType: "saveTranslationSettings", keywordAwareTranslation: String(checked) },
+      { method: "post", action: "/app/settings" },
+    );
+  };
 
   function submit(intent: Record<string, unknown>) {
     fetcher.submit(intent as Record<string, string>, {
@@ -130,6 +147,23 @@ export function SettingsTranslationsTab({
           <Text as="p" tone="subdued" variant="bodyMd">
             {t.settings.translationsDescription}
           </Text>
+
+          {/* Keyword-aware translation. Sits in this card because it changes
+              what a TRANSLATION does, not what generation does — the editor's
+              generate/format actions already work the active locale's keywords
+              in and are deliberately not governed by this switch. */}
+          <Divider />
+          <InlineStack align="space-between" blockAlign="center" gap="400">
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.keywordAwareTranslation}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.keywordAwareTranslationHelp}
+              </Text>
+            </BlockStack>
+            <ToggleSwitch checked={keywordAware} onChange={toggleKeywordAware} />
+          </InlineStack>
         </BlockStack>
       </Card>
 

@@ -459,6 +459,8 @@ export const es: Translation = {
     aiInstructions: "Instrucciones de IA",
     appLanguage: "Idioma de la aplicación",
     translations: "Traducciones",
+    keywordAwareTranslation: "Incorporar palabras clave en las traducciones",
+    keywordAwareTranslationHelp: "Al traducir, el texto se redacta de modo que aparezca la palabra clave registrada para ese idioma de destino, en lugar de traducir el original de forma literal. Los idiomas sin palabras clave propias se traducen sin cambios. Desactívalo si las traducciones deben ser estrictamente fieles.",
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",
     translationsProductType: "Tipo de producto",
     translationsSearchLabel: "Buscar",

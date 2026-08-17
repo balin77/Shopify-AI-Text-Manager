@@ -460,6 +460,8 @@ export const en: Translation = {
     aiInstructions: "AI Instructions",
     appLanguage: "App Language",
     translations: "Translations",
+    keywordAwareTranslation: "Work keywords into translations",
+    keywordAwareTranslationHelp: "When translating, the text is phrased so the keyword tracked for that target language appears in it — instead of rendering the source literally. Languages without their own keywords are translated unchanged. Turn this off when translations must stay strictly faithful.",
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",
     translationsProductType: "Product Type",
     translationsSearchLabel: "Search",

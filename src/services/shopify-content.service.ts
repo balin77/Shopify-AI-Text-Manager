@@ -7,7 +7,12 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
-import { isAuthError } from './ai.service';
+import { isAuthError, localeName } from './ai.service';
+import {
+  keywordTranslationDirective,
+  keywordTranslationDirectiveMulti,
+  type LocaleKeywords,
+} from '../../app/services/seo/keyword-translation-prompt';
 import type { PrismaClient } from "@prisma/client";
 import type { MarketInfo } from "../../app/types/content-editor.types";
 
@@ -1178,8 +1183,8 @@ export class ShopifyContentService {
     shop: string;
     fields: Record<string, string>;
     translationService: {
-      translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
-      translateShortFieldsBatch?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], contentType?: string, instructions?: string) => Promise<Record<string, Record<string, string>>>;
+      translateProduct: (fields: Record<string, string>, locales: string[], contentType?: string, instructions?: string, keywordDirective?: string) => Promise<Record<string, Record<string, string>>>;
+      translateShortFieldsBatch?: (fields: Record<string, string>, sourceLocale: string, targetLocales: string[], contentType?: string, instructions?: string, keywordDirective?: string) => Promise<Record<string, Record<string, string>>>;
     };
     db: PrismaClient;
     targetLocales?: string[];
@@ -1187,8 +1192,14 @@ export class ShopifyContentService {
     taskId?: string;
     customInstructions?: string;
     sourceLocale?: string;
+    /**
+     * Phrase each locale's translation so THAT locale's own tracked keyword
+     * survives (AISettings.keywordAwareTranslation). Off = the previous
+     * literal behaviour, untouched.
+     */
+    keywordAwareTranslation?: boolean;
   }) {
-    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en' } = params;
+    const { resourceId, resourceType, shop, fields, translationService, db, targetLocales: customTargetLocales, contentType, customInstructions, sourceLocale = 'en', keywordAwareTranslation = false } = params;
 
     // Fetch digest map once for all translations
     const { digestMap } = await this.loadTranslatableContent(resourceId);
@@ -1208,6 +1219,44 @@ export class ShopifyContentService {
         .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
         .map((l: { locale: string }) => l.locale);
     }
+
+    // Keyword-aware translation: each target locale's OWN tracked keywords, so
+    // the translated text is phrased to carry them instead of being a literal
+    // rendering of the primary value. A locale that tracks nothing gets no
+    // clause and is translated exactly as before.
+    const keywordsByLocale = new Map<string, LocaleKeywords>();
+    if (keywordAwareTranslation && resourceId) {
+      const { getItemKeywords } = await import('../../app/services/seo/keywords.service');
+      await Promise.all(
+        targetLocales.map(async (locale) => {
+          try {
+            const rows = await getItemKeywords(db, shop, resourceId, locale);
+            if (rows.length === 0) return;
+            const primary = rows.find((r) => r.role === 'primary')?.keyword ?? null;
+            if (!primary) return;
+            keywordsByLocale.set(locale, {
+              locale,
+              localeName: localeName(locale),
+              primary,
+              secondaries: rows.filter((r) => r.role === 'secondary').map((r) => r.keyword),
+            });
+          } catch (err) {
+            // A keyword lookup must never cost the merchant the translation —
+            // worst case this locale is translated the old, literal way.
+            loggers.translation('warn', `Keyword lookup failed for ${locale}, translating without it`, {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }),
+      );
+    }
+
+    /** The clause for ONE locale, empty when it tracks nothing. */
+    const keywordDirectiveFor = (locale: string): string | undefined => {
+      const entry = keywordsByLocale.get(locale);
+      if (!entry) return undefined;
+      return keywordTranslationDirective(entry) || undefined;
+    };
 
     const allTranslations: Record<string, Record<string, string>> = {};
     const failedLocales: string[] = [];
@@ -1507,7 +1556,8 @@ export class ShopifyContentService {
           sourceLocale,
           targetLocales,
           contentType || 'product',
-          customInstructions
+          customInstructions,
+          keywordTranslationDirectiveMulti(Array.from(keywordsByLocale.values())) || undefined,
         );
 
         // Track new productType translations to persist after the loop.
@@ -1555,7 +1605,7 @@ export class ShopifyContentService {
         loggers.translation('warn', 'Falling back to sequential for short fields...');
         for (const locale of targetLocales) {
           try {
-            const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions);
+            const localeTranslations = await translationService.translateProduct(shortFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
             const translatedFields = localeTranslations[locale];
             if (translatedFields) {
               const prepared = await collectLocaleTranslations(locale, translatedFields);
@@ -1576,7 +1626,7 @@ export class ShopifyContentService {
       for (const locale of targetLocales) {
         try {
           loggers.translation('debug', `Translating long fields to ${locale}`, { longFields: Object.keys(longFields) });
-          const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions);
+          const localeTranslations = await translationService.translateProduct(longFields, [locale], contentType, customInstructions, keywordDirectiveFor(locale));
           const translatedFields = localeTranslations[locale];
 
           if (translatedFields) {

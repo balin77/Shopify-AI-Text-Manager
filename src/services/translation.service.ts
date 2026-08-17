@@ -11,10 +11,18 @@ export class TranslationService {
     fields: Record<string, string>,
     targetLocales?: string[],
     contentType: string = 'product',
-    customInstructions?: string
+    customInstructions?: string,
+    /** Keyword-aware translation clause for THIS call's target language(s). */
+    keywordDirective?: string
   ): Promise<Record<string, Record<string, string>>> {
     const locales = targetLocales || ['en', 'fr', 'es', 'it'];
-    return await this.aiService.translateFields(fields, locales, contentType, customInstructions);
+    return await this.aiService.translateFields(
+      fields,
+      locales,
+      contentType,
+      customInstructions,
+      keywordDirective,
+    );
   }
 
   /**
@@ -37,8 +45,18 @@ export class TranslationService {
     fields: Record<string, string>,
     fromLang: string,
     targetLocales: string[],
-    contentType: string = 'product'
+    contentType: string = 'product',
+    customInstructions?: string,
+    /** Keyword-aware translation clause — one line per target language. */
+    keywordDirective?: string
   ): Promise<Record<string, Record<string, string>>> {
-    return await this.aiService.translateShortFieldsBatch(fields, fromLang, targetLocales, contentType);
+    return await this.aiService.translateShortFieldsBatch(
+      fields,
+      fromLang,
+      targetLocales,
+      contentType,
+      customInstructions,
+      keywordDirective,
+    );
   }
 }
