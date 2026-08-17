@@ -1949,8 +1949,11 @@ export default function BulkEditor() {
         : b.saveSuccess.replace("{count}", String(lastSavedCount))
       : "";
 
+  // No maxWidth cap: the grid is a spreadsheet — every extra pixel goes into the
+  // value columns (BulkGrid gives uncapped columns 1fr), so the editor uses the
+  // full viewport width instead of leaving margins unused.
   return (
-    <div style={{ padding: "1rem", maxWidth: "1600px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+    <div style={{ padding: "1rem", width: "100%", boxSizing: "border-box" }}>
       <PlanAccessGate minPlan="basic">
         {gated ? null : (
           <BlockStack gap="400">
