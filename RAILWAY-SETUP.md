@@ -84,7 +84,7 @@ man vor einer destruktiven Migration, und dafür ist dieser Service da.
 | `R2_ACCOUNT_ID` | Cloudflare-Account-ID; daraus wird `https://<id>.r2.cloudflarestorage.com` gebaut |
 | `R2_ENDPOINT` | optional, überschreibt `R2_ACCOUNT_ID`. **Pflicht bei EU-Jurisdiction** (siehe unten) |
 | `R2_BUCKET` | Ziel-Bucket |
-| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2-API-Token. **Nur „Object Read & Write" auf genau diesen Bucket** — der Token liegt in einem Container, der sonst nichts mit R2 zu tun hat |
+| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2-**Account**-API-Token (kein User-Token, s. u.). **Nur „Object Read & Write" auf genau diesen Bucket** — der Token liegt in einem Container, der sonst nichts mit R2 zu tun hat |
 | `BACKUP_PREFIX` | Key-Präfix und Dateiname-Stamm, Default `contentpilot` |
 | `BACKUP_RETENTION_DAYS` | ältere Dumps werden gelöscht, Default `30`, `0` = nie löschen |
 | `BACKUP_KEEP_MINIMUM` | die N neuesten Dumps werden **nie** gelöscht, Default `3` |
@@ -127,6 +127,14 @@ monatelang nicht, darf der nächste Lauf nicht „alle sind alt" als „alle lö
 lesen), und gelöscht wird nur, was auf `.dump` endet — was sonst noch unter dem
 Präfix liegt, gehört der Retention nicht. Beides ist in
 [tests/unit/db-backup.test.ts](tests/unit/db-backup.test.ts) festgenagelt.
+
+**Account-Token, nicht User-Token.** Cloudflare bietet beim Anlegen beide Typen
+an. Ein User-Token hängt an einer Person — an deren Account-Mitgliedschaft und
+deren Rechten. Ändert sich daran etwas, hört das Backup auf zu laufen, nachts und
+unbeaufsichtigt; also genau die stille Sorte Ausfall, gegen die dieser Service
+gebaut ist. Ein Account-Token gehört dem Account und überlebt Personalwechsel.
+Beide liefern dasselbe Access-Key-Paar, die Bucket-Einschränkung gilt für beide —
+es gibt also nichts zu gewinnen und etwas zu verlieren.
 
 **EU-Jurisdiction ändert den Endpoint.** Die Dumps enthalten Shop-Daten und
 Session-PII, EU-Residenz ist also naheliegend — aber Cloudflare trennt zwei
