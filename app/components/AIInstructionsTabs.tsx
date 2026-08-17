@@ -406,15 +406,15 @@ export function AIInstructionsTabs({
                   <Text as="h3" variant="headingMd">
                     {t.settings.keywordAwareTranslation}
                   </Text>
-                  <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.settings.keywordAwareTranslationHelp}
-                    </Text>
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
                       checked={localKeywordAware}
                       onChange={setLocalKeywordAware}
                       disabled={readOnly}
                     />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.settings.keywordAwareTranslationHelp}
+                    </Text>
                   </InlineStack>
                 </BlockStack>
               </div>

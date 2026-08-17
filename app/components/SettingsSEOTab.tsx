@@ -206,15 +206,7 @@ export function SettingsSEOTab({
         </Text>
 
         <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="100">
-              <Text as="p" variant="bodyMd">
-                {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {t.settings.seoTitleSuffixLabel || "Shopify hängt Shop-Namen an SEO-Titel an"}
-              </Text>
-            </BlockStack>
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
             <ToggleSwitch
               checked={seoTitleSuffixEnabled}
               onChange={(checked) => {
@@ -224,6 +216,14 @@ export function SettingsSEOTab({
                 }
               }}
             />
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoTitleSuffixLabel || "Shopify hängt Shop-Namen an SEO-Titel an"}
+              </Text>
+            </BlockStack>
           </InlineStack>
 
           {seoTitleSuffixEnabled && (
