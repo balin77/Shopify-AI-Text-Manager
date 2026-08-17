@@ -1867,11 +1867,20 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       const priceWarnings = (t.content?.priceWarnings ?? {}) as Record<string, string>;
       const priceWarningCode =
         "priceWarning" in fetcher.data ? String(fetcher.data.priceWarning ?? "") : "";
+      const ruleWarnings = (t.content?.ruleWarnings ?? {}) as Record<string, string>;
+      const ruleWarningCode =
+        "ruleWarning" in fetcher.data ? String(fetcher.data.ruleWarning ?? "") : "";
       const serverWarning =
-        // A CODE from the price path (localized here), or a plain string from
-        // the older warning paths. Both end up in the same box.
-        (priceWarningCode && (priceWarnings[priceWarningCode] || priceWarningCode)) ||
-        ("warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "");
+        // A CODE from the price or rule path (localized here), or a plain
+        // string from the older warning paths. All end up in the same box, and
+        // two codes are joined rather than one silently winning.
+        [
+          priceWarningCode && (priceWarnings[priceWarningCode] || priceWarningCode),
+          ruleWarningCode && (ruleWarnings[ruleWarningCode] || ruleWarningCode),
+          "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
 
       if (failedAltTextIndices.length > 0) {
         const failedList = failedAltTextIndices.map((i: number) => i + 1).join(", ");

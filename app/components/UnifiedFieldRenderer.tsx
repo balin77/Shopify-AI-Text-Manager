@@ -11,6 +11,7 @@ import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { AttributeField } from "./unified/AttributeField";
+import { CollectionRulesField } from "./unified/CollectionRulesField";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
@@ -74,6 +75,10 @@ export interface FieldRendererProps {
   attributesKnown?: boolean;
   /** The way out of that state. */
   onReloadAttributes?: () => void;
+  /** PLAN §Phase 3.1 — the API version the app talks to. The rule editor needs
+   *  2026-07; below that `sources[]` does not exist and it says so instead of
+   *  offering a control that cannot work. */
+  apiVersion?: string;
   /** Shop currency ("EUR"), shown as the `money` field's suffix. Currency is
    *  shop-wide, never per field — the same rule the bulk money columns follow. */
   currencyCode?: string;
@@ -125,6 +130,7 @@ export function UnifiedFieldRenderer(
     attributesKnown,
     onReloadAttributes,
     currencyCode,
+    apiVersion = "",
   } = props;
 
   const currentAction = fetcherFormData?.get("action");
@@ -301,6 +307,26 @@ export function UnifiedFieldRenderer(
           altBadge: t.imageManager?.altBadge || "ALT",
           noAltBadge: t.imageManager?.noAltBadge || "NO ALT",
         }}
+      />
+    );
+  }
+
+  // ── PLAN §Phase 3.1 — the rule editor for an existing collection ─────────
+  // Its own branch rather than a case inside AttributeField: it carries state
+  // of its own (an array of sources), its own validation, and its own reason
+  // for being unavailable — the API VERSION, not the plan and not the locale.
+  if (field.type === "collectionRules") {
+    return (
+      <CollectionRulesField
+        value={value}
+        onChange={onChange}
+        label={translatedFieldLabel}
+        isPrimaryLocale={isPrimaryLocale}
+        apiVersion={apiVersion}
+        adminUrlForCollection={
+          selectedItem?.id ? `shopify://admin/collections/${String(selectedItem.id).split("/").pop()}` : undefined
+        }
+        t={t}
       />
     );
   }

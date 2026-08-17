@@ -447,6 +447,15 @@ export const de = {
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
     rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
     addTag: "Tag hinzufügen",
+    // PLAN §3.1 — die Regeländerung ist eine eigene Mutation und kann für sich
+    // fehlschlagen. Jede Meldung sagt dazu, was gespeichert wurde.
+    ruleWarnings: {
+      rulesRequireNewerApi: "Automatische Kollektionsregeln brauchen eine neuere Shopify-API-Version als diese App derzeit nutzt — sie wurden nicht geändert. Alles Übrige wurde gespeichert.",
+      rulesUnreadable: "Die Regeln dieser Kollektion konnten nicht in einer Form gelesen werden, die dieser Editor versteht — sie blieben unangetastet. Alles Übrige wurde gespeichert.",
+      rulesInvalid: "Die Kollektionsregeln waren unvollständig und wurden nicht gespeichert. Alles Übrige wurde gespeichert.",
+      rulesNotConfirmed: "Shopify hat die Regeländerung nicht bestätigt, deshalb wurde sie auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
+      rulesFailed: "Die Kollektionsregeln konnten nicht gespeichert werden. Alles Übrige wurde gespeichert.",
+    },
     // PLAN §3.2 — der Preis ist eine ZWEITE Mutation und kann für sich
     // fehlschlagen, während der Rest gespeichert wurde. Jede Meldung sagt das
     // dazu, sonst speichert der Händler ein zweites Mal.

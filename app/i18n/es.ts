@@ -449,6 +449,15 @@ export const es: Translation = {
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
     rulesNeedApiUpgrade: "Las colecciones automatizadas necesitan la API {version} de Shopify. Hasta que esta aplicación se actualice, puedes crear colecciones y elegir sus productos manualmente.",
     addTag: "Añadir etiqueta",
+    // PLAN §3.1 — el cambio de reglas es una mutación propia y puede fallar
+    // por su cuenta. Cada mensaje dice qué sí se guardó.
+    ruleWarnings: {
+      rulesRequireNewerApi: "Las reglas automáticas de colección necesitan una versión de la API de Shopify más reciente que la que usa esta app, así que no se cambiaron. Todo lo demás se guardó.",
+      rulesUnreadable: "Las reglas de esta colección no se pudieron leer en una forma que este editor entienda, así que se dejaron intactas. Todo lo demás se guardó.",
+      rulesInvalid: "Las reglas de la colección estaban incompletas y no se guardaron. Todo lo demás se guardó.",
+      rulesNotConfirmed: "Shopify no confirmó el cambio de reglas, así que tampoco se guardó localmente. Todo lo demás se guardó.",
+      rulesFailed: "Las reglas de la colección no se pudieron guardar. Todo lo demás se guardó.",
+    },
     // PLAN §3.2 — el precio es una SEGUNDA mutación y puede fallar por su
     // cuenta mientras el resto sí se guarda. Cada mensaje lo dice.
     priceWarnings: {

@@ -296,6 +296,20 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
     },
     // ── §Phase 3 merchandising attributes ──────────────────────────────────
     {
+      // §Phase 3.1 — the rule editor for an EXISTING collection. Not gated on
+      // the plan but on the API VERSION: `sources[]` exists from 2026-07 on,
+      // and below that the builder renders its own explanation rather than a
+      // control that cannot work. `translationKey: ""` keeps it out of every
+      // translation path, like the other attributes.
+      key: "collectionRules",
+      type: "collectionRules",
+      label: "Automatic collection rules",
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+    },
+    {
       key: "sortOrder",
       type: "select",
       label: ATTRIBUTE_LABELS.sortOrder,

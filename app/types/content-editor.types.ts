@@ -251,7 +251,7 @@ export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'poli
  */
 export type FieldType =
   | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
-  | 'select' | 'tags' | 'toggle' | 'money';
+  | 'select' | 'tags' | 'toggle' | 'money' | 'collectionRules';
 
 export interface FieldRenderProps {
   value: string;

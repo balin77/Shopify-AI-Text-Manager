@@ -450,6 +450,15 @@ export const en: Translation = {
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
     rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
     addTag: "Add tag",
+    // PLAN §3.1 — the rule change is its own mutation and can fail alone. Each
+    // message ends with what DID work, so the merchant does not save twice.
+    ruleWarnings: {
+      rulesRequireNewerApi: "Automatic collection rules need a newer Shopify API version than this app currently uses, so they were not changed. Everything else was saved.",
+      rulesUnreadable: "This collection's rules could not be read in a form this editor understands, so they were left untouched. Everything else was saved.",
+      rulesInvalid: "The collection rules were incomplete and were not saved. Everything else was saved.",
+      rulesNotConfirmed: "Shopify did not confirm the rule change, so it was not saved locally either. Everything else was saved.",
+      rulesFailed: "The collection rules could not be saved. Everything else was saved.",
+    },
     // PLAN §3.2 — the price is a SECOND mutation, so it can fail on its own
     // while the rest of the save lands. Each ends with what DID work, because
     // a warning that only says "failed" invites the merchant to save again.

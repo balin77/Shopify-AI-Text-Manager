@@ -197,6 +197,9 @@ interface UnifiedContentEditorProps {
   /** PLAN §Phase 3.2 — shop currency for the `money` field's suffix. Shop-wide,
    *  so it is passed once rather than resolved per field. */
   currencyCode?: string;
+  /** PLAN §Phase 3.1 — the Shopify API version this app talks to. The rule
+   *  editor needs 2026-07; below that it renders its reason instead. */
+  apiVersion?: string;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -216,6 +219,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     hideItemListStatusBars = false,
     showItemListCategoryBadge = false,
     currencyCode,
+    apiVersion,
     planLimit,
     fieldPagination,
     onFieldPageChange,
@@ -1372,6 +1376,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           tagSuggestions={tagSuggestions}
                           attributesKnown={itemAttributesKnown}
                           currencyCode={currencyCode}
+                          apiVersion={apiVersion}
                           onReloadAttributes={() => { void handleSyncAll(); }}
                         />
                         );

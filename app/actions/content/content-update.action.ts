@@ -672,6 +672,23 @@ export async function handleUpdateContent(
       marketId,
     });
 
+    // §Phase 3.1 — the collection's rule sources, as a DIFF against what the
+    // cache holds. A separate mutation from the content update because
+    // `sourcesToCreate/Update/Delete` are their own inputs, and because a
+    // rule failure must not take the merchant's text edits with it.
+    let ruleWarning: string | undefined;
+    if (
+      contentConfig.resourceType === "Collection" &&
+      isPrimarySave &&
+      changedAttributeFields?.includes("collectionRules")
+    ) {
+      const { applyCollectionRuleChange } = await import("~/services/collection-rules.server");
+      ruleWarning = await applyCollectionRuleChange(admin, db, session.shop, {
+        collectionId: itemId,
+        submitted: getFormString(formData, "collectionRules"),
+      });
+    }
+
     const savedOk = (result as { success?: boolean })?.success !== false;
     const redirectNote = savedOk
       ? await finishHandleRedirect(echoedHandle(result as Record<string, unknown>))
@@ -679,7 +696,14 @@ export async function handleUpdateContent(
     // §3.4 — the ONLY moment a page/article/blog publish can reach IndexNow:
     // Shopify emits no webhook for any of them.
     if (savedOk) await finishIndexNow(echoedHandle(result as Record<string, unknown>));
-    return json({ ...result, actionType: "updateContent", ...(redirectNote ? { redirectNote } : {}) });
+    return json({
+      ...result,
+      actionType: "updateContent",
+      ...(redirectNote ? { redirectNote } : {}),
+      // A rule change that did not land is a warning on a save that otherwise
+      // worked — never a silent drop, and never a failed save.
+      ...(ruleWarning ? { ruleWarning } : {}),
+    });
   } catch (error: unknown) {
     const errorMsg = getFullErrorMessage(error);
     logger.error('Unified content update error', {
