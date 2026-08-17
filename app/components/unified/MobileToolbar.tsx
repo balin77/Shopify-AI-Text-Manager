@@ -40,6 +40,29 @@ interface MobileToolbarProps {
   validationOverlays?: ValidationOverlays;
   validationVersion?: number;
 
+  /**
+   * The item-level actions the desktop bar shows as buttons: the visibility
+   * switch, Duplicate, Delete.
+   *
+   * They are in this menu rather than only on desktop because the switch
+   * REPLACED the status field in the form — leaving it out here would make a
+   * product's status unreachable on a phone. `statusLabel` arrives ready to
+   * read (an ActionList row has no room to explain itself), and a `null`
+   * status means the item's state is not known, which renders as a disabled
+   * row rather than a guess.
+   */
+  itemActions?: {
+    statusLabel?: string;
+    statusChecked?: boolean;
+    statusDisabled?: boolean;
+    statusHelp?: string;
+    onToggleStatus?: () => void;
+    onDuplicate?: () => void;
+    duplicateLabel?: string;
+    onDelete?: () => void;
+    deleteLabel?: string;
+  };
+
   // Operation handlers (Save/Discard are handled by the native save bar)
   onTranslateAll: () => void;
   onClearAll: () => void;
@@ -93,6 +116,7 @@ export function MobileToolbar({
   validationVersion,
   onTranslateAll,
   onClearAll,
+  itemActions,
   onToggleSendImageToAI,
   disableBulkActions = false,
   sendImageToAI = false,
@@ -205,6 +229,32 @@ export function MobileToolbar({
                     onToggleSendImageToAI();
                     closePopover();
                   },
+                }] : []),
+                // The item itself: visible or not, copy it, delete it. Same
+                // set and same order as the desktop action bar.
+                ...(itemActions?.onToggleStatus && itemActions.statusLabel ? [{
+                  content: `${itemActions.statusChecked ? "✓" : ""} ${itemActions.statusLabel}`,
+                  onAction: () => {
+                    itemActions.onToggleStatus?.();
+                    closePopover();
+                  },
+                  disabled: itemActions.statusDisabled,
+                  helpText: itemActions.statusHelp,
+                }] : []),
+                ...(itemActions?.onDuplicate ? [{
+                  content: itemActions.duplicateLabel || "Duplicate",
+                  onAction: () => {
+                    itemActions.onDuplicate?.();
+                    closePopover();
+                  },
+                }] : []),
+                ...(itemActions?.onDelete ? [{
+                  content: itemActions.deleteLabel || "Delete",
+                  onAction: () => {
+                    itemActions.onDelete?.();
+                    closePopover();
+                  },
+                  destructive: true,
                 }] : []),
               ]}
             />

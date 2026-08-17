@@ -127,6 +127,12 @@ export const loader = createContentLoader({
         // a save the rule silently undoes.
         collections: { select: { collectionId: true, collectionTitle: true, automated: true } },
         variants: { select: { price: true }, orderBy: { position: "asc" }, take: 1 },
+        // The COUNT, not the rows: the default-price field means "the first
+        // variant" and says so, which is only honest while there is just one.
+        // With several, the field is hidden and the per-variant panel takes
+        // over — so the editor has to know how many there are without paying
+        // for them.
+        _count: { select: { variants: true } },
       },
       orderBy: { title: "asc" },
       take: effectiveTake,
@@ -302,6 +308,10 @@ export const loader = createContentLoader({
       // it is therefore NOT gated on attributesSyncedAt. Decimal has no place
       // in a loader payload, so it goes over as a string.
       defaultVariantPrice: p.variants?.[0]?.price != null ? String(p.variants[0].price) : null,
+      // `undefined` on a row this loader did not count is NOT "one variant":
+      // the price field would then show for a product whose price it cannot
+      // represent. Readers treat anything but a number as unknown.
+      variantCount: typeof p._count?.variants === "number" ? p._count.variants : null,
     }));
 
     return {

@@ -63,6 +63,20 @@ export interface AttributeFieldProps {
   onReloadAttributes?: () => void;
   /** Tags already used in the shop, for the autocomplete. */
   suggestions?: string[];
+  /**
+   * Shopify ENUM values → what the merchant reads, keyed "<field>.<VALUE>".
+   *
+   * The map is passed in rather than baked into the field config because the
+   * config is shared with the server and with the bulk grid, and a label is a
+   * per-language thing. Without it this rendered `ALPHA_ASC` and `AUTO_PUBLISHED`
+   * verbatim — not English prose either, just the wire format.
+   */
+  optionLabels?: Record<string, string>;
+  /** The explanatory line under the control, already translated. */
+  attributeNote?: string;
+  /** Translated help for the plain-text controls, where the config's own
+   *  string is an English sentence the server-side config cannot localise. */
+  helpText?: string;
   t: {
     notTranslatable?: string;
     addTag?: string;
@@ -120,6 +134,9 @@ export function AttributeField({
   attributesKnown,
   onReloadAttributes,
   suggestions = [],
+  optionLabels,
+  attributeNote,
+  helpText,
   t,
 }: AttributeFieldProps) {
   const [draftTag, setDraftTag] = useState("");
@@ -157,7 +174,13 @@ export function AttributeField({
         return (
           <Select
             label={label}
-            options={(field.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
+            options={(field.options ?? []).map((o) => ({
+              // `field.label` is the raw enum value — the config has no
+              // language. A missing entry falls back to it rather than to "",
+              // because an untranslated value still identifies the option.
+              label: optionLabels?.[`${field.key}.${o.value}`] ?? o.label,
+              value: o.value,
+            }))}
             value={value}
             onChange={onChange}
             disabled={locked}
@@ -195,7 +218,7 @@ export function AttributeField({
             autoComplete="off"
             inputMode="decimal"
             suffix={field.currencyCode || undefined}
-            helpText={field.attributeNote}
+            helpText={attributeNote ?? field.attributeNote}
           />
         );
 
@@ -212,7 +235,7 @@ export function AttributeField({
             onChange={onChange}
             disabled={locked}
             autoComplete="off"
-            helpText={typeof field.helpText === "string" ? field.helpText : undefined}
+            helpText={helpText ?? (typeof field.helpText === "string" ? field.helpText : undefined)}
           />
         );
 
@@ -282,10 +305,10 @@ export function AttributeField({
   return (
     <BlockStack gap="150">
       {control}
-      {field.attributeNote && (
+      {(attributeNote ?? field.attributeNote) && (
         <InlineStack gap="100" blockAlign="center" wrap={false}>
           <Icon source={InfoIcon} tone="subdued" />
-          <Text as="p" variant="bodySm" tone="subdued">{field.attributeNote}</Text>
+          <Text as="p" variant="bodySm" tone="subdued">{attributeNote ?? field.attributeNote}</Text>
         </InlineStack>
       )}
       {locked && lockedHint && (

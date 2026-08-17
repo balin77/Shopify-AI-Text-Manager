@@ -358,6 +358,8 @@ export const en: Translation = {
     selectItem: "Select item",
     // Field labels
     fieldLabels: {
+      collectionRules: "Automated rules",
+      images: "Images",
       commerce: "Stock and sales channels",
       category: "Product category",
       collections: "Collections",
@@ -530,6 +532,8 @@ export const en: Translation = {
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
       scheduled: "Scheduled for {date}",
       stockHeading: "Stock",
+      variantSelectLabel: "Variant",
+      oneVariant: "This product has one variant.",
       variantsTruncated: "This product has more variants than were loaded. Edit the rest in the Shopify admin.",
       stockUnknown: "Not loaded yet — reload to see this variant's stock.",
       stockUntracked: "Stock is not tracked for this variant — it can be sold without limit.",
@@ -566,6 +570,45 @@ export const en: Translation = {
     },
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
+    // ONE enum vocabulary, at the top level because THREE surfaces render the
+    // same values: the create modal, the editor's attribute fields and the
+    // bulk grid. Keyed "<field>.<VALUE>" — a Shopify enum is never shown raw
+    // ("ALPHA_ASC" is not a sentence in any language).
+    enumLabels: {
+      "status.DRAFT": "Draft", "status.ACTIVE": "Active",
+      "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
+      "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
+      "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+      "sortOrder.PRICE_ASC": "Price, low to high", "sortOrder.PRICE_DESC": "Price, high to low",
+      "sortOrder.CREATED": "Oldest first", "sortOrder.CREATED_DESC": "Newest first",
+      "sortOrder.MOST_RELEVANT": "Relevance",
+      "commentPolicy.CLOSED": "Closed", "commentPolicy.MODERATED": "Moderated",
+      "commentPolicy.AUTO_PUBLISHED": "Auto-published",
+      "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
+      "weightUnit.OUNCES": "oz", "weightUnit.POUNDS": "lb",
+    },
+    // The explanatory line under an attribute field. Long-form on purpose:
+    // each one exists because merchants reliably assume the opposite.
+    attributeNotes: {
+      status: "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
+      price: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+      category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
+      collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
+      commerce: "Stock and channels are saved on their own — the buttons in this section, not the main save.",
+    },
+    templateSuffixHelp: "Empty = the theme's default template.",
+    statusToggle: {
+      reload: "Reload",
+      active: "Active",
+      activeHint: "Visible in your shop — as long as the product is on a sales channel.",
+      draftHint: "Draft — not visible in your shop.",
+      published: "Visible",
+      publishedHint: "Published and reachable in your shop.",
+      unpublishedHint: "Not published — the address returns a 404.",
+      unavailable: "This status cannot be changed here: {reason}",
+      unknown: "Not loaded from Shopify yet — reload this item to change its status.",
+      archivedHint: "Archived. Change it in the Shopify admin.",
+    },
     duplicateModal: {
       title: "Duplicate \u201c{name}\u201d",
       intro: "Shopify copies everything \u2014 images, variants, options and metafields. You only need a name.",
@@ -589,6 +632,10 @@ export const en: Translation = {
     createModal: {
       // PLAN §2.5a-d — the AI extras.
       altText: "Alt text",
+      changeImage: "Change image",
+      chooseImage: "Choose image",
+      chooseImageTitle: "Choose an image",
+      createFailed: "Could not create",
       altTextGenerating: "Writing alt text…",
       keywordHint: "Goes into the AI prompt and becomes this item's main keyword.",
       generateRest: "Write the rest with AI",
@@ -625,17 +672,6 @@ export const en: Translation = {
         productType: "Product type", vendor: "Vendor", tags: "Tags",
         sortOrder: "Sort order", author: "Author", blog: "Blog",
         commentPolicy: "Comments", metaobjectType: "Type",
-      },
-      options: {
-        "status.DRAFT": "Draft", "status.ACTIVE": "Active",
-        "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
-        "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
-        "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
-        "sortOrder.PRICE_ASC": "Price, low to high", "sortOrder.PRICE_DESC": "Price, high to low",
-        "sortOrder.CREATED": "Oldest first", "sortOrder.CREATED_DESC": "Newest first",
-        "sortOrder.MOST_RELEVANT": "Relevance",
-        "commentPolicy.CLOSED": "Closed", "commentPolicy.MODERATED": "Moderated",
-        "commentPolicy.AUTO_PUBLISHED": "Auto-published",
       },
     },
   },

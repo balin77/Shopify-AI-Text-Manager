@@ -357,6 +357,8 @@ export const es: Translation = {
     selectItem: "Seleccionar elemento",
     // Field labels
     fieldLabels: {
+      collectionRules: "Reglas automáticas",
+      images: "Imágenes",
       commerce: "Inventario y canales de venta",
       category: "Categoría de producto",
       collections: "Colecciones",
@@ -526,6 +528,8 @@ export const es: Translation = {
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
       stockHeading: "Inventario",
+      variantSelectLabel: "Variante",
+      oneVariant: "Este producto tiene una variante.",
       variantsTruncated: "Este producto tiene más variantes de las que se cargaron. Edita el resto en el admin de Shopify.",
       stockUnknown: "Aún no se ha cargado: recarga para ver el inventario de esta variante.",
       stockUntracked: "Esta variante no lleva control de inventario: se puede vender sin límite.",
@@ -562,6 +566,45 @@ export const es: Translation = {
     },
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
+    // UN solo vocabulario de enums, en el nivel superior porque TRES
+    // superficies muestran los mismos valores: el modal de creación, los
+    // campos de atributos del editor y la cuadrícula masiva. Clave
+    // "<campo>.<VALOR>" — un enum de Shopify nunca se muestra en crudo.
+    enumLabels: {
+      "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
+      "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
+      "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Más vendidos",
+      "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+      "sortOrder.PRICE_ASC": "Precio ascendente", "sortOrder.PRICE_DESC": "Precio descendente",
+      "sortOrder.CREATED": "Más antiguos primero", "sortOrder.CREATED_DESC": "Más recientes primero",
+      "sortOrder.MOST_RELEVANT": "Relevancia",
+      "commentPolicy.CLOSED": "Cerrados", "commentPolicy.MODERATED": "Moderados",
+      "commentPolicy.AUTO_PUBLISHED": "Publicación automática",
+      "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
+      "weightUnit.OUNCES": "oz", "weightUnit.POUNDS": "lb",
+    },
+    // La línea explicativa bajo un campo de atributo. Larga a propósito: cada
+    // una existe porque los comerciantes asumen de forma fiable lo contrario.
+    attributeNotes: {
+      status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Gestiona los canales en el admin de Shopify.",
+      price: "Se aplica a la primera variante. Los productos con varias variantes se tarifican en el editor masivo.",
+      category: "Shopify usa la categoría para los tipos impositivos y para los listados de marketplace. Un tipo concreto es mejor que una rama amplia.",
+      collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
+      commerce: "El stock y los canales se guardan por separado — con los botones de esta sección, no con el guardado normal.",
+    },
+    templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
+    statusToggle: {
+      reload: "Recargar",
+      active: "Activo",
+      activeHint: "Visible en tu tienda — siempre que el producto esté en un canal de venta.",
+      draftHint: "Borrador — no visible en tu tienda.",
+      published: "Visible",
+      publishedHint: "Publicado y accesible en tu tienda.",
+      unpublishedHint: "Sin publicar — la dirección devuelve un 404.",
+      unavailable: "Este estado no se puede cambiar aquí: {reason}",
+      unknown: "Aún no se ha cargado desde Shopify — recarga este elemento para cambiar su estado.",
+      archivedHint: "Archivado. Cámbialo en el admin de Shopify.",
+    },
     duplicateModal: {
       title: "Duplicar \u201c{name}\u201d",
       intro: "Shopify copia todo \u2014 imágenes, variantes, opciones y metacampos. Solo necesitas un nombre.",
@@ -585,6 +628,10 @@ export const es: Translation = {
     createModal: {
       // PLAN §2.5a-d — los extras de IA.
       altText: "Texto alternativo",
+      changeImage: "Cambiar imagen",
+      chooseImage: "Elegir imagen",
+      chooseImageTitle: "Elegir imagen",
+      createFailed: "No se pudo crear",
       altTextGenerating: "Escribiendo el texto alternativo…",
       keywordHint: "Entra en el prompt de la IA y pasa a ser la palabra clave principal de este elemento.",
       generateRest: "Que la IA escriba el resto",
@@ -621,17 +668,6 @@ export const es: Translation = {
         productType: "Tipo de producto", vendor: "Proveedor", tags: "Etiquetas",
         sortOrder: "Orden", author: "Autor", blog: "Blog",
         commentPolicy: "Comentarios", metaobjectType: "Tipo",
-      },
-      options: {
-        "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
-        "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
-        "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Más vendidos",
-        "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
-        "sortOrder.PRICE_ASC": "Precio ascendente", "sortOrder.PRICE_DESC": "Precio descendente",
-        "sortOrder.CREATED": "Más antiguos primero", "sortOrder.CREATED_DESC": "Más recientes primero",
-        "sortOrder.MOST_RELEVANT": "Relevancia",
-        "commentPolicy.CLOSED": "Cerrados", "commentPolicy.MODERATED": "Moderados",
-        "commentPolicy.AUTO_PUBLISHED": "Publicación automática",
       },
     },
   },

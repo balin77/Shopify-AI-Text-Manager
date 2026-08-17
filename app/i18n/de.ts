@@ -355,6 +355,8 @@ export const de = {
     selectItem: "Eintrag auswählen",
     // Field labels
     fieldLabels: {
+      collectionRules: "Automatische Regeln",
+      images: "Bilder",
       commerce: "Bestand und Vertriebskanäle",
       category: "Produktkategorie",
       collections: "Kategorien",
@@ -527,6 +529,8 @@ export const de = {
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
       stockHeading: "Bestand",
+      variantSelectLabel: "Variante",
+      oneVariant: "Dieses Produkt hat eine Variante.",
       variantsTruncated: "Dieses Produkt hat mehr Varianten, als geladen wurden. Den Rest bearbeitest du im Shopify-Admin.",
       stockUnknown: "Noch nicht geladen — lade neu, um den Bestand dieser Variante zu sehen.",
       stockUntracked: "Für diese Variante wird kein Bestand geführt — sie kann unbegrenzt verkauft werden.",
@@ -563,6 +567,45 @@ export const de = {
     },
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
+    // EIN Enum-Vokabular, auf oberster Ebene, weil DREI Oberflächen dieselben
+    // Werte rendern: das Anlege-Modal, die Attributfelder im Editor und das
+    // Bulk-Grid. Schlüssel "<feld>.<WERT>" — ein Shopify-Enum wird nie roh
+    // angezeigt ("ALPHA_ASC" ist in keiner Sprache ein Satz).
+    enumLabels: {
+      "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
+      "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
+      "sortOrder.MANUAL": "Manuell", "sortOrder.BEST_SELLING": "Bestseller",
+      "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+      "sortOrder.PRICE_ASC": "Preis aufsteigend", "sortOrder.PRICE_DESC": "Preis absteigend",
+      "sortOrder.CREATED": "Älteste zuerst", "sortOrder.CREATED_DESC": "Neueste zuerst",
+      "sortOrder.MOST_RELEVANT": "Relevanz",
+      "commentPolicy.CLOSED": "Geschlossen", "commentPolicy.MODERATED": "Moderiert",
+      "commentPolicy.AUTO_PUBLISHED": "Automatisch veröffentlicht",
+      "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
+      "weightUnit.OUNCES": "oz", "weightUnit.POUNDS": "lb",
+    },
+    // Die Erklärzeile unter einem Attributfeld. Bewusst ausführlich: jede
+    // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
+    attributeNotes: {
+      status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Kanäle verwaltest du im Shopify-Admin.",
+      price: "Gilt für die erste Variante. Produkte mit mehreren Varianten bepreist du im Bulk-Editor.",
+      category: "Shopify nutzt die Kategorie für Steuersätze und für Marktplatz-Listings. Ein konkreter Typ ist besser als ein breiter Ast.",
+      collections: "Regelbasierte Kategorien werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
+      commerce: "Bestand und Kanäle werden eigenständig gespeichert — über die Buttons in diesem Bereich, nicht über das normale Speichern.",
+    },
+    templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
+    statusToggle: {
+      reload: "Neu laden",
+      active: "Aktiv",
+      activeHint: "In deinem Shop sichtbar — sofern das Produkt auf einem Vertriebskanal liegt.",
+      draftHint: "Entwurf — in deinem Shop nicht sichtbar.",
+      published: "Sichtbar",
+      publishedHint: "Veröffentlicht und in deinem Shop erreichbar.",
+      unpublishedHint: "Nicht veröffentlicht — die Adresse liefert einen 404.",
+      unavailable: "Dieser Status lässt sich hier nicht ändern: {reason}",
+      unknown: "Noch nicht von Shopify geladen — lade diesen Eintrag neu, um den Status zu ändern.",
+      archivedHint: "Archiviert. Änderbar im Shopify-Admin.",
+    },
     duplicateModal: {
       title: "\u201e{name}\u201c duplizieren",
       intro: "Shopify kopiert alles mit \u2014 Bilder, Varianten, Optionen und Metafelder. Du brauchst nur einen Namen.",
@@ -586,6 +629,10 @@ export const de = {
     createModal: {
       // PLAN §2.5a-d — die KI-Extras.
       altText: "Alt-Text",
+      changeImage: "Bild wechseln",
+      chooseImage: "Bild wählen",
+      chooseImageTitle: "Bild wählen",
+      createFailed: "Konnte nicht angelegt werden",
       altTextGenerating: "Alt-Text wird geschrieben …",
       keywordHint: "Fließt in den KI-Prompt ein und wird zum Hauptkeyword dieses Eintrags.",
       generateRest: "Rest von der KI schreiben lassen",
@@ -622,17 +669,6 @@ export const de = {
         productType: "Produkttyp", vendor: "Hersteller", tags: "Tags",
         sortOrder: "Sortierung", author: "Autor", blog: "Blog",
         commentPolicy: "Kommentare", metaobjectType: "Typ",
-      },
-      options: {
-        "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
-        "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
-        "sortOrder.MANUAL": "Manuell", "sortOrder.BEST_SELLING": "Bestseller",
-        "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
-        "sortOrder.PRICE_ASC": "Preis aufsteigend", "sortOrder.PRICE_DESC": "Preis absteigend",
-        "sortOrder.CREATED": "Älteste zuerst", "sortOrder.CREATED_DESC": "Neueste zuerst",
-        "sortOrder.MOST_RELEVANT": "Relevanz",
-        "commentPolicy.CLOSED": "Geschlossen", "commentPolicy.MODERATED": "Moderiert",
-        "commentPolicy.AUTO_PUBLISHED": "Automatisch veröffentlicht",
       },
     },
   },

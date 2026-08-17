@@ -19,6 +19,7 @@ import { useRouteLoaderData } from "react-router";
 import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-rules.shared";
 import { buildAttributeChecklist, needsAttributeSync } from "../services/attribute-checklist.shared";
 import { DuplicateItemModal } from "./create/DuplicateItemModal";
+import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
@@ -351,6 +352,35 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
   // Use effective field definitions (dynamic for templates, static for other content types)
   const fieldDefinitions = effectiveFieldDefinitions || config.fieldDefinitions;
+
+  /**
+   * The one field that decides whether an item is visible in the shop, lifted
+   * out of the field list and into the action bar — it is the answer merchants
+   * look for first, and hunting for it among twenty text fields is not that.
+   *
+   * Which field that IS differs per type, and two of the five have none:
+   *
+   *   products           `status`, four values. Only ACTIVE ⇄ DRAFT is a
+   *                      toggle; UNLISTED and ARCHIVED are real states this
+   *                      app must not silently overwrite, so the switch locks
+   *                      and says which state it is in.
+   *   pages, articles    `isPublished`, a true toggle.
+   *   collections        visibility lives in publications, which this app has
+   *                      no scope for — there is nothing honest to show.
+   *   blogs, policies,   no such field at all.
+   *   theme content
+   *
+   * Derived from the CONFIG rather than hardcoded per content type: a type
+   * that gains one of these fields gets the switch without anyone remembering.
+   */
+  const statusControl = useMemo(() => {
+    const has = (key: string) => fieldDefinitions.some((f) => f.key === key);
+    if (config.contentType === "products" && has("status")) {
+      return { fieldKey: "status", kind: "status" as const };
+    }
+    if (has("isPublished")) return { fieldKey: "isPublished", kind: "published" as const };
+    return null;
+  }, [config.contentType, fieldDefinitions]);
 
   // List-level "sync from Shopify" (discovery): trigger a real full sync of this
   // content type from Shopify, THEN revalidate so newly-created items appear in
@@ -978,7 +1008,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         {/* Left Sidebar - Unified Item List (Desktop only via CSS) */}
         <div className="unified-item-list-container">
           <div className="desktop-only">
-            <UnifiedItemList
+            {/* Duplicate and Delete are NOT passed any more: they moved to the
+            editor's action bar. Above a LIST they looked like list actions
+            while acting on whichever row happened to be selected. */}
+        <UnifiedItemList
             items={unifiedItems}
           selectedItemId={state.selectedItemId}
           onItemSelect={handlers.handleItemSelect}
@@ -996,12 +1029,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           // Labelling it without disabling it let a merchant fill in a whole
           // form only to meet a 403 — and made the two entry points disagree.
           addButtonDisabled={!!createDisabledReason}
-          showDuplicateButton={createResources.length > 0}
-          onDuplicateItem={handleDuplicateItem}
-          duplicateButtonLabel={t.content?.duplicateButtonLabel || "Duplicate"}
-          showDeleteButton={createResources.length > 0}
-          onDeleteItem={handleDeleteItem}
-          deleteButtonLabel={t.content?.deleteButtonLabel || "Delete"}
           addButtonLabel={createDisabledReason || t.content?.createButtonLabel || "Create"}
           onSyncAll={revalidator ? handleSyncAll : undefined}
           isSyncing={isDiscovering || revalidator?.state === "loading"}
@@ -1096,6 +1123,57 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   reloadLocale={state.currentLanguage}
                   onReloadComplete={handleReloadComplete}
                   revalidator={revalidator}
+                  // Mirror of the desktop action bar — see `statusControl`.
+                  // The status field is no longer in the form, so without this
+                  // a phone could not reach it at all.
+                  itemActions={{
+                    ...(statusControl && selectedItem
+                      ? (() => {
+                          const value = helpers.getEditableValue(statusControl.fieldKey);
+                          const checked =
+                            statusControl.kind === "status"
+                              ? value.toUpperCase() === "ACTIVE"
+                              : value !== "false";
+                          const foreign = state.currentLanguage !== primaryLocale;
+                          // UNLISTED / ARCHIVED are real states, and a two-way
+                          // menu row would overwrite them on one tap.
+                          const lockedStatus =
+                            statusControl.kind === "status" &&
+                            !["ACTIVE", "DRAFT"].includes(value.toUpperCase());
+                          const toggle = (t.content?.statusToggle ?? {}) as Record<string, string>;
+                          return {
+                            statusLabel:
+                              statusControl.kind === "status"
+                                ? toggle.active || "Active"
+                                : toggle.published || "Visible",
+                            statusChecked: checked,
+                            statusDisabled: foreign || lockedStatus,
+                            statusHelp: foreign
+                              ? t.content?.attributesForeignLocale
+                              : lockedStatus
+                                ? toggle.archivedHint
+                                : checked
+                                  ? statusControl.kind === "status" ? toggle.activeHint : toggle.publishedHint
+                                  : statusControl.kind === "status" ? toggle.draftHint : toggle.unpublishedHint,
+                            onToggleStatus: () =>
+                              handlers.handleValueChange(
+                                statusControl.fieldKey,
+                                statusControl.kind === "status"
+                                  ? (checked ? "DRAFT" : "ACTIVE")
+                                  : (checked ? "false" : "true"),
+                              ),
+                          };
+                        })()
+                      : {}),
+                    ...(createResources.length > 0 && selectedItem
+                      ? {
+                          onDuplicate: () => handleDuplicateItem(selectedItem.id),
+                          duplicateLabel: t.content?.duplicateButtonLabel || "Duplicate",
+                          onDelete: () => handleDeleteItem(selectedItem.id),
+                          deleteLabel: t.content?.deleteButtonLabel || "Delete",
+                        }
+                      : {}),
+                  }}
                   t={{
                     primaryLocaleSuffix: t.content?.primaryLanguageSuffix || "Primary",
                     translateAll: t.content?.translateAll || "🌍 Translate All",
@@ -1229,6 +1307,52 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             🗑️ {t.content?.clearAll || "Clear All"}
                           </Button>
                           )}
+                        </>
+                      )}
+                    </InlineStack>
+
+                    {/* Middle: what happens to the ITEM — visible/not, copy it,
+                        delete it. Separated from the translate/clear actions on
+                        the left, which act on its TEXT. Both used to live
+                        elsewhere: the switch among twenty fields, the two
+                        buttons over the item list, where they belonged to
+                        whichever row happened to be selected. */}
+                    <InlineStack gap="300" blockAlign="center">
+                      {statusControl && selectedItem && (
+                        <ItemStatusSwitch
+                          kind={statusControl.kind}
+                          value={helpers.getEditableValue(statusControl.fieldKey)}
+                          onChange={(next) => handlers.handleValueChange(statusControl.fieldKey, next)}
+                          // Visibility exists once per item, not per language —
+                          // the same rule every other attribute follows.
+                          disabled={state.currentLanguage !== primaryLocale}
+                          disabledHint={
+                            state.currentLanguage !== primaryLocale
+                              ? t.content?.attributesForeignLocale
+                              : undefined
+                          }
+                          // `isPublished` defaults to TRUE on a row an older
+                          // sync wrote, so without this an unsynced draft would
+                          // present itself as visible.
+                          // A product's `status` is NOT part of the attribute
+                          // block — it is non-null in the schema and predates
+                          // it — so it is trustworthy on every row. Only the
+                          // `isPublished` half needs the discriminator.
+                          known={
+                            statusControl.kind === "status" ||
+                            (selectedItem as { attributesSyncedAt?: string | null }).attributesSyncedAt != null
+                          }
+                          t={(t.content?.statusToggle ?? {}) as Record<string, string>}
+                        />
+                      )}
+                      {createResources.length > 0 && selectedItem && (
+                        <>
+                          <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
+                            {t.content?.duplicateButtonLabel || "Duplicate"}
+                          </Button>
+                          <Button size="slim" tone="critical" onClick={() => handleDeleteItem(selectedItem.id)}>
+                            {t.content?.deleteButtonLabel || "Delete"}
+                          </Button>
                         </>
                       )}
                     </InlineStack>
@@ -1375,7 +1499,25 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       // App-embed technical fields are locked in every locale.
                       const isFieldReadOnly = isTemplatePrimaryReadOnly || isEmbedTechnical;
 
-                      return fieldDefinitions.map((field) => {
+                      return fieldDefinitions.filter((field) => {
+                        // The status/visibility switch lives in the action bar
+                        // above — ONE control per value. Two switches on one
+                        // screen invite the question which of them counts, and
+                        // the answer ("both, they write the same field") is not
+                        // one a merchant should have to work out.
+                        if (statusControl && field.key === statusControl.fieldKey) return false;
+                        // §2.3 — the default price means "the first variant"
+                        // and says so in its note. That is only true while
+                        // there IS one variant; with several, the per-variant
+                        // panel below owns pricing and stock. An UNKNOWN count
+                        // hides it too: showing a single price for a product
+                        // that may have twenty is the misleading direction.
+                        if (field.key === "price" && config.contentType === "products") {
+                          const count = (selectedItem as { variantCount?: number | null } | null)?.variantCount;
+                          if (typeof count !== "number" || count > 1) return false;
+                        }
+                        return true;
+                      }).map((field) => {
                         if (field.type === "image-gallery" && imageGalleryReplacement) {
                           return <div key={field.key}>{imageGalleryReplacement}</div>;
                         }
@@ -1874,6 +2016,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           t={{
             ...(t.content?.createModal ?? {}),
             rules: t.collectionRules,
+            // Same "one block, two surfaces" rule as the rule builder above:
+            // the editor's attribute fields render these very values, so the
+            // enum vocabulary lives at the top level and both read it.
+            options: t.content?.enumLabels,
             // §2.5b — the SCORE strings come from the sidebar's own block, not
             // a second copy: the two show the same findings, and a wording
             // that differs between them reads as two different measurements.

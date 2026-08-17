@@ -73,6 +73,12 @@ export interface CreateItemModalTexts {
   /** Option labels, keyed like `"status.DRAFT"`. */
   options?: Record<string, string>;
   shopifyDefault?: string;
+  /** The image picker's two states and its modal title. */
+  changeImage?: string;
+  chooseImage?: string;
+  chooseImageTitle?: string;
+  /** Heading of the banner shown when the create itself failed. */
+  createFailed?: string;
   altText?: string;
   /** §2.5c — shown while the alt text writes itself. */
   altTextGenerating?: string;
@@ -523,7 +529,7 @@ export function CreateItemModal({
             <InlineStack gap="300" blockAlign="center">
               {image && <Thumbnail source={image.preview} alt="" size="small" />}
               <Button onClick={() => setPickerOpen(true)}>
-                {image ? "Change image" : "Choose image"}
+                {image ? t.changeImage || "Change image" : t.chooseImage || "Choose image"}
               </Button>
               {image && <Button variant="plain" tone="critical" onClick={() => setImage(null)}>Remove</Button>}
             </InlineStack>
@@ -698,7 +704,7 @@ export function CreateItemModal({
             )}
 
             {error && (
-              <Banner tone="critical" title="Could not create">
+              <Banner tone="critical" title={t.createFailed || "Could not create"}>
                 <p>{error}</p>
               </Banner>
             )}
@@ -894,7 +900,7 @@ export function CreateItemModal({
           uploadCommitMode="immediate"
           initialKind="image"
           disallowModel
-          title="Choose an image"
+          title={t.chooseImageTitle || "Choose an image"}
         />
       )}
     </>

@@ -160,8 +160,17 @@ export function UnifiedFieldRenderer(
   const translatedFieldLabel = fieldLabelMap[field.key] || field.label;
   const label = `${translatedFieldLabel} (${localeName})`;
 
-  let helpText = "";
-  if (typeof field.helpText === "function") {
+  // Per-field help that is a fixed SENTENCE gets translated here rather than in
+  // the config: the config is imported by the server and by the bulk grid,
+  // neither of which has a language. `templateSuffix` is the only one today.
+  const staticHelpText: Record<string, string | undefined> = {
+    templateSuffix: t.content?.templateSuffixHelp as string | undefined,
+  };
+
+  let helpText = staticHelpText[field.key] ?? "";
+  if (helpText) {
+    // already resolved
+  } else if (typeof field.helpText === "function") {
     helpText = field.helpText(value);
   } else if (field.helpText) {
     helpText = field.helpText;
@@ -388,6 +397,9 @@ export function UnifiedFieldRenderer(
         t={{
           ...((t.content?.commerce ?? {}) as Record<string, string>),
           warnings: (t.content?.commerceWarnings ?? {}) as Record<string, string>,
+          // The shared enum vocabulary — this panel's weight unit is the same
+          // kind of value as the status and sort-order options above.
+          enumLabels: (t.content?.enumLabels ?? {}) as Record<string, string>,
         }}
       />
     );
@@ -456,6 +468,14 @@ export function UnifiedFieldRenderer(
           "This field can't be edited in the main language here — manage the original in your Shopify admin."
         }
         suggestions={suggestions}
+        // ONE enum vocabulary, shared with the create modal — two copies of
+        // "Draft"/"Entwurf" would drift, and the raw wire values are what the
+        // editor showed before this existed.
+        optionLabels={(t.content?.enumLabels ?? {}) as Record<string, string>}
+        // Translated per field key; the config's own English string is the
+        // fallback for a note nobody has translated yet.
+        attributeNote={((t.content?.attributeNotes ?? {}) as Record<string, string>)[field.key]}
+        helpText={staticHelpText[field.key]}
         t={{
           notTranslatable: t.content?.attributesForeignLocale,
           addTag: t.content?.addTag,

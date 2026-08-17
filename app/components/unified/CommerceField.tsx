@@ -72,6 +72,18 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
   const [saving, setSaving] = useState(false);
   const [notices, setNotices] = useState<string[]>([]);
 
+  /**
+   * Which variant's box is on screen.
+   *
+   * ONE box, not one per variant: a product with twenty variants produced
+   * twenty stacked boxes of identical fields, and the channel list plus the
+   * save button ended up a screen and a half below the first one. Switching is
+   * SAFE because every edit is keyed by variant id (`edits`, `itemEdits`) —
+   * changing the selection hides a box, it does not discard what was typed in
+   * it, and the save still writes every variant that was touched.
+   */
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
+
   /** Edited on-hand values, keyed `variantId::locationId`. */
   const [edits, setEdits] = useState<Record<string, string>>({});
   /** Ticked channels. Seeded from the load, then owned by the merchant. */
@@ -361,6 +373,16 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     );
   }
 
+  /**
+   * The variant whose box is rendered. Falls back to the FIRST one rather than
+   * to nothing: a selection that points at a variant a reload no longer
+   * returns would otherwise leave the stock section empty with no explanation.
+   */
+  const shownVariant = useMemo(() => {
+    if (!data?.variants.length) return null;
+    return data.variants.find((v) => v.id === selectedVariantId) ?? data.variants[0];
+  }, [data, selectedVariantId]);
+
   const hasChanges =
     dirtyStock.length > 0 ||
     dirtyItemFields.length > 0 ||
@@ -452,9 +474,28 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
               </Text>
             )}
 
-            {data.variants.map((variant) => (
+            {/* The picker appears only where there is something to pick. With
+                one variant a dropdown holding one entry is a control that asks
+                a question with a single answer. */}
+            {data.variants.length > 1 && (
+              <Select
+                label={(t.variantSelectLabel as string) || "Variant"}
+                options={data.variants.map((variant) => ({
+                  value: variant.id,
+                  label: `${variant.title}${variant.sku ? ` · ${variant.sku}` : ""}`,
+                }))}
+                value={shownVariant?.id ?? ""}
+                onChange={setSelectedVariantId}
+                disabled={saving}
+              />
+            )}
+
+            {shownVariant && [shownVariant].map((variant) => (
               <Box key={variant.id} background="bg-surface-secondary" padding="300" borderRadius="200">
                 <BlockStack gap="200">
+                  {/* The title stays even with the dropdown above it: with one
+                      variant there IS no dropdown, and the box would then be a
+                      set of fields belonging to nothing named. */}
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
                     {variant.title}{variant.sku ? ` · ${variant.sku}` : ""}
                   </Text>
@@ -489,7 +530,13 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                       <Box minWidth="140px">
                         <Select
                           label={(t.weightUnit as string) || "Unit"}
-                          options={WEIGHT_UNITS.map((unit) => ({ value: unit, label: unit }))}
+                          // `GRAMS` is not a unit anybody writes on a label.
+                          // Same enum vocabulary the editor's attribute fields
+                          // read, passed in with the rest of this panel's text.
+                          options={WEIGHT_UNITS.map((unit) => ({
+                            value: unit,
+                            label: (t.enumLabels as Record<string, string> | undefined)?.[`weightUnit.${unit}`] ?? unit,
+                          }))}
                           value={itemEdits[`${variant.id}::weightUnit`] ?? (variant.weightUnit || "KILOGRAMS")}
                           onChange={(value) => setItemEdits((prev) => ({ ...prev, [`${variant.id}::weightUnit`]: value }))}
                           disabled={saving}
