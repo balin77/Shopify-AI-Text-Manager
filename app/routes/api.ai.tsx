@@ -50,6 +50,7 @@ import { handleSeoCrawl } from "./api-ai-handlers/seo-crawl.handler";
 import { handleSeoInternalLinks } from "./api-ai-handlers/seo-internal-links.handler";
 import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-translate.handler";
 import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
+import { handleInsertKeyword } from "./api-ai-handlers/keyword-insert.handler";
 import { handleSeoRobotsAdvice } from "./api-ai-handlers/seo-robots-advice.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
 
@@ -155,6 +156,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleBulkEditorTranslate(ctx);
       case "distributeKeywords":
         return handleDistributeKeywords(ctx);
+      case "insertKeyword":
+        return handleInsertKeyword(ctx);
       case "generateTemplateTitles":
         return handleGenerateTemplateTitles(ctx);
       case "seoRobotsAdvice":
