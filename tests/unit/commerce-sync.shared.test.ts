@@ -10,6 +10,9 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  INVENTORY_LEVEL_PAGE_SIZE,
+  PRODUCT_PUBLICATIONS_SELECTION,
+  VARIANT_COMMERCE_PAGE_SIZE,
   hasVariantCommerce,
   inventoryLevelRows,
   productPublicationRows,
@@ -239,5 +242,25 @@ describe("stockIsMeaningful", () => {
     expect(stockIsMeaningful(false)).toBe(false);
     // Never synced. A third state, and it renders as "unknown", not as 0.
     expect(stockIsMeaningful(null)).toBe(false);
+  });
+});
+
+describe("the selections themselves", () => {
+  it("stays inside Shopify's single-query cost ceiling", () => {
+    // Cost is priced BEFORE execution, from the `first:` arguments alone, and a
+    // nested connection multiplies by its parent's size. 100 × 20 priced at
+    // roughly 2300–4800 against a ceiling of 1000 — so the panel failed with
+    // MAX_COST_EXCEEDED on every product, including one-variant ones, because
+    // the actual data size never enters the calculation.
+    const approxCost = 2 + VARIANT_COMMERCE_PAGE_SIZE * (2 + INVENTORY_LEVEL_PAGE_SIZE + 12);
+    expect(approxCost).toBeLessThan(1000);
+  });
+
+  it("asks for channels the product is NOT on", () => {
+    // `onlyPublished` defaults to TRUE. Without this argument the picker could
+    // untick channels but never add one, and the "on no channel — invisible"
+    // badge would sit above an empty list — the feature diagnosing the trap
+    // and withholding the cure.
+    expect(PRODUCT_PUBLICATIONS_SELECTION).toContain("onlyPublished: false");
   });
 });

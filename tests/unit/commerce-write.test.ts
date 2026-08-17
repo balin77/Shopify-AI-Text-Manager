@@ -48,11 +48,12 @@ const change = (locationId: string, quantity: number, compareQuantity: number) =
   compareQuantity,
 });
 
-const echo = (entries: Array<{ locationId: string; after: number }>) => ({
+const echo = (entries: Array<{ locationId: string; after: number; name?: string }>) => ({
   data: {
     inventorySetQuantities: {
       inventoryAdjustmentGroup: {
         changes: entries.map((e) => ({
+          name: e.name ?? "on_hand",
           quantityAfterChange: e.after,
           item: { id: ITEM },
           location: { id: e.locationId },
@@ -138,11 +139,16 @@ describe("applyStockChanges", () => {
   it("tells a STALE compare apart from a plain failure", async () => {
     // "someone else changed it" is actionable by reloading. Reading it as a
     // generic failure would invite a retry that overwrites the other change.
+    //
+    // The code is `COMPARE_QUANTITY_STALE`. This test used to feed whatever
+    // string the implementation expected, which proved nothing about the API —
+    // and the implementation had the words the other way round, so the safety
+    // message never fired on a real shop.
     const admin = adminWith({
       data: {
         inventorySetQuantities: {
           inventoryAdjustmentGroup: null,
-          userErrors: [{ message: "stale", code: "STALE_COMPARE_QUANTITY" }],
+          userErrors: [{ message: "stale", code: "COMPARE_QUANTITY_STALE" }],
         },
       },
     });
@@ -326,5 +332,66 @@ describe("applyInventoryItemFields", () => {
       }),
     ).toBe("itemFieldsNotConfirmed");
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe("applyStockChanges — the ledger the echo belongs to", () => {
+  it("judges against on_hand and ignores the available entry", async () => {
+    // Setting on_hand ALSO produces an `available` ledger change (available =
+    // on_hand minus open commitments). A map keyed only by item+location let
+    // that second entry shadow the first, so a write that SUCCEEDED came back
+    // as "not confirmed" — or, if the numbers coincided, was confirmed against
+    // the wrong ledger entirely.
+    const admin = adminWith(
+      echo([
+        { locationId: LOC_A, after: 12, name: "on_hand" },
+        { locationId: LOC_A, after: 9, name: "available" },
+      ]),
+    );
+    const { db, updates } = dbRecorder();
+    const warning = await applyStockChanges(admin, db, "s", {
+      variantId: "42",
+      changes: [change(LOC_A, 12, 9)],
+    });
+    expect(warning).toBeUndefined();
+    expect(updates[0].data).toMatchObject({ onHand: 12 });
+  });
+
+  it("asks Shopify for the on_hand changes only", async () => {
+    const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
+    const { db } = dbRecorder();
+    await applyStockChanges(admin, db, "s", { variantId: "42", changes: [change(LOC_A, 12, 9)] });
+    const query = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][0];
+    expect(query).toContain('changes(quantityNames: ["on_hand"])');
+  });
+
+  it("refuses to write stock for an UNTRACKED variant, and says which it is", async () => {
+    // Sending it anyway comes back as a generic failure, which tells the
+    // merchant nothing about why — and this is the one reason that is a fact
+    // about their setup rather than an error.
+    const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
+    const { db } = dbRecorder();
+    expect(
+      await applyStockChanges(admin, db, "s", {
+        variantId: "42",
+        changes: [change(LOC_A, 12, 9)],
+        tracked: false,
+      }),
+    ).toBe("stockUntracked");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
+  it("does NOT read an unknown tracking state as untracked", async () => {
+    // `null` means the cache never learned it. Refusing on that would block a
+    // legitimate correction on every product the panel has not loaded before.
+    const admin = adminWith(echo([{ locationId: LOC_A, after: 12 }]));
+    const { db } = dbRecorder();
+    expect(
+      await applyStockChanges(admin, db, "s", {
+        variantId: "42",
+        changes: [change(LOC_A, 12, 9)],
+        tracked: null,
+      }),
+    ).toBeUndefined();
   });
 });

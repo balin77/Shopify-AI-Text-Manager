@@ -23,7 +23,7 @@
  * cure here.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Banner,
@@ -85,16 +85,27 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
    */
   const [itemEdits, setItemEdits] = useState<Record<string, string>>({});
 
-  const load = useCallback(() => {
+  /**
+   * Bumped per load. A per-call `cancelled` flag only protects the ONE caller
+   * that keeps the cleanup — the effect. The button and the post-save reload
+   * discarded it, so two overlapping loads raced, and a manual load in flight
+   * while the merchant switched products could paint product A's stock under
+   * product B's id. The save then addresses A's inventory items. Low
+   * probability, real money.
+   */
+  const loadToken = useRef(0);
+
+  const load = useCallback((options?: { keepEdits?: boolean }) => {
     if (!productId) return;
+    const token = ++loadToken.current;
+    const keepEdits = options?.keepEdits === true;
     setLoadError(null);
     setPlanBlocked(false);
     setData(null);
-    let cancelled = false;
     fetch(`/api/product-commerce?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((body) => {
-        if (cancelled) return;
+        if (token !== loadToken.current) return;
         if (!body?.success) {
           // A plan refusal is not a failure — it is a different message, and
           // showing "could not be loaded" for it would send the merchant
@@ -109,22 +120,29 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           channels: body.channels ?? [],
           channelsTruncated: body.channelsTruncated === true,
         });
-        setEdits({});
-        setItemEdits({});
+        // A refused write reloads to SHOW the number that actually moved —
+        // and must not also throw away what the merchant typed, or they have
+        // to retype it from memory against a number that just changed.
+        if (!keepEdits) {
+          setEdits({});
+          setItemEdits({});
+        }
         setChannelState(
           Object.fromEntries((body.channels ?? []).map((c: CommerceChannelView) => [c.publicationId, c.isPublished])),
         );
       })
       .catch(() => {
-        if (!cancelled) setLoadError((t.loadFailed as string) || "Stock and channels could not be loaded.");
+        if (token !== loadToken.current) return;
+        setLoadError((t.loadFailed as string) || "Stock and channels could not be loaded.");
       });
-    return () => { cancelled = true; };
   }, [productId, t.loadFailed]);
 
   useEffect(() => {
     if (!isPrimaryLocale) return;
-    const cleanup = load();
-    return cleanup;
+    load();
+    // Unmounting (or switching products) bumps the token, which is what makes
+    // an in-flight answer land nowhere.
+    return () => { loadToken.current += 1; };
   }, [load, isPrimaryLocale]);
 
   /** The loaded on-hand for a cell — also the value the save compares against. */
@@ -190,6 +208,26 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     return Array.isArray(json.warnings) ? (json.warnings as string[]) : [];
   }, []);
 
+  /**
+   * One submission, its failures isolated.
+   *
+   * A rejected `post` used to throw out of the whole save loop, so a single
+   * bad variant meant the remaining ones were never submitted and the merchant
+   * saw one generic "could not be saved" for work that had partly succeeded.
+   * Each call now reports for itself, exactly like the per-cell rule the bulk
+   * editor follows.
+   */
+  const postIsolated = useCallback(
+    async (body: Record<string, string>, fallback: string): Promise<string[]> => {
+      try {
+        return await post(body);
+      } catch {
+        return [fallback];
+      }
+    },
+    [post],
+  );
+
   const save = useCallback(async () => {
     if (!data) return;
     setSaving(true);
@@ -204,8 +242,14 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
         const [variantId, locationId] = key.split("::");
         const compare = loadedOnHand(variantId, locationId);
         // No loaded value ⇒ nothing to compare against, and a write without a
-        // comparison is exactly the silent overwrite this feature avoids.
-        if (compare === null) continue;
+        // comparison is exactly the silent overwrite this feature avoids. But
+        // it is SAID: dropping a typed quantity with no message, and then
+        // clearing the field on the reload, is how a stock correction
+        // disappears without anyone noticing.
+        if (compare === null) {
+          collected.push((t.warnings?.stockNoBaseline as string) || "stockNoBaseline");
+          continue;
+        }
         const list = byVariant.get(variantId) ?? [];
         list.push({ locationId, quantity: Number.parseInt(value, 10), compare });
         byVariant.set(variantId, list);
@@ -217,7 +261,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           collected.push(t.warnings?.stockNoInventoryItem || "stockNoInventoryItem");
           continue;
         }
-        const warnings = await post({
+        const warnings = await postIsolated({
           intent: "stock",
           productId,
           variantId,
@@ -229,7 +273,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
               compareQuantity: String(entry.compare),
             })),
           ),
-        });
+        }, (t.saveFailed as string) || "The change could not be saved.");
         collected.push(...warnings.map((code) => t.warnings?.[code] || code));
       }
 
@@ -258,37 +302,42 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
 
       for (const [variantId, fields] of itemsByVariant) {
         const variant = data.variants.find((v) => v.id === variantId);
-        const warnings = await post({
-          intent: "itemFields",
-          productId,
-          variantId,
-          inventoryItemId: variant?.inventoryItemId ?? "",
-          fields: JSON.stringify(fields),
-        });
+        const warnings = await postIsolated(
+          {
+            intent: "itemFields",
+            productId,
+            variantId,
+            inventoryItemId: variant?.inventoryItemId ?? "",
+            fields: JSON.stringify(fields),
+          },
+          (t.saveFailed as string) || "The change could not be saved.",
+        );
         collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
       }
 
       if (dirtyChannels.toPublish.length > 0 || dirtyChannels.toUnpublish.length > 0) {
-        const warnings = await post({
-          intent: "channels",
-          productId,
-          channels: JSON.stringify({
-            ...dirtyChannels,
-            names: Object.fromEntries(data.channels.map((c) => [c.publicationId, c.name])),
-          }),
-        });
+        const warnings = await postIsolated(
+          {
+            intent: "channels",
+            productId,
+            channels: JSON.stringify({
+              ...dirtyChannels,
+              names: Object.fromEntries(data.channels.map((c) => [c.publicationId, c.name])),
+            }),
+          },
+          (t.saveFailed as string) || "The change could not be saved.",
+        );
         collected.push(...warnings.map((code) => t.warnings?.[code] || code));
       }
-    } catch {
-      collected.push((t.saveFailed as string) || "The change could not be saved.");
     } finally {
       setSaving(false);
     }
     setNotices(collected);
     // Reload either way. On success it confirms; on a refused write it shows
-    // the number that actually moved, which is the only useful next step.
-    load();
-  }, [data, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, post, productId, load, t]);
+    // the number that actually moved — and then KEEPS the merchant's input,
+    // because that is exactly the case where they need it.
+    load({ keepEdits: collected.length > 0 });
+  }, [data, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
 
   if (!isPrimaryLocale) {
     return (
@@ -327,7 +376,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
         <Banner tone="warning">
           <BlockStack gap="200">
             <Text as="p">{loadError}</Text>
-            <Box><Button onClick={load}>{(t.retry as string) || "Try again"}</Button></Box>
+            <Box><Button onClick={() => load()}>{(t.retry as string) || "Try again"}</Button></Box>
           </BlockStack>
         </Banner>
       )}
@@ -584,7 +633,17 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
             <Button variant="primary" disabled={!hasChanges || saving} loading={saving} onClick={save}>
               {(t.save as string) || "Save stock and channels"}
             </Button>
-            <Button disabled={saving} onClick={load}>{(t.reload as string) || "Reload"}</Button>
+            <Button
+              disabled={saving}
+              onClick={() => {
+                // Reloading discards typed values. Asking is cheap; silently
+                // losing a stock correction is not.
+                if (hasChanges && !window.confirm((t.discardConfirm as string) || "Discard your unsaved changes?")) return;
+                load();
+              }}
+            >
+              {(t.reload as string) || "Reload"}
+            </Button>
           </InlineStack>
           <Text as="p" variant="bodySm" tone="subdued">
             {/* Says WHY there is a separate button: this is not part of the

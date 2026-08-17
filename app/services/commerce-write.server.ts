@@ -23,6 +23,15 @@
  * directly would silently contradict the commitments. So only `on_hand` is
  * writable here; `available` is read and shown.
  *
+ * ── This mutation has a deadline ────────────────────────────────────────────
+ * `compareQuantity` / `ignoreCompareQuantity` are DEPRECATED from 2026-01 and
+ * REMOVED from 2026-04, replaced by `changeFromQuantity` — and Shopify will
+ * require `@idempotent` on inventory mutations from the same version. This app
+ * pins 2025-10, so the shape below is correct today; the moment the pin moves
+ * (the plan's Phase −1 targets 2026-07) this call sends fields that no longer
+ * exist, which is a schema-level error and therefore a total, silent-looking
+ * failure of every stock write. Whoever moves the pin has to come here.
+ *
  * ── Never fails the save ────────────────────────────────────────────────────
  * Like the collection-rules and price paths: the content update has already
  * happened, so a stock or channel change that did not land comes back as a
@@ -44,6 +53,7 @@ export type CommerceWarning =
   | "stockFailed"
   | "stockUntracked"
   | "stockNoInventoryItem"
+  | "stockNoBaseline"
   | "channelsNotConfirmed"
   | "channelsFailed";
 
@@ -92,9 +102,15 @@ export async function applyStockChanges(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
-  params: { variantId: string; changes: StockChange[]; reason?: string },
+  params: { variantId: string; changes: StockChange[]; reason?: string; tracked?: boolean | null },
 ): Promise<CommerceWarning | undefined> {
   if (params.changes.length === 0) return undefined;
+  // An untracked variant has no quantity to set. Sending one anyway comes back
+  // as a generic failure, which tells the merchant nothing about WHY — and
+  // this is the one reason that is a fact about their setup rather than an
+  // error. `undefined` is not "untracked": it means the caller did not say,
+  // and only an explicit `false` refuses.
+  if (params.tracked === false) return "stockUntracked";
 
   try {
     const response = await admin.graphql(
@@ -105,7 +121,12 @@ export async function applyStockChanges(
               # The echo that matters: the quantity Shopify STORED, per item and
               # location. Without it "saved" is a claim about money nobody
               # verified.
-              changes {
+              # Filtered to on_hand. Setting it ALSO produces an "available"
+              # ledger change (available = on_hand minus open commitments), and
+              # a map keyed only by item+location let that second entry shadow
+              # the first — a successful write then read as "not confirmed",
+              # or worse, confirmed against the wrong ledger.
+              changes(quantityNames: ["on_hand"]) {
                 name
                 delta
                 quantityAfterChange
@@ -144,6 +165,7 @@ export async function applyStockChanges(
         inventorySetQuantities?: {
           inventoryAdjustmentGroup?: {
             changes?: Array<{
+              name?: string | null;
               quantityAfterChange?: number | null;
               item?: { id?: string } | null;
               location?: { id?: string } | null;
@@ -170,8 +192,11 @@ export async function applyStockChanges(
       });
       // Told apart on purpose: "someone else changed it" is a thing the
       // merchant can act on by reloading, and reading it as a generic failure
-      // would invite a retry that overwrites the other change.
-      return first.code === "STALE_COMPARE_QUANTITY" ? "stockChangedMeanwhile" : "stockFailed";
+      // would invite exactly the retry-that-overwrites this guard exists to
+      // prevent. The member is `COMPARE_QUANTITY_STALE` — spelling it the
+      // other way round made the comparison never match, so the safety
+      // message never appeared.
+      return first.code === "COMPARE_QUANTITY_STALE" ? "stockChangedMeanwhile" : "stockFailed";
     }
 
     const changes = payload?.inventoryAdjustmentGroup?.changes ?? [];
@@ -180,7 +205,10 @@ export async function applyStockChanges(
     // shop does not hold.
     const confirmed = new Map(
       changes
-        .filter((c) => c.item?.id && c.location?.id)
+        // `quantityNames` already narrows this server-side; the second filter
+        // is here because the cost of the argument being ignored is a money
+        // claim judged against the wrong ledger.
+        .filter((c) => c.item?.id && c.location?.id && (c.name == null || c.name === "on_hand"))
         .map((c) => [`${c.item!.id}::${c.location!.id}`, c.quantityAfterChange ?? null] as const),
     );
 
@@ -316,14 +344,16 @@ export async function applyPublicationChanges(
     const publishResult = await run("publishablePublish", params.toPublish);
     const unpublishResult = await run("publishableUnpublish", params.toUnpublish);
 
-    if (!publishResult.ok || !unpublishResult.ok) return "channelsFailed";
-
     const allConfirmed =
+      publishResult.ok &&
+      unpublishResult.ok &&
       publishResult.confirmed.size === params.toPublish.length &&
       unpublishResult.confirmed.size === params.toUnpublish.length;
 
-    // Mirror only what came BACK. A row written from the request would make
-    // the editor show a channel the product is not actually on.
+    // Mirror only what came BACK — and mirror it even when the OTHER verb
+    // failed. The two are separate mutations with no compensation between
+    // them, so "publish landed, unpublish did not" is a real outcome;
+    // returning early on it left Shopify holding a change the cache denied.
     for (const publicationId of publishResult.confirmed) {
       await db.productPublication
         .upsert({
@@ -348,6 +378,12 @@ export async function applyPublicationChanges(
         .catch(() => undefined);
     }
 
+    if (!publishResult.ok || !unpublishResult.ok) {
+      logger.warn("[Commerce] Channel verb failed", {
+        context: "Commerce", shop, productId: params.productId,
+      });
+      return "channelsFailed";
+    }
     if (!allConfirmed) {
       logger.warn("[Commerce] Channels not fully echoed", {
         context: "Commerce", shop, productId: params.productId,

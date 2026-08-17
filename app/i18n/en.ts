@@ -502,6 +502,7 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      discardConfirm: "Discard your unsaved changes?",
       cost: "Cost per item",
       costHint: "What you pay. Never shown to customers.",
       weight: "Weight",
@@ -542,6 +543,7 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",
       itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
       itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
       itemFieldsFailed: "The item settings could not be saved.",

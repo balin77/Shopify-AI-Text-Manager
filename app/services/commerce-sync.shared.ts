@@ -16,9 +16,11 @@
  * established nor stamp knowledge that never arrived.
  *
  * ── Why stock is cached at all, given that it is volatile ───────────────────
- * To DISPLAY it, and for nothing else. Stock changes from orders, returns and
- * other apps between two page loads, so the cache is a snapshot with a
- * timestamp — never a base for arithmetic. `inventorySetQuantities` takes an
+ * Not to display it: the panel reads Shopify live, and a failed load says so
+ * rather than showing a stale number. The rows are a MIRROR — they keep the
+ * cache in agreement with Shopify for whatever is built on them later, and
+ * give the GDPR purge something coherent to delete. Either way the snapshot
+ * carries a timestamp and is never a base for arithmetic. `inventorySetQuantities` takes an
  * ABSOLUTE quantity, and the write path pairs it with `compareQuantity` so a
  * value that moved under the merchant's feet is REFUSED rather than
  * overwritten. Computing `cached + delta` is the classic source of inventory
@@ -31,15 +33,22 @@
  * column as an empty one.
  */
 
-/** Variants per page. Matches the product sync's own window. */
-export const VARIANT_COMMERCE_PAGE_SIZE = 100;
 /**
- * Locations per variant. Shops with more than this are rare and the truncation
- * is REPORTED rather than silently rounded down — a partial stock list read as
- * a total is a wrong number, not a missing one.
+ * ── These two numbers are a COST budget, not a preference ───────────────────
+ * Shopify prices a query BEFORE running it, from the `first:` arguments alone,
+ * and a nested connection multiplies by its parent's requested size. The
+ * ceiling is 1000 points for a single query. `variants(first: 100)` each
+ * carrying `inventoryLevels(first: 20)` prices at roughly 2300–4800 — so the
+ * panel would fail with `MAX_COST_EXCEEDED` on EVERY product, including a
+ * one-variant one, because the actual data size never enters the calculation.
+ *
+ * 25 × 10 prices at roughly 600. Both windows report their truncation rather
+ * than rounding down silently: a partial stock list read as a total is a wrong
+ * number, not a missing one.
  */
-export const INVENTORY_LEVEL_PAGE_SIZE = 20;
-/** Sales channels a shop can have. Generous; truncation is still reported. */
+export const VARIANT_COMMERCE_PAGE_SIZE = 25;
+export const INVENTORY_LEVEL_PAGE_SIZE = 10;
+/** Sales channels a shop can have. Not nested, so it costs its own size only. */
 export const PUBLICATION_PAGE_SIZE = 50;
 
 /**
@@ -70,9 +79,17 @@ export const VARIANT_COMMERCE_SELECTION = `
                       }
                       taxable`;
 
-/** Every sales channel of the shop, with this product's state in each. */
+/**
+ * Every sales channel of the shop, with this product's state in each.
+ *
+ * `onlyPublished: false` is the load-bearing argument. It DEFAULTS to true,
+ * which returns only the channels the product is already on — so the picker
+ * could untick channels but never add one, and the "on no channel — invisible"
+ * badge would sit above an empty list with nothing to tick. The feature would
+ * diagnose the trap and withhold the cure.
+ */
 export const PRODUCT_PUBLICATIONS_SELECTION = `
-                  resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}) {
+                  resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false) {
                     pageInfo { hasNextPage }
                     nodes {
                       isPublished

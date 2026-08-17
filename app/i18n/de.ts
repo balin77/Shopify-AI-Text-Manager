@@ -499,6 +499,7 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      discardConfirm: "Ungespeicherte Änderungen verwerfen?",
       cost: "Einkaufspreis",
       costHint: "Was du bezahlst. Wird Kundinnen nie angezeigt.",
       weight: "Gewicht",
@@ -539,6 +540,7 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
       itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
       itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
       itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",

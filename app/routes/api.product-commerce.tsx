@@ -8,9 +8,14 @@
  * touching all four product write paths (CLAUDE.md) for data whose whole point
  * is being current.
  *
- * So this reads LIVE on open and writes the result to the cache afterwards. The
- * cache is the fallback for a throttled lookup and the label store for
- * locations and channels — never the number the merchant edits against.
+ * So this reads LIVE on open. It also MIRRORS what it read, but be clear about
+ * what that mirror is for: it is not a fallback and nothing reads it to render
+ * this panel — a failed load says so rather than showing a stale number, which
+ * for stock is the only defensible behaviour. The rows exist so the cache
+ * agrees with Shopify for anything built on them later (a bulk stock column, a
+ * completeness check), and so the GDPR purge has something coherent to delete.
+ * If that never materialises, delete the tables rather than let a write-only
+ * cache drift.
  *
  * ── Plan gate in the ROUTE ──────────────────────────────────────────────────
  * Directly GET/POST-reachable, so the gate lives here and not only in the UI —
@@ -143,7 +148,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       return json({ success: false, error: "That product no longer exists in Shopify." }, { status: 404 });
     }
 
-    const numericProductId = productId.replace("gid://shopify/Product/", "");
+    // `Product.id` is the FULL GID in this schema (unlike `ProductVariant.id`,
+    // which is numeric). Using a numeric id here violated the FK on every
+    // `ProductPublication` insert — swallowed by the `.catch` below, so the
+    // loader silently never cached a single channel — and its `deleteMany`
+    // then never cleared the GID-keyed rows the write path had created.
     const variantNodes = ((product.variants as Record<string, unknown> | undefined)?.nodes ?? []) as Array<
       Record<string, unknown>
     >;
@@ -170,11 +179,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
       // The cache is refreshed from this LIVE read, so a later throttled load
       // still has something honest to show — with its own timestamp.
+      // Scoped through the product, not by id alone. Shopify ids are globally
+      // unique so an unscoped write is safe in practice — but "safe because of
+      // an external invariant" is not the house rule, and a scoped query costs
+      // nothing here.
       await db.productVariant
-        .updateMany({ where: { id: numericId }, data: columns as never })
+        .updateMany({ where: { id: numericId, product: { shop: session.shop } }, data: columns as never })
         .catch(() => undefined);
       if (levels) {
-        await db.inventoryLevel.deleteMany({ where: { variantId: numericId } }).catch(() => undefined);
+        await db.inventoryLevel
+          .deleteMany({ where: { shop: session.shop, variantId: numericId } })
+          .catch(() => undefined);
         if (levels.rows.length > 0) {
           await db.inventoryLevel.createMany({ data: levels.rows, skipDuplicates: true }).catch(() => undefined);
         }
@@ -208,11 +223,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     const publications = productPublicationRows(
       session.shop,
-      numericProductId,
+      productId,
       product.resourcePublicationsV2 as never,
     );
     if (publications) {
-      await db.productPublication.deleteMany({ where: { shop: session.shop, productId: numericProductId } }).catch(() => undefined);
+      await db.productPublication.deleteMany({ where: { shop: session.shop, productId } }).catch(() => undefined);
       if (publications.rows.length > 0) {
         await db.productPublication.createMany({ data: publications.rows, skipDuplicates: true }).catch(() => undefined);
       }
@@ -278,8 +293,17 @@ export async function action({ request }: ActionFunctionArgs) {
     for (const raw of parsed as Array<Record<string, unknown>>) {
       const inventoryItemId = String(raw.inventoryItemId ?? "");
       const locationId = String(raw.locationId ?? "");
-      if (!inventoryItemId.startsWith("gid://shopify/InventoryItem/")) continue;
-      if (!locationId.startsWith("gid://shopify/Location/")) continue;
+      // REFUSED, not skipped. Dropping a malformed change and answering
+      // `success: true` is the worst shape this route could take on a money
+      // write: nothing written, nothing said. It also made the two validation
+      // failures behave oppositely — a bad quantity 400s the batch while a bad
+      // id vanished from it.
+      if (!inventoryItemId.startsWith("gid://shopify/InventoryItem/")) {
+        return json({ success: false, error: "A stock change named something that is not an inventory item." }, { status: 400 });
+      }
+      if (!locationId.startsWith("gid://shopify/Location/")) {
+        return json({ success: false, error: "A stock change named something that is not a location." }, { status: 400 });
+      }
       const quantity = parseQuantity(String(raw.quantity ?? ""));
       const compareQuantity = parseQuantity(String(raw.compareQuantity ?? ""));
       // `compareQuantity` is REQUIRED, not optional: without it a stale page
@@ -291,7 +315,21 @@ export async function action({ request }: ActionFunctionArgs) {
       changes.push({ inventoryItemId, locationId, quantity, compareQuantity });
     }
 
-    const warning = await applyStockChanges(admin, db, session.shop, { variantId, changes });
+    // The variant's own tracking state, from the cache: an untracked variant
+    // has no quantity to set, and saying so beats a generic failure. Read
+    // rather than trusted from the client — the route is POST-reachable.
+    const variantRow = await db.productVariant
+      .findFirst({
+        where: { id: variantId, product: { shop: session.shop } },
+        select: { inventoryTracked: true },
+      })
+      .catch(() => null);
+
+    const warning = await applyStockChanges(admin, db, session.shop, {
+      variantId,
+      changes,
+      tracked: variantRow?.inventoryTracked ?? null,
+    });
     if (warning) warnings.push(warning);
     return json({ success: true, warnings });
   }
