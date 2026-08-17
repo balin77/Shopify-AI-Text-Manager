@@ -699,18 +699,6 @@ export const es: Translation = {
   },
 
   // Direct translations content type
-  // PLAN Phase 4, paso 6 — por qué la app ahora pide ver inventario y canales.
-  // Un cambio de permisos hace pasar a cada comerciante instalado por el
-  // diálogo de reconsentimiento de Shopify, que los enumera y no explica nada.
-  commerceNotice: {
-    title: "ContentPilot ahora pide ver el inventario y los canales de venta",
-    intro: "Para que puedas gestionar un producto por completo aquí en vez de ir al admin de Shopify, la app necesita tres permisos más:",
-    inventory: "Inventario — para mostrar el stock por ubicación y dejarte corregirlo.",
-    locations: "Ubicaciones — el stock siempre es por ubicación, así que los nombres tienen que venir de algún sitio.",
-    publications: "Canales de venta — un producto activo sin ningún canal es invisible, y hoy nadie te lo dice.",
-    reassurance: "La app nunca cambia el inventario por su cuenta. Solo escribe lo que tú introduces, y únicamente después de que Shopify confirme la nueva cifra.",
-  },
-
   directTranslations: {
     title: "Traducciones directas",
     resourceSingular: "Traducción directa",

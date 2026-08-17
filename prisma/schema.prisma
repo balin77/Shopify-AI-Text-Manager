@@ -208,13 +208,10 @@ model AISettings {
   // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
   seoFreshnessDismissed Json?
 
-  /// PLAN_CONTENT_CREATION Phase 4 — when the merchant dismissed the notice
-  /// explaining WHY the app now asks to see stock and sales channels.
-  ///
-  /// A scope change forces every installed merchant to re-consent, and a
-  /// permission dialog that arrives with no explanation is what makes people
-  /// decline. Stored as a TIMESTAMP rather than a boolean so a future notice
-  /// can be told apart from this one without a second column.
+  /// UNUSED. Backed an in-app banner explaining the Phase 4 re-consent, which
+  /// was removed as unwanted. Kept because its migration may already be
+  /// applied, and a drop-migration for a column that might not exist is the
+  /// riskier error than a dead nullable one. Safe to drop deliberately.
   commerceNoticeDismissedAt DateTime?
 
   createdAt DateTime @default(now())

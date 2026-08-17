@@ -704,18 +704,6 @@ export const en: Translation = {
     },
   },
 
-  // PLAN Phase 4, step 6 — why the app now asks for stock and channel access.
-  // A scope change puts every installed merchant through Shopify's re-consent
-  // dialog, which lists permissions and explains nothing.
-  commerceNotice: {
-    title: "ContentPilot now asks to see stock and sales channels",
-    intro: "So you can manage a product completely here instead of switching to the Shopify admin, the app needs three more permissions:",
-    inventory: "Inventory — to show stock per location and let you correct it.",
-    locations: "Locations — stock is always per location, so the names have to come from somewhere.",
-    publications: "Sales channels — an active product published to no channel is invisible, and nothing tells you today.",
-    reassurance: "The app never changes stock on its own. It only writes what you enter, and only after Shopify confirms the new number.",
-  },
-
   // Direct translations content type
   directTranslations: {
     title: "Direct translations",

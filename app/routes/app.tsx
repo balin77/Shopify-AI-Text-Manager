@@ -19,7 +19,6 @@ import { SidebarPanelProvider } from "../contexts/SidebarPanelContext";
 import { useEffect, useRef } from "react";
 import { useI18n } from "../contexts/I18nContext";
 import { InitialSyncBanner } from "../components/InitialSyncBanner";
-import { CommerceScopeNotice } from "../components/CommerceScopeNotice";
 import { MainNavigation } from "../components/MainNavigation";
 import { ContentTypeNavigation } from "../components/ContentTypeNavigation";
 import { useInfoBox } from "../contexts/InfoBoxContext";
@@ -100,8 +99,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         seoTitleSuffixEnabled: true,
         seoTitleSuffix: true,
         seoLimits: true,
-        // PLAN Phase 4 — the scope notice's own dismissal.
-        commerceNoticeDismissedAt: true,
         extensionSetupHintShownAt: true,
       },
     });
@@ -199,10 +196,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiSettings,
       seoTitleSuffix,
       seoLimits,
-      // PLAN Phase 4 — a scope change puts every installed merchant through
-      // Shopify's re-consent dialog, which explains nothing. This is the
-      // explanation, and it ships WITH the scopes rather than after them.
-      showCommerceNotice: !settings?.commerceNoticeDismissedAt,
       localeCount,
       newFeaturesEnabled: !isProductionLocked(),
       initialSync,
@@ -242,17 +235,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       initialSync: null,
       extensionSetupHint: false,
       conditionalContent: { themeAppEmbeds: true },
-      // FALSE on the error path, not true. This branch runs when the session
-      // is temporarily invalid, and a notice that pops back up on every such
-      // hiccup — after the merchant already dismissed it — reads as a bug.
-      showCommerceNotice: false,
       loaderError: true,
     });
   }
 };
 
 function AppContent() {
-  const { aiSettings, extensionSetupHint, showCommerceNotice } = useLoaderData<typeof loader>();
+  const { aiSettings, extensionSetupHint } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { showInfoBox, infoBox, dismissByKey } = useInfoBox();
   const hintFetcher = useFetcher();
@@ -376,7 +365,6 @@ function AppContent() {
   return (
     <AppErrorBoundary>
       <InitialSyncBanner />
-      <CommerceScopeNotice show={showCommerceNotice} t={(t as unknown as { commerceNotice?: Record<string, string> }).commerceNotice ?? {}} />
       {/* Persistent navigation: mounted once per app lifecycle here in the
           layout route so it survives sibling navigation instead of being
           remounted on every sub-page. Only the <Outlet /> content swaps.

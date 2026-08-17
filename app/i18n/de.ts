@@ -699,18 +699,6 @@ export const de = {
       INCLUDES: "enthält",
     },
   },
-  // PLAN Phase 4, Schritt 6 — warum die App jetzt Bestand und Kanäle sehen will.
-  // Eine Scope-Änderung schickt jeden installierten Merchant durch Shopifys
-  // Re-Consent-Dialog, der Berechtigungen auflistet und nichts erklärt.
-  commerceNotice: {
-    title: "ContentPilot möchte jetzt Bestand und Vertriebskanäle sehen",
-    intro: "Damit du ein Produkt vollständig hier verwalten kannst statt im Shopify-Admin, braucht die App drei zusätzliche Berechtigungen:",
-    inventory: "Bestand — um den Lagerbestand pro Lagerort zu zeigen und dich korrigieren zu lassen.",
-    locations: "Lagerorte — Bestand ist immer pro Lagerort, die Namen müssen also irgendwoher kommen.",
-    publications: "Vertriebskanäle — ein aktives Produkt ohne Kanal ist unsichtbar, und heute sagt dir das niemand.",
-    reassurance: "Die App ändert nie von sich aus den Bestand. Sie schreibt nur, was du eingibst — und erst, wenn Shopify die neue Zahl bestätigt hat.",
-  },
-
   directTranslations: {
     title: "Direktübersetzungen",
     resourceSingular: "Direktübersetzung",
