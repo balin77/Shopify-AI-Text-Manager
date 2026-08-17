@@ -93,20 +93,20 @@ export function SettingsImageManagerTab({ settings, onHasChangesChange }: Props)
 
         <Divider />
 
-        <InlineStack align="space-between" blockAlign="center">
+        <InlineStack gap="300" blockAlign="center" wrap={false}>
+          <ToggleSwitch checked={enabled} onChange={setEnabled} />
           <BlockStack gap="100">
             <Text as="p" variant="bodyMd">{t.settings.imageManagerEnabled}</Text>
             <Text as="p" variant="bodySm" tone="subdued">{t.settings.imageManagerEnabledDescription}</Text>
           </BlockStack>
-          <ToggleSwitch checked={enabled} onChange={setEnabled} />
         </InlineStack>
 
-        <InlineStack align="space-between" blockAlign="center">
+        <InlineStack gap="300" blockAlign="center" wrap={false}>
+          <ToggleSwitch checked={autoAltText} onChange={setAutoAltText} />
           <BlockStack gap="100">
             <Text as="p" variant="bodyMd">{t.settings.imageManagerAutoAltText}</Text>
             <Text as="p" variant="bodySm" tone="subdued">{t.settings.imageManagerAutoAltTextDescription}</Text>
           </BlockStack>
-          <ToggleSwitch checked={autoAltText} onChange={setAutoAltText} />
         </InlineStack>
       </BlockStack>
     </Card>

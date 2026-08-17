@@ -2,22 +2,41 @@
  * LibraryTab — presentational half of the Keywords section (Phase 1 split,
  * reworked in Phase 2 into the two-column "Bibliothek", plan §2.1).
  *
- * Layout: the collapsible research panel on top, then a two-column grid — the
- * group sidebar ("Alle" / "Ohne Gruppe" pseudo-groups + real groups + create)
- * on the left and the group editor on the right. Under ~768px the grid
- * collapses to a single column (sidebar above editor).
+ * Layout, top to bottom: the pending AI suggestions (only when there are any),
+ * the collapsible research panel, then a two-column grid — the group sidebar
+ * ("Alle" / "Ohne Gruppe" pseudo-groups + real groups + create) on the left
+ * and the group editor on the right. Under ~768px the grid collapses to a
+ * single column (sidebar above editor).
  *
- * The editor shows, for a REAL group: rename/delete, the ONE bulk-paste box
- * (KeywordPaste), the editable keyword table, bulk priority and the
- * distribution entry + preview. For a PSEUDO group ("all"/"ungrouped"): just
- * the read-only keyword table. Nothing selected → a friendly prompt.
+ * The editor shows, for a REAL group: rename/delete, the keyword table and the
+ * distribution entry. For a PSEUDO group ("all"/"ungrouped"): the same table
+ * with its group-membership actions dropped. Nothing selected → a friendly
+ * prompt.
  *
- * PURE PRESENTATION. All state, fetchers, refs, effects and confirm-dialog
- * flows live in the Shell (SeoKeywords); this component only renders JSX and
- * calls the callbacks / fetchers it is handed.
+ * Two interaction rules the whole tab follows:
+ *  - Keyword actions are SELECTION-driven. Rows carry a checkbox and
+ *    "Zuordnen" / "Priorität" / "Verschieben" / "Entfernen" / "Löschen" sit in
+ *    one bar above the table, so a merchant acts on many keywords at once
+ *    instead of repeating the same click per row.
+ *  - Keywords are edited IN PLACE. "+ Keyword" adds a row under an
+ *    auto-generated name, already in edit mode; every name is a click away
+ *    from being editable. The bulk paste box moved into a modal behind
+ *    "Importieren" — one keyword is the normal case, a pasted list the
+ *    exception.
+ *
+ * Every action button carries a Tooltip saying what it does, via
+ * ActionTooltip — which picks a plain Tooltip while the button is live and the
+ * pointer-events wrapper only while it is disabled. Reaching for
+ * DisabledActionTooltip directly is what made every one of these buttons inert
+ * and cursor-locked: it applies that wrapper unconditionally.
+ *
+ * PURE PRESENTATION apart from the selection and which cell is being edited.
+ * All other state, fetchers, refs, effects and confirm-dialog flows live in
+ * the Shell (SeoKeywords); this component only renders JSX and calls the
+ * callbacks / fetchers it is handed.
  */
 
-import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Card,
   BlockStack,
@@ -30,25 +49,33 @@ import {
   Select,
   Banner,
   IndexTable,
-  Checkbox,
   Modal,
   ProgressBar,
+  Divider,
+  Box,
+  Popover,
+  ActionList,
+  Tooltip,
   useIndexResourceState,
 } from "@shopify/polaris";
 import type { FetcherWithComponents } from "react-router";
 import type { KeywordResourceType } from "../../../services/seo/keywords.service";
 import { HelpTooltip } from "../../HelpTooltip";
+import { ActionTooltip } from "../../ActionTooltip";
 import type { Translation } from "../../../i18n/de";
-import type { loader, ActionResult } from "../../../routes/app.seo.keywords";
+import type { loader, ActionResult, KeywordSelection } from "../../../routes/app.seo.keywords";
 import { GroupSidebar } from "./GroupSidebar";
-import { KeywordPaste } from "./KeywordPaste";
+import { KeywordImportModal } from "./KeywordImportModal";
+import { EditableKeywordCell } from "./EditableKeywordCell";
+import { PriorityBadgeSelect } from "./PriorityBadgeSelect";
 import { ResearchPanel } from "./ResearchPanel";
 import { AssignPanel } from "./AssignPanel";
+import { SuggestionsPanel, type DecisionMap } from "./SuggestionsPanel";
 import type { Route } from "../../../routes/+types/app.seo.keywords";
+import "../../../styles/KeywordsPage.css";
 
 type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
-type DecisionMap = Record<string, "accept" | "secondaryOnly" | "reject">;
 type AssignKeyword = { keywordId: string; keyword: string };
 
 export interface LibraryTabProps {
@@ -61,13 +88,17 @@ export interface LibraryTabProps {
   ungroupedCount: number;
   groupDetail: LoaderData["groupDetail"];
   isPro: boolean;
+  /**
+   * Plan keyword quota (§Plan-Matrix). `over: true` means a downgrade left the
+   * shop above its cap — the rows stay, only new ones are blocked.
+   */
+  keywordQuota: { plan: string; limit: number; used: number; remaining: number; over: boolean };
   runningDistribution: LoaderData["runningDistribution"];
   distributionPreview: LoaderData["distributionPreview"];
   researchAvailability: LoaderData["researchAvailability"];
   productTypes: LoaderData["productTypes"];
   localeOptions: LoaderData["localeOptions"];
   priorityOptions: { label: string; value: string }[];
-  intentLabel: (intent: string | null | undefined) => string | null;
   selectGroup: (groupId: string | null) => void;
   /** Active locale — new groups are created under it (§3.1). */
   activeLocale: string;
@@ -98,9 +129,8 @@ export interface LibraryTabProps {
   renameValue: string;
   setRenameValue: (v: string) => void;
   handleDeleteGroup: () => void;
-  handleApplyBulkPriority: () => void;
-  bulkPriority: string;
-  setBulkPriority: (v: string) => void;
+  /** Priority for the checkbox selection — replaces the old group-wide block. */
+  handleSetPriorityForSelection: (keywordIds: string[], priority: string) => void;
   priorityFetcher: FetcherWithComponents<ActionResult>;
   distFetcher: FetcherWithComponents<{
     success: boolean;
@@ -122,13 +152,14 @@ export interface LibraryTabProps {
   assignFetcher: FetcherWithComponents<ActionResult>;
   startDistribution: (opts: {
     resourceIds: string[];
+    keywordIds: string[];
     targetType: KeywordResourceType;
     maxSecondaries: string;
   }) => void;
 
-  // Move a keyword to another group and/or language.
-  moveModal: { keywordId: string; keyword: string; locale: string } | null;
-  openMoveModal: (row: { keywordId: string; keyword: string; locale: string }) => void;
+  // Move the selected keywords to another group and/or language.
+  moveModal: KeywordSelection | null;
+  openMoveModal: (rows: KeywordSelection) => void;
   closeMoveModal: () => void;
   moveTargetLocale: string;
   setMoveTargetLocale: (v: string) => void;
@@ -136,8 +167,27 @@ export interface LibraryTabProps {
   setMoveTargetGroupId: (v: string) => void;
   submitMove: () => void;
   moveFetcher: FetcherWithComponents<ActionResult>;
-  /** Delete the keyword itself (not just its group membership). */
-  handleDeleteKeywordRow: (row: { keywordId: string; keyword: string; assignmentCount: number }) => void;
+  /** Delete the keywords themselves (not just their group membership). */
+  handleDeleteKeywords: (rows: KeywordSelection) => void;
+  /** Drop the keywords out of the selected (real) group only. */
+  handleRemoveKeywordsFromGroup: (rows: KeywordSelection) => void;
+
+  // Inline editing of the keyword names. `editingKeywordId` lives in the Shell
+  // because a freshly CREATED row has to open in edit mode, and only the Shell
+  // sees the create action's answer.
+  editingKeywordId: string | null;
+  startEditKeyword: (keywordId: string) => void;
+  cancelEditKeyword: () => void;
+  commitEditKeyword: (keywordId: string, keyword: string) => void;
+  /** Rejection text for the row currently being edited, if the server refused. */
+  editKeywordError: string | null;
+  handleCreateKeyword: () => void;
+  keywordEditFetcher: FetcherWithComponents<ActionResult>;
+
+  // Bulk paste, now behind a button instead of permanently on screen.
+  importModalOpen: boolean;
+  openImportModal: () => void;
+  closeImportModal: () => void;
 }
 
 export function LibraryTab({
@@ -148,13 +198,13 @@ export function LibraryTab({
   ungroupedCount,
   groupDetail,
   isPro,
+  keywordQuota,
   runningDistribution,
   distributionPreview,
   researchAvailability,
   productTypes,
   localeOptions,
   priorityOptions,
-  intentLabel,
   selectGroup,
   activeLocale,
   newGroupName,
@@ -174,9 +224,7 @@ export function LibraryTab({
   renameValue,
   setRenameValue,
   handleDeleteGroup,
-  handleApplyBulkPriority,
-  bulkPriority,
-  setBulkPriority,
+  handleSetPriorityForSelection,
   priorityFetcher,
   distFetcher,
   decisions,
@@ -199,9 +247,23 @@ export function LibraryTab({
   setMoveTargetGroupId,
   submitMove,
   moveFetcher,
-  handleDeleteKeywordRow,
+  handleDeleteKeywords,
+  handleRemoveKeywordsFromGroup,
+  editingKeywordId,
+  startEditKeyword,
+  cancelEditKeyword,
+  commitEditKeyword,
+  editKeywordError,
+  handleCreateKeyword,
+  keywordEditFetcher,
+  importModalOpen,
+  openImportModal,
+  closeImportModal,
 }: LibraryTabProps) {
   const isPseudo = !!groupDetail?.pseudo;
+  // No room for another keyword: either the cap is reached or a downgrade left
+  // the shop above it. Both block CREATION only — nothing is ever deleted.
+  const quotaExhausted = keywordQuota.remaining < 1;
 
   // Display name for a stored locale value ("" = primary, the SeoKeyword
   // convention) — the loader's localeOptions are the single source.
@@ -215,27 +277,69 @@ export function LibraryTab({
   ];
   const moveIsNoop =
     !!moveModal &&
-    moveTargetLocale === moveModal.locale &&
+    moveTargetLocale === (moveModal[0]?.locale ?? "") &&
     moveTargetGroupId === (groupDetail && !groupDetail.pseudo ? groupDetail.id : "");
 
-  // Group-keyword table selection (real groups only) drives the "Auswahl
-  // zuordnen" bulk action. Transient view state — the selected ids map back to
-  // the group's keyword rows when the assign panel opens.
+  // Keyword-table selection — the single input every keyword action in the bar
+  // above the table reads. Available in the pseudo views too: assigning,
+  // moving and deleting are keyword-level operations that make just as much
+  // sense from "Alle" / "Ohne Gruppe" as from a real group.
   const keywordRows = groupDetail?.keywords ?? [];
-  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(
-    keywordRows as unknown as { [key: string]: unknown }[],
-    { resourceIDResolver: (r) => (r as unknown as { keywordId: string }).keywordId },
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } =
+    useIndexResourceState(keywordRows as unknown as { [key: string]: unknown }[], {
+      resourceIDResolver: (r) => (r as unknown as { keywordId: string }).keywordId,
+    });
+
+  // Switching group/language swaps the whole row set, and a completed write
+  // (delete, remove-from-group, import, …) rewrites it — either way a
+  // carried-over selection would keep ticks and an "Alle"-header for rows that
+  // are no longer there.
+  const groupKey = `${groupDetail?.id ?? ""}::${groupDetail?.locale ?? ""}`;
+  const groupWriteResult = groupFetcher.state === "idle" ? groupFetcher.data : undefined;
+  useEffect(() => {
+    clearSelection();
+    // clearSelection is stable for a given row set; listing it would wipe the
+    // selection on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupKey, groupWriteResult]);
+
+  // The selected rows, resolved back against the rows actually on screen: a
+  // bulk action revalidates the loader, and until the fresh rows arrive the
+  // selection can still name keywords that were just deleted or moved away.
+  const selectedRows: KeywordSelection = useMemo(
+    () =>
+      keywordRows
+        .filter((r) => selectedResources.includes(r.keywordId))
+        .map((r) => ({
+          keywordId: r.keywordId,
+          keyword: r.keyword,
+          locale: r.locale,
+          assignmentCount: r.assignmentCount,
+        })),
+    [keywordRows, selectedResources],
   );
+  const selectedCount = selectedRows.length;
+  const moveCount = moveModal?.length ?? 0;
+  // Open state of the selection bar's priority menu — view-local, like the
+  // selection itself.
+  const [priorityMenuOpen, setPriorityMenuOpen] = useState(false);
+  // Losing the selection HIDES the popover (its activator goes disabled) but
+  // Polaris only fires onClose while it is active, so the flag would survive
+  // and the menu would spring open again on the next tick.
+  useEffect(() => {
+    if (selectedCount === 0) setPriorityMenuOpen(false);
+  }, [selectedCount]);
+  // One in-flight write at a time — group actions and the move share the
+  // selection, and a second submit would race the first one's revalidation.
+  const bulkBusy = groupFetcher.state !== "idle" || moveFetcher.state !== "idle";
 
   // Keywords in this group not yet assigned to any item — the "redistribute"
   // (§3.3) entry offers exactly these; disabled when none remain.
   const unassignedKeywords = keywordRows.filter((r) => r.assignmentCount === 0);
 
   const openAssignForSelection = () => {
-    const subset = keywordRows
-      .filter((r) => selectedResources.includes(r.keywordId))
-      .map((r) => ({ keywordId: r.keywordId, keyword: r.keyword }));
-    if (subset.length > 0) openAssignPanel(subset);
+    if (selectedCount === 0) return;
+    openAssignPanel(selectedRows.map((r) => ({ keywordId: r.keywordId, keyword: r.keyword })));
   };
   const pseudoTitle =
     groupDetail?.pseudo === "all"
@@ -244,69 +348,364 @@ export function LibraryTab({
         ? k.groupUngrouped || "Ungrouped"
         : "";
 
-  // The keyword table — editable for a real group (priority Select + remove),
-  // read-only for the pseudo groups (priority badge, no actions).
+  /**
+   * The bar that replaced the per-row action buttons: everything a merchant
+   * can do to keywords, applied to the checkbox selection in one go, plus the
+   * two entries that create rows ("+ Keyword" and the paste import).
+   *
+   * Rendered directly above the table in both the real-group and pseudo views
+   * — "Entfernen" and "Importieren" are the entries a pseudo view drops, since
+   * a view has no membership to remove from or import into.
+   *
+   * Every button is wrapped in ActionTooltip, which keeps the hint reachable
+   * on a disabled control too — so "why can I not click this" is answered by
+   * hover instead of by guessing.
+   */
+  /**
+   * Why a selection action just did nothing. Without this a rejected bulk
+   * request (most plausibly a selection past the server's per-request cap —
+   * an import may add 2000 rows to one group) looked exactly like a dead
+   * button.
+   */
+  const renderBulkError = () => {
+    const failure = [groupFetcher, moveFetcher]
+      .map((f) => (f.state === "idle" ? f.data : undefined))
+      .find((d) => d && !d.ok);
+    if (!failure || failure.ok) return null;
+    if (failure.error === "tooManySelected") {
+      return (
+        <Banner tone="warning">
+          {k.selectionTooMany.replace("{max}", String(failure.max))}
+        </Banner>
+      );
+    }
+    // duplicateName is the group-create field's own inline message; anything
+    // else is a genuine failure of the action the merchant just triggered.
+    if (failure.error === "duplicateName" || failure.error === "csvTooMany") return null;
+    return <Banner tone="critical">{k.errorGeneric}</Banner>;
+  };
+
+  /** A move that reported success but carried nothing across. */
+  const renderMoveResult = () => {
+    const d = moveFetcher.state === "idle" ? moveFetcher.data : undefined;
+    if (!d?.ok || d.kind !== "keywordsMoved" || d.failed === 0) return null;
+    return (
+      <Banner tone={d.moved === 0 ? "critical" : "warning"}>
+        {k.moveFailedSome
+          .replace("{failed}", String(d.failed))
+          .replace("{moved}", String(d.moved))}
+      </Banner>
+    );
+  };
+
+  const renderSelectionBar = (readOnly: boolean) => {
+    const nothingSelected = selectedCount === 0;
+    const priorityDisabled = nothingSelected || bulkBusy;
+    const selectionHint = (active: string) => (nothingSelected ? k.selectionNeeded : active);
+
+    return (
+      <div
+        className={`keyword-selection-bar${selectedCount > 0 ? " keyword-selection-bar--active" : ""}`}
+      >
+        <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <Text as="span" variant="bodySm" tone={selectedCount > 0 ? undefined : "subdued"}>
+              {selectedCount > 0
+                ? k.selectionCount.replace("{count}", String(selectedCount))
+                : k.selectionHint}
+            </Text>
+            {selectedCount > 0 && (
+              <Button variant="plain" onClick={clearSelection}>
+                {k.selectionClear}
+              </Button>
+            )}
+            {/* Plan quota, always visible so the cap is never a surprise at
+                the moment of adding. Critical once a downgrade left the shop
+                above it — the rows are kept, only new ones are blocked. */}
+            {keywordQuota.limit > 0 && (
+              <Text as="p" variant="bodySm" tone={quotaExhausted ? "critical" : "subdued"}>
+                {k.keywordQuotaUsage
+                  .replace("{used}", String(keywordQuota.used))
+                  .replace("{limit}", String(keywordQuota.limit))}
+              </Text>
+            )}
+          </InlineStack>
+          {keywordQuota.over && (
+            <Banner tone="warning">
+              <Text as="p" variant="bodySm">
+                {k.keywordQuotaOver
+                  .replace("{used}", String(keywordQuota.used))
+                  .replace("{limit}", String(keywordQuota.limit))}
+              </Text>
+            </Banner>
+          )}
+
+          <InlineStack gap="200" blockAlign="center" wrap>
+            {/* Row-creating entries first — they need no selection. */}
+            {!readOnly && (
+              <>
+                <ActionTooltip
+                  content={quotaExhausted ? k.keywordPlanLimitShort : k.addKeywordHint}
+                  disabled={bulkBusy}
+                  preferredPosition="below"
+                >
+                  {/* Disabled at the cap so the merchant does not discover the
+                      plan limit only after typing a keyword. */}
+                  <Button
+                    size="slim"
+                    disabled={bulkBusy || quotaExhausted}
+                    onClick={handleCreateKeyword}
+                  >
+                    {`＋ ${k.addKeyword}`}
+                  </Button>
+                </ActionTooltip>
+                <ActionTooltip content={k.importHint} preferredPosition="below">
+                  <Button size="slim" variant="plain" onClick={openImportModal}>
+                    {k.importButton}
+                  </Button>
+                </ActionTooltip>
+                <div style={{ height: "1.25rem" }}>
+                  <Divider borderColor="border" />
+                </div>
+              </>
+            )}
+
+            <ActionTooltip
+              content={selectionHint(k.assign.assignSelectionHint)}
+              disabled={nothingSelected}
+              preferredPosition="below"
+            >
+              <Button
+                size="slim"
+                variant="primary"
+                disabled={nothingSelected}
+                onClick={openAssignForSelection}
+              >
+                {k.assign.assignSelection}
+              </Button>
+            </ActionTooltip>
+
+            {/* Priority for the selection — the replacement for the old
+                "set for ALL keywords in this group" block that sat under the
+                table with its own Select. One menu, applied on click.
+
+                Two branches instead of one Popover with a compound `active`
+                and an ActionTooltip activator: that shape needed TWO clicks to
+                open. ActionTooltip swaps between two different wrappers
+                (plain Tooltip vs. the pointer-events one) depending on
+                `disabled`, so the very first click re-mounted the Popover's
+                activator subtree and was spent on the remount instead of on
+                opening. Now the disabled case never builds a Popover at all,
+                and the live one matches the activator shape that already works
+                elsewhere in this codebase (UnifiedItemList): plain boolean
+                `active`, plain Tooltip, one Button. */}
+            {priorityDisabled ? (
+              <ActionTooltip
+                content={selectionHint(k.setPriorityHint)}
+                disabled
+                preferredPosition="below"
+              >
+                <Button size="slim" disclosure disabled>
+                  {k.setPriority}
+                </Button>
+              </ActionTooltip>
+            ) : (
+              <Popover
+                active={priorityMenuOpen}
+                onClose={() => setPriorityMenuOpen(false)}
+                preferredAlignment="left"
+                activator={
+                  /* `active={false}` while the menu is open, rather than
+                     dropping the Tooltip from the tree: an open menu and its
+                     own tooltip overlap, but swapping the activator's wrapper
+                     mid-interaction is exactly what cost this button its first
+                     click before. Polaris gates hover AND focus activation on
+                     `active !== false`, so this suppresses it outright instead
+                     of showing and hiding it again. */
+                  <Tooltip
+                    content={k.setPriorityHint}
+                    active={priorityMenuOpen ? false : undefined}
+                    dismissOnMouseOut
+                    preferredPosition="below"
+                  >
+                    <Button
+                      size="slim"
+                      disclosure
+                      onClick={() => setPriorityMenuOpen((open) => !open)}
+                    >
+                      {k.setPriority}
+                    </Button>
+                  </Tooltip>
+                }
+              >
+                <ActionList
+                  actionRole="menuitem"
+                  items={priorityOptions.map((o) => ({
+                    content: o.label,
+                    onAction: () => {
+                      setPriorityMenuOpen(false);
+                      handleSetPriorityForSelection(
+                        selectedRows.map((r) => r.keywordId),
+                        o.value,
+                      );
+                    },
+                  }))}
+                />
+              </Popover>
+            )}
+
+            {/* From a pseudo view there is no source group to leave, so a
+                same-language move only ADDS the keywords to the chosen group —
+                the dialog spells that out. */}
+            <ActionTooltip
+              content={selectionHint(k.moveKeywordHint)}
+              disabled={nothingSelected || bulkBusy}
+              preferredPosition="below"
+            >
+              <Button
+                size="slim"
+                disabled={nothingSelected || bulkBusy}
+                onClick={() => openMoveModal(selectedRows)}
+              >
+                {k.moveKeyword}
+              </Button>
+            </ActionTooltip>
+
+            {/* Only out of THIS group — a keyword survives as long as it is
+                assigned to an item or belongs to another group. */}
+            {!readOnly && (
+              <ActionTooltip
+                content={selectionHint(k.groupRemoveKeywordHint)}
+                disabled={nothingSelected || bulkBusy}
+                preferredPosition="below"
+              >
+                <Button
+                  size="slim"
+                  disabled={nothingSelected || bulkBusy}
+                  onClick={() => handleRemoveKeywordsFromGroup(selectedRows)}
+                >
+                  {k.groupRemoveKeyword}
+                </Button>
+              </ActionTooltip>
+            )}
+
+            {/* Gone for good, including every item assignment. */}
+            <ActionTooltip
+              content={selectionHint(k.deleteKeywordHint)}
+              disabled={nothingSelected || bulkBusy}
+              preferredPosition="below"
+            >
+              <Button
+                size="slim"
+                tone="critical"
+                disabled={nothingSelected || bulkBusy}
+                onClick={() => handleDeleteKeywords(selectedRows)}
+              >
+                {k.delete}
+              </Button>
+            </ActionTooltip>
+          </InlineStack>
+        </InlineStack>
+      </div>
+    );
+  };
+
+  // The keyword table. `readOnly` is about GROUP MEMBERSHIP, not about the
+  // keywords: a pseudo view has no membership to edit (no "Entfernen"), but its
+  // rows are still selectable, still editable in place, still carry the same
+  // priority control and still support every action in the bar above.
   const renderKeywordTable = (readOnly: boolean) => {
     if (!groupDetail) return null;
     if (groupDetail.keywords.length === 0) {
       return (
-        <Text as="p" tone="subdued">
-          {readOnly
-            ? k.groupNoKeywordsReadonly || "No keywords for this language yet."
-            : k.groupNoKeywords || "No keywords in this group yet — paste some above."}
-        </Text>
+        <Box padding="600">
+          <BlockStack gap="200" inlineAlign="center">
+            <Text as="p" variant="bodyMd" tone="subdued">
+              {readOnly ? k.groupNoKeywordsReadonly : k.groupNoKeywords}
+            </Text>
+            {!readOnly && (
+              <InlineStack gap="200" blockAlign="center">
+                <Button
+                  variant="primary"
+                  disabled={bulkBusy || quotaExhausted}
+                  onClick={handleCreateKeyword}
+                >
+                  {`＋ ${k.addKeyword}`}
+                </Button>
+                <Button variant="plain" onClick={openImportModal}>
+                  {k.importButton}
+                </Button>
+              </InlineStack>
+            )}
+          </BlockStack>
+        </Box>
       );
     }
     const headings: { title: string }[] = [
       { title: k.colKeyword },
       { title: k.colLocale },
-      { title: k.colPriority || "Priority" },
-      { title: k.colAssignments || "Assignments" },
-      // Move is offered in the pseudo views too — "Ohne Gruppe" is exactly
-      // where a keyword tracked under the wrong language tends to sit.
-      { title: "" },
+      { title: k.colPriority },
+      { title: k.colAssignments },
     ];
     return (
       <IndexTable
         itemCount={groupDetail.keywords.length}
-        selectable={!readOnly}
-        selectedItemsCount={readOnly ? undefined : allResourcesSelected ? "All" : selectedResources.length}
-        onSelectionChange={readOnly ? undefined : handleSelectionChange}
-        promotedBulkActions={
-          readOnly ? undefined : [{ content: k.assign.assignSelection, onAction: openAssignForSelection }]
-        }
+        selectable
+        // selectedCount, not selectedResources.length: a write can retire rows
+        // the selection still names, and the header must count what is on screen.
+        selectedItemsCount={allResourcesSelected ? "All" : selectedCount}
+        onSelectionChange={handleSelectionChange}
         headings={headings as [{ title: string }, ...{ title: string }[]]}
       >
-        {groupDetail.keywords.map((gk, index) => (
-          <IndexTable.Row
-            id={gk.keywordId}
-            key={gk.keywordId}
-            position={index}
-            selected={!readOnly && selectedResources.includes(gk.keywordId)}
-          >
-            <IndexTable.Cell>
-              <InlineStack gap="100" blockAlign="center" wrap={false}>
-                <Text as="span" variant="bodyMd">
-                  {gk.keyword}
+        {groupDetail.keywords.map((gk, index) => {
+          const editing = editingKeywordId === gk.keywordId;
+          return (
+            <IndexTable.Row
+              id={gk.keywordId}
+              key={gk.keywordId}
+              position={index}
+              selected={selectedResources.includes(gk.keywordId)}
+            >
+              <IndexTable.Cell>
+                {/* The row click target is the checkbox; the name is its own
+                    button, so a click on the text edits instead of selecting. */}
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyUp={(event) => event.stopPropagation()}
+                  role="presentation"
+                >
+                  <EditableKeywordCell
+                    k={k}
+                    keywordId={gk.keywordId}
+                    keyword={gk.keyword}
+                    editing={editing}
+                    error={editing ? editKeywordError ?? undefined : undefined}
+                    busy={keywordEditFetcher.state !== "idle"}
+                    onStartEdit={() => startEditKeyword(gk.keywordId)}
+                    onCancel={cancelEditKeyword}
+                    onCommit={(next) => commitEditKeyword(gk.keywordId, next)}
+                  />
+                </div>
+              </IndexTable.Cell>
+              <IndexTable.Cell>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  {localeName(gk.locale)}
                 </Text>
-                {gk.intent && <Badge>{intentLabel(gk.intent) ?? gk.intent}</Badge>}
-              </InlineStack>
-            </IndexTable.Cell>
-            <IndexTable.Cell>
-              <Badge>{localeName(gk.locale)}</Badge>
-            </IndexTable.Cell>
-            <IndexTable.Cell>
-              {readOnly ? (
-                <Text as="span" variant="bodySm">
-                  {priorityOptions.find((o) => o.value === String(gk.priority))?.label ?? String(gk.priority)}
-                </Text>
-              ) : (
-                <div style={{ minWidth: "110px" }}>
-                  <Select
-                    label={k.colPriority || "Priority"}
-                    labelHidden
+              </IndexTable.Cell>
+              <IndexTable.Cell>
+                {/* Same control in every view: priority belongs to the KEYWORD,
+                    not to its group membership, so "Alle" / "Ohne Gruppe" can
+                    edit it just as well as a real group. */}
+                <div
+                  onClick={(event) => event.stopPropagation()}
+                  onKeyUp={(event) => event.stopPropagation()}
+                  role="presentation"
+                >
+                  <PriorityBadgeSelect
+                    k={k}
+                    keyword={gk.keyword}
+                    value={gk.priority}
                     options={priorityOptions}
-                    value={String(gk.priority)}
                     disabled={priorityFetcher.state !== "idle"}
                     onChange={(v) =>
                       priorityFetcher.submit(
@@ -316,67 +715,19 @@ export function LibraryTab({
                     }
                   />
                 </div>
-              )}
-            </IndexTable.Cell>
-            <IndexTable.Cell>
-              <Text as="span" variant="bodySm">
-                {gk.assignmentCount}
-              </Text>
-            </IndexTable.Cell>
-            <IndexTable.Cell>
-              <InlineStack gap="200" blockAlign="center" wrap={false}>
-                <Button
-                  variant="plain"
-                  disabled={moveFetcher.state !== "idle"}
-                  onClick={() =>
-                    openMoveModal({ keywordId: gk.keywordId, keyword: gk.keyword, locale: gk.locale })
-                  }
-                >
-                  {/* From a pseudo view there is no source group to leave, so
-                      the same-language case ADDS the keyword to a group — the
-                      label says so rather than promising a move. */}
-                  {readOnly ? k.assignToGroup || "Assign" : k.moveKeyword || "Move"}
-                </Button>
-                {/* Only out of THIS group — the keyword itself survives if it
-                    is assigned to items or belongs to another group. */}
-                {!readOnly && (
-                  <Button
-                    variant="plain"
-                    disabled={groupFetcher.state !== "idle"}
-                    onClick={() =>
-                      groupDetail &&
-                      groupFetcher.submit(
-                        {
-                          actionType: "removeFromGroup",
-                          groupId: groupDetail.id,
-                          keywordId: gk.keywordId,
-                        },
-                        { method: "post" },
-                      )
-                    }
-                  >
-                    {k.groupRemoveKeyword || "Remove"}
-                  </Button>
+              </IndexTable.Cell>
+              <IndexTable.Cell>
+                {gk.assignmentCount > 0 ? (
+                  <Badge tone="success">{String(gk.assignmentCount)}</Badge>
+                ) : (
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {k.assignmentsNone}
+                  </Text>
                 )}
-                {/* Gone for good, including every item assignment. */}
-                <Button
-                  variant="plain"
-                  tone="critical"
-                  disabled={groupFetcher.state !== "idle"}
-                  onClick={() =>
-                    handleDeleteKeywordRow({
-                      keywordId: gk.keywordId,
-                      keyword: gk.keyword,
-                      assignmentCount: gk.assignmentCount,
-                    })
-                  }
-                >
-                  {k.delete}
-                </Button>
-              </InlineStack>
-            </IndexTable.Cell>
-          </IndexTable.Row>
-        ))}
+              </IndexTable.Cell>
+            </IndexTable.Row>
+          );
+        })}
       </IndexTable>
     );
   };
@@ -391,9 +742,14 @@ export function LibraryTab({
   ) : isPseudo ? (
     <Card>
       <BlockStack gap="300">
-        <Text as="h3" variant="headingMd">
-          {`${pseudoTitle} (${groupDetail.keywords.length})`}
-        </Text>
+        <InlineStack align="space-between" blockAlign="center">
+          <Text as="h3" variant="headingMd">
+            {`${pseudoTitle} (${groupDetail.keywords.length})`}
+          </Text>
+          <HelpTooltip helpKey="keywordsDistribute" position="below" />
+        </InlineStack>
+        {groupDetail.keywords.length > 0 && renderSelectionBar(true)}
+        {renderBulkError()}
         {renderKeywordTable(true)}
       </BlockStack>
     </Card>
@@ -447,197 +803,121 @@ export function LibraryTab({
               </Button>
             </InlineStack>
           )}
-          <InlineStack gap="200">
-            <Button
-              variant="primary"
+          {/* Group-WIDE shortcuts: "all keywords" and "the unassigned ones",
+              neither of which needs a selection. The primary action now lives
+              in the selection bar above the table (k.assign.assignSelection),
+              so these stay secondary. */}
+          <InlineStack gap="200" blockAlign="center">
+            <ActionTooltip
+              content={
+                groupDetail.keywords.length === 0
+                  ? k.distributeEmptyHint
+                  : runningDistribution
+                    ? k.distributeRunningHint
+                    : k.distributeButtonHint
+              }
               disabled={!!runningDistribution || groupDetail.keywords.length === 0}
-              onClick={() =>
-                openAssignPanel(
-                  groupDetail.keywords.map((gk) => ({ keywordId: gk.keywordId, keyword: gk.keyword })),
-                )
-              }
+              preferredPosition="below"
             >
-              {k.distributeButton || "Distribute onto items"}
-            </Button>
-            <Button
+              <Button
+                size="slim"
+                disabled={!!runningDistribution || groupDetail.keywords.length === 0}
+                onClick={() =>
+                  openAssignPanel(
+                    groupDetail.keywords.map((gk) => ({ keywordId: gk.keywordId, keyword: gk.keyword })),
+                  )
+                }
+              >
+                {k.distributeButton}
+              </Button>
+            </ActionTooltip>
+            <ActionTooltip
+              content={
+                unassignedKeywords.length === 0
+                  ? k.assign.redistributeNone
+                  : k.assign.redistributeHint.replace("{count}", String(unassignedKeywords.length))
+              }
               disabled={!!runningDistribution || unassignedKeywords.length === 0}
-              onClick={() =>
-                openAssignPanel(
-                  unassignedKeywords.map((gk) => ({ keywordId: gk.keywordId, keyword: gk.keyword })),
-                )
-              }
+              preferredPosition="below"
             >
-              {k.assign.redistribute}
-            </Button>
-            <Button tone="critical" variant="plain" onClick={handleDeleteGroup}>
-              {k.groupDelete || "Delete group"}
-            </Button>
+              <Button
+                size="slim"
+                disabled={!!runningDistribution || unassignedKeywords.length === 0}
+                onClick={() =>
+                  openAssignPanel(
+                    unassignedKeywords.map((gk) => ({ keywordId: gk.keywordId, keyword: gk.keyword })),
+                  )
+                }
+              >
+                {k.assign.redistribute}
+              </Button>
+            </ActionTooltip>
+            <ActionTooltip content={k.groupDeleteHint} preferredPosition="below">
+              <Button size="slim" tone="critical" variant="plain" onClick={handleDeleteGroup}>
+                {k.groupDelete}
+              </Button>
+            </ActionTooltip>
             <HelpTooltip helpKey="keywordsDistribute" position="below" />
           </InlineStack>
         </InlineStack>
-        {unassignedKeywords.length === 0 && groupDetail.keywords.length > 0 && (
-          <Text as="p" variant="bodySm" tone="subdued">
-            {k.assign.redistributeNone}
-          </Text>
-        )}
 
-        {/* Running distribution progress */}
-        {runningDistribution && (
-          <Banner tone="info">
-            <BlockStack gap="150">
-              <Text as="p" variant="bodyMd">
-                {(runningDistribution.fieldType === "apply"
-                  ? k.distApplyRunning || "Applying accepted assignments… ({progress}%)"
-                  : k.distSuggestRunning || "AI distribution is running… ({progress}%)"
-                ).replace("{progress}", String(runningDistribution.progress ?? 0))}
-              </Text>
-              <ProgressBar progress={runningDistribution.progress ?? 0} size="small" />
-            </BlockStack>
-          </Banner>
-        )}
-        {distFetcher.data && !distFetcher.data.success && (
-          <Banner tone="critical">
-            {distFetcher.data.code === "ALREADY_RUNNING"
-              ? k.distAlreadyRunning || "A distribution is already running — check the Tasks tab."
-              : distFetcher.data.error || k.errorGeneric}
-          </Banner>
-        )}
+        {/* The run's progress and its start errors live at the TOP of the tab,
+            next to the suggestions they produce — not duplicated here. */}
 
-        {/* ONE bulk-paste box — replaces the old CSV field + single-add field */}
-        <KeywordPaste k={k} groupId={groupDetail.id} groupFetcher={groupFetcher} priorityOptions={priorityOptions} />
-
-        {/* Group keywords */}
+        {/* Group keywords: the selection bar owns every keyword action, the
+            table below is just the checkboxes and the row data. */}
+        {groupDetail.keywords.length > 0 && renderSelectionBar(false)}
+        {renderBulkError()}
         {renderKeywordTable(false)}
 
-        {/* Bulk priority (plan §5.1 group bulk actions) */}
-        {groupDetail.keywords.length > 1 && (
-          <InlineStack gap="200" blockAlign="end" wrap>
-            <div style={{ minWidth: "150px" }}>
-              <Select
-                label={k.bulkPriorityLabel || "Set priority for ALL"}
-                options={priorityOptions}
-                value={bulkPriority}
-                onChange={setBulkPriority}
-              />
-            </div>
-            <Button loading={groupFetcher.state !== "idle"} onClick={handleApplyBulkPriority}>
-              {k.bulkPriorityApply || "Apply to all"}
-            </Button>
-          </InlineStack>
-        )}
-
-        {/* Distribution preview (plan §5.4 step 4 — never auto-applied) */}
-        {distributionPreview && (
-          <BlockStack gap="200">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h4" variant="headingSm">
-                {k.distPreviewTitle || "Distribution suggestions"}
-              </Text>
-              <Button
-                variant="plain"
-                onClick={() => {
-                  const next: DecisionMap = {};
-                  for (const s of distributionPreview?.suggestions ?? []) {
-                    next[s.keyword] = s.primaryItemId ? "accept" : "reject";
-                  }
-                  setDecisions(next);
-                }}
-              >
-                {k.distAcceptAll || "Accept all"}
-              </Button>
-            </InlineStack>
-            {distributionPreview.failedBatches > 0 && (
-              <Banner tone="warning">
-                {(k.distFailedBatches ||
-                  "{failed} of {total} AI calls failed — their items received no suggestions.")
-                  .replace("{failed}", String(distributionPreview.failedBatches))
-                  .replace("{total}", String(distributionPreview.batches))}
-              </Banner>
-            )}
-            <IndexTable
-              itemCount={distributionPreview.suggestions.length}
-              selectable={false}
-              headings={[
-                { title: k.distColDecision || "Decision" },
-                { title: k.colKeyword },
-                { title: k.distColPrimary || "Primary suggestion" },
-                { title: k.distColSecondaries || "Secondaries" },
-                { title: k.distColConfidence || "Confidence" },
-              ]}
-            >
-              {distributionPreview.suggestions.map((s, index) => {
-                const titles = distributionPreview?.itemTitles ?? {};
-                return (
-                  <IndexTable.Row id={s.keyword} key={s.keyword} position={index}>
-                    <IndexTable.Cell>
-                      <div style={{ minWidth: "140px" }}>
-                        <Select
-                          label={k.distColDecision || "Decision"}
-                          labelHidden
-                          disabled={!s.primaryItemId && s.secondaryItemIds.length === 0}
-                          options={[
-                            { label: k.distDecisionAccept || "Accept", value: "accept" },
-                            { label: k.distDecisionSecondary || "As secondary only", value: "secondaryOnly" },
-                            { label: k.distDecisionReject || "Reject", value: "reject" },
-                          ]}
-                          value={decisions[s.keyword] ?? "reject"}
-                          onChange={(v) =>
-                            setDecisions((prev) => ({
-                              ...prev,
-                              [s.keyword]: v as "accept" | "secondaryOnly" | "reject",
-                            }))
-                          }
-                        />
-                      </div>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodyMd">
-                        {s.keyword}
-                      </Text>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodySm" tone={s.primaryItemId ? undefined : "subdued"}>
-                        {s.primaryItemId ? titles[s.primaryItemId] || s.primaryItemId : k.distNoMatch || "no match"}
-                      </Text>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        {s.secondaryItemIds.map((id) => titles[id] || id).join(", ") || "–"}
-                      </Text>
-                    </IndexTable.Cell>
-                    <IndexTable.Cell>
-                      <Badge tone={s.confidence >= 0.6 ? "success" : undefined}>
-                        {`${Math.round(s.confidence * 100)}%`}
-                      </Badge>
-                    </IndexTable.Cell>
-                  </IndexTable.Row>
-                );
-              })}
-            </IndexTable>
-            <InlineStack gap="300" blockAlign="center" wrap>
-              <Checkbox
-                label={k.distDemoteExisting || "Replace existing primary keywords (demote them to secondary)"}
-                checked={demoteExisting}
-                onChange={setDemoteExisting}
-              />
-              <Button
-                variant="primary"
-                loading={distFetcher.state !== "idle"}
-                disabled={!!runningDistribution || !Object.values(decisions).some((d) => d !== "reject")}
-                onClick={applyDistribution}
-              >
-                {k.distApply || "Apply accepted"}
-              </Button>
-            </InlineStack>
-          </BlockStack>
-        )}
       </BlockStack>
     </Card>
   );
 
   return (
     <BlockStack gap="400">
-      {/* Research on top (plan §2.1) — collapsible, language follows the navbar. */}
+      {/* Pending AI suggestions come FIRST and only exist while there are
+          any — an unreviewed batch is a decision waiting on the merchant, so
+          it outranks the research panel and the group list. It is deliberately
+          not scoped to the selected group (see the loader). */}
+      {distributionPreview && (
+        <SuggestionsPanel
+          k={k}
+          preview={distributionPreview}
+          decisions={decisions}
+          setDecisions={setDecisions}
+          demoteExisting={demoteExisting}
+          setDemoteExisting={setDemoteExisting}
+          applyDistribution={applyDistribution}
+          distFetcher={distFetcher}
+          runningDistribution={runningDistribution}
+        />
+      )}
+
+      {/* A run in flight replaces the suggestion list — same slot, so progress
+          and result appear in the same place instead of in the group card. */}
+      {runningDistribution && (
+        <Card>
+          <BlockStack gap="200">
+            <Text as="p" variant="bodyMd">
+              {(runningDistribution.fieldType === "apply"
+                ? k.distApplyRunning
+                : k.distSuggestRunning
+              ).replace("{progress}", String(runningDistribution.progress ?? 0))}
+            </Text>
+            <ProgressBar progress={runningDistribution.progress ?? 0} size="small" />
+          </BlockStack>
+        </Card>
+      )}
+      {distFetcher.data && !distFetcher.data.success && (
+        <Banner tone="critical">
+          {distFetcher.data.code === "ALREADY_RUNNING"
+            ? k.distAlreadyRunning
+            : distFetcher.data.error || k.errorGeneric}
+        </Banner>
+      )}
+
+      {/* Research (plan §2.1) — collapsible, language follows the navbar. */}
       <ResearchPanel
         k={k}
         researchAvailability={researchAvailability}
@@ -683,19 +963,41 @@ export function LibraryTab({
         activeLocale={activeLocale}
         productTypes={productTypes.map((p) => ({ label: p, value: p }))}
         isPro={isPro}
+        // The AI distribution runs against a real group row (the handler looks
+        // it up by id). "Alle" / "Ohne Gruppe" are views with sentinel ids, so
+        // only manual assignment is offered from them.
+        aiAvailable={!!groupDetail && !groupDetail.pseudo}
         k={k}
         assignFetcher={assignFetcher}
         startDistribution={startDistribution}
         runningDistribution={runningDistribution}
       />
 
-      {/* Move a keyword to another group and/or language. A language change
-          merges the keyword into the target language and carries its item
-          assignments along — hence the warning below. */}
+      {/* Bulk paste, behind the "Importieren" button instead of permanently on
+          screen. Only a real group can be imported into (§3.1: the group owns
+          the keywords' language). */}
+      {groupDetail && !groupDetail.pseudo && (
+        <KeywordImportModal
+          k={k}
+          open={importModalOpen}
+          onClose={closeImportModal}
+          groupId={groupDetail.id}
+          groupFetcher={groupFetcher}
+          priorityOptions={priorityOptions}
+        />
+      )}
+
+      {/* Move the selected keywords to another group and/or language. A
+          language change merges each keyword into the target language and
+          carries its item assignments along — hence the warning below. */}
       <Modal
         open={!!moveModal}
         onClose={closeMoveModal}
-        title={k.moveModalTitle || "Move keyword"}
+        title={
+          moveCount > 1
+            ? k.moveModalTitleMany.replace("{count}", String(moveCount))
+            : k.moveModalTitle || "Move keyword"
+        }
         primaryAction={{
           content: k.moveModalConfirm || "Move",
           loading: moveFetcher.state !== "idle",
@@ -707,10 +1009,12 @@ export function LibraryTab({
         <Modal.Section>
           <BlockStack gap="300">
             <Text as="p" variant="bodyMd">
-              {(k.moveModalBody || "Move “{keyword}” to another language or group.").replace(
-                "{keyword}",
-                moveModal?.keyword ?? "",
-              )}
+              {moveCount > 1
+                ? k.moveModalBodyMany.replace("{count}", String(moveCount))
+                : (k.moveModalBody || "Move “{keyword}” to another language or group.").replace(
+                    "{keyword}",
+                    moveModal?.[0]?.keyword ?? "",
+                  )}
             </Text>
             {localeOptions.length > 1 && (
               <Select
@@ -739,7 +1043,7 @@ export function LibraryTab({
                   : k.moveNoGroupsInLocale || "This language has no keyword groups yet."
               }
             />
-            {moveModal && moveTargetLocale !== moveModal.locale && (
+            {moveModal && moveTargetLocale !== (moveModal[0]?.locale ?? "") && (
               <Banner tone="warning">
                 {(
                   k.moveLocaleWarning ||
@@ -748,8 +1052,17 @@ export function LibraryTab({
               </Banner>
             )}
             {moveFetcher.state === "idle" && moveFetcher.data && !moveFetcher.data.ok && (
-              <Banner tone="critical">{k.errorGeneric}</Banner>
+              <Banner tone="critical">
+                {moveFetcher.data.error === "tooManySelected"
+                  ? k.selectionTooMany.replace("{max}", String(moveFetcher.data.max))
+                  : k.errorGeneric}
+              </Banner>
             )}
+            {/* The server moves what it can and counts the rest — a move where
+                nothing arrived keeps this dialog open (see the Shell) so the
+                reason is visible instead of silently landing on an empty
+                target group. */}
+            {renderMoveResult()}
           </BlockStack>
         </Modal.Section>
       </Modal>

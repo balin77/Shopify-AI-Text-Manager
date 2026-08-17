@@ -44,7 +44,7 @@ const LOCALE_NAMES: Record<string, string> = {
  * a prompt never ships an opaque code like "pt-AO" when a usable name exists.
  * English is the conceptual default fallback locale; we never default to German.
  */
-function localeName(code: string): string {
+export function localeName(code: string): string {
   if (!code) return code;
   if (LOCALE_NAMES[code]) return LOCALE_NAMES[code];
   const base = code.split('-')[0];
@@ -807,7 +807,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     fields: Record<string, string>,
     fromLang: string,
     targetLocales: string[],
-    contentType: string = 'product'
+    contentType: string = 'product',
+    /**
+     * Merchant translate-instructions (incl. the SEO-mode length caps). The
+     * caller has always passed these; the parameter simply did not exist, so
+     * they were silently dropped for short fields while long fields honoured
+     * them — a title could ignore a cap its own description respected.
+     */
+    customInstructions?: string,
+    /** Keyword-aware translation clause — one line per target language. */
+    keywordDirective?: string
   ): Promise<Record<string, Record<string, string>>> {
     // Only allow short fields
     const shortFieldKeys = ['title', 'seoTitle', 'handle', 'productType'];
@@ -871,6 +880,8 @@ ${fieldsText}
 Requirements:
 - Keep translations concise and natural
 - Maintain similar character length${handleInstructions}
+${customInstructions ? `\n${customInstructions}\n` : ''}
+${keywordDirective ? `\n${keywordDirective}\n` : ''}
 ${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;
@@ -1403,7 +1414,14 @@ Output the result in ${language}.${glossaryDirective ? `\n\n${glossaryDirective}
     fields: Record<string, string>,
     targetLocales: string[],
     contentType: string = 'product',
-    customInstructions?: string
+    customInstructions?: string,
+    /**
+     * Keyword-aware translation clause (keyword-translation-prompt.ts). Kept
+     * SEPARATE from customInstructions so the merchant's own instructions are
+     * never overwritten by it — and so passing one still leaves the default
+     * instructions in place when there are no custom ones.
+     */
+    keywordDirective?: string
   ): Promise<Record<string, Record<string, string>>> {
     // Sanitize all field values
     const sanitizedFields: Record<string, string> = {};
@@ -1463,6 +1481,7 @@ Output the result in ${language}.${glossaryDirective ? `\n\n${glossaryDirective}
 ${fieldsText}
 
 ${instructions}
+${keywordDirective ? `\n${keywordDirective}\n` : ''}
 ${glossaryDirective ? `\n${glossaryDirective}\n` : ''}
 Respond in JSON format:
 ${JSON.stringify(jsonStructure, null, 2)}`;

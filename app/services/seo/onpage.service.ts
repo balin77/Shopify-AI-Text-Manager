@@ -15,6 +15,7 @@
 
 import { normalizeCrawlUrl, classifyLinkStatus } from "./crawl.service";
 import { deriveIndexability, type IndexabilityVerdict } from "./indexability.shared";
+import { localeVariants } from "./locale-path.shared";
 
 // ── §3.1 Indexability ──────────────────────────────────────────────────────
 //
@@ -65,19 +66,49 @@ export const EXPECTED_NOINDEX_PATTERNS: Array<{ id: string; test: RegExp }> = [
 
 /** The id of the pattern explaining an expected `noindex`, or null. */
 export function expectedNoindexReason(url: string): string | null {
-  let pathAndQuery: string;
-  try {
-    const u = new URL(url);
-    pathAndQuery = `${u.pathname}${u.search}`;
-  } catch {
-    pathAndQuery = url;
-  }
-  const lower = pathAndQuery.toLowerCase();
-  // A locale prefix (/fr/search) must not defeat the match — strip a leading
-  // two/five-letter language segment before testing.
-  const withoutLocale = lower.replace(/^\/[a-z]{2}(-[a-z]{2})?(?=\/)/, "");
+  // A locale prefix (/fr/search) must not defeat the match — `localeVariants`
+  // is the single stripping rule, shared with the crawl denylist.
+  const { lower, withoutLocale } = localeVariants(url);
   const hit = EXPECTED_NOINDEX_PATTERNS.find((p) => p.test.test(withoutLocale) || p.test.test(lower));
   return hit ? hit.id : null;
+}
+
+// ── The false-positive rule for TITLE / META DESCRIPTION ───────────────────
+
+/**
+ * Pages whose `<title>` and meta description Shopify does not expose for
+ * editing — anywhere, not just in this app. Reporting "meta description
+ * missing" on them is a finding nobody can act on, and on a five-locale shop
+ * that is what the whole category consisted of.
+ *
+ * The reason belongs next to each entry, same as `EXPECTED_NOINDEX_PATTERNS`:
+ * "we filter this" only survives review if the reason does.
+ */
+export const NO_EDITABLE_METADATA_PATTERNS: Array<{ id: string; test: RegExp }> = [
+  // Shopify's policy editor (Settings → Policies) has a BODY field and nothing
+  // else — `shopPolicyUpdate` takes `{ type, body }`, there is no `seo` input
+  // and no metafield surface. The theme renders the title; the description is
+  // empty on every shop, by construction.
+  { id: "policies", test: /^\/policies(\/|$|\?)/ },
+  // `/collections/all` is Shopify's reserved virtual listing, not a Collection
+  // record: `all` cannot be taken as a handle, so there is nothing whose SEO
+  // fields could be edited (which is also why it never resolves to an id).
+  { id: "allCollection", test: /^\/collections\/all(\/|$|\?)/ },
+];
+
+/**
+ * True when the page's title/meta description can be edited at all.
+ *
+ * Beyond the patterns above this also excludes PAGINATION (`?page=2`): Shopify
+ * serves page N of a listing with page 1's metadata, so a missing description
+ * is one finding about one resource, not five, and the identical description
+ * on page 2 and page 3 is not a duplicate-content defect either. (`?page=1` is
+ * normalized away entirely — see `normalizeCrawlUrl`.)
+ */
+export function hasEditableMetadata(url: string): boolean {
+  const { lower, withoutLocale } = localeVariants(url);
+  if (/[?&]page=/.test(lower)) return false;
+  return !NO_EDITABLE_METADATA_PATTERNS.some((p) => p.test.test(withoutLocale) || p.test.test(lower));
 }
 
 export interface OnPageRow {
@@ -466,11 +497,22 @@ export function analyzeHeadings(pages: OnPageRow[]): HeadingReport {
  * what the storefront actually delivered. The two disagreeing is itself
  * information — a stored description that never reaches the HTML is a theme
  * problem the DB check can't see.
+ *
+ * Pages Shopify gives no metadata surface for (policies, `/collections/all`,
+ * pagination) are excluded — see `hasEditableMetadata`. The caller reports how
+ * many were skipped rather than dropping them silently.
  */
 export function findMissingMetaDescriptions(pages: OnPageRow[]): OnPageIssueRow[] {
   return judgeable(pages)
+    .filter((p) => hasEditableMetadata(p.url))
     .filter((p) => !(p.metaDesc || "").trim())
     .map((p) => toIssueRow(p, null));
+}
+
+/** How many 2xx pages `hasEditableMetadata` excludes — the number the UI shows
+ *  so the exclusion is visible rather than a silent truncation. */
+export function countPagesWithoutEditableMetadata(pages: OnPageRow[]): number {
+  return judgeable(pages).filter((p) => !hasEditableMetadata(p.url)).length;
 }
 
 /**

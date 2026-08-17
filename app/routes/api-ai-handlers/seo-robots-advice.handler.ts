@@ -8,7 +8,7 @@
  * own action (which is separately gated on AEO_THEME_WRITES).
  *
  * One click = ONE LLM call over at most ROBOTS_ADVICE_BATCH rules. Synchronous
- * by design, like the keyword-intent classifier; the Task row exists for prompt
+ * by design; the Task row exists for prompt
  * logging and the Tasks-tab audit trail.
  */
 

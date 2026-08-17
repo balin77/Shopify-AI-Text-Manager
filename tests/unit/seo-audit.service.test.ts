@@ -365,7 +365,10 @@ const SAMPLE_AUDIT: AuditAggregate = {
 };
 
 /** Hand-rolled seoScoreSnapshot delegate stub, recording create/findMany/findFirst/deleteMany calls. */
-function makeSnapshotDb(rows: { id: string; shop: string; createdAt: Date; averageScore: number; totalScanned: number; totalAvailable: number; capped: boolean; payload: string }[] = []) {
+function makeSnapshotDb(
+  rows: { id: string; shop: string; createdAt: Date; averageScore: number; totalScanned: number; totalAvailable: number; capped: boolean; payload: string }[] = [],
+  plan: string = "max",
+) {
   const calls: { method: string; args: any }[] = [];
   const db = {
     seoScoreSnapshot: {
@@ -398,12 +401,27 @@ function makeSnapshotDb(rows: { id: string; shop: string; createdAt: Date; avera
       deleteMany: async ({ where }: any) => {
         calls.push({ method: "deleteMany", args: where });
         const before = rows.length;
+        // Two prune shapes now: the row-cap prune (id.notIn = the newest N)
+        // and the plan-retention prune (createdAt.lt, newest row excluded via
+        // id.not). A row must match EVERY predicate present to be deleted.
         const keepIds = new Set<string>(where.id?.notIn ?? []);
-        const remaining = rows.filter((r) => !(r.shop === where.shop && !keepIds.has(r.id)));
+        const remaining = rows.filter((r) => {
+          if (r.shop !== where.shop) return true;
+          if (where.id?.notIn && keepIds.has(r.id)) return true;
+          if (where.id?.not && r.id === where.id.not) return true;
+          if (where.createdAt?.lt && !(r.createdAt < where.createdAt.lt)) return true;
+          return false;
+        });
         rows.length = 0;
         rows.push(...remaining);
         return { count: before - remaining.length };
       },
+    },
+    // saveAuditSnapshot reads the plan to apply the retention window
+    // (§Plan-Matrix). Max = 365 days, so the pre-existing row-cap assertions
+    // stay about the row cap.
+    aISettings: {
+      findUnique: async () => ({ subscriptionPlan: plan }),
     },
   } as any;
   return { db, rows, calls };
@@ -426,6 +444,8 @@ describe("saveAuditSnapshot", () => {
   });
 
   it("prunes down to the newest MAX_SNAPSHOTS_PER_SHOP rows per shop", async () => {
+    // Pro: scoreHistoryDays (30) equals the row floor, so the row cap is the
+    // bound that bites — which is what this case is about.
     const now = Date.now();
     const existing = Array.from({ length: MAX_SNAPSHOTS_PER_SHOP }, (_, i) => ({
       id: `old-${i}`,
@@ -437,13 +457,35 @@ describe("saveAuditSnapshot", () => {
       capped: false,
       payload: "{}",
     }));
-    const { db, rows } = makeSnapshotDb(existing);
+    const { db, rows } = makeSnapshotDb(existing, "pro");
 
     await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
 
     expect(rows).toHaveLength(MAX_SNAPSHOTS_PER_SHOP);
     // The oldest pre-existing row must be the one pruned away.
     expect(rows.find((r) => r.id === "old-0")).toBeUndefined();
+  });
+
+  it("lets Max keep more than the row floor — its 365-day trend needs one point per night", async () => {
+    const now = Date.now();
+    // 40 nightly snapshots, all inside Max's 365-day window.
+    const existing = Array.from({ length: 40 }, (_, i) => ({
+      id: `old-${i}`,
+      shop: "shop.myshopify.com",
+      createdAt: new Date(now - (40 - i) * 24 * 60 * 60 * 1000),
+      averageScore: 50,
+      totalScanned: 1,
+      totalAvailable: 1,
+      capped: false,
+      payload: "{}",
+    }));
+    const { db, rows } = makeSnapshotDb(existing, "max");
+
+    await saveAuditSnapshot(db, "shop.myshopify.com", SAMPLE_AUDIT);
+
+    // 40 kept + the new one. A flat 30-row cap would have thrown away the
+    // oldest 11 and capped the advertised trend at 30 points.
+    expect(rows).toHaveLength(41);
   });
 
   it("does not touch another shop's snapshots when pruning", async () => {
@@ -926,3 +968,113 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
   });
 });
 
+
+/**
+ * Featured-image alt coverage per locale (Collection/Article).
+ *
+ * These types used to be scored with the PRIMARY alt text in every locale, on
+ * the belief that no per-locale store existed. It does — `ContentTranslation`
+ * with `key: "image_alt_text"` on the PARENT, the third translation shape both
+ * editors write — so a foreign audit asks whether the alt is TRANSLATED, the
+ * same question it already asks for product gallery images.
+ */
+describe("analyzeStore — featured-image alt coverage per locale", () => {
+  const COLLECTION_ID = "gid-C9";
+  const ARTICLE_ID = "gid-A9";
+
+  /** One collection + one article, both with a filled PRIMARY alt text. */
+  function makeFeaturedImageDb(
+    altRows: { resourceId: string; resourceType: "Collection" | "Article"; value: string }[],
+  ) {
+    const collections = [
+      {
+        id: COLLECTION_ID,
+        title: U(40, "TC9-"),
+        descriptionHtml: A(200),
+        seoTitle: U(40, "STC9-"),
+        seoDescription: U(140, "DC9-"),
+        imageUrl: "http://img/c",
+        imageAltText: "Primaerer Alt-Text",
+      },
+    ];
+    const articles = [
+      {
+        id: ARTICLE_ID,
+        title: U(40, "TA9-"),
+        body: A(200),
+        seoTitle: U(40, "STA9-"),
+        seoDescription: U(140, "DA9-"),
+        imageUrl: "http://img/a",
+        imageAltText: "Primaerer Alt-Text",
+      },
+    ];
+    return {
+      product: { count: async () => 0, findMany: async () => [] },
+      productImage: { groupBy: async () => [] },
+      productImageAltTranslation: { groupBy: async () => [] },
+      collection: { count: async () => collections.length, findMany: async () => collections },
+      article: { count: async () => articles.length, findMany: async () => articles },
+      page: { count: async () => 0, findMany: async () => [] },
+      contentTranslation: {
+        // Two callers, distinguished the way the real query is: the overlay
+        // loader asks for the four content keys, the alt loader for
+        // `image_alt_text` scoped to one resourceType.
+        findMany: async (args: any) => {
+          if (args?.where?.key !== "image_alt_text") return [];
+          return altRows
+            .filter((r) => r.resourceType === args.where.resourceType)
+            .map((r) => ({ resourceId: r.resourceId, value: r.value }));
+        },
+      },
+    } as any;
+  }
+
+  const analyze = (db: any, locale?: string) =>
+    analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      ...(locale === undefined ? {} : { locale }),
+    });
+
+  const missingAltIds = (audit: AuditAggregate) =>
+    audit.problems.find((p) => p.code === "imagesMissingAlt")?.items.map((i) => i.id) ?? [];
+
+  it("reports an untranslated featured-image alt in a foreign locale", async () => {
+    const audit = await analyze(makeFeaturedImageDb([]), "fr");
+    expect(missingAltIds(audit)).toEqual(
+      expect.arrayContaining([COLLECTION_ID, ARTICLE_ID]),
+    );
+  });
+
+  it("does not report it once the alt text is translated for that locale", async () => {
+    const db = makeFeaturedImageDb([
+      { resourceId: COLLECTION_ID, resourceType: "Collection", value: "Texte alternatif" },
+      { resourceId: ARTICLE_ID, resourceType: "Article", value: "Texte alternatif" },
+    ]);
+    expect(missingAltIds(await analyze(db, "fr"))).toEqual([]);
+  });
+
+  it("treats an empty stored alt translation as no translation", async () => {
+    const db = makeFeaturedImageDb([
+      { resourceId: COLLECTION_ID, resourceType: "Collection", value: "   " },
+      { resourceId: ARTICLE_ID, resourceType: "Article", value: "" },
+    ]);
+    expect(missingAltIds(await analyze(db, "fr"))).toEqual(
+      expect.arrayContaining([COLLECTION_ID, ARTICLE_ID]),
+    );
+  });
+
+  it("does not let a collection's translation cover an article (or vice versa)", async () => {
+    const db = makeFeaturedImageDb([
+      { resourceId: COLLECTION_ID, resourceType: "Collection", value: "Texte alternatif" },
+    ]);
+    expect(missingAltIds(await analyze(db, "fr"))).toEqual([ARTICLE_ID]);
+  });
+
+  it("still scores the PRIMARY alt text on a primary-locale scan", async () => {
+    // No per-locale lookup happens at all here — the primary alt is filled, so
+    // neither type reports a missing alt.
+    expect(missingAltIds(await analyze(makeFeaturedImageDb([])))).toEqual([]);
+  });
+});

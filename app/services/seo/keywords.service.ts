@@ -12,6 +12,10 @@
 // Prisma runtime into the browser bundle and break the vite build.
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { stripHtml } from "../../utils/seo-score";
+// Pure plan helpers — no Prisma, no server-only imports, so the client-side
+// half of this module (analyzeOnPage in SeoSidebar) stays bundle-safe.
+import { getMaxTrackedKeywords, isOverKeywordQuota } from "../../utils/planUtils";
+import type { Plan } from "../../config/plans";
 
 export type KeywordResourceType = "Product" | "Collection" | "Article" | "Page";
 
@@ -244,7 +248,6 @@ export interface KeywordAssignmentRow {
   locale: string;
   role: KeywordRole;
   priority: number;
-  intent: string | null;
   gscPosition: number | null;
   gscClicks: number | null;
   gscImpressions: number | null;
@@ -262,9 +265,62 @@ export type AssignKeywordResult =
       reason: "primaryExists";
       existingKeyword: string;
     }
-  | { ok: false; reason: "tooMany" };
+  | { ok: false; reason: "tooMany" }
+  /** The shop already tracks as many keywords as its plan allows. */
+  | { ok: false; reason: "planLimit" };
 
 const assignmentInclude = { keyword: true } as const;
+
+// ── Plan quota (docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md §Plan-Matrix) ─────
+//
+// The cap counts DISTINCT SeoKeyword rows per shop across all locales. A
+// keyword translated into another language is its own row and does count —
+// that matches the cost driver (every row turns into GSC enrichment work).
+// The number of LOCALES stays uncapped as always; only keyword volume is
+// tiered.
+//
+// Only NEW rows are checked. A shop that lands over the cap by DOWNGRADING
+// keeps every keyword it has: keywords are merchant-authored research, not
+// re-syncable cache, so planCacheCleanup must never delete them. Over the cap
+// the shop simply cannot add more until it is back under (or upgrades).
+
+/** Distinct tracked keywords for a shop, across every locale. */
+export async function countShopKeywords(db: PrismaClient, shop: string): Promise<number> {
+  return db.seoKeyword.count({ where: { shop } });
+}
+
+export interface KeywordQuota {
+  plan: Plan;
+  /** 0 = keyword tracking not available on this plan. */
+  limit: number;
+  used: number;
+  /** Never negative — an over-cap shop (post-downgrade) reports 0. */
+  remaining: number;
+  /** True when the shop holds MORE keywords than the plan allows. */
+  over: boolean;
+}
+
+/** The shop's plan, defaulting to free exactly like the other SEO services. */
+async function getShopPlan(db: PrismaClient, shop: string): Promise<Plan> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  return (settings?.subscriptionPlan || "free") as Plan;
+}
+
+/** Quota snapshot for the UI (banner + disabled "add" controls). */
+export async function getKeywordQuota(db: PrismaClient, shop: string): Promise<KeywordQuota> {
+  const [plan, used] = await Promise.all([getShopPlan(db, shop), countShopKeywords(db, shop)]);
+  const limit = getMaxTrackedKeywords(plan);
+  return {
+    plan,
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+    over: isOverKeywordQuota(plan, used),
+  };
+}
 
 /**
  * Run an interactive transaction at SERIALIZABLE isolation, retrying on
@@ -310,7 +366,6 @@ function toRow(a: {
     keyword: string;
     locale: string;
     priority: number;
-    intent: string | null;
     updatedAt: Date;
   };
 }): KeywordAssignmentRow {
@@ -323,7 +378,6 @@ function toRow(a: {
     locale: a.keyword.locale,
     role: a.role as KeywordRole,
     priority: a.keyword.priority,
-    intent: a.keyword.intent,
     gscPosition: a.gscPosition,
     gscClicks: a.gscClicks,
     gscImpressions: a.gscImpressions,
@@ -376,8 +430,25 @@ export async function assignKeyword(
 ): Promise<AssignKeywordResult> {
   const keyword = normalizeKeyword(input.keyword);
   const locale = input.locale ?? "";
+  // Plan lookup outside the transaction — it never changes mid-write and the
+  // serializable tx below should stay as short as possible.
+  const limit = getMaxTrackedKeywords(await getShopPlan(db, shop));
 
   return serializableWithRetry(db, async (tx) => {
+    // Assigning a keyword the shop ALREADY tracks costs no new row, so the
+    // quota only guards genuinely new ones. Counting inside the tx makes two
+    // parallel adds at the cap serialize instead of both slipping through.
+    const known = await tx.seoKeyword.findUnique({
+      where: { shop_keyword_locale: { shop, keyword, locale } },
+      select: { id: true },
+    });
+    if (!known) {
+      const used = await tx.seoKeyword.count({ where: { shop } });
+      if (used + 1 > limit) {
+        return { ok: false, reason: "planLimit" } as const;
+      }
+    }
+
     const keywordRow = await tx.seoKeyword.upsert({
       where: { shop_keyword_locale: { shop, keyword, locale } },
       create: { shop, keyword, locale },
@@ -854,7 +925,6 @@ export interface GroupKeywordRow {
   keyword: string;
   locale: string;
   priority: number;
-  intent: string | null;
   /** How many items this keyword is currently assigned to (any role). */
   assignmentCount: number;
 }
@@ -980,7 +1050,6 @@ export async function getGroupKeywords(
       keyword: m.keyword.keyword,
       locale: m.keyword.locale,
       priority: m.keyword.priority,
-      intent: m.keyword.intent,
       assignmentCount: m.keyword._count.assignments,
     }))
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
@@ -1009,7 +1078,6 @@ export async function listUngrouped(
       keyword: k.keyword,
       locale: k.locale,
       priority: k.priority,
-      intent: k.intent,
       assignmentCount: k._count.assignments,
     }))
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
@@ -1038,7 +1106,6 @@ export async function listAllKeywords(
       keyword: k.keyword,
       locale: k.locale,
       priority: k.priority,
-      intent: k.intent,
       assignmentCount: k._count.assignments,
     }))
     .sort((a, b) => a.priority - b.priority || a.keyword.localeCompare(b.keyword));
@@ -1048,7 +1115,6 @@ export interface GroupImportEntry {
   keyword: string;
   locale?: string;
   priority?: number;
-  intent?: string | null;
 }
 
 /**
@@ -1056,39 +1122,39 @@ export interface GroupImportEntry {
  * the CSV importer's write path, also used for single manual adds. The locale
  * is OWNED by the group (§3.1 invariant: membership.keyword.locale ===
  * group.locale), so `entry.locale` is IGNORED — every keyword is created under
- * the group's locale. Explicit priority/intent from the file win over an
- * existing keyword's values; omitted ones (undefined priority / null intent)
+ * the group's locale. An explicit priority from the file wins over an
+ * existing keyword's value; an omitted one (undefined priority)
  * leave the existing row untouched. Returns how many keywords were newly added
  * to the group vs. already members. A missing/foreign group is a no-op.
  *
  * Batched (review L13): a 2000-row import used to be ~6000 sequential
  * queries inside a synchronous Remix action — now it's a handful of
  * findMany/createMany calls plus one updateMany per distinct explicit
- * (priority, intent) combination (≤ 15).
+ * priority (≤ 3).
  */
 export async function addKeywordsToGroup(
   db: PrismaClient,
   shop: string,
   groupId: string,
   entries: GroupImportEntry[],
-): Promise<{ added: number; alreadyInGroup: number }> {
+): Promise<{ added: number; alreadyInGroup: number; skippedOverQuota: number }> {
   // Normalize + dedupe within the request by (keyword, locale) — later
   // duplicates win so an explicit priority late in the file still applies.
   const group = await db.seoKeywordGroup.findFirst({
     where: { id: groupId, shop },
     select: { locale: true },
   });
-  if (!group) return { added: 0, alreadyInGroup: 0 };
-  const byKey = new Map<string, { keyword: string; locale: string; priority?: number; intent?: string | null }>();
+  if (!group) return { added: 0, alreadyInGroup: 0, skippedOverQuota: 0 };
+  const byKey = new Map<string, { keyword: string; locale: string; priority?: number }>();
   for (const entry of entries) {
     const keyword = normalizeKeyword(entry.keyword);
     if (!keyword) continue;
     // The locale is owned by the group, not the entry (invariant).
     const locale = group.locale;
-    byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority, intent: entry.intent });
+    byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority });
   }
-  if (byKey.size === 0) return { added: 0, alreadyInGroup: 0 };
-  const normalized = Array.from(byKey.values());
+  if (byKey.size === 0) return { added: 0, alreadyInGroup: 0, skippedOverQuota: 0 };
+  let normalized = Array.from(byKey.values());
   const texts = Array.from(new Set(normalized.map((e) => e.keyword)));
 
   const keyOf = (k: { keyword: string; locale: string }) => `${k.keyword} ${k.locale}`;
@@ -1102,6 +1168,20 @@ export async function addKeywordsToGroup(
 
   const existingIds = await loadIds();
 
+  // Plan quota: rows the shop ALREADY tracks are free (the import only adds
+  // them to a group), so only genuinely new keywords consume quota. A file
+  // that runs past the cap is imported PARTIALLY rather than rejected whole —
+  // whole-batch semantics would make a 2000-row file useless to a Basic shop,
+  // and the caller reports how many were left out.
+  const quota = await getKeywordQuota(db, shop);
+  const wanted = normalized.filter((e) => !existingIds.has(keyOf(e)));
+  let skippedOverQuota = 0;
+  if (wanted.length > quota.remaining) {
+    const allowed = new Set(wanted.slice(0, quota.remaining).map(keyOf));
+    skippedOverQuota = wanted.length - quota.remaining;
+    normalized = normalized.filter((e) => existingIds.has(keyOf(e)) || allowed.has(keyOf(e)));
+  }
+
   // 1. Create the missing keywords in one shot.
   const toCreate = normalized.filter((e) => !existingIds.has(keyOf(e)));
   if (toCreate.length) {
@@ -1111,37 +1191,27 @@ export async function addKeywordsToGroup(
         keyword: e.keyword,
         locale: e.locale,
         priority: e.priority ?? 2,
-        intent: e.intent ?? null,
       })),
       skipDuplicates: true,
     });
   }
 
-  // 2. Explicit priority/intent overrides for PRE-EXISTING rows, grouped by
-  //    value combination so 2000 explicit rows become ≤ 15 updateMany calls.
-  const overrideGroups = new Map<string, { priority?: number; intent?: string; ids: string[] }>();
+  // 2. Explicit priority overrides for PRE-EXISTING rows, grouped by value so
+  //    2000 explicit rows become at most three updateMany calls.
+  const overrideGroups = new Map<string, { priority: number; ids: string[] }>();
   for (const e of normalized) {
     const id = existingIds.get(keyOf(e));
     if (!id) continue; // freshly created above — values already right
-    const hasPriority = e.priority != null;
-    const hasIntent = e.intent != null;
-    if (!hasPriority && !hasIntent) continue;
-    const comboKey = `${hasPriority ? e.priority : "-"}::${hasIntent ? e.intent : "-"}`;
-    const group = overrideGroups.get(comboKey) ?? {
-      ...(hasPriority ? { priority: e.priority } : {}),
-      ...(hasIntent ? { intent: e.intent as string } : {}),
-      ids: [],
-    };
+    if (e.priority == null) continue;
+    const comboKey = String(e.priority);
+    const group = overrideGroups.get(comboKey) ?? { priority: e.priority, ids: [] };
     group.ids.push(id);
     overrideGroups.set(comboKey, group);
   }
   for (const group of overrideGroups.values()) {
     await db.seoKeyword.updateMany({
       where: { id: { in: group.ids }, shop },
-      data: {
-        ...(group.priority != null ? { priority: group.priority } : {}),
-        ...(group.intent != null ? { intent: group.intent } : {}),
-      },
+      data: { priority: group.priority },
     });
   }
 
@@ -1162,7 +1232,11 @@ export async function addKeywordsToGroup(
       skipDuplicates: true,
     });
   }
-  return { added: toAdd.length, alreadyInGroup: memberIds.length - toAdd.length };
+  return {
+    added: toAdd.length,
+    alreadyInGroup: memberIds.length - toAdd.length,
+    skippedOverQuota,
+  };
 }
 
 /** Remove one keyword from a group (orphan cleanup like removeAssignment). */
@@ -1220,6 +1294,148 @@ export async function deleteKeyword(
     await tx.seoKeyword.delete({ where: { id: keyword.id } });
     return { ok: true, removedAssignments };
   });
+}
+
+// ── Creating and renaming a single keyword (inline table editing) ───────────
+
+/**
+ * Stem of the auto-generated name a freshly added keyword carries until the
+ * merchant types over it — the table adds a row in edit mode rather than
+ * asking for the text up front, so the row needs SOME name to exist under.
+ * Deliberately not translated: it is stored as the keyword text itself, and a
+ * merchant switching UI language must not end up with two naming schemes.
+ */
+export const PLACEHOLDER_KEYWORD_BASE = "keyword";
+
+const PLACEHOLDER_PATTERN = new RegExp(`^${PLACEHOLDER_KEYWORD_BASE} (\\d+)$`);
+
+export type CreateKeywordResult =
+  | { ok: true; keywordId: string; keyword: string }
+  | { ok: false; reason: "notFound" | "planLimit" };
+
+/**
+ * Add ONE empty-but-named keyword, ready to be renamed inline.
+ *
+ * The name is the lowest free `keyword N` within the target language, so a
+ * merchant adding three rows in a row gets 1, 2, 3 — and a gap left by a
+ * deleted placeholder is reused instead of counting ever upwards. Scoped per
+ * LOCALE because that is what the uniqueness key is scoped to: "keyword 1" may
+ * legitimately exist once per language.
+ *
+ * `groupId` null creates the keyword outside any group (the "Ohne Gruppe"
+ * bucket), which is what the pseudo views need; with a group, the group owns
+ * the locale (§3.1) and the passed one is ignored.
+ */
+export async function createKeyword(
+  db: PrismaClient,
+  shop: string,
+  input: { groupId: string | null; locale: string },
+): Promise<CreateKeywordResult> {
+  let locale = input.locale;
+  if (input.groupId) {
+    const group = await db.seoKeywordGroup.findFirst({
+      where: { id: input.groupId, shop },
+      select: { locale: true },
+    });
+    if (!group) return { ok: false, reason: "notFound" };
+    locale = group.locale;
+  }
+
+  // A placeholder row is always a NEW keyword, so it always needs quota.
+  const quota = await getKeywordQuota(db, shop);
+  if (quota.remaining < 1) return { ok: false, reason: "planLimit" };
+
+  // Retry on the unique key: two tabs adding a row at the same moment would
+  // otherwise both compute the same free number and one would blow up.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const taken = await db.seoKeyword.findMany({
+      where: { shop, locale, keyword: { startsWith: `${PLACEHOLDER_KEYWORD_BASE} ` } },
+      select: { keyword: true },
+    });
+    const used = new Set<number>();
+    for (const row of taken) {
+      const match = PLACEHOLDER_PATTERN.exec(row.keyword);
+      if (match) used.add(Number(match[1]));
+    }
+    let n = 1;
+    while (used.has(n)) n += 1;
+    const keyword = `${PLACEHOLDER_KEYWORD_BASE} ${n}`;
+
+    try {
+      const created = await db.seoKeyword.create({
+        data: { shop, keyword, locale },
+        select: { id: true },
+      });
+      if (input.groupId) {
+        await db.seoKeywordGroupMembership.create({
+          data: { shop, groupId: input.groupId, keywordId: created.id },
+        });
+      }
+      return { ok: true, keywordId: created.id, keyword };
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      // Someone took that number in between — recompute and try again.
+    }
+  }
+  return { ok: false, reason: "notFound" };
+}
+
+export type RenameKeywordResult =
+  | { ok: true; keywordId: string; keyword: string }
+  | { ok: false; reason: "notFound" | "duplicate" | "invalid" };
+
+/**
+ * Rename a keyword in place — the inline table edit.
+ *
+ * A rename is NOT a merge: (shop, keyword, locale) is unique, so renaming onto
+ * a keyword the language already tracks would have to fold two keywords (and
+ * their assignments and ranking history) into one. That is what `moveKeyword`
+ * does deliberately and visibly for a language change; doing it silently
+ * behind a text edit would quietly destroy history, so a collision is
+ * REJECTED and the UI says which keyword is in the way.
+ */
+export async function renameKeyword(
+  db: PrismaClient,
+  shop: string,
+  keywordId: string,
+  nextKeyword: string,
+): Promise<RenameKeywordResult> {
+  const keyword = normalizeKeyword(nextKeyword);
+  if (!keyword || keyword.length > MAX_KEYWORD_LENGTH) {
+    return { ok: false, reason: "invalid" };
+  }
+  const row = await db.seoKeyword.findFirst({
+    where: { id: keywordId, shop },
+    select: { id: true, keyword: true, locale: true },
+  });
+  if (!row) return { ok: false, reason: "notFound" };
+  // Normalizing can make an edit a no-op ("Vase " → "vase"); report success so
+  // the cell simply closes instead of showing a spurious duplicate error.
+  if (row.keyword === keyword) return { ok: true, keywordId: row.id, keyword };
+
+  const clash = await db.seoKeyword.findFirst({
+    where: { shop, keyword, locale: row.locale },
+    select: { id: true },
+  });
+  if (clash) return { ok: false, reason: "duplicate" };
+
+  try {
+    await db.seoKeyword.update({ where: { id: row.id }, data: { keyword } });
+  } catch (error) {
+    // Lost the race against a concurrent writer — same answer as the check.
+    if (isUniqueViolation(error)) return { ok: false, reason: "duplicate" };
+    throw error;
+  }
+  return { ok: true, keywordId: row.id, keyword };
+}
+
+/** Prisma's unique-constraint code, without a runtime @prisma/client import. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 // ── Moving a keyword between groups and/or languages ────────────────────────
@@ -1290,7 +1506,7 @@ export async function moveKeyword(
   return serializableWithRetry(db, async (tx) => {
     const source = await tx.seoKeyword.findFirst({
       where: { id: input.keywordId, shop },
-      select: { id: true, keyword: true, locale: true, priority: true, intent: true },
+      select: { id: true, keyword: true, locale: true, priority: true },
     });
     if (!source) return { ok: false, reason: "notFound" } as const;
 
@@ -1352,7 +1568,6 @@ export async function moveKeyword(
           keyword: source.keyword,
           locale: input.targetLocale,
           priority: source.priority,
-          intent: source.intent,
         },
         select: { id: true },
       }));
@@ -1457,20 +1672,24 @@ export async function setKeywordPriority(
 
 /** Bulk action (plan §5.1 group detail): set the priority of EVERY keyword in
  *  a group in one statement. Returns the number of updated keywords. */
-export async function setGroupPriority(
+/**
+ * Set the priority of an explicit keyword SELECTION.
+ *
+ * Replaces the old group-wide `setGroupPriority`: "apply to every keyword in
+ * this group" was a separate mechanism sitting in its own corner of the page,
+ * while every other bulk action already worked off the table's checkboxes.
+ * One selection model, one place to act on it.
+ */
+export async function setKeywordPriorities(
   db: PrismaClient,
   shop: string,
-  groupId: string,
+  keywordIds: string[],
   priority: number,
 ): Promise<number> {
   if (priority !== 1 && priority !== 2 && priority !== 3) return 0;
-  const group = await db.seoKeywordGroup.findFirst({
-    where: { id: groupId, shop },
-    select: { id: true },
-  });
-  if (!group) return 0;
+  if (keywordIds.length === 0) return 0;
   const updated = await db.seoKeyword.updateMany({
-    where: { shop, groups: { some: { groupId } } },
+    where: { id: { in: keywordIds }, shop },
     data: { priority },
   });
   return updated.count;

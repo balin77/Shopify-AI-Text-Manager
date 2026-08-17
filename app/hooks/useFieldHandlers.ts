@@ -8,7 +8,7 @@
 
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
 import { isAttributeField } from "../services/content-attributes.shared";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
@@ -147,6 +147,10 @@ export interface FieldHandlers {
   handleDiscard: () => void;
   handleGenerateAI: (fieldKey: string, userInstruction?: string) => void;
   handleFormatAI: (fieldKey: string) => void;
+  /** Work the active language's tracked keywords into every field missing them. */
+  handleInsertKeywords: () => void;
+  /** True while that multi-field run is in flight. */
+  isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
   handleCopyField: (fieldKey: string) => void;
@@ -175,6 +179,9 @@ export interface FieldHandlers {
 // ============================================================================
 
 export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
+  // Local to this hook: the keyword-insertion run spans several fields, so
+  // no single field's own AI-loading flag describes it.
+  const [isInsertingKeywords, setIsInsertingKeywords] = useState(false);
   const {
     config,
     primaryLocale,
@@ -534,6 +541,91 @@ const handleFormatAI = (fieldKey: string) => {
         );
       }
     }
+  );
+};
+
+/**
+ * Work the tracked keywords of the ACTIVE language into every field that is
+ * still missing them, without rewriting anything else (the `insertKeyword`
+ * pass). Unlike "Formatieren" this touches only what it has to: a field whose
+ * keywords are already present is not even sent to the server.
+ *
+ * Results land in aiSuggestions like every other AI action, so the merchant
+ * reviews and accepts them per field instead of the button writing silently.
+ */
+const handleInsertKeywords = async () => {
+  if (!selectedItemId || !selectedItem) return;
+  const seoStrings = t.seo as
+    | {
+        insertKeywordsNothing?: string;
+        insertKeywordsNoneMissing?: string;
+        insertKeywordsDone?: string;
+      }
+    | undefined;
+  const requestItemId = selectedItemId;
+
+  // The fields a keyword can live in, in the order the server understands
+  // them. Slugs are deliberately absent — the pass skips them anyway, and
+  // asking would only cost a round trip.
+  const candidateKeys = ["title", "seoTitle", "metaDescription", "description", "body"].filter(
+    (key) =>
+      effectiveFieldDefinitions.some((f) => f.key === key) && (editableValues[key] || "").trim(),
+  );
+  if (candidateKeys.length === 0) {
+    showInfoBox(
+      seoStrings?.insertKeywordsNothing || "No text to work keywords into.",
+      "warning",
+      t.common?.warning || "Warning",
+    );
+    return;
+  }
+
+  setIsInsertingKeywords(true);
+  let changed = 0;
+  let stuffing = false;
+  try {
+    // Sequential on purpose: the fields share one item and one AI queue, and a
+    // fan-out here would just contend with itself.
+    for (const fieldKey of candidateKeys) {
+      if (selectedItemIdRef.current !== requestItemId) return;
+      await submitAIAction(
+        {
+          action: "insertKeyword",
+          itemId: requestItemId,
+          fieldType: fieldKey,
+          currentValue: editableValues[fieldKey] || "",
+          // Same locale contract as generation and format: THIS language's
+          // keywords, not the primary language's.
+          keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
+        },
+        fieldKey,
+        (result) => {
+          if (selectedItemIdRef.current !== requestItemId) return;
+          if (result.skipped) return;
+          changed += 1;
+          if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) stuffing = true;
+          setAiSuggestions((prev) => ({ ...prev, [fieldKey]: result.value as string }));
+        },
+      );
+    }
+  } finally {
+    setIsInsertingKeywords(false);
+  }
+
+  if (selectedItemIdRef.current !== requestItemId) return;
+  if (changed === 0) {
+    showInfoBox(
+      seoStrings?.insertKeywordsNoneMissing || "Every tracked keyword is already in the texts.",
+      "info",
+      String(t.common?.info || "Info"),
+    );
+    return;
+  }
+  showInfoBox(
+    (seoStrings?.insertKeywordsDone || "Keywords worked into {count} field(s) — review and accept them.")
+      .replace("{count}", String(changed)),
+    stuffing ? "warning" : "success",
+    stuffing ? t.common?.warning || "Warning" : t.common?.success || "Success",
   );
 };
 
@@ -1781,6 +1873,8 @@ const handleCopyFieldToAllLocales = (fieldKey: string): void => {
     handleDiscard,
     handleGenerateAI,
     handleFormatAI,
+    handleInsertKeywords,
+    isInsertingKeywords,
     handleTranslateField,
     handleTranslateFieldToAllLocales,
     handleCopyField,

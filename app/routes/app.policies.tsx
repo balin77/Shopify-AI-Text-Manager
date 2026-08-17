@@ -9,7 +9,7 @@
  */
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
-import { useLoaderData, useFetcher, useRevalidator } from "react-router";
+import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { Text, BlockStack, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
@@ -194,6 +194,14 @@ export default function PoliciesPage() {
   const { t } = useI18n();
   const { showInfoBox } = useInfoBox();
 
+  // Deep-link from the SEO crawl report: ?select=<ShopPolicy GID> preselects
+  // the policy. Policy pages are crawled like any other storefront page and can
+  // collect on-page findings (multiple H1s, thin content) — without this the
+  // report's "open in editor" could only drop the merchant on the list.
+  const [searchParams] = useSearchParams();
+  const initialItemId = searchParams.get("select") || undefined;
+  const initialLocale = searchParams.get("locale") || undefined;
+
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({
     config: POLICIES_CONFIG,
@@ -204,6 +212,8 @@ export default function PoliciesPage() {
     fetcher,
     showInfoBox,
     t,
+    initialItemId,
+    initialLocale,
   });
 
   // Show loader error

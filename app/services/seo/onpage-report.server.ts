@@ -15,6 +15,8 @@ import {
   analyzeCanonicals,
   analyzeHeadings,
   findMissingMetaDescriptions,
+  countPagesWithoutEditableMetadata,
+  hasEditableMetadata,
   findImagesWithoutAlt,
   findThinPages,
   canonicalHostFromPages,
@@ -34,7 +36,7 @@ import {
   normalizeMetaDescription,
 } from "./crawl.service";
 import { fetchPrimaryDomain } from "../../utils/shop-domain.server";
-import type { AuditType } from "./audit.service";
+import { isAuditType, type AuditType } from "./resource-types.shared";
 
 const UI_ROW_CAP = 100;
 
@@ -89,6 +91,9 @@ export const EMPTY_ONPAGE_REPORT = {
   metaDuplicates: [] as DuplicateGroupRow[],
   thin: [] as ThinPageRow[],
   thinSkippedTypes: [] as Array<{ resourceType: string; pageCount: number }>,
+  /** 2xx pages whose title/meta description Shopify exposes no editor for
+   *  (policies, /collections/all, pagination). Reported, not silently dropped. */
+  metadataSkipped: 0,
   images: [] as OnPageIssueRow[],
   headDrift: [] as HeadDriftRow[],
   duplicates: [] as DuplicateGroupRow[],
@@ -178,12 +183,17 @@ export async function buildOnPageReport(
   const indexablePages = selfCanonicalPages(okPages, canonicalHost, [shop, primaryDomain]);
   // Totals BEFORE the slice — taking `.length` of an already-sliced array is
   // how a tile ends up reporting the cap ("100") as the answer.
+  // …and only over pages whose metadata is editable at all. `?page=2` and
+  // `?page=3` of one listing carry page 1's meta description by construction,
+  // so grouping them reported a Shopify implementation detail as a duplicate-
+  // content defect on every shop with a paginated collection.
+  const editablePages = indexablePages.filter((p) => hasEditableMetadata(p.url));
   const duplicatesAll = groupDuplicateTitles(
-    indexablePages.map((p) => ({ url: p.url, title: p.title })),
+    editablePages.map((p) => ({ url: p.url, title: p.title })),
     shopName,
   );
   const metaDuplicatesAll = groupDuplicateValues(
-    indexablePages.map((p) => ({ url: p.url, value: p.metaDesc })),
+    editablePages.map((p) => ({ url: p.url, value: p.metaDesc })),
     normalizeMetaDescription,
   );
 
@@ -211,8 +221,9 @@ export async function buildOnPageReport(
     .filter(
       (p) =>
         p.resourceId &&
-        p.resourceType &&
-        p.resourceType !== "unknown" &&
+        // `isAuditType`, not `!== "unknown"`: a policy page resolves to a real
+        // id now, but ShopPolicy stores no SEO title to drift against.
+        isAuditType(p.resourceType) &&
         p.locale === "" &&
         p.statusCode >= 200 &&
         p.statusCode < 300,
@@ -257,6 +268,7 @@ export async function buildOnPageReport(
     metaDuplicates,
     thin: thin.pages.slice(0, UI_ROW_CAP),
     thinSkippedTypes: thin.skippedTypes,
+    metadataSkipped: countPagesWithoutEditableMetadata(pages),
     images: images.slice(0, UI_ROW_CAP),
     headDrift,
     duplicates,

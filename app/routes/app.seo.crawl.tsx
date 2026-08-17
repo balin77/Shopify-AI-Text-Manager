@@ -34,6 +34,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { CrawlSnapshotHeader } from "../components/seo/CrawlSnapshotHeader";
 import {
   ReportGrid,
@@ -62,7 +63,7 @@ import {
 } from "../services/seo/onpage-report.server";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
-import type { AuditType } from "../services/seo/audit.service";
+import { isAuditType, type DeepLinkType } from "../services/seo/resource-types.shared";
 import { isBotBlockStatus, classifyLinkStatus } from "../services/seo/crawl.service";
 // Client-safe module on purpose: the component renders this threshold, and
 // importing it from crawl.service would pull url-resolver.server into the
@@ -81,11 +82,15 @@ import {
 } from "../services/seo/external-links.shared";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
 
-const TYPE_PATH: Record<AuditType, string> = {
+const TYPE_PATH: Record<DeepLinkType, string> = {
   product: "/app/products",
   collection: "/app/collections",
   article: "/app/blog",
   page: "/app/pages",
+  // Policies carry no SEO fields, but their BODY is editable — and a crawl
+  // finding about a policy page (multiple H1s, thin content) is actionable
+  // exactly there. `DeepLinkType`, not `AuditType`: the audit never scores them.
+  policy: "/app/policies",
 };
 
 const UI_ROW_CAP = 100;
@@ -159,7 +164,7 @@ interface ServerErrorRow {
   url: string;
   statusCode: number;
   responseMs: number;
-  resourceType: AuditType | null;
+  resourceType: DeepLinkType | null;
   resourceId: string | null;
 }
 
@@ -168,7 +173,7 @@ interface BrokenLinkRow {
   toUrl: string;
   statusCode: number;
   anchor: string | null;
-  fromResourceType: AuditType | null;
+  fromResourceType: DeepLinkType | null;
   fromResourceId: string | null;
 }
 
@@ -181,13 +186,13 @@ interface BrokenLinkRow {
 interface BrokenPageRow {
   url: string;
   statusCode: number;
-  resourceType: AuditType | null;
+  resourceType: DeepLinkType | null;
   resourceId: string | null;
   /** Internal pages linking here — capped at MAX_SOURCES_PER_PAGE. */
   sources: {
     fromUrl: string;
     anchor: string | null;
-    fromResourceType: AuditType | null;
+    fromResourceType: DeepLinkType | null;
     fromResourceId: string | null;
   }[];
   /** Total inbound broken-link edges found, so the UI can say "+N more". */
@@ -197,7 +202,7 @@ interface BrokenPageRow {
 interface OrphanRow {
   url: string;
   title: string | null;
-  resourceType: AuditType;
+  resourceType: DeepLinkType;
   resourceId: string;
 }
 
@@ -376,7 +381,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     statusCode: p.statusCode,
     statusClass: classifyLinkStatus(p.statusCode),
     responseMs: p.responseMs,
-    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as DeepLinkType) : null,
     resourceId: p.resourceId ?? null,
     // §4.4 — chains the crawler OBSERVED, including ones no merchant redirect
     // explains (theme/app/locale). A badge in the existing table, not a tab:
@@ -397,7 +402,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     url: p.url,
     statusCode: p.statusCode,
     responseMs: p.responseMs,
-    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+    resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as DeepLinkType) : null,
     resourceId: p.resourceId ?? null,
   }));
 
@@ -440,7 +445,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         statusCode: bl.statusCode,
         anchor: bl.anchor,
         fromResourceType:
-          from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as AuditType) : null,
+          from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as DeepLinkType) : null,
         fromResourceId: from?.resourceId ?? null,
       };
     });
@@ -454,7 +459,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       fromUrl: bl.fromUrl,
       anchor: bl.anchor,
       fromResourceType:
-        from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as AuditType) : null,
+        from?.resourceType && from.resourceType !== "unknown" ? (from.resourceType as DeepLinkType) : null,
       fromResourceId: from?.resourceId ?? null,
     };
     const list = sourcesByTarget.get(bl.toUrl);
@@ -469,7 +474,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       return {
         url: p.url,
         statusCode: p.statusCode,
-        resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as AuditType) : null,
+        resourceType: p.resourceType && p.resourceType !== "unknown" ? (p.resourceType as DeepLinkType) : null,
         resourceId: p.resourceId ?? null,
         sources: sources.slice(0, MAX_SOURCES_PER_PAGE),
         sourceTotal: sources.length,
@@ -480,12 +485,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     snapshotRow.status === "capped"
       ? []
       : pages
-          .filter((p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0)
+          // Same narrowing as the persisted orphanCount and the dashboard
+          // bucket — see the note in crawl.service.ts.
+          .filter((p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0)
           .slice(0, UI_ROW_CAP)
           .map((p) => ({
             url: p.url,
             title: p.title,
-            resourceType: p.resourceType as AuditType,
+            resourceType: p.resourceType as DeepLinkType,
             resourceId: p.resourceId as string,
           }));
 
@@ -659,8 +666,13 @@ export default function SeoCrawl() {
   const c = (t.seo as any).crawlPage as Record<string, string>;
   const o = (t.seo as any).onpagePage as Record<string, string>;
 
-  const openInEditor = (type: AuditType, id: string) => {
-    handleNavigate(TYPE_PATH[type], { searchParams: new URLSearchParams({ select: id }) });
+  const openInEditor = (type: DeepLinkType, id: string) => {
+    // Rows carry a persisted string, so an unmapped type is possible in
+    // principle (an older snapshot, a type added later). Navigating to
+    // `undefined` would blank the page — do nothing instead.
+    const path = TYPE_PATH[type];
+    if (!path) return;
+    handleNavigate(path, { searchParams: new URLSearchParams({ select: id }) });
   };
   const createRedirect = (toUrl: string) => {
     let path = toUrl;
@@ -724,12 +736,77 @@ export default function SeoCrawl() {
 
   const body = (
     <BlockStack gap="400">
-      <Banner tone="info" title={view === "onpage" ? o.introTitle : c.introTitle}>
+      {/* One box per STEP, not per section: the two steps explain different
+          things, so hiding the on-page intro must leave the delivery one. */}
+      <SeoHelpBanner
+        helpId={view === "onpage" ? "crawl-onpage" : "crawl-delivery"}
+        title={view === "onpage" ? o.introTitle : c.introTitle}
+      >
         <Text as="p" variant="bodyMd">{view === "onpage" ? o.introBody : c.introBody}</Text>
-      </Banner>
+      </SeoHelpBanner>
 
-      {/* §7.2 — what CHANGED since the last crawl. Above the tiles, because a
-          state report reads "fine" right up until it isn't. */}
+      <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
+        {/* §6.5 — visible where the crawl is started, because it changes what
+            the crawl DOES, not just what it shows. */}
+        <Checkbox
+          label={c.externalChecksLabel}
+          helpText={c.externalChecksHelp}
+          checked={externalChecksEnabled}
+          disabled={externalToggleFetcher.state !== "idle"}
+          onChange={(checked) => {
+            setExternalChecksEnabled(checked);
+            externalToggleFetcher.submit(
+              { actionType: "toggleExternalChecks", enabled: String(checked) },
+              { method: "post" },
+            );
+          }}
+        />
+
+        {snapshot && snapshot.pagesBlocked > 0 && !data.running && (
+          <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
+        )}
+      </CrawlSnapshotHeader>
+
+      {/* The two steps of one crawl — same shape as the AEO section's, because
+          it is the same relationship: step 2 has nothing to judge until step 1
+          says the page was delivered at all. */}
+      <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
+        <StepTile
+          selected={view === "delivery"}
+          onSelect={() => goToView("delivery")}
+          kicker={c.stepDeliveryKicker}
+          title={c.stepDeliveryTitle}
+          body={c.stepDeliveryBody}
+          badge={
+            snapshot ? (
+              <Badge tone={snapshot.pagesBroken + snapshot.pagesServerError > 0 ? "critical" : "success"}>
+                {c.stepDeliveryBadge.replace(
+                  "{count}",
+                  String(snapshot.pagesBroken + snapshot.pagesServerError),
+                )}
+              </Badge>
+            ) : null
+          }
+        />
+        <StepTile
+          selected={view === "onpage"}
+          onSelect={() => goToView("onpage")}
+          kicker={c.stepOnPageKicker}
+          title={c.stepOnPageTitle}
+          body={c.stepOnPageBody}
+          badge={
+            view === "onpage" && snapshot ? (
+              <Badge tone={data.onPage.totals.indexability > 0 ? "critical" : "success"}>
+                {c.stepOnPageBadge.replace("{count}", String(data.onPage.totals.indexability))}
+              </Badge>
+            ) : null
+          }
+        />
+      </InlineGrid>
+
+      {/* §7.2 — what CHANGED since the last crawl. Directly above the result
+          tiles, because a state report reads "fine" right up until it isn't —
+          and below the scan card, because it is a RESULT, not scan logic. */}
       {data.diff && hasDiffContent(data.diff) && (
         <Card>
           <BlockStack gap="300">
@@ -798,132 +875,82 @@ export default function SeoCrawl() {
         </Card>
       )}
 
-      {/* The two steps of one crawl — same shape as the AEO section's, because
-          it is the same relationship: step 2 has nothing to judge until step 1
-          says the page was delivered at all. */}
-      <InlineGrid columns={{ xs: 1, md: 2 }} gap="300">
-        <StepTile
-          selected={view === "delivery"}
-          onSelect={() => goToView("delivery")}
-          kicker={c.stepDeliveryKicker}
-          title={c.stepDeliveryTitle}
-          body={c.stepDeliveryBody}
-          badge={
-            snapshot ? (
-              <Badge tone={snapshot.pagesBroken + snapshot.pagesServerError > 0 ? "critical" : "success"}>
-                {c.stepDeliveryBadge.replace(
-                  "{count}",
-                  String(snapshot.pagesBroken + snapshot.pagesServerError),
-                )}
-              </Badge>
-            ) : null
-          }
-        />
-        <StepTile
-          selected={view === "onpage"}
-          onSelect={() => goToView("onpage")}
-          kicker={c.stepOnPageKicker}
-          title={c.stepOnPageTitle}
-          body={c.stepOnPageBody}
-          badge={
-            view === "onpage" && snapshot ? (
-              <Badge tone={data.onPage.totals.indexability > 0 ? "critical" : "success"}>
-                {c.stepOnPageBadge.replace("{count}", String(data.onPage.totals.indexability))}
-              </Badge>
-            ) : null
-          }
-        />
-      </InlineGrid>
-
-      <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
-        {/* §6.5 — visible where the crawl is started, because it changes what
-            the crawl DOES, not just what it shows. */}
-        <Checkbox
-          label={c.externalChecksLabel}
-          helpText={c.externalChecksHelp}
-          checked={externalChecksEnabled}
-          disabled={externalToggleFetcher.state !== "idle"}
-          onChange={(checked) => {
-            setExternalChecksEnabled(checked);
-            externalToggleFetcher.submit(
-              { actionType: "toggleExternalChecks", enabled: String(checked) },
-              { method: "post" },
-            );
-          }}
-        />
-
-        {snapshot && snapshot.pagesBlocked > 0 && !data.running && (
-          <Banner tone="warning">{c.blockedBanner.replace("{count}", String(snapshot.pagesBlocked))}</Banner>
-        )}
-
-        {snapshot && view === "onpage" && (
-          <OnPageTiles data={data.onPage} activeTab={onPageTab} onSelect={setOnPageTab} />
-        )}
-
-        {snapshot && view === "delivery" && (
-          <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
-              <Tile
-                label={c.tilePages}
-                value={snapshot.pagesCrawled}
-                onClick={() => setActiveTab("allPages")}
-                selected={activeTab === "allPages"}
-              />
-              <Tile
-                label={c.tileOk}
-                value={snapshot.pagesOk}
-                onClick={() => setActiveTab("okPages")}
-                selected={activeTab === "okPages"}
-              />
-              <Tile
-                label={c.tileBroken}
-                value={snapshot.pagesBroken}
-                onClick={() => setActiveTab("broken")}
-                selected={activeTab === "broken"}
-              />
-              <Tile
-                label={c.tileServerErrors}
-                value={snapshot.pagesServerError}
-                // Short form here — the full explanation is the section banner.
-                hint={snapshot.pagesServerError > 0 ? c.tileServerErrorsHint : undefined}
-                onClick={() => setActiveTab("serverErrors")}
-                selected={activeTab === "serverErrors"}
-              />
-              <Tile
-                label={c.tileBlocked}
-                value={snapshot.pagesBlocked}
-                hint={snapshot.pagesBlocked > 0 ? c.blockedHint : undefined}
-                onClick={() => setActiveTab("blocked")}
-                selected={activeTab === "blocked"}
-              />
-              <Tile
-                label={c.tileOrphans}
-                value={isCapped ? "—" : snapshot.orphanCount}
-                hint={isCapped ? c.orphanCappedHint : undefined}
-                onClick={() => setActiveTab("orphans")}
-                selected={activeTab === "orphans"}
-              />
-              <Tile
-                label={c.tileSlowest}
-                value={data.slowest.length}
-                onClick={() => setActiveTab("slowest")}
-                selected={activeTab === "slowest"}
-              />
-              <Tile
-                label={c.tileExternal}
-                // "—" rather than 0 when the check is off: zero would read as
-                // "no dead external links", which we did not measure (§6.5).
-                value={data.externalChecksEnabled ? data.externalBrokenTotal : "—"}
-                hint={
-                  data.externalChecksEnabled
-                    ? c.tileExternalHint.replace("{total}", String(data.externalTotal))
-                    : c.tileExternalDisabledHint
-                }
-                onClick={() => setActiveTab("external")}
-                selected={activeTab === "external"}
-              />
-          </InlineGrid>
-        )}
-      </CrawlSnapshotHeader>
+      {/* The selected step's result tiles. Their own card, BELOW the step
+          badges: the tiles belong to whichever step is open, so putting them in
+          the scan card made the page read "here is the scan, here are ITS
+          numbers, and now — afterwards — here is which of two reports you are
+          looking at". Order is explanation → scan → step badges → results. */}
+      {snapshot && (
+        <Card>
+          <BlockStack gap="300">
+            {view === "onpage" ? (
+              <OnPageTiles data={data.onPage} activeTab={onPageTab} onSelect={setOnPageTab} />
+            ) : (
+              <InlineGrid columns={{ xs: 2, sm: 3, md: 4, lg: 5 }} gap="300">
+                <Tile
+                  label={c.tilePages}
+                  value={snapshot.pagesCrawled}
+                  onClick={() => setActiveTab("allPages")}
+                  selected={activeTab === "allPages"}
+                />
+                <Tile
+                  label={c.tileOk}
+                  value={snapshot.pagesOk}
+                  onClick={() => setActiveTab("okPages")}
+                  selected={activeTab === "okPages"}
+                />
+                <Tile
+                  label={c.tileBroken}
+                  value={snapshot.pagesBroken}
+                  onClick={() => setActiveTab("broken")}
+                  selected={activeTab === "broken"}
+                />
+                <Tile
+                  label={c.tileServerErrors}
+                  value={snapshot.pagesServerError}
+                  // Short form here — the full explanation is the section banner.
+                  hint={snapshot.pagesServerError > 0 ? c.tileServerErrorsHint : undefined}
+                  onClick={() => setActiveTab("serverErrors")}
+                  selected={activeTab === "serverErrors"}
+                />
+                <Tile
+                  label={c.tileBlocked}
+                  value={snapshot.pagesBlocked}
+                  hint={snapshot.pagesBlocked > 0 ? c.blockedHint : undefined}
+                  onClick={() => setActiveTab("blocked")}
+                  selected={activeTab === "blocked"}
+                />
+                <Tile
+                  label={c.tileOrphans}
+                  value={isCapped ? "—" : snapshot.orphanCount}
+                  hint={isCapped ? c.orphanCappedHint : undefined}
+                  onClick={() => setActiveTab("orphans")}
+                  selected={activeTab === "orphans"}
+                />
+                <Tile
+                  label={c.tileSlowest}
+                  value={data.slowest.length}
+                  onClick={() => setActiveTab("slowest")}
+                  selected={activeTab === "slowest"}
+                />
+                <Tile
+                  label={c.tileExternal}
+                  // "—" rather than 0 when the check is off: zero would read as
+                  // "no dead external links", which we did not measure (§6.5).
+                  value={data.externalChecksEnabled ? data.externalBrokenTotal : "—"}
+                  hint={
+                    data.externalChecksEnabled
+                      ? c.tileExternalHint.replace("{total}", String(data.externalTotal))
+                      : c.tileExternalDisabledHint
+                  }
+                  onClick={() => setActiveTab("external")}
+                  selected={activeTab === "external"}
+                />
+              </InlineGrid>
+            )}
+          </BlockStack>
+        </Card>
+      )}
 
       {snapshot && view === "onpage" && <OnPageSections data={data.onPage} activeTab={onPageTab} />}
 
@@ -1048,7 +1075,7 @@ export default function SeoCrawl() {
                                 <EditAction
                                   label={c.openInEditor}
                                   onClick={() =>
-                                    openInEditor(s.fromResourceType as AuditType, s.fromResourceId as string)
+                                    openInEditor(s.fromResourceType as DeepLinkType, s.fromResourceId as string)
                                   }
                                 />
                               ) : null,
@@ -1091,7 +1118,7 @@ export default function SeoCrawl() {
                                 <EditAction
                                   label={c.openInEditor}
                                   onClick={() =>
-                                    openInEditor(bl.fromResourceType as AuditType, bl.fromResourceId as string)
+                                    openInEditor(bl.fromResourceType as DeepLinkType, bl.fromResourceId as string)
                                   }
                                 />
                               )}
@@ -1132,7 +1159,7 @@ export default function SeoCrawl() {
                             e.resourceType && e.resourceId ? (
                               <EditAction
                                 label={c.openInEditor}
-                                onClick={() => openInEditor(e.resourceType as AuditType, e.resourceId as string)}
+                                onClick={() => openInEditor(e.resourceType as DeepLinkType, e.resourceId as string)}
                               />
                             ) : null,
                           ]}

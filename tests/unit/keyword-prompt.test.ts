@@ -24,7 +24,7 @@ function dbWith(rows: any[]) {
 }
 
 /** Shaped like the `include: { keyword: true }` row `toRow` maps — note that
- *  `intent` and `priority` hang off the KEYWORD, not the assignment. */
+ *  `priority` hangs off the KEYWORD, not the assignment. */
 function assignment(
   keyword: string,
   role: "primary" | "secondary",
@@ -44,7 +44,6 @@ function assignment(
       keyword,
       locale: "",
       priority: 2,
-      intent: null,
       updatedAt: new Date(0),
       ...keywordExtra,
     },
@@ -102,23 +101,10 @@ describe("loadTrackedKeywords", () => {
     expect(kw.primary).toBeNull();
   });
 
-  it("splits roles and exposes the primary intent", async () => {
-    const { db } = dbWith([
-      assignment("blue shoes", "primary", { intent: "transactional" }),
-      assignment("running shoes", "secondary"),
-      assignment("sneakers", "secondary"),
-    ]);
-    const kw = await loadTrackedKeywordsUnfiltered(db, "s", "gid://shopify/Product/1", "");
-    expect(kw.primary).toBe("blue shoes");
-    expect(kw.secondaries).toEqual(["running shoes", "sneakers"]);
-    expect(kw.primaryIntent).toBe("transactional");
-    expect(kw.all).toEqual(["blue shoes", "running shoes", "sneakers"]);
-  });
-
   it("returns the empty set when the item tracks nothing", async () => {
     const { db } = dbWith([]);
     const kw = await loadTrackedKeywordsUnfiltered(db, "s", "gid://shopify/Product/1", "");
-    expect(kw).toEqual({ primary: null, secondaries: [], primaryIntent: null, all: [] });
+    expect(kw).toEqual({ primary: null, secondaries: [], all: [] });
   });
 });
 
@@ -126,15 +112,13 @@ describe("keywordRequirementLines", () => {
   const kw = {
     primary: "blue shoes",
     secondaries: ["running shoes"],
-    primaryIntent: "transactional",
     all: ["blue shoes", "running shoes"],
   };
 
-  it("asks for the primary, offers the secondaries and adds the intent hint", () => {
+  it("asks for the primary and offers the secondaries", () => {
     const out = keywordRequirementLines(kw);
     expect(out).toContain('target keyword "blue shoes"');
     expect(out).toContain('"running shoes"');
-    expect(out).toContain("transactional");
   });
 
   it("phrases slugs differently and drops the secondaries", () => {
@@ -143,30 +127,18 @@ describe("keywordRequirementLines", () => {
     expect(out).not.toContain('"running shoes"');
   });
 
-  it("keeps the prose intent hint out of a slug prompt", () => {
-    // The output is restricted to a-z0-9- — "emphasize purchase, benefit,
-    // availability" is nothing a slug can act on.
-    expect(keywordRequirementLines(kw, true)).not.toContain("Search intent");
-    expect(keywordRequirementLines(kw, false)).toContain("Search intent");
-  });
-
   it("is empty when nothing is tracked, so callers can append blindly", () => {
     expect(
-      keywordRequirementLines({ primary: null, secondaries: [], primaryIntent: null, all: [] }),
+      keywordRequirementLines({ primary: null, secondaries: [], all: [] }),
     ).toBe("");
   });
 
-  it("omits the intent hint for an unclassified keyword", () => {
-    const out = keywordRequirementLines({ ...kw, primaryIntent: null });
-    expect(out).not.toContain("Search intent");
-  });
 });
 
 describe("keywordPreservationLine", () => {
   const kw = {
     primary: "blue shoes",
     secondaries: ["sneakers"],
-    primaryIntent: null,
     all: ["blue shoes", "sneakers"],
   };
 
@@ -191,7 +163,7 @@ describe("keywordPreservationLine", () => {
 
   it("falls back to preserve-only when there is no primary to add", () => {
     const out = keywordPreservationLine(
-      { primary: null, secondaries: ["sneakers"], primaryIntent: null, all: ["sneakers"] },
+      { primary: null, secondaries: ["sneakers"], all: ["sneakers"] },
       { mayAddPrimary: true },
     );
     expect(out).toContain("Do NOT add keywords");
@@ -199,7 +171,7 @@ describe("keywordPreservationLine", () => {
   });
 
   it("is empty when nothing is tracked", () => {
-    const empty = { primary: null, secondaries: [], primaryIntent: null, all: [] };
+    const empty = { primary: null, secondaries: [], all: [] };
     expect(keywordPreservationLine(empty)).toBe("");
     expect(keywordPreservationLine(empty, { mayAddPrimary: true })).toBe("");
   });
@@ -245,7 +217,6 @@ describe("explicitPrimaryKeyword", () => {
     expect(explicitPrimaryKeyword("running shoes")).toEqual({
       primary: "running shoes",
       secondaries: [],
-      primaryIntent: null,
       all: ["running shoes"],
     });
   });

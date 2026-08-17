@@ -1,6 +1,6 @@
 # Keywords-Contract
 
-**Was das ist:** der aktive Architektur-Vertrag für das Keyword-System — Datenmodell (Keyword/Assignment/Gruppen), AI-Bridge in die Textgenerierung, GSC-Adopt, AI-Verteilung, Autocomplete-Recherche und Kannibalisierungs-/Intent-Regeln.
+**Was das ist:** der aktive Architektur-Vertrag für das Keyword-System — Datenmodell (Keyword/Assignment/Gruppen), AI-Bridge in die Textgenerierung, GSC-Adopt, AI-Verteilung, Autocomplete-Recherche und Kannibalisierungs-Regeln.
 
 **Warum das existiert:** Die Invarianten hier sind nicht aus dem Schema ablesbar (App-Layer-Garantien, bewusste Architektur-Entscheidungen gegen Alternativen, Kosten-/Prompt-Semantik). Verstöße erzeugen leise Datenfehler (doppelte Primaries, stille Rollen-Downgrades, kaputte Client-Bundles), keine Testrot-Signale.
 
@@ -12,7 +12,7 @@
 
 Vier Tabellen ([schema.prisma](../../prisma/schema.prisma)), Service: [keywords.service.ts](../../app/services/seo/keywords.service.ts):
 
-- **`SeoKeyword`** ist ein eigenständiges shop-scoped Objekt — `@@unique([shop, keyword, locale])`, dazu `priority` (1/2/3) und `intent`. Keine Item-Bindung.
+- **`SeoKeyword`** ist ein eigenständiges shop-scoped Objekt — `@@unique([shop, keyword, locale])`, dazu `priority` (1/2/3). Keine Item-Bindung.
 - **`SeoKeywordAssignment`** verbindet Keyword ↔ Item mit `role` (`primary`/`secondary`). **Die GSC-Metriken leben HIER** (nicht am Keyword), weil GSC (query, page)-Tupel liefert. `SeoKeywordSnapshot` (Ranking-Historie) hängt ebenfalls am Assignment.
 - **`SeoKeywordGroup`/`-Membership`**: Gruppen sind reine Verwaltungs-Container (CSV-Import-Ziel, Verteilungs-Einstieg). Eine Gruppe wird **nie** als Ganzes einem Item zugewiesen — Zuweisung passiert immer pro Keyword. Seit dem UI-Rework sind Gruppen **locale-scoped** (`@@unique([shop, name, locale])`, `@@index([shop, locale])`); Details in §UI.
 
@@ -32,7 +32,7 @@ Vier Tabellen ([schema.prisma](../../prisma/schema.prisma)), Service: [keywords.
 [text-generation.handler.ts](../../app/routes/api-ai-handlers/text-generation.handler.ts):
 
 - Lookup: `getItemKeywords(db, shop, itemId, "")` — Locale `""` (Primary-Sprache), primary zuerst, secondaries nach Priorität. Der Index `@@index([shop, resourceId])` existiert genau für diese Query (ohne `resourceType`).
-- Prompt: Primary als Pflicht-Keyword („do not stuff"), Secondaries als Kann-Liste („never more than one per sentence"), Intent-Hint wenn klassifiziert.
+- Prompt: Primary als Pflicht-Keyword („do not stuff"), Secondaries als Kann-Liste („never more than one per sentence").
 - **Stuffing-Guard ist feldtyp-abhängig** — eine globale Density-Schwelle funktioniert nicht (5-Wort-SEO-Titel mit 2-Wort-Keyword ≈ 40 % Density):
   - Long-Content (`description`): Density > 3 % → Regenerate
   - Kurzfelder (`title`/`seoTitle`/`metaDescription`): Occurrences > 1 → Regenerate
@@ -47,13 +47,13 @@ Vier Tabellen ([schema.prisma](../../prisma/schema.prisma)), Service: [keywords.
 
 ## §5 Gruppen, CSV, AI-Verteilung
 
-- **CSV-Import** ([keywords-csv.ts](../../app/services/seo/keywords-csv.ts)): `keyword[,priority][,intent][,locale]`, nutzt die Grid-/Delimiter-Helfer aus redirects-csv, Cap 2000/Request. **Fehlende Priorität ist `undefined`, nicht Default 2** — ein Re-Import ohne Prioritäts-Spalte darf Bestandswerte nicht resetten. `addKeywordsToGroup` ist gebatcht (findMany/createMany + ein updateMany pro Werte-Kombination).
+- **CSV-Import** ([keywords-csv.ts](../../app/services/seo/keywords-csv.ts)): `keyword[,priority][,locale]`, nutzt die Grid-/Delimiter-Helfer aus redirects-csv, Cap 2000/Request. **Fehlende Priorität ist `undefined`, nicht Default 2** — ein Re-Import ohne Prioritäts-Spalte darf Bestandswerte nicht resetten. `addKeywordsToGroup` ist gebatcht (findMany/createMany + ein updateMany pro Prioritätswert).
 - **Verteilung** ([keyword-distribution.service.ts](../../app/services/seo/keyword-distribution.service.ts) + [.handler.ts](../../app/routes/api-ai-handlers/keyword-distribution.handler.ts)):
   - **Batch-LLM statt Embeddings** (bewusste Entscheidung): jeder Call sieht ALLE Keywords der Gruppe + einen Item-Chunk (`ITEMS_PER_BATCH` 15, schrumpft bei >~300 Keywords). Embedding-Vorstufe nur bauen, wenn 5000+-Produkt-Kataloge empirisch klagen — nicht spekulativ.
   - Task `distributeKeywords`, Stages `suggest`/`apply`, Single-Flight über BEIDE Stages, Item-Cap 2000, Pro-Gate. Vorschläge landen als JSON auf `Task.result`; Apply stempelt `appliedAt` in den Suggest-Task (Preview verschwindet).
   - **Kein Auto-Apply, nie.** Die Preview-Tabelle ist der Qualitäts-Gate; Confidence-Werte über Batch-Grenzen sind **unkalibrierte Heuristik** (Tie-Breaker im Merge, Default-Accept-Schwelle 0.6 — kein Ranking).
   - `maxSecondaries` begrenzt Secondary-**Items pro Keyword** (nicht Secondary-Keywords pro Item — Letzteres deckelt der 5er-Cap). Cap greift auch beim Merge-Erstinsert (Ein-Batch-Läufe).
-  - **Sanitizer-Echo:** Prompts sanitisieren Keyword-Text; die Antwort-Validierung MUSS gegen die sanitisierte Form matchen und auf den Rohtext zurückmappen (sonst blockieren Sanitizer-Treffer dauerhaft ihren Batch-Slot). Gilt identisch für den Intent-Klassifikator.
+  - **Sanitizer-Echo:** Prompts sanitisieren Keyword-Text; die Antwort-Validierung MUSS gegen die sanitisierte Form matchen und auf den Rohtext zurückmappen (sonst blockieren Sanitizer-Treffer dauerhaft ihren Batch-Slot).
   - **Cost-Preview MUSS Output-Tokens mitrechnen** (Output ist der teurere Posten). Die Mathematik lebt CLIENT-safe in [keyword-distribution.shared.ts](../../app/services/seo/keyword-distribution.shared.ts) — der Service selbst zieht den Prompt-Sanitizer → `logger.server` und darf nie in den Client-Bundle.
   - **Nicht umsetzbar:** Vendor-Facette als Verteilungs-Filter — das gecachte Product-Modell hat keine `vendor`-Spalte (nur `productType`).
 
@@ -66,11 +66,11 @@ Vier Tabellen ([schema.prisma](../../prisma/schema.prisma)), Service: [keywords.
 - **Availability-Probe = integrierter §6.1-Spike:** `getSuggestionsAvailability()` (vom Keywords-Tab-Loader aufgerufen) probt bei stale Verdict im Hintergrund (TTL 12 h ok / 15 min blocked / 5 min unknown), loggt `[KeywordSuggestions] availability probe: …` (Railway-Logs = Spike-Ergebnis) und blockt bei `blocked` das Panel. Echte Nutzungen füttern den Cache (`markSuggestionsAvailability`). Erstverdict Produktion 2026-07-22: **ok**. Volllast-Test manuell: `node scripts/spike-suggestqueries.mjs` (auf Railway ausführen).
 - Echte Recherche nur bei expliziter Merchant-Aktion — kein Prefetch (die Probe ist ein Reachability-Check, kein Keyword-Fetch).
 
-## §7 Kannibalisierung & Search-Intent
+## §7 Kannibalisierung
 
 - **Konflikt = gleiches Keyword primary auf ≥2 Items desselben `resourceType`.** Product ≠ Collection ist bewusst KEIN Konflikt (Kategorie-Seite rankt „Vasen", Produkt „grüne Keramikvase"). `findCannibalizationConflicts` ist pure über die geladene Assignment-Liste.
 - **Confirm-Guard nur für MANUELLE Primary-Anlage** (`findPrimaryElsewhere` + `acceptCannibalization`-Bypass in Keywords-Tab und Sidebar). Automatisierte Pfade (Adopt, Verteilung) überspringen ihn by design — dort gilt die Preview bzw. der Merge als Gate. Sidebar-Regel: Item-Wechsel invalidiert einen offenen Kannibalisierungs-Prompt (das gestashte „Trotzdem hinzufügen"-Payload darf nie aufs neue Item feuern).
-- **Intent:** `classifyKeywordIntents` (Pro, 50 distinkte Texte pro Call, gleiche Klassifikation für alle Locale-Rows desselben Texts, Task-Typ `keywordIntent`). Wirkung: Intent-Hint im Generation-Prompt, Intent↔Item-Typ-Regel im Verteilungs-Prompt.
+- **Search-Intent gab es hier einmal und ist bewusst ENTFERNT.** Ein LLM klassifizierte jedes Keyword aus seinem TEXT allein als informational/commercial/transactional/navigational; der Wert floss als Hinweis in den Generierungs- und den Verteilungs-Prompt und stand als Badge in der Tabelle. Die Absicht hinter einer Suche ist aus dem Text nicht entscheidbar — „Stifthalter" ist für den einen ein Vergleich, für den nächsten ein Kauf, und das eine gespeicherte Label zwang beiden dieselbe Lesart auf. Klassifikator, CSV-Spalte, Prompt-Hinweise, Badge und Filter sind weg, die Spalte `SeoKeyword.intent` fiel im Folge-Deploy (`20260818000000_drop_seo_keyword_intent`); die i18n-Labels des Task-Typs `keywordIntent` bleiben nur, bis die letzten gespeicherten Task-Zeilen ablaufen. Nicht als „fehlt noch" wieder aufbauen.
 
 ## §UI UI-Rework — Locale-scoped Gruppen, Bulk-Assign, Item-Picker (PLAN_KEYWORDS_UI_REWORK, Phasen 0–6, PR #9)
 

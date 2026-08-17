@@ -14,13 +14,16 @@ import {
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { DEFAULT_SEO_LIMITS, resolveSeoLimits, type SeoLimits } from "../utils/character-limits";
-import { meetsPlan, type Plan } from "../utils/planUtils";
+import { meetsPlan, canAccessSeoFeature, getMinimumPlanForSeoFeature, type Plan } from "../utils/planUtils";
+import { PLAN_DISPLAY_NAMES } from "../config/plans";
 
 interface Settings {
   seoTitleSuffixEnabled: boolean;
   seoTitleSuffix: string;
   /** PLAN §Phase 3.3 — redirect the old URL when a handle changes. */
   seoAutoHandleRedirect?: boolean;
+  /** Nightly automatic store audit (Max plan). */
+  seoAutoAuditEnabled: boolean;
   /** Stored merchant overrides; `null` = defaults from character-limits.ts. */
   seoLimits: Partial<SeoLimits> | null;
 }
@@ -124,6 +127,11 @@ export function SettingsSEOTab({
   onHasChangesChange,
 }: SettingsSEOTabProps) {
   const canEditLimits = meetsPlan(subscriptionPlan, "pro");
+  // The nightly audit is an entitlement, so the row is shown on every plan but
+  // only operable where the plan grants it — same treatment the limit fields
+  // get, and the action re-checks server-side.
+  const canScheduleAudit = canAccessSeoFeature(subscriptionPlan, "scheduledAudit");
+  const scheduledAuditPlan = getMinimumPlanForSeoFeature("scheduledAudit");
   const initialDraft = toDraft(settings.seoLimits ?? null);
 
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
@@ -137,6 +145,9 @@ export function SettingsSEOTab({
   const [autoHandleRedirect, setAutoHandleRedirect] = useState(
     settings.seoAutoHandleRedirect ?? true,
   );
+  const [seoAutoAuditEnabled, setSeoAutoAuditEnabled] = useState(
+    settings.seoAutoAuditEnabled ?? true,
+  );
   const [limits, setLimits] = useState<Record<keyof SeoLimits, string>>(initialDraft);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -146,13 +157,14 @@ export function SettingsSEOTab({
       seoTitleSuffix !== (settings.seoTitleSuffix || "");
     const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
     const redirectChanged = autoHandleRedirect !== (settings.seoAutoHandleRedirect ?? true);
-    const changed = suffixChanged || limitsChanged || redirectChanged;
+    const autoAuditChanged = seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true);
+    const changed = suffixChanged || limitsChanged || redirectChanged || autoAuditChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
     // initialDraft is derived from `settings` — including it in deps would
     // create a new object each render and loop indefinitely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, limits, settings, onHasChangesChange]);
+  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, seoAutoAuditEnabled, limits, settings, onHasChangesChange]);
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -169,6 +181,12 @@ export function SettingsSEOTab({
         seoTitleSuffix,
         seoAutoHandleRedirect: String(autoHandleRedirect),
         ...(limitsChanged ? { seoLimits: JSON.stringify(coerceLimits(limits)) } : {}),
+        // Same rule as the limits payload: only send the field when the
+        // merchant may change it AND did, so a read-only render on a lower
+        // plan can never write the column.
+        ...(canScheduleAudit && seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true)
+          ? { seoAutoAuditEnabled: String(seoAutoAuditEnabled) }
+          : {}),
       },
       { method: "POST" },
     );
@@ -179,6 +197,7 @@ export function SettingsSEOTab({
     setSeoTitleSuffix(settings.seoTitleSuffix || "");
     setAutoHandleRedirect(settings.seoAutoHandleRedirect ?? true);
     setLimits(toDraft(settings.seoLimits ?? null));
+    setSeoAutoAuditEnabled(settings.seoAutoAuditEnabled ?? true);
   };
 
   const handleResetLimits = () => {
@@ -220,8 +239,14 @@ export function SettingsSEOTab({
         <BlockStack gap="400">
           {/* PLAN §Phase 3.3 / §A1 — until now, changing a handle in this app
               silently 404'd every existing link to the old address. On by
-              default: a stray redirect is untidy, a broken URL costs traffic. */}
-          <InlineStack align="space-between" blockAlign="center">
+              default: a stray redirect is untidy, a broken URL costs traffic.
+              Toggle on the LEFT, matching the row style develop adopted for
+              every pill toggle. */}
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <ToggleSwitch
+              checked={autoHandleRedirect}
+              onChange={setAutoHandleRedirect}
+            />
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
                 {t.settings.autoHandleRedirect || "Weiterleitung bei Handle-Änderung"}
@@ -231,21 +256,9 @@ export function SettingsSEOTab({
                   "Ändert sich der Handle eines Eintrags, wird die alte URL automatisch auf die neue weitergeleitet."}
               </Text>
             </BlockStack>
-            <ToggleSwitch
-              checked={autoHandleRedirect}
-              onChange={setAutoHandleRedirect}
-            />
           </InlineStack>
 
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="100">
-              <Text as="p" variant="bodyMd">
-                {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {t.settings.seoTitleSuffixLabel || "Shopify hängt Shop-Namen an SEO-Titel an"}
-              </Text>
-            </BlockStack>
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
             <ToggleSwitch
               checked={seoTitleSuffixEnabled}
               onChange={(checked) => {
@@ -255,6 +268,14 @@ export function SettingsSEOTab({
                 }
               }}
             />
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoTitleSuffixLabel || "Shopify hängt Shop-Namen an SEO-Titel an"}
+              </Text>
+            </BlockStack>
           </InlineStack>
 
           {seoTitleSuffixEnabled && (
@@ -295,6 +316,42 @@ export function SettingsSEOTab({
               </Banner>
             </BlockStack>
           )}
+        </BlockStack>
+
+        <Divider />
+
+        {/* Nightly automatic audit (Max). Own section because it is the only
+            setting here that changes what the app does WITHOUT the merchant
+            present — it deserves an obvious switch, not a line in a list. */}
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingMd">
+            {t.settings.seoAutoAuditHeading || "Automatischer Audit"}
+          </Text>
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <ToggleSwitch
+              checked={canScheduleAudit && seoAutoAuditEnabled}
+              disabled={!canScheduleAudit}
+              onChange={setSeoAutoAuditEnabled}
+            />
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoAutoAuditLabel || "Nächtlicher SEO-Audit"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoAutoAuditDescription ||
+                  "Einmal täglich wird dein Shop automatisch gescannt und der SEO-Score als Verlaufspunkt gespeichert. Es werden nur Daten gelesen — keine Inhalte werden verändert."}
+              </Text>
+              {!canScheduleAudit && scheduledAuditPlan && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(t.settings.seoAutoAuditPlanHint ||
+                    "Ab dem {plan}-Plan verfügbar.").replace(
+                    "{plan}",
+                    PLAN_DISPLAY_NAMES[scheduledAuditPlan],
+                  )}
+                </Text>
+              )}
+            </BlockStack>
+          </InlineStack>
         </BlockStack>
 
         <Divider />

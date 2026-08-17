@@ -5,8 +5,8 @@
  * and CRLF endings behave identically across both importers.
  *
  * Expected columns: `keyword` (required), `priority` (optional 1/2/3),
- * `intent` (optional), `locale` (optional). NO resourceId column — assignment
- * happens after import via AI distribution or manually (plan §5.3).
+ * `locale` (optional). NO resourceId column — assignment happens after import
+ * via AI distribution or manually (plan §5.3).
  * A headerless single-column file is treated as a plain keyword list.
  */
 
@@ -19,7 +19,6 @@ export interface KeywordCsvRow {
    *  distinction matters downstream: an explicit value overrides an existing
    *  keyword's priority, an absent one must NOT reset it to the default. */
   priority?: number;
-  intent: string | null;
   locale: string; // "" = primary
   /** 1-based row number in the source CSV, for error reporting. */
   csvRow: number;
@@ -39,10 +38,7 @@ export interface KeywordCsvResult {
 
 const KEYWORD_HEADERS = new Set(["keyword", "keywords", "query", "suchbegriff", "suchanfrage", "palabraclave"]);
 const PRIORITY_HEADERS = new Set(["priority", "prio", "prioritaet", "priorität", "prioridad"]);
-const INTENT_HEADERS = new Set(["intent", "searchintent", "suchintention", "intencion", "intención"]);
 const LOCALE_HEADERS = new Set(["locale", "lang", "language", "sprache", "idioma"]);
-
-const VALID_INTENTS = new Set(["informational", "commercial", "transactional", "navigational"]);
 
 export function parseKeywordsCsv(
   text: string,
@@ -67,16 +63,14 @@ export function parseKeywordsCsv(
   const headerRow = grid[0].map(normHeader);
   let keywordIdx = -1;
   let priorityIdx = -1;
-  let intentIdx = -1;
   let localeIdx = -1;
   for (let i = 0; i < headerRow.length; i++) {
     const h = headerRow[i];
     if (keywordIdx < 0 && KEYWORD_HEADERS.has(h)) keywordIdx = i;
     else if (priorityIdx < 0 && PRIORITY_HEADERS.has(h)) priorityIdx = i;
-    else if (intentIdx < 0 && INTENT_HEADERS.has(h)) intentIdx = i;
     else if (localeIdx < 0 && LOCALE_HEADERS.has(h)) localeIdx = i;
   }
-  const isHeader = keywordIdx >= 0 || priorityIdx >= 0 || intentIdx >= 0 || localeIdx >= 0;
+  const isHeader = keywordIdx >= 0 || priorityIdx >= 0 || localeIdx >= 0;
   if (keywordIdx < 0) keywordIdx = 0;
   const startRow = isHeader ? 1 : 0;
 
@@ -107,18 +101,6 @@ export function parseKeywordsCsv(
       }
     }
 
-    let intent: string | null = null;
-    if (intentIdx >= 0) {
-      const i = (raw[intentIdx] ?? "").trim().toLowerCase();
-      if (i) {
-        if (!VALID_INTENTS.has(i)) {
-          errors.push({ row: csvRow, keyword: keywordCell, error: "badIntent" });
-          continue;
-        }
-        intent = i;
-      }
-    }
-
     let locale = "";
     if (localeIdx >= 0) {
       const l = (raw[localeIdx] ?? "").trim().toLowerCase();
@@ -133,7 +115,7 @@ export function parseKeywordsCsv(
     if (seen.has(dedupeKey)) continue; // silent within-file dedupe
     seen.add(dedupeKey);
 
-    rows.push({ keyword, priority, intent, locale, csvRow });
+    rows.push({ keyword, priority, locale, csvRow });
   }
 
   return { rows, errors };

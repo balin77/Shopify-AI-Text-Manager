@@ -29,8 +29,9 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { getFormString } from "../utils/form-data.utils";
-import { meetsPlan } from "../utils/planUtils";
+import { meetsPlan, getGscHistoryDays } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import {
@@ -47,6 +48,7 @@ import {
   signOAuthState,
   defaultDateRange,
   previousDateRange,
+  GSC_RETENTION_DAYS,
   computeQueryDeltas,
   findLostQueries,
   revokeGoogleToken,
@@ -70,7 +72,7 @@ import {
   type KeywordResourceType,
 } from "../services/seo/keywords.service";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
-import { resolvePathsToResources } from "../services/seo/url-resolver.server";
+import { resolvePathsToResources, isContentResourceType } from "../services/seo/url-resolver.server";
 import {
   analyzeFreshness,
   excludeDismissed,
@@ -169,8 +171,12 @@ async function resolveQuickWinResources(
     const r = resolved.get(opp.page);
     return {
       ...opp,
-      resourceType: r?.id ? (r.resourceType as KeywordResourceType) : null,
-      resourceId: r?.id ?? null,
+      // `isContentResourceType`, not just `r?.id`: a policy page resolves to a
+      // real ShopPolicy id but is not a keyword target (no handle, no SEO
+      // title). Leaving it null keeps the row on its item-picker fallback
+      // instead of rendering an Optimize button the action rejects.
+      resourceType: r?.id && isContentResourceType(r.resourceType) ? (r.resourceType as KeywordResourceType) : null,
+      resourceId: r?.id && isContentResourceType(r.resourceType) ? r.id : null,
     };
   });
 }
@@ -346,7 +352,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
-    const { startDate, endDate } = defaultDateRange(new Date());
+    // Lookback window is a plan entitlement (§Plan-Matrix): Pro sees the
+    // rolling 28 days, Max the ~16 months the GSC API itself retains. The
+    // period-over-period comparison below uses the SAME width, so the deltas
+    // stay like-for-like on either plan.
+    const historyDays = getGscHistoryDays(plan);
+    // The period-over-period comparison needs TWO consecutive windows of the
+    // same width to fit inside GSC's ~16-month retention. At Max's 480 days
+    // the previous window would start ~32 months back — outside retention, so
+    // GSC returns nothing and deltas/lost queries silently vanish on the tier
+    // that pays for history. Cap the COMPARISON width (not the main window) at
+    // half the retention.
+    const comparisonDays = Math.min(historyDays, Math.floor(GSC_RETENTION_DAYS / 2));
+    const { startDate, endDate } = defaultDateRange(new Date(), historyDays);
     // ONE (query, page)-dimensioned call feeds BOTH the Top-queries table
     // (aggregated per query via aggregateQueryPageRows) and the Quick-wins
     // detection (raw rows) — saving the previously separate query-dimensioned
@@ -372,15 +390,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (page) base.topPages[q] = page;
     }
 
-    // Period-over-period comparison: the 28 days immediately before the
-    // window above. Best-effort — any failure here just leaves
+    // Period-over-period comparison: the window immediately before the one
+    // above, capped to comparisonDays so both halves stay inside GSC retention. Best-effort — any failure here just leaves
     // deltas/lostQueries empty; the table renders exactly as before.
     // SAME (query,page) dimensions + SAME aggregation as the current period
     // (review M5): comparing our impression-weighted positions against GSC's
     // query-dimension positions would fabricate position deltas for every
     // query that ranks on more than one page.
     try {
-      const prevRange = previousDateRange(new Date());
+      const prevRange = previousDateRange(new Date(), comparisonDays);
       const previousPageRows = await querySearchAnalytics(accessToken, propertyUrl, {
         startDate: prevRange.startDate,
         endDate: prevRange.endDate,
@@ -707,7 +725,11 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       // page should be tracked against the FR edition (§4.2 Locale-Hinweis).
       const page = getFormString(form, "page");
       const resolved = page ? resolveGscPagePath(page) : null;
-      if (resolved) {
+      // "Policy" is a resolvable storefront page (the crawl report deep-links
+      // it) but not a keyword TARGET: ShopPolicy has no handle, no SEO title
+      // and no meta description to optimize against. Left unresolved on
+      // purpose, which routes the row into the existing item-picker modal.
+      if (resolved && resolved.resourceType !== "Policy") {
         try {
           const model =
             resolved.resourceType === "Product"
@@ -1167,12 +1189,12 @@ export default function SeoSearchConsole() {
   return (
     <SeoSectionLayout sectionId="searchConsole">
       <BlockStack gap="400">
-        <Banner tone="info" title={g.helpTitle}>
+        <SeoHelpBanner title={g.helpTitle}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{g.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{g.helpBody2}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* Status from the OAuth bounce-back */}
         {data.statusParam === "connected" && <Banner tone="success">{g.connectedBanner}</Banner>}

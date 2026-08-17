@@ -24,6 +24,66 @@ export type ContentType =
   | "sellingPlans"       // subscription plans (Pro+)
   | "onlineStoreExtras"; // filters + shop metadata + cookie banner (all tiers)
 
+/**
+ * SEO-tab entitlements (docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md §Plan-Matrix).
+ *
+ * Design rule: **Pro gets the full SEO feature surface, Max buys automation,
+ * memory, scale and throughput.** Before this block the highest gate anywhere
+ * in the SEO tab was `planGate: "pro"` (crawl, searchConsole, internalLinks,
+ * sitemap, indexNow) — so a Max subscription unlocked nothing at all here.
+ *
+ * Everything below is a real recurring cost on our side (scheduled compute,
+ * snapshot storage, Google API calls, queue throughput) — the same axis
+ * `monthlyImageOperations` and `dailyPageSpeedRuns` already segment on. AI
+ * tokens are merchant-funded (BYO), and locale count is a deliberate USP, so
+ * neither is ever a gate.
+ *
+ * `SeoSectionDef.planGate` (config/seo-sections.ts) decides whether a section
+ * is *visible*; the numbers here decide what happens *inside* it. Enforce them
+ * server-side in the loader/action/service, never only in the UI.
+ */
+export interface SeoPlanLimits {
+  /**
+   * Nightly automatic store audit (SeoAuditAutoRunService) writing a fresh
+   * SeoScoreSnapshot. Report-only — it never rewrites merchant content.
+   */
+  scheduledAudit: boolean;
+  /**
+   * Days of SeoScoreSnapshot / SeoKeywordSnapshot history kept and charted.
+   * The newest snapshot always survives, so 0 means "current state, no trend".
+   */
+  scoreHistoryDays: number;
+  /**
+   * Distinct tracked SeoKeyword rows per shop (across all locales).
+   * 0 = keyword tracking unavailable.
+   *
+   * Enforced at creation only. Rows already over the cap after a DOWNGRADE are
+   * deliberately KEPT and merely frozen (no new keywords until the merchant is
+   * back under it) — keywords are merchant-authored research, not re-syncable
+   * cache, so planCacheCleanup must never delete them. See §Plan-Matrix.
+   */
+  maxTrackedKeywords: number;
+  /**
+   * Connectable Google Search Console properties (market domains). 0 = locked.
+   *
+   * Capped at 1 on every paid tier TODAY because
+   * GoogleSearchConsoleConnection keys on `shop` alone — one property per
+   * shop is all the schema can hold. Raising Max to 5 is a follow-up that
+   * needs a composite key plus a property picker; until then the Pro→Max GSC
+   * difference is `gscHistoryDays`, which is enforced for real.
+   */
+  gscProperties: number;
+  /**
+   * GSC lookback window in days. 480 ≈ the 16 months the Search Console API
+   * itself retains; 28 is the rolling window smaller shops get.
+   */
+  gscHistoryDays: number;
+  /** Rolling monthly IndexNow submission quota. 0 = IndexNow unavailable. */
+  monthlyIndexNowSubmissions: number;
+  /** Items per bulk-fix / bulk-meta run (queue throughput, mirrors WebP 2→6). */
+  bulkBatchSize: number;
+}
+
 export interface PlanLimits {
   maxProducts: number;
   maxLocales: number;
@@ -56,6 +116,8 @@ export interface PlanLimits {
    * Enforced in services/seo/pagespeed.service.ts via countPageSpeedRunsToday.
    */
   dailyPageSpeedRuns: number;
+  /** SEO-tab entitlements — see SeoPlanLimits above. */
+  seo: SeoPlanLimits;
   productImages: "featured-only" | "all";
   contentTypes: ContentType[];
   aiInstructionsEditable: boolean;
@@ -88,6 +150,19 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.free,
     monthlyImageOperations: 0,
     dailyPageSpeedRuns: 5,
+    // SEO: the diagnostic sections (audit, structured data, hreflang,
+    // redirects, PageSpeed) stay open — a shop that cannot see its own SEO
+    // problems has no reason to upgrade. Everything with a recurring cost is
+    // off here.
+    seo: {
+      scheduledAudit: false,
+      scoreHistoryDays: 0,
+      maxTrackedKeywords: 0,
+      gscProperties: 0,
+      gscHistoryDays: 0,
+      monthlyIndexNowSubmissions: 0,
+      bulkBatchSize: 25,
+    },
     productImages: "featured-only",
     contentTypes: ["products", "collections", "onlineStoreExtras"],
     aiInstructionsEditable: false,
@@ -119,6 +194,18 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.basic,
     monthlyImageOperations: 0,
     dailyPageSpeedRuns: 20,
+    // SEO: first tier with keyword tracking — a small quota, because every
+    // tracked keyword turns into GSC enrichment calls once a shop connects
+    // Search Console on Pro.
+    seo: {
+      scheduledAudit: false,
+      scoreHistoryDays: 0,
+      maxTrackedKeywords: 25,
+      gscProperties: 0,
+      gscHistoryDays: 0,
+      monthlyIndexNowSubmissions: 0,
+      bulkBatchSize: 100,
+    },
     productImages: "all",
     contentTypes: ["products", "collections", "pages", "policies", "delivery", "onlineStoreExtras"],
     aiInstructionsEditable: false,
@@ -146,6 +233,19 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.pro,
     monthlyImageOperations: 2000,
     dailyPageSpeedRuns: 40,
+    // SEO: the complete feature surface — Search Console, crawl, internal
+    // links, sitemap and IndexNow all unlock here, so Pro is never a crippled
+    // tier. What it does not get is automation, long history, multi-property
+    // and Max throughput.
+    seo: {
+      scheduledAudit: false,
+      scoreHistoryDays: 30,
+      maxTrackedKeywords: 100,
+      gscProperties: 1,
+      gscHistoryDays: 28,
+      monthlyIndexNowSubmissions: 5000,
+      bulkBatchSize: 500,
+    },
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,
@@ -172,6 +272,18 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     maxConcurrentWebpConversions: PLAN_WEBP_CONCURRENCY.max,
     monthlyImageOperations: 10000,
     dailyPageSpeedRuns: 80,
+    // SEO: the Pro→Max differentiators — it runs by itself (nightly audit),
+    // it remembers (12 months of history), it scales across markets (5 GSC
+    // properties, 16-month window) and it moves bulk work faster.
+    seo: {
+      scheduledAudit: true,
+      scoreHistoryDays: 365,
+      maxTrackedKeywords: 1000,
+      gscProperties: 1, // see SeoPlanLimits.gscProperties — multi-property is a follow-up
+      gscHistoryDays: 480,
+      monthlyIndexNowSubmissions: 50000,
+      bulkBatchSize: 2500,
+    },
     productImages: "all",
     contentTypes: ["products", "collections", "articles", "blogs", "pages", "policies", "templates", "menus", "metaobjects", "directTranslations", "system", "delivery", "sellingPlans", "onlineStoreExtras"],
     aiInstructionsEditable: true,

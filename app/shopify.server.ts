@@ -186,6 +186,7 @@ import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
+import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -228,6 +229,7 @@ const enhancedAuthenticate = {
     // a merchant opened the section and clicked — "instant" indexing that
     // waited for a human.
     IndexNowAutoSubmitService.getInstance().start();
+    SeoAuditAutoRunService.getInstance().start();
 
     return { admin, session };
   }

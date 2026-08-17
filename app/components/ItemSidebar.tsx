@@ -18,6 +18,7 @@ import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { SidebarTabBar } from "./SidebarTabBar";
 import { AttributeChecklist } from "./sidebar/AttributeChecklist";
 import type { AttributeRow } from "../services/attribute-checklist.shared";
+import { ActionTooltip } from "./ActionTooltip";
 import {
   validateJsonLd,
   renderJsonLdScript,
@@ -121,6 +122,14 @@ interface ItemSidebarProps {
   keywordLocale?: string;
   /** Display name of `keywordLocale`, for the scope hint. Optional. */
   keywordLocaleName?: string;
+  /**
+   * Work the tracked keywords into the item's texts (the `insertKeyword`
+   * pass). Omitted by callers that have no editor behind them — the button is
+   * only rendered when this is supplied.
+   */
+  onInsertKeywords?: () => void;
+  /** True while that multi-field run is in flight. */
+  insertKeywordsLoading?: boolean;
 }
 
 export function ItemSidebar({
@@ -140,6 +149,8 @@ export function ItemSidebar({
   resourceType,
   keywordLocale = "",
   keywordLocaleName,
+  onInsertKeywords,
+  insertKeywordsLoading = false,
 }: ItemSidebarProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -781,7 +792,15 @@ export function ItemSidebar({
                             "{max}",
                             String(MAX_KEYWORDS_PER_ITEM),
                           )
-                        : t.seo?.keywordOpError || "Could not update keywords. Please reload and try again."}
+                        : keywordOpError === "planLimit"
+                          ? // The Short variant carries no {used}/{limit}
+                            // placeholders — the sidebar has no quota numbers
+                            // to substitute, and printing the raw tokens is
+                            // worse than saying less.
+                            t.seo?.keywordPlanLimitShort ||
+                            "Your plan's keyword limit is reached. Upgrade or remove a keyword to add another."
+                          : t.seo?.keywordOpError ||
+                            "Could not update keywords. Please reload and try again."}
                     </Text>
                   )
                 )}
@@ -811,6 +830,31 @@ export function ItemSidebar({
                       ))}
                     </InlineStack>
                   </BlockStack>
+                )}
+
+                {/* Last in the tab, directly under the presence badges: those
+                    badges ARE the readout this button acts on — they show
+                    which fields are still missing the keyword. Sitting above
+                    the add-field it was easy to miss, and it read as belonging
+                    to the list rather than to the analysis. */}
+                {onInsertKeywords && keywords.length > 0 && (
+                  <ActionTooltip
+                    content={
+                      t.seo?.insertKeywordsHint ||
+                      "Works the keywords above into title, SEO title, meta description and body — only where they are missing. Nothing else is rewritten."
+                    }
+                    preferredPosition="above"
+                  >
+                    <Button
+                      size="slim"
+                      fullWidth
+                      onClick={onInsertKeywords}
+                      loading={insertKeywordsLoading}
+                      disabled={keywordLoadFetcher.state !== "idle"}
+                    >
+                      {t.seo?.insertKeywords || "Keywords einarbeiten"}
+                    </Button>
+                  </ActionTooltip>
                 )}
               </BlockStack>
         )}

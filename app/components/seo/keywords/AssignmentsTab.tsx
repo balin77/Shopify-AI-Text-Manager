@@ -4,19 +4,20 @@
  * expandable list scoped to the active language (§2.3).
  *
  * Language is the top dimension: only rows whose `locale === activeLocale` are
- * shown. Cannibalization conflicts render as a single warning header (no card).
- * A type mini-navbar (Produkte / Collections / Seiten / Blogartikel) plus a
- * text / intent / score filter row narrow the list. Each item is a collapsible
- * header (title · type, primary on-page Score, GSC ⌀) revealing its keyword
- * rows (primary first) with presence badges, density, GSC position and per-row
+ * shown, narrowed further to `activeType`. Both of those bars live in the Shell
+ * — the type bar shares one card with the Bibliothek/Zuordnungen tabs, so it
+ * cannot be rendered from in here. Cannibalization conflicts render as a single
+ * warning header (no card), and a text / score filter row narrows the list
+ * further. Each item is a collapsible header ("Produkt: <Titel>" over
+ * "Keyword: <…>", primary on-page Score, GSC ⌀) revealing its keyword rows
+ * (primary first) with presence badges, density, GSC position and per-row
  * actions, plus an inline "+ Keyword" control that assigns under the active
  * locale through the SAME saveFetcher submit path the old add-form used — so the
  * Shell's primaryExists-swap and cannibalization confirm dialogs keep working.
  *
  * PURE PRESENTATION for cross-cutting state: all fetchers, refs, confirm-dialog
  * flows and the submit helper live in the Shell (SeoKeywords). Only view-local
- * state (active type, filters, which items are expanded, the inline add fields)
- * lives here.
+ * state (filters, which items are expanded, the inline add fields) lives here.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -34,7 +35,6 @@ import {
 import type { FetcherWithComponents } from "react-router";
 import { scoreTone } from "../../../utils/seo-score";
 import { HelpTooltip } from "../../HelpTooltip";
-import { SubNavBar, type SubNavBarItem } from "../../nav/SubNavBar";
 import type {
   KeywordResourceType,
   KeywordRole,
@@ -55,8 +55,15 @@ const DENSITY_TONE: Record<DensityBand, "success" | "warning" | "critical" | und
   none: undefined,
 };
 
-/** Type mini-navbar order (§2.3): Produkte / Collections / Seiten / Blogartikel. */
-const TYPE_ORDER: KeywordResourceType[] = ["Product", "Collection", "Page", "Article"];
+/** Type mini-navbar order (§2.3): Produkte / Collections / Seiten / Blogartikel.
+ *  The BAR itself lives in the Shell, so it can share one card with the
+ *  Bibliothek/Zuordnungen tabs above it — this list is what it is built from. */
+export const ASSIGNMENT_TYPE_ORDER: KeywordResourceType[] = [
+  "Product",
+  "Collection",
+  "Page",
+  "Article",
+];
 
 /** Presence badge order: T · H1 · Meta · SEO · Body (matches the old table). */
 const PRESENCE_KEYS = ["title", "h1", "metaDescription", "seoTitle", "body"] as const;
@@ -77,20 +84,13 @@ export interface AssignmentsTabProps {
   k: KeywordsPageStrings;
   /** Active language — rows are scoped to it and inline adds assign under it. */
   activeLocale: string;
+  /** Active resource type — its bar is rendered by the Shell (see above). */
+  activeType: KeywordResourceType;
   conflicts: LoaderData["conflicts"];
   keywords: LoaderData["keywords"];
-  isPro: boolean;
-  unclassifiedCount: number;
-  intentLabel: (intent: string | null | undefined) => string | null;
 
   saveFetcher: FetcherWithComponents<ActionResult>;
   rowFetcher: FetcherWithComponents<ActionResult>;
-  intentFetcher: FetcherWithComponents<{
-    success: boolean;
-    classified?: number;
-    remaining?: number;
-    error?: string;
-  }>;
   pendingRowId: string | null;
 
   /** Per-item inline add — locale is fixed to activeLocale by the Shell. */
@@ -108,6 +108,8 @@ interface ItemGroup {
   rows: KeywordRow[];
   primaryScore: number | null;
   gscAvg: number | null;
+  /** One line of this item's keywords for the collapsed header. */
+  keywordSummary: string;
 }
 
 /** Compact score readout: number + tone-tinted bar (reuses scoreTone). */
@@ -210,23 +212,18 @@ function InlineAddKeyword({
 export function AssignmentsTab({
   k,
   activeLocale,
+  activeType,
   conflicts,
   keywords,
-  isPro,
-  unclassifiedCount,
-  intentLabel,
   saveFetcher,
   rowFetcher,
-  intentFetcher,
   pendingRowId,
   handleAddKeyword,
   handleMakePrimary,
   handleDeleteKeyword,
   openInEditor,
 }: AssignmentsTabProps) {
-  const [activeType, setActiveType] = useState<KeywordResourceType>("Product");
   const [textFilter, setTextFilter] = useState("");
-  const [intentFilter, setIntentFilter] = useState("all");
   const [scoreFilter, setScoreFilter] = useState("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -262,6 +259,7 @@ export function AssignmentsTab({
           rows: [],
           primaryScore: null,
           gscAvg: null,
+          keywordSummary: "",
         };
         byId.set(row.resourceId, g);
       }
@@ -272,6 +270,11 @@ export function AssignmentsTab({
     for (const g of list) {
       const primary = g.rows.find((r) => r.role === "primary");
       g.primaryScore = primary?.score ?? null;
+      // Same ★ marker the expanded rows use for the primary, so the collapsed
+      // line reads as a preview of what unfolds rather than a second notation.
+      g.keywordSummary = g.rows
+        .map((r) => (r.role === "primary" ? `★ ${r.keyword}` : r.keyword))
+        .join(", ");
       const gscVals = g.rows
         .map((r) => r.gscPosition)
         .filter((v): v is number => v != null);
@@ -286,23 +289,13 @@ export function AssignmentsTab({
           g.rows.some((r) => r.keyword.toLowerCase().includes(q)),
       );
     }
-    if (intentFilter === "none") {
-      list = list.filter((g) => g.rows.some((r) => !r.intent));
-    } else if (intentFilter !== "all") {
-      list = list.filter((g) => g.rows.some((r) => r.intent === intentFilter));
-    }
     if (scoreFilter === "under50") {
       list = list.filter((g) => g.primaryScore != null && g.primaryScore < 50);
     } else if (scoreFilter === "under80") {
       list = list.filter((g) => g.primaryScore != null && g.primaryScore < 80);
     }
     return list;
-  }, [keywords, activeLocale, activeType, textFilter, intentFilter, scoreFilter]);
-
-  const typeNavItems: SubNavBarItem[] = TYPE_ORDER.map((rt) => ({
-    id: rt,
-    label: k.types[rt],
-  }));
+  }, [keywords, activeLocale, activeType, textFilter, scoreFilter]);
 
   return (
     <BlockStack gap="400">
@@ -330,14 +323,6 @@ export function AssignmentsTab({
         </Banner>
       )}
 
-      {/* Type mini-navbar (§2.3). */}
-      <SubNavBar
-        ariaLabel={k.listTitle}
-        items={typeNavItems}
-        activeId={activeType}
-        onSelect={(item) => setActiveType(item.id as KeywordResourceType)}
-      />
-
       <Card>
         <BlockStack gap="300">
           {/* Help icon (far right) explaining how assignments work. */}
@@ -359,21 +344,6 @@ export function AssignmentsTab({
                   onClearButtonClick={() => setTextFilter("")}
                 />
               </div>
-              <div style={{ minWidth: "170px" }}>
-                <Select
-                  label={k.intentFilterLabel || "Intent"}
-                  labelHidden
-                  options={[
-                    { label: k.intentFilterAll || "All intents", value: "all" },
-                    { label: k.intentFilterNone || "Unclassified", value: "none" },
-                    ...(["informational", "commercial", "transactional", "navigational"] as const).map(
-                      (i) => ({ label: intentLabel(i) ?? i, value: i }),
-                    ),
-                  ]}
-                  value={intentFilter}
-                  onChange={setIntentFilter}
-                />
-              </div>
               <div style={{ minWidth: "150px" }}>
                 <Select
                   label={k.scoreFilterLabel || "Score"}
@@ -388,31 +358,8 @@ export function AssignmentsTab({
                 />
               </div>
             </InlineStack>
-            {isPro && unclassifiedCount > 0 && (
-              <Button
-                loading={intentFetcher.state !== "idle"}
-                onClick={() =>
-                  intentFetcher.submit(
-                    { action: "classifyKeywordIntents", contentType: "products" },
-                    { method: "post", action: "/api/ai" },
-                  )
-                }
-              >
-                {(k.classifyButton || "Classify intent ({count} open)").replace(
-                  "{count}",
-                  String(unclassifiedCount),
-                )}
-              </Button>
-            )}
           </InlineStack>
 
-          {intentFetcher.state === "idle" && intentFetcher.data?.success && (
-            <Banner tone="success">
-              {(k.classifyDone || "{count} keyword(s) classified, {remaining} remaining.")
-                .replace("{count}", String(intentFetcher.data.classified ?? 0))
-                .replace("{remaining}", String(intentFetcher.data.remaining ?? 0))}
-            </Banner>
-          )}
           {rowFetcher.data && !rowFetcher.data.ok && (
             <Banner tone="critical">{k.errorGeneric}</Banner>
           )}
@@ -468,14 +415,29 @@ export function AssignmentsTab({
                         >
                           {isOpen ? "▾" : "▸"}
                         </span>
-                        <div style={{ maxWidth: "320px" }}>
-                          <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
-                            {g.itemMissing ? k.itemMissing : g.itemTitle || g.resourceId}
-                          </Text>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {" · "}
-                            {k.types[g.resourceType] || g.resourceType}
-                          </Text>
+                        {/* Two labelled lines — "Produkt: <Titel>" over
+                            "Keyword: <…>". Collapsed, the item's keywords are
+                            the one thing this list is ABOUT and they were the
+                            one thing not visible; giving both lines the same
+                            label/value shape makes the pair scannable instead
+                            of turning the second line into loose text. */}
+                        <div style={{ maxWidth: "520px", minWidth: 0 }}>
+                          <div>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {`${k.types[g.resourceType] || g.resourceType}: `}
+                            </Text>
+                            <Text as="span" variant="bodyMd" fontWeight="semibold" truncate>
+                              {g.itemMissing ? k.itemMissing : g.itemTitle || g.resourceId}
+                            </Text>
+                          </div>
+                          <div>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {`${k.colKeyword}: `}
+                            </Text>
+                            <Text as="span" variant="bodySm" truncate>
+                              {g.keywordSummary}
+                            </Text>
+                          </div>
                         </div>
                       </InlineStack>
                       <InlineStack gap="400" blockAlign="center" wrap={false}>
@@ -517,9 +479,6 @@ export function AssignmentsTab({
                                     </span>
                                     {row.keyword}
                                   </Text>
-                                  {row.intent && (
-                                    <Badge>{intentLabel(row.intent) ?? row.intent}</Badge>
-                                  )}
                                   <InlineStack gap="100" wrap>
                                     {PRESENCE_KEYS.map((key) => (
                                       <Badge

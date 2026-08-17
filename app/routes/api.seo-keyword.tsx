@@ -68,7 +68,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionResult =
   | { ok: true; keywords: SidebarKeyword[] }
-  | { ok: false; error: "invalid" | "tooMany" | "primaryExists" }
+  // "planLimit" = the shop already tracks as many keywords as its plan allows
+  // (plan quota, distinct from "tooMany" which is the per-item cap).
+  | { ok: false; error: "invalid" | "tooMany" | "primaryExists" | "planLimit" }
   // Cross-item cannibalization pre-check (plan §7.1) — the sidebar shows a
   // warning with an "add anyway" retry (acceptCannibalization=true).
   | { ok: false; error: "cannibalization"; existingItemTitle: string };

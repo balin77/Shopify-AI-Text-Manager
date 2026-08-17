@@ -532,6 +532,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         deepseekMaxTokensPerMinute: settings.deepseekMaxTokensPerMinute || 100000,
         deepseekMaxRequestsPerMinute: settings.deepseekMaxRequestsPerMinute || 60,
 
+        // Keyword-aware translation (Übersetzungen card).
+        keywordAwareTranslation: settings.keywordAwareTranslation ?? true,
+
+        // Nightly SEO audit (Max) — merchant switch, see
+        // services/seo/audit-auto-run.service.ts. Shown on every plan but only
+        // editable where the plan grants scheduledAudit.
+        seoAutoAuditEnabled: settings.seoAutoAuditEnabled ?? true,
+
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
@@ -725,12 +733,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Translation mode ("exact" | "seo_optimized") is stored on AISettings
       // and piggybacks on the same submit so the Translations sub-section has
       // a single Save button covering the radio + custom instructions.
+      // Keyword-aware translation rides along on the same submit, for the same
+      // reason: it is a knob of the Translations sub-section, and that section
+      // has one Save button. Absent (a submit from another sub-section) leaves
+      // the stored value alone rather than defaulting it back on.
       const rawMode = String(formData.get("translationMode") || "");
-      if (rawMode === "exact" || rawMode === "seo_optimized") {
+      const rawKeywordAware = formData.get("keywordAwareTranslation");
+      const keywordAwareUpdate =
+        rawKeywordAware === null ? {} : { keywordAwareTranslation: rawKeywordAware === "true" };
+      const modeUpdate =
+        rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
+      if (Object.keys(modeUpdate).length > 0 || Object.keys(keywordAwareUpdate).length > 0) {
         await db.aISettings.upsert({
           where: { shop: session.shop },
-          update: { translationMode: rawMode },
-          create: { shop: session.shop, translationMode: rawMode, preferredProvider: "claude" },
+          update: { ...modeUpdate, ...keywordAwareUpdate },
+          create: {
+            shop: session.shop,
+            ...modeUpdate,
+            ...keywordAwareUpdate,
+            preferredProvider: "claude",
+          },
         });
       }
 
@@ -756,6 +778,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
+      // Nightly audit switch. Only written when the field is present, so a
+      // client that does not know the field cannot reset it. Gated below,
+      // next to the seoLimits gate, on the same "would it change anything"
+      // rule — a no-op payload from an unentitled shop must not 403.
+      const rawAutoAudit = formData.get("seoAutoAuditEnabled");
+      const autoAuditRequested = rawAutoAudit === null ? undefined : rawAutoAudit === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
 
       // PLAN §Phase 3.3 — auto-redirect on handle change. Read as
@@ -823,6 +851,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
+      let autoAuditUpdate: boolean | undefined = undefined;
+      if (autoAuditRequested !== undefined) {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoAutoAuditEnabled: true },
+        });
+        const current = row?.seoAutoAuditEnabled ?? true;
+        if (current !== autoAuditRequested) {
+          const { canAccessSeoFeature } = await import("../utils/planUtils");
+          const plan = (row?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!canAccessSeoFeature(plan, "scheduledAudit")) {
+            return json(
+              {
+                success: false,
+                error: "The nightly SEO audit is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoAuditUpdate = autoAuditRequested;
+        }
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
@@ -830,6 +882,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           seoTitleSuffix: suffix,
           ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+          ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
         },
         create: {
           shop: session.shop,
@@ -837,6 +890,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           seoTitleSuffix: suffix,
           ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+          ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
         },
       });
 
@@ -1262,11 +1316,17 @@ export default function SettingsPage() {
       {/* Page padding is owned globally by .Polaris-Page (responsive.css,
           --app-page-padding); .app-page-content zeroes Polaris' own
           Page__Content inset so the gutter is even on all sides (incl. top
-          and bottom), matching the content page. */}
-      <div className="app-page-content">
+          and bottom), matching the content page.
+
+          .app-page-width-full is explicit, not the absence of a cap: this is a
+          sidebar+content layout, not reading-width content, so it keeps the
+          full width the SEO sections and Tasks give up. */}
+      <div className="app-page-content app-page-width-full">
         <div style={{ display: "flex", gap: "1rem" }}>
-          {/* Left Sidebar - Hidden on mobile */}
-          <div className="settings-desktop-nav" style={{ width: "250px", flexShrink: 0 }}>
+          {/* Left Sidebar - Hidden on mobile. Width from
+              --app-list-column-width: the tab nav is a "pick an item" column
+              like the content pages' item list, and now matches it. */}
+          <div className="settings-desktop-nav" style={{ width: "var(--app-list-column-width)", flexShrink: 0 }}>
             <Card padding="0">
               <button
                 onClick={() => handleSectionChange("setup")}
@@ -1502,6 +1562,7 @@ export default function SettingsPage() {
                     primaryShopLocale={primaryShopLocale}
                     onGlossaryHasChangesChange={setHasGlossaryChanges}
                     translationMode={settings.translationMode}
+                    keywordAwareTranslation={settings.keywordAwareTranslation}
                   />
                 </>
               )}
@@ -1538,7 +1599,7 @@ export default function SettingsPage() {
                   imageManagerSettings={imageManagerSettings ?? { enabled: true, autoAltText: false }}
                   shop={shop}
                   onImageManagerHasChangesChange={setHasImageManagerChanges}
-                />
+              />
               )}
 
               {/* Plan Settings */}

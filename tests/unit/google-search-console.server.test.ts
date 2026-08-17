@@ -479,6 +479,8 @@ describe("enrichKeywordsFromGsc", () => {
         upsert: async () => ({}),
         deleteMany: async () => ({ count: 0 }),
       },
+      // Ranking-history retention reads the plan (§Plan-Matrix).
+      aISettings: { findUnique: async () => ({ subscriptionPlan: "max" }) },
     } as any;
 
     const enriched = await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
@@ -504,8 +506,13 @@ describe("enrichKeywordsFromGsc", () => {
     keywords: Array<{ id: string; keyword: string }>;
     onSnapshotUpsert: (args: any) => void;
     onSnapshotDeleteMany: (args: any) => void;
+    /** Ranking-history retention follows the plan (§Plan-Matrix). */
+    plan?: string;
   }) {
     return {
+      aISettings: {
+        findUnique: async () => ({ subscriptionPlan: opts.plan ?? "max" }),
+      },
       googleSearchConsoleConnection: {
         findUnique: async () => ({
           shop: "s.myshopify.com",
@@ -562,7 +569,7 @@ describe("enrichKeywordsFromGsc", () => {
     expect(upserts[0].update).toMatchObject({ position: 7.5, clicks: 12, impressions: 300, ctr: 0.04 });
   });
 
-  it("prunes snapshots older than 400 days, scoped to the shop", async () => {
+  it("prunes ranking snapshots to the PLAN's retention window, scoped to the shop", async () => {
     stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
 
     const deletes: any[] = [];
@@ -570,13 +577,46 @@ describe("enrichKeywordsFromGsc", () => {
       keywords: [{ id: "k1", keyword: "blue shoes" }],
       onSnapshotUpsert: () => {},
       onSnapshotDeleteMany: (args) => deletes.push(args),
+      plan: "max", // 365 days
     });
 
     await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
 
     expect(deletes).toHaveLength(1);
     expect(deletes[0].where.shop).toBe("s.myshopify.com");
-    expect(deletes[0].where.capturedAt.lt).toEqual(new Date("2025-05-25T00:00:00.000Z"));
+    expect(deletes[0].where.capturedAt.lt).toEqual(new Date("2025-06-29T00:00:00.000Z"));
+  });
+
+  it("keeps a shorter window on Pro than on Max", async () => {
+    stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
+
+    const deletes: any[] = [];
+    const db = makeDb({
+      keywords: [{ id: "k1", keyword: "blue shoes" }],
+      onSnapshotUpsert: () => {},
+      onSnapshotDeleteMany: (args) => deletes.push(args),
+      plan: "pro", // 30 days
+    });
+
+    await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(deletes[0].where.capturedAt.lt).toEqual(new Date("2026-05-30T00:00:00.000Z"));
+  });
+
+  it("keeps today's snapshot even on a plan without history (floor of 1 day)", async () => {
+    stubGscFetch([{ keys: ["blue shoes"], clicks: 1, impressions: 1, ctr: 0.1, position: 1 }]);
+
+    const deletes: any[] = [];
+    const db = makeDb({
+      keywords: [{ id: "k1", keyword: "blue shoes" }],
+      onSnapshotUpsert: () => {},
+      onSnapshotDeleteMany: (args) => deletes.push(args),
+      plan: "free", // scoreHistoryDays 0 → clamped to 1 so "today" survives
+    });
+
+    await enrichKeywordsFromGsc(db, "s.myshopify.com", new Date("2026-06-29T00:00:00Z"));
+
+    expect(deletes[0].where.capturedAt.lt).toEqual(new Date("2026-06-28T00:00:00.000Z"));
   });
 
   it("does not write a snapshot for a keyword with no matching GSC row", async () => {

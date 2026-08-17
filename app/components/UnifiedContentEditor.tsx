@@ -51,6 +51,7 @@ import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
+import { countImagesWithAltForLocale } from "../utils/field-validation.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
@@ -60,7 +61,7 @@ import { useGlobalActionState, useLoadingFieldKeys } from "../hooks/useAIOperati
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import "../styles/UnifiedContentEditor.css";
 import "../styles/content-editor-global.css";
-import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale } from "../types/content-editor.types";
+import type { ContentEditorConfig, UseContentEditorReturn, FieldDefinition, TranslatableContentItem, ShopLocale, ContentImage } from "../types/content-editor.types";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { UnifiedItem, SortOption } from "./unified/UnifiedItemList";
 
@@ -241,15 +242,36 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Local state for search input - synced with fieldPagination.search
   const [fieldSearchInput, setFieldSearchInput] = useState(fieldPagination?.search || "");
 
-  // Resizable SEO/bulk sidebar
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const sidebarWidthRef = useRef(320);
+  // Resizable SEO/bulk sidebar. `null` means "not dragged yet" and renders the
+  // DEFAULT width straight from --app-editor-sidebar-width (responsive.css
+  // :root) — so the default, like every other width in the app, is stated in
+  // exactly one place and this panel can be reused elsewhere without carrying a
+  // number along. Once dragged, the state holds real pixels.
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(null);
+  const sidebarWidthRef = useRef<number | null>(null);
+  const sidebarElRef = useRef<HTMLDivElement | null>(null);
   const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    const el = sidebarElRef.current;
+    if (!el) return;
     const startX = e.clientX;
-    const startWidth = sidebarWidthRef.current;
+    // Before the first drag there is no state to start from — measure what the
+    // CSS default actually rendered as, rather than restating the number.
+    const startWidth = sidebarWidthRef.current ?? el.getBoundingClientRect().width;
+    // Drag bounds come from the same :root tokens. Read per drag (cheap, and
+    // picks up a breakpoint override); a token that isn't a px value simply
+    // drops its half of the clamp instead of producing NaN.
+    const styles = getComputedStyle(el);
+    const readPx = (name: string) => {
+      const parsed = parseFloat(styles.getPropertyValue(name));
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const minWidth = readPx("--app-editor-sidebar-min-width");
+    const maxWidth = readPx("--app-editor-sidebar-max-width");
     const onMouseMove = (ev: MouseEvent) => {
-      const newWidth = Math.max(200, Math.min(600, startWidth + (startX - ev.clientX)));
+      let newWidth = startWidth + (startX - ev.clientX);
+      if (maxWidth !== null) newWidth = Math.min(maxWidth, newWidth);
+      if (minWidth !== null) newWidth = Math.max(minWidth, newWidth);
       sidebarWidthRef.current = newWidth;
       setSidebarWidth(newWidth);
     };
@@ -682,22 +704,25 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
 
     // Calculate image alt text stats for SEO score
     // Include featured image if no gallery images exist (e.g. articles)
-    const images = (item as TranslatableContentItem & { images?: Array<{ url?: string; altText?: string | null }> }).images ?? [];
-    const featuredImg = (item as TranslatableContentItem & { featuredImage?: { url?: string; altText?: string | null } }).featuredImage;
-    let totalImages = images.length;
-    let imagesWithAlt = images.filter((img, index) => {
-      const localAltText = state.imageAltTexts?.[index];
-      const originalAltText = img.altText;
-      return !!(localAltText || originalAltText);
-    }).length;
-
-    // Count featured image when no gallery images exist
-    if (totalImages === 0 && featuredImg) {
-      totalImages = 1;
-      const localAltText = state.imageAltTexts?.[0];
-      const originalAltText = featuredImg.altText;
-      imagesWithAlt = !!(localAltText || originalAltText) ? 1 : 0;
-    }
+    const images = (item as TranslatableContentItem & { images?: ContentImage[] }).images ?? [];
+    const featuredImg = (item as TranslatableContentItem & { featuredImage?: ContentImage }).featuredImage;
+    // The same list useEditorAltText indexes its alt-text state by: the gallery
+    // when it has entries, otherwise the single featured image at index 0.
+    const scoredImages: ContentImage[] =
+      images.length > 0 ? images : featuredImg ? [featuredImg] : [];
+    const totalImages = scoredImages.length;
+    // Per LOCALE, not per item: in a foreign language an image only counts as
+    // covered when its alt text is TRANSLATED. Counting the primary alt made
+    // the sidebar's image block score identically in every language, so a
+    // product with no alt translations at all still read "all images have alt
+    // text" — while the SEO dashboard, reading the same locale's
+    // ProductImageAltTranslation rows, reported them as missing.
+    const imagesWithAlt = countImagesWithAltForLocale(
+      scoredImages,
+      state.currentLanguage,
+      primaryLocale,
+      state.imageAltTexts,
+    );
 
     // JSON-LD preview for the SEO sidebar. The shop's storefront domain is
     // not available in this translation editor, so URLs are intentionally
@@ -833,6 +858,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         keywordLocaleName={
           shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage
         }
+        onInsertKeywords={handlers.handleInsertKeywords}
+        insertKeywordsLoading={handlers.isInsertingKeywords}
       />
     );
   };
@@ -923,7 +950,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         // would otherwise hide the editor for a frame while the sidebar column
         // is already unrendered — a blank content area until the effect below
         // resets `open` after paint.
-        className={`unified-content-editor-layout${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
+        // app-page-width-full states the width choice rather than leaving it
+        // implicit: the editor is a three-column workbench, so it takes the
+        // whole width (responsive.css :root owns the token).
+        className={`unified-content-editor-layout app-page-width-full${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is
@@ -1598,7 +1628,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             it is reachable through the nav toggle, which makes this column
             replace the editor instead (`.sidebar-panel-open`). */}
         {selectedItem && config.showItemSidebar && (
-          <div className="seo-sidebar-container" style={{ width: sidebarWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div
+            ref={sidebarElRef}
+            className="seo-sidebar-container"
+            style={{ width: sidebarWidth ?? "var(--app-editor-sidebar-width)", flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+          >
             {/* Way back to the content. `open` can survive a resize past the
                 breakpoint, where the sidebar is shown normally and this row
                 would be meaningless — the class hides it there. */}

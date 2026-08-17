@@ -15,6 +15,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { computeSeoScore, type SeoSeverity } from "../../utils/seo-score";
 import { PLAN_CONFIG, type Plan, type ContentType } from "../../config/plans";
+import { getSeoScoreHistoryDays } from "../../utils/planUtils";
 import { computeHeadDrift, classifyLinkStatus } from "./crawl.service";
 import {
   analyzeIndexability,
@@ -25,7 +26,12 @@ import {
   type OnPageRow,
 } from "./onpage.service";
 
-export type AuditType = "product" | "collection" | "article" | "page";
+// The resource-type vocabulary lives in `resource-types.shared.ts` (a value
+// import from crawl.service.ts would otherwise close the import cycle between
+// these two modules). Re-exported here so every existing `AuditType` import
+// site keeps working unchanged.
+export { isAuditType, type AuditType, type DeepLinkType } from "./resource-types.shared";
+import { isAuditType, type AuditType } from "./resource-types.shared";
 
 /** Per-type cap. Keeps the largest shops bounded; reported via `capped`. */
 export const MAX_AUDIT_ITEMS_PER_TYPE = 1000;
@@ -309,17 +315,26 @@ export interface AnalyzeStoreDeps {
    */
   shopName?: string;
   /**
+   * Cap on the item refs collected per "fix with AI" bucket. Defaults to
+   * MAX_PROBLEM_BUCKET_ITEMS, which is what the DASHBOARD needs (it renders a
+   * list, and the snapshot payload must stay small). The bulk-fix handler
+   * raises it to the plan's `seo.bulkBatchSize` — without that the per-plan
+   * batch size was inert above 100, i.e. Pro's 500 and Max's 2500 could never
+   * happen no matter what the plan card promised.
+   */
+  maxBucketItems?: number;
+  /**
    * Foreign locale to score against (empty/undefined = primary locale, the
    * historic behavior). When set, every scoring input (`title`, `description`,
    * `seoTitle`, `metaDescription`) is sourced from ContentTranslation rows
    * (keys `title`, `body_html`, `meta_title`, `meta_description`) for this
    * (shop, locale, resourceType, resourceId); missing rows count as an empty
    * value, so the same scoring rules that fire for "primary meta description
-   * missing" also fire for "foreign meta description missing". Product image
-   * alt coverage is sourced from ProductImageAltTranslation for the same
-   * locale. Collection/Article featured-image alt is not currently persisted
-   * per-locale in this app, so `imagesMissingAlt` is skipped for those types
-   * on foreign locales (its bucket-fix path would have nowhere to write).
+   * missing" also fire for "foreign meta description missing". Image alt
+   * coverage follows the same rule from its own per-locale store: product
+   * gallery images from `ProductImageAltTranslation`, the Collection/Article
+   * featured image from `ContentTranslation` (key `image_alt_text` on the
+   * PARENT — the third translation shape, see loadFeaturedImageAltCoverage).
    */
   locale?: string;
 }
@@ -471,10 +486,10 @@ export function resolveEffectiveValues(
 
 /**
  * For a given foreign locale, count how many of each product's gallery images
- * have a persisted alt translation. `ProductImageAltTranslation` is the only
- * per-locale alt store in this app; Collection/Article featured-image alt has
- * no per-locale table, so the audit skips its imagesMissingAlt bucket for
- * those types (there'd be no fix path to act on the finding).
+ * have a persisted alt translation, from `ProductImageAltTranslation` (the
+ * per-locale alt store for product media). The Collection/Article featured
+ * image has its own store with a different shape — see
+ * `loadFeaturedImageAltCoverage` below.
  *
  * Returns a productId -> imagesWithAltForLocale count. Not present = 0.
  */
@@ -514,6 +529,54 @@ async function loadProductAltCoverageForLocale(
     map.set(pid, (map.get(pid) ?? 0) + r._count._all);
   }
   return map;
+}
+
+/**
+ * For a given foreign locale, which Collections/Articles have a translated
+ * featured-image alt text.
+ *
+ * This is the THIRD translation shape (see CLAUDE.md): Shopify stores the
+ * translation as key `alt` on the image's own `CollectionImage`/`ArticleImage`
+ * GID, while the DB mirror sits on the PARENT row in `ContentTranslation` with
+ * `key: "image_alt_text"` — exactly what `saveImageAltTextTranslation` (single
+ * editor) and `persistFeaturedImageAltTranslation` (bulk editor) write, so the
+ * audit reads the same rows both editors produce. The audit reads the mirror,
+ * not Shopify: it is DB-only by design, like every other input here.
+ *
+ * The audit used to score these types with the PRIMARY alt in foreign locales,
+ * on the belief that no per-locale store existed. It does — so a collection
+ * whose alt text was never translated now reports the gap in that locale
+ * instead of inheriting the primary locale's verdict.
+ *
+ * Returns the set of parent ids WITH a non-empty translation; absent = missing.
+ */
+async function loadFeaturedImageAltCoverage(
+  db: PrismaClient,
+  shop: string,
+  resourceType: "Collection" | "Article",
+  locale: string,
+  ids: string[],
+): Promise<Set<string>> {
+  const covered = new Set<string>();
+  if (ids.length === 0) return covered;
+
+  const rows = await db.contentTranslation.findMany({
+    where: {
+      shop,
+      locale,
+      resourceId: { in: ids },
+      resourceType,
+      key: "image_alt_text",
+      // Global rows only — same rule as loadTranslationOverlays.
+      marketId: "",
+    },
+    select: { resourceId: true, value: true },
+  });
+  for (const r of rows) {
+    // An empty stored value is not a translation (same rule the overlays use).
+    if (nonEmpty(r.value)) covered.add(r.resourceId);
+  }
+  return covered;
 }
 
 /**
@@ -595,7 +658,7 @@ async function buildCrawlProblemBuckets(
   const brokenAffected = new Map<string, { type: AuditType; id: string; title: string }>();
   for (const bl of brokenLinks) {
     const from = pageByUrl.get(bl.fromUrl);
-    if (!from?.resourceId || !from.resourceType || from.resourceType === "unknown") continue;
+    if (!from?.resourceId || !isAuditType(from.resourceType)) continue;
     const key = `${from.resourceType}:${from.resourceId}`;
     if (!brokenAffected.has(key)) {
       brokenAffected.set(key, { type: from.resourceType as AuditType, id: from.resourceId, title: from.title || "" });
@@ -622,7 +685,7 @@ async function buildCrawlProblemBuckets(
       code: "serverErrors",
       count: serverErrorPages.length,
       items: serverErrorPages
-        .filter((p) => p.resourceId && p.resourceType && p.resourceType !== "unknown")
+        .filter((p) => p.resourceId && isAuditType(p.resourceType))
         .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
         .map((p) => ({
           type: p.resourceType as AuditType,
@@ -637,7 +700,7 @@ async function buildCrawlProblemBuckets(
   // capped crawl produces phantom orphans on any large shop.
   if (snapshot.status !== "capped") {
     const orphans = pages.filter(
-      (p) => p.resourceId && p.resourceType && p.resourceType !== "unknown" && p.inboundCount === 0,
+      (p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0,
     );
     if (orphans.length > 0) {
       buckets.push({
@@ -659,8 +722,7 @@ async function buildCrawlProblemBuckets(
     .filter(
       (p) =>
         p.resourceId &&
-        p.resourceType &&
-        p.resourceType !== "unknown" &&
+        isAuditType(p.resourceType) &&
         p.locale === "" &&
         p.statusCode >= 200 &&
         p.statusCode < 300,
@@ -714,7 +776,7 @@ async function buildOnPageProblemBuckets(
     findings: Array<{ resourceType: string | null; resourceId: string | null; url: string; title?: string | null }>,
   ) =>
     findings
-      .filter((f) => f.resourceId && f.resourceType && f.resourceType !== "unknown")
+      .filter((f) => f.resourceId && isAuditType(f.resourceType))
       .slice(0, MAX_PROBLEM_BUCKET_ITEMS)
       .map((f) => ({
         type: f.resourceType as AuditType,
@@ -800,7 +862,15 @@ async function buildOnPageProblemBuckets(
 
 export async function analyzeStore(
   shop: string,
-  { db, seoTitleEffectiveLimit, plan, locale, seoLimits = null, shopName = "" }: AnalyzeStoreDeps,
+  {
+    db,
+    seoTitleEffectiveLimit,
+    plan,
+    locale,
+    seoLimits = null,
+    shopName = "",
+    maxBucketItems,
+  }: AnalyzeStoreDeps,
 ): Promise<AuditAggregate> {
   // Normalize "" / undefined to "primary". Consumers pass the sentinel "" for
   // primary snapshots so the audit + snapshot table share one call shape.
@@ -881,9 +951,10 @@ export async function analyzeStore(
 
     // Foreign-locale overlay: ContentTranslation values replace the primary
     // scoring inputs; ProductImageAltTranslation counts substitute the primary
-    // alt coverage. The featured-image fallback still uses the primary alt
-    // for now (the app doesn't persist a per-locale featured-image alt outside
-    // of the gallery table), so a shop that only ever uses a featured image
+    // alt coverage. A PRODUCT's featured-image fallback below still uses the
+    // primary alt: a product with no cached ProductImage rows has no
+    // per-locale alt store to read (unlike a collection/article featured
+    // image, which has one), so a shop that only ever uses a featured image
     // still gets non-zero coverage in the foreign audit rather than 0/0 noise.
     const overlays = foreignLocale
       ? await loadTranslationOverlays(db, shop, foreignLocale, productIds)
@@ -901,9 +972,10 @@ export async function analyzeStore(
       // Mirror the editor: fall back to the featured image when no gallery rows.
       if (totalImages === 0 && nonEmpty(p.featuredImageUrl)) {
         totalImages = 1;
-        // For foreign locales we currently have no per-locale featured-image
-        // alt store, so this row falls back to the primary alt — same signal
-        // the storefront ships when no translation is registered.
+        // A product with no cached ProductImage row has no per-locale alt
+        // store, so this row falls back to the primary alt even in a foreign
+        // audit — the same signal the storefront ships when no translation is
+        // registered, and the alt-text fix runner skips it for the same reason.
         imagesWithAlt = nonEmpty(p.featuredImageAlt) ? 1 : 0;
       }
       // Foreign locales score what the storefront serves for this locale —
@@ -1010,8 +1082,12 @@ export async function analyzeStore(
     totalAvailable += count;
     if (count > collections.length) capped = true;
 
+    const collectionIds = collections.map((c) => c.id);
     const collectionOverlays = foreignLocale
-      ? await loadTranslationOverlays(db, shop, foreignLocale, collections.map((c) => c.id))
+      ? await loadTranslationOverlays(db, shop, foreignLocale, collectionIds)
+      : null;
+    const collectionAltForLocale = foreignLocale
+      ? await loadFeaturedImageAltCoverage(db, shop, "Collection", foreignLocale, collectionIds)
       : null;
 
     const stat = newStat("collection");
@@ -1032,11 +1108,17 @@ export async function analyzeStore(
         collectionOverlays?.get(c.id),
         !!foreignLocale,
       );
-      // Collection featured-image alt has no per-locale store in this app,
-      // so foreign audits fall back to the primary alt (same value the
-      // storefront ships when no translation is registered).
+      // Alt coverage is per locale, like every other scored field: a foreign
+      // audit asks whether the featured image has an alt TRANSLATION, the
+      // primary audit whether it has an alt text at all.
       const totalImages = nonEmpty(c.imageUrl) ? 1 : 0;
-      const imagesWithAlt = nonEmpty(c.imageAltText) ? 1 : 0;
+      const imagesWithAlt = collectionAltForLocale
+        ? collectionAltForLocale.has(c.id)
+          ? 1
+          : 0
+        : nonEmpty(c.imageAltText)
+          ? 1
+          : 0;
       const item = scoreOne(
         "collection",
         c.id,
@@ -1096,8 +1178,12 @@ export async function analyzeStore(
     totalAvailable += count;
     if (count > articles.length) capped = true;
 
+    const articleIds = articles.map((a) => a.id);
     const articleOverlays = foreignLocale
-      ? await loadTranslationOverlays(db, shop, foreignLocale, articles.map((a) => a.id))
+      ? await loadTranslationOverlays(db, shop, foreignLocale, articleIds)
+      : null;
+    const articleAltForLocale = foreignLocale
+      ? await loadFeaturedImageAltCoverage(db, shop, "Article", foreignLocale, articleIds)
       : null;
 
     const stat = newStat("article");
@@ -1118,8 +1204,15 @@ export async function analyzeStore(
         articleOverlays?.get(a.id),
         !!foreignLocale,
       );
+      // Per locale — same rule as collections above.
       const totalImages = nonEmpty(a.imageUrl) ? 1 : 0;
-      const imagesWithAlt = nonEmpty(a.imageAltText) ? 1 : 0;
+      const imagesWithAlt = articleAltForLocale
+        ? articleAltForLocale.has(a.id)
+          ? 1
+          : 0
+        : nonEmpty(a.imageAltText)
+          ? 1
+          : 0;
       const item = scoreOne(
         "article",
         a.id,
@@ -1250,6 +1343,8 @@ export async function analyzeStore(
   // typed item refs, same as every other bucket.
   const typeById = new Map<string, AuditType>();
   const titleById = new Map<string, string>();
+  // Dashboard default; the bulk-fix caller raises it to its plan batch size.
+  const bucketCap = maxBucketItems ?? MAX_PROBLEM_BUCKET_ITEMS;
   let scoreSum = 0;
 
   // `missingTranslations` rides along on EVERY bucket's item refs, not just
@@ -1268,7 +1363,7 @@ export async function analyzeStore(
       items = [];
       bucketItems.set(code, items);
     }
-    if (items.length < MAX_PROBLEM_BUCKET_ITEMS) {
+    if (items.length < bucketCap) {
       items.push({
         type,
         id,
@@ -1425,8 +1520,20 @@ function finalizeStat(stat: MutStat): void {
 // point-in-time result and let the dashboard loader read the latest one
 // instead of re-scanning synchronously.
 
-/** Keep only the newest N snapshots per shop — a history, not an unbounded log. */
-export const MAX_SNAPSHOTS_PER_SHOP = 30;
+/**
+ * Row floor per (shop, locale) — enough history for a shop that only ever
+ * rescans by hand, on any plan.
+ *
+ * The effective cap is `max(this, scoreHistoryDays)`: with the nightly sweep a
+ * snapshot lands once a DAY, so a flat 30 rows would have capped Max's
+ * advertised 365-day trend at 30 points — the age prune below would never have
+ * fired for it. Both bounds apply, whichever bites first, and the newest
+ * snapshot is never pruned so the dashboard always has something to show.
+ */
+export const MIN_SNAPSHOTS_PER_SHOP = 30;
+
+/** @deprecated Kept as the old name for callers/tests; use MIN_SNAPSHOTS_PER_SHOP. */
+export const MAX_SNAPSHOTS_PER_SHOP = MIN_SNAPSHOTS_PER_SHOP;
 
 export interface AuditSnapshot {
   audit: AuditAggregate;
@@ -1463,6 +1570,16 @@ export async function saveAuditSnapshot(
     },
   });
 
+  // The plan decides how much history is worth keeping; the row cap is only a
+  // floor so a hand-rescanning shop on any tier still gets a short trend.
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const historyDays = getSeoScoreHistoryDays(plan);
+  const rowCap = Math.max(MIN_SNAPSHOTS_PER_SHOP, historyDays);
+
   // Prune: find the id of the Nth-newest row (for this locale) and delete
   // everything older. Two small queries beat a single DELETE ... OFFSET
   // (not portable in Prisma) and keep the cap exact even under concurrent
@@ -1471,13 +1588,28 @@ export async function saveAuditSnapshot(
     where: { shop, locale },
     select: { id: true },
     orderBy: { createdAt: "desc" },
-    take: MAX_SNAPSHOTS_PER_SHOP,
+    take: rowCap,
   });
-  if (keep.length === MAX_SNAPSHOTS_PER_SHOP) {
+  if (keep.length === rowCap) {
     await db.seoScoreSnapshot.deleteMany({
       where: { shop, locale, id: { notIn: keep.map((r) => r.id) } },
     });
   }
+
+  // Age prune on top of the row cap: trends are an entitlement, so a tier
+  // without history keeps only what it needs to render "today". The newest row
+  // is always excluded, which is what makes scoreHistoryDays === 0 mean
+  // "current state, no trend" instead of "empty dashboard".
+  const newest = keep[0]?.id;
+  const cutoff = new Date(Date.now() - historyDays * 24 * 60 * 60 * 1000);
+  await db.seoScoreSnapshot.deleteMany({
+    where: {
+      shop,
+      locale,
+      createdAt: { lt: cutoff },
+      ...(newest ? { id: { not: newest } } : {}),
+    },
+  });
 }
 
 /**

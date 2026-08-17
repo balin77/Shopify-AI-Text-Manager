@@ -19,6 +19,7 @@ import { errorMessage, createAIService, isAuthError, CONTENT_CONFIGS } from "./s
 import { getFormString } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
+import { getSeoBulkBatchSize } from "~/utils/planUtils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement, type SeoLimits } from "~/utils/character-limits";
@@ -35,7 +36,13 @@ import type { DataResponse } from "~/types/data-response";
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
 // handler safe even if that cap ever changes independently.
-const MAX_BULK_FIX_ITEMS = 100;
+/**
+ * Hard ceiling on one bulk-fix run, independent of the plan — one request must
+ * never enqueue an unbounded fan-out. The PLAN's `seo.bulkBatchSize` (Free 25 …
+ * Max 2500, §Plan-Matrix) applies on top; whichever is lower wins, which is
+ * what makes throughput a real Pro→Max difference.
+ */
+const MAX_BULK_FIX_ITEMS = 2500;
 
 // Allowlist of AI-fixable problem buckets (see audit.service.ts FINDING_TO_BUCKET
 // for the full code list).
@@ -149,12 +156,17 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
     return json({ success: false, error: localeResolution.error }, { status: 400 });
   }
 
+  const planBatchSize = Math.min(MAX_BULK_FIX_ITEMS, getSeoBulkBatchSize(plan));
   const audit = await analyzeStore(session.shop, {
     db,
     seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix, auditSeoLimits),
     seoLimits: auditSeoLimits,
     plan,
     locale: localeResolution.foreignLocale || undefined,
+    // The bucket must be able to HOLD a full batch — its default cap (100) is
+    // sized for the dashboard list and would silently truncate Pro's 500 and
+    // Max's 2500 to 100.
+    maxBucketItems: planBatchSize,
   });
 
   const bucket: AuditProblemBucket | undefined = audit.problems.find((p) => p.code === problemCode);
@@ -164,7 +176,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
   // server-derived bucket is what makes a POSTed GID safe to trust.
   const items = singleItemId
     ? bucketItems.filter((it) => it.id === singleItemId && it.type === singleItemType).slice(0, 1)
-    : bucketItems.slice(0, MAX_BULK_FIX_ITEMS);
+    : bucketItems.slice(0, planBatchSize);
 
   if (items.length === 0) {
     return json(
@@ -786,6 +798,47 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
 // own responsibility (productUpdateMedia for gallery images, updateCollection
 // / updateArticle for their single featured image).
 
+/**
+ * Whether a collection's / article's featured image still needs an alt text
+ * for the targeted locale — the enumeration rule for both alt-text runners.
+ *
+ * A foreign run asks about the TRANSLATION (`ContentTranslation`, key
+ * `image_alt_text` on the parent — the same rows the audit scores), never
+ * about the primary alt: an image whose primary alt is filled but untranslated
+ * is exactly the case a foreign run exists for, and one whose primary alt is
+ * empty still needs its own translation. Both runners share this so a job can
+ * never be enumerated by one rule and written by another.
+ */
+async function featuredImageAltIsMissing(
+  db: PrismaClient,
+  shop: string,
+  resourceType: "Collection" | "Article",
+  resourceId: string,
+  primaryAltText: string | null,
+  foreignLocale: string,
+): Promise<boolean> {
+  if (foreignLocale.length === 0) {
+    return !primaryAltText || primaryAltText.trim() === "";
+  }
+  const row = await db.contentTranslation.findUnique({
+    where: {
+      shop_resourceId_key_locale_marketId: {
+        shop,
+        resourceId,
+        key: "image_alt_text",
+        locale: foreignLocale,
+        marketId: "",
+      },
+    },
+    select: { value: true, resourceType: true },
+  });
+  // resourceType is not part of the unique key (resourceId is a globally
+  // unique Shopify GID), so a row can only belong to this resource — but
+  // assert it anyway rather than silently trusting a mismatched row.
+  if (row && row.resourceType !== resourceType) return true;
+  return !row || row.value.trim() === "";
+}
+
 interface AltTextRunArgs {
   db: PrismaClient;
   settings: AISettings | null;
@@ -896,9 +949,11 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
       } else if (
         product.images.length === 0 &&
         product.featuredImageUrl &&
-        // Foreign locale: skip the featured-image-only fallback — no
-        // per-locale featured-image alt store means we'd have to clobber the
-        // primary alt as a side effect, which the merchant didn't ask for.
+        // Foreign locale: skip the featured-image-only fallback — a PRODUCT
+        // with no cached ProductImage row has no per-locale alt store (unlike
+        // a collection/article featured image, which has one), so we'd have to
+        // clobber the primary alt as a side effect. The audit scores this row
+        // off the primary alt for the same reason, so nothing is orphaned.
         !isForeign &&
         (!product.featuredImageAlt || product.featuredImageAlt.trim() === "")
       ) {
@@ -914,23 +969,25 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
         });
       }
     } else if (it.type === "collection") {
-      // Foreign locale: no CollectionImageAltTranslation table — skip so a
-      // foreign fix run never overwrites the primary alt as a side effect.
-      if (isForeign) continue;
       const c = await db.collection.findUnique({
         where: { shop_id: { shop, id: it.id } },
         select: { id: true, title: true, imageUrl: true, imageAltText: true },
       });
-      if (c?.imageUrl && (!c.imageAltText || c.imageAltText.trim() === "")) {
+      if (
+        c?.imageUrl &&
+        (await featuredImageAltIsMissing(db, shop, "Collection", it.id, c.imageAltText, foreignLocale))
+      ) {
         jobs.push({ type: "collection", id: it.id, productTitle: c.title, imageUrl: c.imageUrl });
       }
     } else if (it.type === "article") {
-      if (isForeign) continue; // Same rationale as collection above.
       const a = await db.article.findUnique({
         where: { shop_id: { shop, id: it.id } },
         select: { id: true, title: true, imageUrl: true, imageAltText: true },
       });
-      if (a?.imageUrl && (!a.imageAltText || a.imageAltText.trim() === "")) {
+      if (
+        a?.imageUrl &&
+        (await featuredImageAltIsMissing(db, shop, "Article", it.id, a.imageAltText, foreignLocale))
+      ) {
         jobs.push({ type: "article", id: it.id, productTitle: a.title, imageUrl: a.imageUrl });
       }
     }
@@ -958,10 +1015,11 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
     .catch(() => {});
 
   // Foreign-locale digest cache for MediaImage GIDs — same aliased-batch
-  // trick as runSeoBulkFix. Featured-image-only products are skipped upstream
-  // in the foreign branch, so every `job.mediaId` here is populated. On a
-  // product with 5 gallery images × 100 items = 500 lookups → 10 requests
-  // instead of 500.
+  // trick as runSeoBulkFix. Featured-image-only PRODUCTS are skipped upstream
+  // in the foreign branch, so every product job's `mediaId` is populated. A
+  // collection/article job carries none: its CollectionImage/ArticleImage GID
+  // is cached nowhere and is resolved per job at write time. On a product with
+  // 5 gallery images × 100 items = 500 lookups → 10 requests instead of 500.
   const altDigestByMedia = isForeign
     ? await loadTranslatableDigests(
         gateway,
@@ -997,6 +1055,11 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
             locale: writtenLocale,
           })
         ).trim();
+        // Same guard the single-item runner has: an empty generation must not
+        // be written. On the primary path it would CLEAR the alt text; on the
+        // foreign path it would store an empty translation row, which reads
+        // back as "still missing" — a fix that silently fixed nothing.
+        if (altText.length === 0) throw new Error("AI returned an empty alt text");
 
         if (isForeign) {
           await persistImageAltTextForLocale({
@@ -1824,11 +1887,11 @@ interface AltTextForOneItemArgs {
    *  name and cannot key a glossary lookup. */
   writtenLocale: string;
   /** "" (primary) or a foreign locale code. When non-empty, alt-text is saved
-   * via translationsRegister on the MediaImage GID + a
-   * ProductImageAltTranslation upsert, mirroring the alt-text bulk-translate
-   * pipeline. Collection/Article featured-image alt has no per-locale store
-   * in this app; foreign runs skip those (their imagesMissingAlt bucket was
-   * also filtered out by the audit). */
+   * via translationsRegister on the image's own translatable resource plus the
+   * matching DB mirror — MediaImage + `ProductImageAltTranslation` for product
+   * gallery images, CollectionImage/ArticleImage + `ContentTranslation`
+   * (key `image_alt_text` on the parent) for a collection's/article's featured
+   * image. See persistImageAltTextForLocale. */
   foreignLocale: string;
   aiService: ReturnType<typeof createAIService>;
   contentService: ShopifyContentService;
@@ -1913,11 +1976,11 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
       jobs.length === 0 &&
       product.images.length === 0 &&
       product.featuredImageUrl &&
-      // Foreign-locale featured-image-only products can't be fixed by this
-      // runner: there's no per-locale featured-image alt store, only the
-      // primary featuredImageAlt. Skip so we don't clobber the primary alt
-      // as a side effect of a foreign fix. Merchant's editor still supports
-      // per-locale alt on gallery images once the product has one.
+      // Foreign-locale featured-image-only PRODUCTS can't be fixed by this
+      // runner: with no cached ProductImage row there is no per-locale store
+      // for them, only the primary featuredImageAlt. Skip so we don't clobber
+      // the primary alt as a side effect of a foreign fix. (A collection's /
+      // article's featured image DOES have one and is handled above.)
       !isForeign &&
       (!product.featuredImageAlt || product.featuredImageAlt.trim() === "")
     ) {
@@ -1928,27 +1991,27 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
       });
     }
   } else if (itemType === "collection") {
-    // Foreign locale: no CollectionImageAltTranslation table — skip so we
-    // don't overwrite the primary alt when the merchant asked for a
-    // foreign-locale fix. The audit surfaces the finding for signal; the
-    // fix path can be added once per-locale storage exists.
-    if (isForeign) return;
     const c = await db.collection.findUnique({
       where: { shop_id: { shop, id: itemId } },
       select: { title: true, imageUrl: true, imageAltText: true },
     });
     if (!c) throw new Error("Collection no longer exists in the content cache");
-    if (c.imageUrl && (!c.imageAltText || c.imageAltText.trim() === "")) {
+    if (
+      c.imageUrl &&
+      (await featuredImageAltIsMissing(db, shop, "Collection", itemId, c.imageAltText, foreignLocale))
+    ) {
       jobs.push({ imageUrl: c.imageUrl, productTitle: c.title });
     }
   } else if (itemType === "article") {
-    if (isForeign) return; // Same rationale as collection above.
     const a = await db.article.findUnique({
       where: { shop_id: { shop, id: itemId } },
       select: { title: true, imageUrl: true, imageAltText: true },
     });
     if (!a) throw new Error("Article no longer exists in the content cache");
-    if (a.imageUrl && (!a.imageAltText || a.imageAltText.trim() === "")) {
+    if (
+      a.imageUrl &&
+      (await featuredImageAltIsMissing(db, shop, "Article", itemId, a.imageAltText, foreignLocale))
+    ) {
       jobs.push({ imageUrl: a.imageUrl, productTitle: a.title });
     }
   }
@@ -2038,9 +2101,10 @@ async function runAltTextForOneItem(args: AltTextForOneItemArgs): Promise<void> 
 //   • persistFieldForLocale: translationsRegister on the resource's own GID +
 //     ContentTranslation upsert. Digest accepted from the batch cache when
 //     available (falls back to a single-item fetch for FixAllForItem).
-//   • persistImageAltTextForLocale: translationsRegister on the MediaImage GID +
-//     ProductImageAltTranslation upsert (product images only — Collection/Article
-//     featured-image alt has no per-locale store in this app).
+//   • persistImageAltTextForLocale: translationsRegister on the image's own
+//     translatable resource + its DB mirror — MediaImage + ProductImageAltTranslation
+//     for product gallery images, CollectionImage/ArticleImage + ContentTranslation
+//     (key image_alt_text on the parent) for a featured image.
 
 /** Alias batch cap. Shopify's calculated-cost budget for a single request is
  * generous, but `translatableResource` isn't free — each aliased selection
@@ -2407,53 +2471,41 @@ interface PersistImageAltForLocaleArgs {
   digest?: string;
 }
 
+/** The `alt` digest of one translatable image resource (MediaImage,
+ * CollectionImage, ArticleImage — all offer the single key `alt`). */
+async function loadAltDigest(
+  gateway: ShopifyApiGateway,
+  resourceId: string,
+): Promise<string | undefined> {
+  const response = await gateway.graphql(
+    `#graphql
+      query seoBulkFixAltDigest($resourceId: ID!) {
+        translatableResource(resourceId: $resourceId) {
+          translatableContent { key digest }
+        }
+      }`,
+    { variables: { resourceId } },
+  );
+  const data = (await response.json()) as {
+    data?: { translatableResource?: { translatableContent?: { key: string; digest: string }[] } };
+  };
+  return data.data?.translatableResource?.translatableContent?.find((c) => c.key === "alt")?.digest;
+}
+
 /**
- * Write a foreign-locale image alt: translationsRegister on the MediaImage
- * GID (key "alt") + ProductImageAltTranslation upsert. Only product images
- * — Collection/Article featured-image paths were already skipped upstream.
+ * translationsRegister of one `alt` translation on an image resource, ECHO
+ * VERIFIED: Shopify can accept the mutation and store nothing, so a caller
+ * that only checked `userErrors` would mirror a value into the DB that the
+ * storefront never serves. Throws on every failure mode — the alt-text runner
+ * turns a throw into a per-image `failed` entry.
  */
-async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs): Promise<void> {
-  const { db, shop, job, altText, locale, gateway, digest: prefetchedDigest } = params;
-  if (job.type !== "product") {
-    // Defensive: upstream already filters these out, but never fall through
-    // to a silent no-op — this would strand the DB in a corrupt state.
-    throw new Error(
-      `Foreign-locale alt-text fix is only supported on product images (got ${job.type}).`,
-    );
-  }
-  if (!job.productImageId) {
-    throw new Error("productImageId missing — cannot persist foreign-locale alt to DB.");
-  }
-
-  // Resolve mediaId if we don't have one cached (bare featuredImageUrl case
-  // is skipped for foreign runs, but this stays here for defense in depth).
-  const mediaId = job.mediaId;
-  if (!mediaId) {
-    throw new Error("MediaImage GID missing — cannot translate this image's alt text.");
-  }
-
-  let digest = prefetchedDigest;
-  if (!digest) {
-    const digestResponse = await gateway.graphql(
-      `#graphql
-        query seoBulkFixAltDigest($resourceId: ID!) {
-          translatableResource(resourceId: $resourceId) {
-            translatableContent { key digest }
-          }
-        }`,
-      { variables: { resourceId: mediaId } },
-    );
-    const digestData = (await digestResponse.json()) as {
-      data?: { translatableResource?: { translatableContent?: { key: string; digest: string }[] } };
-    };
-    digest = digestData.data?.translatableResource?.translatableContent?.find(
-      (c) => c.key === "alt",
-    )?.digest;
-  }
-  if (!digest) {
-    throw new Error(`No translatable digest for alt on MediaImage ${mediaId}.`);
-  }
-
+async function registerAltTranslation(
+  gateway: ShopifyApiGateway,
+  imageResourceId: string,
+  locale: string,
+  altText: string,
+  digest: string,
+): Promise<void> {
   const registerResponse = await gateway.graphql(
     `#graphql
       mutation seoBulkFixAltTranslationsRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
@@ -2464,7 +2516,7 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
       }`,
     {
       variables: {
-        resourceId: mediaId,
+        resourceId: imageResourceId,
         translations: [
           { key: "alt", value: altText, locale, translatableContentDigest: digest },
         ],
@@ -2494,6 +2546,85 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
       `Shopify accepted the mutation but did not echo the alt translation in ${locale} — nothing was saved.`,
     );
   }
+}
+
+/**
+ * Write a foreign-locale image alt. Two shapes, one echo rule:
+ *
+ *  - PRODUCT gallery image: translationsRegister on the MediaImage GID +
+ *    `ProductImageAltTranslation` upsert (keyed by the ProductImage cache row).
+ *  - COLLECTION/ARTICLE featured image: translationsRegister on the image's own
+ *    `CollectionImage`/`ArticleImage` GID + `ContentTranslation` upsert on the
+ *    PARENT with key `image_alt_text` — the third translation shape, the exact
+ *    rows `saveImageAltTextTranslation` (single editor) and the bulk editor
+ *    write, so all three surfaces read each other's values. The image GID is
+ *    cached nowhere and cannot be derived from the parent id, so it is resolved
+ *    per job.
+ *
+ * A product whose only image is a bare `featuredImageUrl` has no per-locale
+ * store at all and is filtered out upstream; the guard below stays as defense
+ * in depth so this never degrades into a silent no-op.
+ */
+async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs): Promise<void> {
+  const { db, shop, job, altText, locale, gateway, digest: prefetchedDigest } = params;
+
+  if (job.type === "collection" || job.type === "article") {
+    const resourceType = job.type === "collection" ? "Collection" : "Article";
+    const imageResourceId = await fetchFeaturedImageGid(gateway, job.type, job.id);
+    if (!imageResourceId) {
+      throw new Error(`${resourceType} ${job.id} has no image on Shopify — nothing to translate.`);
+    }
+    const digest = await loadAltDigest(gateway, imageResourceId);
+    if (!digest) {
+      throw new Error(`No translatable digest for alt on ${imageResourceId}.`);
+    }
+    await registerAltTranslation(gateway, imageResourceId, locale, altText, digest);
+    await db.contentTranslation.upsert({
+      where: {
+        shop_resourceId_key_locale_marketId: {
+          shop,
+          resourceId: job.id,
+          key: "image_alt_text",
+          locale,
+          marketId: "",
+        },
+      },
+      update: { value: altText, digest, resourceType },
+      create: {
+        shop,
+        resourceId: job.id,
+        resourceType,
+        key: "image_alt_text",
+        value: altText,
+        locale,
+        marketId: "",
+        digest,
+      },
+    });
+    return;
+  }
+
+  if (job.type !== "product") {
+    // Defensive: pages have no images, so nothing else can reach this.
+    throw new Error(`Foreign-locale alt-text fix is not supported for ${job.type}.`);
+  }
+  if (!job.productImageId) {
+    throw new Error("productImageId missing — cannot persist foreign-locale alt to DB.");
+  }
+
+  // Resolve mediaId if we don't have one cached (bare featuredImageUrl case
+  // is skipped for foreign runs, but this stays here for defense in depth).
+  const mediaId = job.mediaId;
+  if (!mediaId) {
+    throw new Error("MediaImage GID missing — cannot translate this image's alt text.");
+  }
+
+  const digest = prefetchedDigest ?? (await loadAltDigest(gateway, mediaId));
+  if (!digest) {
+    throw new Error(`No translatable digest for alt on MediaImage ${mediaId}.`);
+  }
+
+  await registerAltTranslation(gateway, mediaId, locale, altText, digest);
 
   await db.productImageAltTranslation.upsert({
     where: {
@@ -2502,4 +2633,35 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
     update: { altText },
     create: { imageId: job.productImageId, locale, altText, marketId: "" },
   });
+}
+
+/**
+ * The GID of a collection's / article's featured image — `CollectionImage` /
+ * `ArticleImage`, which is what Shopify keys the `alt` translation by. NOT the
+ * parent's id and NOT the `MediaImage` of the same file: the two are different
+ * resources with different alt values (see CLAUDE.md), so translating the file
+ * would not change what the collection page serves.
+ */
+async function fetchFeaturedImageGid(
+  gateway: ShopifyApiGateway,
+  type: "collection" | "article",
+  parentId: string,
+): Promise<string | undefined> {
+  const field = type === "collection" ? "collection" : "article";
+  const response = await gateway.graphql(
+    type === "collection"
+      ? `#graphql
+          query seoBulkFixCollectionImageId($id: ID!) {
+            collection(id: $id) { image { id } }
+          }`
+      : `#graphql
+          query seoBulkFixArticleImageId($id: ID!) {
+            article(id: $id) { image { id } }
+          }`,
+    { variables: { id: parentId } },
+  );
+  const data = (await response.json()) as {
+    data?: Record<string, { image?: { id?: string } } | undefined>;
+  };
+  return data.data?.[field]?.image?.id;
 }

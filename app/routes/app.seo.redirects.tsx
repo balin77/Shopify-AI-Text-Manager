@@ -29,6 +29,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { HelpTooltip } from "../components/HelpTooltip";
 import {
   listRedirects,
@@ -602,12 +603,12 @@ export default function SeoRedirects() {
   return (
     <SeoSectionLayout sectionId="redirects">
       <BlockStack gap="400">
-        <Banner tone="info" title={r.helpTitle}>
+        <SeoHelpBanner title={r.helpTitle}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{r.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{r.helpBody2}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* §4.3 — redirect chains. Above the list on purpose: it is the one
             finding on this page the merchant cannot see by scrolling. */}

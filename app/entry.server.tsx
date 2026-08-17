@@ -9,6 +9,7 @@ import { ShopReaperService } from "../src/services/shop-reaper.service";
 import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
+import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { logger } from "./utils/logger.server";
 import { initSentryServer, captureServerError } from "./utils/sentry.server";
 
@@ -32,6 +33,7 @@ process.on('SIGTERM', () => {
   GscAutoSyncService.getInstance().stop();
   LlmsAutoRefreshService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
+  SeoAuditAutoRunService.getInstance().stop();
 });
 
 process.on('SIGINT', () => {
@@ -41,6 +43,7 @@ process.on('SIGINT', () => {
   GscAutoSyncService.getInstance().stop();
   LlmsAutoRefreshService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
+  SeoAuditAutoRunService.getInstance().stop();
 });
 
 export default async function handleRequest(

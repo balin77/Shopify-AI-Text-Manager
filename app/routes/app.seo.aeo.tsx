@@ -36,6 +36,7 @@ import {
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { StepTile } from "../components/seo/StepTile";
 import { ToggleSwitch } from "../components/ToggleSwitch";
 import { getFormString } from "../utils/form-data.utils";
@@ -380,12 +381,12 @@ export default function SeoAeo() {
     <SeoSectionLayout sectionId="aeo">
       {data.gated ? null : (
         <BlockStack gap="400">
-          <Banner tone="info" title={a.helpTitle}>
+          <SeoHelpBanner title={a.helpTitle}>
             <BlockStack gap="200">
               <Text as="p" variant="bodyMd">{a.helpBody1}</Text>
               <Text as="p" variant="bodyMd">{a.helpBody2}</Text>
             </BlockStack>
-          </Banner>
+          </SeoHelpBanner>
 
           {genMsg && <Banner tone={genMsg.tone}>{genMsg.msg}</Banner>}
           {robotsMsg && <Banner tone={robotsMsg.tone}>{robotsMsg.msg}</Banner>}

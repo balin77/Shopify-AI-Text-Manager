@@ -29,6 +29,7 @@ import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { StepTile } from "../components/seo/StepTile";
 import {
   buildOrganizationJsonLd,
@@ -560,13 +561,13 @@ export default function SeoStructuredData() {
     <SeoSectionLayout sectionId="structuredData">
       <BlockStack gap="400">
         {/* 1. What are structured data + why care */}
-        <Banner tone="info" title={(s as any).introTitle as string}>
+        <SeoHelpBanner title={(s as any).introTitle as string}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{(s as any).introBody1 as string}</Text>
             <Text as="p" variant="bodyMd">{(s as any).introBody2 as string}</Text>
             <Text as="p" variant="bodyMd">{(s as any).introBody3 as string}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* 2. Activation in the theme editor (the two app-embed blocks) */}
         <Card>

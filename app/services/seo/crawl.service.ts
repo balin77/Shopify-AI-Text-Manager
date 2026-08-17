@@ -29,6 +29,7 @@ import { Semaphore } from "../../utils/semaphore";
 import { parseRobots, type RobotsGroup } from "./aeo.service";
 import { resolveGscPagePath, resolvePathsToResources } from "./url-resolver.server";
 import { isPrivateOrLoopbackHost } from "../../utils/private-host";
+import { stripLocalePrefix } from "./locale-path.shared";
 import {
   normalizeExternalUrl,
   runExternalLinkPass,
@@ -37,12 +38,13 @@ import {
   MAX_SAMPLE_SOURCES,
   type ExternalTarget,
 } from "./external-links.server";
-import type { AuditType } from "./audit.service";
+import { isAuditType, type AuditType, type DeepLinkType } from "./resource-types.shared";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-/** Pagination whitelist (§3.2): `?page=1..5` survives the query-strip; anything
- *  else (facets, `?variant=`, `?sort_by=`, `page=6+`) is dropped entirely. */
+/** Pagination whitelist (§3.2): `?page=2..5` survives the query-strip; anything
+ *  else (facets, `?variant=`, `?sort_by=`, `page=6+`) is dropped entirely.
+ *  `page=1` is dropped too — it is the same document as the bare URL. */
 export const CRAWL_PAGINATION_MAX = 5;
 
 /** Hardcoded denylist (§3.2), in addition to robots.txt — paths we never crawl
@@ -149,10 +151,19 @@ function pathStartsWithSegment(pathname: string, seg: string): boolean {
   return pathname === clean || pathname.startsWith(clean + "/");
 }
 
-/** True when `pathname` matches the hardcoded crawl denylist (§3.2). */
+/**
+ * True when `pathname` matches the hardcoded crawl denylist (§3.2).
+ *
+ * The locale prefix must be stripped first. Shopify serves every one of these
+ * paths under each published locale (`/it/cart`, `/es/account`), and a prefix
+ * match on the raw path silently missed ALL of them — so a multilingual shop
+ * had its cart and its PII-adjacent account pages crawled and then reported as
+ * on-page findings. Same stripping rule as `expectedNoindexReason`.
+ */
 export function isDenylistedPath(pathname: string): boolean {
   const p = pathname.toLowerCase();
-  return CRAWL_DENYLIST_PATHS.some((d) => pathStartsWithSegment(p, d));
+  const withoutLocale = stripLocalePrefix(p);
+  return CRAWL_DENYLIST_PATHS.some((d) => pathStartsWithSegment(p, d) || pathStartsWithSegment(withoutLocale, d));
 }
 
 /** Machine feeds Shopify generates itself: sitemaps (`sitemap_products_1.xml`),
@@ -175,10 +186,10 @@ export function isFeedPath(pathname: string): boolean {
  * primary domain) so both hostnames collapse to one crawl identity.
  *
  * Rules (§3.2): query string stripped entirely except `page` (whitelisted,
- * clamped to 1..CRAWL_PAGINATION_MAX — out-of-range values are dropped, not
+ * kept only for 2..CRAWL_PAGINATION_MAX — out-of-range values are dropped, not
  * clamped, since a stripped page param collapses harmlessly with the
- * unpaginated URL); fragment stripped; trailing slash normalized (except
- * root); host lowercased.
+ * unpaginated URL, and `page=1` IS that same URL); fragment stripped; trailing
+ * slash normalized (except root); host lowercased.
  */
 export function normalizeCrawlUrl(
   rawUrl: string,
@@ -210,7 +221,11 @@ export function normalizeCrawlUrl(
   u.search = "";
   if (pageParam && /^[1-9][0-9]*$/.test(pageParam)) {
     const n = parseInt(pageParam, 10);
-    if (n >= 1 && n <= CRAWL_PAGINATION_MAX) {
+    // `?page=1` is the SAME document as the unpaginated URL — Shopify serves it
+    // with a canonical pointing at the bare path. Keeping the param crawled the
+    // identical page twice, and both copies then landed in every on-page list
+    // (missing meta description, duplicate titles) as two separate findings.
+    if (n > 1 && n <= CRAWL_PAGINATION_MAX) {
       u.searchParams.set("page", String(n));
     }
   }
@@ -1140,13 +1155,17 @@ export interface CrawlSummary {
 /** Lowercase resourceType, matching `SeoCrawlPage.resourceType` / `AuditType`
  *  plus "unknown" for same-origin HTML pages that don't map to a known
  *  content route (theme pages, metaobjects — §3.8). */
-type CrawlResourceType = AuditType | "unknown";
+// "policy" is NOT an AuditType (policies carry no SEO fields the audit could
+// score) but IS a deep-link target: /app/policies edits them. Persisting the
+// type is what gives a policy page an "open in editor" action at all.
+type CrawlResourceType = DeepLinkType | "unknown";
 
-const RESOLVED_TYPE_TO_AUDIT_TYPE: Record<string, AuditType> = {
+const RESOLVED_TYPE_TO_AUDIT_TYPE: Record<string, DeepLinkType> = {
   Product: "product",
   Collection: "collection",
   Page: "page",
   Article: "article",
+  Policy: "policy",
 };
 
 /**
@@ -1642,10 +1661,11 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     // statusCode must be 2xx (§ fix 5): a broken resolved page never had its
     // body parsed, so `title` is always null there — comparing that against
     // the DB title is a spurious drift finding, not a real one.
+    // `isAuditType`, not `!== "unknown"`: a policy page now resolves to a real
+    // ShopPolicy id, but that record stores no SEO title to drift against.
     if (
       resourceId &&
-      resourceType &&
-      resourceType !== "unknown" &&
+      isAuditType(resourceType) &&
       page.locale === "" &&
       page.statusCode >= 200 &&
       page.statusCode < 300
@@ -1654,7 +1674,14 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     }
   }
 
-  const orphanCount = persistablePages.filter((p) => p.resourceId && p.inboundCount === 0).length;
+  // `isAuditType`, not just `resourceId`: policy pages now resolve to a real id,
+  // and the dashboard's orphanPages bucket narrows to the four audit types (its
+  // items feed Record<AuditType, …> maps). Counting them here would make the
+  // crawl tile disagree with the dashboard on the same snapshot — the exact
+  // double-counting the brokenLinks/serverErrors split was introduced to stop.
+  const orphanCount = persistablePages.filter(
+    (p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0,
+  ).length;
   const headDrift = await computeHeadDrift(db, shop, headDriftCandidates, shopName, Infinity);
 
   // Only genuinely broken targets become SeoCrawlBrokenLink rows — a 403/429

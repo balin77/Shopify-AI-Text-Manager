@@ -3,10 +3,13 @@
  * Helper functions for checking plan limits and access
  */
 
-import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan, type ContentType, type PlanLimits } from "../config/plans";
+import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan, type ContentType, type PlanLimits, type SeoPlanLimits } from "../config/plans";
 
 // Re-export types for convenience
-export type { Plan, ContentType, PlanLimits } from "../config/plans";
+export type { Plan, ContentType, PlanLimits, SeoPlanLimits } from "../config/plans";
+
+/** Tier order, lowest first — the one place the ranking is written down. */
+const PLAN_ORDER: Plan[] = ["free", "basic", "pro", "max"];
 
 /**
  * Get the limits and features for a given plan
@@ -35,14 +38,28 @@ export function isWithinProductLimit(plan: Plan, currentCount: number): boolean 
  * Get the next higher plan for upgrade suggestions
  */
 export function getNextPlanUpgrade(currentPlan: Plan): Plan | null {
-  const planOrder: Plan[] = ["free", "basic", "pro", "max"];
-  const currentIndex = planOrder.indexOf(currentPlan);
+  const currentIndex = PLAN_ORDER.indexOf(currentPlan);
 
-  if (currentIndex === -1 || currentIndex === planOrder.length - 1) {
+  if (currentIndex === -1 || currentIndex === PLAN_ORDER.length - 1) {
     return null; // Already at max or invalid plan
   }
 
-  return planOrder[currentIndex + 1];
+  return PLAN_ORDER[currentIndex + 1];
+}
+
+/**
+ * Get the next LOWER plan — the tier a plan card is compared against when the
+ * cards highlight what they add over the one below them (utils/planDiff.ts).
+ * `null` for the lowest tier (and for an unknown plan string).
+ */
+export function getPreviousPlanTier(currentPlan: Plan): Plan | null {
+  const currentIndex = PLAN_ORDER.indexOf(currentPlan);
+
+  if (currentIndex <= 0) {
+    return null; // lowest tier, or invalid plan
+  }
+
+  return PLAN_ORDER[currentIndex - 1];
 }
 
 /**
@@ -51,8 +68,7 @@ export function getNextPlanUpgrade(currentPlan: Plan): Plan | null {
  * (e.g. Direct Translations requires "max").
  */
 export function meetsPlan(current: Plan, required: Plan): boolean {
-  const order: Plan[] = ["free", "basic", "pro", "max"];
-  return order.indexOf(current) >= order.indexOf(required);
+  return PLAN_ORDER.indexOf(current) >= PLAN_ORDER.indexOf(required);
 }
 
 /**
@@ -169,8 +185,7 @@ export function isAtLimit(plan: Plan, resourceType: ResourceType, currentCount: 
  * Returns null if all plans have access (e.g. products, collections).
  */
 export function getMinimumPlanForContentType(contentType: ContentType): Plan | null {
-  const planOrder: Plan[] = ["free", "basic", "pro", "max"];
-  for (const plan of planOrder) {
+  for (const plan of PLAN_ORDER) {
     if (PLAN_CONFIG[plan].contentTypes.includes(contentType)) {
       return plan === "free" ? null : plan;
     }
@@ -247,6 +262,145 @@ export function isWithinImageOperationQuota(
   const limit = getMonthlyImageOperationsLimit(plan);
   if (limit === 0) return false;
   return currentCount + n <= limit;
+}
+
+// ---------------------------------------------------------------------------
+// SEO-tab entitlements — pure helpers over PlanLimits.seo
+// ---------------------------------------------------------------------------
+//
+// Pro has the full SEO feature surface; Max buys automation (nightly audit),
+// memory (history), scale (multi-property GSC) and throughput (bulk batches,
+// IndexNow quota). See docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md §Plan-Matrix.
+//
+// Boolean access is DERIVED from the numbers (0 = locked) rather than stored a
+// second time, so a quota and its feature flag can never disagree — the same
+// approach getSyncScope takes. Section VISIBILITY stays with
+// SeoSectionDef.planGate (enforced in SeoSectionLayout); these helpers govern
+// what happens inside a section and belong in the loader/action/service.
+
+/** All SEO entitlements for a plan. */
+export function getSeoLimits(plan: Plan): SeoPlanLimits {
+  return getPlanLimits(plan).seo;
+}
+
+/**
+ * Gateable SEO capabilities. The diagnostic sections (overview/audit,
+ * structured data, hreflang, redirects, PageSpeed, AEO) are deliberately absent
+ * — they are open on every tier and must stay that way.
+ */
+export type SeoFeature =
+  | "scheduledAudit"   // nightly automatic store audit (Max)
+  | "scoreHistory"     // score/ranking trend over time (Pro 30d / Max 365d)
+  | "keywords"         // target-keyword tracking (Basic+)
+  | "searchConsole"    // Google Search Console integration (Pro+)
+  | "indexNow";        // IndexNow / instant indexing (Pro+)
+
+/** True if the plan may use the given SEO capability at all. */
+export function canAccessSeoFeature(plan: Plan, feature: SeoFeature): boolean {
+  const seo = getSeoLimits(plan);
+  switch (feature) {
+    case "scheduledAudit":
+      return seo.scheduledAudit;
+    case "scoreHistory":
+      return seo.scoreHistoryDays > 0;
+    case "keywords":
+      return seo.maxTrackedKeywords > 0;
+    case "searchConsole":
+      return seo.gscProperties > 0;
+    case "indexNow":
+      return seo.monthlyIndexNowSubmissions > 0;
+    default: {
+      // Exhaustiveness guard: adding a SeoFeature without a case here is a
+      // compile error, not a feature that silently locks on every plan.
+      const exhaustive: never = feature;
+      return exhaustive;
+    }
+  }
+}
+
+/**
+ * Lowest plan that unlocks an SEO capability, for upsell copy. Returns null
+ * when there is nothing to upsell — either every tier already has it (like
+ * getMinimumPlanForContentType) or no tier does, in which case pointing a Max
+ * merchant at Max would be nonsense.
+ */
+export function getMinimumPlanForSeoFeature(feature: SeoFeature): Plan | null {
+  for (const plan of PLAN_ORDER) {
+    if (canAccessSeoFeature(plan, feature)) {
+      return plan === "free" ? null : plan;
+    }
+  }
+  return null;
+}
+
+/** Nightly automatic audit — the headline Max differentiator. */
+export function canUseScheduledSeoAudit(plan: Plan): boolean {
+  return getSeoLimits(plan).scheduledAudit;
+}
+
+/** Days of score/ranking history to keep and chart. 0 = newest snapshot only. */
+export function getSeoScoreHistoryDays(plan: Plan): number {
+  return getSeoLimits(plan).scoreHistoryDays;
+}
+
+/** Distinct tracked keywords allowed per shop. 0 = keyword tracking locked. */
+export function getMaxTrackedKeywords(plan: Plan): number {
+  return getSeoLimits(plan).maxTrackedKeywords;
+}
+
+/**
+ * True if `n` more tracked keywords fit. limit === 0 ⇒ always false (feature
+ * disabled), matching isWithinImageOperationQuota.
+ *
+ * Only NEW keywords are checked. A shop that lands over the cap by downgrading
+ * keeps every row it has (see SeoPlanLimits.maxTrackedKeywords) — this simply
+ * returns false until it is back under the limit.
+ */
+export function isWithinKeywordQuota(plan: Plan, currentCount: number, n: number = 1): boolean {
+  const limit = getMaxTrackedKeywords(plan);
+  if (limit === 0) return false;
+  return currentCount + n <= limit;
+}
+
+/** True if the shop holds more keywords than its (current) plan allows. */
+export function isOverKeywordQuota(plan: Plan, currentCount: number): boolean {
+  return currentCount > getMaxTrackedKeywords(plan);
+}
+
+/** Connectable Google Search Console properties. */
+export function getMaxGscProperties(plan: Plan): number {
+  return getSeoLimits(plan).gscProperties;
+}
+
+/** True if one more GSC property may be connected on this plan. */
+export function canConnectGscProperty(plan: Plan, connectedCount: number): boolean {
+  return connectedCount < getMaxGscProperties(plan);
+}
+
+/** GSC lookback window in days (Pro 28 / Max 480 ≈ the API's own 16 months). */
+export function getGscHistoryDays(plan: Plan): number {
+  return getSeoLimits(plan).gscHistoryDays;
+}
+
+/** Rolling monthly IndexNow submission quota. 0 = IndexNow unavailable. */
+export function getMonthlyIndexNowLimit(plan: Plan): number {
+  return getSeoLimits(plan).monthlyIndexNowSubmissions;
+}
+
+/**
+ * True if `n` more IndexNow submissions fit this month. Uses the same UTC
+ * period key as the image quota (currentImageOpPeriod) — usage data, lazily
+ * enforced, no cron and no downgrade cleanup.
+ */
+export function isWithinIndexNowQuota(plan: Plan, currentCount: number, n: number = 1): boolean {
+  const limit = getMonthlyIndexNowLimit(plan);
+  if (limit === 0) return false;
+  return currentCount + n <= limit;
+}
+
+/** Items processed per bulk-fix / bulk-meta run. */
+export function getSeoBulkBatchSize(plan: Plan): number {
+  return getSeoLimits(plan).bulkBatchSize;
 }
 
 // ============================================================================

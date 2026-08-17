@@ -58,11 +58,11 @@ describe("buildItemSnippet / chunkItems", () => {
 describe("buildDistributionPrompt", () => {
   it("lists every keyword with attributes and every item with id", () => {
     const prompt = buildDistributionPrompt(
-      [{ keyword: "green vase", locale: "", priority: 1, intent: "transactional" }],
+      [{ keyword: "green vase", locale: "", priority: 1 }],
       [{ id: "gid://shopify/Product/1", title: "Green Vase", snippet: "A vase." }],
       { maxSecondariesPerItem: 3 },
     );
-    expect(prompt).toContain('"green vase" (priority=1, intent=transactional)');
+    expect(prompt).toContain('"green vase" (priority=1)');
     expect(prompt).toContain("ITEM id=gid://shopify/Product/1");
     expect(prompt).toContain("AT MOST ONE primary item in this batch");
     expect(prompt).toContain("up to 3 additional");

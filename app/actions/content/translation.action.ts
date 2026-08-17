@@ -385,6 +385,9 @@ export async function handleTranslateAll(
       taskId: task.id,
       customInstructions: translateInstructionsAll,
       sourceLocale,
+      // Phrase each locale's translation so THAT locale's tracked keyword
+      // survives, instead of translating the primary text literally.
+      keywordAwareTranslation: ctx.aiSettings?.keywordAwareTranslation ?? true,
     });
 
     const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
@@ -541,6 +544,9 @@ export async function handleTranslateAllForLocale(
       taskId: task.id,
       customInstructions: translateInstructionsForLocale,
       sourceLocale,
+      // Phrase each locale's translation so THAT locale's tracked keyword
+      // survives, instead of translating the primary text literally.
+      keywordAwareTranslation: ctx.aiSettings?.keywordAwareTranslation ?? true,
     });
 
     const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;
@@ -661,6 +667,9 @@ export async function handleTranslateFieldToAllLocales(
       taskId: task.id,
       customInstructions: translateInstructionsFieldToAll,
       sourceLocale,
+      // Phrase each locale's translation so THAT locale's tracked keyword
+      // survives, instead of translating the primary text literally.
+      keywordAwareTranslation: ctx.aiSettings?.keywordAwareTranslation ?? true,
     });
 
     const { translations: allTranslations, failedLocales, rejectedFields, skippedFields } = result;

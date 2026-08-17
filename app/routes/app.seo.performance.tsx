@@ -41,6 +41,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
+import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { HelpTooltip } from "../components/HelpTooltip";
 import { getFormString } from "../utils/form-data.utils";
 import {
@@ -2436,12 +2437,12 @@ export default function SeoPerformance() {
   return (
     <SeoSectionLayout sectionId="performance">
       <BlockStack gap="400">
-        <Banner tone="info" title={p.helpTitle}>
+        <SeoHelpBanner title={p.helpTitle}>
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{p.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{p.helpBody2}</Text>
           </BlockStack>
-        </Banner>
+        </SeoHelpBanner>
 
         {/* Controls */}
         <Card>
