@@ -926,3 +926,113 @@ describe("analyzeStore — crawl-derived dashboard buckets (§3.6)", () => {
   });
 });
 
+
+/**
+ * Featured-image alt coverage per locale (Collection/Article).
+ *
+ * These types used to be scored with the PRIMARY alt text in every locale, on
+ * the belief that no per-locale store existed. It does — `ContentTranslation`
+ * with `key: "image_alt_text"` on the PARENT, the third translation shape both
+ * editors write — so a foreign audit asks whether the alt is TRANSLATED, the
+ * same question it already asks for product gallery images.
+ */
+describe("analyzeStore — featured-image alt coverage per locale", () => {
+  const COLLECTION_ID = "gid-C9";
+  const ARTICLE_ID = "gid-A9";
+
+  /** One collection + one article, both with a filled PRIMARY alt text. */
+  function makeFeaturedImageDb(
+    altRows: { resourceId: string; resourceType: "Collection" | "Article"; value: string }[],
+  ) {
+    const collections = [
+      {
+        id: COLLECTION_ID,
+        title: U(40, "TC9-"),
+        descriptionHtml: A(200),
+        seoTitle: U(40, "STC9-"),
+        seoDescription: U(140, "DC9-"),
+        imageUrl: "http://img/c",
+        imageAltText: "Primaerer Alt-Text",
+      },
+    ];
+    const articles = [
+      {
+        id: ARTICLE_ID,
+        title: U(40, "TA9-"),
+        body: A(200),
+        seoTitle: U(40, "STA9-"),
+        seoDescription: U(140, "DA9-"),
+        imageUrl: "http://img/a",
+        imageAltText: "Primaerer Alt-Text",
+      },
+    ];
+    return {
+      product: { count: async () => 0, findMany: async () => [] },
+      productImage: { groupBy: async () => [] },
+      productImageAltTranslation: { groupBy: async () => [] },
+      collection: { count: async () => collections.length, findMany: async () => collections },
+      article: { count: async () => articles.length, findMany: async () => articles },
+      page: { count: async () => 0, findMany: async () => [] },
+      contentTranslation: {
+        // Two callers, distinguished the way the real query is: the overlay
+        // loader asks for the four content keys, the alt loader for
+        // `image_alt_text` scoped to one resourceType.
+        findMany: async (args: any) => {
+          if (args?.where?.key !== "image_alt_text") return [];
+          return altRows
+            .filter((r) => r.resourceType === args.where.resourceType)
+            .map((r) => ({ resourceId: r.resourceId, value: r.value }));
+        },
+      },
+    } as any;
+  }
+
+  const analyze = (db: any, locale?: string) =>
+    analyzeStore("shop.myshopify.com", {
+      db,
+      seoTitleEffectiveLimit: 60,
+      plan: "pro",
+      ...(locale === undefined ? {} : { locale }),
+    });
+
+  const missingAltIds = (audit: AuditAggregate) =>
+    audit.problems.find((p) => p.code === "imagesMissingAlt")?.items.map((i) => i.id) ?? [];
+
+  it("reports an untranslated featured-image alt in a foreign locale", async () => {
+    const audit = await analyze(makeFeaturedImageDb([]), "fr");
+    expect(missingAltIds(audit)).toEqual(
+      expect.arrayContaining([COLLECTION_ID, ARTICLE_ID]),
+    );
+  });
+
+  it("does not report it once the alt text is translated for that locale", async () => {
+    const db = makeFeaturedImageDb([
+      { resourceId: COLLECTION_ID, resourceType: "Collection", value: "Texte alternatif" },
+      { resourceId: ARTICLE_ID, resourceType: "Article", value: "Texte alternatif" },
+    ]);
+    expect(missingAltIds(await analyze(db, "fr"))).toEqual([]);
+  });
+
+  it("treats an empty stored alt translation as no translation", async () => {
+    const db = makeFeaturedImageDb([
+      { resourceId: COLLECTION_ID, resourceType: "Collection", value: "   " },
+      { resourceId: ARTICLE_ID, resourceType: "Article", value: "" },
+    ]);
+    expect(missingAltIds(await analyze(db, "fr"))).toEqual(
+      expect.arrayContaining([COLLECTION_ID, ARTICLE_ID]),
+    );
+  });
+
+  it("does not let a collection's translation cover an article (or vice versa)", async () => {
+    const db = makeFeaturedImageDb([
+      { resourceId: COLLECTION_ID, resourceType: "Collection", value: "Texte alternatif" },
+    ]);
+    expect(missingAltIds(await analyze(db, "fr"))).toEqual([ARTICLE_ID]);
+  });
+
+  it("still scores the PRIMARY alt text on a primary-locale scan", async () => {
+    // No per-locale lookup happens at all here — the primary alt is filled, so
+    // neither type reports a missing alt.
+    expect(missingAltIds(await analyze(makeFeaturedImageDb([])))).toEqual([]);
+  });
+});
