@@ -194,6 +194,9 @@ interface UnifiedContentEditorProps {
      * shared "" rows keep the nav list non-empty (PLAN_THEME_SELECTION_B_LITE). */
     needsThemeSync?: boolean;
   };
+  /** PLAN §Phase 3.2 — shop currency for the `money` field's suffix. Shop-wide,
+   *  so it is passed once rather than resolved per field. */
+  currencyCode?: string;
 }
 
 export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
@@ -212,6 +215,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     hideItemListImages = false,
     hideItemListStatusBars = false,
     showItemListCategoryBadge = false,
+    currencyCode,
     planLimit,
     fieldPagination,
     onFieldPageChange,
@@ -1367,6 +1371,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           validationOverlays={validationOverlays}
                           tagSuggestions={tagSuggestions}
                           attributesKnown={itemAttributesKnown}
+                          currencyCode={currencyCode}
                           onReloadAttributes={() => { void handleSyncAll(); }}
                         />
                         );

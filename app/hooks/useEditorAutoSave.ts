@@ -277,12 +277,31 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       }
     }
 
-    // If saving primary locale, include changed fields for translation deletion
-    // BUT: Skip this if we're in an accept-and-translate flow
+    // ── Two questions, two fields ─────────────────────────────────────────
+    // `changedFields` answers "which translations did this primary change make
+    // stale", and the accept-and-translate flow deliberately withholds it: it
+    // is about to write those very translations, so marking them stale would
+    // make them flash empty in between.
+    //
+    // PLAN §Phase 3 needs a DIFFERENT answer: which merchandising attributes
+    // did the merchant actually touch — because a primary save carries every
+    // field and the server cannot otherwise tell an edit from a passenger.
+    // Folding that into `changedFields` would have re-introduced the deletion
+    // this flow exists to avoid; withholding it would silently drop attribute
+    // edits while reporting success. So it travels on its own.
     const item = selectedItemRef.current;
-    if (locale === primaryLocale && item && !isAcceptAndTranslateFlowRef.current) {
+    if (locale === primaryLocale && item) {
       const changedFields = getChangedFields(valuesToSave);
-      if (changedFields.length > 0) {
+
+      const changedAttributes = changedFields.filter((fieldKey) => {
+        const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+        return field && field.supportsTranslation === false && !field.translationKey;
+      });
+      if (changedAttributes.length > 0) {
+        formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);
+      }
+
+      if (changedFields.length > 0 && !isAcceptAndTranslateFlowRef.current) {
         formDataObj.changedFields = JSON.stringify(changedFields);
 
         changedFields.forEach((fieldKey) => {

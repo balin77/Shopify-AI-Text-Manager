@@ -338,6 +338,21 @@ const handleSave = () => {
       debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
     }
 
+    // PLAN §Phase 3 — a SEPARATE list, because it answers a different question.
+    // `changedFields` says which translations went stale; this says which
+    // merchandising attributes the merchant actually touched. A primary save
+    // carries every field, so without it the server cannot tell an edit from a
+    // passenger — and would rewrite vendor/tags/visibility on every save.
+    // They are separate rather than one list because the accept-and-translate
+    // flow deliberately withholds `changedFields` (see useEditorAutoSave).
+    const changedAttributes = changedFields.filter((fieldKey) => {
+      const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+      return field && field.supportsTranslation === false && !field.translationKey;
+    });
+    if (changedAttributes.length > 0) {
+      formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);
+    }
+
     if (changedAltTextIndices.length > 0) {
       formDataObj.changedAltTextIndices = JSON.stringify(changedAltTextIndices);
       debugLog.save(' Changed alt-text indices (translations will be deleted):', changedAltTextIndices);

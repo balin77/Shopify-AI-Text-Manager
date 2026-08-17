@@ -26,6 +26,23 @@ import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "../config/creat
 
 export type AttributeResource = "Page" | "Blog" | "Article" | "Collection";
 
+/**
+ * Is this field one of the §Phase 3 merchandising attributes?
+ *
+ * The two marks together, never the `type` alone: `vendor`, `author` and
+ * `templateSuffix` are `type: "text"` like a title is, and routing on type
+ * would either miss them (leaving them without the not-synced lock and the
+ * not-translatable notice the other four get) or swallow every text field in
+ * the app. `translationKey: ""` plus `supportsTranslation: false` is true of
+ * exactly these seven fields and of nothing else in the repo.
+ */
+export function isAttributeField(field: {
+  translationKey?: string;
+  supportsTranslation?: boolean;
+}): boolean {
+  return field.supportsTranslation === false && !field.translationKey;
+}
+
 /** Shaped for the four `*UpdateInput`s. `author` stays a plain name here — the
  *  service wraps it in Shopify's `AuthorInput` at the call. */
 export interface AttributeInput {

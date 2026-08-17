@@ -957,6 +957,9 @@ export default function BulkEditor() {
    * image preview modal show the same explanation. */
   const readOnlyTooltips: Record<CellReadOnlyReason, string> = {
     column: b.readOnlyTooltip,
+    // §3.6 — the merchant CAN clear this: a resync fills the block in. The
+    // reason says so rather than reading as a permanent restriction.
+    attributesNotSynced: b.readOnlyReasons.attributesNotSynced,
     richText: b.readOnlyReasons.richText,
     linkedOption: b.readOnlyReasons.linkedOption,
     missingOption: b.readOnlyReasons.missingOption,

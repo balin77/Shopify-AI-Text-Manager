@@ -190,6 +190,7 @@ export async function handleUpdateContent(
         vendor: "vendor",
         tags: "tags",
         templateSuffix: "templateSuffix",
+        price: "price",
       };
 
       // Only forward fields that were actually sent by the client.
@@ -204,10 +205,18 @@ export async function handleUpdateContent(
         productFormData.set(productFieldName, value);
       });
 
-      // Pass changedFields for translation deletion when primary locale changes
+        // Pass changedFields for translation deletion when primary locale changes
       const changedFieldsStr = getFormString(formData, "changedFields");
       if (changedFieldsStr && locale === primaryLocale) {
         productFormData.set("changedFields", changedFieldsStr);
+      }
+      // §Phase 3 — which merchandising attributes the merchant actually
+      // touched. Separate from `changedFields` because that one is withheld by
+      // the accept-and-translate flow, and an attribute edit must not be
+      // silently dropped just because the save also starts a translation.
+      const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+      if (changedAttributesStr && locale === primaryLocale) {
+        productFormData.set("changedAttributeFields", changedAttributesStr);
       }
 
       // Pass imageAltTexts if present
@@ -579,6 +588,11 @@ export async function handleUpdateContent(
     // Get changed fields (for translation deletion when saving primary locale)
     const changedFieldsStr = getFormString(formData, "changedFields");
     const changedFields: string[] | undefined = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : undefined;
+    // §Phase 3 — see the product branch above for why this is its own list.
+    const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+    const changedAttributeFields: string[] | undefined = changedAttributesStr
+      ? safeJsonParse<string[]>(changedAttributesStr, [])
+      : undefined;
 
     // Extract policyType for ShopPolicy primary locale updates
     const policyType = contentConfig.resourceType === "ShopPolicy"
@@ -596,6 +610,7 @@ export async function handleUpdateContent(
       shop: session.shop,
       policyType,
       changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
+      changedAttributeFields: locale === primaryLocale ? changedAttributeFields : undefined,
       marketId,
     });
 

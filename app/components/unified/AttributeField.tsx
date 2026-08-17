@@ -180,6 +180,42 @@ export function AttributeField({
           />
         );
 
+      case "money":
+        // Parsing happens SERVER-side (the same `parseMoney` the grid uses), so
+        // this stays a plain text field: locale-specific money input is a
+        // minefield — "1.299" is 1299 to a German merchant and 1.30 to an
+        // English one — and a control that silently normalises would pick one
+        // reading and be wrong for the other half of the shops.
+        return (
+          <TextField
+            label={label}
+            value={value}
+            onChange={onChange}
+            disabled={locked}
+            autoComplete="off"
+            inputMode="decimal"
+            suffix={field.currencyCode || undefined}
+            helpText={field.attributeNote}
+          />
+        );
+
+      // Vendor, author, template suffix: plain text, but merchandising all the
+      // same. They belong here rather than in the generic text renderer for two
+      // reasons that only this component knows — they must lock when the
+      // attribute block was never fetched, and they carry no AI or translation
+      // controls at all.
+      case "text":
+        return (
+          <TextField
+            label={label}
+            value={value}
+            onChange={onChange}
+            disabled={locked}
+            autoComplete="off"
+            helpText={typeof field.helpText === "string" ? field.helpText : undefined}
+          />
+        );
+
       case "tags":
         return (
           <BlockStack gap="200">

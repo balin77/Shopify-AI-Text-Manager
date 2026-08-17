@@ -774,6 +774,12 @@ export class ShopifyContentService {
     shop: string;
     policyType?: string;
     changedFields?: string[]; // Fields that changed in primary locale - their translations will be deleted
+    /** PLAN §Phase 3 — which MERCHANDISING attributes the merchant actually
+     *  touched. A separate list from `changedFields` on purpose: that one is
+     *  withheld by the accept-and-translate flow (it is about to write the very
+     *  translations it would mark stale), and an attribute edit must not be
+     *  dropped just because the save also starts a translation. */
+    changedAttributeFields?: string[];
     /**
      * Market scope for this save. "" (or undefined) = global (applies to all
      * markets, legacy behaviour). Non-empty = gid://shopify/Market/<id>, saving a
@@ -1035,7 +1041,7 @@ export class ShopifyContentService {
         // Presence is not intent — see the module's own note. A primary save
         // carries every field, so without this a title edit would rewrite the
         // merchandising block from whatever the cache happened to hold.
-        changedFields,
+        params.changedAttributeFields,
       );
 
       /**

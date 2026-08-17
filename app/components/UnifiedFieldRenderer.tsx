@@ -11,6 +11,7 @@ import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { AttributeField } from "./unified/AttributeField";
+import { isAttributeField } from "../services/content-attributes.shared";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
 import { resolveSeoLimits } from "../utils/character-limits";
@@ -73,6 +74,9 @@ export interface FieldRendererProps {
   attributesKnown?: boolean;
   /** The way out of that state. */
   onReloadAttributes?: () => void;
+  /** Shop currency ("EUR"), shown as the `money` field's suffix. Currency is
+   *  shop-wide, never per field — the same rule the bulk money columns follow. */
+  currencyCode?: string;
 }
 
 export function UnifiedFieldRenderer(
@@ -120,6 +124,7 @@ export function UnifiedFieldRenderer(
     tagSuggestions = [],
     attributesKnown,
     onReloadAttributes,
+    currencyCode,
   } = props;
 
   const currentAction = fetcherFormData?.get("action");
@@ -305,22 +310,25 @@ export function UnifiedFieldRenderer(
   // these fields carry no AI actions, no translate/copy buttons and no
   // suggestion state, and their one locked case (a foreign locale) has a
   // reason of its own that the generic hint would get wrong.
-  if (field.type === "select" || field.type === "tags" || field.type === "toggle") {
+  if (isAttributeField(field)) {
     const suggestions: string[] = field.suggestionsKey ? tagSuggestions : [];
     // Enum labels are shared with the create modal (`t.create.options`, keyed
     // `"status.DRAFT"`) rather than duplicated: the two surfaces offer the same
     // values, and a status the modal calls "Draft" while the editor calls it
     // "DRAFT" reads as two different things.
     const optionLabels: Record<string, string> = t.create?.options || {};
-    const localizedField = field.options
-      ? {
-          ...field,
-          options: field.options.map((o) => ({
-            ...o,
-            label: (o.labelKey && optionLabels[o.labelKey]) || optionLabels[`${field.key}.${o.value}`] || o.label,
-          })),
-        }
-      : field;
+    const localizedField = {
+      ...field,
+      ...(field.type === "money" ? { currencyCode } : {}),
+      ...(field.options
+        ? {
+            options: field.options.map((o) => ({
+              ...o,
+              label: (o.labelKey && optionLabels[o.labelKey]) || optionLabels[`${field.key}.${o.value}`] || o.label,
+            })),
+          }
+        : {}),
+    };
     return (
       <AttributeField
         field={localizedField}

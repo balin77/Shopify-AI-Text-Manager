@@ -2989,6 +2989,9 @@ export const en: Translation = {
       },
     },
     readOnlyReasons: {
+      // PLAN §3.6 — the block was never fetched, so an empty cell here is
+      // "not loaded", not "empty". A resync is the way out.
+      attributesNotSynced: "This product's details have not been loaded from Shopify yet — reload the products, then edit this.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",

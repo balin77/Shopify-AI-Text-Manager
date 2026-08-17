@@ -14,6 +14,7 @@ import { sanitizeSlug } from "~/utils/slug.utils";
 // One rule per attribute, shared with the generic content path — the previous
 // generation of this code kept a per-resource copy of each and they drifted.
 import { isValidProductStatus, parseTagList } from "~/services/content-attributes.shared";
+import { parseMoney } from "~/services/bulk-editor/columns.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
@@ -41,6 +42,10 @@ interface UpdateProductParams {
   /** Comma-joined on the wire, split into Shopify's array before the write. */
   tags?: string;
   templateSuffix?: string;
+  /** Price of the DEFAULT variant, as the merchant typed it. Parsed server-side
+   *  with the same `parseMoney` the bulk grid uses — locale-specific money
+   *  input is a minefield and one parser is the only way both surfaces agree. */
+  price?: string;
   imageAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
@@ -81,6 +86,12 @@ export async function handleUpdateProduct(
   const changedFields: string[] = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
   // Parse changedAltTextIndices if present (for alt-text translation deletion when primary locale changes)
+  // §Phase 3 — a separate list from `changedFields`: see content-update.action.
+  const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+  const changedAttributeFields: string[] = changedAttributesStr
+    ? safeJsonParse<string[]>(changedAttributesStr, [])
+    : [];
+
   const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
   const changedAltTextIndices: number[] = changedAltTextIndicesStr ? safeJsonParse<number[]>(changedAltTextIndicesStr, []) : [];
 
@@ -118,6 +129,7 @@ export async function handleUpdateProduct(
     vendor: getFormStringOrNull(formData, "vendor") ?? undefined,
     tags: getFormStringOrNull(formData, "tags") ?? undefined,
     templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
+    price: getFormStringOrNull(formData, "price") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
     // Primary-locale saves are always global; only foreign locales carry a market.
@@ -161,7 +173,7 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop, changedAttributeFields);
     }
 
     // If alt-text saves failed, merge warning into the response
@@ -871,7 +883,10 @@ async function updatePrimaryProduct(
   params: UpdateProductParams,
   changedFields: string[] = [],
   changedAltTextIndices: number[] = [],
-  shop: string
+  shop: string,
+  /** §Phase 3 — the attributes the merchant actually touched. Empty ⇒ write
+   *  none of them; see the gate below for why that is the safe default. */
+  changedAttributeFields: string[] = [],
 ): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
@@ -969,7 +984,7 @@ async function updatePrimaryProduct(
   // No `changedFields` at all ⇒ write no attributes. A caller that does not
   // say what changed cannot be distinguished from one that changed nothing,
   // and of the two readings only this one is safe.
-  const attributeChanged = (key: string) => changedFields.includes(key);
+  const attributeChanged = (key: string) => changedAttributeFields.includes(key);
 
   if (params.status !== undefined && attributeChanged("status")) {
     // An unrecognised status is REFUSED rather than sent: `status` is the one
@@ -1110,6 +1125,17 @@ async function updatePrimaryProduct(
       error: dbError instanceof Error ? dbError.message : String(dbError),
     });
     // Don't fail the entire request if DB update fails - Shopify is source of truth
+  }
+
+  // ── §Phase 3.2 — the default variant's price ──────────────────────────────
+  // A SECOND mutation, because price does not live on the product: Shopify
+  // keeps it on ProductVariant and `productUpdate` has no field for it. It runs
+  // after the product write and reports as a warning rather than a failure —
+  // the text edits above already landed, and telling the merchant the whole
+  // save failed would invite them to make it twice.
+  let priceWarning: string | undefined;
+  if (params.price !== undefined && changedAttributeFields.includes("price")) {
+    priceWarning = await updateDefaultVariantPrice(gateway, db, productId, params.price, shop);
   }
 
   // Delete translations for changed fields in all foreign languages
@@ -1371,5 +1397,105 @@ async function updatePrimaryProduct(
     }
   }
 
-  return json({ success: true, product: data.data.productUpdate.product });
+  return json({
+    success: true,
+    product: data.data.productUpdate.product,
+    // A price that could not be written is a warning on a save that otherwise
+    // worked — never a silent drop, which for a money field is the worst
+    // possible outcome.
+    ...(priceWarning ? { warning: priceWarning } : {}),
+  });
+}
+
+/**
+ * Writes the DEFAULT variant's price (PLAN_CONTENT_CREATION §Phase 3.2).
+ *
+ * Returns a human-readable WARNING or undefined. Never throws: the product save
+ * this accompanies has already landed, so a failure here must not be reported
+ * as a failed save.
+ *
+ * ── Three rules worth stating ──────────────────────────────────────────────
+ * 1. The variant is resolved SERVER-side, from the cache, scoped by shop. The
+ *    client never names it — a variant GID from a request body is an invitation
+ *    to write into another shop's catalogue.
+ * 2. Money is parsed with the bulk editor's `parseMoney`, not `parseFloat`.
+ *    "1.299,00" and "1,299.00" are the same amount to a merchant and wildly
+ *    different to `parseFloat`, and a bare "1.299" is genuinely ambiguous — it
+ *    is refused rather than silently rounded to 1.30.
+ * 3. The echo rule, strictly: the mirror is written only from the price Shopify
+ *    RETURNED. `userErrors: []` alone is not success, and a money value is the
+ *    last place to guess.
+ */
+async function updateDefaultVariantPrice(
+  gateway: ShopifyApiGateway,
+  db: PrismaClient,
+  productId: string,
+  rawPrice: string,
+  shop: string,
+): Promise<string | undefined> {
+  const parsed = parseMoney(rawPrice);
+  if (!parsed.ok) {
+    return parsed.error === "ambiguous"
+      ? `The price "${rawPrice}" is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.`
+      : `The price "${rawPrice}" could not be read as an amount. Everything else was saved.`;
+  }
+  // Shopify's price is not nullable — an emptied field is not "remove the
+  // price", it is an unfinished edit.
+  if (parsed.value === null) {
+    return "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.";
+  }
+
+  try {
+    const variant = await db.productVariant.findFirst({
+      where: { productId, product: { shop } },
+      orderBy: { position: "asc" },
+      select: { id: true, shopifyGid: true },
+    });
+    if (!variant?.shopifyGid) {
+      return "The price could not be saved because this product's variants are not in the local cache yet — resync the product. Everything else was saved.";
+    }
+
+    const response = await gateway.graphql(
+      `#graphql
+        mutation updateDefaultVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            productVariants { id price }
+            userErrors { field message }
+          }
+        }`,
+      { variables: { productId, variants: [{ id: variant.shopifyGid, price: parsed.value }] } },
+    );
+    const body = (await response.json()) as {
+      data?: {
+        productVariantsBulkUpdate?: {
+          productVariants?: Array<{ id: string; price: string }> | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+
+    // A SCHEMA-level error arrives as a top-level `errors` array with
+    // `data: null` and never reaches `userErrors` — checking only the latter
+    // would read this as a success and mirror a price Shopify never stored.
+    if (body.errors?.length) {
+      return `The price could not be saved (${body.errors[0]?.message ?? "GraphQL error"}). Everything else was saved.`;
+    }
+    const payload = body.data?.productVariantsBulkUpdate;
+    if (payload?.userErrors?.length) {
+      return `The price could not be saved (${payload.userErrors[0].message}). Everything else was saved.`;
+    }
+
+    const echoed = payload?.productVariants?.find((v) => v.id === variant.shopifyGid);
+    if (!echoed?.price) {
+      return "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.";
+    }
+
+    await db.productVariant
+      .update({ where: { id: variant.id }, data: { price: echoed.price } })
+      .catch(() => undefined);
+    return undefined;
+  } catch (error) {
+    return `The price could not be saved (${error instanceof Error ? error.message : String(error)}). Everything else was saved.`;
+  }
 }

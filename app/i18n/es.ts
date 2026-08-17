@@ -2988,6 +2988,9 @@ export const es: Translation = {
       },
     },
     readOnlyReasons: {
+      // PLAN §3.6 — el bloque de atributos nunca se cargó; vacío aquí
+      // significa "no cargado", no "vacío". Una resincronización lo resuelve.
+      attributesNotSynced: "Los datos de este producto aún no se han cargado desde Shopify — recarga los productos y edítalo después.",
       richText: "El contenido de texto enriquecido no se puede editar en la tabla — abre el elemento en el editor.",
       linkedOption: "Esta opción está vinculada a metaobjetos y no se puede editar aquí — usa el editor.",
       missingOption: "Este producto no tiene una opción en esta posición.",

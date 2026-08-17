@@ -1,6 +1,23 @@
 # Inhalte in ContentPilot erstellen — Plan (Phasen 0–4)
 
-**Status:** Entwurf, Umsetzung nicht begonnen. Grundsatzentscheidungen getroffen (§2), Review-Durchlauf eingearbeitet (2026-08).
+**Status (2026-08-17, Branch `claude/plan-content-creation-4fqoph`):** Phasen 0–3 weitgehend umgesetzt, jeder Schritt mit eigenem Review-Durchlauf und behobenen Befunden.
+
+| Phase | Stand |
+|---|---|
+| 0 | ✅ Migration, Attribut-Sync (`attribute-sync.shared.ts`), Join-Modell `ProductCollection`, `blog`-Case, Messungen (Collection-Probe) |
+| 1 | ✅ Create-Modal + `createContent`, sechs Typen, Idempotenz, Delete mit Doppelbestätigung, Undo, Duplizieren |
+| 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts` (im Create-Modal; Einbindung in den **Editor** bestehender Collections steht noch aus) |
+| 1b | ✅ `SeoSidebar` → `ItemSidebar` |
+| 2 | ✅ Attribut-Tab; Loader liefern den Attributblock (nachgezogen in Phase 3) |
+| 3.1/3.2/3.5 | ✅ `status`, `vendor`, `tags`, `author`, `sortOrder`, `templateSuffix`, `isPublished` editierbar, nicht übersetzbar markiert. **Offen:** `taxonomy` (Kategorie), `collections` (Mitgliedschafts-Picker), `money` (Preis der Standardvariante), `collectionRules` im Editor |
+| 3.3 | ✅ Redirect bei Handle-Wechsel (Einzel- **und** Bulk-Editor), als Diff über bestehende Redirects |
+| 3.4 | ✅ IndexNow am Publish-Übergang für Pages/Artikel/Blogs (die drei ohne Webhook) |
+| 3.6 | ✅ `vendor`/`tags` als Bulk-Spalten |
+| 4 | ⛔ nicht begonnen — Scope-Change, braucht eine Entscheidung (§8.1) |
+
+Ebenfalls offen: §2.5 (KI-Extras: „Rest generieren", Live-SEO-Score im Modal, Auto-Alt-Text, „danach übersetzen", Glossar in `generate*`) sowie §8.2–§8.4.
+
+**Ursprünglicher Status:** Entwurf, Umsetzung nicht begonnen. Grundsatzentscheidungen getroffen (§2), Review-Durchlauf eingearbeitet (2026-08).
 **Ziel:** Der Merchant soll für das **Anlegen und Bearbeiten von Content** nicht mehr in den Shopify-Admin wechseln müssen. Einstieg ist der bereits vorhandene „+"-Button in [UnifiedItemList](../../app/components/unified/UnifiedItemList.tsx), der ein Create-Modal öffnet; ergänzend ein neuer Sidebar-Tab, der die *nicht-SEO*-Vollständigkeit eines Items zeigt.
 **Baut auf:** [unified-content.actions.ts](../../app/actions/unified-content.actions.ts) (der EINE Action-Handler), [UnifiedContentEditor](../../app/components/UnifiedContentEditor.tsx), [FilePickerModal](../../app/components/image-manager/FilePickerModal.tsx) + Staged-Upload-Pipeline, [text-generation.handler.ts](../../app/routes/api-ai-handlers/text-generation.handler.ts) (kann bereits aus einem Bild generieren).
 

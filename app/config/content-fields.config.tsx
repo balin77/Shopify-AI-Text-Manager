@@ -202,6 +202,19 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsTranslation: false,
     },
     tagsField("productTags"),
+    {
+      // §2.3 — the price of the DEFAULT variant only. A product with several
+      // variants has several prices and one field cannot mean all of them, so
+      // the note says where the rest live rather than pretending otherwise.
+      key: "price",
+      type: "money",
+      label: "Price (default variant)",
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      attributeNote: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+    },
     TEMPLATE_SUFFIX_FIELD,
   ],
 };

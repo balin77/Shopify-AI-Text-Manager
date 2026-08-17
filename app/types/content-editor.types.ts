@@ -251,7 +251,7 @@ export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'poli
  */
 export type FieldType =
   | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
-  | 'select' | 'tags' | 'toggle';
+  | 'select' | 'tags' | 'toggle' | 'money';
 
 export interface FieldRenderProps {
   value: string;
@@ -336,6 +336,10 @@ export interface FieldDefinition {
   /** Rendered under the control — for the things a merchant cannot see, like
    *  "Active does not mean visible without a sales channel" (§2.3). */
   attributeNote?: string;
+
+  /** `money` only: the shop currency, shown as a suffix. Currency is shop-wide,
+   *  never per field — the same rule the bulk editor's money columns follow. */
+  currencyCode?: string;
 }
 
 export interface ContentEditorConfig {

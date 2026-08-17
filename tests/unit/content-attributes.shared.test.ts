@@ -16,7 +16,32 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { attributeInputFor, parseTagList, isValidProductStatus, isValidSortOrder } from "~/services/content-attributes.shared";
+import {
+  attributeInputFor,
+  isAttributeField,
+  isValidProductStatus,
+  isValidSortOrder,
+  parseTagList,
+} from "~/services/content-attributes.shared";
+
+describe("isAttributeField", () => {
+  it("needs BOTH marks, because three of the seven are plain text fields", () => {
+    // `vendor`, `author` and `templateSuffix` are `type: "text"` exactly like a
+    // title is. Routing on type would either miss them — leaving them without
+    // the not-synced lock and the not-translatable notice — or swallow every
+    // text field in the app.
+    expect(isAttributeField({ translationKey: "", supportsTranslation: false })).toBe(true);
+    expect(isAttributeField({ translationKey: "title", supportsTranslation: false })).toBe(false);
+    expect(isAttributeField({ translationKey: "", supportsTranslation: true })).toBe(false);
+    expect(isAttributeField({ translationKey: "body_html", supportsTranslation: true })).toBe(false);
+  });
+
+  it("does not claim a field that simply omits both marks", () => {
+    // `supportsTranslation` undefined means "yes, by default" everywhere else
+    // in the editor — treating it as an attribute would lock ordinary fields.
+    expect(isAttributeField({})).toBe(false);
+  });
+});
 
 describe("parseTagList", () => {
   it("trims and drops empties, the way Shopify stores them", () => {

@@ -1163,7 +1163,13 @@ export type CellReadOnlyReason =
   | "missingMediaId" // image row lacks the MediaImage GID — resync needed
   | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
   | "listSeparatorInValue" // a list entry contains "|" — editing would shatter it (Finding 11)
-  | "altTextInImages"; // product main-image alt — edit it under the Images row type
+  | "altTextInImages" // product main-image alt — edit it under the Images row type
+  | "attributesNotSynced"; // PLAN §2.4 — the block was never fetched (see below)
+
+/** The columns fed by the Phase-0 attribute block, whose emptiness only means
+ *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
+ *  predates that block and is non-null in the schema. */
+const ATTRIBUTE_BLOCK_COLUMNS = new Set(["field.vendor", "field.tags"]);
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
@@ -1185,8 +1191,19 @@ function joinOptionValues(option: BulkRowOption): string {
  */
 export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
   switch (column.kind) {
-    case "field":
-      return { value: primaryValueForColumn(row, column), editable: column.editable };
+    case "field": {
+      const value = primaryValueForColumn(row, column);
+      // PLAN §2.4 / §3.6 — a cell whose row predates the attribute sync shows
+      // the migration's default, not the merchant's data. Read-only, because
+      // `productUpdate` REPLACES the tag list rather than merging it: typing
+      // one tag into an unsynced row would wipe the product's real tags, on a
+      // row the grid itself admits it does not know. The single editor locks
+      // the same fields for the same reason; a resync is the way out.
+      if (ATTRIBUTE_BLOCK_COLUMNS.has(column.id) && row.attributesKnown === false) {
+        return { value, editable: false, readOnlyReason: "attributesNotSynced" };
+      }
+      return { value, editable: column.editable };
+    }
     case "metafield": {
       const mf = row.metafields?.[column.id];
       const raw = mf?.value ?? "";

@@ -44,6 +44,10 @@ export const loader = createContentLoader({
                 id
                 title
                 handle
+                # PLAN §Phase 3 — a blog container's one merchandising attribute.
+                # Read LIVE, so unlike the cached types there is no "written by
+                # an older sync" ambiguity: whatever comes back IS current.
+                templateSuffix
                 seoTitle: metafield(namespace: "global", key: "title_tag") { value }
                 seoDescription: metafield(namespace: "global", key: "description_tag") { value }
                 articles(first: 250) {
@@ -60,6 +64,7 @@ export const loader = createContentLoader({
       id: string;
       title: string;
       handle: string;
+      templateSuffix?: string | null;
       seoTitle?: { value: string } | null;
       seoDescription?: { value: string } | null;
       articles?: { edges: Array<{ node: { id: string } }> };
@@ -201,6 +206,12 @@ export const loader = createContentLoader({
         description: blog.seoDescription?.value ?? null,
       },
       images: [],
+      // The query above just delivered it, so the editor may judge and edit it.
+      // The stamp is what the attribute controls gate on — without it they read
+      // "known" by default, which on the one type this data is live for would
+      // be the only place the discriminator lied.
+      attributesSyncedAt: new Date().toISOString(),
+      templateSuffix: blog.templateSuffix ?? null,
     }));
 
     // Load article image alt-text translations from contentTranslation table

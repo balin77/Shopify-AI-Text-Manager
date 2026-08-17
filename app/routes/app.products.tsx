@@ -301,7 +301,12 @@ export const loader = createContentLoader({
     const newFeaturesEnabled = !isProductionLocked();
     const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
     const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings };
+    // §Phase 3.2 — the shop currency, as a suffix on the price field. Shop-wide
+    // and memoized per boot (changing it is a support-gated Shopify operation),
+    // so this costs one query per shop, not one per load.
+    const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
+    const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode };
   },
 });
 
@@ -337,7 +342,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -927,6 +932,7 @@ export default function ProductsPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PRODUCTS_CONFIG}
+          currencyCode={currencyCode}
           items={products as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}

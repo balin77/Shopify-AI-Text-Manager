@@ -2989,6 +2989,9 @@ export const de = {
       },
     },
     readOnlyReasons: {
+      // PLAN §3.6 — der Attributblock wurde nie geladen; leer heißt hier
+      // "nicht geladen", nicht "leer". Ein Resync ist der Ausweg.
+      attributesNotSynced: "Die Details dieses Produkts wurden noch nicht von Shopify geladen — lade die Produkte neu und bearbeite das dann.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
