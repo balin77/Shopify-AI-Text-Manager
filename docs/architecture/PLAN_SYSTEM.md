@@ -260,7 +260,7 @@ Zugriff aus den Zahlen ab, damit Quota und Flag nicht driften können.
 
 | Dimension | Durchsetzung |
 |---|---|
-| `scheduledAudit` | `services/seo/audit-auto-run.service.ts` — Sweep wählt nur Shops auf einem Plan mit dem Flag (Filter in der Query) |
+| `scheduledAudit` | `services/seo/audit-auto-run.service.ts` — Sweep wählt nur Shops mit dem Plan-Flag **und** aktivem Merchant-Schalter `AISettings.seoAutoAuditEnabled` (beides Filter in der Query); Schalter in Settings → SEO, Action prüft den Plan erneut |
 | `scoreHistoryDays` | `saveAuditSnapshot` (Score-Snapshots) + `enrichKeywordsFromGsc` (Ranking-Snapshots) prunen nach Alter; die neueste Zeile überlebt immer |
 | `maxTrackedKeywords` | `keywords.service.ts` (`getKeywordQuota`) in `assignKeyword` / `createKeyword` / `addKeywordsToGroup`; Section-Gate `planGate:"basic"` |
 | `gscHistoryDays` | `defaultDateRange(now, days)` in `app.seo.search-console.tsx` + Export-Route |

@@ -138,6 +138,11 @@ model AISettings {
   // SEO Title suffix (shop name appended by Shopify theme)
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
+  // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
+  // entitled shop gets the trend without hunting for a checkbox; the sweep
+  // filters on it IN THE QUERY, so switching it off costs nothing per tick.
+  // Independent of the plan gate: both must hold for a scan to happen.
+  seoAutoAuditEnabled Boolean @default(true)
   // Last automatic (nightly) SEO audit run for this shop — see
   // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
   // the sweep's "is this shop due" query and is stamped on every path

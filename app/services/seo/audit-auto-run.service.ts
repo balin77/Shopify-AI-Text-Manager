@@ -26,7 +26,9 @@
  *   - candidates are shops on a plan with `seo.scheduledAudit` — resolved from
  *     AISettings.subscriptionPlan, never trusted from the caller. Free/Basic/
  *     Pro shops are filtered out IN THE QUERY, so an ineligible shop costs
- *     nothing per tick.
+ *     nothing per tick. The merchant switch `seoAutoAuditEnabled` (Settings →
+ *     SEO) is ANDed into the same query: entitlement and consent must both
+ *     hold, and an opted-out shop is never selected.
  *   - `lastAutoAuditAt` is a backoff stamp, NOT a lock, and is written on
  *     EVERY path (success, skip, error) — same rule the sibling sweeps
  *     document: an unstamped shop wins the due query forever. Two replicas
@@ -184,6 +186,8 @@ export class SeoAuditAutoRunService {
     return db.aISettings.findMany({
       where: {
         subscriptionPlan: { in: SCHEDULED_AUDIT_PLANS },
+        // Merchant opt-out (Settings → SEO). Entitlement AND consent.
+        seoAutoAuditEnabled: true,
         OR: [{ lastAutoAuditAt: null }, { lastAutoAuditAt: { lt: dueBefore } }],
       },
       select: {
