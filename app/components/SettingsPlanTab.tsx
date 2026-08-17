@@ -4,7 +4,7 @@
  * Extracted from app.settings.tsx to keep that route file focused on layout.
  */
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRevalidator } from "react-router";
 import {
   BlockStack,
@@ -24,10 +24,20 @@ import {
   isApproachingLimit,
   type ResourceType,
 } from "../utils/planUtils";
+import { contentTypeLimit, getPlanCardHighlights } from "../utils/planDiff";
 import { getAvailablePlans, type BillingPlan } from "../config/billing";
 import { useI18n } from "../contexts/I18nContext";
 import { formatNumber } from "../utils/format";
 import { SettingsUsageLimitsTab } from "./SettingsUsageLimitsTab";
+
+/**
+ * Wraps a plan-card value in <strong> when the row differs from the tier below.
+ * The row LABEL is already bold, so only the value changes weight — the same
+ * treatment the WebP-concurrency row had before this became a general rule.
+ */
+function PlanValue({ highlight, children }: { highlight: boolean; children: ReactNode }) {
+  return highlight ? <strong>{children}</strong> : <>{children}</>;
+}
 
 interface SettingsPlanTabProps {
   subscriptionPlan: string;
@@ -195,6 +205,10 @@ export function SettingsPlanTab({
       >
         {availablePlans.map(({ id, config }) => {
           const planDetails = PLAN_CONFIG[id];
+          // Bold whatever this tier adds over the card below it — new rows and
+          // rows whose number changed. Derived from PLAN_CONFIG in planDiff.ts,
+          // never from thresholds written into this file.
+          const highlights = getPlanCardHighlights(id);
           const isCurrentPlan = id === subscriptionPlan;
           const price = config ? `€${config.price.toFixed(2)}${t.settings.perMonth}` : t.settings.free;
           const shouldPulse = hasApproachingLimit && nextPlan === id;
@@ -226,15 +240,19 @@ export function SettingsPlanTab({
                     <BlockStack gap="200">
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings?.usageLocales || "Sprachen"}:</strong>{" "}
-                        {planDetails.maxLocales === Infinity
-                          ? t.settings.unlimited
-                          : planDetails.maxLocales}
+                        <PlanValue highlight={highlights.rows.locales}>
+                          {planDetails.maxLocales === Infinity
+                            ? t.settings.unlimited
+                            : planDetails.maxLocales}
+                        </PlanValue>
                       </Text>
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings.images}:</strong>{" "}
-                        {planDetails.productImages === "all"
-                          ? t.settings.allImages
-                          : t.settings.featuredImageOnly}
+                        <PlanValue highlight={highlights.rows.images}>
+                          {planDetails.productImages === "all"
+                            ? t.settings.allImages
+                            : t.settings.featuredImageOnly}
+                        </PlanValue>
                       </Text>
                       {/* WebP conversion only ever runs inside the Pro+ image
                           suite (variantImageManager) and is hard-gated by the
@@ -246,34 +264,25 @@ export function SettingsPlanTab({
                       {planDetails.variantImageManager && (
                         <Text as="p" variant="bodyMd">
                           <strong>{t.settings.webpConversion}:</strong>{" "}
-                          {planDetails.maxConcurrentWebpConversions >= 4 ? (
-                            <strong>
-                              {t.settings.webpConversionParallel.replace(
-                                "{count}",
-                                String(planDetails.maxConcurrentWebpConversions),
-                              )}{" "}
-                              ({t.settings.webpConversionFaster})
-                            </strong>
-                          ) : (
-                            t.settings.webpConversionParallel.replace(
+                          <PlanValue highlight={highlights.rows.webpConversion}>
+                            {t.settings.webpConversionParallel.replace(
                               "{count}",
                               String(planDetails.maxConcurrentWebpConversions),
-                            )
-                          )}
+                            )}
+                            {/* "2× faster" only where the number actually went
+                                UP — not merely where the row is new. */}
+                            {highlights.webpFasterThanPrevious
+                              ? ` (${t.settings.webpConversionFaster})`
+                              : ""}
+                          </PlanValue>
                         </Text>
                       )}
                       {planDetails.monthlyImageOperations > 0 && (
                         <Text as="p" variant="bodyMd">
                           <strong>{t.settings.monthlyImageOperations}:</strong>{" "}
-                          {/* Mirror the webpConversion treatment: bold the
-                              value on the highest tier (Max = 10k, Pro = 2k)
-                              so the Pro→Max image-quota jump is scannable in
-                              the same way concurrency already is. */}
-                          {planDetails.monthlyImageOperations >= 5000 ? (
-                            <strong>{formatNumber(planDetails.monthlyImageOperations, locale)}</strong>
-                          ) : (
-                            formatNumber(planDetails.monthlyImageOperations, locale)
-                          )}
+                          <PlanValue highlight={highlights.rows.imageOperations}>
+                            {formatNumber(planDetails.monthlyImageOperations, locale)}
+                          </PlanValue>
                         </Text>
                       )}
                       <Text as="p" variant="bodyMd">
@@ -281,35 +290,31 @@ export function SettingsPlanTab({
                       </Text>
                       <BlockStack gap="100">
                         {planDetails.contentTypes.map((type) => {
-                          const getLimitText = () => {
-                            switch (type) {
-                              case "products":
-                                return planDetails.maxProducts === Infinity
-                                  ? t.settings.unlimited
-                                  : formatNumber(planDetails.maxProducts, locale);
-                              case "collections":
-                                return formatNumber(planDetails.maxCollections, locale);
-                              case "articles":
-                                return formatNumber(planDetails.maxArticles, locale);
-                              case "pages":
-                                return formatNumber(planDetails.maxPages, locale);
-                              case "templates":
-                                return planDetails.maxThemeTranslations === 0
+                          // The numbers come from planDiff.contentTypeLimit, the
+                          // same reader the highlight comparison uses — the two
+                          // cannot drift apart into "bold, but same number".
+                          const rawLimit = contentTypeLimit(planDetails, type);
+                          const limit =
+                            rawLimit === null
+                              ? null
+                              : rawLimit === Infinity
+                                ? t.settings.unlimited
+                                : rawLimit === 0
                                   ? "—"
-                                  : formatNumber(planDetails.maxThemeTranslations, locale);
-                              default:
-                                return null;
-                            }
-                          };
-
-                          const limit = getLimitText();
+                                  : formatNumber(rawLimit, locale);
                           let note = limit ? ` (${limit})` : "";
                           if (type === "menus") {
                             note = ` (${t.settings.readOnly || "read-only"})`;
                           }
 
                           return (
-                            <Text key={type} as="p" variant="bodySm" tone="success">
+                            <Text
+                              key={type}
+                              as="p"
+                              variant="bodySm"
+                              tone="success"
+                              fontWeight={highlights.contentTypes.has(type) ? "bold" : undefined}
+                            >
                               ✓ {type}{note}
                             </Text>
                           );
@@ -328,7 +333,13 @@ export function SettingsPlanTab({
                             t.settings.featureBulkAltText,
                             t.settings.featureBulkImageUpload,
                           ].map((label) => (
-                            <Text key={label} as="p" variant="bodySm" tone="success">
+                            <Text
+                              key={label}
+                              as="p"
+                              variant="bodySm"
+                              tone="success"
+                              fontWeight={highlights.rows.imageTools ? "bold" : undefined}
+                            >
                               ✓ {label}
                             </Text>
                           ))
@@ -341,7 +352,12 @@ export function SettingsPlanTab({
                           // counts (it's the app's own simple gallery, and Basic
                           // does more than Free) — see plans.ts `productImages`.
                           <>
-                            <Text as="p" variant="bodySm" tone="success">
+                            <Text
+                              as="p"
+                              variant="bodySm"
+                              tone="success"
+                              fontWeight={highlights.rows.imageTools ? "bold" : undefined}
+                            >
                               ✓{" "}
                               {planDetails.productImages === "all"
                                 ? t.settings.featureBasicImages
@@ -354,12 +370,12 @@ export function SettingsPlanTab({
                         )}
                       </BlockStack>
 
-                      {/* SEO tools. Same reading order as the image block:
-                          what every tier gets first, then the paid unlocks,
-                          with the Max-only line bolded exactly like the WebP
-                          concurrency / image-quota rows above so the Pro→Max
-                          jump is scannable. Values come from PLAN_CONFIG[].seo
-                          — never hardcode them here. */}
+                      {/* SEO tools. Same reading order as the image block: what
+                          every tier gets first, then the paid unlocks. Bolding
+                          follows the card-wide rule (planDiff.ts) — the audit
+                          line is identical on every tier and therefore never
+                          bold. Values come from PLAN_CONFIG[].seo — never
+                          hardcode them here. */}
                       <Text as="p" variant="bodyMd">
                         <strong>{t.settings.seoFeaturesTitle}:</strong>
                       </Text>
@@ -367,7 +383,12 @@ export function SettingsPlanTab({
                         <Text as="p" variant="bodySm" tone="success">
                           ✓ {t.settings.seoFeatureAudit}
                         </Text>
-                        <Text as="p" variant="bodySm" tone="success">
+                        <Text
+                          as="p"
+                          variant="bodySm"
+                          tone="success"
+                          fontWeight={highlights.rows.seoBulkBatch ? "bold" : undefined}
+                        >
                           ✓{" "}
                           {t.settings.seoFeatureBulkBatch.replace(
                             "{count}",
@@ -375,7 +396,12 @@ export function SettingsPlanTab({
                           )}
                         </Text>
                         {planDetails.seo.maxTrackedKeywords > 0 && (
-                          <Text as="p" variant="bodySm" tone="success">
+                          <Text
+                            as="p"
+                            variant="bodySm"
+                            tone="success"
+                            fontWeight={highlights.rows.seoKeywords ? "bold" : undefined}
+                          >
                             ✓{" "}
                             {t.settings.seoFeatureKeywords.replace(
                               "{count}",
@@ -384,7 +410,12 @@ export function SettingsPlanTab({
                           </Text>
                         )}
                         {planDetails.seo.scoreHistoryDays > 0 && (
-                          <Text as="p" variant="bodySm" tone="success">
+                          <Text
+                            as="p"
+                            variant="bodySm"
+                            tone="success"
+                            fontWeight={highlights.rows.seoScoreHistory ? "bold" : undefined}
+                          >
                             ✓{" "}
                             {t.settings.seoFeatureScoreHistory.replace(
                               "{days}",
@@ -393,7 +424,12 @@ export function SettingsPlanTab({
                           </Text>
                         )}
                         {planDetails.seo.gscProperties > 0 && (
-                          <Text as="p" variant="bodySm" tone="success">
+                          <Text
+                            as="p"
+                            variant="bodySm"
+                            tone="success"
+                            fontWeight={highlights.rows.seoSearchConsole ? "bold" : undefined}
+                          >
                             ✓{" "}
                             {t.settings.seoFeatureSearchConsole
                               .replace("{properties}", formatNumber(planDetails.seo.gscProperties, locale))
@@ -401,7 +437,12 @@ export function SettingsPlanTab({
                           </Text>
                         )}
                         {planDetails.seo.monthlyIndexNowSubmissions > 0 && (
-                          <Text as="p" variant="bodySm" tone="success">
+                          <Text
+                            as="p"
+                            variant="bodySm"
+                            tone="success"
+                            fontWeight={highlights.rows.seoIndexNow ? "bold" : undefined}
+                          >
                             ✓{" "}
                             {t.settings.seoFeatureIndexNow.replace(
                               "{count}",
@@ -410,8 +451,13 @@ export function SettingsPlanTab({
                           </Text>
                         )}
                         {planDetails.seo.scheduledAudit && (
-                          <Text as="p" variant="bodySm" tone="success">
-                            ✓ <strong>{t.settings.seoFeatureScheduledAudit}</strong>
+                          <Text
+                            as="p"
+                            variant="bodySm"
+                            tone="success"
+                            fontWeight={highlights.rows.seoScheduledAudit ? "bold" : undefined}
+                          >
+                            ✓ {t.settings.seoFeatureScheduledAudit}
                           </Text>
                         )}
                         {/* Upsell line only when ALL three named unlocks are

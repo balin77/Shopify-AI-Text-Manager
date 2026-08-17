@@ -48,6 +48,21 @@ export function getNextPlanUpgrade(currentPlan: Plan): Plan | null {
 }
 
 /**
+ * Get the next LOWER plan — the tier a plan card is compared against when the
+ * cards highlight what they add over the one below them (utils/planDiff.ts).
+ * `null` for the lowest tier (and for an unknown plan string).
+ */
+export function getPreviousPlanTier(currentPlan: Plan): Plan | null {
+  const currentIndex = PLAN_ORDER.indexOf(currentPlan);
+
+  if (currentIndex <= 0) {
+    return null; // lowest tier, or invalid plan
+  }
+
+  return PLAN_ORDER[currentIndex - 1];
+}
+
+/**
  * Hierarchical plan check: does `current` rank at or above `required`?
  * Use this to gate features that need a minimum subscription tier
  * (e.g. Direct Translations requires "max").
