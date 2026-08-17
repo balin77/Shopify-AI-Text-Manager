@@ -31,7 +31,7 @@
      Pages built on the .app-page-content frame (Polaris <Page fullWidth>) put
      the class on that same element — capping the frame keeps its inner scroll
      container and its padding intact. */
-  --app-page-width-content: 1320px;
+  --app-page-width-content: 1452px;
   --app-page-width-narrow: 1200px;
   --app-page-width-full: none;
 
