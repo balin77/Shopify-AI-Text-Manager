@@ -14,6 +14,27 @@
      their own page-level padding wrapper on top of this. */
   --app-page-padding: 16px;
 
+  /* Single source of truth for how WIDE a page's content may get. Change the
+     numbers here and every page follows — routes must never hardcode a page
+     max-width of their own. Apply one of the .app-page-width* classes below to
+     the route's outermost content wrapper; which one is a content decision:
+
+     --app-page-width-content  reading-width pages: prose, forms, report
+                               tables (SEO sections, Tasks). Wide enough for a
+                               table, narrow enough that a line of text does
+                               not run the full width of a 4K monitor.
+     --app-page-width-narrow   focused single-task pages that are mostly a
+                               list of checkboxes or fields (bulk translate).
+     --app-page-width-full     data grids that turn every extra pixel into
+                               column width (the bulk editor).
+
+     Pages built on the .app-page-content frame (Polaris <Page fullWidth>) put
+     the class on that same element — capping the frame keeps its inner scroll
+     container and its padding intact. */
+  --app-page-width-content: 1320px;
+  --app-page-width-narrow: 1200px;
+  --app-page-width-full: none;
+
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
      100vh shell is taller than what is actually visible and its last rows can
@@ -130,6 +151,28 @@ html {
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+/* Page width, centred. The values live in :root above — these classes only
+   spend them, so a width change is one edit for the whole app. Deliberately
+   NO padding here: the .app-page-content frame already owns its gutter via
+   --app-page-padding, and a second `padding` declaration on the same element
+   would silently win or lose by rule order. */
+.app-page-width,
+.app-page-width-narrow,
+.app-page-width-full {
+  width: 100%;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+.app-page-width {
+  max-width: var(--app-page-width-content);
+}
+.app-page-width-narrow {
+  max-width: var(--app-page-width-narrow);
+}
+.app-page-width-full {
+  max-width: var(--app-page-width-full);
 }
 
 /* Visibility Utilities for Mobile/Tablet/Desktop

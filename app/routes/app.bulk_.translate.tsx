@@ -441,8 +441,10 @@ export default function BulkTranslateMissingPage() {
 
   const overCapNow = Math.max(0, selectedUnits - MAX_TRANSLATE_UNITS);
 
+  // Width comes from .app-page-width-narrow (responsive.css :root) — this page
+  // is a focused checkbox list, not a grid. Never hardcode a max-width here.
   return (
-    <div style={{ padding: "1rem", maxWidth: "1200px", margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
+    <div className="app-page-width-narrow" style={{ padding: "1rem" }}>
       <PlanAccessGate minPlan="pro">
         {data.gated ? null : (
           <BlockStack gap="400">

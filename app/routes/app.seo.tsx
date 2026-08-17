@@ -194,9 +194,9 @@ export default function SeoLayout() {
       )}
 
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {/* Stays centred and capped (SEO sections are reading-width content),
-            but 10% wider than the former 1200px so the tables breathe. */}
-        <div style={{ padding: "1rem", maxWidth: "1320px", margin: "0 auto", width: "100%" }}>
+        {/* Width comes from .app-page-width (responsive.css :root) — never
+            hardcode a max-width here. SEO sections are reading-width content. */}
+        <div className="app-page-width" style={{ padding: "1rem" }}>
           {isSeoSectionLoading ? (
             <Card>
               <BlockStack gap="400">

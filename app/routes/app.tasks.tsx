@@ -304,8 +304,14 @@ export default function TasksPage() {
       {/* Page padding is owned globally by .Polaris-Page (responsive.css,
           --app-page-padding); .app-page-content zeroes Polaris' own
           Page__Content inset so the gutter is even on all sides (incl. top
-          and bottom), matching the content page. */}
-      <div className="app-page-content">
+          and bottom), matching the content page.
+
+          .app-page-width caps and centres the FRAME (same reading width as the
+          SEO sections — the value lives in responsive.css :root, never here),
+          which leaves the frame's padding and its inner scroll container
+          untouched. <Page fullWidth> stays: without it Polaris' own ~1000px
+          cap would win before ours is ever reached. */}
+      <div className="app-page-content app-page-width">
         <BlockStack gap="400">
           {/* Filters */}
           <Card>
