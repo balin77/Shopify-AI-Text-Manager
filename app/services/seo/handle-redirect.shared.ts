@@ -20,6 +20,27 @@
  *   - a redirect whose source and target are equal is a LOOP. Shopify would
  *     accept it; the crawler in this very app would then report it.
  *   - the merchant may not want one. It is offered, not imposed.
+ *
+ * ── The locale prefix, MEASURED ────────────────────────────────────────────
+ * This module only ever redirects PRIMARY-locale handles, and for a long time
+ * the stated reason was that the interaction between a path-based redirect and
+ * a locale prefix was unknown. It is not unknown any more. Measured 2026-08 on
+ * a live translating shop with [api.redirect-locale-probe.tsx]
+ * (../../routes/api.redirect-locale-probe.tsx) — a throwaway redirect
+ * `/<probe>` → `/<target>`, both sides distinctive so neither answer can be
+ * confused with a normalisation:
+ *
+ *   `/<probe>`      → 301 → `/<target>`
+ *   `/en/<probe>`   → 301 → `/en/<target>`      ← NOT `/<target>`
+ *
+ * So both halves of the question have an answer: a prefixed path DOES match the
+ * redirect table, and the prefix is CARRIED onto the target. One UNPREFIXED row
+ * therefore serves every locale, and a per-locale row would be redundant rather
+ * than necessary — the opposite of what the pessimistic reading assumed.
+ *
+ * The foreign-handle write paths still create nothing, but that is now a scope
+ * decision and not an unknown: extending them is a behaviour change on a
+ * URL-affecting write path, so it gets asked for rather than assumed.
  */
 
 /** The types whose storefront URL is derived from a handle. */

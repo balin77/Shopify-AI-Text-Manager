@@ -62,7 +62,9 @@ export async function handleUpdateContent(
   // ── PLAN §Phase 3.3 / §A1 — a handle change breaks the old URL ───────────
   // Read BEFORE the write, because afterwards the old handle is gone and with
   // it any chance of preserving the address it served. Only for the primary
-  // locale: a translated handle is a different URL and a different question.
+  // locale: a translated handle is a different URL, and covering it is a scope
+  // decision left open — see the measured locale-prefix note in
+  // handle-redirect.shared.ts.
   // The per-save form field wins where it is sent, so a future per-edit
   // checkbox needs no server change; otherwise the shop's preference decides.
   const wantsHandleRedirect = resolveRedirectPreference(

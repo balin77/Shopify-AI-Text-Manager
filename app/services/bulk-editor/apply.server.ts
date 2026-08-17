@@ -1711,10 +1711,13 @@ async function loadPrimaryHandle(
 // go. The shop-level setting is a shop-level promise, so it has to hold on this
 // path as well — through the SAME decision module, never a second rule.
 //
-// Bulk-TRANSLATE is deliberately not covered: a translated handle is a
-// locale-prefixed URL (`/es/products/…`) and how Shopify's path-based redirects
-// interact with the locale prefix is unmeasured. Guessing there would produce
-// redirects nobody can verify, which is worse than the honest gap.
+// Bulk-TRANSLATE is deliberately not covered — a scope decision, no longer an
+// unknown. The locale-prefix question was measured 2026-08 on a live shop (see
+// the header of handle-redirect.shared.ts): a prefixed path DOES match a
+// path-based redirect and the prefix is carried onto the target, so one
+// unprefixed row would serve every locale. Extending this to translated handles
+// is therefore possible; it is a behaviour change on a URL-affecting write path
+// and is asked for rather than assumed.
 
 interface CapturedHandle {
   resource: RedirectableResource;

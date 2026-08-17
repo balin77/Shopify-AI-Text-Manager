@@ -9,10 +9,18 @@
  * is the prefixed path a different path as far as the redirect table is
  * concerned?
  *
- * Nothing in the docs or in this codebase answers it, and the answer decides
+ * Nothing in the docs or in this codebase answered it, and the answer decides
  * whether bulk-translate's foreign-handle column can create redirects at all.
- * Guessing would produce rows nobody can verify — which is why that path
- * currently creates none.
+ *
+ * ── The result (2026-08, live translating shop) ────────────────────────────
+ *   `/<probe>`    → 301 → `/<target>`
+ *   `/en/<probe>` → 301 → `/en/<target>`      ← the prefix is CARRIED
+ *
+ * Both halves answered: a prefixed path matches the redirect table, and the
+ * target keeps the prefix — so ONE unprefixed row serves every locale. Recorded
+ * as an invariant in the header of `services/seo/handle-redirect.shared.ts`.
+ * This route stays so the answer can be RE-measured in one click when Shopify
+ * changes something, rather than re-argued from memory.
  *
  * ── How this measures it ───────────────────────────────────────────────────
  * A throwaway redirect from a path that cannot collide with anything real,
