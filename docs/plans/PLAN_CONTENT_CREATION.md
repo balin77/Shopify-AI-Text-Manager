@@ -1,21 +1,23 @@
 # Inhalte in ContentPilot erstellen — Plan (Phasen 0–4)
 
-**Status (2026-08-17, Branch `claude/plan-content-creation-4fqoph`):** Phasen 0–3 weitgehend umgesetzt, jeder Schritt mit eigenem Review-Durchlauf und behobenen Befunden.
+**Status (2026-08-17, Branch `claude/plan-content-creation-4fqoph`):** Phasen 0–4 umgesetzt, jeder Schritt mit eigenem Review-Durchlauf und behobenen Befunden.
 
 | Phase | Stand |
 |---|---|
 | 0 | ✅ Migration, Attribut-Sync (`attribute-sync.shared.ts`), Join-Modell `ProductCollection`, `blog`-Case, Messungen (Collection-Probe) |
 | 1 | ✅ Create-Modal + `createContent`, sechs Typen, Idempotenz, Delete mit Doppelbestätigung, Undo, Duplizieren |
-| 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts` (im Create-Modal; Einbindung in den **Editor** bestehender Collections steht noch aus) |
+| 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts`, im Create-Modal **und** im Editor bestehender Collections (API-Guard ≥2026-07, Bearbeiten als Bedingungs-Diff) |
 | 1b | ✅ `SeoSidebar` → `ItemSidebar` |
 | 2 | ✅ Attribut-Tab; Loader liefern den Attributblock (nachgezogen in Phase 3) |
-| 3.1/3.2/3.5 | ✅ `status`, `vendor`, `tags`, `author`, `sortOrder`, `templateSuffix`, `isPublished`, `money` (Preis der Standardvariante) editierbar, nicht übersetzbar markiert. **Offen:** `taxonomy` (Kategorie), `collections` (Mitgliedschafts-Picker), `collectionRules` im Editor |
+| 3.1/3.2/3.5 | ✅ `status`, `vendor`, `tags`, `author`, `sortOrder`, `templateSuffix`, `isPublished`, `money`, `taxonomy` (Kategorie-Suche), `collections` (Mitgliedschafts-Diff), `collectionRules` im Editor |
 | 3.3 | ✅ Redirect bei Handle-Wechsel (Einzel- **und** Bulk-Editor), als Diff über bestehende Redirects |
 | 3.4 | ✅ IndexNow am Publish-Übergang für Pages/Artikel/Blogs (die drei ohne Webhook) |
 | 3.6 | ✅ `vendor`/`tags` als Bulk-Spalten |
-| 4 | ⛔ nicht begonnen — Scope-Change, braucht eine Entscheidung (§8.1) |
+| 4 | ✅ Scopes in beiden TOMLs, Schema + Sync (`commerce-sync.shared.ts`), `inventorySetQuantities` mit `compareQuantity`, `publishablePublish`/`Unpublish`, eigene Route + Panel, Merchant-Hinweis zum Scope-Change. **Offen:** `inventoryItemUpdate` (Kosten, Steuerpflicht, Gewicht, Zolltarif, Ursprungsland) — synchronisiert, aber noch nicht schreibbar |
 
-Ebenfalls offen: §2.5 (KI-Extras: „Rest generieren", Live-SEO-Score im Modal, Auto-Alt-Text, „danach übersetzen", Glossar in `generate*`) sowie §8.2–§8.4.
+§2.5 ist vollständig umgesetzt (KI-Extras: Rest generieren, Live-SEO-Score im Modal, Auto-Alt-Text, danach übersetzen, Glossar in `generate*`). Ebenfalls offen: §8.2–§8.4.
+
+**Phase 4, Schritt 5 (Task-Recovery):** entfällt bewusst — Bestand und Kanäle schreiben synchron im Request, es entsteht kein `Task`-Eintrag, also gibt es auch keinen Typ für `LONG_RUNNING_TASK_TYPES`.
 
 **Ursprünglicher Status:** Entwurf, Umsetzung nicht begonnen. Grundsatzentscheidungen getroffen (§2), Review-Durchlauf eingearbeitet (2026-08).
 **Ziel:** Der Merchant soll für das **Anlegen und Bearbeiten von Content** nicht mehr in den Shopify-Admin wechseln müssen. Einstieg ist der bereits vorhandene „+"-Button in [UnifiedItemList](../../app/components/unified/UnifiedItemList.tsx), der ein Create-Modal öffnet; ergänzend ein neuer Sidebar-Tab, der die *nicht-SEO*-Vollständigkeit eines Items zeigt.
@@ -676,7 +678,7 @@ Die Phase mit dem Scope-Change → **ein Deploy, eine Re-Consent-Runde**. Vorher
 | **−1** | **API-Umzug 2025-10 → 2026-07 — Frist 2026-10-16, auch ohne diesen Plan fällig** | **1–2 Tage** | nein |
 | 0 | Migration, Sync-Felder, Join-Modell, `blog`-Case, Messungen | 1–2 Tage | nein |
 | 1 | Create-Modal + `createContent`, sechs Typen, Idempotenz, Undo, Duplizieren | 3–4 Tage | nein |
-| 1.4b | `CollectionRuleBuilder` + `collection-rules.shared.ts` | 2–3 Tage | nein |
+| 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts`, im Create-Modal **und** im Editor bestehender Collections (API-Guard ≥2026-07, Bearbeiten als Bedingungs-Diff) |
 | 1b | Rename `SeoSidebar` → `ItemSidebar` (eigener Commit) | ~1 h | nein |
 | 2 | Attribute-Tab | 1 Tag | nein |
 | 3 | Feldtypen, Status, Preis, Redirects, IndexNow | 3–4 Tage | nein |
