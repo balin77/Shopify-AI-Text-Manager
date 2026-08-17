@@ -4,6 +4,7 @@ import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { SidebarTabBar } from "./SidebarTabBar";
+import { ActionTooltip } from "./ActionTooltip";
 import {
   validateJsonLd,
   renderJsonLdScript,
@@ -91,6 +92,14 @@ interface SeoSidebarProps {
   keywordLocale?: string;
   /** Display name of `keywordLocale`, for the scope hint. Optional. */
   keywordLocaleName?: string;
+  /**
+   * Work the tracked keywords into the item's texts (the `insertKeyword`
+   * pass). Omitted by callers that have no editor behind them — the button is
+   * only rendered when this is supplied.
+   */
+  onInsertKeywords?: () => void;
+  /** True while that multi-field run is in flight. */
+  insertKeywordsLoading?: boolean;
 }
 
 export function SeoSidebar({
@@ -109,6 +118,8 @@ export function SeoSidebar({
   resourceType,
   keywordLocale = "",
   keywordLocaleName,
+  onInsertKeywords,
+  insertKeywordsLoading = false,
 }: SeoSidebarProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -669,6 +680,28 @@ export function SeoSidebar({
                     </Button>
                   </InlineStack>
                 ))}
+
+                {/* Work the tracked keywords into the texts. Deliberately
+                    below the list: it acts on everything above it, and it is
+                    only useful once at least one keyword exists. */}
+                {onInsertKeywords && keywords.length > 0 && (
+                  <ActionTooltip
+                    content={
+                      t.seo?.insertKeywordsHint ||
+                      "Works the keywords above into title, SEO title, meta description and body — only where they are missing. Nothing else is rewritten."
+                    }
+                    preferredPosition="below"
+                  >
+                    <Button
+                      size="slim"
+                      onClick={onInsertKeywords}
+                      loading={insertKeywordsLoading}
+                      disabled={keywordLoadFetcher.state !== "idle"}
+                    >
+                      {t.seo?.insertKeywords || "Keywords einarbeiten"}
+                    </Button>
+                  </ActionTooltip>
+                )}
 
                 {keywords.length < MAX_KEYWORDS_PER_ITEM ? (
                   <InlineStack gap="200" blockAlign="end" wrap={false}>

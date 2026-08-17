@@ -547,6 +547,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         keywordLocaleName={
           shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage
         }
+        onInsertKeywords={handlers.handleInsertKeywords}
+        insertKeywordsLoading={handlers.isInsertingKeywords}
       />
     );
   };

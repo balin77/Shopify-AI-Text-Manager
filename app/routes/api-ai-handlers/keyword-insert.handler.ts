@@ -13,10 +13,12 @@
  *    `analyzeOnPage` (word-boundary aware, same rule the keywords tab shows),
  *    so the answer costs no AI call and the field is returned untouched with
  *    `skipped: true`. On a well-maintained item the whole run is free.
- *  - **No secondaries.** Only the PRIMARY keyword is inserted. Offering four
- *    optional phrases to a pass that is supposed to preserve the text is how
- *    "insert" turns into "rewrite" — the same reasoning that keeps them out of
- *    `keywordPreservationLine`.
+ *  - **Never force a keyword in.** Every tracked keyword of the locale is
+ *    offered, but only the ones still MISSING are asked for, and the prompt is
+ *    explicit that a keyword which would distort the meaning — or would not
+ *    fit a short field's character ceiling — is to be left out. Five keywords
+ *    do not fit a 60-character SEO title, and pretending otherwise is how a
+ *    preserving pass turns into stuffing.
  *
  * The SEO rules still apply: the field's character ceiling is enforced (a
  * keyword must not push an SEO title past its limit) and the stuffing guard
@@ -57,13 +59,17 @@ export async function handleInsertKeyword(ctx: AIActionContext): Promise<DataRes
 
   const locale = resolveKeywordLocale(formData);
   const tracked = await loadTrackedKeywords(db, session.shop, itemId, locale, fieldType);
-  if (!tracked.primary) {
+  if (tracked.all.length === 0) {
     return json({ success: true, skipped: true, reason: "noKeyword", fieldType, value: currentValue });
   }
 
-  // The whole point of the confirmed "skip" rule: already present → no call,
-  // no change, no risk of the model touching a finished text.
-  if (analyzeOnPage({ keyword: tracked.primary, bodyHtml: currentValue }).presence.body) {
+  // The confirmed skip rule, applied per keyword: whatever is already in the
+  // text costs no AI call and is never mentioned to the model. All present →
+  // no call at all, and the finished text is not touched.
+  const missing = tracked.all.filter(
+    (keyword) => !analyzeOnPage({ keyword, bodyHtml: currentValue }).presence.body,
+  );
+  if (missing.length === 0) {
     return json({ success: true, skipped: true, reason: "present", fieldType, value: currentValue });
   }
 
@@ -88,22 +94,29 @@ export async function handleInsertKeyword(ctx: AIActionContext): Promise<DataRes
     fieldType: isValidFieldType(fieldType) ? fieldType : undefined,
     allowNewlines: true,
   });
-  const keyword = sanitizePromptInput(tracked.primary, { fieldType: "general" });
+  const sanitizedMissing = missing.map((keyword) =>
+    sanitizePromptInput(keyword, { fieldType: "general" }),
+  );
+  const keywordList = sanitizedMissing.map((keyword) => `"${keyword}"`).join(", ");
+  const isPrimaryMissing = !!tracked.primary && missing[0] === tracked.primary;
 
-  const basePrompt = `Below is an existing ${field?.label || fieldType} text. It does not yet contain the target keyword "${keyword}".
+  const basePrompt = `Below is an existing ${field?.label || fieldType} text. These target keywords do not appear in it yet: ${keywordList}.
 
 TEXT:
 ${sanitizedValue}
 
-Your ONLY task is to make the exact phrase "${keyword}" appear in this text ONCE.
+Your ONLY task is to make as many of those keywords as fit naturally appear in this text, each at most ONCE.
 
 Rules:
-- Change as little as possible. Reword ONE existing phrase or sentence so the keyword fits naturally.
+- Change as little as possible. Reword existing phrases so a keyword fits; never write new content around one.
 - Do NOT append a new sentence, heading or list item.
-- Do NOT rephrase, reorder, shorten or "improve" anything else — every other sentence must come back unchanged.
+- Do NOT rephrase, reorder, shorten or "improve" anything else — every sentence you are not using to place a keyword must come back unchanged.
 - Keep the original language, tone and meaning.
-- Do NOT add any other keyword.${isHtml ? "\n- Preserve the HTML structure and every tag exactly." : ""}
-- If the keyword genuinely cannot be worked in without distorting the meaning, return the text UNCHANGED.${ceiling ? `\n- ${ceiling}` : ""}
+- Never place more than one keyword in the same sentence.
+- LEAVE OUT any keyword that would distort the meaning, read as forced, or not fit. Fewer keywords worked in well is the correct outcome; cramming them all in is not.${
+    isPrimaryMissing ? `\n- If only one fits, it must be "${sanitizedMissing[0]}".` : ""
+  }${isHtml ? "\n- Preserve the HTML structure and every tag exactly." : ""}
+- If none of them can be worked in, return the text UNCHANGED.${ceiling ? `\n- ${ceiling}` : ""}
 
 Return ONLY the resulting text. No explanation, no quotes, no markdown fences.`;
 
@@ -131,12 +144,14 @@ Return ONLY the resulting text. No explanation, no quotes, no markdown fences.`;
     // Same guard as generation: one retry, then accept with a warning rather
     // than silently persisting a stuffed value.
     const isLongContent = isHtml || fieldType === "description" || fieldType === "body";
-    let stuffed = findStuffedKeyword(result, [keyword], isLongContent);
+    // The guard measures EVERY tracked keyword, not just the inserted ones —
+    // adding one can push a keyword that was already present over the line.
+    let stuffed = findStuffedKeyword(result, tracked.all, isLongContent);
     if (stuffed) {
       result = (
         await aiService["askAI"](basePrompt + stuffingRetryWarning(stuffed, isLongContent))
       ).trim();
-      stuffed = findStuffedKeyword(result, [keyword], isLongContent);
+      stuffed = findStuffedKeyword(result, tracked.all, isLongContent);
     }
 
     if (!result) {
@@ -170,7 +185,11 @@ Return ONLY the resulting text. No explanation, no quotes, no markdown fences.`;
       skipped: false,
       fieldType,
       value: result,
-      keyword: tracked.primary,
+      // What actually landed — the model is allowed to leave keywords out, so
+      // this is measured on the RESULT rather than assumed from the request.
+      inserted: missing.filter(
+        (keyword) => analyzeOnPage({ keyword, bodyHtml: result }).presence.body,
+      ),
       keywordStuffingWarning: !!stuffed,
     });
   } catch (error: unknown) {

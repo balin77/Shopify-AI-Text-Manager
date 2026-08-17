@@ -399,6 +399,10 @@ export interface EditorHandlers {
   handleDiscard: () => void;
   handleGenerateAI: (fieldKey: string, userInstruction?: string) => void;
   handleFormatAI: (fieldKey: string) => void;
+  /** Work the active language's tracked keywords into every field missing them. */
+  handleInsertKeywords: () => void;
+  /** True while that multi-field run is in flight. */
+  isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
   handleTranslateFieldToAllLocales: (fieldKey: string) => void;
   handleCopyField: (fieldKey: string) => void;
