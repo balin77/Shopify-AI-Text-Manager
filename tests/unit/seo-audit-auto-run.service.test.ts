@@ -10,22 +10,25 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const findMany = vi.fn();
-const update = vi.fn(async () => ({}));
-const analyzeStore = vi.fn();
-const saveAuditSnapshot = vi.fn(async () => {});
+// Typed as (...args: any[]) so the module stubs below can forward their real
+// arguments — a zero-arg vi.fn() makes every forwarding call a type error.
+const findMany = vi.fn<(args: any) => Promise<any>>();
+const update = vi.fn<(args: any) => Promise<any>>();
+const analyzeStore = vi.fn<(shop: any, deps: any) => Promise<any>>();
+const saveAuditSnapshot = vi.fn<(db: any, shop: any, audit: any, locale: any) => Promise<void>>();
 
 vi.mock("~/db.server", () => ({
   db: {
     aISettings: {
-      findMany: (...args: any[]) => findMany(...args),
-      update: (...args: any[]) => update(...args),
+      findMany: (args: any) => findMany(args),
+      update: (args: any) => update(args),
     },
   },
 }));
 vi.mock("~/services/seo/audit.service", () => ({
-  analyzeStore: (...args: any[]) => analyzeStore(...args),
-  saveAuditSnapshot: (...args: any[]) => saveAuditSnapshot(...args),
+  analyzeStore: (shop: any, deps: any) => analyzeStore(shop, deps),
+  saveAuditSnapshot: (db: any, shop: any, audit: any, locale: any) =>
+    saveAuditSnapshot(db, shop, audit, locale),
 }));
 
 const AUDIT = { averageScore: 71, totalScanned: 12, totalAvailable: 12, capped: false };
