@@ -200,9 +200,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 type ActionResult =
   | { ok: true; kind: "provisioned" | "deprovisioned" }
-  | { ok: true; kind: "submitted"; submitted: number; failed: number; failureKind: SubmitStatusKind | null }
+  | {
+      ok: true;
+      kind: "submitted";
+      submitted: number;
+      failed: number;
+      failureKind: SubmitStatusKind | null;
+      /** URLs left out because the monthly quota ran out mid-catalog. */
+      skippedOverQuota?: number;
+    }
   | { ok: true; kind: "empty" }
   | { ok: true; kind: "cooldown"; retryAfterMinutes: number }
+  /** This month's plan submission quota is used up — nothing was sent. */
+  | { ok: true; kind: "quotaExhausted"; quotaLimit: number; quotaUsed: number }
   | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
@@ -257,6 +267,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     if (allowed.status === "disabled") {
       return json<ActionResult>({ ok: false, error: "disabled" }, { status: 409 });
     }
+    if (allowed.status === "quotaExhausted") {
+      return json<ActionResult>({
+        ok: true,
+        kind: "quotaExhausted",
+        quotaLimit: allowed.quota.limit,
+        quotaUsed: allowed.quota.used,
+      });
+    }
     if (allowed.status === "cooldown") {
       return json<ActionResult>({
         ok: true,
@@ -270,6 +288,14 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     ]);
     const outcome = await submitAll(db, session.shop, { blogHandles, unpublishedPageIds });
     if (outcome.status === "disabled") return json<ActionResult>({ ok: false, error: "disabled" }, { status: 409 });
+    if (outcome.status === "quotaExhausted") {
+      return json<ActionResult>({
+        ok: true,
+        kind: "quotaExhausted",
+        quotaLimit: outcome.quota.limit,
+        quotaUsed: outcome.quota.used,
+      });
+    }
     if (outcome.status === "cooldown") {
       return json<ActionResult>({
         ok: true,
@@ -283,12 +309,22 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       submitted: outcome.result.submitted,
       failed: outcome.result.failed,
       failureKind: firstFailureKind(outcome.result),
+      skippedOverQuota: outcome.skippedOverQuota,
     });
   }
   if (actionType === "submitPending") {
     const outcome = await drainQueue(db, session.shop);
     if (outcome.status === "disabled") return json<ActionResult>({ ok: false, error: "disabled" }, { status: 409 });
     if (outcome.status === "empty") return json<ActionResult>({ ok: true, kind: "empty" });
+    if (outcome.status === "quotaExhausted") {
+      return json<ActionResult>({
+        ok: true,
+        kind: "quotaExhausted",
+        quotaLimit: outcome.quota.limit,
+        quotaUsed: outcome.quota.used,
+      });
+    }
+
     return json<ActionResult>({
       ok: true,
       kind: "submitted",
@@ -346,9 +382,28 @@ export default function SeoIndexNow() {
             + failureText(failureKind),
         };
       }
+      const skipped = fetcher.data.skippedOverQuota ?? 0;
+      if (skipped > 0) {
+        // A truncated push must not read as a complete one.
+        return {
+          tone: "warning" as const,
+          text:
+            n.submitted.replace("{count}", String(submitted)) +
+            " " +
+            n.submitTruncated.replace("{count}", String(skipped)),
+        };
+      }
       return { tone: "success" as const, text: n.submitted.replace("{count}", String(submitted)) };
     }
     if (fetcher.data.kind === "empty") return { tone: "info" as const, text: n.nothingToSubmit };
+    if (fetcher.data.kind === "quotaExhausted") {
+      return {
+        tone: "warning" as const,
+        text: n.quotaExhausted
+          .replace("{used}", String(fetcher.data.quotaUsed))
+          .replace("{limit}", String(fetcher.data.quotaLimit)),
+      };
+    }
     if (fetcher.data.kind === "cooldown") {
       return {
         tone: "info" as const,

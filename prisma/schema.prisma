@@ -138,6 +138,18 @@ model AISettings {
   // SEO Title suffix (shop name appended by Shopify theme)
   seoTitleSuffixEnabled Boolean @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
+  // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
+  // entitled shop gets the trend without hunting for a checkbox; the sweep
+  // filters on it IN THE QUERY, so switching it off costs nothing per tick.
+  // Independent of the plan gate: both must hold for a scan to happen.
+  seoAutoAuditEnabled Boolean @default(true)
+  // Last automatic (nightly) SEO audit run for this shop — see
+  // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
+  // the sweep's "is this shop due" query and is stamped on every path
+  // (success, skip, error) so a broken shop cannot win it forever. Backoff
+  // stamp, NOT a lock. Only shops on a plan with seo.scheduledAudit are ever
+  // selected.
+  lastAutoAuditAt DateTime?
 
   // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
   // after the storefront crawl. Default ON (the report is worth little
@@ -187,6 +199,9 @@ model AISettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Backs the nightly-audit sweep's due-query (audit-auto-run.service.ts).
+  @@index([subscriptionPlan, lastAutoAuditAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the
@@ -1254,6 +1269,13 @@ model SeoIndexNowConfig {
   // ineligible shop can't win the "due" query forever — same guard the
   // llms/GSC sweeps document. NOT a lock.
   lastAutoRunAt DateTime?
+  // Rolling monthly submission quota (PlanLimits.seo.monthlyIndexNowSubmissions).
+  // `submitPeriod` is the UTC "YYYY-MM" key the counter belongs to — the same
+  // convention as the image-operation quota, so a new month resets the counter
+  // lazily on the next write instead of needing a cron. Usage data, not
+  // entitlement data: never touched by planCacheCleanup.
+  submitPeriod  String?
+  submitCount   Int       @default(0)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

@@ -529,6 +529,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // Keyword-aware translation (Übersetzungen card).
         keywordAwareTranslation: settings.keywordAwareTranslation ?? true,
 
+        // Nightly SEO audit (Max) — merchant switch, see
+        // services/seo/audit-auto-run.service.ts. Shown on every plan but only
+        // editable where the plan grants scheduledAudit.
+        seoAutoAuditEnabled: settings.seoAutoAuditEnabled ?? true,
+
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
@@ -764,6 +769,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
+      // Nightly audit switch. Only written when the field is present, so a
+      // client that does not know the field cannot reset it. Gated below,
+      // next to the seoLimits gate, on the same "would it change anything"
+      // rule — a no-op payload from an unentitled shop must not 403.
+      const rawAutoAudit = formData.get("seoAutoAuditEnabled");
+      const autoAuditRequested = rawAutoAudit === null ? undefined : rawAutoAudit === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
 
       // Merchant-editable SEO character limits (Pro+). Parse first, then
@@ -822,18 +833,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
+      let autoAuditUpdate: boolean | undefined = undefined;
+      if (autoAuditRequested !== undefined) {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoAutoAuditEnabled: true },
+        });
+        const current = row?.seoAutoAuditEnabled ?? true;
+        if (current !== autoAuditRequested) {
+          const { canAccessSeoFeature } = await import("../utils/planUtils");
+          const plan = (row?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!canAccessSeoFeature(plan, "scheduledAudit")) {
+            return json(
+              {
+                success: false,
+                error: "The nightly SEO audit is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoAuditUpdate = autoAuditRequested;
+        }
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+          ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
         },
         create: {
           shop: session.shop,
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
+          ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
         },
       });
 

@@ -14,11 +14,14 @@ import {
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { DEFAULT_SEO_LIMITS, resolveSeoLimits, type SeoLimits } from "../utils/character-limits";
-import { meetsPlan, type Plan } from "../utils/planUtils";
+import { meetsPlan, canAccessSeoFeature, getMinimumPlanForSeoFeature, type Plan } from "../utils/planUtils";
+import { PLAN_DISPLAY_NAMES } from "../config/plans";
 
 interface Settings {
   seoTitleSuffixEnabled: boolean;
   seoTitleSuffix: string;
+  /** Nightly automatic store audit (Max plan). */
+  seoAutoAuditEnabled: boolean;
   /** Stored merchant overrides; `null` = defaults from character-limits.ts. */
   seoLimits: Partial<SeoLimits> | null;
 }
@@ -122,12 +125,20 @@ export function SettingsSEOTab({
   onHasChangesChange,
 }: SettingsSEOTabProps) {
   const canEditLimits = meetsPlan(subscriptionPlan, "pro");
+  // The nightly audit is an entitlement, so the row is shown on every plan but
+  // only operable where the plan grants it — same treatment the limit fields
+  // get, and the action re-checks server-side.
+  const canScheduleAudit = canAccessSeoFeature(subscriptionPlan, "scheduledAudit");
+  const scheduledAuditPlan = getMinimumPlanForSeoFeature("scheduledAudit");
   const initialDraft = toDraft(settings.seoLimits ?? null);
 
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
     settings.seoTitleSuffixEnabled ?? false,
   );
   const [seoTitleSuffix, setSeoTitleSuffix] = useState(settings.seoTitleSuffix || "");
+  const [seoAutoAuditEnabled, setSeoAutoAuditEnabled] = useState(
+    settings.seoAutoAuditEnabled ?? true,
+  );
   const [limits, setLimits] = useState<Record<keyof SeoLimits, string>>(initialDraft);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -136,13 +147,14 @@ export function SettingsSEOTab({
       seoTitleSuffixEnabled !== (settings.seoTitleSuffixEnabled ?? false) ||
       seoTitleSuffix !== (settings.seoTitleSuffix || "");
     const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
-    const changed = suffixChanged || limitsChanged;
+    const autoAuditChanged = seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true);
+    const changed = suffixChanged || limitsChanged || autoAuditChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
     // initialDraft is derived from `settings` — including it in deps would
     // create a new object each render and loop indefinitely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seoTitleSuffixEnabled, seoTitleSuffix, limits, settings, onHasChangesChange]);
+  }, [seoTitleSuffixEnabled, seoTitleSuffix, limits, seoAutoAuditEnabled, settings, onHasChangesChange]);
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -158,6 +170,12 @@ export function SettingsSEOTab({
         seoTitleSuffixEnabled: String(seoTitleSuffixEnabled),
         seoTitleSuffix,
         ...(limitsChanged ? { seoLimits: JSON.stringify(coerceLimits(limits)) } : {}),
+        // Same rule as the limits payload: only send the field when the
+        // merchant may change it AND did, so a read-only render on a lower
+        // plan can never write the column.
+        ...(canScheduleAudit && seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true)
+          ? { seoAutoAuditEnabled: String(seoAutoAuditEnabled) }
+          : {}),
       },
       { method: "POST" },
     );
@@ -167,6 +185,7 @@ export function SettingsSEOTab({
     setSeoTitleSuffixEnabled(settings.seoTitleSuffixEnabled ?? false);
     setSeoTitleSuffix(settings.seoTitleSuffix || "");
     setLimits(toDraft(settings.seoLimits ?? null));
+    setSeoAutoAuditEnabled(settings.seoAutoAuditEnabled ?? true);
   };
 
   const handleResetLimits = () => {
@@ -264,6 +283,42 @@ export function SettingsSEOTab({
               </Banner>
             </BlockStack>
           )}
+        </BlockStack>
+
+        <Divider />
+
+        {/* Nightly automatic audit (Max). Own section because it is the only
+            setting here that changes what the app does WITHOUT the merchant
+            present — it deserves an obvious switch, not a line in a list. */}
+        <BlockStack gap="300">
+          <Text as="h3" variant="headingMd">
+            {t.settings.seoAutoAuditHeading || "Automatischer Audit"}
+          </Text>
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <ToggleSwitch
+              checked={canScheduleAudit && seoAutoAuditEnabled}
+              disabled={!canScheduleAudit}
+              onChange={setSeoAutoAuditEnabled}
+            />
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoAutoAuditLabel || "Nächtlicher SEO-Audit"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoAutoAuditDescription ||
+                  "Einmal täglich wird dein Shop automatisch gescannt und der SEO-Score als Verlaufspunkt gespeichert. Es werden nur Daten gelesen — keine Inhalte werden verändert."}
+              </Text>
+              {!canScheduleAudit && scheduledAuditPlan && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(t.settings.seoAutoAuditPlanHint ||
+                    "Ab dem {plan}-Plan verfügbar.").replace(
+                    "{plan}",
+                    PLAN_DISPLAY_NAMES[scheduledAuditPlan],
+                  )}
+                </Text>
+              )}
+            </BlockStack>
+          </InlineStack>
         </BlockStack>
 
         <Divider />

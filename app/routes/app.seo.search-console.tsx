@@ -31,7 +31,7 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { getFormString } from "../utils/form-data.utils";
-import { meetsPlan } from "../utils/planUtils";
+import { meetsPlan, getGscHistoryDays } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import {
@@ -48,6 +48,7 @@ import {
   signOAuthState,
   defaultDateRange,
   previousDateRange,
+  GSC_RETENTION_DAYS,
   computeQueryDeltas,
   findLostQueries,
   revokeGoogleToken,
@@ -351,7 +352,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
-    const { startDate, endDate } = defaultDateRange(new Date());
+    // Lookback window is a plan entitlement (§Plan-Matrix): Pro sees the
+    // rolling 28 days, Max the ~16 months the GSC API itself retains. The
+    // period-over-period comparison below uses the SAME width, so the deltas
+    // stay like-for-like on either plan.
+    const historyDays = getGscHistoryDays(plan);
+    // The period-over-period comparison needs TWO consecutive windows of the
+    // same width to fit inside GSC's ~16-month retention. At Max's 480 days
+    // the previous window would start ~32 months back — outside retention, so
+    // GSC returns nothing and deltas/lost queries silently vanish on the tier
+    // that pays for history. Cap the COMPARISON width (not the main window) at
+    // half the retention.
+    const comparisonDays = Math.min(historyDays, Math.floor(GSC_RETENTION_DAYS / 2));
+    const { startDate, endDate } = defaultDateRange(new Date(), historyDays);
     // ONE (query, page)-dimensioned call feeds BOTH the Top-queries table
     // (aggregated per query via aggregateQueryPageRows) and the Quick-wins
     // detection (raw rows) — saving the previously separate query-dimensioned
@@ -377,15 +390,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       if (page) base.topPages[q] = page;
     }
 
-    // Period-over-period comparison: the 28 days immediately before the
-    // window above. Best-effort — any failure here just leaves
+    // Period-over-period comparison: the window immediately before the one
+    // above, capped to comparisonDays so both halves stay inside GSC retention. Best-effort — any failure here just leaves
     // deltas/lostQueries empty; the table renders exactly as before.
     // SAME (query,page) dimensions + SAME aggregation as the current period
     // (review M5): comparing our impression-weighted positions against GSC's
     // query-dimension positions would fabricate position deltas for every
     // query that ranks on more than one page.
     try {
-      const prevRange = previousDateRange(new Date());
+      const prevRange = previousDateRange(new Date(), comparisonDays);
       const previousPageRows = await querySearchAnalytics(accessToken, propertyUrl, {
         startDate: prevRange.startDate,
         endDate: prevRange.endDate,

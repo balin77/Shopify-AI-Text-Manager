@@ -191,6 +191,9 @@ describe("drainQueue", () => {
       db: {
         seoIndexNowConfig: { findUnique: async () => ({ ...CONFIG, ...extra }), updateMany },
         seoIndexNowQueue: { findMany: async () => rows, deleteMany },
+        // Monthly submission quota (§Plan-Matrix): Max keeps it out of the way
+        // of the cases below, which are about queue mechanics.
+        aISettings: { findUnique: async () => ({ subscriptionPlan: "max" }) },
       } as any,
       deleteMany,
       updateMany,
@@ -252,6 +255,7 @@ describe("drainQueue", () => {
     const db = {
       seoIndexNowConfig: { findUnique: async () => ({ ...CONFIG, enabled: false }) },
       seoIndexNowQueue: { findMany, deleteMany: vi.fn(async (_args: any) => ({ count: 0 })) },
+      aISettings: { findUnique: async () => ({ subscriptionPlan: "max" }) },
     } as any;
     expect(await drainQueue(db, "s.myshopify.com")).toEqual({ status: "disabled" });
     expect(findMany).not.toHaveBeenCalled();
@@ -261,6 +265,7 @@ describe("drainQueue", () => {
     const db = {
       seoIndexNowConfig: { findUnique: async () => CONFIG },
       seoIndexNowQueue: { findMany: async () => [], deleteMany: vi.fn(async (_args: any) => ({ count: 0 })) },
+      aISettings: { findUnique: async () => ({ subscriptionPlan: "max" }) },
     } as any;
     expect(await drainQueue(db, "s.myshopify.com")).toEqual({ status: "empty" });
   });
@@ -523,12 +528,18 @@ describe("collectStoreUrls", () => {
 describe("submitAll", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  const emptyCatalogDb = (config: any, updateMany = vi.fn(async (_args: any) => ({ count: 1 }))) => ({
+  const emptyCatalogDb = (
+    config: any,
+    updateMany = vi.fn(async (_args: any) => ({ count: 1 })),
+    plan = "max",
+  ) => ({
     seoIndexNowConfig: { findUnique: async () => config, updateMany },
     product: { findMany: async () => [] },
     collection: { findMany: async () => [] },
     page: { findMany: async () => [] },
     article: { findMany: async () => [] },
+    // Monthly submission quota (§Plan-Matrix) — checked before the cooldown.
+    aISettings: { findUnique: async () => ({ subscriptionPlan: plan }) },
   }) as any;
 
   it("refuses when IndexNow is disabled", async () => {

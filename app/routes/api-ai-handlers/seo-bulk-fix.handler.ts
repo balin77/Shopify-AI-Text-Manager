@@ -19,6 +19,7 @@ import { errorMessage, createAIService, isAuthError, CONTENT_CONFIGS } from "./s
 import { getFormString } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
+import { getSeoBulkBatchSize } from "~/utils/planUtils";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement, type SeoLimits } from "~/utils/character-limits";
@@ -35,7 +36,13 @@ import type { DataResponse } from "~/types/data-response";
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
 // handler safe even if that cap ever changes independently.
-const MAX_BULK_FIX_ITEMS = 100;
+/**
+ * Hard ceiling on one bulk-fix run, independent of the plan — one request must
+ * never enqueue an unbounded fan-out. The PLAN's `seo.bulkBatchSize` (Free 25 …
+ * Max 2500, §Plan-Matrix) applies on top; whichever is lower wins, which is
+ * what makes throughput a real Pro→Max difference.
+ */
+const MAX_BULK_FIX_ITEMS = 2500;
 
 // Allowlist of AI-fixable problem buckets (see audit.service.ts FINDING_TO_BUCKET
 // for the full code list).
@@ -149,12 +156,17 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
     return json({ success: false, error: localeResolution.error }, { status: 400 });
   }
 
+  const planBatchSize = Math.min(MAX_BULK_FIX_ITEMS, getSeoBulkBatchSize(plan));
   const audit = await analyzeStore(session.shop, {
     db,
     seoTitleEffectiveLimit: seoTitleEffectiveLimit(suffix, auditSeoLimits),
     seoLimits: auditSeoLimits,
     plan,
     locale: localeResolution.foreignLocale || undefined,
+    // The bucket must be able to HOLD a full batch — its default cap (100) is
+    // sized for the dashboard list and would silently truncate Pro's 500 and
+    // Max's 2500 to 100.
+    maxBucketItems: planBatchSize,
   });
 
   const bucket: AuditProblemBucket | undefined = audit.problems.find((p) => p.code === problemCode);
@@ -164,7 +176,7 @@ export async function handleSeoBulkFix(ctx: AIActionContext): Promise<DataRespon
   // server-derived bucket is what makes a POSTed GID safe to trust.
   const items = singleItemId
     ? bucketItems.filter((it) => it.id === singleItemId && it.type === singleItemType).slice(0, 1)
-    : bucketItems.slice(0, MAX_BULK_FIX_ITEMS);
+    : bucketItems.slice(0, planBatchSize);
 
   if (items.length === 0) {
     return json(

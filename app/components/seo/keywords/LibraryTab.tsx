@@ -88,6 +88,11 @@ export interface LibraryTabProps {
   ungroupedCount: number;
   groupDetail: LoaderData["groupDetail"];
   isPro: boolean;
+  /**
+   * Plan keyword quota (§Plan-Matrix). `over: true` means a downgrade left the
+   * shop above its cap — the rows stay, only new ones are blocked.
+   */
+  keywordQuota: { plan: string; limit: number; used: number; remaining: number; over: boolean };
   runningDistribution: LoaderData["runningDistribution"];
   distributionPreview: LoaderData["distributionPreview"];
   researchAvailability: LoaderData["researchAvailability"];
@@ -193,6 +198,7 @@ export function LibraryTab({
   ungroupedCount,
   groupDetail,
   isPro,
+  keywordQuota,
   runningDistribution,
   distributionPreview,
   researchAvailability,
@@ -255,6 +261,9 @@ export function LibraryTab({
   closeImportModal,
 }: LibraryTabProps) {
   const isPseudo = !!groupDetail?.pseudo;
+  // No room for another keyword: either the cap is reached or a downgrade left
+  // the shop above it. Both block CREATION only — nothing is ever deleted.
+  const quotaExhausted = keywordQuota.remaining < 1;
 
   // Display name for a stored locale value ("" = primary, the SeoKeyword
   // convention) — the loader's localeOptions are the single source.
@@ -410,14 +419,43 @@ export function LibraryTab({
                 {k.selectionClear}
               </Button>
             )}
+            {/* Plan quota, always visible so the cap is never a surprise at
+                the moment of adding. Critical once a downgrade left the shop
+                above it — the rows are kept, only new ones are blocked. */}
+            {keywordQuota.limit > 0 && (
+              <Text as="p" variant="bodySm" tone={quotaExhausted ? "critical" : "subdued"}>
+                {k.keywordQuotaUsage
+                  .replace("{used}", String(keywordQuota.used))
+                  .replace("{limit}", String(keywordQuota.limit))}
+              </Text>
+            )}
           </InlineStack>
+          {keywordQuota.over && (
+            <Banner tone="warning">
+              <Text as="p" variant="bodySm">
+                {k.keywordQuotaOver
+                  .replace("{used}", String(keywordQuota.used))
+                  .replace("{limit}", String(keywordQuota.limit))}
+              </Text>
+            </Banner>
+          )}
 
           <InlineStack gap="200" blockAlign="center" wrap>
             {/* Row-creating entries first — they need no selection. */}
             {!readOnly && (
               <>
-                <ActionTooltip content={k.addKeywordHint} disabled={bulkBusy} preferredPosition="below">
-                  <Button size="slim" disabled={bulkBusy} onClick={handleCreateKeyword}>
+                <ActionTooltip
+                  content={quotaExhausted ? k.keywordPlanLimitShort : k.addKeywordHint}
+                  disabled={bulkBusy}
+                  preferredPosition="below"
+                >
+                  {/* Disabled at the cap so the merchant does not discover the
+                      plan limit only after typing a keyword. */}
+                  <Button
+                    size="slim"
+                    disabled={bulkBusy || quotaExhausted}
+                    onClick={handleCreateKeyword}
+                  >
                     {`＋ ${k.addKeyword}`}
                   </Button>
                 </ActionTooltip>
@@ -587,7 +625,11 @@ export function LibraryTab({
             </Text>
             {!readOnly && (
               <InlineStack gap="200" blockAlign="center">
-                <Button variant="primary" disabled={bulkBusy} onClick={handleCreateKeyword}>
+                <Button
+                  variant="primary"
+                  disabled={bulkBusy || quotaExhausted}
+                  onClick={handleCreateKeyword}
+                >
                   {`＋ ${k.addKeyword}`}
                 </Button>
                 <Button variant="plain" onClick={openImportModal}>

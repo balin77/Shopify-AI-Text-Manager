@@ -23,7 +23,12 @@ import {
   canAccessVariantImageManagerInEnv,
   canAccessImageProcessingTab as utilCanAccessImageProcessingTab,
   canAccessImageManagerSettingsTab as utilCanAccessImageManagerSettingsTab,
+  getSeoLimits,
+  canAccessSeoFeature as utilCanAccessSeoFeature,
+  getMinimumPlanForSeoFeature,
   type ResourceType,
+  type SeoFeature,
+  type SeoPlanLimits,
 } from "../utils/planUtils";
 
 interface PlanContextValue {
@@ -49,6 +54,10 @@ interface PlanContextValue {
   canAccessVariantImageManager: () => boolean;
   canAccessImageProcessingTab: () => boolean;
   canAccessImageManagerSettingsTab: () => boolean;
+  // SEO-tab entitlements (UI/upsell only — sections re-check server-side)
+  getSeoLimits: () => SeoPlanLimits;
+  canAccessSeoFeature: (feature: SeoFeature) => boolean;
+  getMinimumPlanForSeoFeature: (feature: SeoFeature) => Plan | null;
 }
 
 const PlanContext = createContext<PlanContextValue | null>(null);
@@ -82,6 +91,10 @@ export function PlanProvider({ plan, newFeaturesEnabled, children }: PlanProvide
     canAccessVariantImageManager: () => canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled),
     canAccessImageProcessingTab: () => utilCanAccessImageProcessingTab(plan, newFeaturesEnabled),
     canAccessImageManagerSettingsTab: () => utilCanAccessImageManagerSettingsTab(plan, newFeaturesEnabled),
+    // SEO-tab entitlements
+    getSeoLimits: () => getSeoLimits(plan),
+    canAccessSeoFeature: (feature: SeoFeature) => utilCanAccessSeoFeature(plan, feature),
+    getMinimumPlanForSeoFeature: (feature: SeoFeature) => getMinimumPlanForSeoFeature(feature),
   }), [plan, newFeaturesEnabled]);
 
   return <PlanContext.Provider value={value}>{children}</PlanContext.Provider>;

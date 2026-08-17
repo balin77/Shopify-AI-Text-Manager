@@ -17,7 +17,7 @@ import {
   GscReconnectRequiredError,
   type SearchAnalyticsFilters,
 } from "../services/google-search-console.server";
-import { meetsPlan } from "../utils/planUtils";
+import { meetsPlan, getGscHistoryDays } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
 
 const EXPORT_ROW_CAP = 1000;
@@ -74,7 +74,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   try {
     const { accessToken, propertyUrl } = await getGscAccessToken(db, session.shop);
-    const { startDate, endDate } = defaultDateRange(new Date());
+    // Same plan-based window as the dashboard, so the export matches what the
+    // merchant just looked at (§Plan-Matrix).
+    const { startDate, endDate } = defaultDateRange(new Date(), getGscHistoryDays(plan));
 
     let csv: string;
     let filename: string;

@@ -62,6 +62,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "../../utils/logger.server";
+import { getMonthlyIndexNowLimit, currentImageOpPeriod } from "../../utils/planUtils";
+import type { Plan } from "../../config/plans";
 
 const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
 /** App-proxy path that serves the key file (see proxy.indexnow-key.tsx). */
@@ -517,7 +519,9 @@ export async function getQueueCount(db: PrismaClient, shop: string): Promise<num
 export type DrainOutcome =
   | { status: "submitted"; result: SubmitResult }
   | { status: "disabled" }
-  | { status: "empty" };
+  | { status: "empty" }
+  /** This month's plan submission quota is used up; the queue is left intact. */
+  | { status: "quotaExhausted"; quota: IndexNowQuota };
 
 /**
  * Submit everything in the queue, then clear the rows whose chunk succeeded.
@@ -526,6 +530,74 @@ export type DrainOutcome =
  * keep every row, so the URLs that DID reach IndexNow were submitted again on
  * the next run. Rows of a failed chunk survive and are retried.
  */
+// ── Monthly plan quota ───────────────────────────────────────────────────────
+//
+// IndexNow submissions are a real outbound cost (and a signal we do not want a
+// single shop to burn), so the volume is tiered: Pro 5 000 / Max 50 000 URLs
+// per UTC month (PlanLimits.seo.monthlyIndexNowSubmissions). Usage data, not
+// entitlement data — counted lazily on the config row with the same "YYYY-MM"
+// period key as the image quota, so a new month resets it on the next write
+// without a cron, and planCacheCleanup never touches it.
+
+export interface IndexNowQuota {
+  limit: number;
+  used: number;
+  remaining: number;
+}
+
+/** Current month's submission quota for a shop. */
+export async function getSubmitQuota(
+  db: PrismaClient,
+  shop: string,
+  now: Date = new Date(),
+): Promise<IndexNowQuota> {
+  const [settings, config] = await Promise.all([
+    db.aISettings.findUnique({ where: { shop }, select: { subscriptionPlan: true } }),
+    db.seoIndexNowConfig.findUnique({
+      where: { shop },
+      select: { submitPeriod: true, submitCount: true },
+    }),
+  ]);
+  const limit = getMonthlyIndexNowLimit((settings?.subscriptionPlan || "free") as Plan);
+  // A counter from an earlier month is stale — treat it as zero rather than
+  // rewriting the row on a read.
+  const used = config?.submitPeriod === currentImageOpPeriod(now) ? config.submitCount : 0;
+  return { limit, used, remaining: Math.max(0, limit - used) };
+}
+
+/**
+ * Book `count` submissions against the current month. Called AFTER a
+ * successful submit so a network failure never costs the merchant quota.
+ */
+async function recordSubmissions(
+  db: PrismaClient,
+  shop: string,
+  count: number,
+  now: Date,
+): Promise<void> {
+  if (count <= 0) return;
+  const period = currentImageOpPeriod(now);
+  // Atomic increment, scoped to rows already in this period: a sweep drain and
+  // a manual submit can overlap, and a read-modify-write would let one of them
+  // overwrite the other's count — under-charging the quota, which is exactly
+  // the direction we must not be wrong in.
+  const bumped = await db.seoIndexNowConfig.updateMany({
+    where: { shop, submitPeriod: period },
+    data: { submitCount: { increment: count } },
+  });
+  if (bumped.count === 0) {
+    // First submission of the month (or the row still carries last month's
+    // period): start a fresh counter. Two racers can both land here; the loser
+    // overwrites with its own count, which can under-count by one batch at a
+    // month boundary — bounded, self-correcting on the next increment, and not
+    // worth a transaction on a config row.
+    await db.seoIndexNowConfig.updateMany({
+      where: { shop },
+      data: { submitPeriod: period, submitCount: count },
+    });
+  }
+}
+
 export async function drainQueue(
   db: PrismaClient,
   shop: string,
@@ -546,11 +618,18 @@ export async function drainQueue(
     logger.warn(`[IndexNow] Dropped ${expired.count} queued URL(s) older than the retry window for ${shop}`);
   }
 
+  // Plan quota: take at most what is left this month. Oldest-first ordering
+  // means a quota-capped drain still makes progress instead of starving the
+  // front of the queue; the rest stays queued for next month (or the next
+  // drain after an upgrade).
+  const quota = await getSubmitQuota(db, shop, now);
+  if (quota.remaining <= 0) return { status: "quotaExhausted", quota };
+
   const rows = await db.seoIndexNowQueue.findMany({
     where: { shop },
     select: { id: true, url: true },
     orderBy: { createdAt: "asc" }, // oldest first, so a capped drain makes progress
-    take: MAX_URLS_PER_DRAIN,
+    take: Math.min(MAX_URLS_PER_DRAIN, quota.remaining),
   });
   if (rows.length === 0) return { status: "empty" };
 
@@ -574,6 +653,8 @@ export async function drainQueue(
   if (submittedIds.length > 0) {
     await db.seoIndexNowQueue.deleteMany({ where: { id: { in: submittedIds } } });
     await db.seoIndexNowConfig.updateMany({ where: { shop }, data: { lastSubmittedAt: new Date() } });
+    // Only URLs that actually reached IndexNow are booked against the quota.
+    await recordSubmissions(db, shop, submitted, now);
   }
   if (failed > 0) {
     logger.warn(`[IndexNow] Drain for ${shop}: ${submitted} submitted, ${failed} kept for retry`, {
@@ -657,9 +738,11 @@ export async function collectStoreUrls(
  * always has something to send even on a brand-new shop.
  */
 export type SubmitAllOutcome =
-  | { status: "submitted"; result: SubmitResult }
+  | { status: "submitted"; result: SubmitResult; skippedOverQuota: number }
   | { status: "disabled" }
-  | { status: "cooldown"; retryAfterMs: number };
+  | { status: "cooldown"; retryAfterMs: number }
+  /** This month's plan submission quota is used up (or too small for the catalog). */
+  | { status: "quotaExhausted"; quota: IndexNowQuota };
 
 /**
  * Cheap pre-check with the same rules `submitAll` enforces. The route calls it
@@ -670,9 +753,18 @@ export async function canSubmitAll(
   db: PrismaClient,
   shop: string,
   now: Date = new Date(),
-): Promise<{ status: "ok" } | { status: "disabled" } | { status: "cooldown"; retryAfterMs: number }> {
+): Promise<
+  | { status: "ok" }
+  | { status: "disabled" }
+  | { status: "cooldown"; retryAfterMs: number }
+  | { status: "quotaExhausted"; quota: IndexNowQuota }
+> {
   const config = await getEnabledConfig(db, shop);
   if (!config) return { status: "disabled" };
+  // Checked before the cooldown so an out-of-quota shop learns the real
+  // reason instead of "try again in an hour".
+  const quota = await getSubmitQuota(db, shop, now);
+  if (quota.remaining <= 0) return { status: "quotaExhausted", quota };
   if (config.lastFullSubmitAt && SUBMIT_ALL_COOLDOWN_MS > 0) {
     const elapsed = now.getTime() - config.lastFullSubmitAt.getTime();
     if (elapsed < SUBMIT_ALL_COOLDOWN_MS) {
@@ -693,7 +785,13 @@ export async function submitAll(
 
   // Re-read: canSubmitAll already proved it exists and is enabled.
   const config = (await getEnabledConfig(db, shop))!;
-  const urls = await collectStoreUrls(db, shop, config.host, options);
+  const allUrls = await collectStoreUrls(db, shop, config.host, options);
+  // A catalog larger than the remaining quota is submitted PARTIALLY rather
+  // than refused — a truncated push still helps, and the section reports what
+  // was left out.
+  const quota = await getSubmitQuota(db, shop, now);
+  const urls = allUrls.slice(0, quota.remaining);
+  const skippedOverQuota = allUrls.length - urls.length;
   const result = await submitUrls(config.host, config.key, config.keyLocation, urls);
 
   if (result.submitted > 0) {
@@ -701,8 +799,15 @@ export async function submitAll(
     // catalog ACTUALLY went out in full. Stamping it after a partial failure
     // would lock the merchant out for an hour from the retry they need.
     const data: { lastSubmittedAt: Date; lastFullSubmitAt?: Date } = { lastSubmittedAt: now };
-    if (result.failed === 0) data.lastFullSubmitAt = now;
+    // A quota-truncated push is not a FULL submit, so it must not start the
+    // cooldown — the merchant needs the retry once quota frees up.
+    if (result.failed === 0 && urls.length === allUrls.length) data.lastFullSubmitAt = now;
     await db.seoIndexNowConfig.updateMany({ where: { shop }, data });
+    await recordSubmissions(db, shop, result.submitted, now);
   }
-  return { status: "submitted", result };
+  // Truncated URLs are NOT queued: the queue is for incremental webhook
+  // changes, and refilling it with a whole catalog would make the next drain
+  // resubmit pages nothing happened to. The count is reported so the section
+  // can say what was left out instead of claiming a full push.
+  return { status: "submitted", result, skippedOverQuota };
 }

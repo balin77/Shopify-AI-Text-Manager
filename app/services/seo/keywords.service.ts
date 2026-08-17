@@ -12,6 +12,10 @@
 // Prisma runtime into the browser bundle and break the vite build.
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { stripHtml } from "../../utils/seo-score";
+// Pure plan helpers — no Prisma, no server-only imports, so the client-side
+// half of this module (analyzeOnPage in SeoSidebar) stays bundle-safe.
+import { getMaxTrackedKeywords, isOverKeywordQuota } from "../../utils/planUtils";
+import type { Plan } from "../../config/plans";
 
 export type KeywordResourceType = "Product" | "Collection" | "Article" | "Page";
 
@@ -261,9 +265,62 @@ export type AssignKeywordResult =
       reason: "primaryExists";
       existingKeyword: string;
     }
-  | { ok: false; reason: "tooMany" };
+  | { ok: false; reason: "tooMany" }
+  /** The shop already tracks as many keywords as its plan allows. */
+  | { ok: false; reason: "planLimit" };
 
 const assignmentInclude = { keyword: true } as const;
+
+// ── Plan quota (docs/plans/SEO_TAB_IMPLEMENTATION_PLAN.md §Plan-Matrix) ─────
+//
+// The cap counts DISTINCT SeoKeyword rows per shop across all locales. A
+// keyword translated into another language is its own row and does count —
+// that matches the cost driver (every row turns into GSC enrichment work).
+// The number of LOCALES stays uncapped as always; only keyword volume is
+// tiered.
+//
+// Only NEW rows are checked. A shop that lands over the cap by DOWNGRADING
+// keeps every keyword it has: keywords are merchant-authored research, not
+// re-syncable cache, so planCacheCleanup must never delete them. Over the cap
+// the shop simply cannot add more until it is back under (or upgrades).
+
+/** Distinct tracked keywords for a shop, across every locale. */
+export async function countShopKeywords(db: PrismaClient, shop: string): Promise<number> {
+  return db.seoKeyword.count({ where: { shop } });
+}
+
+export interface KeywordQuota {
+  plan: Plan;
+  /** 0 = keyword tracking not available on this plan. */
+  limit: number;
+  used: number;
+  /** Never negative — an over-cap shop (post-downgrade) reports 0. */
+  remaining: number;
+  /** True when the shop holds MORE keywords than the plan allows. */
+  over: boolean;
+}
+
+/** The shop's plan, defaulting to free exactly like the other SEO services. */
+async function getShopPlan(db: PrismaClient, shop: string): Promise<Plan> {
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  return (settings?.subscriptionPlan || "free") as Plan;
+}
+
+/** Quota snapshot for the UI (banner + disabled "add" controls). */
+export async function getKeywordQuota(db: PrismaClient, shop: string): Promise<KeywordQuota> {
+  const [plan, used] = await Promise.all([getShopPlan(db, shop), countShopKeywords(db, shop)]);
+  const limit = getMaxTrackedKeywords(plan);
+  return {
+    plan,
+    limit,
+    used,
+    remaining: Math.max(0, limit - used),
+    over: isOverKeywordQuota(plan, used),
+  };
+}
 
 /**
  * Run an interactive transaction at SERIALIZABLE isolation, retrying on
@@ -373,8 +430,25 @@ export async function assignKeyword(
 ): Promise<AssignKeywordResult> {
   const keyword = normalizeKeyword(input.keyword);
   const locale = input.locale ?? "";
+  // Plan lookup outside the transaction — it never changes mid-write and the
+  // serializable tx below should stay as short as possible.
+  const limit = getMaxTrackedKeywords(await getShopPlan(db, shop));
 
   return serializableWithRetry(db, async (tx) => {
+    // Assigning a keyword the shop ALREADY tracks costs no new row, so the
+    // quota only guards genuinely new ones. Counting inside the tx makes two
+    // parallel adds at the cap serialize instead of both slipping through.
+    const known = await tx.seoKeyword.findUnique({
+      where: { shop_keyword_locale: { shop, keyword, locale } },
+      select: { id: true },
+    });
+    if (!known) {
+      const used = await tx.seoKeyword.count({ where: { shop } });
+      if (used + 1 > limit) {
+        return { ok: false, reason: "planLimit" } as const;
+      }
+    }
+
     const keywordRow = await tx.seoKeyword.upsert({
       where: { shop_keyword_locale: { shop, keyword, locale } },
       create: { shop, keyword, locale },
@@ -1063,14 +1137,14 @@ export async function addKeywordsToGroup(
   shop: string,
   groupId: string,
   entries: GroupImportEntry[],
-): Promise<{ added: number; alreadyInGroup: number }> {
+): Promise<{ added: number; alreadyInGroup: number; skippedOverQuota: number }> {
   // Normalize + dedupe within the request by (keyword, locale) — later
   // duplicates win so an explicit priority late in the file still applies.
   const group = await db.seoKeywordGroup.findFirst({
     where: { id: groupId, shop },
     select: { locale: true },
   });
-  if (!group) return { added: 0, alreadyInGroup: 0 };
+  if (!group) return { added: 0, alreadyInGroup: 0, skippedOverQuota: 0 };
   const byKey = new Map<string, { keyword: string; locale: string; priority?: number }>();
   for (const entry of entries) {
     const keyword = normalizeKeyword(entry.keyword);
@@ -1079,8 +1153,8 @@ export async function addKeywordsToGroup(
     const locale = group.locale;
     byKey.set(`${keyword} ${locale}`, { keyword, locale, priority: entry.priority });
   }
-  if (byKey.size === 0) return { added: 0, alreadyInGroup: 0 };
-  const normalized = Array.from(byKey.values());
+  if (byKey.size === 0) return { added: 0, alreadyInGroup: 0, skippedOverQuota: 0 };
+  let normalized = Array.from(byKey.values());
   const texts = Array.from(new Set(normalized.map((e) => e.keyword)));
 
   const keyOf = (k: { keyword: string; locale: string }) => `${k.keyword} ${k.locale}`;
@@ -1093,6 +1167,20 @@ export async function addKeywordsToGroup(
   };
 
   const existingIds = await loadIds();
+
+  // Plan quota: rows the shop ALREADY tracks are free (the import only adds
+  // them to a group), so only genuinely new keywords consume quota. A file
+  // that runs past the cap is imported PARTIALLY rather than rejected whole —
+  // whole-batch semantics would make a 2000-row file useless to a Basic shop,
+  // and the caller reports how many were left out.
+  const quota = await getKeywordQuota(db, shop);
+  const wanted = normalized.filter((e) => !existingIds.has(keyOf(e)));
+  let skippedOverQuota = 0;
+  if (wanted.length > quota.remaining) {
+    const allowed = new Set(wanted.slice(0, quota.remaining).map(keyOf));
+    skippedOverQuota = wanted.length - quota.remaining;
+    normalized = normalized.filter((e) => existingIds.has(keyOf(e)) || allowed.has(keyOf(e)));
+  }
 
   // 1. Create the missing keywords in one shot.
   const toCreate = normalized.filter((e) => !existingIds.has(keyOf(e)));
@@ -1144,7 +1232,11 @@ export async function addKeywordsToGroup(
       skipDuplicates: true,
     });
   }
-  return { added: toAdd.length, alreadyInGroup: memberIds.length - toAdd.length };
+  return {
+    added: toAdd.length,
+    alreadyInGroup: memberIds.length - toAdd.length,
+    skippedOverQuota,
+  };
 }
 
 /** Remove one keyword from a group (orphan cleanup like removeAssignment). */
@@ -1219,7 +1311,7 @@ const PLACEHOLDER_PATTERN = new RegExp(`^${PLACEHOLDER_KEYWORD_BASE} (\\d+)$`);
 
 export type CreateKeywordResult =
   | { ok: true; keywordId: string; keyword: string }
-  | { ok: false; reason: "notFound" };
+  | { ok: false; reason: "notFound" | "planLimit" };
 
 /**
  * Add ONE empty-but-named keyword, ready to be renamed inline.
@@ -1248,6 +1340,10 @@ export async function createKeyword(
     if (!group) return { ok: false, reason: "notFound" };
     locale = group.locale;
   }
+
+  // A placeholder row is always a NEW keyword, so it always needs quota.
+  const quota = await getKeywordQuota(db, shop);
+  if (quota.remaining < 1) return { ok: false, reason: "planLimit" };
 
   // Retry on the unique key: two tabs adding a row at the same moment would
   // otherwise both compute the same free number and one would blow up.
