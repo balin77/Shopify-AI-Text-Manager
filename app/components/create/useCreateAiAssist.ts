@@ -57,18 +57,28 @@ async function postAi(body: Record<string, string>): Promise<Record<string, unkn
 
 export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssistOptions) {
   const [busyField, setBusyField] = useState<string | null>(null);
+  /** A warning CODE (`t.aiWarnings.*`), never a sentence. */
   const [aiError, setAiError] = useState<string | null>(null);
   const [altBusy, setAltBusy] = useState(false);
 
   /**
-   * Bumped on every run. A run that finished after the merchant closed the
-   * dialog or switched resource must not write its results into the form that
-   * is on screen now — the values would arrive with no visible cause.
+   * Bumped per run. A run that finished after the merchant closed the dialog
+   * or switched resource must not write its results into the form that is on
+   * screen now — the values would arrive with no visible cause.
+   *
+   * TWO counters, not one. "Write the rest" and the automatic alt text are
+   * independent operations that overlap in practice: attaching an image while
+   * a description is being written is an ordinary thing to do. Sharing a
+   * counter made each cancel the other — the generated text was thrown away
+   * with no message and the button spun forever, because the abandoned run
+   * also skipped clearing its own busy flag.
    */
-  const runToken = useRef(0);
+  const restToken = useRef(0);
+  const altToken = useRef(0);
 
   const cancel = useCallback(() => {
-    runToken.current += 1;
+    restToken.current += 1;
+    altToken.current += 1;
     setBusyField(null);
     setAltBusy(false);
   }, []);
@@ -82,7 +92,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
       const spec = createAiSpecFor(resource);
       if (!spec) return null;
 
-      const token = ++runToken.current;
+      const token = ++restToken.current;
       setAiError(null);
 
       const filled: Record<string, string> = {};
@@ -94,7 +104,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
 
       try {
         for (const field of spec.fields) {
-          if (token !== runToken.current) return null;
+          if (token !== restToken.current) return null;
           // Never overwrite. See the header — "the rest" means the rest.
           if ((values[field.createKey] ?? "").trim()) continue;
 
@@ -131,13 +141,17 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
           }
         }
       } finally {
-        if (token === runToken.current) setBusyField(null);
+        // Unconditionally: an abandoned run that leaves the flag set is a
+        // button that spins until the dialog is closed and reopened. `cancel`
+        // and the next run both clear it too, so an out-of-order clear costs
+        // nothing.
+        setBusyField(null);
       }
 
-      if (token !== runToken.current) return null;
-      if (Object.keys(filled).length === 0 && failed.length > 0) {
-        setAiError("The AI could not write any of the remaining fields.");
-      }
+      if (token !== restToken.current) return null;
+      // A CODE, phrased by the modal — the app ships in three languages, and a
+      // sentence built here would be English for everyone.
+      if (Object.keys(filled).length === 0 && failed.length > 0) setAiError("allFailed");
       return { filled, failed, stuffingWarning };
     },
     [mainLanguage, sendImageToAI],
@@ -156,7 +170,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
       const spec = createAiSpecFor(resource);
       if (!spec || !imageUrl) return null;
 
-      const token = ++runToken.current;
+      const token = ++altToken.current;
       setAltBusy(true);
       try {
         const data = await postAi({
@@ -167,7 +181,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
           mainLanguage,
           sendImageToAI: sendImageToAI ? "true" : "false",
         });
-        if (token !== runToken.current) return null;
+        if (token !== altToken.current) return null;
         const altText = typeof data.altText === "string" ? data.altText.trim() : "";
         return altText || null;
       } catch {
@@ -176,7 +190,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
         // filling in, is noise — the alt field simply stays empty and editable.
         return null;
       } finally {
-        if (token === runToken.current) setAltBusy(false);
+        setAltBusy(false);
       }
     },
     [mainLanguage, sendImageToAI],

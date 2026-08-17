@@ -2146,7 +2146,13 @@ async function resolveTargetLocale(
   | { error: null; foreignLocale: string; targetLanguageName: string; writtenLocale: string }
   | { error: string; foreignLocale: never; targetLanguageName: never; writtenLocale: never }
 > {
-  const locales = await getCachedShopLocales(admin, shop).catch(() => []);
+  // NOT wrapped in `.catch`. `getCachedShopLocales` already swallows non-401
+  // errors and resolves with []; it re-throws 401 ON PURPOSE so the request can
+  // re-authenticate (CLAUDE.md). The previous `.catch(() => [])` here predated
+  // this call being on the primary-locale path, and once it was, an expired
+  // session on the ordinary bulk fix turned into a silent run with the glossary
+  // off instead of a re-auth.
+  const locales = await getCachedShopLocales(admin, shop);
   const primaryLocale = locales.find((l) => l.primary)?.locale ?? "";
 
   if (!requestedLocale) {

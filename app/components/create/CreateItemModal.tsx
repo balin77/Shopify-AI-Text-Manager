@@ -39,7 +39,11 @@ import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
 import { CreateSeoScore } from "./CreateSeoScore";
 import { useCreateAiAssist } from "./useCreateAiAssist";
-import { createAiSpecFor, LONG_TEXT_KEY_BY_RESOURCE } from "~/config/create-ai.shared";
+import {
+  createAiSpecFor,
+  translatableCreateFields,
+  LONG_TEXT_KEY_BY_RESOURCE,
+} from "~/config/create-ai.shared";
 import {
   conditionKinds,
   newCondition,
@@ -81,8 +85,12 @@ export interface CreateItemModalTexts {
   sendImageToAI?: string;
   keywordStuffed?: string;
   generateFailed?: string;
+  /** Warning CODES from the AI hook, phrased here. */
+  aiWarnings?: Record<string, string>;
   translateAfterwards?: string;
   translateAfterwardsHint?: string;
+  /** Why the box is greyed for a blog or a metaobject. */
+  translateAfterwardsUnsupported?: string;
   /** §2.5b — the live score panel. */
   seoScore?: { heading?: string; outOf?: string; issues?: Record<string, string> };
   collectionTypeLabel?: string;
@@ -223,10 +231,22 @@ export function CreateItemModal({
   const ruleErrors = useMemo(() => (rulesOpen ? validateRuleSources(ruleSources) : []), [rulesOpen, ruleSources]);
 
   const ai = useCreateAiAssist({ mainLanguage, sendImageToAI });
+  /** Already-phrased notices from the last AI run (partial failure, stuffing). */
+  const [aiNotices, setAiNotices] = useState<string[]>([]);
   // Null for blogs and metaobjects — see `create-ai.shared.ts` for why those
   // two are deliberately not offered an AI button.
   const aiSpec = createAiSpecFor(resource);
   const longTextKey = resource ? LONG_TEXT_KEY_BY_RESOURCE[resource] ?? "" : "";
+  /**
+   * §2.5a — can the chained translate-all carry anything for THIS type?
+   *
+   * The chain sends the form's values by editor field key, and for a blog or a
+   * metaobject there is no mapping — so the checkbox used to tick, submit, and
+   * do nothing at all, with no task, no spinner and no note. A promise the
+   * dialog cannot keep is worse than an absent one, so the box is disabled
+   * with the reason instead.
+   */
+  const canChainTranslate = translatableCreateFields(resource).length > 0;
 
   // A metaobject's own fields appear only once its definition is chosen —
   // rendering them before that would ask for values against no schema.
@@ -238,6 +258,17 @@ export function CreateItemModal({
 
   const runtimeFields = useMemo(() => [...extraFields, ...chosenExtras], [extraFields, chosenExtras]);
   const allFields = useMemo(() => [...(spec?.fields ?? []), ...runtimeFields], [spec, runtimeFields]);
+  /**
+   * Create KEY → i18n LABEL KEY. They differ where it matters: a product's
+   * long text is `key: "descriptionHtml"` with `labelKey: "description"`, and
+   * `t.fields` holds the latter. Looking a key up directly yields the raw
+   * internal name, which is what the progress line used to show.
+   */
+  const labelKeyFor = useCallback(
+    (key: string) => allFields.find((f) => f.key === key)?.labelKey ?? key,
+    [allFields],
+  );
+
   const basicFields = allFields.filter((f) => !f.advanced);
   const advancedFields = allFields.filter((f) => f.advanced);
 
@@ -336,9 +367,10 @@ export function CreateItemModal({
       imageUrl: image?.url ?? "",
       imageAlt: image?.alt ?? "",
       requestId,
-      // Only when the shop CAN translate. A stale `true` from a shop that
-      // dropped to one locale would chain a call with no targets.
-      translateAfterwards: translateAfterwards && hasSecondLocale,
+      // Only when the shop CAN translate AND this type has fields the chain
+      // can carry. A stale `true` would otherwise promise a translation that
+      // never runs.
+      translateAfterwards: translateAfterwards && hasSecondLocale && canChainTranslate,
     });
   }, [
     localErrors,
@@ -352,6 +384,7 @@ export function CreateItemModal({
     requestId,
     translateAfterwards,
     hasSecondLocale,
+    canChainTranslate,
   ]);
 
   /**
@@ -365,8 +398,35 @@ export function CreateItemModal({
    */
   const handleGenerateRest = useCallback(async () => {
     if (!resource) return;
+    setAiNotices([]);
     const result = await ai.generateRest(resource, values, image?.url ?? "");
     if (!result) return;
+
+    /**
+     * What did NOT come through.
+     *
+     * A partial run used to be silent: three fields written, the meta
+     * description timed out, and the modal said nothing — so the merchant
+     * created the product believing every field was filled. The per-field
+     * failure list is the whole reason failures are per field, and dropping it
+     * made that design pointless.
+     */
+    const notices: string[] = [];
+    if (result.failed.length > 0 && Object.keys(result.filled).length > 0) {
+      notices.push(
+        (t.generateFailed || "These could not be written: {fields}").replace(
+          "{fields}",
+          result.failed.map((key) => t.fields?.[labelKeyFor(key)] ?? key).join(", "),
+        ),
+      );
+    }
+    // §3.2 — the retry still over-used the keyword. Said HERE of all places:
+    // this is the one entrance where the merchant typed that keyword
+    // themselves a moment ago.
+    if (result.stuffingWarning) {
+      notices.push(t.keywordStuffed || "The text repeats your keyword more often than is good for it — worth a read.");
+    }
+    setAiNotices(notices);
     if (Object.keys(result.filled).length > 0) {
       setValues((prev) => {
         const next = { ...prev };
@@ -382,7 +442,7 @@ export function CreateItemModal({
       // validation error still on screen is about the form as it WAS.
       setTouched(false);
     }
-  }, [ai, resource, values, image]);
+  }, [ai, resource, values, image, labelKeyFor, t]);
 
   /**
    * The picker can return video and 3D as well. Swallowing those silently is
@@ -444,6 +504,7 @@ export function CreateItemModal({
   if (!spec) return null;
 
   const label = (field: CreateFieldDef) => t.fields?.[field.labelKey] ?? field.labelKey;
+
 
   const renderField = (field: CreateFieldDef) => {
     const value = values[field.key] ?? "";
@@ -721,9 +782,13 @@ export function CreateItemModal({
                     <InlineStack gap="200" blockAlign="center">
                       <Spinner size="small" />
                       <Text as="span" variant="bodySm" tone="subdued">
+                        {/* `t.fields` is keyed by labelKey, NOT by field key.
+                            Looking it up by key made the first (and longest)
+                            call read "Writing descriptionHtml…" in all three
+                            languages. */}
                         {(t.generatingField || "Writing {field}…").replace(
                           "{field}",
-                          t.fields?.[ai.busyField ?? ""] ?? ai.busyField ?? "",
+                          t.fields?.[labelKeyFor(ai.busyField ?? "")] ?? ai.busyField ?? "",
                         )}
                       </Text>
                     </InlineStack>
@@ -744,7 +809,18 @@ export function CreateItemModal({
                 )}
                 {ai.aiError && (
                   <Banner tone="warning" onDismiss={ai.dismissAiError}>
-                    <p>{ai.aiError}</p>
+                    {/* A CODE from the hook, phrased here — the app ships in
+                        three languages. */}
+                    <p>{t.aiWarnings?.[ai.aiError] || ai.aiError}</p>
+                  </Banner>
+                )}
+                {aiNotices.length > 0 && (
+                  <Banner tone="warning" onDismiss={() => setAiNotices([])}>
+                    <BlockStack gap="100">
+                      {aiNotices.map((notice, index) => (
+                        <Text as="p" key={index}>{notice}</Text>
+                      ))}
+                    </BlockStack>
                   </Banner>
                 )}
               </BlockStack>
@@ -770,13 +846,22 @@ export function CreateItemModal({
                 cannot. Single-language shops see it DISABLED with a reason,
                 never hidden. */}
             {!blocked && (
-              <DisabledActionTooltip hint={hasSecondLocale ? undefined : requiresSecondLanguageHint}>
+              <DisabledActionTooltip
+                hint={
+                  hasSecondLocale
+                    ? canChainTranslate
+                      ? undefined
+                      : t.translateAfterwardsUnsupported ||
+                        "This type is translated from its own editor after creating it."
+                    : requiresSecondLanguageHint
+                }
+              >
                 <Checkbox
                   label={t.translateAfterwards || "Translate into all languages afterwards"}
-                  checked={translateAfterwards && hasSecondLocale}
+                  checked={translateAfterwards && hasSecondLocale && canChainTranslate}
                   onChange={setTranslateAfterwards}
-                  disabled={!hasSecondLocale || submitting}
-                  helpText={hasSecondLocale ? t.translateAfterwardsHint : undefined}
+                  disabled={!hasSecondLocale || !canChainTranslate || submitting}
+                  helpText={hasSecondLocale && canChainTranslate ? t.translateAfterwardsHint : undefined}
                 />
               </DisabledActionTooltip>
             )}

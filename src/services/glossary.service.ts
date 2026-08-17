@@ -425,8 +425,23 @@ export function buildGlossaryGenerationDirective(
     // would be a foreign word dropped into the text.
     const value = locale ? rule.translations[locale] : undefined;
     const tgt = value ? sanitizePromptInput(value, { allowNewlines: false }) : "";
-    if (!tgt) continue;
-    preferred.push(`- Refer to "${src}" as "${tgt}" — that is the shop's own wording; do not substitute a synonym`);
+    if (tgt) {
+      preferred.push(`- Refer to "${src}" as "${tgt}" — that is the shop's own wording; do not substitute a synonym`);
+      used++;
+      continue;
+    }
+
+    // No value for this language — which is the NORMAL case when the language
+    // being written is the shop's PRIMARY one, because the glossary editor can
+    // only record a value for a FOREIGN locale. The source term is itself the
+    // primary-language entry, so the rule still says something here, and it is
+    // the plan's own motivating case: the merchant's house word appearing in
+    // every translation and being paraphrased in the original.
+    //
+    // Only when a locale is actually known. Under a failed locale lookup this
+    // would claim "the shop's own word" for a language nobody established.
+    if (!locale) continue;
+    preferred.push(`- Use "${src}" for that concept — it is the shop's own word for it; do not substitute a synonym`);
     used++;
   }
 

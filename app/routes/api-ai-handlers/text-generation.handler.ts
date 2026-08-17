@@ -160,6 +160,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   const genInstructionsTextKey = genInstructionsKey ? `${genInstructionsKey}Instructions` : null;
   const genFieldLabel = genField?.label || fieldType;
   const isGenLongContent = genField?.type === "html";
+  const isGenSlug = genField?.type === "slug";
 
   // Get instructions (with default fallback)
   const writingStyle = getWritingStyleInstructions(genAiInstructions);
@@ -308,10 +309,18 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
     // the glossary working on exactly the half they are least likely to check.
     // The context decides which rules are relevant, so a 200-term glossary
     // does not dilute the rest of the prompt.
-    const glossary = {
-      contextTexts: [sanitizedContextTitle, sanitizedContextDescription, currentValue],
-      locale: writtenLocale,
-    };
+    // A SLUG gets no glossary block. Its prompt restricts the output to
+    // a-z0-9-, and "write these names exactly as given, never translated or
+    // inflected" directly contradicts that two lines below the slug rules.
+    // `sanitizeSlug` saves the output either way, so this is about not putting
+    // two contradicting instructions in one prompt. The keyword line already
+    // takes an `isSlug` flag for the same reason.
+    const glossary = isGenSlug
+      ? undefined
+      : {
+          contextTexts: [sanitizedContextTitle, sanitizedContextDescription, currentValue],
+          locale: writtenLocale,
+        };
     const generate = (p: string) =>
       isGenLongContent
         ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend, glossary)
@@ -599,10 +608,14 @@ Do NOT:
     // §2.5e — a reformat rewrites the merchant's own words, which is exactly
     // where a house term gets replaced by a synonym. The context is the text
     // being reworked, so only the rules it actually touches are sent.
-    const glossary = {
-      contextTexts: [currentValue, sanitizedContextTitle],
-      locale: await resolveWrittenLocale(ctx.admin, session.shop, formData),
-    };
+    // Same slug exception as the generation path above.
+    const glossary =
+      field?.type === "slug"
+        ? undefined
+        : {
+            contextTexts: [currentValue, sanitizedContextTitle],
+            locale: await resolveWrittenLocale(ctx.admin, session.shop, formData),
+          };
     const runFormat = (p: string) =>
       isLongContent
         ? aiService.generateProductDescription(currentValue, p, imageUrlToSend, glossary)

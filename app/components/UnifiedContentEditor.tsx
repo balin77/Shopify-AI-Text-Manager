@@ -1772,6 +1772,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
               handleChanged: t.content?.createdHandle,
               reload: t.content?.reloadAllTooltip,
               translating: t.content?.createModal?.translatingAfterCreate,
+              warnings: t.content?.createModal?.createWarnings,
             }}
           />
         </div>
@@ -1842,6 +1843,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // §2.5b — the SCORE strings come from the sidebar's own block, not
             // a second copy: the two show the same findings, and a wording
             // that differs between them reads as two different measurements.
+            aiWarnings: t.content?.createModal?.aiWarnings,
             seoScore: {
               heading: t.content?.createModal?.seoScoreHeading,
               outOf: t.content?.createModal?.seoScoreOutOf,

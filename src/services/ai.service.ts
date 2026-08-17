@@ -2178,8 +2178,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    * everyone who does not use one.
    */
   private async appendGlossary(prompt: string, contextTexts: string[], locale?: string): Promise<string> {
-    if (!locale) return prompt;
-    const directive = await this.getGlossaryGenerationDirective(contextTexts, locale);
+    // NOT `if (!locale) return prompt`. An empty locale means the shop-locale
+    // lookup failed (getCachedShopLocales resolves with [] on a swallowed
+    // error), and short-circuiting here turned one throttled query into
+    // "the merchant's brand-name protection is silently off". The builder
+    // already degrades correctly: it drops the half that needs a locale and
+    // keeps the do-not-translate names, which hold in every language.
+    const directive = await this.getGlossaryGenerationDirective(contextTexts, locale ?? '');
     return directive ? `${prompt}\n\n${directive}` : prompt;
   }
 

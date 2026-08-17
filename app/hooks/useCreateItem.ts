@@ -34,6 +34,13 @@ export interface CreatedItemInfo {
   /** False when the object exists on Shopify but the cache did not pick it up. */
   synced: boolean;
   notes: string[];
+  /**
+   * §2.5a — warning CODES from the chained translate-all, phrased by the
+   * banner. Separate from `notes` because those arrive from the SERVER already
+   * phrased, while these are decided here — and a sentence written here would
+   * be English for a three-language app.
+   */
+  warningCodes?: string[];
 }
 
 export interface UseCreateItemOptions {
@@ -201,6 +208,22 @@ export function useCreateItem({
    */
   const translateFetcher = useFetcher<Record<string, unknown>>();
   const [translating, setTranslating] = useState(false);
+  /**
+   * The answer that was already on the fetcher when this run was submitted.
+   *
+   * `translateFetcher.data` SURVIVES a completed run, and `translating` is set
+   * by us rather than by the router — so between our `setTranslating(true)` and
+   * the router flipping the fetcher to "submitting", a render can observe
+   * `translating && state === "idle"` with the PREVIOUS run's answer still
+   * attached. Consumed as this run's, it would put the previous failure's
+   * warning on the new item and then never read the real answer.
+   *
+   * A counter of our own submissions cannot tell those apart — the fetcher's
+   * payload carries no id. Its object IDENTITY can: the router mints a fresh
+   * one per response, so "still the object we saw at submit time" is exactly
+   * "our answer has not arrived yet".
+   */
+  const translateDataAtSubmit = useRef<unknown>(null);
 
   // Resolved by the effect below once the action answers.
   const pendingPayload = useRef<{
@@ -319,6 +342,7 @@ export function useCreateItem({
         const value = payload.values[field.createKey];
         if (value?.trim()) translateData.set(field.editorKey, value);
       }
+      translateDataAtSubmit.current = translateFetcher.data;
       setTranslating(true);
       translateFetcher.submit(translateData, { method: "POST" });
     }
@@ -333,13 +357,16 @@ export function useCreateItem({
   // against everywhere else.
   useEffect(() => {
     if (!translating || translateFetcher.state !== "idle" || !translateFetcher.data) return;
+    // The router has not started OUR submission yet — what is attached is the
+    // previous run's answer. See the ref's comment.
+    if (translateFetcher.data === translateDataAtSubmit.current) return;
+    translateDataAtSubmit.current = translateFetcher.data;
     setTranslating(false);
     const failed = translateFetcher.data.success !== true;
     if (failed) {
+      // A CODE, phrased by the banner.
       setCreated((prev) =>
-        prev
-          ? { ...prev, notes: [...prev.notes, "The item was created, but translating it did not finish. Use \"Translate all\" on the item."] }
-          : prev,
+        prev ? { ...prev, warningCodes: [...(prev.warningCodes ?? []), "translateChainFailed"] } : prev,
       );
     }
     onTranslated?.();

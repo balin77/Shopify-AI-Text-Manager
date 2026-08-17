@@ -530,6 +530,15 @@ export const es: Translation = {
       translateAfterwards: "Traducir después a todos los idiomas",
       translateAfterwardsHint: "Se ejecuta justo después de crearlo, con el indicador de progreso habitual.",
       translatingAfterCreate: "Traduciendo a tus otros idiomas…",
+      translateAfterwardsUnsupported: "Este tipo se traduce desde su propio editor después de crearlo.",
+      generateFailed: "No se pudieron escribir: {fields}",
+      keywordStuffed: "El texto repite tu palabra clave más de lo que le conviene: merece una lectura.",
+      aiWarnings: {
+        allFailed: "La IA no pudo escribir ninguno de los campos restantes.",
+      },
+      createWarnings: {
+        translateChainFailed: "El elemento se creó, pero la traducción no llegó a terminar. Usa \"Traducir a todos los idiomas\" en el elemento.",
+      },
       seoScoreHeading: "Puntuación SEO",
       seoScoreOutOf: "{n} de 100",
       create: "Crear",

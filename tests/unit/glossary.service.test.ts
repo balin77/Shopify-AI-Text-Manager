@@ -255,9 +255,15 @@ describe("buildGlossaryGenerationDirective", () => {
     expect(block).not.toContain("basket");
   });
 
-  it("is silent when the written locale has no value for a term", () => {
+  it("falls back to the SOURCE term when the written locale has no value", () => {
+    // The normal case when the language being written is the shop's PRIMARY
+    // one: the glossary editor can only record a value for a FOREIGN locale,
+    // so `translations[<primary>]` never exists. The source term IS the
+    // primary-language entry — and this is the plan's own motivating case, the
+    // house word honoured in every translation and paraphrased in the original.
     const block = buildGlossaryGenerationDirective(rules, ["Der Turnschuh"], "es");
-    expect(block).toBe("");
+    expect(block).toContain('Use "Turnschuh"');
+    expect(block).not.toContain("Sneaker");
   });
 
   it("keeps the do-not-translate half when the locale is unknown", () => {
@@ -268,6 +274,9 @@ describe("buildGlossaryGenerationDirective", () => {
     const block = buildGlossaryGenerationDirective(rules, ["Der Acme Turnschuh"], "");
     expect(block).toContain('"Acme"');
     expect(block).not.toContain("Sneaker");
+    // And not the source-term fallback either: without a known language,
+    // "the shop's own word" is a claim about a language nobody established.
+    expect(block).not.toContain("Turnschuh");
   });
 
   it("still emits do-not-translate names even with no translations at all", () => {

@@ -531,6 +531,15 @@ export const de = {
       translateAfterwards: "Danach in alle Sprachen übersetzen",
       translateAfterwardsHint: "Läuft direkt nach dem Anlegen, mit der gewohnten Fortschrittsanzeige.",
       translatingAfterCreate: "Wird in deine anderen Sprachen übersetzt …",
+      translateAfterwardsUnsupported: "Dieser Typ wird nach dem Anlegen in seinem eigenen Editor übersetzt.",
+      generateFailed: "Diese konnten nicht geschrieben werden: {fields}",
+      keywordStuffed: "Der Text wiederholt dein Keyword öfter, als ihm guttut — lies ihn kurz gegen.",
+      aiWarnings: {
+        allFailed: "Die KI konnte keines der übrigen Felder schreiben.",
+      },
+      createWarnings: {
+        translateChainFailed: "Der Eintrag wurde angelegt, aber die Übersetzung ist nicht fertig geworden. Nutze „In alle Sprachen übersetzen\" am Eintrag.",
+      },
       seoScoreHeading: "SEO-Score",
       seoScoreOutOf: "{n} von 100",
       create: "Anlegen",

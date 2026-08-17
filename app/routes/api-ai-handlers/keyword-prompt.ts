@@ -90,6 +90,10 @@ export interface TrackedKeywords {
 
 const EMPTY: TrackedKeywords = { primary: null, secondaries: [], primaryIntent: null, all: [] };
 
+/** Generous next to the form's own 120, tight enough that no prompt is made of
+ *  keyword. A phrase longer than this is not a keyword. */
+const MAX_EXPLICIT_KEYWORD_CHARS = 200;
+
 /**
  * The keyword set for a generation that has NO item yet (PLAN §2.5d).
  *
@@ -105,7 +109,11 @@ const EMPTY: TrackedKeywords = { primary: null, secondaries: [], primaryIntent: 
  * takes.
  */
 export function explicitPrimaryKeyword(raw: string): TrackedKeywords {
-  const primary = sanitizePromptInput(raw.trim(), { fieldType: "general" });
+  // Bounded here, not at the form. The client field caps at 120 characters,
+  // but `/api/ai` is directly POST-reachable and this value is interpolated
+  // into the prompt twice (the requirement line and the stuffing retry).
+  // `sanitizePromptInput` deliberately does not truncate.
+  const primary = sanitizePromptInput(raw.trim().slice(0, MAX_EXPLICIT_KEYWORD_CHARS), { fieldType: "general" });
   if (!primary) return EMPTY;
   return { primary, secondaries: [], primaryIntent: null, all: [primary] };
 }

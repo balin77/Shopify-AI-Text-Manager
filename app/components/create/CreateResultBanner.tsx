@@ -39,6 +39,8 @@ export interface CreateResultBannerProps {
     reload?: string;
     undo?: string;
     translating?: string;
+    /** Keyed by `CreatedItemInfo.warningCodes` entries. */
+    warnings?: Record<string, string>;
   };
 }
 
@@ -85,6 +87,12 @@ export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabe
 
         {info.notes.map((note, i) => (
           <Text as="p" key={i} tone="subdued">{note}</Text>
+        ))}
+
+        {/* CODES decided client-side, phrased here — `notes` above arrive from
+            the server already phrased, these would be English otherwise. */}
+        {(info.warningCodes ?? []).map((code) => (
+          <Text as="p" key={code} tone="subdued">{t.warnings?.[code] || code}</Text>
         ))}
 
         {(onReload || onUndo) && (

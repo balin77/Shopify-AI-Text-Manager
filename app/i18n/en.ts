@@ -534,6 +534,15 @@ export const en: Translation = {
       translateAfterwards: "Translate into all languages afterwards",
       translateAfterwardsHint: "Runs right after creating, with the usual progress display.",
       translatingAfterCreate: "Translating into your other languages…",
+      translateAfterwardsUnsupported: "This type is translated from its own editor after creating it.",
+      generateFailed: "These could not be written: {fields}",
+      keywordStuffed: "The text repeats your keyword more often than is good for it — worth a read.",
+      aiWarnings: {
+        allFailed: "The AI could not write any of the remaining fields.",
+      },
+      createWarnings: {
+        translateChainFailed: "The item was created, but translating it did not finish. Use \"Translate all\" on the item.",
+      },
       seoScoreHeading: "SEO score",
       seoScoreOutOf: "{n} of 100",
       create: "Create",
