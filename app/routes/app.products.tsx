@@ -270,7 +270,13 @@ export const loader = createContentLoader({
       // §Phase 3.1 — the picker writes the GID, the checklist shows the name.
       // Both travel: `categoryName` alone cannot be sent back as a value, and
       // `categoryId` alone has no label.
-      categoryId: p.categoryId ?? null,
+      //
+      // GATED on the discriminator, like `collections` below. Ungated, an
+      // un-attribute-synced row's `null` reaches the picker as "" and renders a
+      // confident "Not set" — right next to `vendor` and `tags` correctly
+      // saying "not loaded from Shopify yet". Same block, same question,
+      // opposite answers.
+      categoryId: p.attributesSyncedAt ? p.categoryId ?? null : null,
       templateSuffix: p.templateSuffix ?? null,
       featuredImageUrl: p.featuredImageUrl || null,
       // Membership count comes from the Phase-0 join rows. `hasMoreCollections`

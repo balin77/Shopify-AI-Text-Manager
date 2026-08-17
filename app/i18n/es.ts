@@ -464,6 +464,8 @@ export const es: Translation = {
     // cuenta mientras el resto sí se guarda. Cada mensaje lo dice.
     // PLAN §Phase 3.1 — el buscador de categorías del catálogo.
     taxonomy: {
+      unknown: "Aún no se ha cargado desde Shopify: recarga este producto para ver su categoría.",
+      reload: "Recargar",
       search: "Buscar categorías …",
       searching: "Buscando …",
       keepTyping: "Escribe al menos dos caracteres.",
@@ -475,6 +477,9 @@ export const es: Translation = {
     },
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {
+      reload: "Recargar",
+      automatedUnknown: "Aún no se ha cargado desde Shopify: recarga las colecciones para cambiarlo.",
+      listTruncated: "Esta tienda tiene más colecciones de las que se listan aquí. Usa el filtro o gestiona el resto en el admin de Shopify.",
       filter: "Filtrar colecciones …",
       loading: "Cargando colecciones",
       lookupFailed: "No se pudo cargar la lista de colecciones, así que solo se muestran las pertenencias actuales.",

@@ -465,6 +465,8 @@ export const de = {
     // „die Suche ist fehlgeschlagen" sind drei verschiedene Dinge, und nur
     // eines davon heißt, dass andere Wörter helfen.
     taxonomy: {
+      unknown: "Noch nicht von Shopify geladen — lade dieses Produkt neu, um seine Kategorie zu sehen.",
+      reload: "Neu laden",
       search: "Kategorien durchsuchen …",
       searching: "Wird gesucht …",
       keepTyping: "Gib mindestens zwei Zeichen ein.",
@@ -476,6 +478,9 @@ export const de = {
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
+      reload: "Neu laden",
+      automatedUnknown: "Noch nicht von Shopify geladen — lade die Kategorien neu, um das zu ändern.",
+      listTruncated: "Dieser Shop hat mehr Kategorien, als hier aufgelistet sind. Nutze den Filter, oder verwalte den Rest im Shopify-Admin.",
       filter: "Kategorien filtern …",
       loading: "Kategorien werden geladen",
       lookupFailed: "Die Kategorieliste konnte nicht geladen werden — angezeigt werden nur die aktuellen Zuordnungen.",

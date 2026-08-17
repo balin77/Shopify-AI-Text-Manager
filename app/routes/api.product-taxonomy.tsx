@@ -53,11 +53,18 @@ export interface CollectionOption {
   id: string;
   title: string;
   /**
-   * Rule-based on Shopify's side. The picker must not offer to remove such a
-   * membership — the rule would simply re-add it, and the merchant would be
-   * left thinking the save silently failed.
+   * Rule-based on Shopify's side. The picker must not offer to TOUCH such a
+   * membership — a removal the rule undoes, and a manual add Shopify refuses
+   * outright (which, because `productUpdate` is atomic, would take the
+   * merchant's text edits down with it).
+   *
+   * `null` is the third state and the important one: `Collection.isSmart` is
+   * NOT NULL DEFAULT false on a column added to an existing table, so a shop
+   * synced before Phase 0 reads every collection as manual. Unknown is not
+   * manual — `attributesSyncedAt` is the discriminator, and without it the row
+   * renders locked with a reason rather than tickable.
    */
-  automated: boolean;
+  automated: boolean | null;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -116,7 +123,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (kind === "collections") {
       const rows = await db.collection.findMany({
         where: { shop: session.shop },
-        select: { id: true, title: true, isSmart: true },
+        // `attributesSyncedAt` travels WITH `isSmart` for the same reason it
+        // travels with every other Phase-0 column: without it the migration's
+        // `false` default is indistinguishable from a measured "manual".
+        select: { id: true, title: true, isSmart: true, attributesSyncedAt: true },
         orderBy: { title: "asc" },
         take: COLLECTION_PAGE_SIZE,
       });
@@ -128,7 +138,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         collections: rows.map((c) => ({
           id: c.id,
           title: c.title,
-          automated: c.isSmart === true,
+          automated: c.attributesSyncedAt ? c.isSmart === true : null,
         })) satisfies CollectionOption[],
       });
     }

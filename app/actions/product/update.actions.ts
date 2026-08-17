@@ -13,7 +13,11 @@ import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
 // One rule per attribute, shared with the generic content path — the previous
 // generation of this code kept a per-resource copy of each and they drifted.
-import { PRODUCT_COLLECTIONS_SELECTION, productCollectionRows } from "~/services/attribute-sync.shared";
+import {
+  PRODUCT_COLLECTIONS_SELECTION,
+  productCollectionRows,
+  type ShopifyProductCollections,
+} from "~/services/attribute-sync.shared";
 import {
   diffCollectionMembership,
   isValidProductStatus,
@@ -1060,11 +1064,35 @@ async function updatePrimaryProduct(
       where: { shop, productId },
       select: { collectionId: true, automated: true },
     });
-    const diff = diffCollectionMembership(cached, parseCollectionIds(params.collections));
+    // How each collection of the SHOP reads, for screening JOINS — `cached`
+    // has no row for a collection the product is not in yet, so it cannot
+    // answer "is this one rule-based". `attributesSyncedAt` is the
+    // discriminator: an unsynced row's `isSmart: false` is the migration's
+    // default, not a measurement, and is refused rather than trusted.
+    const knownCollections = new Map<string, boolean | null>(
+      (
+        await db.collection.findMany({
+          where: { shop },
+          select: { id: true, isSmart: true, attributesSyncedAt: true },
+        })
+      ).map((c) => [c.id, c.attributesSyncedAt ? c.isSmart === true : null] as const),
+    );
+    const diff = diffCollectionMembership(
+      cached,
+      parseCollectionIds(params.collections),
+      knownCollections,
+    );
     if (diff.toJoin.length > 0) mutationInput.collectionsToJoin = diff.toJoin;
     if (diff.toLeave.length > 0) mutationInput.collectionsToLeave = diff.toLeave;
     if (diff.refusedAutomated.length > 0) membershipNotes.push("collectionsAutomatedKept");
   }
+
+  // Which halves of §Phase 3.1 this save is actually writing. Used for BOTH
+  // the echo selection and the mirror, so the two can never disagree about
+  // whether the block is present.
+  const wroteCategory = mutationInput.category !== undefined;
+  const wroteMembership =
+    mutationInput.collectionsToJoin !== undefined || mutationInput.collectionsToLeave !== undefined;
 
   const response = await gateway.graphql(
     `#graphql
@@ -1083,15 +1111,17 @@ async function updatePrimaryProduct(
             vendor
             tags
             templateSuffix
-            # §Phase 3.1 — echoed so the cache mirrors what Shopify RESOLVED.
-            # The taxonomy node carries its own full path, which is what the
-            # picker labels the category with; deriving it here would be a
-            # second copy of Shopify's own data.
-            category { id fullName name }
-            # Membership after the join/leave diff. The SHARED selection, not a
-            # copy: the mapper below requires every key of it, and a hand-written
-            # near-copy is how the mirror silently stops writing.
-            ${PRODUCT_COLLECTIONS_SELECTION}
+            # §Phase 3.1 — echoed ONLY when this save actually writes them.
+            #
+            # The membership selection is 100 nodes with a nested ruleSet, and
+            # a title fix, an SEO edit or an alt-text save has no use for any of
+            # it — the mirror below is already gated on the same predicate, so
+            # unconditional selection drained the cost bucket for data that was
+            # then discarded. Absent means productCollectionRows gets undefined,
+            # returns null, and the "skip the rebuild" path runs, which is the
+            # designed semantics rather than a special case.
+            ${wroteCategory ? "category { id fullName name }" : ""}
+            ${wroteMembership ? PRODUCT_COLLECTIONS_SELECTION : ""}
             seo {
               title
               description
@@ -1168,10 +1198,11 @@ async function updatePrimaryProduct(
     const echoed = data.data.productUpdate.product as {
       status?: string; vendor?: string; tags?: string[]; templateSuffix?: string | null;
       category?: { id?: string; fullName?: string | null; name?: string | null } | null;
-      collections?: {
-        nodes?: Array<{ id: string; title?: string | null; ruleSet?: unknown | null }> | null;
-        pageInfo?: { hasNextPage?: boolean } | null;
-      } | null;
+      // The SHARED type, not a hand-written near-copy: this is exactly the
+      // drift the removed `as never` cast used to hide — the mapper requires
+      // every key of the selection, and a local shape that merely looks like
+      // it would stop the mirror writing without a word.
+      collections?: ShopifyProductCollections | null;
     } | null;
     // Mirrored only for what was actually WRITTEN — same gate as the mutation
     // input above, or a title edit would mirror the cache's own defaults back
@@ -1194,7 +1225,7 @@ async function updatePrimaryProduct(
     // sidebar say "Shirts & Tops" for a category the merchant chose under
     // "Apparel". Cleared to null when the merchant cleared it, which the echo
     // reports as a missing category rather than an empty one.
-    if (mutationInput.category !== undefined) {
+    if (wroteCategory) {
       updateData.categoryId = echoed?.category?.id ?? null;
       updateData.categoryName = echoed?.category?.fullName ?? echoed?.category?.name ?? null;
     }
@@ -1209,26 +1240,32 @@ async function updatePrimaryProduct(
     // memberships — the same rule the sync follows. It is also why the
     // truncation flag rides along: "in N collections" must not read as
     // complete when it is a cut-off list.
-    const membership =
-      mutationInput.collectionsToJoin !== undefined || mutationInput.collectionsToLeave !== undefined
-        ? productCollectionRows(shop, productId, echoed?.collections as never)
-        : null;
+    const membership = wroteMembership
+      ? productCollectionRows(shop, productId, echoed?.collections)
+      : null;
     if (membership) updateData.hasMoreCollections = membership.hasMore;
 
-    await db.product.update({
-      where: { shop_id: { shop, id: productId } },
-      data: updateData,
-    });
+    // ONE transaction, exactly as the three sync sites do it. Without it a
+    // connection blip between the delete and the createMany leaves the product
+    // cached as a member of NOTHING while the save reports success — and
+    // because `attributesSyncedAt` is untouched, the picker then renders that
+    // emptiness as a confident "in no collections". The `hasMoreCollections`
+    // flag rides along for the same reason: it and the rows must not disagree.
+    await db.$transaction(async (tx) => {
+      await tx.product.update({
+        where: { shop_id: { shop, id: productId } },
+        data: updateData,
+      });
 
-    if (membership) {
+      if (!membership) return;
       // Delete-by-product then createMany, exactly as the sync does: the echo
       // is the complete window, so a diff against it would only reintroduce
       // the drift this rebuild exists to remove.
-      await db.productCollection.deleteMany({ where: { shop, productId } });
+      await tx.productCollection.deleteMany({ where: { shop, productId } });
       if (membership.rows.length > 0) {
-        await db.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
       }
-    }
+    });
 
     loggers.product("info", "Updated product in DB", {
       productId,

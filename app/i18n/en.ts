@@ -468,6 +468,8 @@ export const en: Translation = {
     // typing" and "the lookup broke" are three different things, and only one
     // of them means the merchant should try different words.
     taxonomy: {
+      unknown: "Not loaded from Shopify yet — reload this product to see its category.",
+      reload: "Reload",
       search: "Search categories …",
       searching: "Searching …",
       keepTyping: "Type at least two characters.",
@@ -479,6 +481,9 @@ export const en: Translation = {
     },
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
+      reload: "Reload",
+      automatedUnknown: "Not loaded from Shopify yet — reload the collections to change this.",
+      listTruncated: "This shop has more collections than are listed here. Use the filter, or manage the rest in the Shopify admin.",
       filter: "Filter collections …",
       loading: "Loading collections",
       lookupFailed: "The collection list could not be loaded, so only the current memberships are shown.",

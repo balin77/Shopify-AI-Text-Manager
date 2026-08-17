@@ -325,8 +325,14 @@ export function UnifiedFieldRenderer(
         currentLabel={(selectedItem?.categoryName as string) || ""}
         label={translatedFieldLabel}
         // Same rule as every other attribute: one value per product, so a
-        // foreign locale reads it only.
+        // foreign locale reads it only — WITH the reason, never in silence.
         disabled={!isPrimaryLocale}
+        foreignLocaleHint={isPrimaryLocale ? undefined : t.content?.attributesForeignLocale}
+        // §2.4 — the same discriminator the neighbouring attribute fields read.
+        // Without it an unsynced row renders a confident "Not set" next to
+        // fields correctly saying "not loaded yet".
+        known={attributesKnown !== false}
+        onReload={onReloadAttributes}
         t={(t.content?.taxonomy ?? {}) as Record<string, string>}
       />
     );
@@ -340,21 +346,30 @@ export function UnifiedFieldRenderer(
         onChange={onChange}
         memberships={
           Array.isArray(selectedItem?.collections)
-            ? (selectedItem.collections as Array<{ id: string; title?: string; automated?: boolean }>).map((c) => ({
+            ? (selectedItem.collections as Array<{ id: string; title?: string; automated?: boolean | null }>).map((c) => ({
                 collectionId: c.id,
                 collectionTitle: c.title ?? "",
-                automated: c.automated === true,
+                // `null` stays null — unknown is not manual, and the picker
+                // locks it rather than offering a change Shopify would refuse.
+                automated: c.automated ?? null,
               }))
             : []
         }
         truncated={selectedItem?.hasMoreCollections === true}
+        onReload={onReloadAttributes}
         // `collections: null` means the row was never attribute-synced — the
         // same discriminator every other attribute reads. An empty list would
         // say "in no collections", which the save would then act on.
         known={Array.isArray(selectedItem?.collections)}
         label={translatedFieldLabel}
         disabled={!isPrimaryLocale}
-        t={(t.content?.collectionsField ?? {}) as Record<string, string>}
+        t={{
+          ...((t.content?.collectionsField ?? {}) as Record<string, string>),
+          // The same sentence the other attribute fields show in a foreign
+          // locale — greying every box with no reason is the "DISABLE +
+          // tooltip, don't hide" rule half-applied.
+          ...(isPrimaryLocale ? {} : { foreignLocale: t.content?.attributesForeignLocale }),
+        }}
       />
     );
   }

@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BlockStack, Banner, Button, InlineStack, Spinner, Text, TextField } from "@shopify/polaris";
+import { BlockStack, Banner, Box, Button, InlineStack, Spinner, Text, TextField } from "@shopify/polaris";
 import type { TaxonomyOption } from "../../routes/api.product-taxonomy";
 
 export interface TaxonomyFieldProps {
@@ -36,6 +36,13 @@ export interface TaxonomyFieldProps {
   currentLabel: string;
   label: string;
   disabled?: boolean;
+  /** False ⇒ the row was never attribute-synced. "" then means UNKNOWN, not
+   *  "no category" — the same discriminator every other attribute reads. */
+  known?: boolean;
+  /** The way out of that state. */
+  onReload?: () => void;
+  /** Set in a foreign locale — the reason, shown instead of silence. */
+  foreignLocaleHint?: string;
   t: {
     search?: string;
     searching?: string;
@@ -44,6 +51,8 @@ export interface TaxonomyFieldProps {
     lookupFailed?: string;
     none?: string;
     clear?: string;
+    unknown?: string;
+    reload?: string;
     /** Marker on a category that is a branch rather than a specific type. */
     broad?: string;
   };
@@ -53,8 +62,27 @@ export interface TaxonomyFieldProps {
  *  list feels live. The route additionally refuses searches under 2 chars. */
 const DEBOUNCE_MS = 300;
 
-export function TaxonomyField({ value, onChange, currentLabel, label, disabled, t }: TaxonomyFieldProps) {
+export function TaxonomyField({
+  value,
+  onChange,
+  currentLabel,
+  label,
+  disabled,
+  known = true,
+  onReload,
+  foreignLocaleHint,
+  t,
+}: TaxonomyFieldProps) {
   const [query, setQuery] = useState("");
+  /**
+   * The label of a category chosen in THIS session.
+   *
+   * `currentLabel` comes from the cache and only refreshes after a save plus a
+   * loader revalidation — so without this, picking a category rendered "Not
+   * set" (or, worse, kept showing the PREVIOUS one). A change the UI reports
+   * as no change is indistinguishable from a mis-click.
+   */
+  const [pendingLabel, setPendingLabel] = useState<{ id: string; fullName: string } | null>(null);
   const [results, setResults] = useState<TaxonomyOption[] | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "tooShort" | "failed">("idle");
 
@@ -109,12 +137,40 @@ export function TaxonomyField({ value, onChange, currentLabel, label, disabled, 
   const choose = useCallback(
     (option: TaxonomyOption) => {
       onChange(option.id);
+      setPendingLabel({ id: option.id, fullName: option.fullName });
       setQuery("");
       setResults(null);
       requestToken.current += 1;
     },
     [onChange],
   );
+
+  // The chosen label survives only as long as the value it belongs to. A
+  // switch to another item, an undo, or a save-and-reload all move `value`
+  // away from it, and a stale path under a different category would be a
+  // confident lie.
+  const shownLabel = pendingLabel && pendingLabel.id === value ? pendingLabel.fullName : currentLabel;
+
+  if (foreignLocaleHint) {
+    return (
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd">{label}</Text>
+        <Banner tone="info"><p>{foreignLocaleHint}</p></Banner>
+      </BlockStack>
+    );
+  }
+
+  if (!known) {
+    return (
+      <BlockStack gap="200">
+        <Text as="p" variant="bodyMd">{label}</Text>
+        <Text as="p" variant="bodySm" tone="subdued">
+          {t.unknown || "Not loaded from Shopify yet — reload this product to see its category."}
+        </Text>
+        {onReload && <Box><Button onClick={onReload}>{t.reload || "Reload"}</Button></Box>}
+      </BlockStack>
+    );
+  }
 
   return (
     <BlockStack gap="200">
@@ -126,7 +182,7 @@ export function TaxonomyField({ value, onChange, currentLabel, label, disabled, 
               been attribute-synced since the category was set. The id is not a
               name, so the field says "set, name unknown" by showing nothing
               rather than a GID. */}
-          {value ? currentLabel || t.none || "Not set" : t.none || "Not set"}
+          {value ? shownLabel || t.none || "Not set" : t.none || "Not set"}
         </Text>
         {value && !disabled && (
           <Button variant="plain" tone="critical" onClick={() => onChange("")}>

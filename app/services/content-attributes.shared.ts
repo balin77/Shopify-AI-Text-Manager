@@ -178,32 +178,59 @@ export function attributeInputFor(
  *   - The BEFORE side is the CACHE (`ProductCollection`), never the client. A
  *     payload that names an id as "left" must not be able to remove a
  *     membership this editor never showed.
- *   - An AUTOMATED membership is never left. Its rule would re-add the product
- *     within seconds, and the merchant would be looking at a save that
- *     apparently did nothing. The picker says so; this enforces it, because the
- *     action is reachable by POST.
+ *   - A RULE-BASED collection is never touched, in EITHER direction. Leaving
+ *     one is undone by its rule within seconds — a save that apparently did
+ *     nothing. JOINING one is worse: Shopify refuses manual membership on a
+ *     smart collection, and because `productUpdate` is atomic that refusal
+ *     takes the merchant's title, description and SEO edits down with it. The
+ *     picker locks such rows; this is the server-side twin, because the action
+ *     is reachable by POST.
+ *   - `automated: null` means UNKNOWN — a collection row written before the
+ *     attribute sync existed, where the column's `false` default is
+ *     indistinguishable from a measured "manual". Unknown is treated as
+ *     automated for the purpose of refusing: the cost of not adding a
+ *     membership is a merchant clicking again, the cost of adding it wrongly is
+ *     a lost text edit.
  */
 export interface MembershipDiff {
   toJoin: string[];
   toLeave: string[];
-  /** Automated memberships the payload asked to leave. Reported, not silent. */
+  /** Rule-based (or unknown) collections the payload tried to change. */
   refusedAutomated: string[];
 }
 
 export function diffCollectionMembership(
-  before: Array<{ collectionId: string; automated: boolean }>,
+  before: Array<{ collectionId: string; automated: boolean | null }>,
   afterIds: string[],
+  /**
+   * How each collection in the SHOP reads — the picker's own list. Only
+   * consulted for a JOIN, where `before` by definition has no row to read.
+   * Omitted ⇒ joins are not screened, which is the pre-existing behaviour and
+   * the right one for a caller that has no list to screen against.
+   */
+  known?: Map<string, boolean | null>,
 ): MembershipDiff {
   const beforeById = new Map(before.map((row) => [row.collectionId, row] as const));
   const after = new Set(afterIds.filter((id) => id.trim()));
 
-  const toJoin = [...after].filter((id) => !beforeById.has(id));
+  const toJoin: string[] = [];
+  const refusedAutomated: string[] = [];
+
+  for (const id of after) {
+    if (beforeById.has(id)) continue;
+    // Not `=== true`: `null` (never attribute-synced) is refused too. See the
+    // header — the asymmetry of the two costs is the whole argument.
+    if (known && known.has(id) && known.get(id) !== false) {
+      refusedAutomated.push(id);
+      continue;
+    }
+    toJoin.push(id);
+  }
 
   const toLeave: string[] = [];
-  const refusedAutomated: string[] = [];
   for (const row of before) {
     if (after.has(row.collectionId)) continue;
-    if (row.automated) {
+    if (row.automated !== false) {
       refusedAutomated.push(row.collectionId);
       continue;
     }

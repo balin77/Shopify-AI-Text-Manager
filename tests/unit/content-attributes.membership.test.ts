@@ -41,11 +41,43 @@ describe("diffCollectionMembership", () => {
     expect(diff.refusedAutomated).toEqual([gid(1)]);
   });
 
-  it("still JOINS an automated collection when asked", () => {
-    // Adding a product to a smart collection is a legitimate manual override
-    // on Shopify's side; only removing it is the one the rule undoes.
-    const diff = diffCollectionMembership([], [gid(9)]);
-    expect(diff.toJoin).toEqual([gid(9)]);
+  it("REFUSES to join a rule-based collection", () => {
+    // Corrected premise: Shopify does not accept manual membership on a smart
+    // collection. And because `productUpdate` is atomic, a refusal takes the
+    // merchant's title, description and SEO edits down with it — which is why
+    // this is screened here rather than left for Shopify to reject.
+    const known = new Map<string, boolean | null>([[gid(9), true]]);
+    const diff = diffCollectionMembership([], [gid(9)], known);
+    expect(diff.toJoin).toEqual([]);
+    expect(diff.refusedAutomated).toEqual([gid(9)]);
+  });
+
+  it("REFUSES to join a collection whose type is unknown", () => {
+    // `Collection.isSmart` is NOT NULL DEFAULT false on a column added to an
+    // existing table, so an unsynced row reads as manual. The two costs are
+    // not symmetric: not adding a membership is a second click, adding one
+    // wrongly is a lost text edit.
+    const known = new Map<string, boolean | null>([[gid(9), null]]);
+    const diff = diffCollectionMembership([], [gid(9)], known);
+    expect(diff.toJoin).toEqual([]);
+    expect(diff.refusedAutomated).toEqual([gid(9)]);
+  });
+
+  it("joins a KNOWN-manual collection", () => {
+    const known = new Map<string, boolean | null>([[gid(9), false]]);
+    expect(diffCollectionMembership([], [gid(9)], known).toJoin).toEqual([gid(9)]);
+  });
+
+  it("does not screen joins when no shop list was supplied", () => {
+    // A caller with nothing to screen against gets the pre-existing behaviour
+    // rather than a refusal it cannot explain.
+    expect(diffCollectionMembership([], [gid(9)]).toJoin).toEqual([gid(9)]);
+  });
+
+  it("refuses to leave a membership whose type is UNKNOWN", () => {
+    const diff = diffCollectionMembership([{ collectionId: gid(1), automated: null }], []);
+    expect(diff.toLeave).toEqual([]);
+    expect(diff.refusedAutomated).toEqual([gid(1)]);
   });
 
   it("emits nothing when the membership is unchanged", () => {

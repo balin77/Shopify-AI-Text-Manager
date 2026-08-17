@@ -24,13 +24,15 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { BlockStack, Banner, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
+import { BlockStack, Banner, Box, Button, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
 import type { CollectionOption } from "../../routes/api.product-taxonomy";
 
 export interface ProductMembership {
   collectionId: string;
   collectionTitle: string;
-  automated: boolean;
+  /** `null` ⇒ the collection row was never attribute-synced — unknown, which
+   *  this picker treats as locked. See `diffCollectionMembership`. */
+  automated: boolean | null;
 }
 
 export interface CollectionsFieldProps {
@@ -43,15 +45,21 @@ export interface CollectionsFieldProps {
   truncated: boolean;
   /** False ⇒ the row was never attribute-synced; nothing here is known. */
   known: boolean;
+  /** The way OUT of that state — the same affordance `AttributeField` offers. */
+  onReload?: () => void;
   label: string;
   disabled?: boolean;
   t: {
     filter?: string;
     loading?: string;
+    reload?: string;
+    automatedUnknown?: string;
     lookupFailed?: string;
     automated?: string;
     truncated?: string;
+    listTruncated?: string;
     unknown?: string;
+    foreignLocale?: string;
     none?: string;
   };
 }
@@ -65,12 +73,15 @@ export function CollectionsField({
   memberships,
   truncated,
   known,
+  onReload,
   label,
   disabled,
   t,
 }: CollectionsFieldProps) {
   const [options, setOptions] = useState<CollectionOption[] | null>(null);
   const [failed, setFailed] = useState(false);
+  /** The cache holds more collections than one page — see the route's cap. */
+  const [listTruncated, setListTruncated] = useState(false);
   const [filter, setFilter] = useState("");
 
   useEffect(() => {
@@ -86,6 +97,10 @@ export function CollectionsField({
           return;
         }
         setOptions((data.collections ?? []) as CollectionOption[]);
+        // Said, not swallowed: a shop with more collections than the page gets
+        // the first N alphabetically, and a merchant looking for "Winter Sale"
+        // would otherwise conclude it does not exist.
+        setListTruncated(data.truncated === true);
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -113,9 +128,10 @@ export function CollectionsField({
       byId.set(membership.collectionId, {
         id: membership.collectionId,
         title: existing?.title || membership.collectionTitle || membership.collectionId,
-        // The MEMBERSHIP's own flag wins: it is what the sync measured for
-        // this product, and it is what the server's refusal is keyed on.
-        automated: membership.automated || existing?.automated === true,
+        // The MEMBERSHIP's own flag wins where it KNOWS; otherwise the shop
+        // list's answer. `null` from both stays null, which renders locked —
+        // unknown is not manual, and the server refuses it either way.
+        automated: membership.automated ?? existing?.automated ?? null,
       });
     }
     return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));
@@ -143,6 +159,11 @@ export function CollectionsField({
         <Text as="p" variant="bodySm" tone="subdued">
           {t.unknown || "Not loaded yet — reload this product to see its collections."}
         </Text>
+        {/* The affordance, not just the sentence — the same one every other
+            attribute offers in this state. */}
+        {onReload && (
+          <Box><Button onClick={onReload}>{t.reload || "Reload"}</Button></Box>
+        )}
       </BlockStack>
     );
   }
@@ -160,6 +181,12 @@ export function CollectionsField({
       {truncated && (
         <Banner tone="info">
           <p>{t.truncated || "This product is in more collections than were loaded. Manage the rest in the Shopify admin."}</p>
+        </Banner>
+      )}
+
+      {listTruncated && (
+        <Banner tone="info">
+          <p>{t.listTruncated || "This shop has more collections than are listed here. Use the filter, or manage the rest in the Shopify admin."}</p>
         </Banner>
       )}
 
@@ -192,8 +219,18 @@ export function CollectionsField({
             checked={selected.has(row.id)}
             // Rule-based: shown ticked and locked. See the header — unticking
             // it would be a save that apparently did nothing.
-            disabled={disabled || row.automated}
-            helpText={row.automated ? t.automated || "Managed by this collection's rules" : undefined}
+            // Locked for rule-based AND for unknown. Ticking either one sends
+            // a `collectionsToJoin` Shopify refuses, and because
+            // `productUpdate` is atomic that refusal takes the merchant's text
+            // edits with it.
+            disabled={disabled || row.automated !== false}
+            helpText={
+              row.automated === true
+                ? t.automated || "Managed by this collection's rules"
+                : row.automated === null
+                  ? t.automatedUnknown || "Not loaded from Shopify yet — reload the collections to change this."
+                  : undefined
+            }
             onChange={(checked) => toggle(row.id, checked)}
           />
         ))}
