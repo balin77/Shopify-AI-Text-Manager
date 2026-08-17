@@ -22,9 +22,28 @@ export interface SeoSectionDef {
   icon: string;
   labelKey: string;      // i18n-Key unter t.seo.sections.*
   kind: SeoSectionKind;
-  planGate?: Plan;       // ab welchem Plan freigeschaltet (fehlt = alle Pläne)
+  planGate?: Plan;       // ab welchem Plan SICHTBAR (fehlt = alle Pläne)
 }
 ```
+
+**`planGate` regelt nur die Sichtbarkeit einer Section.** Alles Feinere —
+Kontingente, Historienlänge, Automatisierung, Durchsatz — steht in
+`PlanLimits.seo` (`app/config/plans.ts`) und wird über die `getSeo*`-Helper in
+`planUtils.ts` **server-seitig im Loader/Action/Service** geprüft. Es gibt
+bewusst keinen zweiten Gating-Mechanismus. Leitprinzip: **Pro bekommt die
+vollständige Feature-Fläche, Max kauft Automatisierung, Gedächtnis, Skalierung
+und Durchsatz.** Die Matrix und die Durchsetzungsstellen stehen in
+[PLAN_SYSTEM.md §SEO-Entitlements](PLAN_SYSTEM.md#seo-entitlements-planlimitsseo).
+
+Zwei Regeln, die beim Anlegen einer Section gelten:
+
+1. **Ein `planGate` muss zur Quota passen.** Eine Section, die auf einem Plan
+   sichtbar ist, dessen Kontingent 0 ist, rendert eine leere Hülle, in der jede
+   Aktion abgelehnt wird (genau das passierte der Keywords-Section auf Free, bis
+   sie `planGate:"basic"` bekam). Ein Test hält beides zusammen.
+2. **Merchant-eigene Daten werden beim Downgrade nie gelöscht.** Keywords sind
+   Recherche, kein Cache — über dem Cap wird nur das Anlegen gesperrt. Nur
+   abgeleitete Daten (Snapshots) folgen der Plan-Retention.
 
 Sections liegen in **Rubriken** (`SEO_RUBRICS`) — die Level-2-Ebene des SEO-Tabs, analog zu `CONTENT_RUBRICS`:
 

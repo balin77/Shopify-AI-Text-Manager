@@ -15,6 +15,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { computeSeoScore, type SeoSeverity } from "../../utils/seo-score";
 import { PLAN_CONFIG, type Plan, type ContentType } from "../../config/plans";
+import { getSeoScoreHistoryDays } from "../../utils/planUtils";
 import { computeHeadDrift, classifyLinkStatus } from "./crawl.service";
 import {
   analyzeIndexability,
@@ -1500,7 +1501,13 @@ function finalizeStat(stat: MutStat): void {
 // point-in-time result and let the dashboard loader read the latest one
 // instead of re-scanning synchronously.
 
-/** Keep only the newest N snapshots per shop — a history, not an unbounded log. */
+/**
+ * Hard row ceiling per (shop, locale) — a history, not an unbounded log. The
+ * PLAN also bounds the history by AGE (`scoreHistoryDays`: Free/Basic current
+ * state only, Pro 30 days, Max 365 — see §Plan-Matrix); whichever bound bites
+ * first wins. The newest snapshot is never pruned, so the dashboard always has
+ * something to show.
+ */
 export const MAX_SNAPSHOTS_PER_SHOP = 30;
 
 export interface AuditSnapshot {
@@ -1553,6 +1560,28 @@ export async function saveAuditSnapshot(
       where: { shop, locale, id: { notIn: keep.map((r) => r.id) } },
     });
   }
+
+  // Plan retention on top of the row cap: trends are an entitlement, so a
+  // tier without history keeps only what it needs to render "today". The row
+  // just written is always excluded from the age prune (notIn newest), which
+  // is what makes scoreHistoryDays === 0 mean "current state, no trend"
+  // instead of "empty dashboard".
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const historyDays = getSeoScoreHistoryDays(plan);
+  const newest = keep[0]?.id;
+  const cutoff = new Date(Date.now() - historyDays * 24 * 60 * 60 * 1000);
+  await db.seoScoreSnapshot.deleteMany({
+    where: {
+      shop,
+      locale,
+      createdAt: { lt: cutoff },
+      ...(newest ? { id: { not: newest } } : {}),
+    },
+  });
 }
 
 /**

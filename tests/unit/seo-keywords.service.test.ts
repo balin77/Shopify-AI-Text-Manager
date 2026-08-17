@@ -20,6 +20,21 @@ import {
 } from "~/services/seo/keywords.service";
 
 /**
+ * The keyword write paths consult the shop's plan quota (§Plan-Matrix), so
+ * every fake db needs an AISettings row and a shop-wide keyword count. Max +
+ * count 0 = "quota never in the way", which keeps the pre-existing assertions
+ * about the per-item cap and the locale key focused on what they test. The
+ * quota itself is covered by its own cases below.
+ */
+function quotaFakes(plan = "max", used = 0) {
+  return {
+    aISettings: { findUnique: vi.fn(async (_args: any) => ({ subscriptionPlan: plan })) },
+    keywordCount: vi.fn(async (_args: any) => used),
+  };
+}
+
+
+/**
  * Phase 5 keyword on-page analysis (pure) + persistence helpers (keyword +
  * assignment model since the keywords expansion, PLAN_KEYWORDS_EXPANSION.md
  * §2). Density bands use controlled word counts; H1 is extracted from raw
@@ -225,12 +240,23 @@ describe("persistence helpers (keyword + assignment)", () => {
   function makeDb(overrides: {
     siblings?: any[];
     keywordRow?: any;
+    /** Simulate a keyword the shop does NOT track yet (consumes quota). */
+    newKeyword?: boolean;
+    plan?: string;
+    used?: number;
   } = {}) {
     const keywordRow = overrides.keywordRow ?? { id: "kw1", keyword: "blue shoes", locale: "" };
+    const q = quotaFakes(overrides.plan, overrides.used);
     const tx = {
       seoKeyword: {
         upsert: vi.fn(async (_args: any) => keywordRow),
         delete: vi.fn(async (_args: any) => ({})),
+        // Quota path: the keyword is already known unless a case says otherwise,
+        // so an assign never consumes quota by default.
+        findUnique: vi.fn(async (_args: any) =>
+          overrides.newKeyword ? null : { id: keywordRow.id },
+        ),
+        count: q.keywordCount,
       },
       seoKeywordAssignment: {
         findMany: vi.fn(async (_args: any) => overrides.siblings ?? []),
@@ -244,7 +270,11 @@ describe("persistence helpers (keyword + assignment)", () => {
         count: vi.fn(async (_args: any) => 0),
       },
     };
-    const db = { ...tx, $transaction: vi.fn(async (fn: any) => fn(tx)) } as any;
+    const db = {
+      ...tx,
+      aISettings: q.aISettings,
+      $transaction: vi.fn(async (fn: any) => fn(tx)),
+    } as any;
     return { db, tx };
   }
 
@@ -652,7 +682,13 @@ describe("assignMany / planItemAssignments", () => {
       .mockResolvedValueOnce(fiveSiblings);
     const txAssignmentUpsert = vi.fn(async (_args: any) => ({}));
     const tx = {
-      seoKeyword: { upsert: txUpsertKw },
+      seoKeyword: {
+        upsert: txUpsertKw,
+        // Both keywords already exist (assignMany works off keyword IDs), so
+        // the quota never engages here.
+        findUnique: vi.fn(async (_args: any) => ({ id: "kw" })),
+        count: vi.fn(async (_args: any) => 0),
+      },
       seoKeywordAssignment: {
         findMany: txAssignmentFindMany,
         upsert: txAssignmentUpsert,
@@ -662,6 +698,7 @@ describe("assignMany / planItemAssignments", () => {
     const db = {
       seoKeyword: { findMany: keywordFindMany },
       seoKeywordAssignment: { findMany: topAssignmentFindMany },
+      aISettings: quotaFakes().aISettings,
       $transaction: vi.fn(async (fn: any) => fn(tx)),
     } as any;
 
@@ -744,8 +781,10 @@ describe("group locale (Phase 0)", () => {
       seoKeywordGroup: { findFirst: vi.fn(async (_args: any) => ({ locale: "de" })) },
       seoKeyword: {
         findMany: vi.fn(async (_args: any) => []), // nothing exists yet, then still nothing after create in this mock
+        count: vi.fn(async (_args: any) => 0),
         createMany,
       },
+      aISettings: quotaFakes().aISettings,
       seoKeywordGroupMembership: {
         findMany: vi.fn(async (_args: any) => []),
         createMany: vi.fn(async (_args: any) => ({ count: 0 })),
@@ -762,12 +801,17 @@ describe("group locale (Phase 0)", () => {
     const createMany = vi.fn(async (_args: any) => ({ count: 0 }));
     const db = {
       seoKeywordGroup: { findFirst: vi.fn(async (_args: any): Promise<any> => null) },
-      seoKeyword: { findMany: vi.fn(async (_args: any) => []), createMany },
+      seoKeyword: {
+        findMany: vi.fn(async (_args: any) => []),
+        count: vi.fn(async (_args: any) => 0),
+        createMany,
+      },
       seoKeywordGroupMembership: { findMany: vi.fn(async (_args: any) => []), createMany: vi.fn() },
+      aISettings: quotaFakes().aISettings,
     } as any;
 
     const result = await addKeywordsToGroup(db, SHOP, "foreign", [{ keyword: "widget" }]);
-    expect(result).toEqual({ added: 0, alreadyInGroup: 0 });
+    expect(result).toEqual({ added: 0, alreadyInGroup: 0, skippedOverQuota: 0 });
     expect(createMany).not.toHaveBeenCalled();
   });
 
@@ -1133,13 +1177,16 @@ describe("createKeyword — placeholder rows for inline editing", () => {
   function makeDb(existing: { keyword: string }[], group?: { locale: string } | null) {
     const create = vi.fn(async (_args: any) => ({ id: "new-id" }));
     const membershipCreate = vi.fn(async (_args: any) => ({}));
+    const q = quotaFakes();
     const db = {
       seoKeyword: {
         findMany: vi.fn(async (_args: any) => existing),
+        count: q.keywordCount,
         create,
       },
       seoKeywordGroup: { findFirst: vi.fn(async (_args: any) => group ?? null) },
       seoKeywordGroupMembership: { create: membershipCreate },
+      aISettings: q.aISettings,
     } as any;
     return { db, create, membershipCreate };
   }

@@ -365,7 +365,10 @@ const SAMPLE_AUDIT: AuditAggregate = {
 };
 
 /** Hand-rolled seoScoreSnapshot delegate stub, recording create/findMany/findFirst/deleteMany calls. */
-function makeSnapshotDb(rows: { id: string; shop: string; createdAt: Date; averageScore: number; totalScanned: number; totalAvailable: number; capped: boolean; payload: string }[] = []) {
+function makeSnapshotDb(
+  rows: { id: string; shop: string; createdAt: Date; averageScore: number; totalScanned: number; totalAvailable: number; capped: boolean; payload: string }[] = [],
+  plan: string = "max",
+) {
   const calls: { method: string; args: any }[] = [];
   const db = {
     seoScoreSnapshot: {
@@ -398,12 +401,27 @@ function makeSnapshotDb(rows: { id: string; shop: string; createdAt: Date; avera
       deleteMany: async ({ where }: any) => {
         calls.push({ method: "deleteMany", args: where });
         const before = rows.length;
+        // Two prune shapes now: the row-cap prune (id.notIn = the newest N)
+        // and the plan-retention prune (createdAt.lt, newest row excluded via
+        // id.not). A row must match EVERY predicate present to be deleted.
         const keepIds = new Set<string>(where.id?.notIn ?? []);
-        const remaining = rows.filter((r) => !(r.shop === where.shop && !keepIds.has(r.id)));
+        const remaining = rows.filter((r) => {
+          if (r.shop !== where.shop) return true;
+          if (where.id?.notIn && keepIds.has(r.id)) return true;
+          if (where.id?.not && r.id === where.id.not) return true;
+          if (where.createdAt?.lt && !(r.createdAt < where.createdAt.lt)) return true;
+          return false;
+        });
         rows.length = 0;
         rows.push(...remaining);
         return { count: before - remaining.length };
       },
+    },
+    // saveAuditSnapshot reads the plan to apply the retention window
+    // (§Plan-Matrix). Max = 365 days, so the pre-existing row-cap assertions
+    // stay about the row cap.
+    aISettings: {
+      findUnique: async () => ({ subscriptionPlan: plan }),
     },
   } as any;
   return { db, rows, calls };

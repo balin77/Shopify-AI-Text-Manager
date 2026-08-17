@@ -740,7 +740,11 @@ export function SeoSidebar({
                             "{max}",
                             String(MAX_KEYWORDS_PER_ITEM),
                           )
-                        : t.seo?.keywordOpError || "Could not update keywords. Please reload and try again."}
+                        : keywordOpError === "planLimit"
+                          ? t.seo?.keywordPlanLimit ||
+                            "Your plan's keyword limit is reached. Upgrade or remove a keyword to add another."
+                          : t.seo?.keywordOpError ||
+                            "Could not update keywords. Please reload and try again."}
                     </Text>
                   )
                 )}

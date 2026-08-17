@@ -42,6 +42,7 @@ import {
   countUngrouped,
   listUngrouped,
   addKeywordsToGroup,
+  getKeywordQuota,
   removeKeywordFromGroup,
   deleteKeyword,
   createKeyword,
@@ -497,6 +498,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // result lands in the server logs and in the next load.
     researchAvailability: getSuggestionsAvailability(),
     isPro,
+    // Plan keyword quota (§Plan-Matrix): drives the usage line, the disabled
+    // "add" control and the over-cap banner after a downgrade. Existing rows
+    // are never deleted for it — see keywords.service.ts.
+    keywordQuota: await getKeywordQuota(db, shop),
   });
 };
 
@@ -504,7 +509,15 @@ type CsvErrorRow = { row: number; keyword: string; error: string };
 
 export type ActionResult =
   | { ok: true; kind: "saved" | "deleted" | "promoted" | "prioritySet" | "groupCreated" | "groupDeleted" | "groupUpdated" }
-  | { ok: true; kind: "csvImported"; added: number; alreadyInGroup: number; csvErrors: CsvErrorRow[] }
+  | {
+      ok: true;
+      kind: "csvImported";
+      added: number;
+      alreadyInGroup: number;
+      /** Rows dropped because the shop's plan keyword quota ran out. */
+      skippedOverQuota: number;
+      csvErrors: CsvErrorRow[];
+    }
   // Inline table editing: a row added under an auto-generated name (the client
   // opens it in edit mode), and a row renamed in place.
   | { ok: true; kind: "keywordCreated"; keywordId: string; keyword: string }
@@ -529,7 +542,13 @@ export type ActionResult =
   // Bulk assignment (plan §4.1): `applied` writes plus a per-pair skip report.
   // `dryRun` echoes back so the client can tell a preview from a real apply.
   | { ok: true; kind: "assigned"; applied: number; skipped: AssignManySkip[]; dryRun?: boolean }
-  | { ok: false; error: "invalid" | "tooMany" | "duplicateName" | "csvEmpty" | "csvTooMany"; existingKeyword?: never }
+  | {
+      ok: false;
+      // "planLimit" = the shop's plan keyword quota is exhausted (distinct from
+      // "tooMany", the per-item cap).
+      error: "invalid" | "tooMany" | "planLimit" | "duplicateName" | "csvEmpty" | "csvTooMany";
+      existingKeyword?: never;
+    }
   // An inline rename would collide with a keyword this language already has.
   // Never merged silently — see renameKeyword. `keywordId` lets the table
   // re-open the right cell instead of dropping the merchant's text.
@@ -840,7 +859,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
 
     const result = await createKeyword(db, session.shop, { groupId, locale });
     if (!result.ok) {
-      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+      // The plan quota gets its own error so the table can say "upgrade or
+      // delete one" instead of a generic failure.
+      return json<ActionResult>(
+        { ok: false, error: result.reason === "planLimit" ? "planLimit" : "invalid" },
+        { status: result.reason === "planLimit" ? 409 : 400 },
+      );
     }
     return json<ActionResult>({
       ok: true,
@@ -996,7 +1020,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     // untouched.
     const defaultPriorityRaw = Number(getFormString(form, "defaultPriority"));
     const defaultPriority = [1, 2, 3].includes(defaultPriorityRaw) ? defaultPriorityRaw : undefined;
-    const { added, alreadyInGroup } = await addKeywordsToGroup(
+    const { added, alreadyInGroup, skippedOverQuota } = await addKeywordsToGroup(
       db,
       session.shop,
       groupId,
@@ -1011,6 +1035,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       kind: "csvImported",
       added,
       alreadyInGroup,
+      skippedOverQuota,
       csvErrors: parsed.errors.slice(0, 20), // cap the error list the UI shows
     });
   }
@@ -1783,6 +1808,7 @@ export default function SeoKeywords() {
             ungroupedCount={data.ungroupedCount}
             groupDetail={data.groupDetail}
             isPro={data.isPro}
+            keywordQuota={data.keywordQuota}
             runningDistribution={data.runningDistribution}
             distributionPreview={data.distributionPreview}
             researchAvailability={data.researchAvailability}

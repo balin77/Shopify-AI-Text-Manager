@@ -119,6 +119,10 @@ export const SEO_RUBRICS: SeoRubricDef[] = [
         icon: "🔑",
         labelKey: "keywords",
         kind: "tool",
+        // Keyword tracking starts at Basic (PlanLimits.seo.maxTrackedKeywords:
+        // 0 / 25 / 100 / 1000). Without the gate a Free shop opened a fully
+        // built section in which every "add" was refused by the quota.
+        planGate: "basic",
       },
       {
         id: "searchConsole",

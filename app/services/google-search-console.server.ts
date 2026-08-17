@@ -16,6 +16,8 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { encryptApiKey, tryDecryptApiKey } from "../utils/encryption.server";
 import { resolvePathsToResources, isContentResourceType } from "./seo/url-resolver.server";
+import { getSeoScoreHistoryDays } from "../utils/planUtils";
+import type { Plan } from "../config/plans";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -777,9 +779,12 @@ function utcMidnight(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-// One year of daily charts plus slack; bounds table growth without losing the
-// history the "last 12 months" ranking chart needs.
-const SNAPSHOT_RETENTION_DAYS = 400;
+// Ranking-history retention is a plan entitlement (§Plan-Matrix): Pro keeps 30
+// days, Max a full year. This hard ceiling only bounds table growth for any
+// future tier that asks for more — the plan value wins whenever it is lower.
+// The newest snapshot is never pruned by age (a shop must always see where it
+// stands), which is why the cutoff below is clamped to "yesterday" at most.
+const SNAPSHOT_RETENTION_CEILING_DAYS = 400;
 
 /**
  * Fetch GSC query analytics and write per-keyword position/clicks/impressions/ctr
@@ -854,8 +859,20 @@ export async function enrichKeywordsFromGsc(
 
   // Retention: one deleteMany per sync run rather than a separate scheduled
   // job — cheap (an indexed range delete) and keeps the prune tied to the
-  // same shop-scoped code path that writes the snapshots.
-  const retentionCutoff = new Date(now.getTime() - SNAPSHOT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  // same shop-scoped code path that writes the snapshots. The window is the
+  // plan's scoreHistoryDays, capped by the ceiling above; a plan without
+  // history (Free/Basic) keeps today's row and nothing older, so the chart
+  // shows the current state rather than going blank.
+  const settings = await db.aISettings.findUnique({
+    where: { shop },
+    select: { subscriptionPlan: true },
+  });
+  const plan = (settings?.subscriptionPlan || "free") as Plan;
+  const retentionDays = Math.min(
+    SNAPSHOT_RETENTION_CEILING_DAYS,
+    Math.max(1, getSeoScoreHistoryDays(plan)),
+  );
+  const retentionCutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
   await db.seoKeywordSnapshot.deleteMany({ where: { shop, capturedAt: { lt: retentionCutoff } } });
 
   return enriched;

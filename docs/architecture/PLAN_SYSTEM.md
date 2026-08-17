@@ -223,10 +223,57 @@ Downgrades).
 - Alle Features aktiviert (höhere Limits als Pro: 500 Collections, 200 Pages,
   300 Articles; Locales unbegrenzt wie alle Tiers)
 - Variant Image Manager / Bulk-Upload / WebP: **10000** Bild-Operationen/Monat
-  (5× Pro), **6** parallele WebP-Konvertierungen (3× Pro) — die beiden realen,
-  kostenausgerichteten Pro→Max-Differenzierer (AI ist BYO)
+  (5× Pro), **6** parallele WebP-Konvertierungen (3× Pro) — kostenausgerichtete
+  Pro→Max-Differenzierer (AI ist BYO)
+- SEO-Tab: nächtlicher Auto-Audit (exklusiv), 12 Monate Score- und
+  Ranking-Historie, 1000 Keywords, 480-Tage-GSC-Fenster, 50 000
+  IndexNow-URLs/Monat, 2500er-Bulk-Batches — siehe „SEO-Entitlements" unten
 
 **Use Case**: Very large shops, agencies
+
+### SEO-Entitlements (`PlanLimits.seo`)
+
+Eigener Block in `app/config/plans.ts`, ausgewertet über die `getSeo*`-Helper in
+`planUtils.ts`. **Leitprinzip: Pro bekommt die vollständige SEO-Feature-Fläche,
+Max kauft Automatisierung, Gedächtnis, Skalierung und Durchsatz.** Vorher war
+`planGate: "pro"` die höchste Stufe im gesamten SEO-Tab — Max schaltete dort
+nichts frei. Segmentiert wird ausschließlich an realen wiederkehrenden Kosten
+(geplante Compute-Zyklen, Snapshot-Storage, Google-API-Calls, Queue-Durchsatz),
+dieselbe Achse wie `monthlyImageOperations` und `dailyPageSpeedRuns` — nie an
+der Sprachanzahl (bewusster USP) und nie am Basis-Audit.
+
+| Dimension | Free | Basic | Pro | Max |
+|---|---|---|---|---|
+| Audit, Ladezeit, Structured Data, Redirects, hreflang, AEO | ✅ | ✅ | ✅ | ✅ |
+| `bulkBatchSize` (Elemente/Bulk-Lauf) | 25 | 100 | 500 | **2500** |
+| `maxTrackedKeywords` | 0 | 25 | 100 | **1000** |
+| `scoreHistoryDays` (Score- + Ranking-Historie) | 0 | 0 | 30 | **365** |
+| `gscProperties` / `gscHistoryDays` | 0 / 0 | 0 / 0 | 1 / 28 | 1 / **480** |
+| `monthlyIndexNowSubmissions` | 0 | 0 | 5000 | **50000** |
+| `scheduledAudit` (Nacht-Audit) | ❌ | ❌ | ❌ | **✅** |
+
+`0` = Feature gesperrt (nicht „leeres Kontingent"), gleiche Konvention wie
+`monthlyImageOperations`. `canAccessSeoFeature()` **leitet** den booleschen
+Zugriff aus den Zahlen ab, damit Quota und Flag nicht driften können.
+
+**Wo das durchgesetzt wird** (immer server-seitig, `usePlan()` ist Kosmetik):
+
+| Dimension | Durchsetzung |
+|---|---|
+| `scheduledAudit` | `services/seo/audit-auto-run.service.ts` — Sweep wählt nur Shops auf einem Plan mit dem Flag (Filter in der Query) |
+| `scoreHistoryDays` | `saveAuditSnapshot` (Score-Snapshots) + `enrichKeywordsFromGsc` (Ranking-Snapshots) prunen nach Alter; die neueste Zeile überlebt immer |
+| `maxTrackedKeywords` | `keywords.service.ts` (`getKeywordQuota`) in `assignKeyword` / `createKeyword` / `addKeywordsToGroup`; Section-Gate `planGate:"basic"` |
+| `gscHistoryDays` | `defaultDateRange(now, days)` in `app.seo.search-console.tsx` + Export-Route |
+| `monthlyIndexNowSubmissions` | `index-now.service.ts` (`getSubmitQuota`) in `drainQueue` / `submitAll` / `canSubmitAll`, Zähler auf `SeoIndexNowConfig` |
+| `bulkBatchSize` | `seo-bulk-fix.handler.ts` kappt die Item-Liste |
+
+**Downgrade-Regel — wichtig:** `planCacheCleanup` löscht **Cache** (aus Shopify
+nachsyncbar). `SeoKeyword` ist merchant-eigene Recherche und wird deshalb
+**niemals** gelöscht: ein Shop über dem Cap behält alle Keywords, kann nur keine
+neuen anlegen (`isOverKeywordQuota` → Banner + deaktivierter „Hinzufügen"-Button,
+`getKeywordQuota` im Loader). Abgeleitete Daten (Score-/Ranking-Snapshots) folgen
+dagegen der Plan-Retention. Der IndexNow-Zähler ist Nutzungsdatum → lazy, kein
+Cleanup.
 
 ### Bild-Operationen (monthlyImageOperations)
 

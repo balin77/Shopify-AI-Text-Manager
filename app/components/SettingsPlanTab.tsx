@@ -18,7 +18,12 @@ import {
   Modal,
 } from "@shopify/polaris";
 import { PLAN_CONFIG, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans";
-import { getNextPlanUpgrade, isApproachingLimit, type ResourceType } from "../utils/planUtils";
+import {
+  getNextPlanUpgrade,
+  getMinimumPlanForSeoFeature,
+  isApproachingLimit,
+  type ResourceType,
+} from "../utils/planUtils";
 import { getAvailablePlans, type BillingPlan } from "../config/billing";
 import { useI18n } from "../contexts/I18nContext";
 import { formatNumber } from "../utils/format";
@@ -127,6 +132,9 @@ export function SettingsPlanTab({
     isApproachingLimit(subscriptionPlan as Plan, r, counts[r])
   );
   const nextPlan = getNextPlanUpgrade(subscriptionPlan as Plan);
+  // Tier named in the SEO upsell note on locked cards — derived from
+  // PLAN_CONFIG, so re-tiering Search Console rewrites the copy by itself.
+  const seoUpsellPlan = getMinimumPlanForSeoFeature("searchConsole");
 
   return (
     <BlockStack gap="400">
@@ -344,6 +352,84 @@ export function SettingsPlanTab({
                             </Text>
                           </>
                         )}
+                      </BlockStack>
+
+                      {/* SEO tools. Same reading order as the image block:
+                          what every tier gets first, then the paid unlocks,
+                          with the Max-only line bolded exactly like the WebP
+                          concurrency / image-quota rows above so the Pro→Max
+                          jump is scannable. Values come from PLAN_CONFIG[].seo
+                          — never hardcode them here. */}
+                      <Text as="p" variant="bodyMd">
+                        <strong>{t.settings.seoFeaturesTitle}:</strong>
+                      </Text>
+                      <BlockStack gap="100">
+                        <Text as="p" variant="bodySm" tone="success">
+                          ✓ {t.settings.seoFeatureAudit}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="success">
+                          ✓{" "}
+                          {t.settings.seoFeatureBulkBatch.replace(
+                            "{count}",
+                            formatNumber(planDetails.seo.bulkBatchSize, locale),
+                          )}
+                        </Text>
+                        {planDetails.seo.maxTrackedKeywords > 0 && (
+                          <Text as="p" variant="bodySm" tone="success">
+                            ✓{" "}
+                            {t.settings.seoFeatureKeywords.replace(
+                              "{count}",
+                              formatNumber(planDetails.seo.maxTrackedKeywords, locale),
+                            )}
+                          </Text>
+                        )}
+                        {planDetails.seo.scoreHistoryDays > 0 && (
+                          <Text as="p" variant="bodySm" tone="success">
+                            ✓{" "}
+                            {t.settings.seoFeatureScoreHistory.replace(
+                              "{days}",
+                              formatNumber(planDetails.seo.scoreHistoryDays, locale),
+                            )}
+                          </Text>
+                        )}
+                        {planDetails.seo.gscProperties > 0 && (
+                          <Text as="p" variant="bodySm" tone="success">
+                            ✓{" "}
+                            {t.settings.seoFeatureSearchConsole
+                              .replace("{properties}", formatNumber(planDetails.seo.gscProperties, locale))
+                              .replace("{days}", formatNumber(planDetails.seo.gscHistoryDays, locale))}
+                          </Text>
+                        )}
+                        {planDetails.seo.monthlyIndexNowSubmissions > 0 && (
+                          <Text as="p" variant="bodySm" tone="success">
+                            ✓{" "}
+                            {t.settings.seoFeatureIndexNow.replace(
+                              "{count}",
+                              formatNumber(planDetails.seo.monthlyIndexNowSubmissions, locale),
+                            )}
+                          </Text>
+                        )}
+                        {planDetails.seo.scheduledAudit && (
+                          <Text as="p" variant="bodySm" tone="success">
+                            ✓ <strong>{t.settings.seoFeatureScheduledAudit}</strong>
+                          </Text>
+                        )}
+                        {/* Upsell line only when ALL three named unlocks are
+                            still locked here, with the tier derived from the
+                            config — otherwise re-tiering one of them would
+                            print "✓ IndexNow" and "IndexNow from Pro" on the
+                            same card. */}
+                        {planDetails.seo.gscProperties === 0 &&
+                          planDetails.seo.scoreHistoryDays === 0 &&
+                          planDetails.seo.monthlyIndexNowSubmissions === 0 &&
+                          seoUpsellPlan && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {t.settings.seoFeatureProNote.replace(
+                                "{plan}",
+                                PLAN_DISPLAY_NAMES[seoUpsellPlan],
+                              )}
+                            </Text>
+                          )}
                       </BlockStack>
                     </BlockStack>
                   </BlockStack>
