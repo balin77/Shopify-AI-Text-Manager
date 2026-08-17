@@ -719,12 +719,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Translation mode ("exact" | "seo_optimized") is stored on AISettings
       // and piggybacks on the same submit so the Translations sub-section has
       // a single Save button covering the radio + custom instructions.
+      // Keyword-aware translation rides along on the same submit, for the same
+      // reason: it is a knob of the Translations sub-section, and that section
+      // has one Save button. Absent (a submit from another sub-section) leaves
+      // the stored value alone rather than defaulting it back on.
       const rawMode = String(formData.get("translationMode") || "");
-      if (rawMode === "exact" || rawMode === "seo_optimized") {
+      const rawKeywordAware = formData.get("keywordAwareTranslation");
+      const keywordAwareUpdate =
+        rawKeywordAware === null ? {} : { keywordAwareTranslation: rawKeywordAware === "true" };
+      const modeUpdate =
+        rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
+      if (Object.keys(modeUpdate).length > 0 || Object.keys(keywordAwareUpdate).length > 0) {
         await db.aISettings.upsert({
           where: { shop: session.shop },
-          update: { translationMode: rawMode },
-          create: { shop: session.shop, translationMode: rawMode, preferredProvider: "claude" },
+          update: { ...modeUpdate, ...keywordAwareUpdate },
+          create: {
+            shop: session.shop,
+            ...modeUpdate,
+            ...keywordAwareUpdate,
+            preferredProvider: "claude",
+          },
         });
       }
 
@@ -747,18 +761,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         create: { shop: session.shop, appLanguage, preferredProvider: "claude" },
       });
 
-      return json({ success: true, actionType });
-    } else if (actionType === "saveTranslationSettings") {
-      // Whether a translation is phrased to carry the TARGET locale's own
-      // tracked keyword. Off = the previous literal behaviour.
-      await db.aISettings.upsert({
-        where: { shop: session.shop },
-        update: { keywordAwareTranslation: formData.get("keywordAwareTranslation") === "true" },
-        create: {
-          shop: session.shop,
-          keywordAwareTranslation: formData.get("keywordAwareTranslation") === "true",
-        },
-      });
       return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
       const enabled = formData.get("seoTitleSuffixEnabled") === "true";
@@ -1474,6 +1476,7 @@ export default function SettingsPage() {
                     primaryShopLocale={primaryShopLocale}
                     onGlossaryHasChangesChange={setHasGlossaryChanges}
                     translationMode={settings.translationMode}
+                    keywordAwareTranslation={settings.keywordAwareTranslation}
                   />
                 </>
               )}
@@ -1510,7 +1513,6 @@ export default function SettingsPage() {
                   imageManagerSettings={imageManagerSettings ?? { enabled: true, autoAltText: false }}
                   shop={shop}
                   onImageManagerHasChangesChange={setHasImageManagerChanges}
-                keywordAwareTranslation={settings.keywordAwareTranslation ?? true}
               />
               )}
 

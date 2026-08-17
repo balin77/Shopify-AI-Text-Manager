@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { ToggleSwitch } from "./ToggleSwitch";
 import { HelpTooltip } from "./HelpTooltip";
 import { SettingsGlossaryTab, type GlossaryEntryDto, type GlossaryShopLocale } from "./SettingsGlossaryTab";
 import {
@@ -91,6 +92,12 @@ interface AIInstructionsTabsProps {
   // of the same "saveInstructions" submit so a single button covers the
   // entire Translations sub-section.
   translationMode: "exact" | "seo_optimized";
+  /**
+   * AISettings.keywordAwareTranslation — whether a translation is phrased so
+   * the TARGET locale's own tracked keyword survives, instead of being a
+   * literal rendering of the primary text.
+   */
+  keywordAwareTranslation: boolean;
 }
 
 export function AIInstructionsTabs({
@@ -103,12 +110,14 @@ export function AIInstructionsTabs({
   primaryShopLocale,
   onGlossaryHasChangesChange,
   translationMode,
+  keywordAwareTranslation,
 }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [subSection, setSubSection] = useState<"content" | "translations">("content");
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
   const [localTranslationMode, setLocalTranslationMode] = useState<"exact" | "seo_optimized">(translationMode);
+  const [localKeywordAware, setLocalKeywordAware] = useState(keywordAwareTranslation);
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -194,6 +203,7 @@ export function AIInstructionsTabs({
     // Translation mode piggybacks on the same save so one button covers the
     // entire Translations sub-section (radio + custom instructions).
     formData.append("translationMode", localTranslationMode);
+    formData.append("keywordAwareTranslation", String(localKeywordAware));
 
     fetcher.submit(formData, { method: "POST" });
   };
@@ -208,7 +218,8 @@ export function AIInstructionsTabs({
   // Check if there are unsaved changes (instructions OR translation mode)
   const hasChanges =
     JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
-    localTranslationMode !== translationMode;
+    localTranslationMode !== translationMode ||
+    localKeywordAware !== keywordAwareTranslation;
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -220,6 +231,7 @@ export function AIInstructionsTabs({
   const handleDiscard = () => {
     setLocalInstructions(instructions);
     setLocalTranslationMode(translationMode);
+    setLocalKeywordAware(keywordAwareTranslation);
   };
 
   return (
@@ -383,6 +395,27 @@ export function AIInstructionsTabs({
                       </Text>
                     </Banner>
                   )}
+                </BlockStack>
+              </div>
+              {/* Keyword-aware translation. Sits between the strategy picker
+                  and the free-text instructions because it is the same kind of
+                  knob: it changes HOW the AI translates, not what it is told
+                  about the shop. Saved with the rest of this tab. */}
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">
+                    {t.settings.keywordAwareTranslation}
+                  </Text>
+                  <InlineStack align="space-between" blockAlign="center" gap="400" wrap={false}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {t.settings.keywordAwareTranslationHelp}
+                    </Text>
+                    <ToggleSwitch
+                      checked={localKeywordAware}
+                      onChange={setLocalKeywordAware}
+                      disabled={readOnly}
+                    />
+                  </InlineStack>
                 </BlockStack>
               </div>
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
