@@ -71,16 +71,52 @@ export async function handleUpdateContent(
   // save. Everything below therefore has to be cheap in the common case: the
   // cache read happens only when a redirect could actually come of it, and the
   // blog lookup only once the handle is known to have changed.
-  const previousHandle =
-    wantsHandleRedirect && redirectResource && locale === primaryLocale && submittedHandle
+  //
+  // ONE pre-save snapshot serves BOTH features that need to know what the item
+  // looked like before: the handle redirect (§3.3) and the IndexNow enqueue
+  // (§3.4). Reading it twice would be two queries for the same row.
+  const isPrimarySave = locale === primaryLocale;
+  const beforeSave =
+    isPrimarySave && redirectResource
       ? // A blog CONTAINER has no cache model, so its old handle is fetched
         // live — the same one call `loadBlogHandle` already makes for articles.
         redirectResource === "blog"
-        ? await loadBlogHandle(admin, itemId)
-        : await loadCachedHandle(db, session.shop, contentConfig.resourceType, itemId)
+        ? { handle: await loadBlogHandle(admin, itemId), isPublished: null }
+        : await loadCachedSnapshot(db, session.shop, contentConfig.resourceType, itemId)
       : null;
+  const previousHandle = wantsHandleRedirect ? beforeSave?.handle ?? null : null;
   const handleChanged =
     !!previousHandle && !!submittedHandle && normalizeHandle(previousHandle) !== normalizeHandle(submittedHandle);
+
+  /**
+   * §Phase 3.4 / §A2 — pages, articles and blogs have NO Shopify webhook, so
+   * this save is the only moment anything can tell IndexNow that a URL went
+   * live, went away, or moved. Products and collections are covered by their
+   * own webhooks and are deliberately not repeated here.
+   *
+   * Never throws (see `enqueuePublishChange`): the save already happened.
+   */
+  const finishIndexNow = async (storedHandle?: string | null): Promise<void> => {
+    if (!isPrimarySave || !beforeSave) return;
+    const resource =
+      redirectResource === "page" || redirectResource === "article" || redirectResource === "blog"
+        ? redirectResource
+        : null;
+    if (!resource) return;
+    const submittedPublished = getFormString(formData, "isPublished");
+    const { enqueuePublishChange } = await import("~/services/seo/index-now-content.server");
+    await enqueuePublishChange(db, session.shop, {
+      resource,
+      previousPublished: beforeSave.isPublished,
+      // Absent ⇒ unchanged. Only the transition is interesting, and treating a
+      // missing field as "now published" would ping every draft.
+      nextPublished: submittedPublished === "" ? beforeSave.isPublished : submittedPublished !== "false",
+      previousHandle: beforeSave.handle,
+      nextHandle: storedHandle || submittedHandle || beforeSave.handle,
+      blogHandle:
+        resource === "article" ? await loadArticleBlogHandle(admin, db, session.shop, itemId) : undefined,
+    });
+  };
 
   /**
    * Runs AFTER the save. `storedHandle` is the handle Shopify ECHOED back where
@@ -196,6 +232,10 @@ export async function handleUpdateContent(
         productBody?.success === false
           ? undefined
           : await finishHandleRedirect(echoedHandle(productBody));
+      // Products have their own webhook, so `finishIndexNow` is a no-op here —
+      // it is called anyway so the two return paths stay identical and a future
+      // creatable type on this branch is covered without anyone remembering.
+      if (productBody?.success !== false) await finishIndexNow(echoedHandle(productBody));
       return json(
         { ...productBody, actionType: "updateContent", ...(productRedirectNote ? { redirectNote: productRedirectNote } : {}) },
         { status: readDataStatus(productResult) ?? 200 },
@@ -559,10 +599,13 @@ export async function handleUpdateContent(
       marketId,
     });
 
-    const redirectNote =
-      (result as { success?: boolean })?.success === false
-        ? undefined
-        : await finishHandleRedirect(echoedHandle(result as Record<string, unknown>));
+    const savedOk = (result as { success?: boolean })?.success !== false;
+    const redirectNote = savedOk
+      ? await finishHandleRedirect(echoedHandle(result as Record<string, unknown>))
+      : undefined;
+    // §3.4 — the ONLY moment a page/article/blog publish can reach IndexNow:
+    // Shopify emits no webhook for any of them.
+    if (savedOk) await finishIndexNow(echoedHandle(result as Record<string, unknown>));
     return json({ ...result, actionType: "updateContent", ...(redirectNote ? { redirectNote } : {}) });
   } catch (error: unknown) {
     const errorMsg = getFullErrorMessage(error);
@@ -602,25 +645,62 @@ function echoedHandle(body: Record<string, unknown> | null | undefined): string 
   return null;
 }
 
-/** The handle currently in the cache — i.e. the one about to be replaced. */
-async function loadCachedHandle(
+/**
+ * What the item looked like BEFORE this save — the handle about to be replaced
+ * and the visibility about to change. One read for both §3.3 and §3.4; reading
+ * it twice would be two queries for the same row.
+ *
+ * `isPublished: null` means the type does not have one (products carry a status
+ * enum instead, collections nothing) — NOT that it is hidden.
+ */
+async function loadCachedSnapshot(
   db: ContentActionHandlerContext["db"],
   shop: string,
   resourceType: string,
   itemId: string,
-): Promise<string | null> {
+): Promise<{ handle: string | null; isPublished: boolean | null }> {
+  const empty = { handle: null, isPublished: null };
   try {
     switch (resourceType) {
-      case "Product":    return (await db.product.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
-      case "Collection": return (await db.collection.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
-      case "Page":       return (await db.page.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
-      case "Article":    return (await db.article.findFirst({ where: { shop, id: itemId }, select: { handle: true } }))?.handle ?? null;
-      default:           return null;
+      case "Product": {
+        const row = await db.product.findFirst({ where: { shop, id: itemId }, select: { handle: true } });
+        return { handle: row?.handle ?? null, isPublished: null };
+      }
+      case "Collection": {
+        const row = await db.collection.findFirst({ where: { shop, id: itemId }, select: { handle: true } });
+        return { handle: row?.handle ?? null, isPublished: null };
+      }
+      case "Page": {
+        const row = await db.page.findFirst({
+          where: { shop, id: itemId },
+          select: { handle: true, isPublished: true, attributesSyncedAt: true },
+        });
+        return {
+          handle: row?.handle ?? null,
+          // §2.4 — `isPublished` defaults to TRUE in the schema, so on a row an
+          // older sync wrote it says nothing. Reported as unknown rather than
+          // as "was visible", which would make every first save look like a
+          // publish transition and ping IndexNow for drafts.
+          isPublished: row?.attributesSyncedAt ? row.isPublished : null,
+        };
+      }
+      case "Article": {
+        const row = await db.article.findFirst({
+          where: { shop, id: itemId },
+          select: { handle: true, isPublished: true, attributesSyncedAt: true },
+        });
+        return {
+          handle: row?.handle ?? null,
+          isPublished: row?.attributesSyncedAt ? row.isPublished : null,
+        };
+      }
+      default:
+        return empty;
     }
   } catch {
-    // A cache miss is not a reason to fail the save — it only means no
-    // redirect can be offered for this edit.
-    return null;
+    // A cache miss is not a reason to fail the save — it only means neither
+    // the redirect nor the IndexNow ping can be offered for this edit.
+    return empty;
   }
 }
 
