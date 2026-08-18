@@ -28,13 +28,21 @@
      --app-page-width-full     data grids that turn every extra pixel into
                                column width (the bulk editor).
 
-     The three classes above CENTRE their page. `.app-page-width-start` is the
-     same content width, left-aligned instead: on the content pages the left
-     column (UnifiedItemList) has to stay flush with the window gutter, so only
-     the right edge may be capped. That is the class for every content page
-     WITHOUT the item sidebar (the panel carrying the SEO-score tab) — with the
-     sidebar the editor is a three-column workbench that earns the full width,
-     without it the middle column just keeps growing on a 4K screen.
+     --app-page-width-with-list
+                               the same reading width for the CONTENT column of
+                               a page that also carries the item column: the
+                               list is ADDED to the reading width, not taken out
+                               of it, so the editor next to it is exactly as
+                               wide as an SEO page. Spent by
+                               `.app-page-width-start` — see below.
+
+     The three classes above CENTRE their page. `.app-page-width-start` is
+     left-aligned instead: on the content pages the left column
+     (UnifiedItemList) has to stay flush with the window gutter, so only the
+     right edge may be capped. That is the class for every content page WITHOUT
+     the item sidebar (the panel carrying the SEO-score tab) — with the sidebar
+     the editor is a three-column workbench that earns the full width, without
+     it the middle column just keeps growing on a 4K screen.
 
      Pages built on the .app-page-content frame (Polaris <Page fullWidth>) put
      the class on that same element — capping the frame keeps its inner scroll
@@ -42,6 +50,15 @@
   --app-page-width-content: 1452px;
   --app-page-width-narrow: 1200px;
   --app-page-width-full: none;
+  /* Derived, never a second number: the item column, the gap between the two
+     columns, the reading width, and the frame's two gutters. Every page that
+     spends this puts its columns in a flex row with `gap: var(--app-page-
+     padding)` (16px) inside a border-box frame padded with the same token —
+     which is why one gutter's worth of gap and two of padding are what has to
+     be added for the CONTENT column to come out at --app-page-width-content. */
+  --app-page-width-with-list: calc(
+    var(--app-list-column-width) + var(--app-page-width-content) + 3 * var(--app-page-padding)
+  );
 
   /* …and how wide the COLUMNS inside a page are. Same rule: the numbers live
      here, components spend them as `width: var(--…)` in their inline style —
@@ -199,11 +216,14 @@ html {
 .app-page-width-full {
   margin-inline: auto;
 }
-/* Same reading width as .app-page-width, but anchored to the left instead of
-   centred — see the note in :root. Centring is what would move the item list
-   away from the gutter, which is the one thing these pages must NOT do. */
+/* Anchored to the left instead of centred — see the note in :root. Centring is
+   what would move the item list away from the gutter, which is the one thing
+   these pages must NOT do. The cap is the WITH-LIST width: these pages put the
+   item column inside the same frame, so capping them at the bare reading width
+   would spend a third of it on the list and leave the editor narrower than any
+   SEO page. */
 .app-page-width-start {
-  max-width: var(--app-page-width-content);
+  max-width: var(--app-page-width-with-list);
   margin-inline: 0 auto;
 }
 .app-page-width {

@@ -1098,7 +1098,8 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         {/* Top padding (16px) matches the editor page's grey padding border
             below, so the gap nav→banner equals the gap banner→content. The
             width class is the same one the editor below picks for these pages
-            (no item sidebar → capped reading width, responsive.css :root) — a
+            (no item sidebar → capped at the with-list width, responsive.css
+            :root) — a
             banner running the full 4K width above a capped editor would read as
             two different pages. */}
         {infoBanner && (

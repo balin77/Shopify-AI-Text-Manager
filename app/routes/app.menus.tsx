@@ -787,15 +787,15 @@ export default function MenusPage() {
             its own, and <Page fullWidth> has to stay or Polaris' ~1000px cap
             wins first. `-start` rather than `-full`: this page has no item
             sidebar, so nothing else stops the right column from growing on a
-            wide screen — capped at the shared content width, left-aligned so
-            the item column stays flush with the gutter.
+            wide screen — capped at the item column PLUS the shared reading
+            width, left-aligned so the item column stays flush with the gutter.
 
             The frame also owns the height, which retires the viewport calc
             this page used to do by hand. `.app-page-content > *` makes its
             SINGLE child the scroll container, so the flex row below is that
             one child. */}
         <div className="app-page-content app-page-width-start">
-          <div style={{ display: "flex", gap: "1rem", minHeight: 0, overflow: "hidden" }}>
+          <div style={{ display: "flex", gap: "var(--app-page-padding)", minHeight: 0, overflow: "hidden" }}>
             {/* The shared item column, not a hand-built one. Two things came with
                 the bespoke version and both were bugs: it was invisible to the
                 mobile navbar selector (see registerItems above), and it hardcoded
