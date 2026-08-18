@@ -1111,8 +1111,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         // (responsive.css :root owns both tokens): WITH the item sidebar the
         // editor is a three-column workbench and takes the whole width; WITHOUT
         // it nothing caps the middle column and it just keeps growing on a wide
-        // screen, so the page gets the same reading width the SEO sections use
-        // — left-aligned, so the item list stays flush with the gutter.
+        // screen, so the page is capped at --app-page-width-with-list — the
+        // item column PLUS the reading width, so the editor beside the list is
+        // as wide as an SEO page rather than that width minus the list.
+        // Left-aligned, so the item list stays flush with the gutter.
         // Keyed on config, not on `hasSidebar`: the latter also drops when no
         // item is selected, and the page must not change width on selection.
         className={`unified-content-editor-layout ${config.showItemSidebar ? "app-page-width-full" : "app-page-width-start"}${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
@@ -1129,7 +1131,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           flex: 1,
           minHeight: 0,
           display: "flex",
-          gap: "16px",
+          // The column gap is the page gutter — the same token, not a second
+          // 16px: --app-page-width-with-list is derived from it (responsive.css
+          // :root), so a gap that drifts would make the cap come out wrong.
+          gap: "var(--app-page-padding)",
           // Single source of truth for the page margin — shared with the
           // simple Polaris pages via responsive.css (.Polaris-Page padding).
           padding: "var(--app-page-padding)",
