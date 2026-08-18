@@ -147,20 +147,20 @@ model AISettings {
   deepseekMaxRequestsPerMinute Int? @default(60)
 
   // SEO Title suffix (shop name appended by Shopify theme)
-  seoTitleSuffixEnabled Boolean @default(false)
+  seoTitleSuffixEnabled Boolean   @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
   // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
   // entitled shop gets the trend without hunting for a checkbox; the sweep
   // filters on it IN THE QUERY, so switching it off costs nothing per tick.
   // Independent of the plan gate: both must hold for a scan to happen.
-  seoAutoAuditEnabled Boolean @default(true)
+  seoAutoAuditEnabled   Boolean   @default(true)
   // Last automatic (nightly) SEO audit run for this shop — see
   // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
   // the sweep's "is this shop due" query and is stamped on every path
   // (success, skip, error) so a broken shop cannot win it forever. Backoff
   // stamp, NOT a lock. Only shops on a plan with seo.scheduledAudit are ever
   // selected.
-  lastAutoAuditAt DateTime?
+  lastAutoAuditAt       DateTime?
 
   // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
   // after the storefront crawl. Default ON (the report is worth little
@@ -168,6 +168,19 @@ model AISettings {
   // requests to servers neither the merchant nor we control, and it makes the
   // crawl take longer.
   seoCrawlExternalLinks Boolean @default(true)
+
+  // Merchant switch for the weekly automatic storefront crawl (Settings → SEO).
+  // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
+  // should get the delivery report without hunting for a checkbox — and ANDed
+  // into the sweep's due-query, so switching it off costs nothing per tick.
+  seoAutoCrawlEnabled Boolean   @default(true)
+  // Last automatic storefront crawl for this shop — see
+  // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
+  // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
+  // lock, and only shops on a plan with seo.scheduledCrawl are selected.
+  // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
+  // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
+  lastAutoCrawlAt     DateTime?
 
   // Keyword-aware translation: a translation into a foreign locale is
   // phrased so THAT locale's own tracked keyword survives, instead of being
@@ -219,6 +232,8 @@ model AISettings {
 
   // Backs the nightly-audit sweep's due-query (audit-auto-run.service.ts).
   @@index([subscriptionPlan, lastAutoAuditAt])
+  // Same, for the weekly crawl sweep (crawl-auto-run.service.ts).
+  @@index([subscriptionPlan, lastAutoCrawlAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the
@@ -474,6 +489,17 @@ model Product {
   // that the remainder lives in the Shopify admin; the full sync deliberately
   // does NOT paginate variants (§5.1).
   hasMoreVariants Boolean @default(false)
+
+  // Mirror of the product-video upload dates this app last wrote to the
+  // `custom.video_upload_dates` metafield (services/seo/video-schema.*).
+  // Liquid cannot know when a video was uploaded, and `uploadDate` is one of
+  // Google's required VideoObject properties — so the sync carries the Admin
+  // API's `File.createdAt` into a metafield the storefront block reads back.
+  // This column exists to make that write DIFF-driven: null means "nothing
+  // written / no videos", and a value equal to the freshly built one means no
+  // Shopify call at all. It mirrors what was PUSHED (and echoed), never what
+  // was merely intended.
+  videoSchemaJson String? @db.Text
 
   // ── PLAN_CONTENT_CREATION Phase 0 — merchandising attributes ──────────────
   // Everything below is fetched by the product sync from Phase 0 on. Rows
@@ -1475,9 +1501,43 @@ model GoogleSearchConsoleConnection {
   lastKeywordSyncAt DateTime?
 }
 
+// Visits that arrived from an AI assistant (ChatGPT, Perplexity, Claude, …).
+//
+// Aggregate ONLY: one row per (shop, source, UTC day, landing path) with a
+// counter. No visitor identifier, no cookie, no session, no IP — the beacon
+// sends the referrer's classified SOURCE, never the referrer itself, so a
+// referrer carrying a conversation id or a search term cannot land in the
+// database at all. That is what makes this reportable without a consent
+// dialog, and it is also why the report can never answer "which visitor".
+//
+// Day bucketing rather than raw hits keeps the table bounded (sources ×
+// paths × days) and is the granularity the report actually draws.
+model SeoAiReferral {
+  id       String   @id @default(cuid())
+  shop     String
+  // Normalized source key from classifyAiReferral (e.g. "chatgpt"), never the
+  // raw referrer.
+  source   String
+  // UTC day bucket. Date, not DateTime: the report groups by day and a
+  // timestamp would fragment every bucket by the millisecond.
+  day      DateTime @db.Date
+  // Landing path, query stripped (same rule as Seo404Hit).
+  path     String
+  pathHash String
+  count    Int      @default(1)
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, source, day, pathHash])
+  @@index([shop, day])
+  @@index([shop, source, day])
+}
+
 // SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
 // design (it is served at keyLocation for verification), so it is intentionally
 // stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+
 model SeoIndexNowConfig {
   shop             String    @id
   key              String // public IndexNow token (plaintext by design)
@@ -1513,16 +1573,16 @@ model SeoIndexNowConfig {
   // Stamped by the background sweep on EVERY path (success, skip, error) so an
   // ineligible shop can't win the "due" query forever — same guard the
   // llms/GSC sweeps document. NOT a lock.
-  lastAutoRunAt DateTime?
+  lastAutoRunAt    DateTime?
   // Rolling monthly submission quota (PlanLimits.seo.monthlyIndexNowSubmissions).
   // `submitPeriod` is the UTC "YYYY-MM" key the counter belongs to — the same
   // convention as the image-operation quota, so a new month resets the counter
   // lazily on the next write instead of needing a cron. Usage data, not
   // entitlement data: never touched by planCacheCleanup.
-  submitPeriod  String?
-  submitCount   Int       @default(0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  submitPeriod     String?
+  submitCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Drives the sweep's due-query (index-now-auto-submit.service.ts).
   @@index([enabled, lastAutoRunAt])

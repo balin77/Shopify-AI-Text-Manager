@@ -200,7 +200,7 @@ export async function redactCustomerData(
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
  *      ImageOperationCounter, EnabledMetafieldDefinition,
  *      DirectTranslationItem, DirectTranslationCandidate,
- *      DirectTranslationSettings, Seo404Hit, SeoKeyword,
+ *      DirectTranslationSettings, Seo404Hit, SeoAiReferral, SeoKeyword,
  *      SeoKeywordAssignment, SeoKeywordGroup, SeoKeywordGroupMembership,
  *      SeoKeywordSnapshot,
  *      GoogleSearchConsoleConnection, SeoIndexNowConfig,
@@ -451,6 +451,14 @@ export async function redactShopData(
       where: { shop: shop_domain },
     });
     logger.debug(`[GDPR] Deleted ${seo404HitsDeleted.count} SEO 404 hits`);
+
+    // AI referral tracking (aggregate visits from ChatGPT/Perplexity/...).
+    // Shop-scoped usage data, no visitor identifiers — deleted with the shop
+    // all the same.
+    const seoAiReferralsDeleted = await tx.seoAiReferral.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${seoAiReferralsDeleted.count} AI referral rows`);
 
     // Ranking history for SEO keyword assignments (shop-scoped). Deleted
     // before the assignment/keyword tables even though it also cascades on

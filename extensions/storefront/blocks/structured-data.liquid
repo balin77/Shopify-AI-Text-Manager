@@ -16,6 +16,7 @@
   assign want_article = block.settings.enable_article
   assign want_breadcrumb = block.settings.enable_breadcrumb
   assign want_faq = block.settings.enable_faq
+  assign want_video = block.settings.enable_video
 
   assign logo_url = ''
   if block.settings.logo
@@ -432,6 +433,134 @@
 {%- endif -%}
 
 {%- comment -%}
+  VideoObject: product pages, from the native `product.media`. Covers Shopify-
+  hosted videos AND external ones (YouTube/Vimeo), because a merchant who
+  embedded a YouTube video did the same job and expects the same treatment.
+
+  Emitted as one <script> PER video rather than one array: each object stays
+  self-contained with its own @context, which is this block's convention for
+  every other type, and a video whose data is incomplete simply doesn't print
+  instead of poisoning a shared array.
+
+  Two properties decide whether it is emitted at all: a thumbnail and a URL to
+  the video (contentUrl for hosted, embedUrl for external). Without either
+  there is nothing a consumer could do with the entry.
+
+  `uploadDate` is one of Google's REQUIRED properties for the video rich
+  result and Liquid's media objects carry no creation date. It comes from two
+  metafields instead, merchant first: `custom.video_upload_date` (a date the
+  merchant set for the product) wins, otherwise the per-media map in
+  `custom.video_upload_dates`, which the app maintains from the Admin API's
+  `File.createdAt` during the product sync. Both absent ⇒ the property is
+  OMITTED, never guessed — same rule as `custom.price_valid_until` above.
+
+  `duration` is milliseconds in Liquid and ISO-8601 in schema.org, hence the
+  divide/modulo.
+
+  The cap counts VIDEOS EMITTED, not media scanned: `product.media` mixes
+  images and videos, so a `limit:` on the loop would silently skip the video of
+  a product whose first ten media are photos. External videos have no duration and skip the property.
+{%- endcomment -%}
+{%- if want_video and request.page_type == 'product' and product -%}
+  {%- assign v_desc = product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500 -%}
+  {%- comment -%}
+    Two date sources, merchant first. `custom.video_upload_dates` is the map
+    the APP maintains from the Admin API's `File.createdAt` (one entry per
+    media id, written by the product sync — see services/seo/video-schema.*),
+    which is what makes the rich result reachable without anyone typing a date.
+    `custom.video_upload_date` stays as the merchant's manual override for the
+    whole product: they may know the real first-publication date (a video
+    that ran on YouTube long before it was added here), and a person's stated
+    fact outranks our derived one.
+  {%- endcomment -%}
+  {%- assign v_upload_override = '' -%}
+  {%- assign vud_raw = product.metafields.custom.video_upload_date.value -%}
+  {%- if vud_raw != blank -%}
+    {%- assign v_upload_override = vud_raw | date: '%Y-%m-%d' -%}
+  {%- endif -%}
+  {%- assign v_upload_map = product.metafields.custom.video_upload_dates.value -%}
+  {%- assign v_printed = 0 -%}
+  {%- for v_media in product.media -%}
+    {%- if v_printed >= 5 -%}{%- break -%}{%- endif -%}
+    {%- if v_media.media_type == 'video' or v_media.media_type == 'external_video' -%}
+      {%- liquid
+        # Per-video date from the app's map, keyed by the NUMERIC media id
+        # (Liquid's `media.id` is the number, the map is written with the same
+        # form). `| append: ''` forces the string key a JSON object has.
+        assign v_upload = v_upload_override
+        if v_upload == '' and v_upload_map
+          assign v_media_key = v_media.id | append: ''
+          assign v_upload = v_upload_map[v_media_key] | default: ''
+        endif
+
+        assign v_thumb = ''
+        if v_media.preview_image
+          assign v_thumb = v_media.preview_image | image_url: width: 1200
+          assign v_scheme = v_thumb | slice: 0, 2
+          if v_scheme == '//'
+            assign v_thumb = v_thumb | prepend: 'https:'
+          endif
+        endif
+
+        assign v_content = ''
+        assign v_embed = ''
+        if v_media.media_type == 'video'
+          assign v_mp4 = v_media.sources | where: 'format', 'mp4' | last
+          if v_mp4 == nil
+            assign v_mp4 = v_media.sources | last
+          endif
+          assign v_content = v_mp4.url
+        else
+          if v_media.host == 'youtube'
+            assign v_embed = 'https://www.youtube.com/embed/' | append: v_media.external_id
+          elsif v_media.host == 'vimeo'
+            assign v_embed = 'https://player.vimeo.com/video/' | append: v_media.external_id
+          endif
+        endif
+
+        # ONE flag instead of a compound condition on the emission guard:
+        # Liquid has no operator precedence and evaluates `and`/`or` right to
+        # left, so `a and b or a and c` is a puzzle rather than a condition.
+        assign v_has_url = false
+        if v_content != blank or v_embed != blank
+          assign v_has_url = true
+        endif
+
+        assign v_duration = ''
+        if v_media.duration and v_media.duration > 0
+          assign v_secs = v_media.duration | divided_by: 1000
+          assign v_mins = v_secs | divided_by: 60
+          assign v_rest = v_secs | modulo: 60
+          capture v_duration
+            echo 'PT'
+            echo v_mins
+            echo 'M'
+            echo v_rest
+            echo 'S'
+          endcapture
+        endif
+      -%}
+      {%- if v_thumb != blank and v_has_url -%}
+<script type="application/ld+json" data-contentpilot="video">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoObject",
+  "name": {{ v_media.alt | default: product.title | json }},
+  "thumbnailUrl": [{{ v_thumb | json }}]
+  {%- if v_desc != blank -%}, "description": {{ v_desc | json }}{%- endif -%}
+  {%- if v_upload != blank -%}, "uploadDate": {{ v_upload | json }}{%- endif -%}
+  {%- if v_content != blank -%}, "contentUrl": {{ v_content | json }}{%- endif -%}
+  {%- if v_embed != blank -%}, "embedUrl": {{ v_embed | json }}{%- endif -%}
+  {%- if v_duration != blank -%}, "duration": {{ v_duration | json }}{%- endif -%}
+}
+</script>
+        {%- assign v_printed = v_printed | plus: 1 -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
+
+{%- comment -%}
   Breadcrumb: each ListItem is emitted inline (no join/split round-trip) so a
   title containing a "|" cannot corrupt positions or JSON. Every name/url is
   `| json`-escaped.
@@ -497,6 +626,52 @@
 </script>
 {%- endif -%}
 
+{%- comment -%}
+  AI referral beacon: report a visit that arrived from an AI assistant
+  (ChatGPT, Perplexity, Claude, Gemini, Copilot, ...) to the app-proxy
+  collector, so ContentPilot -> SEO -> KI-Suche can show whether AEO work
+  produces arrivals at all.
+
+  Fires ONLY when the referrer host (or the landing URL's utm_source, which
+  ChatGPT appends to the links it hands out) looks like one of those hosts, so
+  an ordinary pageview sends nothing. The token list here is a cheap PREFILTER
+  to keep normal traffic off the endpoint - the server re-classifies and is
+  the authority, so a token missing here costs a missed visit, never a wrong
+  one.
+
+  Privacy: the beacon sends the landing path plus the referrer for
+  classification; the server stores only the resulting source key and an
+  aggregate day counter. No cookie, no identifier, nothing that is read back.
+  Best-effort: sendBeacon with a fetch fallback, wrapped in try/catch so it can
+  never disturb the storefront.
+{%- endcomment -%}
+<script>
+  (function () {
+    try {
+      var ref = document.referrer || '';
+      var utm = '';
+      try { utm = new URLSearchParams(window.location.search).get('utm_source') || ''; } catch (e) {}
+      if (!ref && !utm) return;
+      var TOKENS = /chatgpt|openai|perplexity|claude\.ai|gemini\.google|copilot\.microsoft|grok\.com|x\.ai|deepseek|you\.com|poe\.com|mistral/i;
+      var refHost = '';
+      try { refHost = ref ? new URL(ref).hostname : ''; } catch (e) {}
+      if (refHost && refHost === window.location.hostname) return;
+      if (!TOKENS.test(refHost) && !TOKENS.test(utm)) return;
+      var payload = JSON.stringify({
+        path: window.location.pathname,
+        referrer: ref,
+        utmSource: utm
+      });
+      var url = '/apps/contentpilot/ai-referral';
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
+      } else {
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
+      }
+    } catch (e) { /* never break the storefront */ }
+  })();
+</script>
+
 {% schema %}
 {
   "name": "JSON-LD Structured Data",
@@ -504,7 +679,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, Video, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
     },
     {
       "type": "checkbox",
@@ -535,6 +710,13 @@
       "type": "checkbox",
       "id": "enable_breadcrumb",
       "label": "Breadcrumb list",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_video",
+      "label": "Video (product pages, from your product media)",
+      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos on a product. Google's video rich result additionally needs an upload date, which the storefront does not expose - set the product metafield \"custom.video_upload_date\" (type date) and it is published; left unset the property is omitted rather than guessed.",
       "default": true
     },
     {

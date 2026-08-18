@@ -483,3 +483,58 @@ describe("storefront Liquid block: priceValidUntil parity with the service", () 
     expect(liquid).toMatch(/pvu_raw = product\.metafields\./);
   });
 });
+
+/**
+ * VideoObject lives ONLY in the storefront block: the DB cache holds product
+ * IMAGES, not videos, so the app-side builder has nothing to build from and the
+ * preview deliberately says so. A unit test cannot render Liquid, but it can
+ * pin the rules that make this markup trustworthy.
+ */
+describe("storefront Liquid block: VideoObject", () => {
+  const liquid = readFileSync(
+    join(__dirname, "../../extensions/storefront/blocks/structured-data.liquid"),
+    "utf8",
+  );
+
+  it("never invents an upload date", () => {
+    // The only date source is the merchant's metafield — the same rule
+    // priceValidUntil follows. A clock-derived value would be a fabricated
+    // claim about when a video was published.
+    expect(liquid).toContain("product.metafields.custom.video_upload_date.value");
+    expect(liquid).not.toMatch(/v_upload\s*=\s*'now'/);
+    expect(liquid).not.toMatch(/v_upload\s*=\s*product\.published_at/);
+    expect(liquid).not.toMatch(/v_upload\s*=\s*product\.created_at/);
+  });
+
+  it("guards the uploadDate emission with a non-empty check", () => {
+    const emissions = liquid.split("\n").filter((l) => l.includes('"uploadDate":'));
+    expect(emissions).toHaveLength(1);
+    for (const line of emissions) {
+      expect(line).toMatch(/\{%-?\s*if v_upload != blank/);
+    }
+  });
+
+  it("covers external videos, not just Shopify-hosted ones", () => {
+    expect(liquid).toContain("external_video");
+    expect(liquid).toContain("https://www.youtube.com/embed/");
+    expect(liquid).toContain("https://player.vimeo.com/video/");
+  });
+
+  it("emits nothing without a thumbnail AND a video URL", () => {
+    // Liquid has no operator precedence and evaluates and/or RIGHT TO LEFT, so
+    // the guard must stay a single flag rather than a compound condition —
+    // otherwise it silently means something other than it reads.
+    expect(liquid).toContain("{%- if v_thumb != blank and v_has_url -%}");
+    expect(liquid).not.toMatch(/if v_thumb != blank and .* or .* and /);
+  });
+
+  it("converts the duration from Liquid milliseconds to ISO-8601", () => {
+    expect(liquid).toMatch(/v_secs = v_media\.duration \| divided_by: 1000/);
+    expect(liquid).toMatch(/v_rest = v_secs \| modulo: 60/);
+  });
+
+  it("is offered as its own opt-out setting", () => {
+    expect(liquid).toContain('"id": "enable_video"');
+    expect(liquid).toContain("assign want_video = block.settings.enable_video");
+  });
+});

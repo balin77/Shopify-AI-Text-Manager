@@ -538,6 +538,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
         // editable where the plan grants scheduledAudit.
         seoAutoAuditEnabled: settings.seoAutoAuditEnabled ?? true,
+        seoAutoCrawlEnabled: settings.seoAutoCrawlEnabled ?? true,
 
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
@@ -783,6 +784,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // rule — a no-op payload from an unentitled shop must not 403.
       const rawAutoAudit = formData.get("seoAutoAuditEnabled");
       const autoAuditRequested = rawAutoAudit === null ? undefined : rawAutoAudit === "true";
+      // Weekly crawl switch — same present-or-absent rule as the audit one.
+      const rawAutoCrawl = formData.get("seoAutoCrawlEnabled");
+      const autoCrawlRequested = rawAutoCrawl === null ? undefined : rawAutoCrawl === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
 
       // PLAN §Phase 3.3 — auto-redirect on handle change. Read as
@@ -874,6 +878,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
+      let autoCrawlUpdate: boolean | undefined = undefined;
+      if (autoCrawlRequested !== undefined) {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoAutoCrawlEnabled: true },
+        });
+        const current = row?.seoAutoCrawlEnabled ?? true;
+        if (current !== autoCrawlRequested) {
+          const { canAccessSeoFeature } = await import("../utils/planUtils");
+          const plan = (row?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!canAccessSeoFeature(plan, "scheduledCrawl")) {
+            return json(
+              {
+                success: false,
+                error: "The weekly storefront crawl is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoCrawlUpdate = autoCrawlRequested;
+        }
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
@@ -882,6 +910,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+          ...(autoCrawlUpdate !== undefined ? { seoAutoCrawlEnabled: autoCrawlUpdate } : {}),
         },
         create: {
           shop: session.shop,
@@ -890,6 +919,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+          ...(autoCrawlUpdate !== undefined ? { seoAutoCrawlEnabled: autoCrawlUpdate } : {}),
         },
       });
 

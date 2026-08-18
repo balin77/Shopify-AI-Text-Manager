@@ -273,6 +273,13 @@ export const PRODUCT_OPTION_UPDATE = `#graphql
  *
  * REQUIREMENTS:
  *   - `write_products` scope (for product metafields, already present)
+ *
+ * The echo selects `owner { ... on Product { id } }` because the returned
+ * metafields carry no owner by themselves: a caller writing the SAME key for
+ * many owners in one call could otherwise only recognise its writes by
+ * matching the value back, which confirms the wrong owner as soon as two of
+ * them get identical content. (services/seo/video-schema.server.ts depends on
+ * this to decide whether a product's write actually landed.)
  */
 export const METAFIELDS_SET = `#graphql
   mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -283,6 +290,11 @@ export const METAFIELDS_SET = `#graphql
         key
         value
         type
+        owner {
+          ... on Product {
+            id
+          }
+        }
       }
       userErrors {
         field

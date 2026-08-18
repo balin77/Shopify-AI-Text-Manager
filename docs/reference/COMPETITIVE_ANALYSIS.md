@@ -196,6 +196,12 @@ Direct Translations ist das die breiteste Abdeckung am Markt.
 
 ### 2.2 SEO-Apps
 
+> ⚠️ **Veraltet (Tabelle aus 01/2026).** Die ❌-Zeilen unten sind seit dem SEO-Tab-Ausbau
+> (07/2026) und den Erweiterungen danach fast alle geschlossen — JSON-LD, Rich Snippets, GSC,
+> Broken-Link-Detection, Sitemap, Keyword-Research und der manuelle Bulk-Editor sind live.
+> **Aktueller Stand, gegen `develop` verifiziert + Markt 08/2026:**
+> [SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md).
+
 | Feature | Unsere App | Yoast SEO | SEOWILL | StoreSEO |
 |---------|------------|-----------|---------|----------|
 | SEO-Titel/Meta | ✅ | ✅ | ✅ | ✅ |
@@ -222,6 +228,13 @@ Direct Translations ist das die breiteste Abdeckung am Markt.
 - StoreSEO: Free / ab $100/Monat (250+ SKUs)
 
 ### 2.2.1 Übersehene & neue Funktionsweisen (Nachtrag 2026-06-29)
+
+> ⚠️ **Ebenfalls überholt.** Alle hier als ❌/⚠️ geführten AEO-Punkte (llms.txt, IndexNow,
+> AI-Crawler-Zugriff, Schema-Vollständigkeit, Bulk-Meta-Grid) sind ausgeliefert. Neu seit dieser
+> Fassung: `agents.md` hat `llms.txt` als kanonische KI-Discovery-Datei abgelöst (Shopify,
+> ~20.05.2026) und Shopify Spring '26 (17.06.2026) liefert Catalog/UCP nativ — beides ändert die
+> AEO-Bewertung grundlegend. Siehe
+> [SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md) §2.
 
 Die ursprüngliche SEO-Tabelle (§2.2) stammt aus 01/2026 und verpasst den **definierenden Markt-Shift 2026: AEO/GEO** — Optimierung für *Antwort-/generative Engines* (ChatGPT Search, Perplexity, Google AI Overviews, Gemini, Amazon Rufus, MS Copilot). Diese Funktionsweisen fehlen oben komplett und werden von der aktuellen Wettbewerbsspitze (StoreSEO „AI SEO Agent", SEOWILL, TinyIMG, dedizierte IndexNow-Apps) bereits ausgeliefert:
 
@@ -877,5 +890,6 @@ laden + in `vars`-Objekt reichen).
 | 2026-06-29 | **§2.4 Korrektur — Bulk-Auto-Zuweisung** ist vorhanden (war fälschlich als Lücke gelistet): deterministisches Dateiname↔SKU/Image-Key-Matching (`BulkImageUploadPanel.tsx`, `parseFilenames.ts`, `api.update-variant-match-key.tsx`) + 1-Klick-Key-Generator + Cross-Produkt-Option-Value-Memory (eigener USP, kein Konkurrent hat das). Neuer Erklär-Block, zwei neue Tabellenzeilen; „Auto-Zuweisung" aus der Lücken-Liste entfernt — bewusster Verzicht nur auf Pixel-AI-Bilderkennung (Rubik). |
 | 2026-06-29 | **§2.2.1 Nachtrag — übersehene & neue Funktionsweisen** ergänzt (Web-Recherche 06/2026): AEO/GEO als definierender 2026-Layer, llms.txt, IndexNow/Instant-Indexing, AI-Crawler-Zugriff (robots.txt), GTIN/Brand im Product-Schema für AI-Shopping, erweiterte Schema-Typen (FAQ/Review/LocalBusiness/Video), internes Linking, manueller Bulk-Meta-Editor, Bild-Dateinamen-SEO, AI-Referral-Tracking, OG/Twitter-Cards, Autopilot-Design-Warnung. Strategie: **mehrsprachige AEO** als unbesetzter USP. Wurde als SEO-Tab Phase 0–8 umgesetzt (siehe folgender Eintrag) und lebt heute unter `app/routes/app.seo.*.tsx` mit dem Contract in `docs/architecture/SEO_SECTION_CONTRACT.md`. |
 | 2026-07-19 | **SEO-Tab Phasen 0–8 ausgeliefert** — kompletter Umbau von §1.4/§2.2/§2.2.1/§3 und den Roadmap-Phasen. Neu live: store-weites Audit-Dashboard mit Score-Trend/Snapshots, JSON-LD Structured Data (Product inkl. GTIN/Offer, Organization, Breadcrumb, Article, Review/AggregateRating, FAQ), Open Graph / Twitter Cards, Redirects & 404-Tracking, hreflang-Audit, Keyword-Tracking + On-Page-Analyse per-Locale, Google Search Console Pro+ mit täglicher Auto-Sync, AEO (`llms.txt` + `robots.txt`-AI-Crawler-Audit), IndexNow / Instant Indexing Pro+, manueller Bulk-Meta-Editor, Bulk „Fix with AI", Foreign-Locale SEO-Audit + AI-Fix. Damit sind die kritischen SEO-Gaps #1/#2 (JSON-LD/Rich Snippets), #8 (GSC), #9 (Broken Link Detection), #15 (Keyword Research) erledigt. |
+| 2026-08-18 | **SEO-Teil ausgelagert und neu erhoben** — §2.2/§2.2.1 als veraltet markiert und auf [SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md) verwiesen: vollständige Feature-Matrix gegen `develop` verifiziert, Markt-Recherche 08/2026. Kernbefund: bei technischem On-Site-SEO auf oder über Wettbewerbsniveau; echte Lücken sind `agents.md` (löste llms.txt als kanonische KI-Discovery-Datei ab), Catalog-/Produktdaten-Readiness nach Shopify Spring '26, AI-Sichtbarkeits-Tracking, zeitgesteuerte Crawls, Bild-Dateinamen-SEO und Readability. |
 | 2026-07-19 | **Content-Templates ⛔ zurückgezogen** nach 2-Tages-Test auf `develop` (Merge `266b00a` → Rollback `69e7b8b`). Kritischer Nutzer-Review ergab: die `{{title}}`/`{{description}}`/`{{language}}`/`{{current_value}}`/`{{field_label}}`-Substitution lieferte der KI keine Info, die sie nicht bereits über die Handler-Prompt-Zeilen (`Context - Title:`, `Language:` etc.) bekam. Templates duplizierten damit die bestehenden per-Field-Custom-Instructions mit rein textueller Umpositionierung. Reverse-Migration `20260719130000_drop_content_template` räumt die DB-Tabelle beim nächsten Deploy weg. §2.3 Fußnote ⁵, §3.1 Punkt 5, §3.5 „Big Picture", §4 Phase 1.3 alle aktualisiert. **Bedingung für einen späteren Wiedereinstieg:** Variablen müssen Zusatz-Info liefern, die die KI heute nicht bekommt (`{{brand}}`/`{{price}}`/`{{tags}}`/`{{vendor}}`/`{{product_type}}`/`{{similar_products}}` aus Shopify). Ohne diese Bedingung deckt Custom-Instructions denselben Bedarf ohne zweite Konfigurationsfläche ab. |
 

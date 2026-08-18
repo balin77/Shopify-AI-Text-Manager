@@ -322,6 +322,24 @@ describe("summarizeLiveJsonLd", () => {
     expect(summary!.crawlStatus).toBe("capped");
   });
 
+  it("does not call several VideoObjects on one page a duplicate", async () => {
+    // A product with three videos carries three VideoObjects for the same
+    // reason it carries three videos. The duplicate rule exists for the
+    // theme-vs-app collision (two Products), not for markup doing its job —
+    // and without the exception our own block would trip our own audit.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({
+          url: "https://s/p/1",
+          jsonLdTypes: "Product,VideoObject,VideoObject,VideoObject",
+          jsonLdAppTypes: "Product,VideoObject,VideoObject,VideoObject",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.duplicates).toEqual([]);
+  });
+
   it("attributes a duplicate to this app when one copy carries our marker", async () => {
     const summary = await summarizeLiveJsonLd(
       crawlDb([

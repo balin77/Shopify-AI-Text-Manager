@@ -142,7 +142,9 @@ async function processWebhookAsync(
       // Snapshot first: the sync is what erases the previous status/handle,
       // and both decide what IndexNow should hear about.
       const before = await loadIndexNowSnapshot(db, shop, productId);
-      await syncService.syncProduct(productId);
+      // `writeVideoSchema: false` — this resync may well BE the echo of our
+      // own metafield write; letting it write again is how a loop starts.
+      await syncService.syncProduct(productId, false, { writeVideoSchema: false });
       await enqueueProductForIndexNow(db, shop, productId, before);
     } else if (topic === "PRODUCTS_DELETE") {
       // IndexNow is meant to be told about removed URLs too, so we must
