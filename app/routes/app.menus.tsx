@@ -93,7 +93,13 @@ export const loader = createContentLoader({
         ctx.session.shop,
       );
     } catch (error) {
-      // A failed refresh shows the CACHED menus rather than an error page —
+      // A thrown Response is the framework's business, not a refresh failure:
+      // createContentLoader turns a 401 into "delete the stale session, show
+      // Session expired, re-authenticate on the next request". Swallowing it
+      // would leave a revoked token serving cached menus with every field
+      // disabled — forever, since nothing would ever trigger the recovery.
+      if (error instanceof Response) throw error;
+      // Anything else shows the CACHED menus rather than an error page —
       // stale navigation labels are worth more than no page at all, and the
       // save path re-reads from Shopify anyway.
       const { logger } = await import("~/utils/logger.server");
@@ -158,6 +164,9 @@ export const loader = createContentLoader({
       }
       return { linkTranslations, linkSweepTruncated: sweep.truncated };
     } catch (error) {
+      // Same rule as the refresh above: a 401 belongs to the loader factory's
+      // session recovery, not to this catch.
+      if (error instanceof Response) throw error;
       const { logger } = await import("~/utils/logger.server");
       logger.error("[MENUS-LOADER] Link sweep failed", {
         context: "Menus",
@@ -553,9 +562,16 @@ export default function MenusPage() {
                     </Banner>
                   )}
 
-                  {fetcher.data?.error === "gated" && (
+                  {/* Every failure mode of the action reaches the merchant.
+                      Reporting only the gated one made a 502 from the digest
+                      re-read look like a Save button that does nothing. */}
+                  {fetcher.data?.error && (
                     <Banner tone="critical">
-                      <p>{t.content?.upgradeRequired || "Upgrade required"}</p>
+                      <p>
+                        {fetcher.data.error === "gated"
+                          ? t.content?.upgradeRequired || "Upgrade required"
+                          : `${t.content?.menuSaveFailed ?? ""} ${fetcher.data.error}`.trim()}
+                      </p>
                     </Banner>
                   )}
 
