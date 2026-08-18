@@ -354,6 +354,13 @@ export async function action({ request }: ActionFunctionArgs) {
       // A merchant types a number into the row; they do not press "activate"
       // and then type.
       const quantity = parseQuantity(getFormString(formData, "quantity"));
+      // The client only ever sends a non-empty value here, so `null` can only
+      // mean "not a whole number". Activating at zero anyway and answering
+      // success is how a mistyped "-5" becomes "stocked, none in the room" —
+      // the stock intent refuses the same input, and so does this one.
+      if (quantity === null) {
+        return json({ success: false, error: "That is not a whole number." }, { status: 400 });
+      }
       const response = await admin.graphql(
         `#graphql
           mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!, $onHand: Decimal) {
@@ -362,7 +369,7 @@ export async function action({ request }: ActionFunctionArgs) {
               userErrors { field message }
             }
           }`,
-        { variables: { inventoryItemId, locationId, onHand: quantity === null ? null : String(quantity) } },
+        { variables: { inventoryItemId, locationId, onHand: String(quantity) } },
       );
       const activateBody = (await response.json()) as {
         data?: {
@@ -385,7 +392,11 @@ export async function action({ request }: ActionFunctionArgs) {
           context: "Commerce", shop: session.shop, locationId,
           detail: payload?.userErrors?.map((e) => e.message).join("; ") || "no level returned",
         });
-        return json({ success: false, warnings: ["activateNotConfirmed"] satisfies string[] });
+        // `success: true` WITH a warning, like the stock and channel intents:
+        // `success: false` makes the client's `post()` throw, which discards
+        // the payload and leaves the merchant with a generic fallback instead
+        // of the reason.
+        return json({ success: true, warnings: ["activateNotConfirmed"] satisfies string[] });
       }
       return json({ success: true });
     } catch (error) {
@@ -393,7 +404,7 @@ export async function action({ request }: ActionFunctionArgs) {
         context: "Commerce", shop: session.shop,
         error: error instanceof Error ? error.message : String(error),
       });
-      return json({ success: false, warnings: ["activateFailed"] satisfies string[] });
+      return json({ success: true, warnings: ["activateFailed"] satisfies string[] });
     }
   }
 
@@ -402,6 +413,13 @@ export async function action({ request }: ActionFunctionArgs) {
     const variantGid = getFormString(formData, "variantGid");
     if (!variantGid.startsWith("gid://shopify/ProductVariant/")) {
       return json({ success: false, error: "That is not a variant." }, { status: 400 });
+    }
+    // The two have to name the SAME variant. The GID addresses Shopify and the
+    // numeric id addresses the cache mirror, so a mismatched pair — this route
+    // is directly POST-reachable — would write one variant's price onto
+    // another's cached row.
+    if (variantGid !== `gid://shopify/ProductVariant/${variantId}`) {
+      return json({ success: false, error: "The variant ids do not match." }, { status: 400 });
     }
     const fields: VariantPriceFields = {};
     if (formData.has("price")) fields.price = getFormString(formData, "price");
@@ -414,7 +432,9 @@ export async function action({ request }: ActionFunctionArgs) {
       fields,
     });
     if (warning) warnings.push(warning);
-    return json({ success: warnings.length === 0, warnings });
+    // Same rule: the WARNING carries the failure, the envelope stays a success
+    // so the client can read it.
+    return json({ success: true, warnings });
   }
 
   if (intent === "stock") {

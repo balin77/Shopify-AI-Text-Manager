@@ -41,6 +41,7 @@
 
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
+import { parseMoney } from "./bulk-editor/columns.shared";
 import { logger } from "~/utils/logger.server";
 
 /** Codes resolved to sentences by the client (`t.content.commerceWarnings`). */
@@ -57,6 +58,7 @@ export type CommerceWarning =
   | "channelsNotConfirmed"
   | "channelsFailed"
   | "priceInvalid"
+  | "priceAmbiguous"
   | "priceNotConfirmed"
   | "priceFailed";
 
@@ -488,10 +490,12 @@ export async function applyInventoryItemFields(
       input.cost = null;
       mirror.cost = null;
     } else {
-      const cost = parseDecimal(params.fields.cost);
-      if (cost === null) return "itemFieldsInvalid";
-      input.cost = cost;
-      mirror.cost = cost;
+      // Money, so the same parser as the prices — `parseDecimal` would read a
+      // German "1.299" as 1.30 here too.
+      const parsed = parseMoney(params.fields.cost);
+      if (!parsed.ok || !parsed.value) return "itemFieldsInvalid";
+      input.cost = parsed.value;
+      mirror.cost = parsed.value;
     }
   }
   if (params.fields.requiresShipping !== undefined) {
@@ -656,13 +660,31 @@ export async function applyVariantPrices(
   const input: Record<string, unknown> = { id: params.variantGid };
   const mirror: Record<string, unknown> = {};
 
+  /**
+   * THE money parser — the bulk grid's, not this module's `parseDecimal`.
+   *
+   * `parseDecimal` folds one comma and accepts anything matching `\d+(\.\d+)?`,
+   * which reads a German merchant's "1.299" as ONE EURO THIRTY. `parseMoney`
+   * knows that "1.299" is genuinely ambiguous — 1299 to a German, 1.299 to an
+   * American — and refuses it with a message telling the merchant how to write
+   * it unambiguously, instead of silently picking one reading and repricing the
+   * product by a factor of a thousand. It also rounds to two decimals, which
+   * keeps the echo comparison below from tripping over Shopify's own rounding.
+   */
+  const money = (raw: string): { value: string } | { warning: CommerceWarning } => {
+    const parsed = parseMoney(raw);
+    if (!parsed.ok) return { warning: parsed.error === "ambiguous" ? "priceAmbiguous" : "priceInvalid" };
+    return { value: parsed.value ?? "" };
+  };
+
   if (params.fields.price !== undefined) {
     // The price itself cannot be cleared — Shopify requires one on every
     // variant — so an empty field is "leave it alone", not "set nothing".
-    const price = parseDecimal(params.fields.price);
-    if (price === null) return "priceInvalid";
-    input.price = price;
-    mirror.price = price;
+    const parsed = money(params.fields.price);
+    if ("warning" in parsed) return parsed.warning;
+    if (parsed.value === "") return "priceInvalid";
+    input.price = parsed.value;
+    mirror.price = parsed.value;
   }
   if (params.fields.compareAtPrice !== undefined) {
     if (params.fields.compareAtPrice.trim() === "") {
@@ -672,10 +694,10 @@ export async function applyVariantPrices(
       input.compareAtPrice = null;
       mirror.compareAtPrice = null;
     } else {
-      const compareAt = parseDecimal(params.fields.compareAtPrice);
-      if (compareAt === null) return "priceInvalid";
-      input.compareAtPrice = compareAt;
-      mirror.compareAtPrice = compareAt;
+      const parsed = money(params.fields.compareAtPrice);
+      if ("warning" in parsed) return parsed.warning;
+      input.compareAtPrice = parsed.value;
+      mirror.compareAtPrice = parsed.value;
     }
   }
 

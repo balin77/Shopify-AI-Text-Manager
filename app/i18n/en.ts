@@ -531,7 +531,6 @@ export const en: Translation = {
       weightUnit: "Unit",
       hsCode: "HS code",
       countryOfOrigin: "Country of origin",
-      countryHint: "Two letters, e.g. DE",
       requiresShipping: "Needs shipping",
       taxableLabel: "Taxable: {v}",
       yes: "yes",
@@ -540,7 +539,6 @@ export const en: Translation = {
       loadFailed: "Stock and channels could not be loaded.",
       saveFailed: "The change could not be saved.",
       retry: "Try again",
-      reload: "Reload",
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       channelsHeading: "Sales channels",
@@ -567,6 +565,7 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Nothing was saved.",
       priceInvalid: "A price was not a number, so it was not saved.",
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
       priceFailed: "The price could not be saved.",

@@ -527,7 +527,6 @@ export const es: Translation = {
       weightUnit: "Unidad",
       hsCode: "Código arancelario",
       countryOfOrigin: "País de origen",
-      countryHint: "Dos letras, p. ej. ES",
       requiresShipping: "Requiere envío",
       taxableLabel: "Sujeto a impuestos: {v}",
       yes: "sí",
@@ -536,7 +535,6 @@ export const es: Translation = {
       loadFailed: "No se pudieron cargar el inventario y los canales.",
       saveFailed: "No se pudo guardar el cambio.",
       retry: "Reintentar",
-      reload: "Recargar",
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
       channelsHeading: "Canales de venta",
@@ -563,6 +561,7 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. No se guardó nada.",
       priceInvalid: "Un precio no era un número, así que no se guardó.",
       priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Recarga para ver el valor actual.",
       priceFailed: "El precio no se pudo guardar.",

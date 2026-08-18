@@ -306,6 +306,28 @@ describe("applyVariantPrices", () => {
     expect((updates[0] as { data: { compareAtPrice: unknown } }).data.compareAtPrice).toBeNull();
   });
 
+  it("REFUSES an ambiguous number instead of picking a reading", async () => {
+    // "1.299" is 1299 to a German merchant and 1.299 to an American one. The
+    // module used to fold one comma and accept anything else, which turned a
+    // €1299 product into a €1.30 one — silently, because the write succeeded.
+    // The bulk grid's parser knows the case and says how to write it instead.
+    const admin = adminWith(priceEcho("1299.00"));
+    const { db } = variantRecorder();
+
+    expect(await applyVariantPrices(admin, db, "s", params({ price: "1.299" }))).toBe("priceAmbiguous");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
+  it("reads the unambiguous German and English spellings the same way", async () => {
+    for (const [typed, expected] of [["1.299,00", "1299.00"], ["1,299.00", "1299.00"], ["1299", "1299.00"]]) {
+      const admin = adminWith(priceEcho(expected));
+      const { db } = variantRecorder();
+      expect(await applyVariantPrices(admin, db, "s", params({ price: typed }))).toBeUndefined();
+      const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+      expect(sent.variants[0].price, typed).toBe(expected);
+    }
+  });
+
   it("refuses a price that is not a number instead of forwarding it", async () => {
     // A bad scalar fails at the SCHEMA level, where `userErrors` never sees it
     // — the call would read as a success while nothing was written.

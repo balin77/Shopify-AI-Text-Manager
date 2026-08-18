@@ -15,13 +15,42 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useEffect, useState } from "react";
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, cleanup } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { CommerceField } from "~/components/unified/CommerceField";
 import { useCommerceSaveRegistry } from "~/contexts/CommerceSaveContext";
 
 let renders = 0;
+
+const BODY = {
+  success: true,
+  variants: [
+    {
+      id: "1",
+      gid: "gid://shopify/ProductVariant/1",
+      title: "S",
+      sku: null,
+      price: "9.90",
+      compareAtPrice: null,
+      inventoryItemId: "gid://shopify/InventoryItem/1",
+      inventoryTracked: true,
+      cost: null,
+      taxable: true,
+      requiresShipping: true,
+      weight: null,
+      weightUnit: null,
+      harmonizedSystemCode: null,
+      countryCodeOfOrigin: null,
+      levels: [],
+      levelsTruncated: false,
+    },
+  ],
+  variantsTruncated: false,
+  channels: [{ publicationId: "gid://shopify/Publication/1", name: "Online Store", isPublished: true, publishDate: null }],
+  channelsTruncated: false,
+  shopLocations: [],
+};
 
 /** Mimics the editor: registry here, provider around it, and — the part that
  *  mattered — a `t` bag rebuilt inline on every render. */
@@ -37,6 +66,9 @@ function Editor() {
   return (
     <commerceSave.Provider value={commerceSave.value}>
       <span data-testid="dirty">{String(commerceSave.hasChanges)}</span>
+      <button data-testid="discard" onClick={() => commerceSave.discard()}>discard</button>
+      <button data-testid="reload" onClick={() => commerceSave.requestReload()}>reload</button>
+      <button data-testid="save" onClick={() => void commerceSave.save()}>save</button>
       <CommerceField
         productId="gid://shopify/Product/1"
         label="Stock"
@@ -47,6 +79,13 @@ function Editor() {
   );
 }
 
+/** The loader's answer, reused by the mid-reload test. */
+const loaded = () => ({
+  ok: true,
+  status: 200,
+  json: async () => BODY,
+});
+
 beforeEach(() => {
   renders = 0;
   vi.stubGlobal(
@@ -54,14 +93,7 @@ beforeEach(() => {
     vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({
-        success: true,
-        variants: [],
-        variantsTruncated: false,
-        channels: [],
-        channelsTruncated: false,
-        shopLocations: [],
-      }),
+      json: async () => BODY,
     })),
   );
 });
@@ -85,5 +117,70 @@ describe("CommerceField + save registry", () => {
   it("reports a clean panel as not dirty", async () => {
     render(<AppProvider i18n={en}><Editor /></AppProvider>);
     await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("false"));
+  });
+
+  it("carries the dirty flag up and lets Discard clear it again", async () => {
+    // The round trip the first version of this file could not see, because its
+    // fixture had no variants and so nothing to make dirty.
+    render(<AppProvider i18n={en}><Editor /></AppProvider>);
+
+    const price = await screen.findByLabelText("Price");
+    fireEvent.change(price, { target: { value: "12.00" } });
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("true"));
+
+    fireEvent.click(screen.getByTestId("discard"));
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("false"));
+  });
+
+  it("Discard NEVER unticks a sales channel, not even mid-reload", async () => {
+    // THE defect, reproduced through the path that actually reaches it.
+    //
+    // `discard()` reseeded the channel ticks from `data`, which is null while a
+    // reload is in flight — producing an empty map. Normally the landing load
+    // repairs that, but the post-save reload passes `keepEdits: true` whenever
+    // the save produced a warning, and the reseed is skipped in that case. So
+    // the empty map SURVIVED, `dirtyChannels` read every published channel as
+    // "unticked", and the next save posted an unpublish for all of them: the
+    // product off the storefront, from a click that says "discard".
+    let release: ((body: unknown) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: { method?: string }) => {
+        // The save's POST answers with a WARNING — that is what makes the
+        // reload keep the edits.
+        if (init?.method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, warnings: ["priceNotConfirmed"] }),
+          });
+        }
+        return new Promise((resolve) => {
+          release = (body) => resolve({ ok: true, status: 200, json: async () => body });
+        });
+      }),
+    );
+
+    render(<AppProvider i18n={en}><Editor /></AppProvider>);
+    release?.(BODY);
+
+    const channel = (await screen.findByLabelText("Online Store")) as HTMLInputElement;
+    expect(channel.checked).toBe(true);
+
+    // Something to save, so the POST runs and comes back with its warning.
+    fireEvent.change(screen.getByLabelText("Price"), { target: { value: "12.00" } });
+    await waitFor(() => expect(screen.getByTestId("dirty").textContent).toBe("true"));
+    fireEvent.click(screen.getByTestId("save"));
+
+    // The reload is now in flight with `keepEdits`. This is the window.
+    await waitFor(() => expect(release).toBeTruthy());
+    fireEvent.click(screen.getByTestId("discard"));
+    release?.(BODY);
+
+    await waitFor(() => expect((screen.getByLabelText("Online Store") as HTMLInputElement).checked).toBe(true));
+    // The badge only appears when the panel believes the product is on NO
+    // channel — its presence was the visible half of the bug.
+    expect(screen.queryByText(/On no channel/i)).toBeNull();
+    expect(screen.getByTestId("dirty").textContent).toBe("false");
   });
 });

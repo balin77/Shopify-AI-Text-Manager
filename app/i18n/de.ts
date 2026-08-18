@@ -528,7 +528,6 @@ export const de = {
       weightUnit: "Einheit",
       hsCode: "Zolltarifnummer",
       countryOfOrigin: "Ursprungsland",
-      countryHint: "Zwei Buchstaben, z. B. DE",
       requiresShipping: "Muss versendet werden",
       taxableLabel: "Steuerpflichtig: {v}",
       yes: "ja",
@@ -537,7 +536,6 @@ export const de = {
       loadFailed: "Bestand und Kanäle konnten nicht geladen werden.",
       saveFailed: "Die Änderung konnte nicht gespeichert werden.",
       retry: "Nochmal versuchen",
-      reload: "Neu laden",
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
       channelsHeading: "Vertriebskanäle",
@@ -564,6 +562,7 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      priceAmbiguous: "Der Preis ist mehrdeutig — schreib 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Es wurde nichts gespeichert.",
       priceInvalid: "Ein Preis war keine Zahl und wurde deshalb nicht gespeichert.",
       priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, er wurde deshalb auch lokal nicht gespeichert. Lade neu, um den aktuellen Stand zu sehen.",
       priceFailed: "Der Preis konnte nicht gespeichert werden.",

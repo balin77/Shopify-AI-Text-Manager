@@ -177,12 +177,22 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
    */
   const reloadNonce = useCommerceReloadNonce();
   const seenNonce = useRef(reloadNonce);
+  /** `hasChanges` without putting it in the effect's deps — asking has to
+   *  happen at the moment of the reload, not re-run when the flag flips. */
+  const dirtyRef = useRef(false);
   useEffect(() => {
     if (seenNonce.current === reloadNonce) return;
     seenNonce.current = reloadNonce;
     if (!isPrimaryLocale) return;
+    // ASKED, because a reload discards typed values and the merchant probably
+    // pressed that button to refresh their translations. The panel's own
+    // Reload asked before it was removed; losing the question with the button
+    // would make the editor's reload quietly eat a stock correction.
+    if (dirtyRef.current && !window.confirm((t.discardConfirm as string) || "Discard your unsaved changes?")) {
+      return;
+    }
     load();
-  }, [reloadNonce, isPrimaryLocale, load]);
+  }, [reloadNonce, isPrimaryLocale, load, t.discardConfirm]);
 
   useEffect(() => {
     if (!isPrimaryLocale) return;
@@ -217,7 +227,11 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     const toUnpublish: string[] = [];
     for (const channel of data.channels) {
       const next = channelState[channel.publicationId];
-      if (next === channel.isPublished) continue;
+      // `undefined` means the seed has not landed (or was lost), NOT "off".
+      // Reading it as off is what turned a mistimed Discard into an
+      // unpublish-from-every-channel — the §2.3 trap this panel exists to
+      // reveal, caused by the panel itself.
+      if (next === undefined || next === channel.isPublished) continue;
       if (next) toPublish.push(channel.publicationId);
       else toUnpublish.push(channel.publicationId);
     }
@@ -307,12 +321,19 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     dirtyChannels.toPublish.length > 0 ||
     dirtyChannels.toUnpublish.length > 0;
 
+  dirtyRef.current = hasChanges;
+
   const save = useCallback(async () => {
     // A second click while the first write is in flight would send the same
     // `compareQuantity` twice: the second is refused and reported as "the stock
     // changed meanwhile" — a frightening message caused by the merchant's own
     // double click.
-    if (!data || savingRef.current) return;
+    //
+    // `!hasChanges` short-circuits the common case: the save bar calls this on
+    // EVERY save, and without it a plain title edit walked the empty loops and
+    // still reloaded — one GraphQL round trip and a visible blank-and-repaint
+    // of the panel for a save that had nothing to do with it.
+    if (!data || savingRef.current || !hasChanges) return;
     savingRef.current = true;
     setSaving(true);
     setNotices([]);
@@ -337,7 +358,10 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           },
           "priceFailed",
         );
-        collected.push(...warnings);
+        // Phrased, like every other branch: pushing the raw code showed the
+        // merchant the literal string `priceFailed`, and the two SPECIFIC
+        // reasons (invalid, not confirmed) could never reach them at all.
+        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
       }
 
       // Grouped per VARIANT: `inventorySetQuantities` is atomic per call, so a
@@ -385,7 +409,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           },
           "activateFailed",
         );
-        collected.push(...warnings);
+        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
       }
 
       for (const [variantId, list] of byVariant) {
@@ -471,7 +495,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     // the number that actually moved — and then KEEPS the merchant's input,
     // because that is exactly the case where they need it.
     load({ keepEdits: collected.length > 0 });
-  }, [data, dirtyPrices, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
+  }, [data, hasChanges, dirtyPrices, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
 
   /**
    * The editor's save bar drives this panel. Registered rather than lifted:
@@ -493,8 +517,14 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     setItemEdits({});
     setPriceEdits({});
     setNotices([]);
+    // Only when there IS a loaded answer to reseed FROM. During a reload `data`
+    // is null, and `Object.fromEntries([])` produced an empty map — which
+    // `dirtyChannels` then read as "every channel unticked" and queued an
+    // unpublish-from-everywhere on the next save. Discarding must never be
+    // able to take a product off its sales channels.
+    if (!data) return;
     setChannelState(
-      Object.fromEntries((data?.channels ?? []).map((c) => [c.publicationId, c.isPublished])),
+      Object.fromEntries(data.channels.map((c) => [c.publicationId, c.isPublished])),
     );
   }, [data]);
 
@@ -896,7 +926,15 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                           The activation rides along with the save — Shopify's
                           `inventoryActivate` takes the quantity, so it is one
                           call, not two. */}
-                      {data.shopLocations
+                      {/* Suppressed entirely when the level window was cut
+                          off: locations 11+ of a variant stocked at more than
+                          `INVENTORY_LEVEL_PAGE_SIZE` places are missing from
+                          `levels` while present in `shopLocations`, and would
+                          be listed as "not stocked here" WITH an input that
+                          routes into activation — writing a quantity over a
+                          real one with no compare-and-swap. The truncation
+                          notice above already says the list is incomplete. */}
+                      {(variant.levelsTruncated ? [] : data.shopLocations)
                         .filter((location) => !variant.levels.some((l) => l.locationId === location.id))
                         .map((location) => {
                           const key = `${variant.id}::${location.id}`;
