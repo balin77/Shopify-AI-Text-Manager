@@ -1735,6 +1735,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onCancelCreateOption={subResourceHandlers.handleCancelCreateOption}
                       onDeleteOption={subResourceHandlers.handleDeleteOption}
                       onReorderOptions={subResourceHandlers.handleReorderOptions}
+                      onReorderOptionValues={subResourceHandlers.handleReorderOptionValues}
                       translatingFieldIds={subResourceState.translatingFieldIds}
                       missingTranslationIds={optionMissingTranslationIds}
                       t={{
@@ -1761,6 +1762,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         deleteOption: t.products?.deleteOption,
                         deleteOptionConfirm: t.products?.deleteOptionConfirm,
                         deleteOptionTitle: t.products?.deleteOptionTitle,
+                        editMetaobject: t.products?.editMetaobject,
                         deleteValueTitle: t.products?.deleteValueTitle,
                         deleteValueCount: t.products?.deleteValueCount,
                         deleteValueUnknown: t.products?.deleteValueUnknown,

@@ -23,6 +23,11 @@ export interface OptionValueData {
   id: string;  // gid://shopify/ProductOptionValue/...
   name: string;
   linked?: boolean;  // true = metaobject-linked value
+  /** The METAOBJECT GID behind a linked value. The only identifier that
+   *  addresses the entry itself — the option's `linkedMetafieldKey` is a
+   *  metafield namespace/key and only coincides with the metaobject type for
+   *  Shopify's own standard definitions. */
+  linkedValue?: string;
 }
 
 export interface OptionData {
@@ -106,6 +111,7 @@ interface OptionsFieldProps {
   onCancelCreateOption?: (index: number) => void;
   onDeleteOption?: (optionId: string) => void;
   onReorderOptions?: (orderedIds: string[]) => void;
+  onReorderOptionValues?: (optionId: string, orderedValueIds: string[]) => void;
 
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
   translatingFieldIds?: Set<string>;
@@ -143,6 +149,7 @@ interface OptionsFieldProps {
     optionNamePlaceholder?: string;
     deleteOption?: string;
     deleteOptionTitle?: string;
+    editMetaobject?: string;
     deleteValueTitle?: string;
     deleteOptionConfirm?: string;
     deleteValueCount?: string;
@@ -186,6 +193,7 @@ export function OptionsField({
   onCancelCreateOption,
   onDeleteOption,
   onReorderOptions,
+  onReorderOptionValues,
   translatingFieldIds = new Set(),
   missingTranslationIds,
   t = {},
@@ -195,7 +203,13 @@ export function OptionsField({
 
   // Navigate to metaobjects page with optional type pre-selection
   const navigateToMetaobjects = (option: OptionData) => {
-    const selectValue = option.linkedMetaobjectType || option.name;
+    // The entry's own GID first: it addresses one metaobject unambiguously and
+    // lands the merchant ON it. `linkedMetafieldKey` is a metafield
+    // namespace/key ("custom--material") and equals the metaobject type only
+    // for Shopify's standard definitions, where the two happen to be spelled
+    // the same; for a custom one it matches nothing and the page opens blank.
+    const linkedGid = option.values.find((v) => v.linkedValue)?.linkedValue;
+    const selectValue = linkedGid || option.linkedMetaobjectType || option.name;
     handleNavigate("/app/metaobjects", {
       searchParams: new URLSearchParams({ select: selectValue }),
     });
@@ -238,6 +252,8 @@ export function OptionsField({
         onCancelCreateOption={(index) => onCancelCreateOption?.(index)}
         onDeleteOption={(id) => onDeleteOption?.(id)}
         onReorder={(ids) => onReorderOptions?.(ids)}
+        onReorderValues={(id, valueIds) => onReorderOptionValues?.(id, valueIds)}
+        onOpenMetaobjects={navigateToMetaobjects}
         onTranslate={onTranslate}
         translatingFieldIds={translatingFieldIds}
         savedNonce={savedNonce}

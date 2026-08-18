@@ -787,6 +787,23 @@ export async function handleSavePrimarySubResources(
     const optionsToDelete: string[] = safeParseList(getFormString(formData, "optionsToDelete"));
     /** The full ordered list of option ids, after the creates and deletes. */
     const optionOrder: string[] = safeParseList(getFormString(formData, "optionOrder"));
+    /** Value GIDs in their new order, per option id. Reordering VALUES is what
+     *  decides which variant the storefront shows first. */
+    const optionValueOrder: Record<string, string[]> = (() => {
+      try {
+        const parsed: unknown = JSON.parse(getFormString(formData, "optionValueOrder") || "{}");
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+        const out: Record<string, string[]> = {};
+        for (const [optionId, ids] of Object.entries(parsed as Record<string, unknown>)) {
+          if (!isValidShopifyGID(optionId) || !Array.isArray(ids)) continue;
+          const valid = ids.filter((id): id is string => typeof id === "string" && isValidShopifyGID(id));
+          if (valid.length > 0) out[optionId] = valid;
+        }
+        return out;
+      } catch {
+        return {};
+      }
+    })();
     /** Failure CODES from the option writes — phrased by the client. */
     const optionWarnings: string[] = [];
     /** Create / delete / reorder failures. They have no option id to report
@@ -886,10 +903,14 @@ export async function handleSavePrimarySubResources(
       }
     }
 
-    if (optionOrder.length > 1) {
+    // One call does both halves. The client sends the full option order
+    // whenever EITHER half moved, so a pure value reorder still has a list of
+    // options to hang its values on.
+    if (optionOrder.length > 0 && (optionOrder.length > 1 || Object.keys(optionValueOrder).length > 0)) {
       const warning = await reorderOptions(admin, db, session.shop, {
         productId,
         orderedIds: optionOrder.filter(isValidShopifyGID),
+        valueOrder: optionValueOrder,
       });
       if (warning) {
         optionWarnings.push(warning);

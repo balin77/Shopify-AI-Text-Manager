@@ -306,12 +306,31 @@ export async function deleteOption(
   return undefined;
 }
 
-/** Order only -- the one operation here that cannot lose a variant. */
+/**
+ * Order only -- the one operation here that cannot lose a variant.
+ *
+ * It reorders OPTIONS and, per option, their VALUES. Both matter to the
+ * merchant for the same reason: the first option and its first value decide
+ * which variant the storefront shows first, which is the one a customer sees
+ * before touching anything.
+ *
+ * `OptionReorderInput` carries a nested `values` list, so one call does both.
+ * Values are sent ONLY for options whose values actually moved -- restating an
+ * unchanged order is work with a chance of going wrong and none of achieving
+ * anything, and it would also make every option reorder depend on the value
+ * half being accepted.
+ */
 export async function reorderOptions(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
-  params: { productId: string; orderedIds: string[] },
+  params: {
+    productId: string;
+    orderedIds: string[];
+    /** Value GIDs in their new order, per option id. Omit an option to leave
+     *  its values alone. */
+    valueOrder?: Record<string, string[]>;
+  },
 ): Promise<OptionWriteWarning | undefined> {
   const outcome = await runOptionMutation(
     admin,
@@ -320,13 +339,97 @@ export async function reorderOptions(
     {
       productId: params.productId,
       // Shopify counts positions from 1.
-      options: params.orderedIds.map((id, index) => ({ id, position: index + 1 })),
+      options: params.orderedIds.map((id, index) => {
+        const values = params.valueOrder?.[id];
+        return values && values.length > 0
+          ? {
+              id,
+              position: index + 1,
+              values: values.map((valueId, valueIndex) => ({ id: valueId, position: valueIndex + 1 })),
+            }
+          : { id, position: index + 1 };
+      }),
     },
     "productOptionsReorder",
   );
   if (outcome.warning) return outcome.warning;
   await mirrorOptions(db, params.productId, outcome.options ?? []);
   return undefined;
+}
+
+/**
+ * The colour swatch Shopify holds for each option value, keyed by value GID.
+ *
+ * Its own query, and its own failure handling, on purpose. `swatch` is a newer
+ * field than most of what this app selects, and folding it into the product
+ * sync's option selection would mean that if it is ever absent or renamed, a
+ * SCHEMA-level error takes down the whole product sync -- for a decoration.
+ * Here the worst case is a card without swatches.
+ *
+ * Only values that HAVE a swatch appear. An absent key means "Shopify holds no
+ * swatch for this value", which the caller may then try to derive from the
+ * value's own name (see `product-option-swatch.shared.ts`).
+ */
+export async function fetchOptionSwatches(
+  admin: AdminApiContext,
+  shop: string,
+  productId: string,
+): Promise<Record<string, { color?: string; imageUrl?: string }>> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query productOptionSwatches($id: ID!) {
+          product(id: $id) {
+            options {
+              id
+              optionValues {
+                id
+                swatch {
+                  color
+                  image { image { url } }
+                }
+              }
+            }
+          }
+        }`,
+      { variables: { id: productId } },
+    );
+    const body = (await response.json()) as {
+      data?: {
+        product?: {
+          options?: Array<{
+            optionValues?: Array<{
+              id: string;
+              swatch?: { color?: string | null; image?: { image?: { url?: string | null } | null } | null } | null;
+            }>;
+          }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+    // A schema-level error costs the swatches and nothing else.
+    if (body.errors?.length) {
+      logger.warn("[ProductOptions] swatch query rejected", {
+        context: "ProductOptions", shop, productId, error: body.errors[0]?.message,
+      });
+      return {};
+    }
+    const swatches: Record<string, { color?: string; imageUrl?: string }> = {};
+    for (const option of body.data?.product?.options ?? []) {
+      for (const value of option.optionValues ?? []) {
+        const color = value.swatch?.color ?? undefined;
+        const imageUrl = value.swatch?.image?.image?.url ?? undefined;
+        if (color || imageUrl) swatches[value.id] = { color, imageUrl };
+      }
+    }
+    return swatches;
+  } catch (error) {
+    logger.warn("[ProductOptions] swatch query failed", {
+      context: "ProductOptions", shop, productId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  }
 }
 
 /**

@@ -41,7 +41,15 @@ const selectedItem = {
   id: "gid://shopify/Product/1",
   title: "Shirt",
   options: [
-    { id: OPTION, name: "Colour", position: 1, values: [{ id: "gid://shopify/ProductOptionValue/1", name: "Red" }] },
+    {
+      id: OPTION,
+      name: "Colour",
+      position: 1,
+      values: [
+        { id: "gid://shopify/ProductOptionValue/1", name: "Red" },
+        { id: "gid://shopify/ProductOptionValue/1b", name: "Blue" },
+      ],
+    },
     { id: SECOND, name: "Size", position: 2, values: [{ id: "gid://shopify/ProductOptionValue/2", name: "S" }] },
     { id: THIRD, name: "Material", position: 3, values: [{ id: "gid://shopify/ProductOptionValue/3", name: "Cotton" }] },
   ],
@@ -205,7 +213,7 @@ describe("a value renamed and deleted in the same save", () => {
     // that would take the merchant's other renames on the same option with it.
     const { result } = setup();
 
-    act(() => result.current.handlers.handlePrimaryOptionValuesChange(OPTION, ["Crimson"]));
+    act(() => result.current.handlers.handlePrimaryOptionValuesChange(OPTION, ["Crimson", "Blue"]));
     act(() =>
       result.current.handlers.handleRemoveOptionValue(OPTION, "gid://shopify/ProductOptionValue/1"),
     );
@@ -275,5 +283,40 @@ describe("what the client calls a success", () => {
 
     expect(showInfoBox.mock.calls.at(-1)?.[1]).toBe("success");
     expect(result.current.state.optionsToCreate).toEqual([]);
+  });
+});
+
+describe("reordering VALUES", () => {
+  it("sends the moved order, and the option list to hang it on", () => {
+    // The reorder mutation nests values under an option, so a pure value drag
+    // still needs the current option order named.
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleReorderOptionValues(OPTION, [
+        "gid://shopify/ProductOptionValue/1b",
+        "gid://shopify/ProductOptionValue/1",
+      ]),
+    );
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionValueOrder)).toEqual({
+      [OPTION]: ["gid://shopify/ProductOptionValue/1b", "gid://shopify/ProductOptionValue/1"],
+    });
+    expect(JSON.parse(submitted().optionOrder)).toEqual([OPTION, SECOND, THIRD]);
+  });
+
+  it("sends nothing when the values ended where they started", () => {
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleReorderOptionValues(OPTION, [
+        "gid://shopify/ProductOptionValue/1",
+        "gid://shopify/ProductOptionValue/1b",
+      ]),
+    );
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(submit).not.toHaveBeenCalled();
   });
 });

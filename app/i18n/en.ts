@@ -30,6 +30,7 @@ export const en: Translation = {
     deleteOption: "Delete",
     deleteOptionTitle: "Delete this variant?",
     deleteValueTitle: "Delete this value?",
+    editMetaobject: "Edit these values",
     deleteOptionConfirm: "This removes the option and rebuilds the product's variants around the remaining ones.",
     deleteValueCount: "This deletes {n} variant(s), including their stock, prices and SKUs. It cannot be undone.",
     deleteValueUnknown: "This deletes the variants that use this value, including their stock and prices. How many that is could not be read.",

@@ -163,11 +163,22 @@ export default function MetaobjectsPage() {
   const selectParam = searchParams.get("select");
   const initialItemId = useMemo(() => {
     if (!selectParam || metaobjects.length === 0) return undefined;
-    // Match by type handle (most reliable, e.g. "color") or definition name (e.g. "Color")
+    const wanted = selectParam.toLowerCase();
+    // An entry's own GID is unambiguous and lands on the entry itself — that is
+    // what the product editor sends for a metaobject-linked option value.
+    const byId = metaobjects.find((m: any) => m.id === selectParam);
+    if (byId) return byId.id;
+    // Otherwise a type handle ("color"), a definition name ("Color") or a
+    // title. A caller may also pass a metafield key ("custom--material"): the
+    // two are spelled alike only for Shopify's standard definitions, so the
+    // part after the namespace is tried as well rather than matching nothing.
+    const withoutNamespace = wanted.includes("--") ? wanted.split("--").slice(1).join("--") : wanted;
     const match = metaobjects.find((m: any) =>
-      m.type?.toLowerCase() === selectParam.toLowerCase() ||
-      m.title?.toLowerCase() === selectParam.toLowerCase() ||
-      m.definitionName?.toLowerCase() === selectParam.toLowerCase()
+      m.type?.toLowerCase() === wanted ||
+      m.title?.toLowerCase() === wanted ||
+      m.definitionName?.toLowerCase() === wanted ||
+      m.type?.toLowerCase() === withoutNamespace ||
+      m.definitionName?.toLowerCase() === withoutNamespace
     );
     return match?.id;
   }, [selectParam, metaobjects]);

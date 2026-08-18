@@ -28,11 +28,22 @@
  * zero would read as "nothing depends on this, delete freely", which is the
  * opposite of what an unanswered question means.
  *
- * -- What it deliberately does not do ----------------------------------------
- * Values cannot be reordered. Shopify's `optionValuesToUpdate` renames by id
- * and has no position, so a drag here could only be faked locally and would
- * snap back on the next load. Options CAN be reordered, because
- * `productOptionsReorder` exists for exactly that.
+ * -- Ordering ----------------------------------------------------------------
+ * Both options AND their values are draggable. `optionValuesToUpdate` renames
+ * by id and carries no position -- which is where this file's earlier "values
+ * cannot be reordered" note came from -- but `productOptionsReorder` takes a
+ * NESTED value list with positions, which is how Shopify's own admin does it.
+ * It matters beyond tidiness: the first option and its first value decide which
+ * variant the storefront shows FIRST, i.e. the one a customer sees before
+ * touching anything.
+ *
+ * -- Swatches ----------------------------------------------------------------
+ * A colour value is painted next to its name. Shopify's own per-value swatch
+ * is the source wherever there is one; the rest is `resolveSwatch`, which will
+ * read a hex out of the name and knows the basic colour WORDS of the three
+ * languages this app ships in, and returns nothing for anything else. A swatch
+ * that is confidently the wrong colour is worse than none, because it is what
+ * the merchant looks at instead of the name.
  *
  * Nothing here writes on its own: every action edits pending state that the
  * editor's ONE save bar carries, the same as the text fields.
@@ -55,7 +66,35 @@ import { DeleteIcon, DragHandleIcon, PlusIcon } from "@shopify/polaris-icons";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import { variantCountKey } from "../../services/product-options.shared";
+import { resolveSwatch, type OptionValueSwatch } from "../../services/product-option-swatch.shared";
 import type { OptionData } from "./OptionsField";
+
+/**
+ * The colour chip in front of a value.
+ *
+ * `aria-hidden`: the name next to it already says which colour this is, so a
+ * screen reader would only hear it twice. A swatch IMAGE (a pattern, a fabric)
+ * is shown as the image, since a pattern cannot be one colour.
+ */
+function Swatch({ swatch }: { swatch: ReturnType<typeof resolveSwatch> }) {
+  if (!swatch) return null;
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: "inline-block",
+        width: "16px",
+        height: "16px",
+        flex: "0 0 auto",
+        borderRadius: "4px",
+        // A border so white and very light colours are still a visible chip
+        // rather than a hole in the card.
+        border: "1px solid var(--p-color-border)",
+        background: swatch.imageUrl ? `center / cover no-repeat url(${JSON.stringify(swatch.imageUrl)})` : swatch.color,
+      }}
+    />
+  );
+}
 
 export interface VariantOptionsEditorProps {
   productId: string;
@@ -81,6 +120,11 @@ export interface VariantOptionsEditorProps {
   onCancelCreateOption?: (index: number) => void;
   onDeleteOption: (optionId: string) => void;
   onReorder: (orderedIds: string[]) => void;
+  /** Values in their new order, for one option. Their order decides which
+   *  variant the storefront shows first. */
+  onReorderValues?: (optionId: string, orderedValueIds: string[]) => void;
+  /** Jump to this app's own metaobjects page for a linked option. */
+  onOpenMetaobjects?: (option: OptionData) => void;
   onTranslate?: (optionId: string) => void;
   translatingFieldIds?: Set<string>;
   /** Bumped whenever a save lands. The variant counts are re-fetched: a save
@@ -108,6 +152,8 @@ export function VariantOptionsEditor({
   onCancelCreateOption,
   onDeleteOption,
   onReorder,
+  onReorderValues,
+  onOpenMetaobjects,
   onTranslate,
   translatingFieldIds = new Set(),
   savedNonce = 0,
@@ -125,7 +171,15 @@ export function VariantOptionsEditor({
   /** Variants per option-value, for the delete confirmation. `null` = not
    *  loaded, which the dialog reports rather than treating as zero. */
   const [impact, setImpact] = useState<Record<string, number> | null>(null);
+  /** Shopify's own swatches, keyed by value GID. Fetched with the counts. */
+  const [swatches, setSwatches] = useState<Record<string, OptionValueSwatch>>({});
   const [dragId, setDragId] = useState<string | null>(null);
+  /** The value being dragged, as `optionId::valueId` — a value only ever
+   *  moves within its own option. */
+  const [dragValue, setDragValue] = useState<string | null>(null);
+  /** The dragged value order per option id, or absent while untouched. Local,
+   *  because a drag has to feel immediate. */
+  const [valueOrder, setValueOrder] = useState<Record<string, string[]>>({});
   /**
    * The pending confirmation, or null.
    *
@@ -167,11 +221,12 @@ export function VariantOptionsEditor({
     if (!openOptionId || impact !== null || !productId) return;
 
     let cancelled = false;
-    fetch(`/api/product-option-impact?productId=${encodeURIComponent(productId)}`)
+    fetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((body) => {
         if (cancelled) return;
         setImpact(body?.success ? (body.counts as Record<string, number>) : {});
+        setSwatches(body?.success ? ((body.swatches ?? {}) as Record<string, OptionValueSwatch>) : {});
       })
       .catch(() => {
         // An empty map is "we could not count", which the dialog says out loud.
@@ -184,9 +239,11 @@ export function VariantOptionsEditor({
    *  counts would name the wrong number in a delete dialog. */
   useEffect(() => {
     setImpact(null);
+    setSwatches({});
     setOpenOptionId(null);
     setDraft(null);
     setOrder(null);
+    setValueOrder({});
     setPendingConfirm(null);
   }, [productId]);
 
@@ -203,6 +260,7 @@ export function VariantOptionsEditor({
     if (savedNonce === 0) return;
     setImpact(null);
     setOrder(null);
+    setValueOrder({});
   }, [savedNonce]);
 
   const nameOf = (option: OptionData) =>
@@ -224,13 +282,40 @@ export function VariantOptionsEditor({
     const existing = option.values
       .map((v, index) => ({ id: v.id, name: edited?.[index] ?? v.name, linked: v.linked }))
       .filter((v) => !removed.has(v.id));
+
+    // The dragged order, when there is one. Anything the order does not
+    // mention (a value that arrived after the drag) keeps its place at the end
+    // rather than disappearing.
+    const wanted = valueOrder[option.id];
+    const ordered = wanted
+      ? [
+          ...wanted.map((id) => existing.find((v) => v.id === id)).filter((v): v is typeof existing[number] => !!v),
+          ...existing.filter((v) => !wanted.includes(v.id)),
+        ]
+      : existing;
+
     const added = (valuesToAdd[option.id] ?? []).map((name, index) => ({
       id: "",
       name,
       addedIndex: index,
       linked: false,
     }));
-    return [...existing, ...added];
+    // Pending adds stay at the END: they have no Shopify id yet, so they
+    // cannot take part in a reorder and pretending otherwise would show an
+    // arrangement the save cannot express.
+    return [...ordered, ...added];
+  };
+
+  /** Moves `fromId` to where `toId` sits, within one option. */
+  const moveValue = (option: OptionData, fromId: string, toId: string) => {
+    if (!fromId || !toId || fromId === toId) return;
+    const ids = valuesOf(option).filter((v) => v.id).map((v) => v.id);
+    const from = ids.indexOf(fromId);
+    const to = ids.indexOf(toId);
+    if (from < 0 || to < 0) return;
+    ids.splice(to, 0, ...ids.splice(from, 1));
+    setValueOrder((prev) => ({ ...prev, [option.id]: ids }));
+    onReorderValues?.(option.id, ids);
   };
 
   const deleteValueBody = useCallback(
@@ -315,12 +400,47 @@ export function VariantOptionsEditor({
                           <Text as="p" variant="bodyMd" fontWeight="semibold">
                             {nameOf(option)}
                           </Text>
-                          {option.isLinked && <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>}
+                          {option.isLinked &&
+                            (onOpenMetaobjects ? (
+                              // A linked option's values live in metaobjects,
+                              // so the place to edit them is this app's own
+                              // metaobjects page -- one click, not a hunt.
+                              <span
+                                role="link"
+                                tabIndex={0}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onOpenMetaobjects(option);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                  event.stopPropagation();
+                                  onOpenMetaobjects(option);
+                                }}
+                                style={{ cursor: "pointer" }}
+                              >
+                                <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                              </span>
+                            ) : (
+                              <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
+                            ))}
                         </InlineStack>
                         <InlineStack gap="100" wrap>
-                          {values.map((value) => (
-                            <Tag key={value.id || `new-${value.addedIndex}`}>{value.name}</Tag>
-                          ))}
+                          {values.map((value) => {
+                            const swatch = resolveSwatch(value.name, swatches[value.id]);
+                            return (
+                              <Tag key={value.id || `new-${value.addedIndex}`}>
+                                {swatch ? (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                                    <Swatch swatch={swatch} />
+                                    {value.name}
+                                  </span>
+                                ) : (
+                                  value.name
+                                )}
+                              </Tag>
+                            );
+                          })}
                         </InlineStack>
                       </BlockStack>
                     </div>
@@ -351,29 +471,84 @@ export function VariantOptionsEditor({
                   )}
                 </InlineStack>
 
-                <TextField
-                  label={t.optionNameLabel || "Option name"}
-                  labelHidden
-                  value={nameOf(option)}
-                  onChange={(value) => onNameChange(option.id, value)}
-                  autoComplete="off"
-                />
+                {/* Capped: an option name is two words, and left to itself a
+                    Polaris field fills the whole editor column. */}
+                <div style={{ maxWidth: "var(--app-short-field-width)" }}>
+                  <TextField
+                    label={t.optionNameLabel || "Option name"}
+                    labelHidden
+                    value={nameOf(option)}
+                    onChange={(value) => onNameChange(option.id, value)}
+                    autoComplete="off"
+                  />
+                </div>
 
                 {/* A metaobject-linked option's values live in the metaobjects,
                     so they are shown and never edited here — the same rule the
                     old card followed. */}
                 {option.isLinked ? (
-                  <InlineStack gap="100" wrap>
-                    {values.map((value) => (
-                      <Tag key={value.id}>{value.name}</Tag>
-                    ))}
-                  </InlineStack>
+                  <BlockStack gap="200">
+                    <InlineStack gap="100" wrap>
+                      {values.map((value) => {
+                        const swatch = resolveSwatch(value.name, swatches[value.id]);
+                        return (
+                          <Tag key={value.id}>
+                            {swatch ? (
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                                <Swatch swatch={swatch} />
+                                {value.name}
+                              </span>
+                            ) : (
+                              value.name
+                            )}
+                          </Tag>
+                        );
+                      })}
+                    </InlineStack>
+                    {onOpenMetaobjects && (
+                      <InlineStack>
+                        <Button variant="plain" onClick={() => onOpenMetaobjects(option)}>
+                          {t.editMetaobject || "Edit these values"}
+                        </Button>
+                      </InlineStack>
+                    )}
+                  </BlockStack>
                 ) : (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
                     {values.map((value, index) => (
-                      <InlineStack key={value.id || `new-${index}`} gap="200" blockAlign="center" wrap={false}>
-                        <div style={{ flex: 1 }}>
+                      <div
+                        key={value.id || `new-${index}`}
+                        // Only SAVED values can move: a pending add has no
+                        // Shopify id, so it cannot be given a position.
+                        draggable={!!value.id}
+                        onDragStart={(event) => {
+                          if (!value.id) return;
+                          // Stops the OPTION card underneath from being
+                          // dragged at the same time.
+                          event.stopPropagation();
+                          setDragValue(value.id);
+                        }}
+                        onDragOver={(event) => {
+                          if (!value.id || !dragValue) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                        }}
+                        onDrop={(event) => {
+                          if (!value.id || !dragValue) return;
+                          event.stopPropagation();
+                          moveValue(option, dragValue, value.id);
+                          setDragValue(null);
+                        }}
+                      >
+                      <InlineStack gap="200" blockAlign="center" wrap={false}>
+                        {value.id && (
+                          <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
+                            <Icon source={DragHandleIcon} tone="subdued" />
+                          </span>
+                        )}
+                        <Swatch swatch={resolveSwatch(value.name, swatches[value.id])} />
+                        <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
                           <TextField
                             label={t.valueLabel || "Value"}
                             labelHidden
@@ -421,10 +596,11 @@ export function VariantOptionsEditor({
                           disabled={values.length <= 1}
                         />
                       </InlineStack>
+                      </div>
                     ))}
 
                     <InlineStack gap="200" blockAlign="center" wrap={false}>
-                      <div style={{ flex: 1 }}>
+                      <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
                         <TextField
                           label={t.addValue || "Add another value"}
                           labelHidden
@@ -506,18 +682,21 @@ export function VariantOptionsEditor({
         {draft && (
           <Card padding="300">
             <BlockStack gap="300">
-              <TextField
-                label={t.optionNameLabel || "Option name"}
-                value={draft.name}
-                onChange={(name) => setDraft({ ...draft, name })}
-                autoComplete="off"
-                placeholder={t.optionNamePlaceholder || "Size, Colour, Material"}
-              />
+              <div style={{ maxWidth: "var(--app-short-field-width)" }}>
+                <TextField
+                  label={t.optionNameLabel || "Option name"}
+                  value={draft.name}
+                  onChange={(name) => setDraft({ ...draft, name })}
+                  autoComplete="off"
+                  placeholder={t.optionNamePlaceholder || "Size, Colour, Material"}
+                />
+              </div>
               <BlockStack gap="200">
                 <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
                 {draft.values.map((value, index) => (
                   <InlineStack key={index} gap="200" blockAlign="center" wrap={false}>
-                    <div style={{ flex: 1 }}>
+                    <Swatch swatch={resolveSwatch(value)} />
+                    <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
                       <TextField
                         label={t.valueLabel || "Value"}
                         labelHidden

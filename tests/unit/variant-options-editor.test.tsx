@@ -52,6 +52,8 @@ const handlers = () => ({
   onDeleteOption: vi.fn(),
   onReorder: vi.fn(),
   onCancelCreateOption: vi.fn(),
+  onReorderValues: vi.fn(),
+  onOpenMetaobjects: vi.fn(),
 });
 
 function ui(overrides: Record<string, unknown> = {}) {
@@ -82,6 +84,7 @@ beforeEach(() => {
       json: async () => ({
         success: true,
         counts: { [variantCountKey("Colour", "Red")]: 3 },
+        swatches: { "gid://shopify/ProductOptionValue/2": { color: "#0000FF" } },
       }),
     })),
   );
@@ -271,5 +274,62 @@ describe("VariantOptionsEditor — a product with no options yet", () => {
     fireEvent.click(remove[remove.length - 1]);
 
     expect(spies.onCancelCreateOption).toHaveBeenCalledWith(0);
+  });
+});
+
+describe("VariantOptionsEditor — colours and order", () => {
+  it("paints Shopify's swatch, and derives one from a name it is sure of", async () => {
+    const { container } = ui();
+    fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Red");
+
+    const painted = [...container.querySelectorAll("span[aria-hidden]")]
+      .map((el) => (el as HTMLElement).style.background)
+      .filter(Boolean);
+
+    // "Blue" carries a swatch from Shopify; "Red" is a basic colour word.
+    expect(painted.some((b) => b.includes("rgb(0, 0, 255)") || b.includes("#0000FF"))).toBe(true);
+    expect(painted.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reports a value drag as a new order", async () => {
+    const { spies } = ui();
+    fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Red");
+
+    const rows = screen.getAllByDisplayValue(/Red|Blue/).map((input) => input.closest("[draggable]")!);
+    fireEvent.dragStart(rows[0]);
+    fireEvent.dragOver(rows[1]);
+    fireEvent.drop(rows[1]);
+
+    // The first value decides which variant the storefront shows first.
+    expect(spies.onReorderValues).toHaveBeenCalledWith(OPTION, [
+      "gid://shopify/ProductOptionValue/2",
+      "gid://shopify/ProductOptionValue/1",
+    ]);
+  });
+
+  it("offers the metaobject page for a linked option", () => {
+    const spies = handlers();
+    render(
+      <AppProvider i18n={en}>
+        <VariantOptionsEditor
+          productId="gid://shopify/Product/1"
+          options={[{ ...options[0], isLinked: true }]}
+          primaryOptions={{}}
+          valuesToAdd={{}}
+          valuesToDelete={{}}
+          optionsToCreate={[]}
+          optionsToDelete={[]}
+          {...spies}
+        />
+      </AppProvider>,
+    );
+    fireEvent.click(screen.getByText("Colour"));
+
+    // A linked option's values live in metaobjects, so the place to edit them
+    // is this app's own metaobjects page.
+    fireEvent.click(screen.getByRole("button", { name: /Edit these values/i }));
+    expect(spies.onOpenMetaobjects).toHaveBeenCalled();
   });
 });

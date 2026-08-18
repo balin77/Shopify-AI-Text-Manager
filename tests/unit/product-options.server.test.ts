@@ -317,6 +317,28 @@ describe("reorderOptions", () => {
       { id: "c", position: 3 },
     ]);
   });
+
+  it("carries the VALUE order nested under its option", async () => {
+    // The first option and its first value decide which variant the storefront
+    // shows first, so this is not tidiness — it is which product a customer
+    // sees before touching anything.
+    const admin = adminWith(echo("productOptionsReorder", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    await reorderOptions(admin, db, "s", {
+      productId: PRODUCT,
+      orderedIds: ["a", "b"],
+      valueOrder: { a: ["v2", "v1"] },
+    });
+
+    expect(sent(admin).options).toEqual([
+      { id: "a", position: 1, values: [{ id: "v2", position: 1 }, { id: "v1", position: 2 }] },
+      // Option b's values are untouched, so they are not restated: an
+      // unchanged order is work with a chance of going wrong and nothing to
+      // achieve, and it would make the option reorder depend on it.
+      { id: "b", position: 2 },
+    ]);
+  });
 });
 
 describe("countVariantsPerValue", () => {
