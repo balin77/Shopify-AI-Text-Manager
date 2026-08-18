@@ -65,6 +65,15 @@ export interface CommerceVariantView {
   gid: string;
   title: string;
   sku: string | null;
+  /** ISBN, UPC, GTIN — Shopify's own label for the field. */
+  barcode: string | null;
+  /**
+   * `DENY` or `CONTINUE`: whether Shopify keeps selling at zero stock.
+   *
+   * Only meaningful while the item is TRACKED — untracked, Shopify keeps no
+   * count and there is no "out of stock" for the policy to apply to.
+   */
+  inventoryPolicy: string | null;
   /** The SELLING price — what a customer pays. Not `cost`, which is what the
    *  merchant pays and is the field that used to be alone in this panel. */
   price: string | null;
@@ -204,6 +213,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
                 title
                 sku
                 image { url altText }
+                barcode
                 selectedOptions { name value }
                 ${VARIANT_COMMERCE_SELECTION}
               }
@@ -346,6 +356,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
         gid,
         title: String(node.title ?? ""),
         sku: (node.sku as string | null) ?? null,
+        barcode: (node.barcode as string | null) ?? null,
+        inventoryPolicy: columns.inventoryPolicy ?? null,
         // Read straight off the node, NOT through `variantCommerceColumns`:
         // price is not part of the commerce block (the regular product sync
         // owns it), and folding it in would tie it to that block's
@@ -542,6 +554,8 @@ export async function action({ request }: ActionFunctionArgs) {
     const fields: VariantPriceFields = {};
     if (formData.has("price")) fields.price = getFormString(formData, "price");
     if (formData.has("compareAtPrice")) fields.compareAtPrice = getFormString(formData, "compareAtPrice");
+    if (formData.has("barcode")) fields.barcode = getFormString(formData, "barcode");
+    if (formData.has("inventoryPolicy")) fields.inventoryPolicy = getFormString(formData, "inventoryPolicy");
 
     const warning = await applyVariantPrices(admin, db, session.shop, {
       productId,
@@ -642,6 +656,8 @@ export async function action({ request }: ActionFunctionArgs) {
     if ("requiresShipping" in raw) fields.requiresShipping = raw.requiresShipping === true;
     if ("harmonizedSystemCode" in raw) fields.harmonizedSystemCode = String(raw.harmonizedSystemCode ?? "");
     if ("countryCodeOfOrigin" in raw) fields.countryCodeOfOrigin = String(raw.countryCodeOfOrigin ?? "");
+    if ("tracked" in raw) fields.tracked = raw.tracked === true || raw.tracked === "true";
+    if ("sku" in raw) fields.sku = String(raw.sku ?? "");
     if ("weight" in raw && raw.weight && typeof raw.weight === "object") {
       const weight = raw.weight as Record<string, unknown>;
       fields.weight = { value: String(weight.value ?? ""), unit: String(weight.unit ?? "") };

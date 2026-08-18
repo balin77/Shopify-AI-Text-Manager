@@ -448,6 +448,20 @@ export interface InventoryItemFields {
   weight?: { value: string; unit: string };
   harmonizedSystemCode?: string;
   countryCodeOfOrigin?: string;
+  /**
+   * Whether Shopify keeps a COUNT for this item.
+   *
+   * Off, there is no quantity at all — not zero, none — so the stock table has
+   * nothing to show and the "keep selling at zero" policy has no zero to apply
+   * to. Written here because `tracked` is a field of the InventoryItem, which
+   * is also where this app READS it from.
+   */
+  tracked?: boolean;
+  /**
+   * The stock-keeping unit. On `InventoryItem` in 2025-10, which is where this
+   * writes it; `ProductVariant.sku` is the same value read through the variant.
+   */
+  sku?: string;
 }
 
 /** Shopify's `WeightUnit` enum. A bad enum fails at the SCHEMA level. */
@@ -502,6 +516,17 @@ export async function applyInventoryItemFields(
     input.requiresShipping = params.fields.requiresShipping;
     mirror.requiresShipping = params.fields.requiresShipping;
   }
+  if (params.fields.tracked !== undefined) {
+    input.tracked = params.fields.tracked;
+    mirror.inventoryTracked = params.fields.tracked;
+  }
+  if (params.fields.sku !== undefined) {
+    // "" clears it. A SKU is a merchant's own reference and an empty one is a
+    // deliberate state, not a missing value.
+    const sku = params.fields.sku.trim();
+    input.sku = sku === "" ? null : sku;
+    mirror.sku = sku === "" ? null : sku;
+  }
   if (params.fields.weight !== undefined) {
     const value = parseDecimal(params.fields.weight.value);
     const unit = params.fields.weight.unit.trim().toUpperCase();
@@ -544,6 +569,7 @@ export async function applyInventoryItemFields(
             inventoryItem {
               id
               tracked
+              sku
               requiresShipping
               countryCodeOfOrigin
               harmonizedSystemCode
@@ -561,6 +587,8 @@ export async function applyInventoryItemFields(
         inventoryItemUpdate?: {
           inventoryItem?: {
             id?: string;
+            tracked?: boolean | null;
+            sku?: string | null;
             requiresShipping?: boolean | null;
             countryCodeOfOrigin?: string | null;
             harmonizedSystemCode?: string | null;
@@ -588,6 +616,12 @@ export async function applyInventoryItemFields(
     }
     const item = payload?.inventoryItem;
     if (!item?.id) return "itemFieldsNotConfirmed";
+    // `tracked` decides whether stock exists at all, so a write Shopify
+    // accepted and did not apply must not read as success.
+    if ("inventoryTracked" in mirror && item.tracked !== mirror.inventoryTracked) {
+      return "itemFieldsNotConfirmed";
+    }
+    if ("sku" in mirror && (item.sku ?? null) !== mirror.sku) return "itemFieldsNotConfirmed";
 
     // Mirror from the ECHO, not from `mirror` — Shopify normalises (a cost of
     // "4.5" comes back "4.50", a weight in grams may be rebased). Writing the
@@ -607,6 +641,8 @@ export async function applyInventoryItemFields(
             : {}),
           ...("harmonizedSystemCode" in mirror ? { harmonizedSystemCode: item.harmonizedSystemCode ?? null } : {}),
           ...("countryCodeOfOrigin" in mirror ? { countryCodeOfOrigin: item.countryCodeOfOrigin ?? null } : {}),
+          ...("inventoryTracked" in mirror ? { inventoryTracked: item.tracked ?? null } : {}),
+          ...("sku" in mirror ? { sku: item.sku ?? null } : {}),
         },
       })
       .catch(() => undefined);
@@ -631,7 +667,20 @@ export async function applyInventoryItemFields(
 export interface VariantPriceFields {
   price?: string;
   compareAtPrice?: string;
+  /** ISBN, UPC, GTIN. "" CLEARS it — a wrong barcode is worse than none. */
+  barcode?: string;
+  /**
+   * `DENY` or `CONTINUE` — whether Shopify keeps selling at zero stock.
+   *
+   * A GraphQL ENUM, so a bad value fails at the SCHEMA level: a top-level
+   * `errors` array with `data: null` that never reaches `userErrors`, i.e. a
+   * save that reads as a success while nothing was written. Validated here.
+   */
+  inventoryPolicy?: string;
 }
+
+/** Shopify's `ProductVariantInventoryPolicy`. */
+const INVENTORY_POLICIES = new Set(["DENY", "CONTINUE"]);
 
 /**
  * Write the SELLING price of one variant.
@@ -699,6 +748,23 @@ export async function applyVariantPrices(
       input.compareAtPrice = parsed.value;
       mirror.compareAtPrice = parsed.value;
     }
+  }
+
+  if (params.fields.barcode !== undefined) {
+    // "" clears it: an empty barcode field means the merchant removed a wrong
+    // one, and dropping that as "unchanged" would leave it in place.
+    const barcode = params.fields.barcode.trim();
+    input.barcode = barcode === "" ? null : barcode;
+    mirror.barcode = barcode === "" ? null : barcode;
+  }
+  if (params.fields.inventoryPolicy !== undefined) {
+    const policy = params.fields.inventoryPolicy.trim().toUpperCase();
+    // An unrecognised enum is DROPPED and reported, never forwarded: Shopify
+    // would reject the whole mutation at the schema level and the price in the
+    // same call would go down with it.
+    if (!INVENTORY_POLICIES.has(policy)) return "priceInvalid";
+    input.inventoryPolicy = policy;
+    mirror.inventoryPolicy = policy;
   }
 
   if (Object.keys(input).length <= 1) return undefined;

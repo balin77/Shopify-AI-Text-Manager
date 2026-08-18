@@ -334,7 +334,10 @@ export function CommerceDataProvider({
    * opposite — "" there is how a merchant ends a sale, so it IS a change.
    */
   const dirtyPrices = useMemo(() => {
-    const byVariant = new Map<string, { price?: string; compareAtPrice?: string }>();
+    const byVariant = new Map<
+      string,
+      { price?: string; compareAtPrice?: string; barcode?: string; inventoryPolicy?: string }
+    >();
     for (const [key, value] of Object.entries(priceEdits)) {
       const [variantId, field] = key.split("::");
       const variant = data?.variants.find((v) => v.id === variantId);
@@ -345,6 +348,13 @@ export function CommerceDataProvider({
       } else if (field === "compareAtPrice") {
         if (value.trim() === (variant.compareAtPrice ?? "")) continue;
         byVariant.set(variantId, { ...byVariant.get(variantId), compareAtPrice: value });
+      } else if (field === "barcode") {
+        // "" IS a change here — it clears a wrong barcode, unlike the price.
+        if (value.trim() === (variant.barcode ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), barcode: value });
+      } else if (field === "inventoryPolicy") {
+        if (value === (variant.inventoryPolicy ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), inventoryPolicy: value });
       }
     }
     return [...byVariant.entries()];
@@ -391,6 +401,8 @@ export function CommerceDataProvider({
             variantGid: variant.gid,
             ...(fields.price !== undefined ? { price: fields.price } : {}),
             ...(fields.compareAtPrice !== undefined ? { compareAtPrice: fields.compareAtPrice } : {}),
+            ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
+            ...(fields.inventoryPolicy !== undefined ? { inventoryPolicy: fields.inventoryPolicy } : {}),
           },
           "priceFailed",
         );
@@ -487,6 +499,10 @@ export function CommerceDataProvider({
           };
         } else if (field === "requiresShipping") {
           fields.requiresShipping = value === "true";
+        } else if (field === "inventoryTracked") {
+          // Keyed by the VIEW's field name so the dirty check compares against
+          // what was loaded; the write module's input calls it `tracked`.
+          fields.tracked = value === "true";
         } else {
           fields[field] = value;
         }

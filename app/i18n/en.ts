@@ -540,6 +540,14 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      inventoryHeading: "Inventory",
+      identifiersHeading: "More details",
+      trackedLabel: "Track quantity",
+      trackedHint: "Shopify keeps a count and lowers it with every order. Off, there is no count at all and the variant can always be bought.",
+      continueSellingLabel: "Continue selling when out of stock",
+      continueSellingHint: "Customers can order it at zero stock. Off, Shopify shows it as sold out.",
+      skuLabel: "SKU (Stock Keeping Unit)",
+      barcodeLabel: "Barcode (ISBN, UPC, GTIN, etc.)",
       locationsColumn: "Locations",
       unavailableColumn: "Unavailable",
       committedColumn: "Committed",

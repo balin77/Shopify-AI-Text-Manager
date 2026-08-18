@@ -3,9 +3,17 @@ interface ToggleSwitchProps {
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   id?: string;
+  /**
+   * What this switch decides.
+   *
+   * The visible text sits BESIDE the switch rather than inside its `<label>`,
+   * so without this the control has no accessible name at all — a screen
+   * reader announces "checkbox" and nothing else.
+   */
+  ariaLabel?: string;
 }
 
-export function ToggleSwitch({ checked, onChange, disabled = false, id }: ToggleSwitchProps) {
+export function ToggleSwitch({ checked, onChange, disabled = false, id, ariaLabel }: ToggleSwitchProps) {
   return (
     <label
       style={{
@@ -20,6 +28,8 @@ export function ToggleSwitch({ checked, onChange, disabled = false, id }: Toggle
       <input
         id={id}
         type="checkbox"
+        role="switch"
+        aria-label={ariaLabel}
         checked={checked}
         disabled={disabled}
         onChange={e => onChange(e.target.checked)}
