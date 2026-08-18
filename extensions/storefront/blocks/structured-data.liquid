@@ -626,52 +626,6 @@
 </script>
 {%- endif -%}
 
-{%- comment -%}
-  AI referral beacon: report a visit that arrived from an AI assistant
-  (ChatGPT, Perplexity, Claude, Gemini, Copilot, ...) to the app-proxy
-  collector, so ContentPilot -> SEO -> KI-Suche can show whether AEO work
-  produces arrivals at all.
-
-  Fires ONLY when the referrer host (or the landing URL's utm_source, which
-  ChatGPT appends to the links it hands out) looks like one of those hosts, so
-  an ordinary pageview sends nothing. The token list here is a cheap PREFILTER
-  to keep normal traffic off the endpoint - the server re-classifies and is
-  the authority, so a token missing here costs a missed visit, never a wrong
-  one.
-
-  Privacy: the beacon sends the landing path plus the referrer for
-  classification; the server stores only the resulting source key and an
-  aggregate day counter. No cookie, no identifier, nothing that is read back.
-  Best-effort: sendBeacon with a fetch fallback, wrapped in try/catch so it can
-  never disturb the storefront.
-{%- endcomment -%}
-<script>
-  (function () {
-    try {
-      var ref = document.referrer || '';
-      var utm = '';
-      try { utm = new URLSearchParams(window.location.search).get('utm_source') || ''; } catch (e) {}
-      if (!ref && !utm) return;
-      var TOKENS = /chatgpt|openai|perplexity|claude\.ai|gemini\.google|copilot\.microsoft|grok\.com|x\.ai|deepseek|you\.com|poe\.com|mistral/i;
-      var refHost = '';
-      try { refHost = ref ? new URL(ref).hostname : ''; } catch (e) {}
-      if (refHost && refHost === window.location.hostname) return;
-      if (!TOKENS.test(refHost) && !TOKENS.test(utm)) return;
-      var payload = JSON.stringify({
-        path: window.location.pathname,
-        referrer: ref,
-        utmSource: utm
-      });
-      var url = '/apps/contentpilot/ai-referral';
-      if (navigator.sendBeacon) {
-        navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }));
-      } else {
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true });
-      }
-    } catch (e) { /* never break the storefront */ }
-  })();
-</script>
-
 {% schema %}
 {
   "name": "JSON-LD Structured Data",

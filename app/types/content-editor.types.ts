@@ -207,14 +207,7 @@ export type TranslationValue = string | string[] | { [key: string]: TranslationV
 export interface HelpContent {
   title: string;
   summary: string;
-  /**
-   * Long-form explanation behind "Mehr erfahren". An ARRAY renders one
-   * paragraph per entry — a topic that needs two (the SEO score and what the
-   * readability block under it does and does not mean) is unreadable as one
-   * wall of text, and splitting it in the renderer would guess at sentence
-   * boundaries in three languages.
-   */
-  details?: string | string[];
+  details?: string;
   tips?: string[];
   examples?: string[];
 }
