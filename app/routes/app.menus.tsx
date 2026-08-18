@@ -48,10 +48,8 @@ import {
   Banner,
   Button,
   TextField,
-  Badge,
 } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
-import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
@@ -322,7 +320,6 @@ export default function MenusPage() {
   const { menus, shopLocales, primaryLocale, error, linkTranslations, linkSweepTruncated } =
     useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
-  const { getTotalNavHeight } = useNavigationHeight();
   const { registerItems, clearItems } = useItemSelector();
   const fetcher = useFetcher<{
     success: boolean;
@@ -688,12 +685,9 @@ export default function MenusPage() {
       >
         <div className={`ai-editable-field-wrapper ${background}`}>
           <TextField
-            label={
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="span" variant="bodySm">{`${item.path.join(".")} · ${primaryTitle}`}</Text>
-                {item.depth > 1 && <Badge tone="info">{`L${item.depth}`}</Badge>}
-              </InlineStack>
-            }
+            // No depth badge: the indentation already shows the nesting, and
+            // "L2" is this app's vocabulary, not the merchant's.
+            label={<Text as="span" variant="bodySm">{`${item.path.join(".")} · ${primaryTitle}`}</Text>}
             value={value}
             onChange={(next) => {
               if (!editable || !item.linkId) return;
@@ -783,154 +777,157 @@ export default function MenusPage() {
           saveText={t.content?.save}
           discardText={t.content?.discard}
         />
-        {/* Own viewport calc rather than height:100% (the Polaris Page chain has
-            no definite height here). It therefore has to subtract the bottom
-            inset itself — the app shell's padding-bottom does not reach a box
-            sized off the viewport. */}
-        <div
-          className="app-page-width-full"
-          style={{
-            height: `calc(var(--app-shell-height) - ${getTotalNavHeight()}px - var(--app-bottom-inset))`,
-            display: "flex",
-            gap: "1rem",
-            padding: "1rem",
-            overflow: "hidden",
-          }}
-        >
-          {/* The shared item column, not a hand-built one. Two things came with
-              the bespoke version and both were bugs: it was invisible to the
-              mobile navbar selector (see registerItems above), and it hardcoded
-              its own list chrome instead of the search, sorting and pagination
-              every other content tab has. UnifiedItemList owns its own width
-              token, so none is set here. `desktop-only` is what hands the list
-              over to the navbar below 900px. */}
-          <div className="desktop-only" style={{ flexShrink: 0, height: "100%" }}>
-            <UnifiedItemList
-              items={selectorItems}
-              selectedItemId={selectedMenuId}
-              onItemSelect={setSelectedMenuId}
-              resourceName={{
-                singular: t.content?.menu || "Menu",
-                plural: t.content?.menus || "Menus",
-              }}
-              searchPlaceholder={t.content?.searchPlaceholder}
-              sortOptions={[{ field: "title", label: t.content?.title || "Title" }]}
-              t={{
-                searchPlaceholder: t.content?.searchPlaceholder,
-                paginationOf: t.content?.paginationOf || "of",
-                paginationPrevious: t.content?.paginationPrevious || "Previous",
-                paginationNext: t.content?.paginationNext || "Next",
-                sortTooltip: t.content?.sortTooltip,
-                noItemsFound: t.content?.noEntries,
-              }}
-            />
-          </div>
+        {/* The frame every Polaris page in this app uses. `.app-page-content`
+            is what makes responsive.css zero Polaris' own Page/Page__Content
+            inset (0 24px sides, 20px top, 8px bottom) and own the single
+            gutter via --app-page-padding instead. Without the class those
+            rules do not match, so this page was rendering Polaris' asymmetric
+            inset PLUS a hardcoded 1rem of its own — visibly more padding than
+            anywhere else. The width class caps the FRAME, adds no padding of
+            its own, and <Page fullWidth> has to stay or Polaris' ~1000px cap
+            wins first.
 
-          {/* Right: the selected menu's items, in the active language */}
-          <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
-            {error && (
-              <div style={{ marginBottom: "1rem" }}>
-                <Banner title={t.content?.error || "Error"} tone="critical">
-                  <p>{error}</p>
-                </Banner>
-              </div>
-            )}
+            The frame also owns the height, which retires the viewport calc
+            this page used to do by hand. `.app-page-content > *` makes its
+            SINGLE child the scroll container, so the flex row below is that
+            one child. */}
+        <div className="app-page-content app-page-width-full">
+          <div style={{ display: "flex", gap: "1rem", minHeight: 0, overflow: "hidden" }}>
+            {/* The shared item column, not a hand-built one. Two things came with
+                the bespoke version and both were bugs: it was invisible to the
+                mobile navbar selector (see registerItems above), and it hardcoded
+                its own list chrome instead of the search, sorting and pagination
+                every other content tab has. UnifiedItemList owns its own width
+                token, so none is set here. `desktop-only` is what hands the list
+                over to the navbar below 900px. */}
+            <div className="desktop-only" style={{ flexShrink: 0, height: "100%" }}>
+              <UnifiedItemList
+                items={selectorItems}
+                selectedItemId={selectedMenuId}
+                onItemSelect={setSelectedMenuId}
+                resourceName={{
+                  singular: t.content?.menu || "Menu",
+                  plural: t.content?.menus || "Menus",
+                }}
+                searchPlaceholder={t.content?.searchPlaceholder}
+                sortOptions={[{ field: "title", label: t.content?.title || "Title" }]}
+                t={{
+                  searchPlaceholder: t.content?.searchPlaceholder,
+                  paginationOf: t.content?.paginationOf || "of",
+                  paginationPrevious: t.content?.paginationPrevious || "Previous",
+                  paginationNext: t.content?.paginationNext || "Next",
+                  sortTooltip: t.content?.sortTooltip,
+                  noItemsFound: t.content?.noEntries,
+                }}
+              />
+            </div>
 
-            <Card padding="600">
-              {selectedMenu ? (
-                <BlockStack gap="500">
-                  <Text as="p" tone="subdued">
-                    {t.content?.menuIntro}
-                  </Text>
-
-                  {/* The app's standard language bar. It disappears entirely on
-                      a single-language shop — one permanently active button is
-                      noise, not a choice. */}
-                  {shouldRenderLanguageBar({ localeCount: localeList.length }) && (
-                    <UnifiedLanguageBar
-                      shopLocales={localeList as ShopLocale[]}
-                      currentLanguage={activeLocale}
-                      primaryLocale={primaryLocale}
-                      selectedItem={languageBarItem}
-                      contentType={"menus" as ContentType}
-                      hasChanges={changeCount > 0}
-                      onLanguageChange={setActiveLocale}
-                      showTranslateAll={false}
-                      showReloadButton={false}
-                      t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
-                    />
-                  )}
-
-                  {foreignLocales.length === 0 && (
-                    <Banner tone="info">
-                      <p>{t.content?.menuNeedsSecondLanguage}</p>
-                    </Banner>
-                  )}
-
-                  {foreignLocales.length > 0 && isPrimary && (
-                    <Banner tone="info">
-                      <p>{t.content?.menuPrimaryReadOnly}</p>
-                    </Banner>
-                  )}
-
-                  {linkSweepTruncated && (
-                    <Banner tone="warning">
-                      <p>{t.content?.menuListIncomplete}</p>
-                    </Banner>
-                  )}
-
-                  {translateError && (
-                    <Banner tone="critical">
-                      <p>
-                        {t.content?.menuTranslateFailed} {translateError}
-                      </p>
-                    </Banner>
-                  )}
-
-                  {!!fetcher.data?.deferred && (
-                    <Banner tone="warning">
-                      <p>{t.content?.menuSaveDeferred}</p>
-                    </Banner>
-                  )}
-
-                  {failures.length > 0 && (
-                    <Banner tone="critical">
-                      <BlockStack gap="100">
-                        <Text as="p">{t.content?.menuSaveFailed}</Text>
-                        {failures.map((f) => (
-                          <Text as="p" variant="bodySm" key={`${f.locale}-${f.linkId}`}>
-                            {titleForLink(f.linkId)} ({f.locale}): {f.message}
-                          </Text>
-                        ))}
-                      </BlockStack>
-                    </Banner>
-                  )}
-
-                  {/* Every failure mode of the action reaches the merchant.
-                      Reporting only the gated one made a 502 from the digest
-                      re-read look like a Save button that does nothing. */}
-                  {fetcher.data?.error && (
-                    <Banner tone="critical">
-                      <p>
-                        {fetcher.data.error === "gated"
-                          ? t.content?.upgradeRequired || "Upgrade required"
-                          : `${t.content?.menuSaveFailed ?? ""} ${fetcher.data.error}`.trim()}
-                      </p>
-                    </Banner>
-                  )}
-
-                  {selectedMenu.flat.length > 0 && (
-                    <div>{selectedMenu.flat.map(renderItem)}</div>
-                  )}
-                </BlockStack>
-              ) : (
-                <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
-                  <Text as="p" variant="headingLg" tone="subdued">
-                    {t.content?.selectFromList || "Select a menu from the list"}
-                  </Text>
+            {/* Right: the selected menu's items, in the active language */}
+            <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
+              {error && (
+                <div style={{ marginBottom: "1rem" }}>
+                  <Banner title={t.content?.error || "Error"} tone="critical">
+                    <p>{error}</p>
+                  </Banner>
                 </div>
               )}
-            </Card>
+
+              <Card>
+                {selectedMenu ? (
+                  <BlockStack gap="500">
+                    <Text as="p" tone="subdued">
+                      {t.content?.menuIntro}
+                    </Text>
+
+                    {/* The app's standard language bar. It disappears entirely on
+                        a single-language shop — one permanently active button is
+                        noise, not a choice. */}
+                    {shouldRenderLanguageBar({ localeCount: localeList.length }) && (
+                      <UnifiedLanguageBar
+                        shopLocales={localeList as ShopLocale[]}
+                        currentLanguage={activeLocale}
+                        primaryLocale={primaryLocale}
+                        selectedItem={languageBarItem}
+                        contentType={"menus" as ContentType}
+                        hasChanges={changeCount > 0}
+                        onLanguageChange={setActiveLocale}
+                        showTranslateAll={false}
+                        showReloadButton={false}
+                        t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
+                      />
+                    )}
+
+                    {foreignLocales.length === 0 && (
+                      <Banner tone="info">
+                        <p>{t.content?.menuNeedsSecondLanguage}</p>
+                      </Banner>
+                    )}
+
+                    {foreignLocales.length > 0 && isPrimary && (
+                      <Banner tone="info">
+                        <p>{t.content?.menuPrimaryReadOnly}</p>
+                      </Banner>
+                    )}
+
+                    {linkSweepTruncated && (
+                      <Banner tone="warning">
+                        <p>{t.content?.menuListIncomplete}</p>
+                      </Banner>
+                    )}
+
+                    {translateError && (
+                      <Banner tone="critical">
+                        <p>
+                          {t.content?.menuTranslateFailed} {translateError}
+                        </p>
+                      </Banner>
+                    )}
+
+                    {!!fetcher.data?.deferred && (
+                      <Banner tone="warning">
+                        <p>{t.content?.menuSaveDeferred}</p>
+                      </Banner>
+                    )}
+
+                    {failures.length > 0 && (
+                      <Banner tone="critical">
+                        <BlockStack gap="100">
+                          <Text as="p">{t.content?.menuSaveFailed}</Text>
+                          {failures.map((f) => (
+                            <Text as="p" variant="bodySm" key={`${f.locale}-${f.linkId}`}>
+                              {titleForLink(f.linkId)} ({f.locale}): {f.message}
+                            </Text>
+                          ))}
+                        </BlockStack>
+                      </Banner>
+                    )}
+
+                    {/* Every failure mode of the action reaches the merchant.
+                        Reporting only the gated one made a 502 from the digest
+                        re-read look like a Save button that does nothing. */}
+                    {fetcher.data?.error && (
+                      <Banner tone="critical">
+                        <p>
+                          {fetcher.data.error === "gated"
+                            ? t.content?.upgradeRequired || "Upgrade required"
+                            : `${t.content?.menuSaveFailed ?? ""} ${fetcher.data.error}`.trim()}
+                        </p>
+                      </Banner>
+                    )}
+
+                    {selectedMenu.flat.length > 0 && (
+                      <div>{selectedMenu.flat.map(renderItem)}</div>
+                    )}
+                  </BlockStack>
+                ) : (
+                  <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
+                    <Text as="p" variant="headingLg" tone="subdued">
+                      {t.content?.selectFromList || "Select a menu from the list"}
+                    </Text>
+                  </div>
+                )}
+              </Card>
+            </div>
           </div>
         </div>
       </Page>
