@@ -480,6 +480,8 @@ export default function SeoStructuredData() {
     "schemaArticle",
     "schemaOrganization",
     "schemaBreadcrumb",
+    "schemaVideo",
+    "schemaFaq",
   ];
 
   const fixUrlFor = (kind: FixLinkKind): string | null => {
@@ -780,6 +782,13 @@ export default function SeoStructuredData() {
                     </Badge>
                   ))}
                 </InlineStack>
+                {/* Both of these come from native media / a metafield on the
+                    storefront, so they have no counterpart in the preview
+                    below — which is built from the DB cache. Saying so beats
+                    letting a merchant conclude the video markup is missing. */}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(s as any).schemaVideoNote as string}
+                </Text>
               </BlockStack>
             </BlockStack>
           </Card>

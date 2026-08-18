@@ -248,9 +248,10 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 | **P2.4 KI-Referral-Tracking** | ✅ | Storefront-Beacon + `SeoAiReferral` (aggregiert, ohne Besucherkennung), Auswertung in der AEO-Sektion. Grenzen (AI Overviews, unterdrückter Referrer) stehen in der UI. |
 | **P3 Readability** | ✅ | Struktur-Befunde in jeder Sprache, Reading-Ease-Zahl nur für EN/DE/ES (validierte Formeln), bewusst außerhalb des SEO-Scores. |
 | **P3 Keyword-Volumen** | ✅ (Erklärung) | Der Keywords-Tab sagt jetzt, *warum* dort keine Volumenschätzung steht — und dass GSC dieselbe Frage mit echten Daten beantwortet. |
-| **P2.5 Bild-Dateinamen-SEO** | ⛔ verworfen | Siehe §9. |
+| **P2.5 Bild-Dateinamen-SEO** | 📋 notiert | Nicht eingeplant, aber als Idee festgehalten — Benennung beim Upload zuerst, nachträgliches Umbenennen als Option. Siehe §9.1. |
 | **P2.5 Speed-Eingriffe** | ⛔ Nicht-Ziel | Siehe §9 — Produktentscheidung 2026-08-18: keine Bearbeitung des Merchant-Theme-Codes. |
-| **P3 Schema-Typen** | ⏸ teils offen | LocalBusiness und VideoObject bleiben Kandidaten, HowTo ist erledigt — siehe §9. |
+| **P3 VideoObject** | ✅ | Storefront-Block emittiert VideoObject für Shopify- und YouTube-/Vimeo-Videos; `uploadDate` nur aus dem Metafeld, nie geraten — siehe §9.3. |
+| **P3 Schema-Typen (Rest)** | ⏸ teils offen | LocalBusiness bleibt Kandidat (nur als Opt-in), HowTo gestrichen — siehe §9.3. |
 | **P3 Long-Form-Generator** | ⏸ offen | Eigener Workflow (Outline → Abschnitte → interne Links), zu groß für diesen Durchgang. |
 
 **Was das an §3 ändert:** Die Zeilen `agents.md` (❌ → ✅), `AI-Sichtbarkeits-Tracking`
@@ -261,25 +262,39 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 
 ## 9. Entscheidungen zu den offenen Punkten (2026-08-18)
 
-### 9.1 Bild-Dateinamen-SEO — ⛔ verworfen
+### 9.1 Bild-Dateinamen-SEO — heute nicht, aber als Idee notiert
 
-Der Nutzen ist klein und der Preis konkret. Google nennt den Dateinamen als
-*einen* Hinweis auf den Bildinhalt, aber Alt-Text, Bildunterschrift und
-umgebender Text sind die stärkeren Signale — und die deckt die App bereits ab.
-Der Rest wäre Google-Bildersuche, dort meist marginal. Dass Konkurrenten es
-prominent bewerben, macht es zu einem guten *Verkaufsargument*, nicht zu einem
-guten Hebel.
+**Korrektur zur ersten Einschätzung (2026-08-18):** Hier stand, ein Rename
+würde die Bulk-Auto-Zuweisung brechen. Das stimmt nicht. `parseFilenames.ts`
+wertet den Dateinamen **beim Drop** aus und schreibt das Ergebnis in die
+Variantenzuordnung (`custom.variant_gallery` bzw. den Image-Key); danach liest
+kein Pfad den Dateinamen je wieder. Die Konvention lebt genau bis zum Upload,
+und nur dort.
 
-Dagegen: Eine Umbenennung ändert die CDN-URL jedes Bildes; alte URLs laufen
-danach in externen Caches, Social-Previews und direkt verlinkten Bildern ins
-Leere. Und in diesem Repo kommt ein echter Zielkonflikt dazu — die
-Bulk-Auto-Zuweisung liest den Dateinamen als **Konvention**
-(`ProductName_Variant1_..._Identifier.ext` → SKU/Image-Key-Matching,
-`parseFilenames.ts`). Ein „SEO-Rename" würde genau die Information zerstören,
-aus der das Matching seine Zuordnung zieht. Das ist kein Nebeneffekt, sondern
-ein Widerspruch im Modell.
+Was bleibt, ist die nüchterne Nutzenfrage: Alt-Text, Bildunterschrift und
+umgebender Text sind die stärkeren Signale, und die deckt die App bereits ab.
+Der Dateiname zahlt vor allem auf die Google-Bildersuche ein, dort meist
+marginal. Beide Varianten sind deshalb **nicht eingeplant**, aber
+festgehalten — die Rangfolge ist eindeutig:
 
-Vermarktet wird stattdessen der bestehende Vorsprung: KI-Alt-Texte **plus**
+**(a) Benennung BEIM Upload — der interessantere Weg.** Die App hat den
+Moment ohnehin in der Hand (Staged Upload + WebP-Konvertierung), das Bild ist
+noch nirgends referenziert, und ein sauberer Name entsteht ohne jede
+Nebenwirkung. Der SEO-Name kann aus Produkttitel + Optionswerten gebaut werden
+— genau den Daten, aus denen der Key-Generator schon heute SKUs und
+Image-Keys erzeugt. Zu klären wäre die Reihenfolge: das Matching braucht den
+ORIGINALEN Dateinamen, also muss geparst werden, **bevor** umbenannt wird.
+Beides im selben Schritt, Parsing zuerst.
+
+**(b) Nachträgliches Umbenennen — möglich, aber teurer.** `fileUpdate` kann
+den Dateinamen bestehender Dateien ändern; Shopify hält die Referenzen über
+die Datei-ID, das Produkt verliert sein Bild also nicht. Der Preis ist die
+**CDN-URL**: alte URLs laufen danach in externen Caches, Social-Previews und
+direkt verlinkten Bildern ins Leere. Für einen frisch aufgebauten Katalog
+harmlos, für einen gewachsenen nicht — deshalb allenfalls als bewusst
+ausgelöste Massenaktion mit klarer Ansage, nie automatisch.
+
+Bis dahin wird der bestehende Vorsprung vermarktet: KI-Alt-Texte **plus**
 deren Übersetzung — das hat in dieser Kategorie kein Konkurrent.
 
 ### 9.2 Theme-Eingriffe (Lazy-Load, Minify) — ⛔ Nicht-Ziel

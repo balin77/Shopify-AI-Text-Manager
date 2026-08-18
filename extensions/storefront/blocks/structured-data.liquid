@@ -16,6 +16,7 @@
   assign want_article = block.settings.enable_article
   assign want_breadcrumb = block.settings.enable_breadcrumb
   assign want_faq = block.settings.enable_faq
+  assign want_video = block.settings.enable_video
 
   assign logo_url = ''
   if block.settings.logo
@@ -432,6 +433,109 @@
 {%- endif -%}
 
 {%- comment -%}
+  VideoObject: product pages, from the native `product.media`. Covers Shopify-
+  hosted videos AND external ones (YouTube/Vimeo), because a merchant who
+  embedded a YouTube video did the same job and expects the same treatment.
+
+  Emitted as one <script> PER video rather than one array: each object stays
+  self-contained with its own @context, which is this block's convention for
+  every other type, and a video whose data is incomplete simply doesn't print
+  instead of poisoning a shared array.
+
+  Two properties decide whether it is emitted at all: a thumbnail and a URL to
+  the video (contentUrl for hosted, embedUrl for external). Without either
+  there is nothing a consumer could do with the entry.
+
+  `uploadDate` is Google's third required property for the video rich result
+  and the storefront does NOT expose it — Liquid's media objects carry no
+  creation date. It therefore comes from the optional product metafield
+  `custom.video_upload_date` (type `date`) and is otherwise OMITTED. Same rule
+  as `custom.price_valid_until` above: the app never invents a date, and a
+  guessed upload date on a video is exactly the kind of fabrication that makes
+  markup untrustworthy. Without it the markup is still valid schema.org and
+  still read by AI answer engines — it is only the Google video rich result
+  that stays out of reach.
+
+  `duration` is milliseconds in Liquid and ISO-8601 in schema.org, hence the
+  divide/modulo. External videos have no duration and skip the property.
+{%- endcomment -%}
+{%- if want_video and request.page_type == 'product' and product -%}
+  {%- assign v_desc = product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500 -%}
+  {%- assign v_upload = '' -%}
+  {%- assign vud_raw = product.metafields.custom.video_upload_date.value -%}
+  {%- if vud_raw != blank -%}
+    {%- assign v_upload = vud_raw | date: '%Y-%m-%d' -%}
+  {%- endif -%}
+  {%- for v_media in product.media limit: 10 -%}
+    {%- if v_media.media_type == 'video' or v_media.media_type == 'external_video' -%}
+      {%- liquid
+        assign v_thumb = ''
+        if v_media.preview_image
+          assign v_thumb = v_media.preview_image | image_url: width: 1200
+          assign v_scheme = v_thumb | slice: 0, 2
+          if v_scheme == '//'
+            assign v_thumb = v_thumb | prepend: 'https:'
+          endif
+        endif
+
+        assign v_content = ''
+        assign v_embed = ''
+        if v_media.media_type == 'video'
+          assign v_mp4 = v_media.sources | where: 'format', 'mp4' | last
+          if v_mp4 == nil
+            assign v_mp4 = v_media.sources | last
+          endif
+          assign v_content = v_mp4.url
+        else
+          if v_media.host == 'youtube'
+            assign v_embed = 'https://www.youtube.com/embed/' | append: v_media.external_id
+          elsif v_media.host == 'vimeo'
+            assign v_embed = 'https://player.vimeo.com/video/' | append: v_media.external_id
+          endif
+        endif
+
+        # ONE flag instead of a compound condition on the emission guard:
+        # Liquid has no operator precedence and evaluates `and`/`or` right to
+        # left, so `a and b or a and c` is a puzzle rather than a condition.
+        assign v_has_url = false
+        if v_content != blank or v_embed != blank
+          assign v_has_url = true
+        endif
+
+        assign v_duration = ''
+        if v_media.duration and v_media.duration > 0
+          assign v_secs = v_media.duration | divided_by: 1000
+          assign v_mins = v_secs | divided_by: 60
+          assign v_rest = v_secs | modulo: 60
+          capture v_duration
+            echo 'PT'
+            echo v_mins
+            echo 'M'
+            echo v_rest
+            echo 'S'
+          endcapture
+        endif
+      -%}
+      {%- if v_thumb != blank and v_has_url -%}
+<script type="application/ld+json" data-contentpilot="video">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoObject",
+  "name": {{ v_media.alt | default: product.title | json }},
+  "description": {{ v_desc | json }},
+  "thumbnailUrl": [{{ v_thumb | json }}]
+  {%- if v_upload != blank -%}, "uploadDate": {{ v_upload | json }}{%- endif -%}
+  {%- if v_content != blank -%}, "contentUrl": {{ v_content | json }}{%- endif -%}
+  {%- if v_embed != blank -%}, "embedUrl": {{ v_embed | json }}{%- endif -%}
+  {%- if v_duration != blank -%}, "duration": {{ v_duration | json }}{%- endif -%}
+}
+</script>
+      {%- endif -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
+
+{%- comment -%}
   Breadcrumb: each ListItem is emitted inline (no join/split round-trip) so a
   title containing a "|" cannot corrupt positions or JSON. Every name/url is
   `| json`-escaped.
@@ -550,7 +654,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, Video, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
     },
     {
       "type": "checkbox",
@@ -581,6 +685,13 @@
       "type": "checkbox",
       "id": "enable_breadcrumb",
       "label": "Breadcrumb list",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_video",
+      "label": "Video (product pages, from your product media)",
+      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos on a product. Google's video rich result additionally needs an upload date, which the storefront does not expose - set the product metafield \"custom.video_upload_date\" (type date) and it is published; left unset the property is omitted rather than guessed.",
       "default": true
     },
     {
