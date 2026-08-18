@@ -3198,8 +3198,8 @@ export const en: Translation = {
       referralTotal: "{count} visits in {days} days",
       referralTopPages: "Most visited landing pages",
       referralNoneInWindow: "No visits from AI answers in the last {days} days.",
-      referralNoneHint: "If you just clicked into your store from ChatGPT or Claude yourself and still see nothing here: the counter lives in the “JSON-LD Structured Data” app embed. Check under “App embeds” in the theme editor that it is enabled — and that the current version of the app extension is published. To verify: search a product page's source for “ai-referral”.",
-      referralCaveat: "Not included: Google AI Overviews (the click arrives as an ordinary Google visit, indistinguishable from classic search) and visitors whose browser suppresses the referrer. The number is therefore a lower bound — we would rather undercount than guess.",
+      referralNoneHint: "If you just clicked into your store from ChatGPT yourself and still see nothing here: the counter lives in the “Web Vitals (RUM)” app embed — the same one that measures real load times. Check under “App embeds” in the theme editor that it is enabled, and that the current version of the app extension is published. To verify: search a product page's source for “web-vitals.js”.",
+      referralCaveat: "Requires the “Web Vitals (RUM)” app embed to be enabled in your theme — without it nothing is counted at all. Not included: Google AI Overviews (the click arrives as an ordinary Google visit, indistinguishable from classic search) and visitors whose browser suppresses the referrer. The latter is what happens with Claude: its links pass on neither a referrer nor a utm_source parameter, so a click from there is technically indistinguishable from a direct visit. ChatGPT and Perplexity are detected. The number is therefore a lower bound — we would rather undercount than guess.",
       referralSourceName: {
         chatgpt: "ChatGPT",
         perplexity: "Perplexity",
@@ -3831,13 +3831,24 @@ export const en: Translation = {
         "Criteria that do not apply are left out and the rest is scaled up — a blog without a body is not punished for it",
         "The length limits come from your settings, including the shop-name suffix Shopify appends to the SEO title",
         "Below the score you get the concrete issues and what to do about them",
-        "The readability block below does NOT count towards the score — it is reported, not graded",
-        "The readability number exists only for German, English and Spanish, and it is not comparable across languages",
+        "The readability block at the bottom does NOT count towards the score — it has its own “?”",
       ],
-      details: [
+      details:
         "The score is calculated by the same function as the store-wide SEO dashboard, so an item can never be rated differently in the two places. It measures the basics that are always true — is the field filled, is it within a sensible length, do the images have alt text — and deliberately says nothing about content quality: a meta description of exactly 155 characters of nonsense scores full points. Treat it as a checklist you should not fail, not as a ranking prediction.",
-        "The “readability” block below the score has two halves. The findings (long sentences, long paragraphs, missing subheadings) hold in every language and are always computed — that is the useful half. The 0-100 number is a reading-ease formula: it counts how many words a sentence has and how many syllables a word has, and nothing else. So it says how much EFFORT a text takes to read, not how good it is. Each language uses its OWN formula, validated for that language (German: Amstad, English: Flesch, Spanish: Fernández Huerta). Because German words carry noticeably more syllables than English ones, the same text scores lower in German than in English although both read equally well — the numbers compare within a language, never across languages. For every other language we deliberately show no number: no validated formula exists, and an English formula applied to Italian text produces a wrong number that looks like a right one. And readability deliberately does NOT feed the SEO score: Google does not grade readability directly, the number depends on the language, and a score that moves 20 points because one sentence was rephrased would be worthless as a checklist.",
+    },
+    seoSidebarReadability: {
+      title: "Readability",
+      summary:
+        "How much effort this text takes to read — as findings that hold in every language, plus a score for the three languages that have a validated formula.",
+      tips: [
+        "The findings (sentence length, paragraph length, missing subheadings) are the useful half — they always apply",
+        "The number exists only for German, English and Spanish; each language has its own formula",
+        "Numbers from different languages are NOT comparable — German scores lower by construction",
+        "Readability does not count towards the SEO score",
+        "It analyses the language the editor is currently showing",
       ],
+      details:
+        "The 0-100 number is a reading-ease formula: it counts how many words a sentence has and how many syllables a word has, and nothing else. So it says how much EFFORT a text takes to read, not how good it is. Each language uses its OWN formula, validated for that language (German: Amstad, English: Flesch, Spanish: Fernández Huerta). Because German words carry noticeably more syllables than English ones, the same text scores lower in German than in English although both read equally well — the numbers compare within a language, never across languages. For every other language we deliberately show no number: no validated formula exists, and an English formula applied to Italian text produces a wrong number that looks like a right one. The structure findings still run, because sentences and paragraphs that are too long stay too long in any language. And readability deliberately does NOT feed the SEO score: Google does not grade readability directly, the number depends on the language, and a score that moves 20 points because one sentence was rephrased would be worthless as a checklist. Passive-voice and filler-word checks are deliberately absent: they need per-language word lists to be anything but noise.",
     },
     seoSidebarKeywords: {
       title: "Keywords",

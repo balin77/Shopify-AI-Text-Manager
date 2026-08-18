@@ -3201,8 +3201,8 @@ export const de = {
       referralTotal: "{count} Besuche in {days} Tagen",
       referralTopPages: "Meistbesuchte Landeseiten",
       referralNoneInWindow: "In den letzten {days} Tagen keine Besuche aus KI-Antworten.",
-      referralNoneHint: "Wenn du gerade selbst über ChatGPT oder Claude auf deinen Shop geklickt hast und hier trotzdem nichts steht: Der Zähler steckt im App-Embed „JSON-LD Structured Data“. Prüfe im Theme-Editor unter „App-Einbettungen“, ob es aktiviert ist — und ob die aktuelle Version der App-Erweiterung veröffentlicht ist. Zur Kontrolle: im Quelltext einer Produktseite nach „ai-referral“ suchen.",
-      referralCaveat: "Nicht enthalten: Google AI Overviews (dort kommt der Klick als normaler Google-Besuch an und ist von der klassischen Suche nicht zu unterscheiden) und Besucher, deren Browser die Herkunft unterdrückt. Die Zahl ist also eine Untergrenze — wir zählen lieber zu wenig als zu raten.",
+      referralNoneHint: "Wenn du gerade selbst über ChatGPT auf deinen Shop geklickt hast und hier trotzdem nichts steht: Der Zähler sitzt im App-Embed „Web Vitals (RUM)“ — dasselbe, das auch die echten Ladezeiten misst. Prüfe im Theme-Editor unter „App-Einbettungen“, ob es aktiviert ist, und ob die aktuelle Version der App-Erweiterung veröffentlicht ist. Zur Kontrolle: im Quelltext einer Produktseite nach „web-vitals.js“ suchen.",
+      referralCaveat: "Voraussetzung: das App-Embed „Web Vitals (RUM)“ ist im Theme aktiviert — ohne das wird gar nichts gezählt. Nicht enthalten: Google AI Overviews (dort kommt der Klick als normaler Google-Besuch an und ist von der klassischen Suche nicht zu unterscheiden) sowie Besucher, deren Browser die Herkunft unterdrückt. Letzteres betrifft Claude: dessen Links geben weder eine Herkunft noch einen utm_source-Parameter weiter, ein Klick von dort ist also technisch nicht von einem Direkteinstieg zu unterscheiden. ChatGPT und Perplexity werden erkannt. Die Zahl ist damit eine Untergrenze — wir zählen lieber zu wenig als zu raten.",
       referralSourceName: {
         chatgpt: "ChatGPT",
         perplexity: "Perplexity",
@@ -3836,13 +3836,24 @@ export const de = {
         "Nicht zutreffende Kriterien fallen raus, der Rest wird hochskaliert — ein Blog ohne Fließtext wird dafür nicht bestraft",
         "Die Längengrenzen kommen aus Ihren Einstellungen, inklusive des Shop-Namens, den Shopify an den SEO-Titel hängt",
         "Unter dem Score stehen die konkreten Probleme und was dagegen zu tun ist",
-        "Die Lesbarkeit darunter zählt NICHT in den Score — sie wird berichtet, nicht bewertet",
-        "Die Punktzahl der Lesbarkeit gibt es nur für Deutsch, Englisch und Spanisch, und sie ist nicht zwischen Sprachen vergleichbar",
+        "Die Lesbarkeit ganz unten zählt NICHT in den Score — sie hat ihr eigenes „?“",
       ],
-      details: [
+      details:
         "Der Score wird von derselben Funktion berechnet wie das shopweite SEO-Dashboard — ein Eintrag kann an beiden Stellen also nie unterschiedlich bewertet werden. Gemessen werden die Grundlagen, die immer gelten: Ist das Feld gefüllt, liegt es in einer sinnvollen Länge, haben die Bilder Alt-Texte. Über inhaltliche Qualität sagt er bewusst nichts — eine Meta-Description aus exakt 155 Zeichen Unsinn bekommt die volle Punktzahl. Verstehen Sie ihn als Checkliste, durch die man nicht durchfallen sollte, nicht als Ranking-Prognose.",
-        "Der Abschnitt „Lesbarkeit“ unter dem Score besteht aus zwei Teilen. Die Hinweise (zu lange Sätze, zu lange Absätze, fehlende Zwischentitel) gelten in jeder Sprache und werden immer berechnet — sie sind der nützliche Teil. Die Punktzahl von 0 bis 100 ist eine „Reading-Ease“-Formel: sie rechnet aus, wie viele Wörter ein Satz hat und wie viele Silben ein Wort, und nichts weiter. Sie sagt also, wie AUFWENDIG ein Text zu lesen ist, nicht wie gut er ist. Wichtig: für jede Sprache gilt eine EIGENE, für diese Sprache geprüfte Formel (Deutsch: Amstad, Englisch: Flesch, Spanisch: Fernández-Huerta). Weil deutsche Wörter im Schnitt deutlich mehr Silben haben als englische, ergibt derselbe Text auf Deutsch eine niedrigere Zahl als auf Englisch, obwohl beide gleich gut lesbar sind — die Zahlen sind innerhalb einer Sprache vergleichbar, zwischen Sprachen nicht. Für alle anderen Sprachen zeigen wir absichtlich keine Zahl: es existiert keine geprüfte Formel dafür, und eine englische Formel auf italienischen Text angewandt ergibt eine falsche Zahl, die aussieht wie eine richtige. Und die Lesbarkeit fließt bewusst NICHT in den SEO-Score ein: Google bewertet Lesbarkeit nicht direkt, die Zahl hängt an der Sprache, und ein Score, der sich durch einen umformulierten Satz um 20 Punkte bewegt, wäre als Checkliste nichts mehr wert.",
+    },
+    seoSidebarReadability: {
+      title: "Lesbarkeit",
+      summary:
+        "Wie viel Aufwand das Lesen dieses Textes macht — als Hinweise, die in jeder Sprache gelten, plus eine Punktzahl für die drei Sprachen, für die es eine geprüfte Formel gibt.",
+      tips: [
+        "Die Hinweise (Satzlänge, Absatzlänge, fehlende Zwischentitel) sind der nützliche Teil — sie gelten immer",
+        "Die Punktzahl gibt es nur für Deutsch, Englisch und Spanisch; jede Sprache hat ihre eigene Formel",
+        "Zahlen verschiedener Sprachen sind NICHT vergleichbar — Deutsch liegt formelbedingt tiefer",
+        "Die Lesbarkeit zählt nicht in den SEO-Score",
+        "Analysiert wird die Sprache, die im Editor gerade angezeigt wird",
       ],
+      details:
+        "Die Punktzahl von 0 bis 100 ist eine „Reading-Ease“-Formel: sie rechnet aus, wie viele Wörter ein Satz hat und wie viele Silben ein Wort, und nichts weiter. Sie sagt also, wie AUFWENDIG ein Text zu lesen ist, nicht wie gut er ist. Für jede Sprache gilt eine EIGENE, für diese Sprache geprüfte Formel (Deutsch: Amstad, Englisch: Flesch, Spanisch: Fernández-Huerta). Weil deutsche Wörter im Schnitt deutlich mehr Silben haben als englische, ergibt derselbe Text auf Deutsch eine niedrigere Zahl als auf Englisch, obwohl beide gleich gut lesbar sind — die Zahlen sind innerhalb einer Sprache vergleichbar, zwischen Sprachen nicht. Für alle anderen Sprachen zeigen wir absichtlich keine Zahl: es existiert keine geprüfte Formel dafür, und eine englische Formel auf italienischen Text angewandt ergibt eine falsche Zahl, die aussieht wie eine richtige. Die Struktur-Hinweise laufen trotzdem, denn zu lange Sätze und Absätze bleiben in jeder Sprache zu lang. Und die Lesbarkeit fließt bewusst NICHT in den SEO-Score ein: Google bewertet Lesbarkeit nicht direkt, die Zahl hängt an der Sprache, und ein Score, der sich durch einen umformulierten Satz um 20 Punkte bewegt, wäre als Checkliste nichts mehr wert. Bewusst nicht enthalten sind Passiv- und Füllwort-Prüfungen: die brauchen Wortlisten pro Sprache, um mehr als Rauschen zu sein.",
     },
     seoSidebarKeywords: {
       title: "Keywords",
