@@ -36,7 +36,6 @@
 export interface ScopeVariant {
   id: string;
   title: string;
-  sku: string | null;
   imageUrl: string | null;
   imageAlt: string | null;
   selectedOptions: Array<{ name: string; value: string }>;

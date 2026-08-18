@@ -611,7 +611,6 @@ export const en: Translation = {
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
       scheduled: "Scheduled for {date}",
       variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
-      savingStock: "Saving stock…",
       notStockedHere: "not stocked here",
       stockHeading: "Stock",
       variantSelectLabel: "Variant",
@@ -623,7 +622,6 @@ export const en: Translation = {
       noLevels: "No location holds stock of this variant.",
       locationInactive: "inactive",
       onHand: "On hand",
-      availableLabel: "available: {n}",
     },
     // Codes from the stock and channel write paths. A quantity is money, so
     // "not confirmed" is a distinct answer from "failed": only one of them

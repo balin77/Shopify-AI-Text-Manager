@@ -607,7 +607,6 @@ export const es: Translation = {
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
       variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
-      savingStock: "Guardando el stock…",
       notStockedHere: "sin stock aquí",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
@@ -619,7 +618,6 @@ export const es: Translation = {
       noLevels: "Ninguna ubicación tiene inventario de esta variante.",
       locationInactive: "inactiva",
       onHand: "Disponible físicamente",
-      availableLabel: "disponible: {n}",
     },
     // Códigos de los caminos de escritura de inventario y canales. Una cantidad
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":

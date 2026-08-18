@@ -59,7 +59,6 @@ import {
   Card,
   Icon,
   InlineStack,
-  Divider,
   Modal,
   Popover,
   Tag,
@@ -1102,12 +1101,12 @@ export function VariantOptionsEditor({
           </Card>
         )}
 
-        {footer && (
-          <>
-            <Divider />
-            {footer}
-          </>
-        )}
+        {/* No divider here. `footer &&` is true for an element that RETURNS
+            null — which the variant editor does for a shop without the plan,
+            while loading, and for a product with no variants — so the card
+            ended with a rule under empty space. Only the footer knows whether
+            it drew anything, so it draws its own separator. */}
+        {footer}
       </BlockStack>
 
       <Modal

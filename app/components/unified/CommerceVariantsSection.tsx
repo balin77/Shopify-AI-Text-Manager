@@ -38,9 +38,13 @@ import {
   Badge,
   BlockStack,
   Box,
+  Banner,
+  Button,
   Checkbox,
+  Divider,
   InlineStack,
   Select,
+  Spinner,
   Text,
   TextField,
   Thumbnail,
@@ -76,8 +80,33 @@ export function CommerceVariantsSection() {
   // editor into its error boundary by putting one below an early return, and
   // React counts hooks per render, not per branch.
   if (!commerce || !commerce.isPrimaryLocale || commerce.planBlocked) return null;
-  const { data, saving, priceEdits, setPriceEdits, itemEdits, setItemEdits, edits, setEdits, loadedOnHand } = commerce;
-  if (!data) return null;
+  const { data, saving, priceEdits, setPriceEdits, itemEdits, setItemEdits, edits, setEdits, loadError, load } =
+    commerce;
+
+  // A failed load used to leave this card EMPTY: the banner and its retry
+  // button live in the channels card, which is somewhere else on the screen.
+  // A merchant looking at the variants card saw nothing and no reason.
+  if (loadError) {
+    return (
+      <BlockStack gap="300">
+        <Divider />
+        <Banner tone="warning">
+          <BlockStack gap="200">
+            <Text as="p">{loadError}</Text>
+            <Box><Button onClick={() => load()}>{(t.retry as string) || "Try again"}</Button></Box>
+          </BlockStack>
+        </Banner>
+      </BlockStack>
+    );
+  }
+  if (!data) {
+    return (
+      <BlockStack gap="300">
+        <Divider />
+        <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />
+      </BlockStack>
+    );
+  }
   if (variants.length === 0) return null;
 
   /** The chosen scope, falling back to the first variant. A selection pointing
@@ -97,10 +126,37 @@ export function CommerceVariantsSection() {
   const priceMixed = (field: VariantField): boolean =>
     isBulk && commonValue(members.map((m) => priceEdits[`${m.id}::${field}`] ?? (m[field] ?? ""))) === null;
 
+  /**
+   * Whether the members DISAGREE on a field as it was loaded — ignoring what
+   * has been typed since.
+   *
+   * This is what makes an empty bulk field safe. A field showing "" because
+   * its members differ is showing "unknown", not "empty", so clearing it back
+   * to "" has to mean UNTOUCHED. Without that there is no way back: a merchant
+   * who types a character into a mixed barcode field and deletes it again sent
+   * `barcode: ""` for every member, and Shopify cleared values they had never
+   * seen — precisely what the mixed display exists to prevent.
+   *
+   * Where the members AGREE, "" keeps its ordinary meaning of "clear this",
+   * because the field was showing the value that is being erased.
+   */
+  const loadedDisagrees = (field: string): boolean =>
+    isBulk &&
+    commonValue(
+      members.map((m) => {
+        const loaded = (m as unknown as Record<string, unknown>)[field];
+        return loaded == null ? "" : String(loaded);
+      }),
+    ) === null;
+
   const setPrice = (field: string, value: string) =>
     setPriceEdits((prev) => {
       const next = { ...prev };
-      for (const member of members) next[`${member.id}::${field}`] = value;
+      const untouched = value === "" && loadedDisagrees(field);
+      for (const member of members) {
+        if (untouched) delete next[`${member.id}::${field}`];
+        else next[`${member.id}::${field}`] = value;
+      }
       return next;
     });
 
@@ -127,7 +183,12 @@ export function CommerceVariantsSection() {
   const setItem = (field: string, value: string) =>
     setItemEdits((prev) => {
       const next = { ...prev };
-      for (const member of members) next[`${member.id}::${field}`] = value;
+      // Same rule as the prices — see `loadedDisagrees`.
+      const untouched = value === "" && loadedDisagrees(field);
+      for (const member of members) {
+        if (untouched) delete next[`${member.id}::${field}`];
+        else next[`${member.id}::${field}`] = value;
+      }
       return next;
     });
 
@@ -148,6 +209,10 @@ export function CommerceVariantsSection() {
 
   return (
     <BlockStack gap="300">
+      {/* Drawn HERE rather than by the card: this component returns null in
+          four states, and a divider placed around it by the card would be a
+          rule under empty space in every one of them. */}
+      <Divider />
       {/* No heading here. "Bestand" over the whole block titled the prices and
           the shipping settings too; it sits over the locations table, which is
           the thing it names. */}
@@ -281,11 +346,18 @@ export function CommerceVariantsSection() {
                           // `GRAMS` is not a unit anybody writes on a label.
                           // Same enum vocabulary the editor's attribute fields
                           // read, passed in with the rest of this panel's text.
-                          options={WEIGHT_UNITS.map((unit) => ({
-                            value: unit,
-                            label: (t.enumLabels as Record<string, string> | undefined)?.[`weightUnit.${unit}`] ?? unit,
-                          }))}
-                          value={(itemValue("weightUnit") || "KILOGRAMS")}
+                          options={[
+                            // A mixed group gets a placeholder entry rather
+                            // than one member's unit standing for the group.
+                            ...(itemMixed("weightUnit")
+                              ? [{ value: "", label: (t.mixedValues as string) || "Different values" }]
+                              : []),
+                            ...WEIGHT_UNITS.map((unit) => ({
+                              value: unit,
+                              label: (t.enumLabels as Record<string, string> | undefined)?.[`weightUnit.${unit}`] ?? unit,
+                            })),
+                          ]}
+                          value={itemMixed("weightUnit") ? "" : (itemValue("weightUnit") || "KILOGRAMS")}
                           onChange={(value) => setItem("weightUnit", value)}
                           disabled={saving}
                         />
@@ -318,8 +390,18 @@ export function CommerceVariantsSection() {
                       <Box minWidth="180px">
                         <Checkbox
                           label={(t.requiresShipping as string) || "Needs shipping"}
+                          // "indeterminate" rather than a flat unchecked box:
+                          // over a group whose members differ, an empty box
+                          // asserts that NONE of them needs shipping.
                           checked={
-                            itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true"
+                            itemMixed("requiresShipping")
+                              ? "indeterminate"
+                              : itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true"
+                          }
+                          helpText={
+                            itemMixed("requiresShipping")
+                              ? ((t.mixedValues as string) || "Different values")
+                              : undefined
                           }
                           disabled={saving}
                           onChange={(checked) =>
@@ -361,7 +443,11 @@ export function CommerceVariantsSection() {
                   <BlockStack gap="200">
                     <InlineStack gap="300" blockAlign="center" wrap={false}>
                       <ToggleSwitch
+                        // A mixed group is NOT off: a switch's position is the
+                        // claim a merchant reads, and off over a half-tracked
+                        // group asserts something untrue about half of it.
                         checked={itemValue("inventoryTracked", "true") === "true"}
+                        indeterminate={itemMixed("inventoryTracked")}
                         ariaLabel={(t.trackedLabel as string) || "Track quantity"}
                         onChange={(checked) => setItem("inventoryTracked", String(checked))}
                         disabled={saving || !first.inventoryItemId}
@@ -383,10 +469,11 @@ export function CommerceVariantsSection() {
                         zero for the policy to apply to, and a switch that
                         decides nothing invites the merchant to think it
                         does. */}
-                    {itemValue("inventoryTracked", "true") === "true" && (
+                    {(itemValue("inventoryTracked", "true") === "true" || itemMixed("inventoryTracked")) && (
                       <InlineStack gap="300" blockAlign="center" wrap={false}>
                         <ToggleSwitch
                           checked={priceValue("inventoryPolicy") === "CONTINUE"}
+                          indeterminate={priceMixed("inventoryPolicy")}
                           ariaLabel={(t.continueSellingLabel as string) || "Continue selling when out of stock"}
                           onChange={(checked) => setPrice("inventoryPolicy", checked ? "CONTINUE" : "DENY")}
                           disabled={saving}
@@ -442,13 +529,13 @@ export function CommerceVariantsSection() {
             </Text>
           ) : (
             <>
-                  {first.inventoryTracked === null && (
+                  {first.inventoryTracked === null && !itemMixed("inventoryTracked") && (
                     <Text as="p" variant="bodySm" tone="subdued">
                       {(t.stockUnknown as string) || "Not loaded yet — reload to see this variant's stock."}
                     </Text>
                   )}
 
-                  {first.inventoryTracked === false && (
+                  {itemValue("inventoryTracked", "true") === "false" && (
                     // NOT zero. Shopify keeps no count for this variant, and a
                     // 0 here would read as "sold out".
                     <Text as="p" variant="bodySm" tone="subdued">
@@ -462,7 +549,12 @@ export function CommerceVariantsSection() {
                     </Text>
                   )}
 
-                  {first.inventoryTracked === true && first.inventoryItemId && (
+                  {/* The EDITED flag, not the loaded one: the switch above
+                      turns tracking off, and a table that stays behind still
+                      offers numbers for an item Shopify will stop counting —
+                      numbers the save would write first and the untrack would
+                      then discard. */}
+                  {itemValue("inventoryTracked", "true") === "true" && first.inventoryItemId && (
                     <BlockStack gap="200">
                       {/* The heading belongs HERE, over the locations it
                           describes — above the variant it read as a title for
@@ -533,6 +625,7 @@ export function CommerceVariantsSection() {
                         edits={edits}
                         onEdit={(key: string, value: string) => setEdits((prev) => ({ ...prev, [key]: value }))}
                         disabled={saving}
+                        truncated={first.levelsTruncated}
                         t={t}
                       />
                     </BlockStack>
@@ -574,9 +667,12 @@ function StockTable({
   edits,
   onEdit,
   disabled,
+  truncated,
   t,
 }: {
   rows: StockRow[];
+  /** The location window was cut off — see the total row. */
+  truncated: boolean;
   edits: Record<string, string>;
   onEdit: (key: string, value: string) => void;
   disabled: boolean;
@@ -597,12 +693,18 @@ function StockTable({
   const headLast: CSSProperties = { ...lastCell, borderTop: "none" };
   const num = (value: number | null) => (value == null ? "—" : String(value));
 
-  /** Summed only over what is KNOWN, and absent when nothing is. A total that
-   *  silently skipped an unknown row would be a smaller number presented as
-   *  the truth. */
+  /**
+   * ALL or nothing. A total is only a total when every row contributed to it.
+   *
+   * Summing the known rows and skipping the unknown ones produced a smaller
+   * number under the word "Total" — and worse, a different number of rows per
+   * column, so "Available" could describe two locations while "On hand"
+   * described three. A row that is not stocked contributes 0, which is a known
+   * quantity; a row whose number could not be READ makes the total unknown.
+   */
   const total = (pick: (row: StockRow) => number | null) => {
-    const known = rows.map(pick).filter((v): v is number => v != null);
-    return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+    const values = rows.map((row) => (row.stocked ? pick(row) : 0));
+    return values.some((v) => v == null) ? null : values.reduce((a, b) => (a as number) + (b as number), 0);
   };
   /** The on-hand total counts what is TYPED, so the figure moves with the edit. */
   const onHandTotal = (() => {
@@ -610,12 +712,14 @@ function StockTable({
       const edited = edits[row.key];
       if (edited !== undefined && edited.trim() !== "") {
         const parsed = Number.parseInt(edited, 10);
+        // A value that does not parse makes the total UNKNOWN rather than
+        // dropping that location out of it — the sum would otherwise fall
+        // while the merchant typed.
         return Number.isFinite(parsed) ? parsed : null;
       }
-      return row.onHand;
+      return row.stocked ? row.onHand : 0;
     });
-    const known = values.filter((v): v is number => v != null);
-    return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+    return values.some((v) => v == null) ? null : values.reduce((a, b) => (a as number) + (b as number), 0);
   })();
 
   return (
@@ -694,7 +798,10 @@ function StockTable({
               </td>
             </tr>
           ))}
-          {rows.length > 1 && (
+          {/* No total row when the location window was cut off: the rows are
+              the first ten of more, and their sum under the word "Total" is a
+              number the merchant would decide against. */}
+          {rows.length > 1 && !truncated && (
             <tr>
               <td style={firstCell}>
                 <Text as="span" variant="bodySm" fontWeight="semibold">

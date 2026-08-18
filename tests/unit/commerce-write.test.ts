@@ -581,6 +581,34 @@ describe("the variant's own settings", () => {
     expect(sentTo(admin).variants[0].barcode).toBeNull();
   });
 
+  it("refuses a barcode or a policy the echo did not carry", async () => {
+    // Both were sent and MIRRORED without ever being asked back for, so
+    // Shopify accepting the call and storing nothing left the cache — and the
+    // merchant — believing a policy that was never applied.
+    const admin = adminWith({
+      data: {
+        productVariantsBulkUpdate: {
+          productVariants: [
+            { id: VARIANT_GID, price: "9.90", compareAtPrice: null, barcode: null, inventoryPolicy: "DENY" },
+          ],
+          userErrors: [],
+        },
+      },
+    });
+    const { db, updates } = recorder();
+
+    expect(
+      await applyVariantPrices(admin, db, "s", {
+        productId: "gid://shopify/Product/1",
+        variantId: "9",
+        variantGid: VARIANT_GID,
+        fields: { inventoryPolicy: "CONTINUE" },
+      }),
+    ).toBe("priceNotConfirmed");
+    // …and nothing is mirrored, so the cache does not claim the new policy.
+    expect(updates).toEqual([]);
+  });
+
   it("refuses a stock policy that is not one of the two enums", async () => {
     // A bad enum fails at the SCHEMA level — a top-level error that never
     // reaches userErrors — and would take the price in the same call with it.

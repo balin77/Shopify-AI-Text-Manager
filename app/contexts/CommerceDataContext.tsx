@@ -67,8 +67,6 @@ export interface CommerceDataValue {
   isPrimaryLocale: boolean;
   t: CommerceTexts;
 
-  selectedVariantId: string | null;
-  setSelectedVariantId: (id: string | null) => void;
   priceEdits: Record<string, string>;
   setPriceEdits: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   edits: Record<string, string>;
@@ -80,6 +78,15 @@ export interface CommerceDataValue {
 
   loadedOnHand: (variantId: string, locationId: string) => number | null;
   hasChanges: boolean;
+  /**
+   * The same function the editor's save bar drives.
+   *
+   * Exposed rather than kept private to the registration: it is what the two
+   * views' edits end up in, so a test that wants to know what a bulk edit
+   * SENDS has to be able to run it — and that is the surface where a wrong
+   * answer destroys a merchant's data rather than merely looking wrong.
+   */
+  save: () => Promise<void>;
 }
 
 const CommerceDataContext = createContext<CommerceDataValue | null>(null);
@@ -116,17 +123,6 @@ export function CommerceDataProvider({
   const savingRef = useRef(false);
   const [notices, setNotices] = useState<string[]>([]);
 
-  /**
-   * Which variant's box is on screen.
-   *
-   * ONE box, not one per variant: a product with twenty variants produced
-   * twenty stacked boxes of identical fields, and the channel list plus the
-   * save button ended up a screen and a half below the first one. Switching is
-   * SAFE because every edit is keyed by variant id (`edits`, `itemEdits`) —
-   * changing the selection hides a box, it does not discard what was typed in
-   * it, and the save still writes every variant that was touched.
-   */
-  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
 
   /** Edited selling prices, keyed `variantId::price` / `::compareAtPrice`. */
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
@@ -601,8 +597,6 @@ export function CommerceDataProvider({
     load,
     isPrimaryLocale,
     t,
-    selectedVariantId,
-    setSelectedVariantId,
     priceEdits,
     setPriceEdits,
     edits,
@@ -613,6 +607,7 @@ export function CommerceDataProvider({
     setChannelState,
     loadedOnHand,
     hasChanges,
+    save,
   };
 
   return <CommerceDataContext.Provider value={value}>{children}</CommerceDataContext.Provider>;

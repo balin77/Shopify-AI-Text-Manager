@@ -608,7 +608,6 @@ export const de = {
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
       variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
-      savingStock: "Bestand wird gespeichert…",
       notStockedHere: "hier nicht bestandsgeführt",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
@@ -620,7 +619,6 @@ export const de = {
       noLevels: "Kein Lagerort führt Bestand dieser Variante.",
       locationInactive: "inaktiv",
       onHand: "Vorhanden",
-      availableLabel: "verfügbar: {n}",
     },
     // Codes aus den Schreibpfaden für Bestand und Kanäle. Eine Menge ist Geld,
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":

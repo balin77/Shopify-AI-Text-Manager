@@ -629,7 +629,13 @@ export async function applyInventoryItemFields(
     // hold, and the panel reads that cache.
     await db.productVariant
       .updateMany({
-        where: { id: params.variantId },
+        // SHOP-SCOPED, like every other mirror in this module. `variantId`
+        // arrives as an unvalidated form field on a directly POST-reachable
+        // route, so an unscoped write lets one shop's request overwrite
+        // another shop's cached variant row. Shopify ids are globally unique
+        // so it is safe in practice — but "safe because of an external
+        // invariant" is not the house rule, and the scope costs nothing.
+        where: { id: params.variantId, product: { shop } },
         data: {
           ...("cost" in mirror ? { cost: item.unitCost?.amount ?? null } : {}),
           ...("requiresShipping" in mirror ? { requiresShipping: item.requiresShipping ?? null } : {}),
@@ -778,6 +784,8 @@ export async function applyVariantPrices(
               id
               price
               compareAtPrice
+              barcode
+              inventoryPolicy
             }
             userErrors { field message }
           }
@@ -788,7 +796,13 @@ export async function applyVariantPrices(
     const body = (await response.json()) as {
       data?: {
         productVariantsBulkUpdate?: {
-          productVariants?: Array<{ id?: string; price?: string | null; compareAtPrice?: string | null }> | null;
+          productVariants?: Array<{
+            id?: string;
+            price?: string | null;
+            compareAtPrice?: string | null;
+            barcode?: string | null;
+            inventoryPolicy?: string | null;
+          }> | null;
           userErrors?: Array<{ message: string }>;
         };
       };
@@ -823,11 +837,23 @@ export async function applyVariantPrices(
     if (input.compareAtPrice !== undefined && !sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
       return "priceNotConfirmed";
     }
+    // The same rule for the two non-money fields. They were sent and mirrored
+    // without ever being asked back for, so Shopify accepting the call and
+    // storing nothing left the cache — and the merchant — believing a policy
+    // that was never applied.
+    if (input.barcode !== undefined && (echoed.barcode ?? null) !== input.barcode) {
+      return "priceNotConfirmed";
+    }
+    if (input.inventoryPolicy !== undefined && echoed.inventoryPolicy !== input.inventoryPolicy) {
+      return "priceNotConfirmed";
+    }
 
     // Mirror what Shopify STORED, not what was sent — the same rule the theme
     // path follows for normalised richtext.
     if (echoed.price != null) mirror.price = echoed.price;
     mirror.compareAtPrice = echoed.compareAtPrice ?? null;
+    if (input.barcode !== undefined) mirror.barcode = echoed.barcode ?? null;
+    if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echoed.inventoryPolicy ?? null;
     await db.productVariant
       .updateMany({ where: { id: params.variantId, product: { shop } }, data: mirror as never })
       .catch(() => undefined);
