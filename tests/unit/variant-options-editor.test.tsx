@@ -84,7 +84,10 @@ beforeEach(() => {
       json: async () => ({
         success: true,
         counts: { [variantCountKey("Colour", "Red")]: 3 },
-        swatches: { "gid://shopify/ProductOptionValue/2": { color: "#0000FF" } },
+        swatches: {
+          "gid://shopify/ProductOptionValue/1": { color: "#00FF00" },
+          "gid://shopify/ProductOptionValue/2": { color: "#0000FF" },
+        },
       }),
     })),
   );
@@ -287,12 +290,12 @@ describe("VariantOptionsEditor — colours and order", () => {
       .map((el) => (el as HTMLElement).style.backgroundColor)
       .filter(Boolean);
 
-    // "Blue" carries a swatch from Shopify (#0000FF) — and is ALSO a colour
-    // word (#1976D2), so this asserts that Shopify's own value wins.
+    // Both values carry a Shopify swatch AND are colour words, so this asserts
+    // the precedence: the shop's own value wins over the derived one.
     expect(painted).toContain("#0000FF");
+    expect(painted).toContain("#00FF00");
     expect(painted).not.toContain("#1976D2");
-    // "Red" has no Shopify swatch and falls to the word table.
-    expect(painted).toContain("#D32F2F");
+    expect(painted).not.toContain("#D32F2F");
   });
 
   it("reports a value drag as a new order", async () => {
@@ -377,5 +380,76 @@ describe("VariantOptionsEditor — an abandoned drag", () => {
       .map((el) => (el as HTMLElement).style.backgroundColor)
       .filter(Boolean);
     expect(painted).toEqual([]);
+  });
+});
+
+describe("VariantOptionsEditor — the two bugs the merchant saw", () => {
+  it("paints swatches on a COLLAPSED card, without opening it", async () => {
+    // A collapsed card is where the values are READ, so a swatch that only
+    // appears on click is missing exactly where it is wanted. The fetch used
+    // to be gated on a card being open, so the only chips a collapsed card
+    // showed were the values whose name the local colour table happens to
+    // know — one lone swatch in a list of many.
+    ui({
+      options: [
+        {
+          id: OPTION,
+          name: "Farbe",
+          position: 1,
+          values: [
+            { id: "gid://shopify/ProductOptionValue/1", name: "Eiche" },
+            { id: "gid://shopify/ProductOptionValue/2", name: "Nuss" },
+            { id: "gid://shopify/ProductOptionValue/3", name: "Schwarz" },
+          ],
+        },
+      ],
+    });
+
+    // Nothing was clicked. "Eiche" and "Nuss" are not colour words, so they
+    // can only be painted from what Shopify holds.
+    await screen.findByText("Eiche");
+    const painted = () =>
+      [...document.querySelectorAll("span[aria-hidden]")]
+        .map((el) => (el as HTMLElement).style.backgroundColor)
+        .filter(Boolean);
+    await vi.waitFor(() => expect(painted()).toContain("#00FF00"));
+    // …alongside the one the table knows on its own.
+    expect(painted()).toContain("#000000");
+  });
+
+  it("lets a metaobject-linked option's values be reordered", async () => {
+    // Their NAMES live in the metaobjects and are not editable here, but their
+    // ORDER belongs to the product — and it decides which variant the
+    // storefront shows first. The linked branch used to render a read-only
+    // chip list with no handles at all, which is why colours could not move.
+    const spies = handlers();
+    render(
+      <AppProvider i18n={en}>
+        <VariantOptionsEditor
+          productId="gid://shopify/Product/1"
+          options={[{ ...options[0], name: "Farbe", isLinked: true }]}
+          primaryOptions={{}}
+          valuesToAdd={{}}
+          valuesToDelete={{}}
+          optionsToCreate={[]}
+          optionsToDelete={[]}
+          {...spies}
+        />
+      </AppProvider>,
+    );
+    fireEvent.click(screen.getByText("Farbe"));
+
+    const rows = ["Red", "Blue"].map((name) => screen.getByText(name).closest("[draggable]")!);
+    expect(rows[0]).toBeTruthy();
+    fireEvent.dragStart(rows[0]);
+    fireEvent.dragOver(rows[1]);
+    fireEvent.drop(rows[1]);
+
+    expect(spies.onReorderValues).toHaveBeenCalledWith(OPTION, [
+      "gid://shopify/ProductOptionValue/2",
+      "gid://shopify/ProductOptionValue/1",
+    ]);
+    // …and still nothing that would rename or delete a metaobject value.
+    expect(screen.queryByDisplayValue("Red")).toBeNull();
   });
 });
