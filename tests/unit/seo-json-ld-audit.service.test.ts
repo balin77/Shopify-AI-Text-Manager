@@ -410,4 +410,64 @@ describe("summarizeLiveJsonLd", () => {
     expect(products.total).toBe(1);
     expect(products.catalogTotal).toBe(3);
   });
+
+  // PLAN_MARKUP_ACTIVATION §1.2 — the per-type stats the activation gate reads.
+  it("counts pages and app pages per CANONICAL type", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        // Theme-only Product on one page…
+        page({ url: "https://s/p/1", jsonLdTypes: "Product" }),
+        // …ours alone on the next…
+        page({ url: "https://s/p/2", jsonLdTypes: "Product", jsonLdAppTypes: "Product" }),
+        // …and both at once on the third, which is the damage state. The theme
+        // spelling is ProductGroup, so a raw-name tally would see no collision.
+        page({
+          url: "https://s/p/3",
+          jsonLdTypes: "ProductGroup,Product",
+          jsonLdAppTypes: "Product",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const product = summary!.typeStats.find((t) => t.type === "Product")!;
+    expect(product.pages).toBe(3);
+    expect(product.appPages).toBe(2);
+    expect(product.duplicatePages).toBe(1);
+    expect(product.appIsOneCopy).toBe(1);
+    expect(product.repeatable).toBe(false);
+  });
+
+  it("marks a repeatable type as such instead of reporting a clean 0", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "VideoObject,VideoObject", jsonLdAppTypes: "VideoObject" })]),
+      "shop.myshopify.com",
+    );
+    const video = summary!.typeStats.find((t) => t.type === "VideoObject")!;
+    expect(video.pages).toBe(1);
+    expect(video.appPages).toBe(1);
+    // Two VideoObjects on one page are two videos, not a collision — so the
+    // duplicate rule stays quiet AND says why.
+    expect(video.duplicatePages).toBe(0);
+    expect(video.repeatable).toBe(true);
+    expect(summary!.duplicates).toEqual([]);
+  });
+
+  it("keeps the duplicate rows and the type stats in agreement", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({
+          url: "https://s/blogs/news/a",
+          resourceType: "article",
+          jsonLdTypes: "Article,BlogPosting",
+          jsonLdAppTypes: "BlogPosting",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    for (const dup of summary!.duplicates) {
+      const stat = summary!.typeStats.find((t) => t.type === dup.type)!;
+      expect(stat.duplicatePages).toBe(dup.pages);
+      expect(stat.appIsOneCopy).toBe(dup.appIsOneCopy);
+    }
+  });
 });

@@ -24,7 +24,7 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useRef, useState } from "react";
-import { Card, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
+import { Card, Box, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -46,6 +46,12 @@ import {
 import { getMainThemeId, readThemeFile } from "../services/seo/aeo.service";
 import { summarizeLiveJsonLd } from "../services/seo/json-ld-audit.service";
 import type { JsonLdAuditAggregate, JsonLdAuditItemType } from "../services/seo/json-ld-audit.service";
+import {
+  activationGate,
+  activationTone,
+  JSON_LD_SWITCHES,
+  type ActivationVerdict,
+} from "../services/seo/markup-activation.shared";
 
 /** Extract the trailing numeric id from a GID like "gid://shopify/Product/123". */
 function gidToNumericId(gid: string | null | undefined): string | null {
@@ -446,9 +452,13 @@ export default function SeoStructuredData() {
   const openEmbedSettings = () =>
     handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "setup" }) });
 
-  // Delivery before data quality: markup that never reaches the page makes the
-  // catalog report moot, so step 1 is what the storefront actually serves.
-  const [step, setStep] = useState<"delivery" | "data">("delivery");
+  // Delivery before data quality before activation. The section used to open
+  // with the activation buttons and put the measurement below them — i.e. in
+  // the order in which the merchant makes the mistake before they can see it,
+  // which is how a live shop ended up serving its product schema twice
+  // (PLAN_MARKUP_ACTIVATION §0.4). Switching a type on is now step 3 and reads
+  // step 1's numbers.
+  const [step, setStep] = useState<"delivery" | "data" | "activate">("delivery");
 
   // Each tile carries its own verdict. "Unknown" is a real state for both and
   // must not be dressed up as a clean result: no crawl yet on the left, never
@@ -473,6 +483,43 @@ export default function SeoStructuredData() {
     </Badge>
   );
   const hintCopy = (s as any).hints as Record<string, string>;
+  const act = (s as any).activation as Record<string, any>;
+
+  // §1.2 — the gate. `measured` is deliberately strict: no crawl at all AND a
+  // snapshot whose jsonLdTypes column is empty everywhere both count as "not
+  // measured", which yields grey, never green. `originKnown` is the weaker
+  // second flag — only a crawl that saw our marker somewhere can read
+  // "appPages === 0" as "none of these are ours".
+  const jsonLdMeasured = !!liveJsonLd && !liveJsonLd.notMeasured;
+  const jsonLdOriginKnown = liveJsonLd?.appEmbedDetected === true;
+  const switchGates = JSON_LD_SWITCHES.map((sw) => ({
+    ...sw,
+    gate: activationGate(
+      liveJsonLd?.typeStats?.find((ts) => ts.type === sw.type),
+      { measured: jsonLdMeasured, originKnown: jsonLdOriginKnown },
+    ),
+  }));
+
+  // One verdict for the tile. Worst wins, and "not measured" is its own state
+  // rather than the best of the three — the whole point is that an unmeasured
+  // shop gets no green light.
+  const activationBadge = !jsonLdMeasured ? (
+    <Badge>{act.badgeUnknown as string}</Badge>
+  ) : switchGates.some((g) => g.gate.verdict === "duplicateApp" || g.gate.verdict === "duplicateForeign") ? (
+    <Badge tone="critical">{act.badgeConflict as string}</Badge>
+  ) : switchGates.some((g) => g.gate.verdict === "foreignOnly" || g.gate.verdict === "mixed") ? (
+    <Badge tone="warning">{act.badgeReview as string}</Badge>
+  ) : (
+    <Badge tone="success">{act.badgeReady as string}</Badge>
+  );
+
+  /** Verdict copy, with the measured numbers substituted in. */
+  const verdictText = (verdict: ActivationVerdict, g: { pages: number; appPages: number; duplicatePages: number; appIsOneCopy: number }) =>
+    ((act.verdicts as Record<string, string>)[verdict] || "")
+      .replace("{pages}", String(g.pages))
+      .replace("{appPages}", String(g.appPages))
+      .replace("{duplicatePages}", String(g.duplicatePages))
+      .replace("{appIsOneCopy}", String(g.appIsOneCopy));
 
   const schemaTypeKeys = [
     "schemaProduct",
@@ -570,44 +617,14 @@ export default function SeoStructuredData() {
           </BlockStack>
         </SeoHelpBanner>
 
-        {/* 2. Activation in the theme editor (the two app-embed blocks) */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingLg">
-              {(s as any).activationTitle as string}
-            </Text>
-            <Text as="p" variant="bodyMd" tone="subdued">
-              {(s as any).activationBody as string}
-            </Text>
-
-            <BlockStack gap="200">
-              <Text as="h3" variant="headingMd">
-                {(s as any).activationJsonLdTitle as string}
-              </Text>
-              <InlineStack>
-                <Button onClick={openEmbedSettings} variant="primary">
-                  {(s as any).activateInSettings as string}
-                </Button>
-              </InlineStack>
-            </BlockStack>
-
-            <BlockStack gap="200">
-              <Text as="h3" variant="headingMd">
-                {(s as any).activationOgTitle as string}
-              </Text>
-              <InlineStack>
-                <Button onClick={openEmbedSettings} variant="primary">
-                  {(s as any).activateInSettings as string}
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </BlockStack>
-        </Card>
-
-        {/* The two halves are sequential, not a pair — markup has to reach the
-            page before its data quality means anything — so they are steps, in
-            the same shape the AEO section uses for robots.txt/llms.txt. */}
-        <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+        {/* The three halves are sequential, not a set of equal cards — markup
+            has to reach the page before its data quality means anything, and
+            switching a type ON is only decidable once you know what the page
+            already serves. Activation used to sit at the TOP of this page,
+            above its own measurement; that is how a live shop came to serve two
+            Product nodes with an identical @id (PLAN_MARKUP_ACTIVATION §0.4).
+            Same shape the AEO section uses for its three steps. */}
+        <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
           <StepTile
             selected={step === "delivery"}
             onSelect={() => setStep("delivery")}
@@ -623,6 +640,14 @@ export default function SeoStructuredData() {
             title={b.stepTitle}
             body={b.stepBody}
             badge={dataBadge}
+          />
+          <StepTile
+            selected={step === "activate"}
+            onSelect={() => setStep("activate")}
+            kicker={act.stepKicker as string}
+            title={act.stepTitle as string}
+            body={act.stepBody as string}
+            badge={activationBadge}
           />
         </InlineGrid>
 
@@ -975,6 +1000,146 @@ export default function SeoStructuredData() {
               )}
             </BlockStack>
           </Card>
+          </BlockStack>
+        )}
+
+        {/* Step 3 — which switches may be turned on, judged against step 1.
+            Nothing here writes anything: the app never flips its own storefront
+            blocks off the back of a crawl finding (plan §4). It reports; the
+            merchant decides, in the theme editor. */}
+        {step === "activate" && (
+          <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingLg">{act.title as string}</Text>
+                <Text as="p" variant="bodyMd" tone="subdued">{act.intro as string}</Text>
+
+                {!jsonLdMeasured ? (
+                  // The core rule of this section, restated in place: a missing
+                  // measurement is not a free pass. No crawl ⇒ no verdict, only
+                  // the invitation to run step 1.
+                  <Banner tone="info">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd">
+                        {liveJsonLd ? (act.notMeasured as string) : (act.noCrawl as string)}
+                      </Text>
+                      <div>
+                        <Button onClick={() => handleNavigate("/app/seo/crawl")}>
+                          {live.goToCrawl}
+                        </Button>
+                      </div>
+                    </BlockStack>
+                  </Banner>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(act.basis as string)
+                      .replace("{time}", new Date(liveJsonLd!.crawledAt).toLocaleString())
+                      .replace("{pages}", String(liveJsonLd!.pagesChecked))}
+                  </Text>
+                )}
+
+                {jsonLdMeasured && !jsonLdOriginKnown && (
+                  // Without the marker every "not ours" reading collapses to
+                  // "we could not tell" — say so once, at the top, instead of
+                  // repeating it under all seven switches.
+                  <Banner tone="info">{act.originUnknownHint as string}</Banner>
+                )}
+
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">{act.switchesTitle as string}</Text>
+                  {switchGates.map((sw) => {
+                    const dup = liveJsonLd?.duplicates.find((d) => d.type === sw.type);
+                    const showExamples =
+                      sw.gate.verdict === "duplicateApp" || sw.gate.verdict === "duplicateForeign";
+                    return (
+                      <Box
+                        key={sw.settingId}
+                        padding="300"
+                        borderWidth="025"
+                        borderColor="border"
+                        borderRadius="200"
+                      >
+                        <BlockStack gap="150">
+                          <InlineStack gap="200" blockAlign="center" wrap>
+                            <Text as="span" variant="bodyMd" fontWeight="semibold">
+                              {(act.switches as Record<string, string>)[sw.labelKey]}
+                            </Text>
+                            <Badge tone={activationTone(sw.gate.verdict)}>
+                              {(act.verdictLabels as Record<string, string>)[sw.gate.verdict]}
+                            </Badge>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {sw.settingId}
+                            </Text>
+                          </InlineStack>
+                          <Text as="p" variant="bodySm">
+                            {verdictText(sw.gate.verdict, sw.gate)}
+                          </Text>
+                          {/* Several VideoObjects on one page are three product
+                              videos, not a collision — the duplicate rule is off
+                              for those types, so a clean result there means "not
+                              checked", never "checked and fine". */}
+                          {sw.gate.repeatable && sw.gate.pages > 0 && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {act.repeatableCaveat as string}
+                            </Text>
+                          )}
+                          {/* A merchant who never opened the theme editor has
+                              the shipped default, so "which state am I in" is
+                              answerable without leaving this page. */}
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {sw.defaultOn ? (act.defaultOn as string) : (act.defaultOff as string)}
+                          </Text>
+                          {showExamples &&
+                            dup?.examples.map((u) => (
+                              <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                            ))}
+                        </BlockStack>
+                      </Box>
+                    );
+                  })}
+                </BlockStack>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingLg">
+                  {(s as any).activationTitle as string}
+                </Text>
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {(s as any).activationBody as string}
+                </Text>
+
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingMd">
+                    {(s as any).activationJsonLdTitle as string}
+                  </Text>
+                  <InlineStack>
+                    <Button onClick={openEmbedSettings} variant="primary">
+                      {(s as any).activateInSettings as string}
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingMd">
+                    {(s as any).activationOgTitle as string}
+                  </Text>
+                  <InlineStack>
+                    <Button onClick={openEmbedSettings} variant="primary">
+                      {(s as any).activateInSettings as string}
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+
+                {/* The app names the conflict; it does not resolve it in the
+                    merchant's theme code (plan §4, and the standing rule that
+                    this app never edits theme code it does not own). */}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {act.themeHint as string}
+                </Text>
+              </BlockStack>
+            </Card>
           </BlockStack>
         )}
 

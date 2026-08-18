@@ -648,7 +648,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, Video, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, Video, FAQ) for Google rich results. Enable once - markup is generated automatically per page. Your theme may already emit some of these types itself; the app's Structured data section, step 3, measures which ones and tells you what is safe to switch on."
     },
     {
       "type": "checkbox",
@@ -660,7 +660,7 @@
       "type": "checkbox",
       "id": "enable_product",
       "label": "Product (product pages)",
-      "info": "Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
+      "info": "Most themes emit their own product markup. Both at once is not merely duplicated but INVALID: this block uses the same @id as the theme on purpose, because it is meant to replace it, so Google merges the two into one node and every field both sides deliver ends up twice. Check step 3 of the app's Structured data section before switching this on. Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
       "default": true
     },
     {

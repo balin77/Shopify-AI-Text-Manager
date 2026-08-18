@@ -38,6 +38,7 @@ import {
   type JsonLdWarningCode,
 } from "../structured-data.service";
 import { MAX_AUDIT_ITEMS_PER_TYPE, MAX_PROBLEM_BUCKET_ITEMS } from "./audit.service";
+import type { MarkupTypeStat } from "./markup-activation.shared";
 
 export type JsonLdAuditItemType = "product" | "collection" | "article";
 
@@ -394,6 +395,22 @@ export interface LiveJsonLdDuplicateRow {
   appIsOneCopy: number;
 }
 
+/**
+ * Per canonical @type, everything the activation gate (PLAN_MARKUP_ACTIVATION
+ * §1.2) needs to judge ONE switch: is the type served at all, do WE serve it,
+ * and does any page carry it twice.
+ *
+ * Keyed by the CANONICAL name (ProductGroup folded into Product, BlogPosting
+ * into Article — see canonicalJsonLdType): a theme emitting ProductGroup while
+ * this app emits Product is exactly the collision the gate exists for, and a
+ * raw-name comparison would walk right past it.
+ *
+ * The shape lives in markup-activation.shared.ts because the gate that reads it
+ * runs in component scope, and importing this module there would drag Prisma
+ * into the client bundle.
+ */
+export type LiveJsonLdTypeStat = MarkupTypeStat;
+
 export interface LiveJsonLdSummary {
   /** When the crawl behind these numbers ran. */
   crawledAt: string;
@@ -410,6 +427,12 @@ export interface LiveJsonLdSummary {
   coverage: LiveJsonLdCoverageRow[];
   /** Every @type served anywhere, with the number of pages serving it. */
   typeCounts: { type: string; pages: number }[];
+  /**
+   * The same pages counted by CANONICAL type, plus who emitted them. Feeds the
+   * activation gate; `typeCounts` above stays raw because that is the list a
+   * merchant reads.
+   */
+  typeStats: LiveJsonLdTypeStat[];
   duplicates: LiveJsonLdDuplicateRow[];
   /**
    * Whether this app's storefront block was seen emitting anything at all.
@@ -469,6 +492,14 @@ export async function summarizeLiveJsonLd(
   const coverage: LiveJsonLdCoverageRow[] = [];
   const pagesByType = new Map<string, number>();
   const duplicatePages = new Map<string, string[]>();
+  // The example lists are capped, so the page COUNT has to be tallied
+  // separately or a shop with six duplicate pages would report five.
+  const duplicateCounts = new Map<string, number>();
+  /** Duplicated types where one of the copies is this app's. */
+  const duplicateAppCounts = new Map<string, number>();
+  /** Pages carrying a canonical type at all, and pages where WE carry it. */
+  const canonicalPages = new Map<string, number>();
+  const canonicalAppPages = new Map<string, number>();
 
   for (const row of served) {
     const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
@@ -477,27 +508,8 @@ export async function summarizeLiveJsonLd(
     // them, see canonicalJsonLdType.
     const seen = new Map<string, number>();
     for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
-    for (const [t, n] of seen) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
-    const canonical = new Map<string, number>();
-    for (const t of types) {
-      const c = canonicalJsonLdType(t);
-      canonical.set(c, (canonical.get(c) ?? 0) + 1);
-    }
-    for (const [t, n] of canonical) {
-      if (n > 1 && !REPEATABLE_JSON_LD_TYPES.has(t)) {
-        const list = duplicatePages.get(t) ?? [];
-        if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
-        duplicatePages.set(t, list);
-      }
-    }
-  }
-  // The example lists are capped, so the page COUNT has to be tallied
-  // separately or a shop with six duplicate pages would report five.
-  const duplicateCounts = new Map<string, number>();
-  /** Duplicated types where one of the copies is this app's. */
-  const duplicateAppCounts = new Map<string, number>();
-  for (const row of served) {
-    const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
+    for (const t of seen.keys()) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
+
     const appTypes = new Set(
       (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
         canonicalJsonLdType,
@@ -509,11 +521,35 @@ export async function summarizeLiveJsonLd(
       canonical.set(c, (canonical.get(c) ?? 0) + 1);
     }
     for (const [t, n] of canonical) {
+      canonicalPages.set(t, (canonicalPages.get(t) ?? 0) + 1);
+      if (appTypes.has(t)) canonicalAppPages.set(t, (canonicalAppPages.get(t) ?? 0) + 1);
       if (n <= 1 || REPEATABLE_JSON_LD_TYPES.has(t)) continue;
+      const list = duplicatePages.get(t) ?? [];
+      if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
+      duplicatePages.set(t, list);
       duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
       if (appTypes.has(t)) duplicateAppCounts.set(t, (duplicateAppCounts.get(t) ?? 0) + 1);
     }
   }
+
+  // A type this app emits that NO page carries any more still deserves a row:
+  // the activation gate reads these stats by type, and a missing entry would
+  // be indistinguishable from "zero pages" only by accident. Adding the app
+  // side of the union keeps the two halves symmetric.
+  for (const t of canonicalAppPages.keys()) {
+    if (!canonicalPages.has(t)) canonicalPages.set(t, canonicalAppPages.get(t) ?? 0);
+  }
+
+  const typeStats: LiveJsonLdTypeStat[] = [...canonicalPages.entries()]
+    .map(([type, pages]) => ({
+      type,
+      pages,
+      appPages: canonicalAppPages.get(type) ?? 0,
+      duplicatePages: duplicateCounts.get(type) ?? 0,
+      appIsOneCopy: duplicateAppCounts.get(type) ?? 0,
+      repeatable: REPEATABLE_JSON_LD_TYPES.has(type),
+    }))
+    .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type));
 
   // "Marker seen anywhere" is proof the embed is on. Its absence proves
   // nothing on its own: a snapshot crawled before the marked block shipped
@@ -549,6 +585,7 @@ export async function summarizeLiveJsonLd(
     typeCounts: [...pagesByType.entries()]
       .map(([type, pages]) => ({ type, pages }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
+    typeStats,
     duplicates: [...duplicateCounts.entries()]
       .map(([type, pages]) => ({
         type,
