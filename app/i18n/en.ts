@@ -24,6 +24,14 @@ export const en: Translation = {
 
   // Products Page
   products: {
+    variantsTitle: "Variants",
+    addOption: "Add variant",
+    optionNamePlaceholder: "Size, Colour, Material",
+    deleteOption: "Delete",
+    deleteOptionConfirm: "This removes the option and rebuilds the product's variants around the remaining ones.",
+    deleteValueCount: "This deletes {n} variant(s), including their stock, prices and SKUs. It cannot be undone.",
+    deleteValueUnknown: "This deletes the variants that use this value, including their stock and prices. How many that is could not be read.",
+    pendingBadge: "Not saved yet",
     title: "Products",
     loading: "Loading Products...",
     count: "Products",
@@ -112,7 +120,6 @@ export const en: Translation = {
     linkedNotEditableHintBefore: "The values of this option are linked to metaobjects. You can edit them under ",
     linkedNotEditableHintAfter: ".",
     metaobjectsLinkText: "Metaobjects",
-    optionPositionLabel: "Option",
     clearButton: "Clear",
     metafieldsEditInstructionPrimary: "Edit the metafield values in the primary language.",
     discardChanges: "Discard",
@@ -1201,7 +1208,13 @@ export const en: Translation = {
     phasePages: "Pages",
     phasePolicies: "Policies",
     phaseThemes: "Themes",
+    phaseSystem: "System content",
+    phaseDelivery: "Delivery methods",
+    phaseOnlineStoreExtras: "Filters & shop metadata",
+    phaseCookieBanner: "Cookie banner",
+    phaseSellingPlans: "Selling plans",
     phaseMetaobjects: "Metaobjects",
+    phaseMenus: "Menus",
     settingUpWebhooks: "Setting up webhooks...",
     setupWebhooks: "Setup Webhooks",
     setupWebhooksDescription: "Register webhooks to automatically sync products when they change in Shopify.",
@@ -1526,6 +1539,8 @@ export const en: Translation = {
 
   // Common
   common: {
+    add: "Add",
+    done: "Done",
     save: "Save",
     discard: "Discard",
     cancel: "Cancel",

@@ -241,12 +241,34 @@ export const UPSERT_THEME_FILES = `#graphql
  * REQUIREMENTS:
  *   - `write_products` scope (already present)
  */
+// Adding and deleting VALUES changes the variant matrix, which is why the
+// three list arguments travel together with a strategy:
+//
+//   optionValuesToAdd    — MANAGE creates the new combinations as variants,
+//                          which is what the Shopify admin does and what a
+//                          merchant means by "we now also sell it in red".
+//   optionValuesToDelete — deletes the variants that used the value, with
+//                          their stock, prices, SKUs and image assignments.
+//                          Irreversible, and the UI counts them before asking.
+//   optionValuesToUpdate — a rename, no matrix change at all.
+//
+// `variantStrategy` is required whenever the first two are present; the app
+// sends MANAGE, and never LEAVE_AS_IS, because a value with no variant behind
+// it is a value nobody can order.
+//
+// Every one of these documents selects `optionValues { id name }` and not just
+// the `values` string list: an ADDED value's GID is what a later rename and
+// every translation write address, and without it the client would have to
+// guess which value it had just created.
 export const PRODUCT_OPTION_UPDATE = `#graphql
-  mutation productOptionUpdate($productId: ID!, $option: OptionUpdateInput!, $optionValuesToUpdate: [OptionValueUpdateInput!]) {
+  mutation productOptionUpdate($productId: ID!, $option: OptionUpdateInput!, $optionValuesToUpdate: [OptionValueUpdateInput!], $optionValuesToAdd: [OptionValueCreateInput!], $optionValuesToDelete: [ID!], $variantStrategy: ProductOptionUpdateVariantStrategy) {
     productOptionUpdate(
       productId: $productId
       option: $option
       optionValuesToUpdate: $optionValuesToUpdate
+      optionValuesToAdd: $optionValuesToAdd
+      optionValuesToDelete: $optionValuesToDelete
+      variantStrategy: $variantStrategy
     ) {
       product {
         id
@@ -254,6 +276,7 @@ export const PRODUCT_OPTION_UPDATE = `#graphql
           id
           name
           position
+          optionValues { id name }
           values
         }
       }
@@ -261,6 +284,64 @@ export const PRODUCT_OPTION_UPDATE = `#graphql
         field
         message
       }
+    }
+  }
+`;
+
+/** A new option on an existing product. CREATE, not LEAVE_AS_IS: a second
+ *  option nobody can order is not what "add a variant" means. */
+export const PRODUCT_OPTIONS_CREATE = `#graphql
+  mutation productOptionsCreate($productId: ID!, $options: [OptionCreateInput!]!) {
+    productOptionsCreate(productId: $productId, options: $options, variantStrategy: CREATE) {
+      product {
+        id
+        options {
+          id
+          name
+          position
+          optionValues { id name }
+          values
+        }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+
+/** Removing a whole option collapses the matrix onto the remaining ones. */
+export const PRODUCT_OPTIONS_DELETE = `#graphql
+  mutation productOptionsDelete($productId: ID!, $options: [ID!]!) {
+    productOptionsDelete(productId: $productId, options: $options, strategy: NON_DESTRUCTIVE) {
+      product {
+        id
+        options {
+          id
+          name
+          position
+          optionValues { id name }
+          values
+        }
+      }
+      userErrors { field message }
+    }
+  }
+`;
+
+/** Order only. It does not touch values, so it cannot lose a variant. */
+export const PRODUCT_OPTIONS_REORDER = `#graphql
+  mutation productOptionsReorder($productId: ID!, $options: [OptionReorderInput!]!) {
+    productOptionsReorder(productId: $productId, options: $options) {
+      product {
+        id
+        options {
+          id
+          name
+          position
+          optionValues { id name }
+          values
+        }
+      }
+      userErrors { field message }
     }
   }
 `;

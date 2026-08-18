@@ -19,6 +19,7 @@ import { isSeoPath, SEO_RUBRICS } from "../config/seo-sections";
 import { meetsPlan } from "../utils/planUtils";
 import { extractReadableName } from "../utils/templates-field-factory";
 import { taskErrorText } from "../utils/task-error-text";
+import { SYNC_PHASE_ORDER, overallSyncPercent } from "../services/sync-phases.shared";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
 
@@ -51,6 +52,20 @@ const SITE_WIDE_TASK_FALLBACK: Record<string, string> = {
   seoBulkMeta: "Bulk editor: changes saved",
   bulkEditorTranslate: "Bulk editor: translation finished",
 };
+
+/**
+ * Translated name of an initial-sync phase. The `phase<Name>` keys live in the
+ * settings section; an unlabelled phase falls back to a humanized key rather
+ * than the raw camelCase one ("onlineStoreExtras" is what a merchant saw in a
+ * German banner before the labels existed).
+ */
+function syncPhaseLabel(settings: Record<string, string>, phase: string): string {
+  const key = `phase${phase.charAt(0).toUpperCase()}${phase.slice(1)}`;
+  return (
+    settings[key] ||
+    phase.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase())
+  );
+}
 
 export function MainNavigation() {
   const location = useLocation();
@@ -529,22 +544,15 @@ export function MainNavigation() {
                     ? `${t.settings?.syncingContent || "Sync"}: ${syncProgress.error}`
                     : `${t.settings?.syncingContent || "Setting up your store"}${
                         syncProgress.phase
-                          ? ` — ${
-                              (t.settings as unknown as Record<string, string>)[
-                                `phase${syncProgress.phase.charAt(0).toUpperCase()}${syncProgress.phase.slice(1)}`
-                              ] || syncProgress.phase
-                            }`
+                          ? ` — ${syncPhaseLabel(
+                              t.settings as unknown as Record<string, string>,
+                              syncProgress.phase,
+                            )}`
                           : ""
                       } (${syncProgress.percent}%)`}
                 </span>
                 {!syncProgress.error && (() => {
-                  const order = ["products", "collections", "articles", "pages", "policies", "themes", "metaobjects", "menus"];
-                  const idx = syncProgress.phase ? order.indexOf(syncProgress.phase) : -1;
-                  const overall = syncProgress.phase === "done"
-                    ? 100
-                    : Math.max(0, Math.min(100, idx >= 0
-                        ? Math.round((idx / order.length) * 100 + syncProgress.percent / order.length)
-                        : syncProgress.percent));
+                  const overall = overallSyncPercent(syncProgress.phase, syncProgress.percent);
                   const Bar = ({ value }: { value: number }) => (
                     <div
                       style={{
@@ -565,10 +573,8 @@ export function MainNavigation() {
                     </div>
                   );
                   const phaseLabel = (p: string) =>
-                    (t.settings as unknown as Record<string, string>)[
-                      `phase${p.charAt(0).toUpperCase()}${p.slice(1)}`
-                    ] || p;
-                  const synced = order
+                    syncPhaseLabel(t.settings as unknown as Record<string, string>, p);
+                  const synced = SYNC_PHASE_ORDER
                     .filter((p) => (syncProgress.stats?.[p] ?? 0) > 0)
                     .map((p) => `${phaseLabel(p)}: ${syncProgress.stats![p]}`);
                   return (

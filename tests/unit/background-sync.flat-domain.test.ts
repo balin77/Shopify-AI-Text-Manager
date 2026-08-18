@@ -126,6 +126,33 @@ describe('syncFlatDomain partial-failure guard (via syncOnlineStoreExtras)', () 
     expect(dbMock.$transaction).not.toHaveBeenCalled();
   });
 
+  it('lets an abort thrown from onProgress propagate', async () => {
+    // The initial-sync orchestrator asserts its abort signal from INSIDE the
+    // progress callback. Swallowing that throw as a resource-type failure left
+    // the run going after the timer was stopped and — with nothing persisted —
+    // tripped the empty-result health check into a bogus data-loss error.
+    const service = makeService();
+    gatewayOf(service).mockImplementation(async (query: string, opts?: { variables?: Record<string, unknown> }) => {
+      const vars = opts?.variables || {};
+      if (query.includes('translatableResources(')) {
+        if (vars.resourceType === 'FILTER') return listResponse('gid://shopify/Filter/1', [{ key: 'label', value: 'Color' }]);
+        if (vars.resourceType === 'SHOP') return listResponse('gid://shopify/Shop/1', [{ key: 'meta_title', value: 'My Shop' }]);
+      }
+      return emptyTranslations();
+    });
+    // A local row exists, so a swallowed abort would reach the health check.
+    dbMock.themeContent.count.mockResolvedValue(3);
+
+    const abort = () => {
+      const err = new Error('Client disconnected');
+      err.name = 'AbortError';
+      throw err;
+    };
+
+    await expect(service.syncOnlineStoreExtras(abort)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(dbMock.themeContent.deleteMany).not.toHaveBeenCalled();
+  });
+
   it('runs orphan cleanup when all resource types succeed', async () => {
     const service = makeService();
     gatewayOf(service).mockImplementation(async (query: string, opts?: { variables?: Record<string, unknown> }) => {

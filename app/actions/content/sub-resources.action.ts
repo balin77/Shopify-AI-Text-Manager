@@ -718,6 +718,18 @@ export async function handleTranslateSubResourceToAllLocales(
 // SAVE PRIMARY SUB-RESOURCES (Options + Metafields - main language values)
 // ============================================================================
 
+/** A JSON list from the form, or an empty one. A malformed payload must not
+ *  fail the whole save — the other halves of it are still valid. */
+function safeParseList<T>(raw: string): T[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function handleSavePrimarySubResources(
   ctx: ContentActionHandlerContext,
   formData: FormData,
@@ -734,12 +746,28 @@ export async function handleSavePrimarySubResources(
     const optionsChangesJson = getFormString(formData, "optionsChanges");
     const metafieldChangesJson = getFormString(formData, "metafieldChanges");
 
-    const optionsChanges: Record<string, { name?: string; valueUpdates?: { id: string; name: string }[] }> = optionsChangesJson
-      ? JSON.parse(optionsChangesJson) : {};
+    const optionsChanges: Record<
+      string,
+      {
+        name?: string;
+        valueUpdates?: { id: string; name: string }[];
+        valuesToAdd?: string[];
+        valuesToDelete?: string[];
+      }
+    > = optionsChangesJson ? JSON.parse(optionsChangesJson) : {};
+    /** Brand-new options, and options to remove entirely. */
+    const optionsToCreate: Array<{ name: string; values: string[] }> = safeParseList(
+      getFormString(formData, "optionsToCreate"),
+    );
+    const optionsToDelete: string[] = safeParseList(getFormString(formData, "optionsToDelete"));
+    /** The full ordered list of option ids, after the creates and deletes. */
+    const optionOrder: string[] = safeParseList(getFormString(formData, "optionOrder"));
+    /** Failure CODES from the option writes — phrased by the client. */
+    const optionWarnings: string[] = [];
     const metafieldChanges: Record<string, string> = metafieldChangesJson
       ? JSON.parse(metafieldChangesJson) : {};
 
-    const { PRODUCT_OPTION_UPDATE, METAFIELDS_SET } = await import("~/graphql/content.mutations");
+    const { METAFIELDS_SET } = await import("~/graphql/content.mutations");
 
     const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
     const gateway = new ShopifyApiGateway(admin, session.shop);
@@ -749,82 +777,73 @@ export async function handleSavePrimarySubResources(
     const savedMetafields: string[] = [];
     const failedMetafields: string[] = [];
 
-    // 1. Update option names and/or values using productOptionUpdate mutation
+    // 1. Options: names, values, and — new — adding, deleting and reordering.
+    //
+    // All of it goes through `product-options.server.ts` rather than an inline
+    // mutation here. That module owns the rules that make these writes safe:
+    // `variantStrategy` only where the matrix actually moves, the echo check,
+    // and a cache mirror built from what Shopify STORED (an added value's GID
+    // is assigned by Shopify, and every translation write addresses values by
+    // GID). A second copy of that here is how the two would drift.
+    const {
+      applyOptionChange,
+      createOption,
+      deleteOption,
+      reorderOptions,
+    } = await import("~/services/product-options.server");
+
+    /** Order matters: create before reorder, so a new option can be placed;
+     *  delete before reorder, so the order does not name a gone option. */
+    for (const create of optionsToCreate) {
+      const warning = await createOption(admin, db, session.shop, {
+        productId,
+        name: create.name,
+        values: create.values,
+      });
+      if (warning) optionWarnings.push(warning);
+    }
+
+    for (const optionId of optionsToDelete) {
+      if (!isValidShopifyGID(optionId)) continue;
+      const warning = await deleteOption(admin, db, session.shop, {
+        productId,
+        optionId,
+        // Counted from the CACHE, which is the server's own state — a client
+        // that under-reports it could talk this into deleting the last option.
+        remainingCount: await db.productOption.count({
+          where: { productId: productId.replace("gid://shopify/Product/", "") },
+        }),
+      });
+      if (warning) optionWarnings.push(warning);
+      else savedOptions.push(optionId);
+    }
+
     for (const [optionId, changes] of Object.entries(optionsChanges)) {
       if (!isValidShopifyGID(optionId)) continue;
-
-      const hasNameChange = changes.name !== undefined;
-      const hasValueChanges = changes.valueUpdates && changes.valueUpdates.length > 0;
-
-      if (!hasNameChange && !hasValueChanges) continue;
-
-      try {
-        const optionInput: { id: string; name?: string } = { id: optionId };
-        if (hasNameChange) {
-          optionInput.name = changes.name;
-        }
-
-        const variables: { productId: string; option: typeof optionInput; optionValuesToUpdate?: { id: string; name: string }[] } = {
-          productId,
-          option: optionInput,
-        };
-
-        if (hasValueChanges) {
-          variables.optionValuesToUpdate = changes.valueUpdates;
-        }
-
-        const updateResponse = await gateway.graphql(
-          PRODUCT_OPTION_UPDATE,
-          { variables }
-        );
-
-        const updateData = await updateResponse.json() as any;
-
-        if (updateData.data?.productOptionUpdate?.userErrors?.length > 0) {
-          logger.error("[UnifiedContent] productOptionUpdate userErrors", {
-            context: "UnifiedContent", optionId, errors: updateData.data.productOptionUpdate.userErrors,
-          });
-          failedOptions.push(optionId);
-        } else {
-          savedOptions.push(optionId);
-
-          // Mirror the saved primary edit into the local DB. The loader reads
-          // option name/values from the ProductOption row; without this, the
-          // client's post-save revalidation re-reads the STALE row and the UI
-          // snaps back to the old value (only a full Shopify reload fixes it).
-          try {
-            const dbOption = await db.productOption.findUnique({ where: { id: optionId } });
-            if (dbOption) {
-              const dbData: { name?: string; values?: string } = {};
-              if (hasNameChange && changes.name !== undefined) {
-                dbData.name = changes.name;
-              }
-              if (hasValueChanges && changes.valueUpdates) {
-                let parsed: any[] = [];
-                try { parsed = JSON.parse(dbOption.values || "[]"); } catch { parsed = []; }
-                const nameById = new Map(changes.valueUpdates.map(v => [v.id, v.name]));
-                const updatedValues = parsed.map((v: any) =>
-                  // Legacy string-format values have no id → can't be matched, leave as-is
-                  typeof v === "string" ? v : (nameById.has(v.id) ? { ...v, name: nameById.get(v.id) } : v)
-                );
-                dbData.values = JSON.stringify(updatedValues);
-              }
-              if (Object.keys(dbData).length > 0) {
-                await db.productOption.update({ where: { id: optionId }, data: dbData });
-              }
-            }
-          } catch (err) {
-            logger.error(`[UnifiedContent] Failed to mirror primary option ${optionId} into DB`, {
-              context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      } catch (err) {
-        logger.error(`[UnifiedContent] Failed to update option ${optionId}`, {
-          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-        });
+      const warning = await applyOptionChange(admin, db, session.shop, {
+        productId,
+        optionId,
+        name: changes.name,
+        values: {
+          toUpdate: changes.valueUpdates,
+          toAdd: changes.valuesToAdd,
+          toDelete: changes.valuesToDelete,
+        },
+      });
+      if (warning) {
+        optionWarnings.push(warning);
         failedOptions.push(optionId);
+      } else {
+        savedOptions.push(optionId);
       }
+    }
+
+    if (optionOrder.length > 1) {
+      const warning = await reorderOptions(admin, db, session.shop, {
+        productId,
+        orderedIds: optionOrder.filter(isValidShopifyGID),
+      });
+      if (warning) optionWarnings.push(warning);
     }
 
     // 3. Update metafields using metafieldsSet mutation
@@ -1045,6 +1064,9 @@ export async function handleSavePrimarySubResources(
       actionType: "savePrimarySubResources",
       success: true,
       savedOptions,
+      // Failure CODES — the client phrases them, this app ships in three
+      // languages and the server has no business writing English here.
+      optionWarnings,
       failedOptions,
       savedMetafields,
       failedMetafields,
