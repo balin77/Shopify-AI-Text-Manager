@@ -1706,6 +1706,61 @@ describe("runCrawl — progress reporting (§3.5)", () => {
     expect(Math.max(...beats.map((b) => b.percent))).toBe(CRAWL_PHASE_MAX_PERCENT);
   });
 
+  it("never reports the crawl phase complete while the loop is still finding pages", async () => {
+    // No sitemap at all, so the root page is the entire frontier when the first
+    // beat is due — the shape that used to report 90% before the root's own
+    // links were queued, and single digits on the very next beat.
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => new HttpResponse(null, { status: 404 })),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html(
+            "Home – Acme",
+            Array.from({ length: 30 }, (_, i) => `<a href="/p/${i}">p${i}</a>`).join(""),
+          ),
+        ),
+      ),
+      http.get(`${BASE}/p/:n`, ({ params }) =>
+        HttpResponse.html(html(`p${params.n} – Acme`, `<h1>p${params.n}</h1><p>hi</p>`)),
+      ),
+    );
+    const beats: number[] = [];
+
+    await runCrawl("snap-progress-no-spike", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: false,
+      // Beat on EVERY page, so the first one — the root, whose 30 links are the
+      // whole frontier — is reported.
+      heartbeatEvery: 1,
+      onProgress: (_crawled, _total, percent) => {
+        beats.push(percent);
+      },
+    });
+
+    // The FIRST beat is the whole regression: it reports the root page, and the
+    // root page's 30 links are the entire frontier. Reported before they were
+    // queued it read 1/1 — the phase complete — and the next beat read 2/31.
+    // A 90 later in the loop is not the same thing and not a defect: by then
+    // everything queued really is done and the crawl really is ending.
+    expect(beats.length).toBeGreaterThan(2);
+    expect(beats[0]).toBeLessThan(10);
+
+    // And no beat may collapse: the estimate may step back as the frontier
+    // grows, but not from "done" to nothing.
+    const worstDrop = Math.max(...beats.slice(1).map((p, i) => beats[i] - p));
+    expect(worstDrop).toBeLessThan(20);
+
+    expect(beats.at(-1)).toBe(CRAWL_PHASE_MAX_PERCENT);
+  });
+
   it("moves the percentage past the crawl phase while the external-link pass runs", async () => {
     server.use(
       http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
@@ -1926,6 +1981,101 @@ describe("runCrawl — a stalled response body (§3.3)", () => {
       seoCrawlExternalLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
     } as any;
   }
+
+  it("keeps a page that arrives slowly but steadily — the deadline is idle, not total", async () => {
+    // Six chunks, each well inside the idle window but together far past it.
+    // Judged as a total budget this healthy page is aborted and lands in the
+    // report as unreachable, which is a broken-link finding nobody can fix.
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", `<a href="/slow">slow</a>`))),
+      http.get(`${BASE}/slow`, () => {
+        const parts = [
+          "<html><head><title>Slow – Acme</title>",
+          '<link rel="canonical" href="' + BASE + '/slow">',
+          "</head><body><h1>Slow</h1>",
+          "<p>" + "word ".repeat(30) + "</p>",
+          "<p>" + "word ".repeat(30) + "</p>",
+          "</body></html>",
+        ];
+        const stream = new ReadableStream({
+          async start(controller) {
+            for (const part of parts) {
+              await new Promise((r) => setTimeout(r, 30));
+              controller.enqueue(new TextEncoder().encode(part));
+            }
+            controller.close();
+          },
+        });
+        return new HttpResponse(stream, { headers: { "content-type": "text/html" } });
+      }),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-slow-body", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: false,
+      // Each gap is 30ms, the whole body ~180ms: inside the idle window, past
+      // a total budget of the same size.
+      bodyTimeoutMs: 100,
+      bodyTotalTimeoutMs: 5_000,
+    });
+
+    const slow = db.__pages.find((p: any) => p.url === `${BASE}/slow`);
+    expect(slow?.statusCode).toBe(200);
+    // Fully read, not truncated at whatever had arrived when the clock ran out.
+    expect(slow?.title).toBe("Slow – Acme");
+    expect(slow?.canonical).toBe(`${BASE}/slow`);
+    expect(summary.pagesBroken).toBe(0);
+  });
+
+  it("gives up on a body that only trickles, so the idle clock cannot be reset forever", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", `<a href="/drip">drip</a>`))),
+      // A byte often enough to re-arm the idle clock, forever.
+      http.get(`${BASE}/drip`, () => {
+        const stream = new ReadableStream({
+          async start(controller) {
+            for (;;) {
+              await new Promise((r) => setTimeout(r, 20));
+              controller.enqueue(new TextEncoder().encode("."));
+            }
+          },
+        });
+        return new HttpResponse(stream, { headers: { "content-type": "text/html" } });
+      }),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-drip-body", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: false,
+      bodyTimeoutMs: 5_000,
+      bodyTotalTimeoutMs: 120,
+    });
+
+    // The run ended — the worker was not held by a stream that never finishes.
+    expect(summary.status).toBe("completed");
+    const drip = db.__pages.find((p: any) => p.url === `${BASE}/drip`);
+    expect(drip?.statusCode).toBe(0);
+  });
 
   it("gives up on the stalled page, records it as unreachable, and finishes the crawl", async () => {
     server.use(

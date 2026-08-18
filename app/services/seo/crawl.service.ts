@@ -117,9 +117,27 @@ const CRAWL_CONCURRENCY = 2;
 const RETRY_AFTER_MAX_MS = 5_000;
 /** Fallback pause before the single 429 retry when no `Retry-After` was sent. */
 const RATE_LIMIT_BACKOFF_MS = 2_000;
-/** Deadline for reading a response BODY, armed after the headers are in. Same
- *  order as REQUEST_TIMEOUT_MS: this is the second half of one request. */
+/**
+ * How long a response BODY may go WITHOUT delivering a byte, armed once the
+ * headers are in. Same order as REQUEST_TIMEOUT_MS: this is the second half of
+ * one request.
+ *
+ * Idle, not total, and the distinction is the whole point. The failure this
+ * guards is a host that sends headers and then falls silent — no bytes, ever.
+ * A total budget would also cut off a page that is arriving steadily but
+ * slowly and report it as unreachable, which is a healthy page turned into a
+ * broken-link finding: exactly the class of false positive the rest of this
+ * report filters out.
+ */
 const BODY_READ_TIMEOUT_MS = 10_000;
+/**
+ * Ceiling on the whole body read regardless of progress. The idle timer alone
+ * cannot bound a trickle (a byte every nine seconds resets it forever), and
+ * this must not be able to hold one of only CRAWL_CONCURRENCY slots
+ * indefinitely — the hang it exists to prevent. Generous on purpose: at the
+ * 2 MB body cap this is under 35 KB/s, slower than any storefront CDN serves.
+ */
+const BODY_READ_TOTAL_MS = 60_000;
 /** Race marker for that deadline — a symbol, so it can never be confused with a
  *  legitimate `ReadableStreamReadResult` or with a body that read as `""`. */
 const TIMED_OUT = Symbol("body-read-timeout");
@@ -805,6 +823,20 @@ interface FetchOutcome {
  * or its title. The caller turns a null into the same status-0 outcome a
  * network error produces, which the retry already covers.
  */
+/** The two clocks a body read runs against — see BODY_READ_TIMEOUT_MS. Passed
+ *  as one value so the fetch layer threads a budget, not a pair of numbers. */
+interface BodyReadBudget {
+  /** Longest gap between two chunks. */
+  idleMs: number;
+  /** Ceiling on the whole read regardless of progress. */
+  totalMs: number;
+}
+
+const DEFAULT_BODY_READ_BUDGET: BodyReadBudget = {
+  idleMs: BODY_READ_TIMEOUT_MS,
+  totalMs: BODY_READ_TOTAL_MS,
+};
+
 async function readBodyCapped(
   res: Response,
   maxBytes: number,
@@ -814,7 +846,7 @@ async function readBodyCapped(
    * body nobody will read.
    */
   controller?: AbortController,
-  timeoutMs: number = BODY_READ_TIMEOUT_MS,
+  budget: BodyReadBudget = DEFAULT_BODY_READ_BUDGET,
 ): Promise<string | null> {
   // The deadline is enforced HERE rather than left to the abort alone: whether
   // an abort errors an already-returned body stream is up to the fetch
@@ -829,7 +861,20 @@ async function readBodyCapped(
       resolve(TIMED_OUT);
     };
   });
-  const timer = setTimeout(fire, timeoutMs);
+  // Two clocks: `idle` is re-armed by every chunk that arrives, `total` never
+  // is. A steadily-arriving large page trips neither; a silent one trips the
+  // first within `timeoutMs`; a trickle that would reset the first forever
+  // trips the second.
+  let idle = setTimeout(fire, budget.idleMs);
+  const total = setTimeout(fire, budget.totalMs);
+  const rearmIdle = () => {
+    clearTimeout(idle);
+    idle = setTimeout(fire, budget.idleMs);
+  };
+  const clearClocks = () => {
+    clearTimeout(idle);
+    clearTimeout(total);
+  };
   const giveUp = () => {
     controller?.abort();
     return null;
@@ -845,7 +890,7 @@ async function readBodyCapped(
       if (text === null) return null;
       return text.length > maxBytes ? text.slice(0, maxBytes) : text;
     } finally {
-      clearTimeout(timer);
+      clearClocks();
     }
   }
 
@@ -863,6 +908,8 @@ async function readBodyCapped(
       const next = await Promise.race([read, deadline]);
       if (next === TIMED_OUT || expired) return giveUp();
       if (next.done) break;
+      // Progress: the connection is alive, so the idle clock starts over.
+      rearmIdle();
       received += next.value.byteLength;
       out += decoder.decode(next.value, { stream: true });
       if (received >= maxBytes) {
@@ -880,7 +927,7 @@ async function readBodyCapped(
     // without incrementing the counter the progress bar reads.
     return null;
   } finally {
-    clearTimeout(timer);
+    clearClocks();
     // Tear the stream down too: the abort in `giveUp` closes the connection,
     // this releases the reader we walked away from.
     if (expired) reader.cancel().catch(() => {});
@@ -894,7 +941,7 @@ async function fetchOnceWithRedirects(
   userAgent: string,
   canonicalHost: string,
   aliasHosts: string[],
-  bodyTimeoutMs: number,
+  bodyBudget: BodyReadBudget,
 ): Promise<FetchOutcome> {
   const started = Date.now();
   let currentUrl = startUrl;
@@ -997,7 +1044,7 @@ async function fetchOnceWithRedirects(
     // Discard non-HTML content types after the headers (§3.1) — never buffer
     // the body of an image/PDF/etc, and never traverse links out of it.
     if (contentType.toLowerCase().includes("text/html")) {
-      body = await readBodyCapped(res, MAX_BODY_BYTES, controller, bodyTimeoutMs);
+      body = await readBodyCapped(res, MAX_BODY_BYTES, controller, bodyBudget);
       // A read that failed is not an empty page: a `<head>` cut halfway
       // through parses cleanly and would be reported as a page missing its
       // title or its canonical. Report it as the network failure it is — the
@@ -1021,7 +1068,7 @@ async function fetchOnceWithRedirects(
       // it's what tells a Cloudflare interstitial apart from a bare 403. Never
       // parsed as content (the cheerio path is 2xx-only). A failed read only
       // costs the attribution here, so the status stands either way.
-      body = await readBodyCapped(res, BLOCK_BODY_SNIFF_BYTES, controller, bodyTimeoutMs);
+      body = await readBodyCapped(res, BLOCK_BODY_SNIFF_BYTES, controller, bodyBudget);
     }
     return {
       status: res.status,
@@ -1075,10 +1122,10 @@ async function fetchWithRetry(
   userAgent: string,
   canonicalHost: string,
   aliasHosts: string[],
-  bodyTimeoutMs: number,
+  bodyBudget: BodyReadBudget,
 ): Promise<FetchOutcome> {
   const once = () =>
-    fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts, bodyTimeoutMs);
+    fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts, bodyBudget);
   const first = await once();
 
   if (first.status === 429) {
@@ -1119,7 +1166,7 @@ async function fetchSitemapDoc(
   fetchImpl: typeof fetch,
   sitemapUrl: string,
   userAgent: string,
-  bodyTimeoutMs: number,
+  bodyBudget: BodyReadBudget,
 ): Promise<SitemapDoc | null> {
   try {
     const controller = new AbortController();
@@ -1137,7 +1184,7 @@ async function fetchSitemapDoc(
     // Same capped-read helper as page fetches (§ cheap fix 9) — an
     // unbounded `res.text()` here let a pathological/malicious sitemap
     // buffer an arbitrarily large response into memory.
-    const text = await readBodyCapped(res, MAX_BODY_BYTES, controller, bodyTimeoutMs);
+    const text = await readBodyCapped(res, MAX_BODY_BYTES, controller, bodyBudget);
     // A half-read sitemap is not a short sitemap: parsing it would seed a
     // truncated URL list and look like a complete one.
     if (text === null) return null;
@@ -1241,10 +1288,14 @@ export interface RunCrawlDeps {
    * the crawl take longer.
    */
   checkExternalLinks?: boolean;
-  /** Deadline for reading a response BODY, armed once the headers are in. Same
-   *  test seam as `coolDownMs` / `spacingMs`: a real stall is 10s of wall clock,
+  /** Longest silence inside a response BODY before the read gives up. Same test
+   *  seam as `coolDownMs` / `spacingMs`: a real stall is 10s of wall clock,
    *  which no unit test should spend. */
   bodyTimeoutMs?: number;
+  /** Ceiling on a whole body read regardless of progress (see
+   *  BODY_READ_TOTAL_MS). Separate seam because it is a different failure — a
+   *  trickle, not a silence. */
+  bodyTotalTimeoutMs?: number;
   /** Overrides for the external pass, used by tests to keep it instant. */
   externalBudgetMs?: number;
   externalTimeoutMs?: number;
@@ -1327,6 +1378,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     spacingMs: spacingOverride,
     maxPages = DEFAULT_MAX_CRAWL_PAGES,
     bodyTimeoutMs = BODY_READ_TIMEOUT_MS,
+    bodyTotalTimeoutMs = BODY_READ_TOTAL_MS,
     onProgress,
     heartbeatEvery = 25,
     heartbeatMaxIntervalMs = HEARTBEAT_MAX_INTERVAL_MS,
@@ -1337,6 +1389,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   } = deps;
 
   const userAgent = crawlUserAgent(appUrl);
+  const bodyBudget: BodyReadBudget = { idleMs: bodyTimeoutMs, totalMs: bodyTotalTimeoutMs };
   const origin = `https://${primaryDomain}`;
   const rootUrl = normalizeCrawlUrl("/", origin, primaryDomain, [myshopifyDomain]);
   if (!rootUrl) {
@@ -1524,7 +1577,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     if (abortedError) return;
     await awaitCoolDown();
     if (abortedError) return;
-    const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain], bodyTimeoutMs);
+    const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain], bodyBudget);
     pagesCompleted += 1;
 
     if (isBotBlockStatus(outcome.status)) {
@@ -1621,46 +1674,58 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     };
     pages.set(url, record);
 
-    await maybeHeartbeat();
+    try {
+      if (abortedError) return;
 
-    if (abortedError) return;
+      if (outcome.body && outcome.status >= 200 && outcome.status < 300 && depth < CRAWL_BFS_MAX_DEPTH) {
+        let $: cheerio.CheerioAPI;
+        try {
+          $ = cheerio.load(outcome.body);
+        } catch {
+          return;
+        }
+        record.title = $("title").first().text().trim() || null;
+        record.metaDesc = $('meta[name="description"]').attr("content")?.trim() || null;
+        record.canonical = $('link[rel="canonical"]').attr("href")?.trim() || null;
+        record.h1Count = $("h1").length;
+        record.wordCount = countWords($);
+        // §2.2-§2.3 — free: the HTML is parsed either way.
+        record.metaRobots = extractMetaRobots($);
+        record.indexabilityKnown = true;
+        record.h1First =
+          $("h1").first().text().replace(/\s+/g, " ").trim().slice(0, MAX_H1_TEXT_LENGTH) || null;
+        const images = countImagesWithoutAlt($);
+        record.imgCount = images.imgCount;
+        record.imgMissingAlt = images.imgMissingAlt;
+        // Free: the HTML is already fetched and parsed. This is the only place in
+        // the app that sees what the storefront actually serves — the JSON-LD
+        // section otherwise only validates what the app WOULD emit.
+        record.jsonLdTypes = extractJsonLdTypes($);
+        record.jsonLdAppTypes = extractAppJsonLdTypes($);
 
-    if (outcome.body && outcome.status >= 200 && outcome.status < 300 && depth < CRAWL_BFS_MAX_DEPTH) {
-      let $: cheerio.CheerioAPI;
-      try {
-        $ = cheerio.load(outcome.body);
-      } catch {
-        return;
+        $("a[href]").each((_, el) => {
+          const href = $(el).attr("href");
+          if (!href) return;
+          const anchor = $(el).text().replace(/\s+/g, " ").trim().slice(0, 200) || null;
+          tryEnqueue(href, depth + 1, url, anchor);
+          // §6.1 — the same sweep, the other direction. `normalizeCrawlUrl`
+          // (inside tryEnqueue) keeps discarding foreign origins; this collects
+          // them instead of changing that rule.
+          if (checkExternalLinks) trackExternalTarget(href, url, anchor);
+        });
       }
-      record.title = $("title").first().text().trim() || null;
-      record.metaDesc = $('meta[name="description"]').attr("content")?.trim() || null;
-      record.canonical = $('link[rel="canonical"]').attr("href")?.trim() || null;
-      record.h1Count = $("h1").length;
-      record.wordCount = countWords($);
-      // §2.2-§2.3 — free: the HTML is parsed either way.
-      record.metaRobots = extractMetaRobots($);
-      record.indexabilityKnown = true;
-      record.h1First =
-        $("h1").first().text().replace(/\s+/g, " ").trim().slice(0, MAX_H1_TEXT_LENGTH) || null;
-      const images = countImagesWithoutAlt($);
-      record.imgCount = images.imgCount;
-      record.imgMissingAlt = images.imgMissingAlt;
-      // Free: the HTML is already fetched and parsed. This is the only place in
-      // the app that sees what the storefront actually serves — the JSON-LD
-      // section otherwise only validates what the app WOULD emit.
-      record.jsonLdTypes = extractJsonLdTypes($);
-      record.jsonLdAppTypes = extractAppJsonLdTypes($);
-
-      $("a[href]").each((_, el) => {
-        const href = $(el).attr("href");
-        if (!href) return;
-        const anchor = $(el).text().replace(/\s+/g, " ").trim().slice(0, 200) || null;
-        tryEnqueue(href, depth + 1, url, anchor);
-        // §6.1 — the same sweep, the other direction. `normalizeCrawlUrl`
-        // (inside tryEnqueue) keeps discarding foreign origins; this collects
-        // them instead of changing that rule.
-        if (checkExternalLinks) trackExternalTarget(href, url, anchor);
-      });
+    } finally {
+      // AFTER this page's own links are queued, never before. `pagesStarted` is
+      // the denominator, so a beat placed between the counter bump and the
+      // enqueues reports a frontier that is exactly this page's links too
+      // small: the last page of a level then reads as "everything queued is
+      // done", i.e. the phase complete, and the next beat drops back to single
+      // digits. With no sitemap seed that was the FIRST page — 90% and then 4%.
+      //
+      // It also makes the window unobservable to the other worker: this was the
+      // only await between `pagesCompleted += 1` and the enqueue sweep, so with
+      // it moved here that whole stretch is synchronous.
+      await maybeHeartbeat();
     }
   };
 
@@ -1739,7 +1804,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       }
     };
 
-    const root = await fetchSitemapDoc(fetchImpl, sitemapUrl, userAgent, bodyTimeoutMs);
+    const root = await fetchSitemapDoc(fetchImpl, sitemapUrl, userAgent, bodyBudget);
     if (root) {
       seed(root.pageUrls);
       // Expand the index one level. Routed through the semaphore like every
@@ -1760,7 +1825,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       const docs = await Promise.all(
         subs.map((sub) =>
           semaphore.run(() =>
-            abortedError ? Promise.resolve(null) : fetchSitemapDoc(fetchImpl, sub, userAgent, bodyTimeoutMs),
+            abortedError ? Promise.resolve(null) : fetchSitemapDoc(fetchImpl, sub, userAgent, bodyBudget),
           ),
         ),
       );
