@@ -42,8 +42,10 @@ import { isMetaobjectLabelField } from "../../constants/shopifyFields";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 import {
+  formatMetaobjectFieldValue,
   isTranslatableMetaobjectFieldType,
   metaobjectFieldRole,
+  metaobjectListValueIsAmbiguous,
   isWritableMetaobjectFieldType,
   parseMetaobjectFieldInput,
   parseMetaobjectFieldKey,
@@ -233,6 +235,31 @@ export async function handleMetaobjectUpdate(
           errors.push(`${field.fieldKey}: the display name cannot be empty.`);
           continue;
         }
+        const stored = entry.fields.find((f) => f.key === field.fieldKey)?.value ?? "";
+        // Safety net for flows that omit `changedFields` (accept-and-translate):
+        // an unchanged value must not re-write and must not invalidate the
+        // entry's foreign translations.
+        //
+        // The comparison is on the DISPLAY form, not the stored one. A list is
+        // shown as `A | B | C` and stored as JSON, so a value that came back
+        // exactly as it was sent down can still fail to round-trip -- and then
+        // an untouched field would be "changed" and written in its damaged
+        // form. What the editor showed against what it sent back is the only
+        // comparison that answers "did the merchant touch this".
+        if (formatMetaobjectFieldValue(fieldType, stored) === field.value) continue;
+
+        // A list ENTRY that itself contains the separator cannot survive the
+        // join/split round trip: editing it would shatter one entry into
+        // several. The bulk editor makes such a cell read-only for the same
+        // reason; here the write is refused with the reason, which is the only
+        // honest answer once the merchant HAS changed something.
+        if (metaobjectListValueIsAmbiguous(fieldType, stored)) {
+          errors.push(
+            `${field.fieldKey}: one of the list values contains "|", which this editor uses to separate them. Edit this field in the Shopify admin.`,
+          );
+          continue;
+        }
+
         const parsed = parseMetaobjectFieldInput(fieldType, field.value);
         if (!parsed.ok) {
           errors.push(
@@ -244,10 +271,6 @@ export async function handleMetaobjectUpdate(
           );
           continue;
         }
-        // Safety net for flows that omit `changedFields` (accept-and-translate):
-        // an unchanged value must not re-write and must not invalidate the
-        // entry's foreign translations.
-        const stored = entry.fields.find((f) => f.key === field.fieldKey)?.value ?? "";
         if (stored === parsed.value) continue;
         writes.push({ ref: field.compoundKey, key: field.fieldKey, value: parsed.value });
         if (isTranslatableMetaobjectFieldType(fieldType)) translatableConfirmedKeys.push(field.fieldKey);
@@ -360,6 +383,28 @@ export async function handleMetaobjectUpdate(
 
       const toRegister: Array<{ key: string; value: string }> = [];
       const toRemove: string[] = [];
+
+      // A list TRANSLATION is stored as JSON too, so it has the same
+      // round-trip hazard as the primary value: an entry containing "|" would
+      // be shattered by the split. The stored rows are only read when a list
+      // field is actually among the writes.
+      const hasListField = fields.some(
+        (f) => metaobjectFieldRole(fieldTypeOf(f.fieldKey, entry, definitionFields)) === "list",
+      );
+      const storedTranslations = hasListField
+        ? await db.metaobjectTranslation.findMany({
+            where: {
+              shop: session.shop,
+              metaobjectId,
+              locale,
+              marketId,
+              key: { in: fields.map((f) => f.fieldKey) },
+            },
+            select: { key: true, value: true },
+          })
+        : [];
+      const storedTranslationByKey = new Map(storedTranslations.map((r) => [r.key, r.value]));
+
       for (const field of fields) {
         const fieldType = fieldTypeOf(field.fieldKey, entry, definitionFields);
         if (!isTranslatableMetaobjectFieldType(fieldType)) {
@@ -374,6 +419,18 @@ export async function handleMetaobjectUpdate(
             fieldKey: field.fieldKey,
             fieldType,
           });
+          continue;
+        }
+        const storedTranslation = storedTranslationByKey.get(field.fieldKey) ?? "";
+        // Unchanged in the DISPLAY form ⇒ nothing to write. Same reason as on
+        // the primary path: a list does not round-trip byte for byte.
+        if (storedTranslation !== "" && formatMetaobjectFieldValue(fieldType, storedTranslation) === field.value) {
+          continue;
+        }
+        if (metaobjectListValueIsAmbiguous(fieldType, storedTranslation)) {
+          errors.push(
+            `${field.fieldKey}: one of the translated list values contains "|", which this editor uses to separate them. Edit this field in the Shopify admin.`,
+          );
           continue;
         }
         // Translations are stored the way Shopify stores the primary value, so

@@ -216,10 +216,19 @@ export default function MetaobjectsPage() {
   const [entrySearch, setEntrySearch] = useState("");
   /** The entry to land on: a deep link, or the one just created. */
   const [focusEntryId, setFocusEntryId] = useState<string | null>(selectedEntryId ?? null);
+  /**
+   * The entry created in THIS session, which is a different thing from the one
+   * being scrolled to: a deep link from the product editor also focuses an
+   * entry, and badging it "Just created" would state something untrue about an
+   * entry that may be years old.
+   */
+  const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
   const [usage, setUsage] = useState<Record<string, MetaobjectUsage>>({});
   const [entryError, setEntryError] = useState<string | null>(null);
   /** What is currently in flight, so a stale response cannot overwrite a newer one. */
   const requestedRef = useRef<string | null>(null);
+  /** Bumped to force a re-fetch of a request that is otherwise identical. */
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   // The selected type's item, augmented with whatever the entry loader
   // returned. Only the SELECTED type carries entries — the others are the
@@ -294,11 +303,12 @@ export default function MetaobjectsPage() {
     setLoaded(null);
     setUsage({});
     setEntryError(null);
+    setJustCreatedId(null);
   }, [selectedType]);
 
   // ── Load the selected type's entries ────────────────────────────────────
   const requestKey = selectedType
-    ? `${selectedType}::${entryPage}::${entrySearch}::${focusEntryId ?? ""}`
+    ? `${selectedType}::${entryPage}::${entrySearch}::${focusEntryId ?? ""}::${reloadNonce}`
     : null;
 
   useEffect(() => {
@@ -316,7 +326,7 @@ export default function MetaobjectsPage() {
     // entryFetcher is intentionally not a dependency — its identity changes on
     // every state transition and the effect would re-fire mid-flight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedType, requestKey, entryPage, entrySearch, focusEntryId]);
+  }, [selectedType, requestKey, entryPage, entrySearch, focusEntryId, reloadNonce]);
 
   useEffect(() => {
     if (entryFetcher.state !== "idle" || !entryFetcher.data) return;
@@ -351,11 +361,18 @@ export default function MetaobjectsPage() {
     setUsage((prev) => ({ ...prev, ...(usageFetcher.data?.usage ?? {}) }));
   }, [usageFetcher.state, usageFetcher.data]);
 
-  /** Reload the current type's entries — after a create or a delete. */
+  /**
+   * Reload the current type's entries — after a create or a delete.
+   *
+   * The nonce is what makes it a reload: the load effect keys on the request it
+   * describes (type, page, search, focus), and after a delete none of those
+   * change. Clearing the ref alone would not re-run the effect, and the entry
+   * area would sit in its loading state until something else moved.
+   */
   const reloadEntries = useCallback(() => {
-    requestedRef.current = null;
     usageKeyRef.current = "";
     setLoaded(null);
+    setReloadNonce((n) => n + 1);
   }, []);
 
   // ── Delete one entry ────────────────────────────────────────────────────
@@ -387,6 +404,7 @@ export default function MetaobjectsPage() {
       // cannot find; the create banner already offers a reload.
       if (!info.synced) return;
       setFocusEntryId(info.id);
+      setJustCreatedId(info.id);
       setEntrySearch("");
       reloadEntries();
     },
@@ -471,7 +489,7 @@ export default function MetaobjectsPage() {
           unsupportedFields={specs
             .filter((s) => s.role === "unsupported")
             .map((s) => ({ label: s.label, fieldType: s.fieldType }))}
-          justCreated={focusEntryId === entry.id}
+          justCreated={justCreatedId === entry.id}
           readOnlyReason={writeAccess === "readOnly" ? "refused" : undefined}
           usage={entryUsage}
           onDelete={() => deleteItem.request({ id: entry.id, title, resource: "metaobject" })}
@@ -485,7 +503,7 @@ export default function MetaobjectsPage() {
         </MetaobjectEntryCard>
       );
     },
-    [entryById, loaded, usage, focusEntryId, deleteItem, cardTexts, handleNavigate, writeAccess],
+    [entryById, loaded, usage, justCreatedId, deleteItem, cardTexts, handleNavigate, writeAccess],
   );
 
   // Entries with NO editable field still get a card — deriving the order from

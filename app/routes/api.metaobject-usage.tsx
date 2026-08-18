@@ -17,14 +17,15 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { canAccessContentType } from "~/utils/planUtils";
 import type { Plan } from "~/config/plans";
-import { countLinkedOptionUsage } from "~/services/metaobject-usage.server";
+import { countLinkedOptionUsage, liveProductCountForUsage } from "~/services/metaobject-usage.server";
 import { isValidShopifyGID } from "~/utils/validation";
 
 /** Matches the entry loader's page size — one page of cards, one request. */
 const MAX_IDS = 250;
 
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const { db } = await import("../db.server");
 
   const settings = await db.aISettings.findUnique({
@@ -48,6 +49,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return json({ success: false, error: `At most ${MAX_IDS} ids per request.` }, { status: 400 });
   }
 
-  const usage = await countLinkedOptionUsage(db, session.shop, ids);
+  const usage = await countLinkedOptionUsage(db, session.shop, ids, () => liveProductCountForUsage(admin));
   return json({ success: true, usage }, { headers: { "Cache-Control": "no-store" } });
 };

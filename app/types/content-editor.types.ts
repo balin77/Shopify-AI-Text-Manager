@@ -272,6 +272,14 @@ export interface FieldRenderProps {
   onChange: (value: string) => void;
   field: FieldDefinition;
   disabled?: boolean;
+  /**
+   * The editor's own read-only verdict — theme content in the primary locale,
+   * an app-embed technical field, or a metaobject definition Shopify does not
+   * let this app write (§7.2). A custom renderer that ignores it presents an
+   * editable control whose save can only fail, which is what the flag exists
+   * to prevent.
+   */
+  readOnly?: boolean;
   suggestion?: string;
   isPrimaryLocale?: boolean;
   isTranslated?: boolean;

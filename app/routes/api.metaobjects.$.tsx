@@ -30,7 +30,7 @@ import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { canAccessContentType } from "~/utils/planUtils";
 import type { Plan } from "~/config/plans";
-import { metaobjectFieldKey } from "~/services/metaobject-fields.shared";
+import { formatMetaobjectFieldValue, metaobjectFieldKey } from "~/services/metaobject-fields.shared";
 import type { MetaobjectFieldDefinition } from "~/config/create-fields.config";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -157,11 +157,34 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // translatable fields, and the metaobject id alone could only ever address
     // one of them. The market lookup is
     //   marketTranslations[marketId][`<metaobjectId>#<fieldKey>`][locale].
+    //
+    // The VALUE is formatted the same way the primary value is: a
+    // list.single_line_text_field translation is stored as JSON, and handing
+    // the raw JSON to the editor would show `["Rot","Blau"]` in a foreign
+    // locale and then re-split THAT on "|" on the next save, storing a
+    // double-encoded single entry.
+    const definitionFields =
+      (definition.fieldDefinitions as unknown as MetaobjectFieldDefinition[]) ?? [];
+    const fieldTypeByKey = new Map<string, string>(
+      definitionFields.map((f) => [
+        f.key,
+        typeof f.type === "string" ? f.type : f.type?.name ?? "",
+      ]),
+    );
+    /** The entry's own field type wins where the definition is out of date. */
+    const typeOfField = (metaobjectId: string, key: string): string => {
+      const entry = formattedMetaobjects.find((m) => m.id === metaobjectId);
+      const own = Array.isArray(entry?.fields)
+        ? (entry!.fields as Array<{ key: string; type?: string }>).find((f) => f.key === key)?.type
+        : undefined;
+      return own || fieldTypeByKey.get(key) || "";
+    };
+
     const translationsArray = translations
       .filter(t => (t.marketId ?? "") === "")
       .map(t => ({
         key: metaobjectFieldKey(t.metaobjectId, t.key),
-        value: t.value,
+        value: formatMetaobjectFieldValue(typeOfField(t.metaobjectId, t.key), t.value),
         locale: t.locale,
       }));
     const marketTranslations: Record<string, Record<string, Record<string, string>>> = {};
@@ -169,7 +192,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       if ((t.marketId ?? "") === "") continue;
       const byKey = (marketTranslations[t.marketId] ??= {});
       const byLocale = (byKey[metaobjectFieldKey(t.metaobjectId, t.key)] ??= {});
-      byLocale[t.locale] = t.value;
+      byLocale[t.locale] = formatMetaobjectFieldValue(typeOfField(t.metaobjectId, t.key), t.value);
     }
 
     logger.debug("[API-METAOBJECTS-LOADER] Metaobjects loaded from DB", {
@@ -195,7 +218,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       // The definition's own field list — the editor builds one control per
       // ENTRY x FIELD from it, and it is also what lets an unsupported field
       // be NAMED with its type instead of silently missing.
-      fieldDefinitions: (definition.fieldDefinitions as unknown as MetaobjectFieldDefinition[]) ?? [],
+      fieldDefinitions: definitionFields,
       // §7.2 — Shopify's access regime for this definition. `null` means the
       // row predates the column, and the client reads that as UNKNOWN: it
       // neither locks the editor nor promises that a save will work.

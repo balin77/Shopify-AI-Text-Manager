@@ -132,7 +132,10 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
   // POST and a client-side lock is not a lock.
   if (resource === "metaobject") {
     const { countLinkedOptionUsage } = await import("~/services/metaobject-usage.server");
-    const usage = (await countLinkedOptionUsage(db, session.shop, [gid]))[gid];
+    const { liveProductCountForUsage } = await import("~/services/metaobject-usage.server");
+    const usage = (
+      await countLinkedOptionUsage(db, session.shop, [gid], () => liveProductCountForUsage(admin))
+    )[gid];
     if (!usage || !usage.known) {
       return json(
         {

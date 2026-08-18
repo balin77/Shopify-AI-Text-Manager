@@ -37,9 +37,13 @@ export function ColorFieldEditor({
   value,
   onChange,
   isPrimaryLocale = true,
+  readOnly: editorReadOnly = false,
   t,
 }: FieldRenderProps) {
-  const readOnly = !isPrimaryLocale;
+  // Two independent reasons to lock: a foreign locale (a colour has ONE value
+  // per shop) and the editor's own verdict (§7.2 — the definition refuses our
+  // writes). Either is enough.
+  const readOnly = !isPrimaryLocale || editorReadOnly;
   const invalid = useMemo(() => {
     if (value.trim() === "") return false;
     const withHash = value.trim().startsWith("#") ? value.trim() : `#${value.trim()}`;

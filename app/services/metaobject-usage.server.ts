@@ -12,16 +12,22 @@
  * metaobject GID -- written by both the product sync and the option mirror, so
  * a linked option is recognisable without a Shopify round trip.
  *
- * Only options that ARE linked are scanned (`linkedMetafieldKey` is set exactly
- * for those), which keeps this to one small query on any real shop. If that
- * scan ever hits its cap the result is UNKNOWN rather than a partial count --
- * a count that silently missed rows is the one output this module must not
- * produce.
+ * The rows are narrowed by a SUBSTRING match on each requested GID rather than
+ * by `linkedMetafieldKey`: that column is written by the normal sync but not by
+ * its fallback path, and a row missing it would have made a used entry look
+ * unused -- which unlocks exactly the destructive delete this module exists to
+ * refuse. A substring can over-match (one GID is a prefix of another), never
+ * under-match, and the JSON is parsed afterwards so a near-miss is dropped.
+ * If the scan hits its cap the result is UNKNOWN rather than a partial count.
  *
- * What it deliberately does NOT do is ask Shopify. PLAN_METAOBJECTS_EDITOR V4
- * (does `Metaobject` expose a reverse relation?) is measured by the Phase-0
- * probe; until that comes back positive there is no live query to prefer over
- * the cache, and inventing one would be the guess this module exists to avoid.
+ * The one Shopify call it does make is a product COUNT, and only when the cache
+ * is empty: without it "no cached products" is permanently unknown, and a shop
+ * that genuinely has no products could never delete an entry no matter how
+ * often it synced. PLAN_METAOBJECTS_EDITOR V4 (does `Metaobject` expose a
+ * reverse relation the usage could be read from directly?) is measured by the
+ * Phase-0 probe; until that comes back positive there is no live query to
+ * prefer over the cache, and inventing one would be the guess this module
+ * exists to avoid.
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -68,6 +74,13 @@ export async function countLinkedOptionUsage(
   db: PrismaClient,
   shop: string,
   metaobjectIds: string[],
+  /**
+   * How many products the SHOP has, live. Consulted only when the cache is
+   * empty, to tell "nothing synced yet" from "this shop has no products". A
+   * `null` result (the call failed) keeps the answer unknown; omitting the
+   * callback entirely does the same, which is what the pure tests rely on.
+   */
+  liveProductCount?: () => Promise<number | null>,
 ): Promise<Record<string, MetaobjectUsage>> {
   const wanted = [...new Set(metaobjectIds.filter(Boolean))];
   const result: Record<string, MetaobjectUsage> = {};
@@ -80,17 +93,26 @@ export async function countLinkedOptionUsage(
 
   try {
     // An empty product cache is not "nothing uses this" -- it is "we have not
-    // looked". The caller offers a sync instead of a reassuring zero.
+    // looked". Unless the shop really HAS no products, which only Shopify can
+    // say: without that question a shop with an empty catalogue could never
+    // delete an entry, and the remedy the UI offers (sync your products) could
+    // not change the answer.
     const productCount = await db.product.count({ where: { shop } });
-    if (productCount === 0) return fill({ known: false, reason: "noProducts" });
+    if (productCount === 0) {
+      const live = liveProductCount ? await liveProductCount() : null;
+      if (live === 0) return fill({ known: true, products: 0, options: 0 });
+      return fill({ known: false, reason: "noProducts" });
+    }
 
     const options = await db.productOption.findMany({
-      where: { product: { shop }, linkedMetafieldKey: { not: null } },
+      // Substring prefilter on the exact GIDs — see the header. It can
+      // over-match and is verified by parsing below; it cannot miss a row.
+      where: { product: { shop }, OR: wanted.map((id) => ({ values: { contains: id } })) },
       select: { productId: true, values: true },
       take: LINKED_OPTION_SCAN_CAP + 1,
     });
     if (options.length > LINKED_OPTION_SCAN_CAP) {
-      logger.warn("[MetaobjectUsage] linked-option scan truncated — reporting unknown", {
+      logger.warn("[MetaobjectUsage] option scan truncated — reporting unknown", {
         context: "MetaobjectUsage",
         shop,
         cap: LINKED_OPTION_SCAN_CAP,
@@ -137,5 +159,38 @@ export async function countLinkedOptionUsage(
       error: error instanceof Error ? error.message : String(error),
     });
     return fill({ known: false, reason: "lookupFailed" });
+  }
+}
+
+/**
+ * The shop's live product count, or null when the question could not be asked.
+ *
+ * Consulted by `countLinkedOptionUsage` only when the product CACHE is empty:
+ * it separates "nothing synced yet" from "this shop has no products", and only
+ * the second of those makes a zero a real answer. A failure is `null`, never 0
+ * -- a throttled response must not unlock a destructive delete.
+ *
+ * It lives here rather than in either caller so the entry card and the delete
+ * action ask the same question the same way.
+ */
+export async function liveProductCountForUsage(admin: {
+  graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+}): Promise<number | null> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query metaobjectUsageProductCount {
+          productsCount { count }
+        }`,
+    );
+    const data = (await response.json()) as {
+      data?: { productsCount?: { count?: number } | null };
+      errors?: unknown[];
+    };
+    if (data.errors?.length) return null;
+    const count = data.data?.productsCount?.count;
+    return typeof count === "number" ? count : null;
+  } catch {
+    return null;
   }
 }

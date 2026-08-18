@@ -299,11 +299,66 @@ describe("countLinkedOptionUsage", () => {
     expect(usage[ENTRY]).toEqual({ known: true, products: 0, options: 0 });
   });
 
-  it("reports UNKNOWN — not zero — when no product is cached", async () => {
+  it("reports UNKNOWN — not zero — when no product is cached and the shop has some", async () => {
     // The distinction this module exists for: an empty cache is "we have not
     // looked", and the UI offers a sync instead of a reassuring 0.
-    const usage = await countLinkedOptionUsage(fakeDb(0, []), "shop.myshopify.com", [ENTRY]);
+    const usage = await countLinkedOptionUsage(
+      fakeDb(0, []),
+      "shop.myshopify.com",
+      [ENTRY],
+      async () => 42,
+    );
     expect(usage[ENTRY]).toEqual({ known: false, reason: "noProducts" });
+  });
+
+  it("stays UNKNOWN when the live product count cannot be asked", async () => {
+    // No callback and a failed callback mean the same thing: the question was
+    // not answered, so the cache's emptiness stays uninterpretable.
+    expect((await countLinkedOptionUsage(fakeDb(0, []), "s", [ENTRY]))[ENTRY]).toEqual({
+      known: false,
+      reason: "noProducts",
+    });
+    expect(
+      (await countLinkedOptionUsage(fakeDb(0, []), "s", [ENTRY], async () => null))[ENTRY],
+    ).toEqual({ known: false, reason: "noProducts" });
+  });
+
+  it("reports a real ZERO when Shopify says the shop has no products at all", async () => {
+    // Without this a shop with an empty catalogue could never delete an entry:
+    // the remedy the UI offers (sync your products) cannot change the answer.
+    const usage = await countLinkedOptionUsage(
+      fakeDb(0, []),
+      "shop.myshopify.com",
+      [ENTRY],
+      async () => 0,
+    );
+    expect(usage[ENTRY]).toEqual({ known: true, products: 0, options: 0 });
+  });
+
+  it("counts an option row that has no linkedMetafieldKey cached", async () => {
+    // The sync's fallback path writes `values` without that column, and
+    // filtering on it made a USED entry look unused — which unlocks exactly
+    // the delete the guard exists to refuse.
+    const usage = await countLinkedOptionUsage(
+      fakeDb(3, [{ productId: "p1", values: linkedValues(ENTRY) }]),
+      "shop.myshopify.com",
+      [ENTRY],
+    );
+    expect(usage[ENTRY]).toEqual({ known: true, products: 1, options: 1 });
+  });
+
+  it("does not let one GID's substring match another entry's usage", async () => {
+    // The DB prefilter is a substring match and .../123 is a prefix of
+    // .../1234 — the JSON parse afterwards is what makes the answer exact.
+    const shorter = "gid://shopify/Metaobject/123";
+    const longer = "gid://shopify/Metaobject/1234";
+    const usage = await countLinkedOptionUsage(
+      fakeDb(3, [{ productId: "p1", values: linkedValues(longer) }]),
+      "shop.myshopify.com",
+      [shorter, longer],
+    );
+    expect(usage[shorter]).toEqual({ known: true, products: 0, options: 0 });
+    expect(usage[longer]).toEqual({ known: true, products: 1, options: 1 });
   });
 
   it("reports UNKNOWN when the linked-option scan hits its cap", async () => {

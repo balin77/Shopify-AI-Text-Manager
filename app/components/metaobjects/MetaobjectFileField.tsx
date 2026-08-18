@@ -35,10 +35,13 @@ export function MetaobjectFileField({
   value,
   onChange,
   isPrimaryLocale = true,
+  readOnly: editorReadOnly = false,
   previewUrl,
   t,
 }: Props) {
-  const readOnly = !isPrimaryLocale;
+  // Same two reasons as the colour field: a file reference has ONE value per
+  // shop, and the definition may refuse our writes entirely (§7.2).
+  const readOnly = !isPrimaryLocale || editorReadOnly;
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,13 +67,20 @@ export function MetaobjectFileField({
         // resolves to nothing.
         setBusy(true);
         try {
-          const body = new FormData();
-          body.set("resourceUrl", item.resourceUrl);
-          body.set("fileName", item.fileName);
-          body.set("mimeType", item.mimeType);
-          const res = await fetch("/api/create-shopify-file", { method: "POST", body });
+          // JSON, not FormData: the route parses with `request.json()` and
+          // reads exactly `resourceUrl` and `alt`. A multipart body reaches it
+          // as an unparseable string and every upload fails.
+          const res = await fetch("/api/create-shopify-file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ resourceUrl: item.resourceUrl, alt: item.fileName }),
+          });
           const data = await res.json();
-          if (!res.ok || !data.fileId) {
+          // The file id is what the FIELD stores. Shopify produces the CDN url
+          // asynchronously, so a response that carries an id but no url (504)
+          // is still a usable reference — refusing it would leave an orphaned
+          // file in the merchant's library and no value in the field.
+          if (!data.fileId) {
             setError(typeof data.error === "string" ? data.error : "The upload could not be stored as a file.");
             return;
           }

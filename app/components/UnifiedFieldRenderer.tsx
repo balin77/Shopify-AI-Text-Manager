@@ -234,6 +234,10 @@ export function UnifiedFieldRenderer(
       field,
       value,
       onChange,
+      // Forwarded, not dropped: this branch returns BEFORE the generic
+      // read-only handling below, so a custom control that never sees the flag
+      // stays editable on a resource the editor has already locked.
+      readOnly,
       suggestion,
       isPrimaryLocale,
       isTranslated,
