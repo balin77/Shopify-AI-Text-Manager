@@ -1707,10 +1707,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryOptionNameChange={subResourceHandlers.handlePrimaryOptionNameChange}
                       onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
+                      productId={selectedItem.id}
+                      valuesToAdd={subResourceState.optionValuesToAdd}
+                      valuesToDelete={subResourceState.optionValuesToDelete}
+                      optionsToCreate={subResourceState.optionsToCreate}
+                      optionsToDelete={subResourceState.optionsToDelete}
+                      onAddOptionValue={subResourceHandlers.handleAddOptionValue}
+                      onRemoveOptionValue={subResourceHandlers.handleRemoveOptionValue}
+                      onEditPendingValue={subResourceHandlers.handleEditPendingValue}
+                      onCreateOption={subResourceHandlers.handleCreateOption}
+                      onDeleteOption={subResourceHandlers.handleDeleteOption}
+                      onReorderOptions={subResourceHandlers.handleReorderOptions}
                       translatingFieldIds={subResourceState.translatingFieldIds}
                       missingTranslationIds={optionMissingTranslationIds}
                       t={{
-                        title: t.products?.productOptions,
+                        title: t.products?.variantsTitle || t.products?.productOptions,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,
@@ -1725,10 +1736,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         linkedNotEditableHintBefore: t.products?.linkedNotEditableHintBefore,
                         linkedNotEditableHintAfter: t.products?.linkedNotEditableHintAfter,
                         metaobjectsLinkText: t.products?.metaobjectsLinkText,
-                        optionPositionLabel: t.products?.optionPositionLabel,
                         clearButton: t.products?.clearButton,
                         copyButton: t.products?.copy,
                         copyToAllLocalesButton: t.products?.copyToAllLocales,
+                        addOption: t.products?.addOption,
+                        optionNamePlaceholder: t.products?.optionNamePlaceholder,
+                        deleteOption: t.products?.deleteOption,
+                        deleteOptionConfirm: t.products?.deleteOptionConfirm,
+                        deleteValueCount: t.products?.deleteValueCount,
+                        deleteValueUnknown: t.products?.deleteValueUnknown,
+                        pendingBadge: t.products?.pendingBadge,
+                        done: t.common?.done,
+                        cancel: t.common?.cancel,
+                        add: t.common?.add,
                       }}
                     />
                   </div>

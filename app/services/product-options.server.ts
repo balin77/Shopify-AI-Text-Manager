@@ -31,6 +31,10 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
+// Re-exported so server callers keep one import, while the CLIENT can reach
+// the same key without pulling Prisma in behind it.
+import { variantCountKey } from "./product-options.shared";
+export { variantCountKey };
 import {
   PRODUCT_OPTION_UPDATE,
   PRODUCT_OPTIONS_CREATE,
@@ -337,16 +341,4 @@ export async function countVariantsPerValue(
     });
     return {};
   }
-}
-
-/**
- * The key `countVariantsPerValue` uses.
- *
- * Exported so the client and the server cannot disagree about it. The separator
- * is a newline rather than a slash or a space: option and value names are
- * merchant text and both can contain either, which would make two different
- * pairs collide on one key.
- */
-export function variantCountKey(optionName: string, valueName: string): string {
-  return `${optionName}\n${valueName}`;
 }

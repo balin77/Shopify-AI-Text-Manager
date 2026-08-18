@@ -23,6 +23,14 @@ export const es: Translation = {
 
   // Products Page
   products: {
+    variantsTitle: "Variantes",
+    addOption: "Añadir variante",
+    optionNamePlaceholder: "Talla, Color, Material",
+    deleteOption: "Eliminar",
+    deleteOptionConfirm: "Esto elimina la opción y reconstruye las variantes del producto en torno a las restantes.",
+    deleteValueCount: "Esto elimina {n} variante(s), con su stock, precios y SKU. No se puede deshacer.",
+    deleteValueUnknown: "Esto elimina las variantes que usan este valor, con su stock y precios. No se pudo leer cuántas son.",
+    pendingBadge: "Sin guardar",
     title: "Productos",
     loading: "Cargando productos...",
     count: "Productos",
@@ -111,7 +119,6 @@ export const es: Translation = {
     linkedNotEditableHintBefore: "Los valores de esta opción están vinculados a metaobjetos. Puede editarlos en ",
     linkedNotEditableHintAfter: ".",
     metaobjectsLinkText: "Metaobjetos",
-    optionPositionLabel: "Opción",
     clearButton: "Borrar",
     metafieldsEditInstructionPrimary: "Editar los valores de metadatos en el idioma principal.",
     discardChanges: "Descartar",
@@ -1517,6 +1524,8 @@ export const es: Translation = {
 
   // Common
   common: {
+    add: "Añadir",
+    done: "Hecho",
     save: "Guardar",
     discard: "Descartar",
     cancel: "Cancelar",

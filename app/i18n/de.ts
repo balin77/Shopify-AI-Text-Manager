@@ -21,6 +21,14 @@ export const de = {
 
   // Products Page
   products: {
+    variantsTitle: "Varianten",
+    addOption: "Variante hinzufügen",
+    optionNamePlaceholder: "Grösse, Farbe, Material",
+    deleteOption: "Löschen",
+    deleteOptionConfirm: "Damit wird die Option entfernt und die Varianten des Produkts werden um die verbleibenden herum neu gebildet.",
+    deleteValueCount: "Damit werden {n} Variante(n) gelöscht, samt Bestand, Preisen und SKUs. Das lässt sich nicht rückgängig machen.",
+    deleteValueUnknown: "Damit werden die Varianten gelöscht, die diesen Wert benutzen, samt Bestand und Preisen. Wie viele das sind, konnte nicht gelesen werden.",
+    pendingBadge: "Noch nicht gespeichert",
     title: "Produkte",
     loading: "Lade Produkte...",
     count: "Produkte",
@@ -109,7 +117,6 @@ export const de = {
     linkedNotEditableHintBefore: "Die Werte dieser Option sind mit Metaobjekten verknüpft. Sie können sie unter ",
     linkedNotEditableHintAfter: " bearbeiten.",
     metaobjectsLinkText: "Metaobjekte",
-    optionPositionLabel: "Option",
     clearButton: "Leeren",
     metafieldsEditInstructionPrimary: "Bearbeiten Sie die Metafeld-Werte in der Hauptsprache.",
     discardChanges: "Verwerfen",
@@ -1517,6 +1524,8 @@ export const de = {
 
   // Common
   common: {
+    add: "Hinzufügen",
+    done: "Fertig",
     save: "Speichern",
     discard: "Verwerfen",
     cancel: "Abbrechen",

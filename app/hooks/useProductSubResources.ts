@@ -45,6 +45,11 @@ export interface SubResourceState {
   metafieldTranslations: Record<string, string>;
   /** Primary locale option edits keyed by option GID → { name, values[] } */
   primaryOptionEdits: Record<string, { name: string; values: string[] }>;
+  /** Pending structural edits, so the card can render them before the save. */
+  optionValuesToAdd: Record<string, string[]>;
+  optionValuesToDelete: Record<string, string[]>;
+  optionsToCreate: Array<{ name: string; values: string[] }>;
+  optionsToDelete: string[];
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
@@ -70,6 +75,16 @@ export interface SubResourceHandlers {
   handleMetafieldChange: (metafieldId: string, value: string) => void;
   handlePrimaryOptionNameChange: (optionId: string, value: string) => void;
   handlePrimaryOptionValuesChange: (optionId: string, values: string[]) => void;
+  /** A value the merchant added. Shopify assigns its GID on save. */
+  handleAddOptionValue: (optionId: string, name: string) => void;
+  /** A value the merchant removed. An empty `valueId` means it was only added
+   *  locally, so `addedIndex` says which pending entry to drop. */
+  handleRemoveOptionValue: (optionId: string, valueId: string, addedIndex?: number) => void;
+  /** Rename a value that exists only locally, by its index in the pending list. */
+  handleEditPendingValue: (optionId: string, index: number, name: string) => void;
+  handleCreateOption: (name: string, values: string[]) => void;
+  handleDeleteOption: (optionId: string) => void;
+  handleReorderOptions: (orderedIds: string[]) => void;
   handlePrimaryMetafieldChange: (metafieldId: string, value: string) => void;
   translateOption: (optionId: string) => void;
   translateOptionField: (optionId: string, fieldType: "name" | "value", valueIndex?: number) => void;
@@ -612,6 +627,14 @@ export function useProductSubResources({
         setHasChanges(false);
         // Clear primary edits after successful save
         setPrimaryOptionEdits({});
+        // The matrix-changing lists too: a discarded delete that survives the
+        // save would fire again on the next one.
+        setOptionValuesToAdd({});
+        setOptionValuesToDelete({});
+        setOptionsToCreate([]);
+        setOptionsToDelete([]);
+        setOptionOrder(null);
+
         setPrimaryMetafieldEdits({});
 
         // Trigger revalidation to reload fresh data from DB/Shopify
@@ -733,6 +756,71 @@ export function useProductSubResources({
   // ============================================================================
   // Primary Locale Handlers
   // ============================================================================
+
+  /**
+   * Option values the merchant ADDED, per option id. Names only: Shopify
+   * assigns the GID, and the echo is what tells us which one.
+   */
+  const [optionValuesToAdd, setOptionValuesToAdd] = useState<Record<string, string[]>>({});
+  /** Value GIDs the merchant removed — and with them, their variants. */
+  const [optionValuesToDelete, setOptionValuesToDelete] = useState<Record<string, string[]>>({});
+  /** Whole options to create, in the order the merchant added them. */
+  const [optionsToCreate, setOptionsToCreate] = useState<Array<{ name: string; values: string[] }>>([]);
+  /** Whole options to remove. */
+  const [optionsToDelete, setOptionsToDelete] = useState<string[]>([]);
+  /** The option ids in the order the merchant dragged them into, or null while
+   *  nothing has been dragged — an unchanged order must not be written. */
+  const [optionOrder, setOptionOrder] = useState<string[] | null>(null);
+
+  const handleAddOptionValue = useCallback((optionId: string, name: string) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setOptionValuesToAdd((prev) => ({ ...prev, [optionId]: [...(prev[optionId] ?? []), clean] }));
+    setHasChanges(true);
+  }, []);
+
+  /** `valueId` empty ⇒ an entry that was only added locally, so it just goes
+   *  off the pending list rather than being queued for deletion. */
+  const handleRemoveOptionValue = useCallback((optionId: string, valueId: string, addedIndex?: number) => {
+    if (!valueId) {
+      setOptionValuesToAdd((prev) => ({
+        ...prev,
+        [optionId]: (prev[optionId] ?? []).filter((_, i) => i !== addedIndex),
+      }));
+      setHasChanges(true);
+      return;
+    }
+    setOptionValuesToDelete((prev) => ({ ...prev, [optionId]: [...(prev[optionId] ?? []), valueId] }));
+    setHasChanges(true);
+  }, []);
+
+  /** Rename a value that only exists locally. Its own handler because
+   *  remove-then-add would move it to the end of the list, and the input the
+   *  merchant is typing into would jump out from under the cursor. */
+  const handleEditPendingValue = useCallback((optionId: string, index: number, name: string) => {
+    setOptionValuesToAdd((prev) => {
+      const list = [...(prev[optionId] ?? [])];
+      if (index < 0 || index >= list.length) return prev;
+      list[index] = name;
+      return { ...prev, [optionId]: list };
+    });
+    setHasChanges(true);
+  }, []);
+
+  const handleCreateOption = useCallback((name: string, values: string[]) => {
+    setOptionsToCreate((prev) => [...prev, { name, values }]);
+    setHasChanges(true);
+  }, []);
+
+  const handleDeleteOption = useCallback((optionId: string) => {
+    setOptionsToDelete((prev) => (prev.includes(optionId) ? prev : [...prev, optionId]));
+    setHasChanges(true);
+  }, []);
+
+  const handleReorderOptions = useCallback((orderedIds: string[]) => {
+    setOptionOrder(orderedIds);
+    setHasChanges(true);
+  }, []);
 
   const handlePrimaryOptionNameChange = useCallback((optionId: string, value: string) => {
     setPrimaryOptionEdits(prev => {
@@ -1062,7 +1150,15 @@ export function useProductSubResources({
 
     if (isPrimaryLocale) {
       // PRIMARY LOCALE: Save primary values (options + metafields)
-      const optionsChanges: Record<string, { name?: string; valueUpdates?: { id: string; name: string }[] }> = {};
+      const optionsChanges: Record<
+        string,
+        {
+          name?: string;
+          valueUpdates?: { id: string; name: string }[];
+          valuesToAdd?: string[];
+          valuesToDelete?: string[];
+        }
+      > = {};
       const metafieldChanges: Record<string, string> = {};
 
       // Collect option name and value changes with validation
@@ -1108,6 +1204,18 @@ export function useProductSubResources({
         }
       }
 
+      // Values added and removed. Their own pass: a merchant can add a colour
+      // without renaming anything, and the loop above only visits options that
+      // carry a text edit.
+      for (const [optionId, added] of Object.entries(optionValuesToAdd)) {
+        if (added.length === 0) continue;
+        optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: added };
+      }
+      for (const [optionId, removed] of Object.entries(optionValuesToDelete)) {
+        if (removed.length === 0) continue;
+        optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToDelete: removed };
+      }
+
       // Collect metafield value changes with validation
       for (const [metafieldId, editValue] of Object.entries(primaryMetafieldEdits)) {
         const originalMetafield = selectedItem.metafields?.find(m => m.id === metafieldId);
@@ -1127,7 +1235,13 @@ export function useProductSubResources({
         }
       }
 
-      if (Object.keys(optionsChanges).length === 0 && Object.keys(metafieldChanges).length === 0) {
+      const hasStructuralChange =
+        optionsToCreate.length > 0 || optionsToDelete.length > 0 || optionOrder !== null;
+      if (
+        Object.keys(optionsChanges).length === 0 &&
+        Object.keys(metafieldChanges).length === 0 &&
+        !hasStructuralChange
+      ) {
         setHasChanges(false);
         return;
       }
@@ -1138,6 +1252,22 @@ export function useProductSubResources({
       formData.append("productId", selectedItem.id);
       formData.append("optionsChanges", JSON.stringify(optionsChanges));
       formData.append("metafieldChanges", JSON.stringify(metafieldChanges));
+      // The structural half. Sent only when it has content: an empty order
+      // list would otherwise ask Shopify to reorder nothing on every save.
+      if (optionsToCreate.length > 0) {
+        formData.append("optionsToCreate", JSON.stringify(optionsToCreate));
+      }
+      if (optionsToDelete.length > 0) {
+        formData.append("optionsToDelete", JSON.stringify(optionsToDelete));
+      }
+      if (optionOrder) {
+        // Dragged order minus whatever is being deleted in the same save —
+        // naming a gone option would fail the reorder for all of them.
+        formData.append(
+          "optionOrder",
+          JSON.stringify(optionOrder.filter((id) => !optionsToDelete.includes(id))),
+        );
+      }
 
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
     } else {
@@ -1187,7 +1317,7 @@ export function useProductSubResources({
         { method: "POST", action: "/app/products" }
       );
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder]);
 
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
@@ -1199,6 +1329,11 @@ export function useProductSubResources({
 
     // Reset primary locale edits
     setPrimaryOptionEdits({});
+    setOptionValuesToAdd({});
+    setOptionValuesToDelete({});
+    setOptionsToCreate([]);
+    setOptionsToDelete([]);
+    setOptionOrder(null);
     setPrimaryMetafieldEdits({});
 
     // Reset flags
@@ -1326,6 +1461,10 @@ export function useProductSubResources({
       optionTranslations,
       metafieldTranslations,
       primaryOptionEdits,
+      optionValuesToAdd,
+      optionValuesToDelete,
+      optionsToCreate,
+      optionsToDelete,
       primaryMetafieldEdits,
       translatingFieldIds,
       fallbackResourceIds,
@@ -1339,6 +1478,12 @@ export function useProductSubResources({
       handleMetafieldChange,
       handlePrimaryOptionNameChange,
       handlePrimaryOptionValuesChange,
+      handleAddOptionValue,
+      handleRemoveOptionValue,
+      handleEditPendingValue,
+      handleCreateOption,
+      handleDeleteOption,
+      handleReorderOptions,
       handlePrimaryMetafieldChange,
       translateOption,
       translateOptionField,
