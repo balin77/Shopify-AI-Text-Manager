@@ -10,6 +10,7 @@ import { data as json } from "react-router";
 import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
+import { parseValueOrderPayload } from "~/services/product-options.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
@@ -777,6 +778,8 @@ export async function handleSavePrimarySubResources(
         name?: string;
         valueUpdates?: { id: string; name: string }[];
         valuesToAdd?: string[];
+        /** Metaobject GIDs, for a linked option — see `OptionValueChange`. */
+        valuesToAddLinked?: string[];
         valuesToDelete?: string[];
       }
     > = optionsChangesJson ? JSON.parse(optionsChangesJson) : {};
@@ -788,22 +791,13 @@ export async function handleSavePrimarySubResources(
     /** The full ordered list of option ids, after the creates and deletes. */
     const optionOrder: string[] = safeParseList(getFormString(formData, "optionOrder"));
     /** Value GIDs in their new order, per option id. Reordering VALUES is what
-     *  decides which variant the storefront shows first. */
-    const optionValueOrder: Record<string, string[]> = (() => {
-      try {
-        const parsed: unknown = JSON.parse(getFormString(formData, "optionValueOrder") || "{}");
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-        const out: Record<string, string[]> = {};
-        for (const [optionId, ids] of Object.entries(parsed as Record<string, unknown>)) {
-          if (!isValidShopifyGID(optionId) || !Array.isArray(ids)) continue;
-          const valid = ids.filter((id): id is string => typeof id === "string" && isValidShopifyGID(id));
-          if (valid.length > 0) out[optionId] = valid;
-        }
-        return out;
-      } catch {
-        return {};
-      }
-    })();
+     *  decides which variant the storefront shows first. Parsed in a shared,
+     *  testable module -- it is a positional payload and its all-or-nothing
+     *  rule is the kind that shipped wrong while it lived inline. */
+    const optionValueOrder = parseValueOrderPayload(
+      getFormString(formData, "optionValueOrder"),
+      isValidShopifyGID,
+    );
     /** Failure CODES from the option writes — phrased by the client. */
     const optionWarnings: string[] = [];
     /** Create / delete / reorder failures. They have no option id to report
@@ -891,6 +885,7 @@ export async function handleSavePrimarySubResources(
         values: {
           toUpdate: changes.valueUpdates,
           toAdd: changes.valuesToAdd,
+          toAddLinked: changes.valuesToAddLinked,
           toDelete: changes.valuesToDelete,
         },
       });

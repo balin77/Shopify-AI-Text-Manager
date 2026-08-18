@@ -132,21 +132,26 @@ export async function runSeoCrawlTask(
       shopName,
       appUrl,
       checkExternalLinks,
-      // Heartbeat every 25 pages (§3.5) — the Task.progress write itself is
-      // the heartbeat the stuck-task reaper watches (contract §8). Total is
-      // unknown up front (a live crawl, not a fixed catalog scan), so the
-      // progress bar shows pages-crawled-so-far rather than a percentage.
-      onProgress: async (pagesCrawled, totalDiscovered) => {
+      // Heartbeat (§3.5) — the Task.progress write itself is the heartbeat the
+      // stuck-task reaper watches (contract §8).
+      //
+      // `percent` comes from `runCrawl` and is written verbatim. Deriving it
+      // here from the page counts is what this used to do, against
+      // `totalDiscovered` — a denominator that keeps growing with every link
+      // seen, including the ones past the page cap that will never be
+      // fetched. A capped crawl therefore reached a fixed percentage, stopped
+      // moving, and stayed there through persistence and the external-link
+      // pass: minutes of a bar that reads as a hung run rather than a
+      // throttled one. `totalToCrawl` is the pages actually queued, so the
+      // "X / Y" the tasks page shows now converges too.
+      onProgress: async (pagesCrawled, totalToCrawl, percent) => {
         await db.task
           .update({
             where: { id: taskId },
             data: {
               processed: pagesCrawled,
-              total: Math.max(totalDiscovered, pagesCrawled, 1),
-              progress:
-                totalDiscovered > 0
-                  ? Math.min(100, Math.round((pagesCrawled / totalDiscovered) * 100))
-                  : 0,
+              total: Math.max(totalToCrawl, pagesCrawled, 1),
+              progress: Math.max(0, Math.min(100, Math.round(percent))),
             },
           })
           .catch(() => {});

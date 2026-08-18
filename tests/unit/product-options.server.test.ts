@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { parseValueOrderPayload } from "~/services/product-options.shared";
 import {
   applyOptionChange,
   countVariantsPerValue,
@@ -102,6 +103,42 @@ describe("applyOptionChange", () => {
     expect(sent(admin).optionValuesToAdd).toEqual([{ name: "Green" }]);
   });
 
+  it("adds a LINKED value by its metaobject GID, not by a name", async () => {
+    // A linked option's values are not free text -- each one IS a metaobject
+    // entry, and Shopify takes the display name from it. A `name` here would
+    // either be rejected or create a value that no longer matches its entry.
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    await applyOptionChange(admin, db, "s", {
+      productId: PRODUCT,
+      optionId: OPTION,
+      values: { toAddLinked: ["gid://shopify/Metaobject/77"] },
+    });
+
+    expect(sent(admin).optionValuesToAdd).toEqual([
+      { linkedMetafieldValue: "gid://shopify/Metaobject/77" },
+    ]);
+    // It moves the matrix like any other add.
+    expect(sent(admin).variantStrategy).toBe("MANAGE");
+  });
+
+  it("refuses a linked add that is not a metaobject GID", async () => {
+    // Forwarded, it would fail at the schema level -- a top-level error that
+    // never reaches userErrors, i.e. a save that reads as successful.
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", {
+        productId: PRODUCT,
+        optionId: OPTION,
+        values: { toAddLinked: ["gid://shopify/ProductOptionValue/1"] },
+      }),
+    ).toBe("optionValueEmpty");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
   it("sends MANAGE when a value is deleted", async () => {
     const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
     const { db } = dbRecorder();
@@ -145,7 +182,19 @@ describe("applyOptionChange", () => {
   it("mirrors the ECHOED values, with their Shopify GIDs", async () => {
     // The added value's id is assigned by Shopify, and every translation write
     // addresses values BY GID — a mirror built from the request would have none.
-    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    // The echo therefore CONTAINS the added value: one that did not would be a
+    // silent no-op, which the confirmation check below refuses.
+    const admin = adminWith(
+      echo("productOptionUpdate", [
+        {
+          ...OPTION_ECHO[0],
+          optionValues: [
+            ...OPTION_ECHO[0].optionValues,
+            { id: "gid://shopify/ProductOptionValue/3", name: "Green" },
+          ],
+        },
+      ]),
+    );
     const { db, upserts } = dbRecorder();
 
     await applyOptionChange(admin, db, "s", {
@@ -160,6 +209,7 @@ describe("applyOptionChange", () => {
     expect(values).toEqual([
       { id: "gid://shopify/ProductOptionValue/1", name: "Red", linked: false },
       { id: "gid://shopify/ProductOptionValue/2", name: "Blue", linked: false },
+      { id: "gid://shopify/ProductOptionValue/3", name: "Green", linked: false },
     ]);
   });
 
@@ -415,5 +465,120 @@ describe("countVariantsPerValue", () => {
     // Option and value names are free text and both can contain a slash or a
     // space, which would make two different pairs collide on one key.
     expect(variantCountKey("A/B", "C")).not.toBe(variantCountKey("A", "B/C"));
+  });
+});
+
+describe("parseValueOrderPayload", () => {
+  const gid = (id: string) => id.startsWith("gid://shopify/");
+
+  it("takes a well-formed map", () => {
+    expect(
+      parseValueOrderPayload(
+        JSON.stringify({ "gid://shopify/ProductOption/1": ["gid://shopify/ProductOptionValue/2", "gid://shopify/ProductOptionValue/1"] }),
+        gid,
+      ),
+    ).toEqual({
+      "gid://shopify/ProductOption/1": ["gid://shopify/ProductOptionValue/2", "gid://shopify/ProductOptionValue/1"],
+    });
+  });
+
+  it("drops the WHOLE option when one id is unusable", () => {
+    // This is a positional payload: filtering the bad id out would not
+    // sanitise the request, it would apply a different order than the merchant
+    // dragged — quietly, to real variants.
+    expect(
+      parseValueOrderPayload(
+        JSON.stringify({
+          "gid://shopify/ProductOption/1": ["gid://shopify/ProductOptionValue/1", "nonsense", "gid://shopify/ProductOptionValue/2"],
+          "gid://shopify/ProductOption/2": ["gid://shopify/ProductOptionValue/3"],
+        }),
+        gid,
+      ),
+    ).toEqual({ "gid://shopify/ProductOption/2": ["gid://shopify/ProductOptionValue/3"] });
+  });
+
+  it("survives anything that is not the expected shape", () => {
+    // A malformed payload must not fail the save, whose other halves are valid.
+    expect(parseValueOrderPayload("", gid)).toEqual({});
+    expect(parseValueOrderPayload("{oops", gid)).toEqual({});
+    expect(parseValueOrderPayload("[]", gid)).toEqual({});
+    expect(parseValueOrderPayload("null", gid)).toEqual({});
+    expect(parseValueOrderPayload(JSON.stringify({ "gid://shopify/ProductOption/1": "not a list" }), gid)).toEqual({});
+    expect(parseValueOrderPayload(JSON.stringify({ nonsense: ["gid://shopify/ProductOptionValue/1"] }), gid)).toEqual({});
+  });
+});
+
+describe("the echo has to CONTAIN what was asked for", () => {
+  // `userErrors: []` is not success anywhere in this app. Shopify can accept
+  // the call and store nothing — the historic silent no-op — and the linked
+  // add is the case that matters most, because its input shape has never been
+  // measured against a live shop.
+
+  it("refuses a linked add the echo does not carry", async () => {
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db, upserts } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", {
+        productId: PRODUCT,
+        optionId: OPTION,
+        values: { toAddLinked: ["gid://shopify/Metaobject/77"] },
+      }),
+    ).toBe("optionsNotConfirmed");
+    // And nothing is mirrored, so the cache does not claim the value exists.
+    expect(upserts).toEqual([]);
+  });
+
+  it("accepts a linked add the echo confirms", async () => {
+    const admin = adminWith(
+      echo("productOptionUpdate", [
+        {
+          ...OPTION_ECHO[0],
+          optionValues: [
+            ...OPTION_ECHO[0].optionValues,
+            {
+              id: "gid://shopify/ProductOptionValue/9",
+              name: "Ocean",
+              linkedMetafieldValue: "gid://shopify/Metaobject/77",
+            },
+          ],
+        },
+      ]),
+    );
+    const { db } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", {
+        productId: PRODUCT,
+        optionId: OPTION,
+        values: { toAddLinked: ["gid://shopify/Metaobject/77"] },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("refuses a delete the echo still shows", async () => {
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", {
+        productId: PRODUCT,
+        optionId: OPTION,
+        values: { toDelete: ["gid://shopify/ProductOptionValue/2"] },
+      }),
+    ).toBe("optionsNotConfirmed");
+  });
+
+  it("refuses a rename the echo did not take", async () => {
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", {
+        productId: PRODUCT,
+        optionId: OPTION,
+        values: { toUpdate: [{ id: "gid://shopify/ProductOptionValue/1", name: "Crimson" }] },
+      }),
+    ).toBe("optionsNotConfirmed");
   });
 });

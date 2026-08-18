@@ -9,7 +9,10 @@
  *    it is per value, and it is the only source that can be WRONG only if the
  *    merchant made it wrong. It wins whenever it exists.
  * 2. A colour written in the value's name as a hex or an `rgb()` — unambiguous
- *    text that means exactly one colour in every language.
+ *    text that means exactly one colour in every language. The `#` is optional
+ *    ONLY on an option that is about colour: `DDD` is a bra cup size, `EEE` a
+ *    shoe width and `ABC` a style code, and every one of them is also a valid
+ *    three-digit hex.
  * 3. A small table of basic colour WORDS in the three languages this app ships
  *    in. This is the only guessing step and it is deliberately narrow: "Rot",
  *    "red" and "rojo" are the same colour in every shop that has ever existed,
@@ -46,6 +49,10 @@ export interface ResolvedSwatch {
 
 /** `#rgb`, `#rrggbb`, `#rrggbbaa`. */
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+/** An `http(s)` URL. A swatch image is painted into a CSS `url()`, and the
+ *  escaping that makes that safe lives in the CALLER — so the value is pinned
+ *  to a shape that cannot mean anything else, here, where it is resolved. */
+const HTTP_URL = /^https?:\/\/[^\s"'()\\]+$/i;
 /** `rgb(1,2,3)` / `rgba(1,2,3,.5)`, digits and separators only — no expressions. */
 const RGB = /^rgba?\(\s*\d{1,3}\s*[, ]\s*\d{1,3}\s*[, ]\s*\d{1,3}\s*(?:[,/]\s*(?:0|1|0?\.\d+)\s*)?\)$/i;
 
@@ -84,34 +91,48 @@ const COLOUR_WORDS: Record<string, string> = {
 export function resolveSwatch(
   valueName: string,
   swatch?: OptionValueSwatch | null,
+  options?: {
+    /** True when the OPTION is about colour. Only then is a bare hex (no `#`)
+     *  read as one — see rule 2 in the header. */
+    isColourOption?: boolean;
+  },
 ): ResolvedSwatch | null {
-  // 1. Shopify's own.
-  if (swatch?.imageUrl) return { imageUrl: swatch.imageUrl, source: "shopify" };
-  if (swatch?.color && (HEX.test(swatch.color.trim()) || RGB.test(swatch.color.trim()))) {
-    return { color: swatch.color.trim(), source: "shopify" };
+  // 1. Shopify's own. A swatch image keeps its colour alongside it: an image
+  //    that 404s or is blocked would otherwise leave an empty chip where a
+  //    known colour was available.
+  const shopColor = swatch?.color?.trim();
+  const validShopColor = shopColor && (HEX.test(shopColor) || RGB.test(shopColor)) ? shopColor : undefined;
+  if (swatch?.imageUrl && HTTP_URL.test(swatch.imageUrl.trim())) {
+    return { imageUrl: swatch.imageUrl.trim(), color: validShopColor, source: "shopify" };
   }
+  if (validShopColor) return { color: validShopColor, source: "shopify" };
 
   const name = (valueName ?? "").trim();
   if (!name) return null;
 
-  // 2. A colour written out as text. `#` is optional: merchants type "FF0000".
-  const asHex = name.startsWith("#") ? name : `#${name}`;
-  if (HEX.test(asHex)) return { color: asHex, source: "hex" };
+  // 2. A colour written out as text.
+  if (HEX.test(name)) return { color: name, source: "hex" };
+  if (options?.isColourOption && HEX.test(`#${name}`)) return { color: `#${name}`, source: "hex" };
   if (RGB.test(name)) return { color: name, source: "hex" };
 
   // 3. A basic colour word. Only the whole name counts — "Rot meliert" is a
   //    fabric, not the colour red, and painting it red would state something
   //    the merchant did not.
-  const word = COLOUR_WORDS[name.toLowerCase()];
+  //
+  //    `Object.hasOwn`, because a plain object literal answers "constructor"
+  //    and "__proto__" with something truthy that is not a colour, and this
+  //    function promises `null` for anything it is not sure of.
+  const key = name.toLowerCase();
+  const word = Object.hasOwn(COLOUR_WORDS, key) ? COLOUR_WORDS[key] : undefined;
   return word ? { color: word, source: "name" } : null;
 }
 
 /**
- * True when an OPTION looks like a colour option.
+ * True when an OPTION is about colour.
  *
- * Used only to decide whether to bother rendering swatch space at all. It is
- * intentionally generous: getting it wrong costs an empty gap, and every value
- * still resolves its own swatch independently.
+ * The one thing it gates is rule 2's bare hex: on a colour option "FF0000" is
+ * a colour, and on a size option "DDD" is a cup size. Everything else resolves
+ * per value regardless, so a false negative here costs at most a `#`.
  */
 export function looksLikeColourOption(optionName: string, linkedMetafieldKey?: string): boolean {
   if (linkedMetafieldKey && /colou?r|farbe/i.test(linkedMetafieldKey)) return true;

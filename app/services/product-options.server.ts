@@ -204,6 +204,15 @@ export interface OptionValueChange {
   toUpdate?: Array<{ id: string; name: string }>;
   /** New value names. Shopify assigns their GIDs. */
   toAdd?: string[];
+  /**
+   * New values on a METAOBJECT-LINKED option, as metaobject GIDs.
+   *
+   * A linked option's values are not free text -- each one IS a metaobject
+   * entry -- so it is added by naming the entry, and Shopify takes the display
+   * name from it. Sending a `name` here instead would either be rejected or
+   * create a value that no longer matches its own metaobject.
+   */
+  toAddLinked?: string[];
   /** Value GIDs to remove -- and with them, their variants. */
   toDelete?: string[];
 }
@@ -234,14 +243,25 @@ export async function applyOptionChange(
   // it away could empty the request entirely, and the "nothing to do" return
   // below would then answer a lost edit with success.
   if (toAdd.length !== requestedAdds.length) return "optionValueEmpty";
+  const toAddLinked = (params.values?.toAddLinked ?? []).filter((id) =>
+    id.startsWith("gid://shopify/Metaobject/"),
+  );
+  if (toAddLinked.length !== (params.values?.toAddLinked ?? []).length) return "optionValueEmpty";
   const toDelete = params.values?.toDelete ?? [];
   const toUpdate = (params.values?.toUpdate ?? []).map((v) => ({ id: v.id, name: v.name.trim() }));
   if (toUpdate.some((v) => !v.name)) return "optionValueEmpty";
 
-  const changesMatrix = toAdd.length > 0 || toDelete.length > 0;
+  const changesMatrix = toAdd.length > 0 || toAddLinked.length > 0 || toDelete.length > 0;
   const variables: Record<string, unknown> = { productId: params.productId, option };
   if (toUpdate.length > 0) variables.optionValuesToUpdate = toUpdate;
-  if (toAdd.length > 0) variables.optionValuesToAdd = toAdd.map((name) => ({ name }));
+  // Linked and plain adds ride in ONE list: an option is either linked or it
+  // is not, so in practice only one side is ever populated, and Shopify takes
+  // `linkedMetafieldValue` in place of `name` for the linked kind.
+  const adds = [
+    ...toAdd.map((name) => ({ name })),
+    ...toAddLinked.map((linkedMetafieldValue) => ({ linkedMetafieldValue })),
+  ];
+  if (adds.length > 0) variables.optionValuesToAdd = adds;
   if (toDelete.length > 0) variables.optionValuesToDelete = toDelete;
   if (changesMatrix) variables.variantStrategy = "MANAGE";
 
@@ -251,6 +271,34 @@ export async function applyOptionChange(
 
   const outcome = await runOptionMutation(admin, shop, PRODUCT_OPTION_UPDATE, variables, "productOptionUpdate");
   if (outcome.warning) return outcome.warning;
+
+  // The ECHO decides, and `userErrors: []` is not the echo.
+  //
+  // Shopify can accept the call and store nothing -- the historic bug pattern
+  // this app names in its own architecture notes. It matters most for the
+  // LINKED add, whose input shape has never been measured against a live shop:
+  // if `linkedMetafieldValue` is silently ignored the response is a perfectly
+  // healthy one with the option unchanged, and without this check the save
+  // reports success while the merchant's pick is simply gone.
+  const echoed = outcome.options?.find((o) => o.id === params.optionId);
+  if (echoed) {
+    const linkedValues = new Set(
+      echoed.optionValues.map((v) => v.linkedMetafieldValue).filter((v): v is string => !!v),
+    );
+    if (toAddLinked.some((id) => !linkedValues.has(id))) return "optionsNotConfirmed";
+
+    const names = new Set(echoed.optionValues.map((v) => v.name));
+    if (toAdd.some((name) => !names.has(name))) return "optionsNotConfirmed";
+
+    const ids = new Set(echoed.optionValues.map((v) => v.id));
+    if (toDelete.some((id) => ids.has(id))) return "optionsNotConfirmed";
+
+    // A rename is confirmed by the new name being there -- Shopify skips a
+    // value update it considers a no-op, and a skipped rename that reports
+    // success is the same silent no-op one level down.
+    if (toUpdate.some((v) => !names.has(v.name))) return "optionsNotConfirmed";
+  }
+
   await mirrorOptions(db, params.productId, outcome.options ?? []);
   return undefined;
 }
@@ -424,6 +472,9 @@ export async function fetchOptionSwatches(
     }
     return swatches;
   } catch (error) {
+    // A re-auth `Response` is not a failed query -- swallowed, the request can
+    // never re-authenticate and every read here answers "unknown" forever.
+    if (error instanceof Response) throw error;
     logger.warn("[ProductOptions] swatch query failed", {
       context: "ProductOptions", shop, productId,
       error: error instanceof Error ? error.message : String(error),
@@ -491,6 +542,7 @@ export async function countVariantsPerValue(
     }
     return counts;
   } catch (error) {
+    if (error instanceof Response) throw error;
     logger.warn("[ProductOptions] variant count failed", {
       context: "ProductOptions", shop, productId,
       error: error instanceof Error ? error.message : String(error),

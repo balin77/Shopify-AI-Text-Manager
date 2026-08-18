@@ -31,9 +31,47 @@ describe("resolveSwatch", () => {
     expect(resolveSwatch("Tweed", { color: "not a colour" })).toBeNull();
   });
 
-  it("reads a hex out of the name, with or without the #", () => {
+  it("reads a hex out of the name", () => {
     expect(resolveSwatch("#B71C1C")).toEqual({ color: "#B71C1C", source: "hex" });
-    expect(resolveSwatch("B71C1C")).toEqual({ color: "#B71C1C", source: "hex" });
+  });
+
+  it("reads a BARE hex only on an option that is about colour", () => {
+    // "DDD" is a bra cup size, "EEE" a shoe width and "ABC" a style code, and
+    // every one of them is also a valid three-digit hex. Painting a size grey
+    // is exactly the confidently-wrong swatch this module exists to avoid.
+    expect(resolveSwatch("DDD")).toBeNull();
+    expect(resolveSwatch("EEE")).toBeNull();
+    expect(resolveSwatch("ABC")).toBeNull();
+
+    expect(resolveSwatch("B71C1C", null, { isColourOption: true })).toEqual({
+      color: "#B71C1C",
+      source: "hex",
+    });
+  });
+
+  it("keeps the colour alongside a swatch image", () => {
+    // An image that 404s or is blocked would otherwise leave an empty chip
+    // where a known colour was available.
+    expect(resolveSwatch("Tweed", { color: "#112233", imageUrl: "https://cdn.example/x.png" })).toEqual({
+      imageUrl: "https://cdn.example/x.png",
+      color: "#112233",
+      source: "shopify",
+    });
+  });
+
+  it("refuses a swatch image that is not a plain http(s) URL", () => {
+    // It is painted into a CSS `url()`. Pinning the shape here is what makes
+    // the caller's quoting sufficient rather than merely adequate today.
+    for (const bad of ["javascript:alert(1)", 'https://x/a").evil("', "https://x/a\nb", "//cdn/x.png"]) {
+      expect(resolveSwatch("Tweed", { imageUrl: bad })).toBeNull();
+    }
+  });
+
+  it("answers null for a name that happens to be an Object property", () => {
+    // A plain object literal answers "constructor" with a function and
+    // "__proto__" with an object — both truthy, neither a colour.
+    expect(resolveSwatch("constructor")).toBeNull();
+    expect(resolveSwatch("__proto__")).toBeNull();
   });
 
   it("knows the basic colour words of the three languages the app ships in", () => {

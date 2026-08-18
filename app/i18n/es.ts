@@ -30,6 +30,10 @@ export const es: Translation = {
     deleteOptionTitle: "¿Eliminar esta variante?",
     deleteValueTitle: "¿Eliminar este valor?",
     editMetaobject: "Editar estos valores",
+    choicesUnavailable: "No se pudieron leer las entradas disponibles.",
+    choicesAllUsed: "Todas las entradas de este tipo ya están en uso.",
+    choicesTruncated: "Solo se muestran las primeras entradas. Gestiona el resto en el panel de Shopify.",
+    choicesSyncedAt: "Leído de la última sincronización: recarga el producto si falta una entrada.",
     deleteOptionConfirm: "Esto elimina la opción y reconstruye las variantes del producto en torno a las restantes.",
     deleteValueCount: "Esto elimina {n} variante(s), con su stock, precios y SKU. No se puede deshacer.",
     deleteValueUnknown: "Esto elimina las variantes que usan este valor, con su stock y precios. No se pudo leer cuántas son.",
@@ -554,6 +558,12 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      scopeSingle: "Una variante",
+      scopeAll: "Todas las variantes",
+      scopeGroup: "Todas {value}",
+      scopeCount: "{n} variantes",
+      mixedValues: "Valores distintos",
+      stockNotBulk: "El stock es una cantidad por variante y ubicación, así que se edita de una en una.",
       pricesHeading: "Precios",
       shippingHeading: "Envío y aduanas",
       price: "Precio de venta",
@@ -1714,6 +1724,7 @@ export const es: Translation = {
     jsonLdAuditCompleted: "Comprobación de JSON-LD finalizada",
     internalLinksCompleted: "Sugerencias de enlazado interno listas",
     robotsAdviceCompleted: "Análisis de robots.txt finalizado",
+    discoveryIntroCompleted: "La propuesta de IA para el texto introductorio está lista",
     bulkEditorSaveCompleted: "Editor masivo: cambios guardados",
     bulkEditorTranslateCompleted: "Editor masivo: traducción finalizada",
     seoBulkFixCompleted: "Corrección SEO finalizada",
@@ -1773,6 +1784,12 @@ export const es: Translation = {
       stats: "{words} palabras · {sentences} frases · media de {avg} palabras por frase",
       allGood: "La longitud de frases y párrafos está bien.",
       noFormula: "No existe una fórmula de legibilidad validada para este idioma, así que mostramos la estructura en lugar de una puntuación. Aplicar una fórmula inglesa a otro idioma da un número equivocado con un nombre familiar.",
+      formulaNote: "Puntuación según {formula}. Solo mide la longitud de frases y palabras, y es comparable dentro de un mismo idioma, nunca entre idiomas. No cuenta para la puntuación SEO.",
+      formulaName: {
+        flesch: "Flesch (inglés)",
+        amstad: "Amstad (alemán)",
+        fernandezHuerta: "Fernández Huerta (español)",
+      },
       band: {
         easy: "fácil de leer",
         medium: "media",
@@ -3207,7 +3224,8 @@ export const es: Translation = {
       referralTotal: "{count} visitas en {days} días",
       referralTopPages: "Páginas de destino más visitadas",
       referralNoneInWindow: "Sin visitas desde respuestas de IA en los últimos {days} días.",
-      referralCaveat: "No incluye: Google AI Overviews (el clic llega como una visita normal de Google, indistinguible de la búsqueda clásica) ni visitantes cuyo navegador oculta la procedencia. La cifra es por tanto un mínimo: preferimos contar de menos antes que adivinar.",
+      referralNoneHint: "Si acabas de entrar en tu tienda desde ChatGPT y aun así no ves nada aquí: el contador está en la inserción de app «Web Vitals (RUM)», la misma que mide los tiempos de carga reales. Comprueba en el editor de temas, en «Inserciones de app», que esté activada, y que la versión actual de la extensión esté publicada. Para verificarlo: busca «web-vitals.js» en el código fuente de una página de producto.",
+      referralCaveat: "Requiere que la inserción de app «Web Vitals (RUM)» esté activada en tu tema: sin ella no se cuenta nada. No incluye: Google AI Overviews (el clic llega como una visita normal de Google, indistinguible de la búsqueda clásica) ni visitantes cuyo navegador oculta la procedencia. Esto último ocurre con Claude: sus enlaces no transmiten ni procedencia ni parámetro utm_source, así que un clic desde allí es técnicamente indistinguible de una visita directa. ChatGPT y Perplexity sí se detectan. La cifra es por tanto un mínimo: preferimos contar de menos antes que adivinar.",
       referralSourceName: {
         chatgpt: "ChatGPT",
         perplexity: "Perplexity",
@@ -3279,9 +3297,25 @@ export const es: Translation = {
       shopDescriptionMissingTitle: "Falta la descripción de la tienda",
       shopDescriptionMissingBody: "Tus archivos de descubrimiento no tienen la línea de resumen: la frase que le dice a una IA de qué trata realmente tu tienda. La tomamos de la descripción de la tienda en Shopify, y la tuya está vacía. Complétala allí y vuelve a generar los archivos. No inventamos una descripción por ti.",
       shopDescriptionOpenSettings: "Abrir ajustes de la tienda",
-      llmsPreviewTitle: "Vista previa",
-      llmsPreviewTruncated: "Vista previa recortada — el archivo contiene todos los elementos indicados arriba.",
       llmsOpenLive: "Abrir en vivo",
+      liveExcerptTitle: "Lo que devuelve esta URL hoy",
+      introTitle: "Texto introductorio",
+      introHint:
+        "La única parte del archivo que escribes tú. Todo lo que va debajo — colecciones, productos, políticas — lo generamos desde tu catálogo y lo mantenemos al día; una lista editada a mano quedaría desfasada en el siguiente cambio de precio o de URL.",
+      introPlaceholder: "Quién está detrás de la tienda, qué la define, a dónde enviáis …",
+      introSave: "Guardar introducción",
+      introReset: "Volver al texto generado",
+      introSaved: "Introducción guardada. Entrará en el archivo la próxima vez que lo generes abajo.",
+      introSaveFailed: "No se pudo guardar la introducción.",
+      introChars: "{count} de {max} caracteres",
+      introAiToggle: "Mejorar con IA",
+      introAiLabel: "¿Qué debería cambiar?",
+      introAiPlaceholder: "p. ej. «más corto y más objetivo, y menciona que enviamos desde Suiza»",
+      introAiRun: "Generar propuesta",
+      introAiHint:
+        "La propuesta solo aparece en el campo — se guarda y se publica cuando pulsas «Guardar introducción».",
+      introAiFailed: "No se pudo generar la propuesta de IA.",
+      introAiMissingInstruction: "Describe brevemente qué debería cambiar.",
       discoveryCanonical: "de referencia",
       discoveryLive: "en vivo",
       discoveryStale: "desactualizado",
@@ -3824,9 +3858,24 @@ export const es: Translation = {
         "Los criterios que no aplican se excluyen y el resto se reescala: un blog sin cuerpo no se penaliza por ello",
         "Los límites de longitud vienen de tus ajustes, incluido el nombre de la tienda que Shopify añade al título SEO",
         "Debajo de la puntuación aparecen los problemas concretos y qué hacer con ellos",
+        "El bloque de legibilidad del final NO cuenta para la puntuación: tiene su propio «?»",
       ],
       details:
         "La puntuación la calcula la misma función que el panel SEO de toda la tienda, así que un elemento nunca puede valorarse de forma distinta en los dos sitios. Mide lo básico que siempre se cumple: si el campo está relleno, si tiene una longitud razonable, si las imágenes tienen texto alternativo. Sobre la calidad del contenido no dice nada a propósito: una meta descripción de exactamente 155 caracteres sin sentido obtiene la puntuación máxima. Tómala como una lista de comprobación que no deberías suspender, no como una predicción de posiciones.",
+    },
+    seoSidebarReadability: {
+      title: "Legibilidad",
+      summary:
+        "Cuánto esfuerzo cuesta leer este texto: avisos que valen en cualquier idioma, más una puntuación para los tres idiomas que tienen una fórmula validada.",
+      tips: [
+        "Los avisos (longitud de frases y párrafos, faltan subtítulos) son la mitad útil: valen siempre",
+        "La cifra solo existe para alemán, inglés y español; cada idioma tiene su propia fórmula",
+        "Las cifras de idiomas distintos NO son comparables: el alemán puntúa más bajo por construcción",
+        "La legibilidad no cuenta para la puntuación SEO",
+        "Se analiza el idioma que el editor está mostrando en ese momento",
+      ],
+      details:
+        "La cifra de 0 a 100 es una fórmula de facilidad de lectura: cuenta cuántas palabras tiene una frase y cuántas sílabas tiene una palabra, y nada más. Dice cuánto ESFUERZO cuesta leer un texto, no lo bueno que es. Cada idioma usa su PROPIA fórmula, validada para ese idioma (alemán: Amstad, inglés: Flesch, español: Fernández Huerta). Como las palabras alemanas tienen bastantes más sílabas que las inglesas, el mismo texto puntúa más bajo en alemán que en inglés aunque ambos se lean igual de bien: las cifras se comparan dentro de un idioma, nunca entre idiomas. Para los demás idiomas no mostramos ninguna cifra a propósito: no existe una fórmula validada, y aplicar una fórmula inglesa a un texto italiano produce un número equivocado con aspecto de correcto. Los avisos de estructura sí se calculan, porque una frase o un párrafo demasiado largos lo son en cualquier idioma. Y la legibilidad no entra en la puntuación SEO a propósito: Google no la califica directamente, la cifra depende del idioma, y una puntuación que se mueve 20 puntos por reformular una frase no serviría como lista de comprobación. Las comprobaciones de voz pasiva y palabras de relleno quedan fuera a propósito: necesitan listas de palabras por idioma para ser algo más que ruido.",
     },
     seoSidebarKeywords: {
       title: "Palabras clave",

@@ -98,15 +98,20 @@ interface OptionsFieldProps {
 
   /** Bumped on every landed save, so the card can drop cached variant counts. */
   savedNonce?: number;
+  /** Rendered inside the variants card, below a divider. */
+  footer?: React.ReactNode;
   /** The product's GID — the variants editor asks how many variants hang off a
    *  value before offering to delete it. */
   productId?: string;
   /** Pending structural edits, so the card can show them before the save. */
   valuesToAdd?: Record<string, string[]>;
+  linkedValuesToAdd?: Record<string, Array<{ id: string; name: string }>>;
   valuesToDelete?: Record<string, string[]>;
   optionsToCreate?: Array<{ name: string; values: string[] }>;
   optionsToDelete?: string[];
   onAddOptionValue?: (optionId: string, name: string) => void;
+  onAddLinkedOptionValue?: (optionId: string, entry: { id: string; name: string }) => void;
+  onRemoveLinkedOptionValue?: (optionId: string, entryId: string) => void;
   onRemoveOptionValue?: (optionId: string, valueId: string, addedIndex?: number) => void;
   onEditPendingValue?: (optionId: string, index: number, name: string) => void;
   onCreateOption?: (name: string, values: string[]) => void;
@@ -152,6 +157,11 @@ interface OptionsFieldProps {
     deleteOption?: string;
     deleteOptionTitle?: string;
     editMetaobject?: string;
+    choicesUnavailable?: string;
+    choicesAllUsed?: string;
+    choicesTruncated?: string;
+    choicesSyncedAt?: string;
+    loading?: string;
     deleteValueTitle?: string;
     deleteOptionConfirm?: string;
     deleteValueCount?: string;
@@ -184,11 +194,15 @@ export function OptionsField({
   primaryOptions = {},
   productId = "",
   savedNonce = 0,
+  footer,
   valuesToAdd = {},
+  linkedValuesToAdd = {},
   valuesToDelete = {},
   optionsToCreate = [],
   optionsToDelete = [],
   onAddOptionValue,
+  onAddLinkedOptionValue,
+  onRemoveLinkedOptionValue,
   onRemoveOptionValue,
   onEditPendingValue,
   onCreateOption,
@@ -242,12 +256,15 @@ export function OptionsField({
         options={options}
         primaryOptions={primaryOptions}
         valuesToAdd={valuesToAdd}
+        linkedValuesToAdd={linkedValuesToAdd}
         valuesToDelete={valuesToDelete}
         optionsToCreate={optionsToCreate}
         optionsToDelete={optionsToDelete}
         onNameChange={(id, value) => onPrimaryOptionNameChange?.(id, value)}
         onValuesChange={(id, values) => onPrimaryOptionValuesChange?.(id, values)}
         onAddValue={(id, name) => onAddOptionValue?.(id, name)}
+        onAddLinkedValue={(id, entry) => onAddLinkedOptionValue?.(id, entry)}
+        onRemoveLinkedValue={(id, entryId) => onRemoveLinkedOptionValue?.(id, entryId)}
         onRemoveValue={(id, valueId, addedIndex) => onRemoveOptionValue?.(id, valueId, addedIndex)}
         onEditPendingValue={(id, index, name) => onEditPendingValue?.(id, index, name)}
         onCreateOption={(name, values) => onCreateOption?.(name, values)}
@@ -259,6 +276,7 @@ export function OptionsField({
         onTranslate={onTranslate}
         translatingFieldIds={translatingFieldIds}
         savedNonce={savedNonce}
+        footer={footer}
         t={t as Record<string, string | undefined>}
       />
     );

@@ -394,18 +394,11 @@ export function UnifiedFieldRenderer(
   // flat value map would be stale by the time the merchant pressed save.
   if (field.type === "commerce") {
     return (
-      <CommerceField
-        productId={String(selectedItem?.id ?? "")}
-        label={translatedFieldLabel}
-        isPrimaryLocale={isPrimaryLocale}
-        t={{
-          ...((t.content?.commerce ?? {}) as Record<string, string>),
-          warnings: (t.content?.commerceWarnings ?? {}) as Record<string, string>,
-          // The shared enum vocabulary — this panel's weight unit is the same
-          // kind of value as the status and sort-order options above.
-          enumLabels: (t.content?.enumLabels ?? {}) as Record<string, string>,
-        }}
-      />
+      // Only the CHANNELS half. The product id, the locale and the strings all
+      // come from `CommerceDataProvider` now — the variant half of this panel
+      // moved into the variants card and the two share one load, one set of
+      // pending edits and one registration with the save bar.
+      <CommerceField label={translatedFieldLabel} />
     );
   }
 

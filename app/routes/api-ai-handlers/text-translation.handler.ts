@@ -9,7 +9,7 @@ import { extractReadableName } from "~/utils/templates-field-factory";
 import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import { resolveSelectedThemeId } from "~/services/theme-selection.server";
 import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/ai-instructions.utils";
-import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
+import { parseMetaobjectFieldKey } from "~/services/metaobject-fields.shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
@@ -818,26 +818,29 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               });
             }
           }
-          // Save to Shopify for metaobjects
-          // fieldType is the metaobject GID (e.g., gid://shopify/Metaobject/123)
+          // Save to Shopify for metaobjects.
+          // `fieldType` is the editor's compound key `<Metaobject GID>#<field
+          // key>` (PLAN_METAOBJECTS_EDITOR §6.1). It used to be the bare entry
+          // GID, which is why this branch hunted for "the label field": there
+          // was no other field the key could have named. Now it names one.
           else if (contentType === 'metaobjects' && fieldType) {
-            const metaobjectGid = fieldType;
+            const parsedMetaKey = parseMetaobjectFieldKey(fieldType);
+            const metaobjectGid = parsedMetaKey?.metaobjectId ?? '';
             let batchMetaAccepted = false;
-            let metaLabelKey = '';
+            let metaLabelKey = parsedMetaKey?.fieldKey ?? '';
 
             try {
-              // Populate digest cache for this metaobject
-              await getCachedDigest(metaobjectGid, 'display_name');
-              const metaDigests = digestCache.get(metaobjectGid);
+              // Populate the digest cache for this entry.
+              await getCachedDigest(metaobjectGid, metaLabelKey || 'display_name');
+              const metaDigests = metaobjectGid ? digestCache.get(metaobjectGid) : undefined;
 
-              // Find the label field key (display_name, name, or label)
-              metaLabelKey = (metaDigests
-                ? METAOBJECT_LABEL_FIELD_KEYS.find(k => metaDigests.has(k))
-                : null) || '';
-
-              if (!metaLabelKey) {
-                logger.warn("[API-AI] Batch: No label field digest found for metaobject", {
+              // A key with no digest has no PRIMARY value, so there is nothing
+              // to translate — reported, never guessed around by falling back
+              // to a different field.
+              if (!metaLabelKey || !metaDigests?.has(metaLabelKey)) {
+                logger.warn("[API-AI] Batch: No digest for this metaobject field", {
                   context: "AI",
+                  fieldKey: fieldType,
                   metaobjectGid,
                   locale,
                   availableKeys: metaDigests ? Array.from(metaDigests.keys()) : []
@@ -1311,25 +1314,25 @@ export async function handleTranslateFieldToAllLocales(ctx: AIActionContext): Pr
               });
             }
           }
-          // For metaobjects: fieldType is the metaobject GID, use it as resourceId
+          // For metaobjects `fieldType` is the compound key `<GID>#<field key>`
+          // — see the batch branch above for why it is no longer a bare GID.
           else if (contentType === 'metaobjects' && fieldType) {
-            const metaobjectGid = fieldType;
+            const parsedMetaKey = parseMetaobjectFieldKey(fieldType);
+            const metaobjectGid = parsedMetaKey?.metaobjectId ?? '';
             let seqMetaAccepted = false;
-            let metaLabelKey = '';
+            let metaLabelKey = parsedMetaKey?.fieldKey ?? '';
 
             try {
-              // Populate digest cache for this metaobject
-              await getCachedDigest(metaobjectGid, 'display_name');
-              const metaDigests = digestCache.get(metaobjectGid);
+              // Populate the digest cache for this entry.
+              await getCachedDigest(metaobjectGid, metaLabelKey || 'display_name');
+              const metaDigests = metaobjectGid ? digestCache.get(metaobjectGid) : undefined;
 
-              // Find the label field key (display_name, name, or label)
-              metaLabelKey = (metaDigests
-                ? METAOBJECT_LABEL_FIELD_KEYS.find(k => metaDigests.has(k))
-                : null) || '';
-
-              if (!metaLabelKey) {
-                logger.warn("[API-AI] No label field digest found for metaobject", {
+              // No digest ⇒ no primary value ⇒ nothing to translate. Reported,
+              // never worked around by translating a different field.
+              if (!metaLabelKey || !metaDigests?.has(metaLabelKey)) {
+                logger.warn("[API-AI] No digest for this metaobject field", {
                   context: "AI",
+                  fieldKey: fieldType,
                   metaobjectGid,
                   locale,
                   availableKeys: metaDigests ? Array.from(metaDigests.keys()) : []

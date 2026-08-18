@@ -10,12 +10,13 @@
  * would touch three language files for something no user can see.
  */
 
-import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
+import { Card, BlockStack, Box, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { SidebarTabBar } from "./SidebarTabBar";
+import { HelpTooltip } from "./HelpTooltip";
 import { AttributeChecklist } from "./sidebar/AttributeChecklist";
 import type { AttributeRow } from "../services/attribute-checklist.shared";
 import { ActionTooltip } from "./ActionTooltip";
@@ -550,77 +551,6 @@ export function ItemSidebar({
           </BlockStack>
         )}
 
-        {/* Readability — reported, not scored. Yoast's signature check, built
-            the way the rest of this app reports: the structure findings hold in
-            every language, the reading-ease NUMBER only appears for the
-            languages that have a validated formula. */}
-        {!excludeDescription && (
-          <BlockStack gap="200">
-            <InlineStack gap="200" blockAlign="center" wrap>
-              <Text as="p" variant="headingSm" fontWeight="semibold">
-                {rd.title}
-              </Text>
-              {readability.readingEaseBand && (
-                <Badge
-                  tone={
-                    readability.readingEaseBand === "easy"
-                      ? "success"
-                      : readability.readingEaseBand === "medium"
-                        ? "attention"
-                        : "warning"
-                  }
-                >
-                  {`${rd.band[readability.readingEaseBand]} · ${readability.readingEase}/100`}
-                </Badge>
-              )}
-            </InlineStack>
-
-            {readability.tooShort ? (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {rd.tooShort}
-              </Text>
-            ) : (
-              <BlockStack gap="200">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {rd.stats
-                    .replace("{words}", String(readability.words))
-                    .replace("{sentences}", String(readability.sentences))
-                    .replace("{avg}", String(readability.avgSentenceWords))}
-                </Text>
-                {readability.readingEase === null && (
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {rd.noFormula}
-                  </Text>
-                )}
-                {readability.findings.length === 0 ? (
-                  <InlineStack gap="200" align="start">
-                    <div style={{ marginTop: "2px" }}>✅</div>
-                    <div style={{ flex: 1 }}>
-                      <Text as="p" variant="bodySm">
-                        {rd.allGood}
-                      </Text>
-                    </div>
-                  </InlineStack>
-                ) : (
-                  readability.findings.map((finding) => (
-                    <InlineStack key={finding.code} gap="200" align="start">
-                      <div style={{ marginTop: "2px" }}>💡</div>
-                      <div style={{ flex: 1 }}>
-                        <Text as="p" variant="bodySm">
-                          {Object.entries(finding.data ?? {}).reduce(
-                            (msg, [key, value]) => msg.replace(`{${key}}`, String(value)),
-                            rd.findings[finding.code],
-                          )}
-                        </Text>
-                      </div>
-                    </InlineStack>
-                  ))
-                )}
-              </BlockStack>
-            )}
-          </BlockStack>
-        )}
-
         {/* Score Details (Expandable) */}
         {showDetails && (
           <div
@@ -707,6 +637,104 @@ export function ItemSidebar({
         <Button onClick={() => setShowDetails(!showDetails)} variant="plain" size="slim">
           {showDetails ? t.seo.hideDetails : t.seo.showDetails}
         </Button>
+
+        {/* Readability — its own section BELOW the score details, with its own
+            help icon. It is reported, never scored (see the help text), so
+            stacking it inside the score's own findings made merchants read it
+            as part of the number. The border is the separation: same treatment
+            the score-details box gets. */}
+        {!excludeDescription && (
+          <Box
+            padding="300"
+            borderWidth="025"
+            borderColor="border"
+            borderRadius="200"
+            background="bg-surface-secondary"
+          >
+            <BlockStack gap="200">
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="p" variant="headingSm" fontWeight="semibold">
+                  {rd.title}
+                </Text>
+                {/* Its own "?" — the readability rules (why some languages get
+                    no number, why the numbers do not compare across languages,
+                    why none of it touches the score) do not belong in the
+                    score's help, and a merchant looking at this block should
+                    not have to find them one section up. */}
+                <HelpTooltip helpKey="seoSidebarReadability" position="below" />
+                {readability.readingEaseBand && (
+                  <Badge
+                    tone={
+                      readability.readingEaseBand === "easy"
+                        ? "success"
+                        : readability.readingEaseBand === "medium"
+                          ? "attention"
+                          : "warning"
+                    }
+                  >
+                    {`${rd.band[readability.readingEaseBand]} · ${readability.readingEase}/100`}
+                  </Badge>
+                )}
+              </InlineStack>
+
+              {readability.tooShort ? (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {rd.tooShort}
+                </Text>
+              ) : (
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {rd.stats
+                      .replace("{words}", String(readability.words))
+                      .replace("{sentences}", String(readability.sentences))
+                      .replace("{avg}", String(readability.avgSentenceWords))}
+                  </Text>
+                  {readability.readingEase === null ? (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {rd.noFormula}
+                    </Text>
+                  ) : (
+                    /* Naming the formula is what stops the number from reading as
+                       universal: the same text scores lower in German than in
+                       English because German words carry more syllables, not
+                       because it reads worse. Without this the badge invites
+                       exactly the cross-language comparison it cannot support. */
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {rd.formulaNote.replace(
+                        "{formula}",
+                        rd.formulaName[readability.readingEaseFormula!],
+                      )}
+                    </Text>
+                  )}
+                  {readability.findings.length === 0 ? (
+                    <InlineStack gap="200" align="start">
+                      <div style={{ marginTop: "2px" }}>✅</div>
+                      <div style={{ flex: 1 }}>
+                        <Text as="p" variant="bodySm">
+                          {rd.allGood}
+                        </Text>
+                      </div>
+                    </InlineStack>
+                  ) : (
+                    readability.findings.map((finding) => (
+                      <InlineStack key={finding.code} gap="200" align="start">
+                        <div style={{ marginTop: "2px" }}>💡</div>
+                        <div style={{ flex: 1 }}>
+                          <Text as="p" variant="bodySm">
+                            {Object.entries(finding.data ?? {}).reduce(
+                              (msg, [key, value]) => msg.replace(`{${key}}`, String(value)),
+                              rd.findings[finding.code],
+                            )}
+                          </Text>
+                        </div>
+                      </InlineStack>
+                    ))
+                  )}
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Box>
+        )}
         </BlockStack>
         )}
 

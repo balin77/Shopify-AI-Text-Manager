@@ -19,6 +19,8 @@ import { fireEvent, render, screen, waitFor, cleanup } from "@testing-library/re
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { CommerceField } from "~/components/unified/CommerceField";
+import { CommerceVariantsSection } from "~/components/unified/CommerceVariantsSection";
+import { CommerceDataProvider } from "~/contexts/CommerceDataContext";
 import { useCommerceSaveRegistry } from "~/contexts/CommerceSaveContext";
 
 let renders = 0;
@@ -69,12 +71,14 @@ function Editor() {
       <button data-testid="discard" onClick={() => commerceSave.discard()}>discard</button>
       <button data-testid="reload" onClick={() => commerceSave.requestReload()}>reload</button>
       <button data-testid="save" onClick={() => void commerceSave.save()}>save</button>
-      <CommerceField
+      <CommerceDataProvider
         productId="gid://shopify/Product/1"
-        label="Stock"
         isPrimaryLocale
         t={{ warnings: {}, enumLabels: {} }}
-      />
+      >
+        <CommerceField label="Stock" />
+        <CommerceVariantsSection />
+      </CommerceDataProvider>
     </commerceSave.Provider>
   );
 }

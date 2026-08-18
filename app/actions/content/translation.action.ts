@@ -14,7 +14,6 @@ import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
-import { findMetaobjectLabelField } from "../../constants/shopifyFields";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
 import type { PrismaClient } from "@prisma/client";
@@ -29,28 +28,38 @@ async function translateMetaobjectEntries(params: {
   admin: AdminApiContext;
   session: Session;
   db: PrismaClient;
-  itemId: string;
+  /**
+   * Keyed by `<Metaobject GID>#<field key>` — the editor's compound field key
+   * (PLAN_METAOBJECTS_EDITOR §6.1). It used to be the bare entry GID, which is
+   * why this helper looked up "the label field" for every entry: there was no
+   * other field it could have meant. Now the key names the field itself.
+   */
   metaobjectFields: Record<string, string>;
   targetLocales: string[];
   translationService: TranslationService;
   customInstructions?: string;
 }): Promise<{ translations: Record<string, Record<string, string>>; failedLocales: string[] }> {
-  const { admin, session, db, itemId, metaobjectFields, targetLocales, translationService, customInstructions } = params;
+  const { admin, session, db, metaobjectFields, targetLocales, translationService, customInstructions } = params;
   const { TRANSLATE_CONTENT } = await import("../../graphql/content.mutations");
   const { GET_TRANSLATABLE_CONTENT } = await import("../../graphql/content.queries");
+  const { parseMetaobjectFieldKey } = await import("~/services/metaobject-fields.shared");
 
-  // Build short-key mapping for cleaner AI prompts
-  const gids = Object.keys(metaobjectFields);
-  const gidToShort: Record<string, string> = {};
-  const shortToGid: Record<string, string> = {};
+  // Build short-key mapping for cleaner AI prompts. A key that is NOT compound
+  // is dropped rather than guessed at: it would reach `metaobject(id: …)` as a
+  // malformed id and translate nothing, which is worse than saying so.
+  const compoundKeys = Object.keys(metaobjectFields).filter((key) => parseMetaobjectFieldKey(key) !== null);
+  const shortToKey: Record<string, string> = {};
   const shortFields: Record<string, string> = {};
 
-  gids.forEach((gid, i) => {
+  compoundKeys.forEach((key, i) => {
     const short = `entry_${i}`;
-    gidToShort[gid] = short;
-    shortToGid[short] = gid;
-    shortFields[short] = metaobjectFields[gid];
+    shortToKey[short] = key;
+    shortFields[short] = metaobjectFields[key];
   });
+
+  if (compoundKeys.length === 0) {
+    return { translations: {}, failedLocales: [...targetLocales] };
+  }
 
   // AI translation (all entries × all locales in one request)
   const aiResult = await translationService.translateProduct(
@@ -72,45 +81,48 @@ async function translateMetaobjectEntries(params: {
     }
     allTranslations[locale] = {};
     for (const [shortKey, value] of Object.entries(localeResult)) {
-      const gid = shortToGid[shortKey];
-      if (gid && value) {
-        allTranslations[locale][gid] = String(value);
+      const compound = shortToKey[shortKey];
+      if (compound && value) {
+        allTranslations[locale][compound] = String(value);
       }
     }
   }
 
   // Save translations to Shopify + DB for each metaobject × locale
   for (const [locale, fieldMap] of Object.entries(allTranslations)) {
-    for (const [gid, translatedValue] of Object.entries(fieldMap)) {
+    for (const [compound, translatedValue] of Object.entries(fieldMap)) {
+      const parsed = parseMetaobjectFieldKey(compound);
+      if (!parsed) continue;
+      const { metaobjectId, fieldKey } = parsed;
       try {
-        // Find label field key for this metaobject
-        const moResponse = await admin.graphql(
-          `#graphql
-            query getMetaobject($id: ID!) {
-              metaobject(id: $id) { fields { key type } }
-            }`,
-          { variables: { id: gid } }
-        );
-        const moData = await moResponse.json();
-        const fields = moData.data?.metaobject?.fields || [];
-        const labelField = findMetaobjectLabelField(fields);
-        if (!labelField) continue;
+        // The cache row is the tenancy check AND the source of the type the DB
+        // row is stamped with. `itemId` on this page is `metaobject_type_<type>`
+        // and stamping THAT is what the definition stale-delete then removes
+        // (PLAN_METAOBJECTS_EDITOR B5) — masked while every key was a label
+        // field, real now that any field key can occur.
+        const cached = await db.metaobject.findUnique({
+          where: { shop_id: { shop: session.shop, id: metaobjectId } },
+          select: { type: true },
+        });
+        if (!cached) continue;
 
-        // Fetch digest
+        // Fetch digest for THIS field. `translatableContent` only lists keys
+        // that have a primary value, so a missing digest means the source field
+        // is empty — nothing to translate, not a failure.
         const digestResponse = await admin.graphql(GET_TRANSLATABLE_CONTENT, {
-          variables: { resourceId: gid },
+          variables: { resourceId: metaobjectId },
         });
         const digestData = await digestResponse.json();
         const tc = digestData.data?.translatableResource?.translatableContent || [];
-        const digestEntry = tc.find((c: any) => c.key === labelField.key);
+        const digestEntry = tc.find((c: { key: string; digest: string | null }) => c.key === fieldKey);
         if (!digestEntry?.digest) continue;
 
         // Register translation
         await admin.graphql(TRANSLATE_CONTENT, {
           variables: {
-            resourceId: gid,
+            resourceId: metaobjectId,
             translations: [{
-              key: labelField.key,
+              key: fieldKey,
               value: translatedValue,
               locale,
               translatableContentDigest: digestEntry.digest,
@@ -124,16 +136,16 @@ async function translateMetaobjectEntries(params: {
             shop_metaobjectId_key_locale_marketId: {
               marketId: "",
               shop: session.shop,
-              metaobjectId: gid,
-              key: labelField.key,
+              metaobjectId,
+              key: fieldKey,
               locale,
             },
           },
           create: {
             shop: session.shop,
-            metaobjectId: gid,
-            type: itemId,
-            key: labelField.key,
+            metaobjectId,
+            type: cached.type,
+            key: fieldKey,
             value: translatedValue,
             locale,
             outdated: false,
@@ -141,15 +153,18 @@ async function translateMetaobjectEntries(params: {
           update: {
             value: translatedValue,
             outdated: false,
+            // Repairs a row an older build stamped with the pseudo-item id.
+            type: cached.type,
             updatedAt: new Date(),
           },
         });
-      } catch (err: any) {
+      } catch (err: unknown) {
         logger.error("[translateMetaobjectEntries] Error saving translation", {
           context: "Metaobjects",
-          gid,
+          metaobjectId,
+          fieldKey,
           locale,
-          error: err.message,
+          error: err instanceof Error ? err.message : String(err),
         });
       }
     }
@@ -349,7 +364,7 @@ export async function handleTranslateAll(
     if (contentConfig.resourceType === "Metaobject") {
       const targetLocales = targetLocalesStr ? safeJsonParse<string[]>(targetLocalesStr, []) : [];
       const result = await translateMetaobjectEntries({
-        admin, session, db, itemId,
+        admin, session, db,
         metaobjectFields: changedFields,
         targetLocales,
         translationService: translationServiceWithTask,
@@ -509,7 +524,7 @@ export async function handleTranslateAllForLocale(
     // Metaobjects need custom translation flow
     if (contentConfig.resourceType === "Metaobject") {
       const result = await translateMetaobjectEntries({
-        admin, session, db, itemId,
+        admin, session, db,
         metaobjectFields: changedFields,
         targetLocales: [targetLocale],
         translationService: translationServiceWithTask,

@@ -28,6 +28,10 @@ export const de = {
     deleteOptionTitle: "Diese Variante löschen?",
     deleteValueTitle: "Diesen Wert löschen?",
     editMetaobject: "Diese Werte bearbeiten",
+    choicesUnavailable: "Die verfügbaren Einträge konnten nicht gelesen werden.",
+    choicesAllUsed: "Alle Einträge dieses Typs sind bereits in Verwendung.",
+    choicesTruncated: "Es werden nur die ersten Einträge angezeigt. Der Rest wird im Shopify-Admin verwaltet.",
+    choicesSyncedAt: "Aus der letzten Synchronisation gelesen — lade das Produkt neu, wenn ein Eintrag fehlt.",
     deleteOptionConfirm: "Damit wird die Option entfernt und die Varianten des Produkts werden um die verbleibenden herum neu gebildet.",
     deleteValueCount: "Damit werden {n} Variante(n) gelöscht, samt Bestand, Preisen und SKUs. Das lässt sich nicht rückgängig machen.",
     deleteValueUnknown: "Damit werden die Varianten gelöscht, die diesen Wert benutzen, samt Bestand und Preisen. Wie viele das sind, konnte nicht gelesen werden.",
@@ -555,6 +559,12 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      scopeSingle: "Eine Variante",
+      scopeAll: "Alle Varianten",
+      scopeGroup: "Alle {value}",
+      scopeCount: "{n} Varianten",
+      mixedValues: "Unterschiedliche Werte",
+      stockNotBulk: "Der Bestand ist eine Anzahl pro Variante und Standort und wird deshalb einzeln bearbeitet.",
       pricesHeading: "Preise",
       shippingHeading: "Versand und Zoll",
       price: "Verkaufspreis",
@@ -1714,6 +1724,7 @@ export const de = {
     jsonLdAuditCompleted: "JSON-LD-Prüfung abgeschlossen",
     internalLinksCompleted: "Vorschläge für interne Verlinkung erstellt",
     robotsAdviceCompleted: "robots.txt-Analyse abgeschlossen",
+    discoveryIntroCompleted: "KI-Vorschlag für den Einleitungstext ist da",
     bulkEditorSaveCompleted: "Bulk-Editor: Änderungen gespeichert",
     bulkEditorTranslateCompleted: "Bulk-Editor: Übersetzung abgeschlossen",
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
@@ -1773,6 +1784,12 @@ export const de = {
       stats: "{words} Wörter · {sentences} Sätze · ⌀ {avg} Wörter pro Satz",
       allGood: "Satz- und Absatzlängen sind in Ordnung.",
       noFormula: "Für diese Sprache gibt es keine geprüfte Lesbarkeitsformel — wir zeigen deshalb keine Punktzahl, sondern nur die Struktur. Eine englische Formel auf einen anderssprachigen Text angewandt ergibt eine falsche Zahl mit vertrautem Namen.",
+      formulaNote: "Punktzahl nach {formula}. Sie misst nur Satz- und Wortlänge und ist nur innerhalb derselben Sprache vergleichbar — nicht zwischen Sprachen. Sie zählt nicht in den SEO-Score.",
+      formulaName: {
+        flesch: "Flesch (Englisch)",
+        amstad: "Amstad (Deutsch)",
+        fernandezHuerta: "Fernández-Huerta (Spanisch)",
+      },
       band: {
         easy: "leicht verständlich",
         medium: "mittel",
@@ -3214,7 +3231,8 @@ export const de = {
       referralTotal: "{count} Besuche in {days} Tagen",
       referralTopPages: "Meistbesuchte Landeseiten",
       referralNoneInWindow: "In den letzten {days} Tagen keine Besuche aus KI-Antworten.",
-      referralCaveat: "Nicht enthalten: Google AI Overviews (dort kommt der Klick als normaler Google-Besuch an und ist von der klassischen Suche nicht zu unterscheiden) und Besucher, deren Browser die Herkunft unterdrückt. Die Zahl ist also eine Untergrenze — wir zählen lieber zu wenig als zu raten.",
+      referralNoneHint: "Wenn du gerade selbst über ChatGPT auf deinen Shop geklickt hast und hier trotzdem nichts steht: Der Zähler sitzt im App-Embed „Web Vitals (RUM)“ — dasselbe, das auch die echten Ladezeiten misst. Prüfe im Theme-Editor unter „App-Einbettungen“, ob es aktiviert ist, und ob die aktuelle Version der App-Erweiterung veröffentlicht ist. Zur Kontrolle: im Quelltext einer Produktseite nach „web-vitals.js“ suchen.",
+      referralCaveat: "Voraussetzung: das App-Embed „Web Vitals (RUM)“ ist im Theme aktiviert — ohne das wird gar nichts gezählt. Nicht enthalten: Google AI Overviews (dort kommt der Klick als normaler Google-Besuch an und ist von der klassischen Suche nicht zu unterscheiden) sowie Besucher, deren Browser die Herkunft unterdrückt. Letzteres betrifft Claude: dessen Links geben weder eine Herkunft noch einen utm_source-Parameter weiter, ein Klick von dort ist also technisch nicht von einem Direkteinstieg zu unterscheiden. ChatGPT und Perplexity werden erkannt. Die Zahl ist damit eine Untergrenze — wir zählen lieber zu wenig als zu raten.",
       referralSourceName: {
         chatgpt: "ChatGPT",
         perplexity: "Perplexity",
@@ -3286,9 +3304,25 @@ export const de = {
       shopDescriptionMissingTitle: "Shop-Beschreibung fehlt",
       shopDescriptionMissingBody: "In deinen Discovery-Dateien fehlt die Zusammenfassungszeile — der eine Satz, an dem eine KI erkennt, worum es in deinem Shop überhaupt geht. Wir ziehen ihn aus der Shop-Beschreibung in Shopify, und die ist bei dir noch leer. Trage sie dort ein und erzeuge die Dateien danach neu. Wir erfinden bewusst keine Beschreibung für dich.",
       shopDescriptionOpenSettings: "Shop-Einstellungen öffnen",
-      llmsPreviewTitle: "Vorschau",
-      llmsPreviewTruncated: "Gekürzte Vorschau — die Datei enthält alle oben genannten Einträge.",
       llmsOpenLive: "Live öffnen",
+      liveExcerptTitle: "Was diese URL heute zurückgibt",
+      introTitle: "Einleitungstext",
+      introHint:
+        "Der einzige Teil der Datei, den du selbst schreibst. Alles darunter — Kollektionen, Produkte, Richtlinien — erzeugen wir aus deinem Katalog und halten es aktuell; von Hand gepflegte Listen wären beim nächsten Preis- oder URL-Wechsel falsch.",
+      introPlaceholder: "Wer steht hinter dem Shop, wofür steht er, wohin wird geliefert …",
+      introSave: "Einleitung speichern",
+      introReset: "Auf erzeugten Text zurücksetzen",
+      introSaved: "Einleitung gespeichert. Sie ist in der Datei enthalten, sobald du sie unten neu erzeugst.",
+      introSaveFailed: "Die Einleitung konnte nicht gespeichert werden.",
+      introChars: "{count} von {max} Zeichen",
+      introAiToggle: "Mit KI verbessern",
+      introAiLabel: "Was soll geändert werden?",
+      introAiPlaceholder: "z. B. „kürzer und sachlicher, und erwähne, dass wir aus der Schweiz versenden“",
+      introAiRun: "Vorschlag erzeugen",
+      introAiHint:
+        "Der Vorschlag landet nur im Feld — gespeichert und veröffentlicht wird er erst, wenn du auf „Einleitung speichern“ klickst.",
+      introAiFailed: "Der KI-Vorschlag konnte nicht erzeugt werden.",
+      introAiMissingInstruction: "Bitte beschreibe kurz, was geändert werden soll.",
       discoveryCanonical: "maßgeblich",
       discoveryLive: "live",
       discoveryStale: "veraltet",
@@ -3832,9 +3866,24 @@ export const de = {
         "Nicht zutreffende Kriterien fallen raus, der Rest wird hochskaliert — ein Blog ohne Fließtext wird dafür nicht bestraft",
         "Die Längengrenzen kommen aus Ihren Einstellungen, inklusive des Shop-Namens, den Shopify an den SEO-Titel hängt",
         "Unter dem Score stehen die konkreten Probleme und was dagegen zu tun ist",
+        "Die Lesbarkeit ganz unten zählt NICHT in den Score — sie hat ihr eigenes „?“",
       ],
       details:
         "Der Score wird von derselben Funktion berechnet wie das shopweite SEO-Dashboard — ein Eintrag kann an beiden Stellen also nie unterschiedlich bewertet werden. Gemessen werden die Grundlagen, die immer gelten: Ist das Feld gefüllt, liegt es in einer sinnvollen Länge, haben die Bilder Alt-Texte. Über inhaltliche Qualität sagt er bewusst nichts — eine Meta-Description aus exakt 155 Zeichen Unsinn bekommt die volle Punktzahl. Verstehen Sie ihn als Checkliste, durch die man nicht durchfallen sollte, nicht als Ranking-Prognose.",
+    },
+    seoSidebarReadability: {
+      title: "Lesbarkeit",
+      summary:
+        "Wie viel Aufwand das Lesen dieses Textes macht — als Hinweise, die in jeder Sprache gelten, plus eine Punktzahl für die drei Sprachen, für die es eine geprüfte Formel gibt.",
+      tips: [
+        "Die Hinweise (Satzlänge, Absatzlänge, fehlende Zwischentitel) sind der nützliche Teil — sie gelten immer",
+        "Die Punktzahl gibt es nur für Deutsch, Englisch und Spanisch; jede Sprache hat ihre eigene Formel",
+        "Zahlen verschiedener Sprachen sind NICHT vergleichbar — Deutsch liegt formelbedingt tiefer",
+        "Die Lesbarkeit zählt nicht in den SEO-Score",
+        "Analysiert wird die Sprache, die im Editor gerade angezeigt wird",
+      ],
+      details:
+        "Die Punktzahl von 0 bis 100 ist eine „Reading-Ease“-Formel: sie rechnet aus, wie viele Wörter ein Satz hat und wie viele Silben ein Wort, und nichts weiter. Sie sagt also, wie AUFWENDIG ein Text zu lesen ist, nicht wie gut er ist. Für jede Sprache gilt eine EIGENE, für diese Sprache geprüfte Formel (Deutsch: Amstad, Englisch: Flesch, Spanisch: Fernández-Huerta). Weil deutsche Wörter im Schnitt deutlich mehr Silben haben als englische, ergibt derselbe Text auf Deutsch eine niedrigere Zahl als auf Englisch, obwohl beide gleich gut lesbar sind — die Zahlen sind innerhalb einer Sprache vergleichbar, zwischen Sprachen nicht. Für alle anderen Sprachen zeigen wir absichtlich keine Zahl: es existiert keine geprüfte Formel dafür, und eine englische Formel auf italienischen Text angewandt ergibt eine falsche Zahl, die aussieht wie eine richtige. Die Struktur-Hinweise laufen trotzdem, denn zu lange Sätze und Absätze bleiben in jeder Sprache zu lang. Und die Lesbarkeit fließt bewusst NICHT in den SEO-Score ein: Google bewertet Lesbarkeit nicht direkt, die Zahl hängt an der Sprache, und ein Score, der sich durch einen umformulierten Satz um 20 Punkte bewegt, wäre als Checkliste nichts mehr wert. Bewusst nicht enthalten sind Passiv- und Füllwort-Prüfungen: die brauchen Wortlisten pro Sprache, um mehr als Rauschen zu sein.",
     },
     seoSidebarKeywords: {
       title: "Keywords",

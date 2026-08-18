@@ -320,3 +320,99 @@ describe("reordering VALUES", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 });
+
+describe("a drag that was abandoned or undone", () => {
+  it("does not reorder an option that the same save deletes", () => {
+    // Its order has nothing left to change, and keeping it would force a
+    // reorder call whose entire content is restating unmoved positions.
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleReorderOptionValues(OPTION, [
+        "gid://shopify/ProductOptionValue/1b",
+        "gid://shopify/ProductOptionValue/1",
+      ]),
+    );
+    act(() => result.current.handlers.handleDeleteOption(OPTION));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(submitted().optionValueOrder).toBeUndefined();
+    expect(submitted().optionOrder).toBeUndefined();
+  });
+});
+
+describe("adding members to a metaobject-linked option", () => {
+  it("sends the metaobject GIDs, not the names", () => {
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, {
+        id: "gid://shopify/Metaobject/77",
+        name: "Ocean",
+      }),
+    );
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
+      "gid://shopify/Metaobject/77",
+    ]);
+  });
+
+  it("refuses to queue the same entry twice", () => {
+    // Shopify rejects a duplicate value, and the refusal would take the
+    // merchant's other edits on that option with it.
+    const { result } = setup();
+    const entry = { id: "gid://shopify/Metaobject/77", name: "Ocean" };
+
+    act(() => result.current.handlers.handleAddLinkedOptionValue(OPTION, entry));
+    act(() => result.current.handlers.handleAddLinkedOptionValue(OPTION, entry));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
+      "gid://shopify/Metaobject/77",
+    ]);
+  });
+
+  it("lets a queued entry be dropped again before the save", () => {
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, { id: "gid://shopify/Metaobject/77", name: "Ocean" }),
+    );
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, { id: "gid://shopify/Metaobject/78", name: "Sand" }),
+    );
+    act(() => result.current.handlers.handleRemoveLinkedOptionValue(OPTION, "gid://shopify/Metaobject/77"));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
+      "gid://shopify/Metaobject/78",
+    ]);
+  });
+});
+
+describe("an option deleted in the same save", () => {
+  it("does not carry its queued edits along", () => {
+    // They address a GID that no longer exists: Shopify rejects them, the save
+    // reports "changes have been reverted", and the merchant is told the
+    // opposite of what happened — the delete succeeded and is irreversible.
+    const { result } = setup();
+
+    act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, {
+        id: "gid://shopify/Metaobject/77",
+        name: "Ocean",
+      }),
+    );
+    act(() =>
+      result.current.handlers.handleRemoveOptionValue(OPTION, "gid://shopify/ProductOptionValue/1"),
+    );
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
+    act(() => result.current.handlers.handleDeleteOption(OPTION));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION]).toBeUndefined();
+    expect(JSON.parse(submitted().optionsToDelete)).toEqual([OPTION]);
+  });
+});

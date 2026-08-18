@@ -31,6 +31,10 @@ export const en: Translation = {
     deleteOptionTitle: "Delete this variant?",
     deleteValueTitle: "Delete this value?",
     editMetaobject: "Edit these values",
+    choicesUnavailable: "The available entries could not be read.",
+    choicesAllUsed: "Every entry of this type is already in use.",
+    choicesTruncated: "Only the first entries are shown. Manage the rest in the Shopify admin.",
+    choicesSyncedAt: "Read from the last sync — reload the product if an entry is missing.",
     deleteOptionConfirm: "This removes the option and rebuilds the product's variants around the remaining ones.",
     deleteValueCount: "This deletes {n} variant(s), including their stock, prices and SKUs. It cannot be undone.",
     deleteValueUnknown: "This deletes the variants that use this value, including their stock and prices. How many that is could not be read.",
@@ -558,6 +562,12 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      scopeSingle: "One variant",
+      scopeAll: "All variants",
+      scopeGroup: "All {value}",
+      scopeCount: "{n} variants",
+      mixedValues: "Different values",
+      stockNotBulk: "Stock is a count per variant and per location, so it is edited one variant at a time.",
       pricesHeading: "Prices",
       shippingHeading: "Shipping and customs",
       price: "Price",
@@ -1720,6 +1730,7 @@ export const en: Translation = {
     jsonLdAuditCompleted: "JSON-LD check finished",
     internalLinksCompleted: "Internal link suggestions ready",
     robotsAdviceCompleted: "robots.txt analysis finished",
+    discoveryIntroCompleted: "AI suggestion for the opening text is ready",
     bulkEditorSaveCompleted: "Bulk editor: changes saved",
     bulkEditorTranslateCompleted: "Bulk editor: translation finished",
     seoBulkFixCompleted: "SEO fix finished",
@@ -1779,6 +1790,12 @@ export const en: Translation = {
       stats: "{words} words · {sentences} sentences · avg {avg} words per sentence",
       allGood: "Sentence and paragraph lengths look fine.",
       noFormula: "There is no validated readability formula for this language, so we show the structure instead of a score. An English formula applied to another language produces a wrong number with a familiar name.",
+      formulaNote: "Score per {formula}. It measures sentence and word length only, and compares within one language — never across languages. It does not count towards the SEO score.",
+      formulaName: {
+        flesch: "Flesch (English)",
+        amstad: "Amstad (German)",
+        fernandezHuerta: "Fernández Huerta (Spanish)",
+      },
       band: {
         easy: "easy to read",
         medium: "medium",
@@ -3211,7 +3228,8 @@ export const en: Translation = {
       referralTotal: "{count} visits in {days} days",
       referralTopPages: "Most visited landing pages",
       referralNoneInWindow: "No visits from AI answers in the last {days} days.",
-      referralCaveat: "Not included: Google AI Overviews (the click arrives as an ordinary Google visit, indistinguishable from classic search) and visitors whose browser suppresses the referrer. The number is therefore a lower bound — we would rather undercount than guess.",
+      referralNoneHint: "If you just clicked into your store from ChatGPT yourself and still see nothing here: the counter lives in the “Web Vitals (RUM)” app embed — the same one that measures real load times. Check under “App embeds” in the theme editor that it is enabled, and that the current version of the app extension is published. To verify: search a product page's source for “web-vitals.js”.",
+      referralCaveat: "Requires the “Web Vitals (RUM)” app embed to be enabled in your theme — without it nothing is counted at all. Not included: Google AI Overviews (the click arrives as an ordinary Google visit, indistinguishable from classic search) and visitors whose browser suppresses the referrer. The latter is what happens with Claude: its links pass on neither a referrer nor a utm_source parameter, so a click from there is technically indistinguishable from a direct visit. ChatGPT and Perplexity are detected. The number is therefore a lower bound — we would rather undercount than guess.",
       referralSourceName: {
         chatgpt: "ChatGPT",
         perplexity: "Perplexity",
@@ -3283,9 +3301,25 @@ export const en: Translation = {
       shopDescriptionMissingTitle: "Shop description missing",
       shopDescriptionMissingBody: "Your discovery files have no summary line — the one sentence that tells an AI what your store is actually about. We take it from the shop description in Shopify, and yours is still empty. Fill it in there, then regenerate the files. We deliberately don't invent a description for you.",
       shopDescriptionOpenSettings: "Open shop settings",
-      llmsPreviewTitle: "Preview",
-      llmsPreviewTruncated: "Preview truncated — the file contains all items listed above.",
       llmsOpenLive: "Open live",
+      liveExcerptTitle: "What this URL returns today",
+      introTitle: "Opening text",
+      introHint:
+        "The only part of the file you write yourself. Everything below it — collections, products, policies — is generated from your catalog and kept current; a hand-maintained list would be wrong at the next price or URL change.",
+      introPlaceholder: "Who is behind the store, what it stands for, where you ship …",
+      introSave: "Save opening text",
+      introReset: "Back to the generated text",
+      introSaved: "Opening text saved. It goes into the file the next time you generate it below.",
+      introSaveFailed: "The opening text could not be saved.",
+      introChars: "{count} of {max} characters",
+      introAiToggle: "Improve with AI",
+      introAiLabel: "What should change?",
+      introAiPlaceholder: "e.g. \"shorter and more factual, and mention that we ship from Switzerland\"",
+      introAiRun: "Generate suggestion",
+      introAiHint:
+        "The suggestion only lands in the field — it is saved and published once you click \"Save opening text\".",
+      introAiFailed: "The AI suggestion could not be generated.",
+      introAiMissingInstruction: "Please describe briefly what should change.",
       discoveryCanonical: "canonical",
       discoveryLive: "live",
       discoveryStale: "stale",
@@ -3827,9 +3861,24 @@ export const en: Translation = {
         "Criteria that do not apply are left out and the rest is scaled up — a blog without a body is not punished for it",
         "The length limits come from your settings, including the shop-name suffix Shopify appends to the SEO title",
         "Below the score you get the concrete issues and what to do about them",
+        "The readability block at the bottom does NOT count towards the score — it has its own “?”",
       ],
       details:
         "The score is calculated by the same function as the store-wide SEO dashboard, so an item can never be rated differently in the two places. It measures the basics that are always true — is the field filled, is it within a sensible length, do the images have alt text — and deliberately says nothing about content quality: a meta description of exactly 155 characters of nonsense scores full points. Treat it as a checklist you should not fail, not as a ranking prediction.",
+    },
+    seoSidebarReadability: {
+      title: "Readability",
+      summary:
+        "How much effort this text takes to read — as findings that hold in every language, plus a score for the three languages that have a validated formula.",
+      tips: [
+        "The findings (sentence length, paragraph length, missing subheadings) are the useful half — they always apply",
+        "The number exists only for German, English and Spanish; each language has its own formula",
+        "Numbers from different languages are NOT comparable — German scores lower by construction",
+        "Readability does not count towards the SEO score",
+        "It analyses the language the editor is currently showing",
+      ],
+      details:
+        "The 0-100 number is a reading-ease formula: it counts how many words a sentence has and how many syllables a word has, and nothing else. So it says how much EFFORT a text takes to read, not how good it is. Each language uses its OWN formula, validated for that language (German: Amstad, English: Flesch, Spanish: Fernández Huerta). Because German words carry noticeably more syllables than English ones, the same text scores lower in German than in English although both read equally well — the numbers compare within a language, never across languages. For every other language we deliberately show no number: no validated formula exists, and an English formula applied to Italian text produces a wrong number that looks like a right one. The structure findings still run, because sentences and paragraphs that are too long stay too long in any language. And readability deliberately does NOT feed the SEO score: Google does not grade readability directly, the number depends on the language, and a score that moves 20 points because one sentence was rephrased would be worthless as a checklist. Passive-voice and filler-word checks are deliberately absent: they need per-language word lists to be anything but noise.",
     },
     seoSidebarKeywords: {
       title: "Keywords",

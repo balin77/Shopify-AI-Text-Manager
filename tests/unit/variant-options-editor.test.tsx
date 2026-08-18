@@ -30,8 +30,8 @@ const options = [
     name: "Colour",
     position: 1,
     values: [
-      { id: "gid://shopify/ProductOptionValue/1", name: "Red" },
-      { id: "gid://shopify/ProductOptionValue/2", name: "Blue" },
+      { id: "gid://shopify/ProductOptionValue/1", name: "Red", linkedValue: "gid://shopify/Metaobject/1" },
+      { id: "gid://shopify/ProductOptionValue/2", name: "Blue", linkedValue: "gid://shopify/Metaobject/2" },
     ],
   },
   {
@@ -54,6 +54,8 @@ const handlers = () => ({
   onCancelCreateOption: vi.fn(),
   onReorderValues: vi.fn(),
   onOpenMetaobjects: vi.fn(),
+  onAddLinkedValue: vi.fn(),
+  onRemoveLinkedValue: vi.fn(),
 });
 
 function ui(overrides: Record<string, unknown> = {}) {
@@ -84,7 +86,10 @@ beforeEach(() => {
       json: async () => ({
         success: true,
         counts: { [variantCountKey("Colour", "Red")]: 3 },
-        swatches: { "gid://shopify/ProductOptionValue/2": { color: "#0000FF" } },
+        swatches: {
+          "gid://shopify/ProductOptionValue/1": { color: "#00FF00" },
+          "gid://shopify/ProductOptionValue/2": { color: "#0000FF" },
+        },
       }),
     })),
   );
@@ -284,12 +289,15 @@ describe("VariantOptionsEditor — colours and order", () => {
     await screen.findByDisplayValue("Red");
 
     const painted = [...container.querySelectorAll("span[aria-hidden]")]
-      .map((el) => (el as HTMLElement).style.background)
+      .map((el) => (el as HTMLElement).style.backgroundColor)
       .filter(Boolean);
 
-    // "Blue" carries a swatch from Shopify; "Red" is a basic colour word.
-    expect(painted.some((b) => b.includes("rgb(0, 0, 255)") || b.includes("#0000FF"))).toBe(true);
-    expect(painted.length).toBeGreaterThanOrEqual(2);
+    // Both values carry a Shopify swatch AND are colour words, so this asserts
+    // the precedence: the shop's own value wins over the derived one.
+    expect(painted).toContain("#0000FF");
+    expect(painted).toContain("#00FF00");
+    expect(painted).not.toContain("#1976D2");
+    expect(painted).not.toContain("#D32F2F");
   });
 
   it("reports a value drag as a new order", async () => {
@@ -331,5 +339,231 @@ describe("VariantOptionsEditor — colours and order", () => {
     // is this app's own metaobjects page.
     fireEvent.click(screen.getByRole("button", { name: /Edit these values/i }));
     expect(spies.onOpenMetaobjects).toHaveBeenCalled();
+  });
+});
+
+describe("VariantOptionsEditor — an abandoned drag", () => {
+  it("does not replay a released value drag on the next drop", () => {
+    // Released over dead space the id stayed set, and the next drop of
+    // anything replayed the move — a reorder the merchant never asked for,
+    // with the save bar going dirty behind it.
+    const { spies } = ui();
+    fireEvent.click(screen.getByText("Colour"));
+
+    const rows = screen.getAllByDisplayValue(/Red|Blue/).map((input) => input.closest("[draggable]")!);
+    fireEvent.dragStart(rows[0]);
+    fireEvent.dragEnd(rows[0]);
+
+    fireEvent.dragOver(rows[1]);
+    fireEvent.drop(rows[1]);
+
+    expect(spies.onReorderValues).not.toHaveBeenCalled();
+  });
+
+  it("does not paint a hex-shaped SIZE", async () => {
+    // "DDD" is a bra cup size and also a valid three-digit hex.
+    const { container } = ui({
+      options: [
+        {
+          id: SECOND,
+          name: "Size",
+          position: 1,
+          values: [
+            { id: "gid://shopify/ProductOptionValue/9", name: "DDD" },
+            { id: "gid://shopify/ProductOptionValue/10", name: "EEE" },
+          ],
+        },
+      ],
+    });
+    fireEvent.click(screen.getByText("Size"));
+    await screen.findByDisplayValue("DDD");
+
+    const painted = [...container.querySelectorAll("span[aria-hidden]")]
+      .map((el) => (el as HTMLElement).style.backgroundColor)
+      .filter(Boolean);
+    expect(painted).toEqual([]);
+  });
+});
+
+describe("VariantOptionsEditor — the two bugs the merchant saw", () => {
+  it("paints swatches on a COLLAPSED card, without opening it", async () => {
+    // A collapsed card is where the values are READ, so a swatch that only
+    // appears on click is missing exactly where it is wanted. The fetch used
+    // to be gated on a card being open, so the only chips a collapsed card
+    // showed were the values whose name the local colour table happens to
+    // know — one lone swatch in a list of many.
+    ui({
+      options: [
+        {
+          id: OPTION,
+          name: "Farbe",
+          position: 1,
+          values: [
+            { id: "gid://shopify/ProductOptionValue/1", name: "Eiche" },
+            { id: "gid://shopify/ProductOptionValue/2", name: "Nuss" },
+            { id: "gid://shopify/ProductOptionValue/3", name: "Schwarz" },
+          ],
+        },
+      ],
+    });
+
+    // Nothing was clicked. "Eiche" and "Nuss" are not colour words, so they
+    // can only be painted from what Shopify holds.
+    await screen.findByText("Eiche");
+    const painted = () =>
+      [...document.querySelectorAll("span[aria-hidden]")]
+        .map((el) => (el as HTMLElement).style.backgroundColor)
+        .filter(Boolean);
+    await vi.waitFor(() => expect(painted()).toContain("#00FF00"));
+    // …alongside the one the table knows on its own.
+    expect(painted()).toContain("#000000");
+  });
+
+  it("lets a metaobject-linked option's values be reordered", async () => {
+    // Their NAMES live in the metaobjects and are not editable here, but their
+    // ORDER belongs to the product — and it decides which variant the
+    // storefront shows first. The linked branch used to render a read-only
+    // chip list with no handles at all, which is why colours could not move.
+    const spies = handlers();
+    render(
+      <AppProvider i18n={en}>
+        <VariantOptionsEditor
+          productId="gid://shopify/Product/1"
+          options={[{ ...options[0], name: "Farbe", isLinked: true }]}
+          primaryOptions={{}}
+          valuesToAdd={{}}
+          valuesToDelete={{}}
+          optionsToCreate={[]}
+          optionsToDelete={[]}
+          {...spies}
+        />
+      </AppProvider>,
+    );
+    fireEvent.click(screen.getByText("Farbe"));
+
+    const rows = ["Red", "Blue"].map((name) => screen.getByText(name).closest("[draggable]")!);
+    expect(rows[0]).toBeTruthy();
+    fireEvent.dragStart(rows[0]);
+    fireEvent.dragOver(rows[1]);
+    fireEvent.drop(rows[1]);
+
+    expect(spies.onReorderValues).toHaveBeenCalledWith(OPTION, [
+      "gid://shopify/ProductOptionValue/2",
+      "gid://shopify/ProductOptionValue/1",
+    ]);
+    // …and still nothing that would rename or delete a metaobject value.
+    expect(screen.queryByDisplayValue("Red")).toBeNull();
+  });
+});
+
+describe("VariantOptionsEditor — members of a predefined option", () => {
+  /** The choices endpoint answers; the details endpoint keeps its own shape. */
+  function withChoices(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("metaobject-choices")
+          ? { ok: true, json: async () => body }
+          : { ok: true, json: async () => ({ success: true, counts: {}, swatches: {} }) },
+      ),
+    );
+  }
+
+  function linkedUi(overrides: Record<string, unknown> = {}) {
+    const spies = handlers();
+    render(
+      <AppProvider i18n={en}>
+        <VariantOptionsEditor
+          productId="gid://shopify/Product/1"
+          options={[{ ...options[0], name: "Farbe", isLinked: true }]}
+          primaryOptions={{}}
+          valuesToAdd={{}}
+          valuesToDelete={{}}
+          optionsToCreate={[]}
+          optionsToDelete={[]}
+          {...spies}
+          {...overrides}
+        />
+      </AppProvider>,
+    );
+    return spies;
+  }
+
+  it("offers the entries not already in use, and queues the pick", async () => {
+    withChoices({
+      success: true,
+      type: "shopify--color-pattern",
+      entries: [
+        { id: "gid://shopify/Metaobject/1", displayName: "Red", color: "#FF0000" },
+        { id: "gid://shopify/Metaobject/3", displayName: "Ocean", color: "#0A5C8A" },
+      ],
+    });
+    const spies = linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+    fireEvent.click(screen.getByRole("button", { name: /Add another value/i }));
+
+    // Metaobject/1 is already a value of this option, so only Ocean is left.
+    // "Red" still appears ONCE — as the existing value chip — but is not
+    // offered a second time in the picker.
+    const ocean = await screen.findByText("Ocean");
+    expect(screen.getAllByText("Red").length).toBe(1);
+
+    fireEvent.click(ocean);
+    expect(spies.onAddLinkedValue).toHaveBeenCalledWith("gid://shopify/ProductOption/1", {
+      id: "gid://shopify/Metaobject/3",
+      name: "Ocean",
+    });
+  });
+
+  it("says the list could not be READ rather than showing an empty one", async () => {
+    // An empty list for a failed read would tell the merchant their shop has
+    // no colours — the same rule the variant count follows for zero.
+    withChoices({ success: false, type: null, entries: [] });
+    linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+    fireEvent.click(screen.getByRole("button", { name: /Add another value/i }));
+
+    expect(await screen.findByText(/could not be read/i)).toBeTruthy();
+  });
+
+  it("says so when every entry is already in use", async () => {
+    withChoices({
+      success: true,
+      type: "shopify--color-pattern",
+      entries: [
+        { id: "gid://shopify/Metaobject/1", displayName: "Red" },
+        { id: "gid://shopify/Metaobject/2", displayName: "Blue" },
+      ],
+    });
+    linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+    fireEvent.click(screen.getByRole("button", { name: /Add another value/i }));
+
+    expect(await screen.findByText(/already in use/i)).toBeTruthy();
+  });
+
+  it("shows a queued entry before the save, and lets it be dropped", async () => {
+    withChoices({ success: true, type: "t", entries: [] });
+    const spies = linkedUi({
+      linkedValuesToAdd: { [OPTION]: [{ id: "gid://shopify/Metaobject/3", name: "Ocean" }] },
+    });
+    fireEvent.click(screen.getByText("Farbe"));
+
+    expect(screen.getByText("Ocean")).toBeTruthy();
+    const removes = screen.getAllByRole("button", { name: /Remove value/i });
+    fireEvent.click(removes[removes.length - 1]);
+    expect(spies.onRemoveLinkedValue).toHaveBeenCalledWith(OPTION, "gid://shopify/Metaobject/3");
+  });
+
+  it("can delete a value of a predefined option, with the variant warning", async () => {
+    withChoices({ success: true, type: "t", entries: [] });
+    const spies = linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Remove value/i })[0]);
+    // The same confirmation as any other value: it takes variants with it.
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^Delete$/i }));
+    expect(spies.onRemoveValue).toHaveBeenCalledWith(OPTION, "gid://shopify/ProductOptionValue/1");
   });
 });

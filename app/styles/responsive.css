@@ -81,12 +81,21 @@
                               Polaris TextField fills its container, so on a
                               wide screen "Rot" got a field the width of the
                               window. It is a max-width, not a width: on a
-                              narrow screen the field still shrinks. */
+                              narrow screen the field still shrinks.
+     --app-value-chip-width   one option VALUE in the variants card. The values
+                              lay out horizontally and wrap, the way Shopify
+                              shows them, so each one needs a width of its own
+                              — a row that stretched would put three colours on
+                              three screen-wide lines. */
   --app-list-column-width: 330px;
   --app-editor-sidebar-width: 320px;
   --app-editor-sidebar-min-width: 200px;
   --app-editor-sidebar-max-width: 600px;
   --app-short-field-width: 380px;
+  --app-value-chip-width: 230px;
+  /* Polaris' Icon box. Spent where a row has to line up with one that starts
+     with a drag handle but has no handle of its own. */
+  --app-drag-handle-width: 20px;
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a

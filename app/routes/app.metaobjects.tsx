@@ -29,6 +29,10 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
+import {
+  resolveMetaobjectSelection,
+  type MetaobjectTypeItem,
+} from "../services/metaobject-select.shared";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -110,34 +114,36 @@ export const loader = createContentLoader({
       shop: ctx.session.shop,
     });
 
+    // A `?select=` carrying a Metaobject GID -- what the product editor sends
+    // for a linked option value -- names an ENTRY, and this page's items are
+    // TYPES (`metaobject_type_<type>`). Only the server can bridge that: the
+    // cache knows which type an entry belongs to. Resolved here so the client
+    // has an id it can actually match, instead of a GID that matches nothing.
+    let selectedType: string | undefined;
+    const select = new URL(ctx.request.url).searchParams.get("select") ?? "";
+    if (select.startsWith("gid://shopify/Metaobject/")) {
+      try {
+        const entry = await db.metaobject.findFirst({
+          where: { shop: ctx.session.shop, id: select },
+          select: { type: true },
+        });
+        selectedType = entry?.type ?? undefined;
+      } catch {
+        // An unresolvable id is a page that opens where it usually does, which
+        // is what happened before this link existed.
+        selectedType = undefined;
+      }
+    }
+
     return {
       items: metaobjectTypes,
       ids: metaobjectTypes.map((t) => t.id),
-    };
-  },
-
-  /**
-   * §8 — resolve `?select=` SERVER-side.
-   *
-   * The product editor links here with the metaobject GID of a linked option
-   * value, which is the only unambiguous address it has. The client list holds
-   * TYPES, so that id matched nothing and the merchant landed on a page with
-   * nothing selected and no explanation. The cache knows which type an entry
-   * belongs to; a cache miss falls back to the string matching below, which is
-   * a missed preselection and never a wrong one.
-   */
-  async extraData(ctx) {
-    const select = new URL(ctx.request.url).searchParams.get("select") ?? "";
-    if (!select.startsWith("gid://shopify/Metaobject/")) {
-      return { selectedEntryId: null as string | null, selectedTypeFromEntry: null as string | null };
-    }
-    const entry = await ctx.db.metaobject.findUnique({
-      where: { shop_id: { shop: ctx.session.shop, id: select } },
-      select: { type: true },
-    });
-    return {
-      selectedEntryId: entry ? select : null,
-      selectedTypeFromEntry: entry?.type ?? null,
+      selectedType,
+      // The ENTRY, not just its type: the editor area lists entry cards, so a
+      // deep link can open on the card itself rather than merely on the right
+      // type. Null when the id resolved to nothing — a missed preselection,
+      // never a wrong one.
+      selectedEntryId: selectedType ? select : null,
     };
   },
 });
@@ -198,9 +204,18 @@ export default function MetaobjectsPage() {
     primaryLocale,
     markets,
     error,
+    // The type `?select=` resolved to, when it carried an entry GID. NOT the
+    // type currently selected — that one follows the merchant's clicks and is
+    // derived below.
+    selectedType: preselectedType,
     selectedEntryId,
-    selectedTypeFromEntry,
-  } = useLoaderData<typeof loader>();
+    // The loader factory's generic widens whatever `loadData` adds beyond
+    // `items`/`ids`, so the two resolved fields are named here rather than
+    // being carried as `unknown` into every consumer.
+  } = useLoaderData<typeof loader>() as ReturnType<typeof useLoaderData<typeof loader>> & {
+    selectedType?: string;
+    selectedEntryId?: string | null;
+  };
   const fetcher = useFetcher<FetcherData>();
   const entryFetcher = useFetcher<{ success?: boolean; error?: string; metaobject?: LoadedEntries }>();
   const usageFetcher = useFetcher<{ success?: boolean; usage?: Record<string, MetaobjectUsage> }>();
@@ -248,30 +263,15 @@ export default function MetaobjectsPage() {
     });
   }, [metaobjects, loaded]);
 
-  // Resolve ?select= to an initial item ID. An ENTRY GID was resolved to its
-  // type by the loader; everything else is matched as a type handle, a
-  // definition name or a metafield key ("custom--material") whose namespace is
-  // stripped because the two are spelled alike only for Shopify's standard
-  // definitions.
+  // Resolve ?select= URL param to an initial item ID (e.g. linked from product options)
+  // `selectedType` is set by the loader when `?select=` carried a Metaobject GID.
   const selectParam = searchParams.get("select");
-  const initialItemId = useMemo(() => {
-    if (metaobjects.length === 0) return undefined;
-    if (selectedTypeFromEntry) {
-      const byEntryType = metaobjects.find((m: { type?: string }) => m.type === selectedTypeFromEntry);
-      if (byEntryType) return byEntryType.id;
-    }
-    if (!selectParam) return undefined;
-    const wanted = selectParam.toLowerCase();
-    const withoutNamespace = wanted.includes("--") ? wanted.split("--").slice(1).join("--") : wanted;
-    const match = metaobjects.find((m: { type?: string; title?: string; definitionName?: string }) =>
-      m.type?.toLowerCase() === wanted ||
-      m.title?.toLowerCase() === wanted ||
-      m.definitionName?.toLowerCase() === wanted ||
-      m.type?.toLowerCase() === withoutNamespace ||
-      m.definitionName?.toLowerCase() === withoutNamespace
-    );
-    return match?.id;
-  }, [selectParam, selectedTypeFromEntry, metaobjects]);
+  const initialItemId = useMemo(
+    // The rule lives in its own module because it is not testable inline —
+    // which is how it shipped wrong. See `metaobject-select.shared.ts`.
+    () => resolveMetaobjectSelection(metaobjects as MetaobjectTypeItem[], selectParam, preselectedType),
+    [selectParam, preselectedType, metaobjects],
+  );
 
   const editor = useUnifiedContentEditor({
     config: METAOBJECTS_CONFIG,
