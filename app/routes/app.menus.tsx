@@ -33,7 +33,7 @@
  * measured, and this file has already paid for that difference once.
  */
 
-import { useState, useEffect, useMemo, useCallback, type ReactElement } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, type ReactElement } from "react";
 import { useLoaderData, useFetcher } from "react-router";
 import {
   Page,
@@ -53,7 +53,7 @@ import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
 import { CONTENT_MAX_HEIGHT } from "../constants/layout";
-import { createContentLoader, incrementalSync } from "~/utils/loader-factory.server";
+import { createContentLoader } from "~/utils/loader-factory.server";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import {
   flattenMenuItems,
@@ -79,33 +79,31 @@ export const loader = createContentLoader({
   itemsKey: "menus",
 
   async loadData(ctx) {
-    const { ContentSyncService } = await import("../services/content-sync.service");
-    const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
+    // Every tree, every load. Menus have no Shopify webhook, and the previous
+    // incremental sync only fetched menus MISSING from the DB — so a tree was
+    // read once and never again: items added in Shopify never showed up, and
+    // deleted ones kept rendering as "not translatable". One query for the
+    // whole shop replaces the per-menu round trips it used to make.
+    try {
+      const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+      const { refreshMenuCache } = await import("~/services/menu-translations.server");
+      await refreshMenuCache(
+        new ShopifyApiGateway(ctx.admin, ctx.session.shop),
+        ctx.db,
+        ctx.session.shop,
+      );
+    } catch (error) {
+      // A failed refresh shows the CACHED menus rather than an error page —
+      // stale navigation labels are worth more than no page at all, and the
+      // save path re-reads from Shopify anyway.
+      const { logger } = await import("~/utils/logger.server");
+      logger.error("[MENUS-LOADER] Menu refresh failed — serving cached menus", {
+        context: "Menus",
+        shop: ctx.session.shop,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
-    // Fetch menu IDs from Shopify
-    const response = await ctx.admin.graphql(
-      `#graphql
-        query getMenuIds {
-          menus(first: 250) {
-            edges { node { id } }
-          }
-        }`,
-    );
-    const data = await response.json();
-    const shopifyIds = new Set<string>(
-      (data.data?.menus?.edges || []).map((e: any) => e.node.id),
-    );
-
-    // Sync missing + remove deleted
-    await incrementalSync(ctx, {
-      shopifyIds,
-      dbModel: ctx.db.menu,
-      resourceType: "Menu",
-      logPrefix: "MENUS",
-      syncFn: (id) => syncService.syncMenu(id),
-    });
-
-    // Load from database
     const menus = await ctx.db.menu.findMany({
       where: { shop: ctx.session.shop },
       orderBy: { title: "asc" },
@@ -123,8 +121,19 @@ export const loader = createContentLoader({
    * them would invite overwriting work the merchant already did.
    */
   async extraData(ctx) {
-    const foreignLocales = ctx.shopLocales
-      .filter((l) => !l.primary)
+    // PUBLISHED and non-primary. An unpublished locale is not served to any
+    // customer, so offering to translate into it would spend the merchant's
+    // time on text nobody can reach — the same filter app.bulk.tsx applies.
+    // `published` comes from getCachedShopLocales at runtime; the loader
+    // factory's ShopLocale type predates the field, hence the widening. An
+    // ABSENT flag counts as published — never gate a feature on a lookup that
+    // did not answer.
+    const foreignLocales = (ctx.shopLocales as Array<{
+      locale: string;
+      primary: boolean;
+      published?: boolean;
+    }>)
+      .filter((l) => l.published !== false && !l.primary)
       .map((l) => l.locale);
 
     if (foreignLocales.length === 0) {
@@ -217,7 +226,23 @@ export async function action({ request }: ActionFunctionArgs) {
   // authorization check on the ids themselves: the sweep is scoped to this
   // shop, so an id it does not contain cannot be written, and this action can
   // never become a generic "translate any Link" endpoint.
-  const sweep = await fetchShopLinkTranslations(gateway, [locale]);
+  let sweep;
+  try {
+    sweep = await fetchShopLinkTranslations(gateway, [locale]);
+  } catch (error) {
+    // Without this the whole action throws, the error boundary renders and
+    // the merchant's unsaved draft is gone — while every OTHER failure on
+    // this path is reported per item and keeps the draft on screen.
+    return Response.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        savedLinkIds: [],
+        failures: [],
+      },
+      { status: 502 },
+    );
+  }
 
   const entries = [];
   const failures: Array<{ linkId: string; message: string }> = [];
@@ -264,7 +289,10 @@ export default function MenusPage() {
 
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
   const foreignLocales = useMemo(
-    () => (shopLocales || []).filter((l: any) => !l.primary).map((l: any) => l.locale as string),
+    () =>
+      (shopLocales || [])
+        .filter((l: any) => l.published !== false && !l.primary)
+        .map((l: any) => l.locale as string),
     [shopLocales],
   );
   // The primary locale is a real choice here (it shows the source text), so it
@@ -310,35 +338,55 @@ export default function MenusPage() {
   const changes = useMemo(() => diffMenuTranslations(savedValues, draft), [savedValues, draft]);
   const isSaving = fetcher.state !== "idle";
 
+  /**
+   * Exactly what the in-flight save submitted. A save is N sequential Shopify
+   * round trips, so the merchant can easily type — or switch language — while
+   * it runs, and the response must not be allowed to discard those keystrokes.
+   */
+  const submittedRef = useRef<{ locale: string; byLink: Record<string, string> } | null>(null);
+
   const onSave = useCallback(() => {
     if (changes.length === 0) return;
+    submittedRef.current = {
+      locale: activeLocale,
+      byLink: Object.fromEntries(changes.map((c) => [c.linkId, c.value])),
+    };
     const fd = new FormData();
     fd.set("locale", activeLocale);
     fd.set("changes", JSON.stringify(changes));
     fetcher.submit(fd, { method: "post" });
   }, [changes, activeLocale, fetcher]);
 
-  // Saved values land in the loader's data on revalidation, so the draft only
-  // has to drop the keys that were confirmed — anything that FAILED stays in
-  // the box, still dirty, still visible.
+  // Confirmed values come back through the loader on revalidation, so the
+  // draft only has to drop the keys that were saved. Two things it must NOT
+  // drop: a key the merchant edited again while the save was in flight (its
+  // draft no longer equals what was submitted), and anything at all if the
+  // language changed underneath — a German save's response would otherwise
+  // clear the Spanish boxes now on screen. Failures stay in the draft by
+  // construction: they are never in savedLinkIds.
   useEffect(() => {
     const saved = fetcher.data?.savedLinkIds;
-    if (!saved?.length) return;
+    const submitted = submittedRef.current;
+    if (!saved?.length || !submitted || submitted.locale !== activeLocale) return;
     setDraft((prev) => {
       const next = { ...prev };
-      for (const linkId of saved) delete next[linkId];
+      for (const linkId of saved) {
+        if ((next[linkId] ?? "").trim() === submitted.byLink[linkId]) delete next[linkId];
+      }
       return next;
     });
-  }, [fetcher.data]);
+  }, [fetcher.data, activeLocale]);
 
   const localeItems: SubNavBarItem[] = useMemo(() => {
     const primarySuffix = t.content?.primaryLanguageSuffix || "Primary";
-    return (shopLocales || []).map((l: any) => ({
-      id: l.locale,
-      label: l.primary
-        ? `${getLocalizedLanguageName(l.locale, appLocale, l.name)} (${primarySuffix})`
-        : getLocalizedLanguageName(l.locale, appLocale, l.name),
-    }));
+    return (shopLocales || [])
+      .filter((l: any) => l.primary || l.published !== false)
+      .map((l: any) => ({
+        id: l.locale,
+        label: l.primary
+          ? `${getLocalizedLanguageName(l.locale, appLocale, l.name)} (${primarySuffix})`
+          : getLocalizedLanguageName(l.locale, appLocale, l.name),
+      }));
   }, [shopLocales, appLocale, t]);
 
   const renderItem = (item: FlatMenuItem): ReactElement => {

@@ -25,6 +25,7 @@
 
 import type { ShopifyApiGateway } from "./shopify-api-gateway.service";
 import { registerAndVerify, removeAndVerify } from "./bulk-editor/translations.server";
+import { flattenMenuItems } from "./menu-translations.shared";
 import { logger } from "../utils/logger.server";
 import type { PrismaClient } from "@prisma/client";
 
@@ -37,9 +38,18 @@ export const MENU_LINK_RESOURCE_TYPE = "Link";
 /** The only translatable key a Link has. A link's URL is not translatable. */
 export const MENU_LINK_KEY = "title";
 
-/** Sweep page size and page cap (2000 links) — see fetchShopLinkTranslations. */
-const SWEEP_PAGE_SIZE = 250;
-const SWEEP_PAGE_CAP = 8;
+/**
+ * Sweep paging. The page SIZE is divided by the number of locales asked for,
+ * because each locale adds its own aliased translations() connection to every
+ * node and Shopify prices a query by its whole selection, not by its rows: at
+ * 250 nodes a five-language shop would blow the max query cost, the sweep
+ * would throw, and every menu item would render disabled — the feature
+ * failing exactly on the shops that need it most. The cap then rises with the
+ * same factor so the total reach stays put.
+ */
+const SWEEP_MAX_NODES = 250;
+const SWEEP_MIN_NODES = 25;
+const SWEEP_MAX_LINKS = 2000;
 
 export interface LinkTranslationRow {
   linkId: string;
@@ -101,14 +111,20 @@ export async function fetchShopLinkTranslations(
     localeVariables[`loc${i}`] = locale;
   });
 
+  const pageSize = Math.min(
+    SWEEP_MAX_NODES,
+    Math.max(SWEEP_MIN_NODES, Math.floor(SWEEP_MAX_NODES / Math.max(1, wanted.length))),
+  );
+  const pageCap = Math.ceil(SWEEP_MAX_LINKS / pageSize);
+
   const rows = new Map<string, LinkTranslationRow>();
   let after: string | null = null;
   let pages = 0;
   let moreAvailable = false;
 
-  while (pages < SWEEP_PAGE_CAP) {
+  while (pages < pageCap) {
     const response = await gateway.graphql(query, {
-      variables: { first: SWEEP_PAGE_SIZE, after, ...localeVariables },
+      variables: { first: pageSize, after, ...localeVariables },
     });
     const payload = (await response.json()) as {
       data?: {
@@ -291,4 +307,143 @@ export async function saveMenuLinkTranslations(
   }
 
   return { savedLinkIds, failures };
+}
+
+// ─── Menu cache refresh ────────────────────────────────────────────────────
+
+/** Depth Shopify documents is 3; this reads one more so an unexpected level
+ *  cannot vanish silently. */
+const MENUS_WITH_ITEMS_QUERY = `#graphql
+  query menusWithItems($first: Int!) {
+    menus(first: $first) {
+      nodes {
+        id
+        title
+        handle
+        items {
+          id
+          title
+          items {
+            id
+            title
+            items {
+              id
+              title
+              items { id title }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const MENU_FETCH_LIMIT = 250;
+
+/**
+ * Refresh every menu's cached item tree, and drop translations whose item is
+ * gone.
+ *
+ * This replaces the "sync only the menus missing from the DB" behaviour the
+ * page used to have. Menus have NO Shopify webhook, so an incremental sync
+ * fetched each tree exactly once, forever: an item added in Shopify never
+ * appeared, and a deleted one kept rendering — with the tooltip "Shopify
+ * offers no translatable resource for this menu item", i.e. reproducing the
+ * precise false claim this whole feature exists to remove. One query for the
+ * whole shop is cheaper than the per-menu round trips it replaces, so there is
+ * no reason to be incremental here.
+ *
+ * Both destructive steps inherit syncAllMenus' paranoia: a possibly truncated
+ * result deletes nothing, and "Shopify returned zero menus" is treated as a
+ * failed read rather than as an empty shop.
+ */
+export async function refreshMenuCache(
+  gateway: ShopifyApiGateway,
+  db: PrismaClient,
+  shop: string,
+): Promise<void> {
+  const response = await gateway.graphql(MENUS_WITH_ITEMS_QUERY, {
+    variables: { first: MENU_FETCH_LIMIT },
+  });
+  const payload = (await response.json()) as {
+    data?: {
+      menus?: {
+        nodes?: Array<{ id: string; title: string; handle: string; items?: unknown }>;
+      };
+    };
+    errors?: Array<{ message: string }>;
+  };
+  if (payload.errors?.length) throw new Error(payload.errors[0].message);
+
+  const menus = payload.data?.menus?.nodes ?? [];
+
+  for (const menu of menus) {
+    const data = {
+      shop,
+      title: menu.title,
+      handle: menu.handle,
+      items: (menu.items ?? []) as never,
+      lastSyncedAt: new Date(),
+    };
+    await db.menu.upsert({
+      where: { shop_id: { shop, id: menu.id } },
+      create: { id: menu.id, ...data },
+      update: data,
+    });
+  }
+
+  const truncated = menus.length >= MENU_FETCH_LIMIT;
+  if (truncated) {
+    logger.warn("[MENU-TRANSLATIONS] Menu list possibly truncated — skipping stale cleanup", {
+      context: "MenuTranslations",
+      shop,
+      menus: menus.length,
+    });
+    return;
+  }
+
+  if (menus.length === 0) {
+    // Same guard syncAllMenus applies: an empty answer over a non-empty cache
+    // is a failed read far more often than it is a shop that deleted every
+    // menu, and acting on it would delete the merchant's translations.
+    const localCount = await db.menu.count({ where: { shop } });
+    if (localCount > 0) {
+      logger.warn("[MENU-TRANSLATIONS] Shopify returned 0 menus over a non-empty cache — nothing deleted", {
+        context: "MenuTranslations",
+        shop,
+        localCount,
+      });
+      return;
+    }
+  }
+
+  const liveMenuIds = menus.map((m) => m.id);
+  if (liveMenuIds.length > 0) {
+    await db.menu.deleteMany({ where: { shop, id: { notIn: liveMenuIds } } });
+  }
+
+  // Orphaned item translations. ContentTranslation carries no foreign key —
+  // its lifecycle is app code by design (see the model comment) — so a menu
+  // item that disappears would otherwise leave its Link row behind forever.
+  // Scoped by resourceType so this can only ever touch menu-item rows.
+  const liveLinkIds: string[] = [];
+  for (const menu of menus) {
+    for (const item of flattenMenuItems(menu.items)) {
+      if (item.linkId) liveLinkIds.push(item.linkId);
+    }
+  }
+  const orphaned = await db.contentTranslation.deleteMany({
+    where: {
+      shop,
+      resourceType: MENU_LINK_RESOURCE_TYPE,
+      ...(liveLinkIds.length > 0 ? { resourceId: { notIn: liveLinkIds } } : {}),
+    },
+  });
+  if (orphaned.count > 0) {
+    logger.info("[MENU-TRANSLATIONS] Removed translations of deleted menu items", {
+      context: "MenuTranslations",
+      shop,
+      removed: orphaned.count,
+    });
+  }
 }
