@@ -2790,6 +2790,7 @@ export const en: Translation = {
       helpTitle: "What can you do here?",
       helpBody1: "Pick a focus keyword for each important item (product, collection, page, or blog article) — the term you want that page to rank for on Google. We automatically check whether the keyword appears in the key SEO spots (title, H1, SEO title, meta description, body copy) and whether the keyword density sits in the healthy range.",
       helpBody2: "The table below shows an on-page score per keyword and what's still missing. \"Open in editor\" jumps straight to the item so you can fix it. Once you connect Google Search Console, the real average Google ranking position will show up here too.",
+      helpBodyVolume: "Deliberately not here: estimated search volume and keyword difficulty. Every vendor buys those numbers from third-party databases, they differ by source, and for small niches they are often simply wrong. Instead of an estimate we show your REAL impressions, clicks and positions through Google Search Console — the same question, answered with your own data.",
       tabLibrary: "Library",
       tabAssignments: "Assignments",
       localeNavLabel: "Language",

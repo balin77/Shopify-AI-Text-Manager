@@ -1,6 +1,10 @@
 # SEO-Wettbewerbsanalyse — August 2026
 
 > **Stand:** 2026-08-18 · **Code-Basis:** `develop` @ `f702508`
+> **Nachtrag 2026-08-18:** Die Lücken P1.1, P1.2, P2.3, P2.4 und die Readability-
+> Lücke aus P3 sind auf `claude/competitive-analysis-seo-518odr` umgesetzt — siehe
+> §8. Die Analyse darunter bleibt im Zustand VOR der Umsetzung stehen, damit
+> nachvollziehbar bleibt, worauf die Entscheidungen beruhten.
 > **Frage:** Hinkt der SEO-Stand der App der Konkurrenz hinterher? Wo sind die Stärken, was fehlt?
 > **Vorgänger:** [COMPETITIVE_ANALYSIS.md](COMPETITIVE_ANALYSIS.md) — dessen SEO-Tabellen (§2.2/§2.2.1)
 > stammen aus 01/2026 bzw. 06/2026 und sind durch die seither gelieferte SEO-Suite überholt.
@@ -231,6 +235,27 @@ Reihenfolge nach Wirkung ÷ Aufwand:
 **Und unabhängig von Code:** Die größte Lücke ist nicht funktional, sondern kommunikativ.
 Mehrsprachiges SEO, Crawl-Disziplin, Freshness-Audit und die interne Verlinkung mit Diff-Preview
 stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends prominent.
+
+---
+
+## 8. Was daraufhin umgesetzt wurde (2026-08-18)
+
+| Lücke | Status | Umsetzung |
+|---|---|---|
+| **P1.1 `agents.md`** | ✅ | `templates/agents.md.liquid` wird zusammen mit `llms.txt` geschrieben, als eigenes agenten-gerichtetes Dokument (Richtlinien-Links, Hinweis auf verbindliche Preis-/Bestandsquelle). Die Auslieferung wird am Live-URL **gemessen** statt aus dem erfolgreichen Upsert gefolgert; fünf Zustände statt zwei, inkl. „Shopify-Standard läuft" mit Auszug. „Eigene Fassung entfernen" gibt den Pfad zurück. `llms-full.txt` bewusst nicht (unsere Fassung ist gedeckelt und wäre gegenüber Shopifys vollem Dump eine Verschlechterung). |
+| **P1.2 Catalog-Readiness** | ✅ | Dritter Schritt der AEO-Sektion: Marke, Kategorie, GTIN, Beschreibung, Bild über alle aktiven Produkte, mit Item-Deep-Links und „Im Bulk-Editor beheben" nur dort, wo das Grid die Spalte hat. `attributesSyncedAt`-Gate und ACTIVE-only wie in CLAUDE.md gefordert. |
+| **P2.3 Zeitgesteuerter Crawl** | ✅ | Wöchentlicher Sweep auf Max (`SeoCrawlAutoRunService`), Merchant-Schalter in Settings → SEO, ein gemeinsamer Startpfad für manuellen und automatischen Lauf. |
+| **P2.4 KI-Referral-Tracking** | ✅ | Storefront-Beacon + `SeoAiReferral` (aggregiert, ohne Besucherkennung), Auswertung in der AEO-Sektion. Grenzen (AI Overviews, unterdrückter Referrer) stehen in der UI. |
+| **P3 Readability** | ✅ | Struktur-Befunde in jeder Sprache, Reading-Ease-Zahl nur für EN/DE/ES (validierte Formeln), bewusst außerhalb des SEO-Scores. |
+| **P3 Keyword-Volumen** | ✅ (Erklärung) | Der Keywords-Tab sagt jetzt, *warum* dort keine Volumenschätzung steht — und dass GSC dieselbe Frage mit echten Daten beantwortet. |
+| **P2.5 Bild-Dateinamen-SEO** | ⏸ offen | Nicht umgesetzt: die Umbenennung ändert die CDN-URL jedes Bildes und berührt damit einen Schreibpfad, dessen Nebenwirkungen (Referenzen, Caches) erst gemessen werden sollten. Bewusste Entscheidung, keine vergessene Zeile. |
+| **P2.5 Speed-Eingriffe** | ⏸ offen | Theme-Eingriff (Lazy-Load, Minify) — erst die Produktfrage klären, ob wir fremde Themes anfassen wollen. |
+| **P3 Schema-Typen** | ⏸ offen | LocalBusiness/Video/HowTo: LocalBusiness braucht gepflegte Adress- und Öffnungszeitendaten; falsch ausgezeichnet ist es ein Google-Verstoß, nicht nur wirkungslos. |
+| **P3 Long-Form-Generator** | ⏸ offen | Eigener Workflow (Outline → Abschnitte → interne Links), zu groß für diesen Durchgang. |
+
+**Was das an §3 ändert:** Die Zeilen `agents.md` (❌ → ✅), `AI-Sichtbarkeits-Tracking`
+(❌ → ⚠️, wir messen Ankünfte statt Prompt-Sichtbarkeit) und `Readability-Analyse`
+(❌ → ✅) sind damit gedreht; `Live-Crawl` läuft jetzt zusätzlich zeitgesteuert.
 
 ---
 

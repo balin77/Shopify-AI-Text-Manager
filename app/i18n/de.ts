@@ -2789,6 +2789,7 @@ export const de = {
       helpTitle: "Was kannst du hier tun?",
       helpBody1: "Lege für jeden wichtigen Inhalt (Produkt, Kollektion, Seite oder Blog-Artikel) ein Fokus-Keyword fest — also den Begriff, für den diese Seite bei Google ranken soll. Wir prüfen automatisch, ob das Keyword an den entscheidenden SEO-Stellen vorkommt (Titel, H1, SEO-Titel, Meta-Description, Fließtext) und ob die Keyword-Dichte im optimalen Bereich liegt.",
       helpBody2: "In der Tabelle unten siehst du pro Keyword einen On-Page-Score und woran es noch hakt. Mit \"Im Editor öffnen\" springst du direkt zum Inhalt, um ihn zu optimieren. Sobald du Google Search Console verbunden hast, erscheint hier zusätzlich die echte durchschnittliche Google-Ranking-Position.",
+      helpBodyVolume: "Bewusst nicht dabei: geschätzte Suchvolumen und Keyword-Difficulty. Diese Zahlen stammen bei jedem Anbieter aus zugekauften Fremddatenbanken, sind je nach Quelle unterschiedlich und für kleine Nischen oft schlicht falsch. Statt einer Schätzung zeigen wir dir mit Google Search Console deine ECHTEN Impressionen, Klicks und Positionen — das ist dieselbe Frage, nur beantwortet mit deinen eigenen Daten.",
       tabLibrary: "Bibliothek",
       tabAssignments: "Zuordnungen",
       localeNavLabel: "Sprache",

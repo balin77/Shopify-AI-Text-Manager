@@ -2784,6 +2784,7 @@ export const es: Translation = {
       helpTitle: "¿Qué puedes hacer aquí?",
       helpBody1: "Elige una palabra clave de enfoque para cada elemento importante (producto, colección, página o artículo de blog): el término por el que quieres que esa página se posicione en Google. Comprobamos automáticamente si la palabra clave aparece en los lugares SEO clave (título, H1, título SEO, meta descripción, texto) y si su densidad está en el rango óptimo.",
       helpBody2: "La tabla de abajo muestra una puntuación on-page por palabra clave y qué le falta aún. «Abrir en el editor» te lleva directamente al contenido para optimizarlo. Cuando conectes Google Search Console, aquí también aparecerá la posición real promedio en Google.",
+      helpBodyVolume: "A propósito no está aquí: el volumen de búsqueda estimado ni la dificultad de palabra clave. Todos los proveedores compran esas cifras a bases de datos externas, varían según la fuente y en nichos pequeños suelen ser simplemente erróneas. En lugar de una estimación te mostramos tus impresiones, clics y posiciones REALES a través de Google Search Console: la misma pregunta, respondida con tus propios datos.",
       tabLibrary: "Biblioteca",
       tabAssignments: "Asignaciones",
       localeNavLabel: "Idioma",

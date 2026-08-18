@@ -1708,6 +1708,10 @@ export default function SeoKeywords() {
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{k.helpBody1}</Text>
             <Text as="p" variant="bodyMd">{k.helpBody2}</Text>
+            {/* Why there is no search-volume column. Without this the gap reads
+                as a missing feature rather than a decision, which is exactly
+                how a merchant comparing app listings would read it. */}
+            <Text as="p" variant="bodyMd">{k.helpBodyVolume}</Text>
           </BlockStack>
         </SeoHelpBanner>
 
