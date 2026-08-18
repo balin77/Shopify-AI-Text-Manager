@@ -1094,6 +1094,22 @@ async function updatePrimaryProduct(
   const wroteMembership =
     mutationInput.collectionsToJoin !== undefined || mutationInput.collectionsToLeave !== undefined;
 
+  // The echoed selection below is PLAN §Phase 3: `status`, `vendor`, `tags`
+  // and `templateSuffix` come back so the cache mirrors what Shopify STORED,
+  // not what this app sent. Shopify normalises tags (trim, dedupe, case) and
+  // can refuse a template suffix, so the sent value is not the stored one.
+  //
+  // The two interpolated selections are PLAN §Phase 3.1 — echoed ONLY when
+  // this save actually writes them. The membership selection is 100 nodes with
+  // a nested ruleSet, and a title fix, an SEO edit or an alt-text save has no
+  // use for any of it — the mirror below is already gated on the same
+  // predicate, so unconditional selection drained the cost bucket for data
+  // that was then discarded. Absent means productCollectionRows gets
+  // undefined, returns null, and the "skip the rebuild" path runs, which is
+  // the designed semantics rather than a special case.
+  //
+  // The prose stays out here on purpose: a `#` comment inside the document
+  // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -1103,23 +1119,10 @@ async function updatePrimaryProduct(
             title
             handle
             descriptionHtml
-            # §Phase 3 — echoed back so the cache mirrors what Shopify STORED,
-            # not what this app sent. Shopify normalises tags (trim, dedupe,
-            # case) and can refuse a template suffix, so the sent value is not
-            # the stored one.
             status
             vendor
             tags
             templateSuffix
-            # §Phase 3.1 — echoed ONLY when this save actually writes them.
-            #
-            # The membership selection is 100 nodes with a nested ruleSet, and
-            # a title fix, an SEO edit or an alt-text save has no use for any of
-            # it — the mirror below is already gated on the same predicate, so
-            # unconditional selection drained the cost bucket for data that was
-            # then discarded. Absent means productCollectionRows gets undefined,
-            # returns null, and the "skip the rebuild" path runs, which is the
-            # designed semantics rather than a special case.
             ${wroteCategory ? "category { id fullName name }" : ""}
             ${wroteMembership ? PRODUCT_COLLECTIONS_SELECTION : ""}
             seo {

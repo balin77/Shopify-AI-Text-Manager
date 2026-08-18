@@ -525,17 +525,20 @@ async function persistProductBaseFields(
           fields.seoDescription !== undefined ? fields.seoDescription : untouchedSeo?.seoDescription ?? "",
       };
     }
+    // `product { id handle tags }` is the echo the mirror and the redirect
+    // read. Shopify normalises both of these — tags are trimmed and
+    // case-collapsed, and a handle is slugified ("Summer Sale" is stored as
+    // "summer-sale") — so the value this app SENT is not the value the shop
+    // holds. Mirroring or redirecting to the sent one records a handle that
+    // does not exist, and (per §Phase 3.3) a redirect onto a live page's own
+    // path makes that page unreachable.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const response = await gateway.graphql(
       `#graphql
         mutation seoBulkMetaProductUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
-            # The echo the mirror and the redirect read. Shopify normalises
-            # both of these — tags are trimmed and case-collapsed, and a handle
-            # is slugified ("Summer Sale" is stored as "summer-sale") — so the
-            # value this app SENT is not the value the shop holds. Mirroring or
-            # redirecting to the sent one records a handle that does not exist,
-            # and (per §Phase 3.3) a redirect onto a live page's own path makes
-            # that page unreachable.
             product { id handle tags }
             userErrors { field message }
           }
