@@ -30,8 +30,8 @@ const options = [
     name: "Colour",
     position: 1,
     values: [
-      { id: "gid://shopify/ProductOptionValue/1", name: "Red" },
-      { id: "gid://shopify/ProductOptionValue/2", name: "Blue" },
+      { id: "gid://shopify/ProductOptionValue/1", name: "Red", linkedValue: "gid://shopify/Metaobject/1" },
+      { id: "gid://shopify/ProductOptionValue/2", name: "Blue", linkedValue: "gid://shopify/Metaobject/2" },
     ],
   },
   {
@@ -54,6 +54,8 @@ const handlers = () => ({
   onCancelCreateOption: vi.fn(),
   onReorderValues: vi.fn(),
   onOpenMetaobjects: vi.fn(),
+  onAddLinkedValue: vi.fn(),
+  onRemoveLinkedValue: vi.fn(),
 });
 
 function ui(overrides: Record<string, unknown> = {}) {
@@ -451,5 +453,117 @@ describe("VariantOptionsEditor — the two bugs the merchant saw", () => {
     ]);
     // …and still nothing that would rename or delete a metaobject value.
     expect(screen.queryByDisplayValue("Red")).toBeNull();
+  });
+});
+
+describe("VariantOptionsEditor — members of a predefined option", () => {
+  /** The choices endpoint answers; the details endpoint keeps its own shape. */
+  function withChoices(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("metaobject-choices")
+          ? { ok: true, json: async () => body }
+          : { ok: true, json: async () => ({ success: true, counts: {}, swatches: {} }) },
+      ),
+    );
+  }
+
+  function linkedUi(overrides: Record<string, unknown> = {}) {
+    const spies = handlers();
+    render(
+      <AppProvider i18n={en}>
+        <VariantOptionsEditor
+          productId="gid://shopify/Product/1"
+          options={[{ ...options[0], name: "Farbe", isLinked: true }]}
+          primaryOptions={{}}
+          valuesToAdd={{}}
+          valuesToDelete={{}}
+          optionsToCreate={[]}
+          optionsToDelete={[]}
+          {...spies}
+          {...overrides}
+        />
+      </AppProvider>,
+    );
+    return spies;
+  }
+
+  it("offers the entries not already in use, and queues the pick", async () => {
+    withChoices({
+      success: true,
+      type: "shopify--color-pattern",
+      entries: [
+        { id: "gid://shopify/Metaobject/1", displayName: "Red", color: "#FF0000" },
+        { id: "gid://shopify/Metaobject/3", displayName: "Ocean", color: "#0A5C8A" },
+      ],
+    });
+    const spies = linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+    fireEvent.click(screen.getByRole("button", { name: /Add another value/i }));
+
+    // Metaobject/1 is already a value of this option, so only Ocean is left.
+    // "Red" still appears ONCE — as the existing value chip — but is not
+    // offered a second time in the picker.
+    const ocean = await screen.findByText("Ocean");
+    expect(screen.getAllByText("Red").length).toBe(1);
+
+    fireEvent.click(ocean);
+    expect(spies.onAddLinkedValue).toHaveBeenCalledWith("gid://shopify/ProductOption/1", {
+      id: "gid://shopify/Metaobject/3",
+      name: "Ocean",
+    });
+  });
+
+  it("says the list could not be READ rather than showing an empty one", async () => {
+    // An empty list for a failed read would tell the merchant their shop has
+    // no colours — the same rule the variant count follows for zero.
+    withChoices({ success: false, type: null, entries: [] });
+    linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+    fireEvent.click(screen.getByRole("button", { name: /Add another value/i }));
+
+    expect(await screen.findByText(/could not be read/i)).toBeTruthy();
+  });
+
+  it("says so when every entry is already in use", async () => {
+    withChoices({
+      success: true,
+      type: "shopify--color-pattern",
+      entries: [
+        { id: "gid://shopify/Metaobject/1", displayName: "Red" },
+        { id: "gid://shopify/Metaobject/2", displayName: "Blue" },
+      ],
+    });
+    linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+    fireEvent.click(screen.getByRole("button", { name: /Add another value/i }));
+
+    expect(await screen.findByText(/already in use/i)).toBeTruthy();
+  });
+
+  it("shows a queued entry before the save, and lets it be dropped", async () => {
+    withChoices({ success: true, type: "t", entries: [] });
+    const spies = linkedUi({
+      linkedValuesToAdd: { [OPTION]: [{ id: "gid://shopify/Metaobject/3", name: "Ocean" }] },
+    });
+    fireEvent.click(screen.getByText("Farbe"));
+
+    expect(screen.getByText("Ocean")).toBeTruthy();
+    const removes = screen.getAllByRole("button", { name: /Remove value/i });
+    fireEvent.click(removes[removes.length - 1]);
+    expect(spies.onRemoveLinkedValue).toHaveBeenCalledWith(OPTION, "gid://shopify/Metaobject/3");
+  });
+
+  it("can delete a value of a predefined option, with the variant warning", async () => {
+    withChoices({ success: true, type: "t", entries: [] });
+    const spies = linkedUi();
+    fireEvent.click(screen.getByText("Farbe"));
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Remove value/i })[0]);
+    // The same confirmation as any other value: it takes variants with it.
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^Delete$/i }));
+    expect(spies.onRemoveValue).toHaveBeenCalledWith(OPTION, "gid://shopify/ProductOptionValue/1");
   });
 });

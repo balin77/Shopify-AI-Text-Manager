@@ -340,3 +340,53 @@ describe("a drag that was abandoned or undone", () => {
     expect(submitted().optionOrder).toBeUndefined();
   });
 });
+
+describe("adding members to a metaobject-linked option", () => {
+  it("sends the metaobject GIDs, not the names", () => {
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, {
+        id: "gid://shopify/Metaobject/77",
+        name: "Ocean",
+      }),
+    );
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
+      "gid://shopify/Metaobject/77",
+    ]);
+  });
+
+  it("refuses to queue the same entry twice", () => {
+    // Shopify rejects a duplicate value, and the refusal would take the
+    // merchant's other edits on that option with it.
+    const { result } = setup();
+    const entry = { id: "gid://shopify/Metaobject/77", name: "Ocean" };
+
+    act(() => result.current.handlers.handleAddLinkedOptionValue(OPTION, entry));
+    act(() => result.current.handlers.handleAddLinkedOptionValue(OPTION, entry));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
+      "gid://shopify/Metaobject/77",
+    ]);
+  });
+
+  it("lets a queued entry be dropped again before the save", () => {
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, { id: "gid://shopify/Metaobject/77", name: "Ocean" }),
+    );
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, { id: "gid://shopify/Metaobject/78", name: "Sand" }),
+    );
+    act(() => result.current.handlers.handleRemoveLinkedOptionValue(OPTION, "gid://shopify/Metaobject/77"));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION].valuesToAddLinked).toEqual([
+      "gid://shopify/Metaobject/78",
+    ]);
+  });
+});

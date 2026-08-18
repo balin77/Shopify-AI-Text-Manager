@@ -103,6 +103,42 @@ describe("applyOptionChange", () => {
     expect(sent(admin).optionValuesToAdd).toEqual([{ name: "Green" }]);
   });
 
+  it("adds a LINKED value by its metaobject GID, not by a name", async () => {
+    // A linked option's values are not free text -- each one IS a metaobject
+    // entry, and Shopify takes the display name from it. A `name` here would
+    // either be rejected or create a value that no longer matches its entry.
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    await applyOptionChange(admin, db, "s", {
+      productId: PRODUCT,
+      optionId: OPTION,
+      values: { toAddLinked: ["gid://shopify/Metaobject/77"] },
+    });
+
+    expect(sent(admin).optionValuesToAdd).toEqual([
+      { linkedMetafieldValue: "gid://shopify/Metaobject/77" },
+    ]);
+    // It moves the matrix like any other add.
+    expect(sent(admin).variantStrategy).toBe("MANAGE");
+  });
+
+  it("refuses a linked add that is not a metaobject GID", async () => {
+    // Forwarded, it would fail at the schema level -- a top-level error that
+    // never reaches userErrors, i.e. a save that reads as successful.
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", {
+        productId: PRODUCT,
+        optionId: OPTION,
+        values: { toAddLinked: ["gid://shopify/ProductOptionValue/1"] },
+      }),
+    ).toBe("optionValueEmpty");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
   it("sends MANAGE when a value is deleted", async () => {
     const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
     const { db } = dbRecorder();

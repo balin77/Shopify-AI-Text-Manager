@@ -28,6 +28,8 @@ export const de = {
     deleteOptionTitle: "Diese Variante löschen?",
     deleteValueTitle: "Diesen Wert löschen?",
     editMetaobject: "Diese Werte bearbeiten",
+    choicesUnavailable: "Die verfügbaren Einträge konnten nicht gelesen werden.",
+    choicesAllUsed: "Alle Einträge dieses Typs sind bereits in Verwendung.",
     deleteOptionConfirm: "Damit wird die Option entfernt und die Varianten des Produkts werden um die verbleibenden herum neu gebildet.",
     deleteValueCount: "Damit werden {n} Variante(n) gelöscht, samt Bestand, Preisen und SKUs. Das lässt sich nicht rückgängig machen.",
     deleteValueUnknown: "Damit werden die Varianten gelöscht, die diesen Wert benutzen, samt Bestand und Preisen. Wie viele das sind, konnte nicht gelesen werden.",

@@ -52,6 +52,9 @@ export interface SubResourceState {
   primaryOptionEdits: Record<string, { name: string; values: string[] }>;
   /** Pending structural edits, so the card can render them before the save. */
   optionValuesToAdd: Record<string, string[]>;
+  /** Metaobject entries queued on a LINKED option: its values are entries, not
+   *  free text, so they are added by naming the entry. */
+  optionLinkedValuesToAdd: Record<string, Array<{ id: string; name: string }>>;
   optionValuesToDelete: Record<string, string[]>;
   optionsToCreate: Array<{ name: string; values: string[] }>;
   optionsToDelete: string[];
@@ -87,6 +90,10 @@ export interface SubResourceHandlers {
   handlePrimaryOptionValuesChange: (optionId: string, values: string[]) => void;
   /** A value the merchant added. Shopify assigns its GID on save. */
   handleAddOptionValue: (optionId: string, name: string) => void;
+  /** Queue a metaobject entry on a LINKED option. */
+  handleAddLinkedOptionValue: (optionId: string, entry: { id: string; name: string }) => void;
+  /** Drop a queued metaobject entry again, by its GID. */
+  handleRemoveLinkedOptionValue: (optionId: string, entryId: string) => void;
   /** A value the merchant removed. An empty `valueId` means it was only added
    *  locally, so `addedIndex` says which pending entry to drop. */
   handleRemoveOptionValue: (optionId: string, valueId: string, addedIndex?: number) => void;
@@ -322,6 +329,7 @@ export function useProductSubResources({
     // product A would be created on product B, multiplying B's variant matrix
     // with `variantStrategy: CREATE`.
     setOptionValuesToAdd({});
+    setOptionLinkedValuesToAdd({});
     setOptionValuesToDelete({});
     setOptionsToCreate([]);
     setOptionsToDelete([]);
@@ -669,6 +677,7 @@ export function useProductSubResources({
         // save bar to undo it -- and the next unrelated edit would re-fire the
         // whole queue. Reverting is what the message already promises.
         setOptionValuesToAdd({});
+        setOptionLinkedValuesToAdd({});
         setOptionValuesToDelete({});
         setOptionsToCreate([]);
         setOptionsToDelete([]);
@@ -688,6 +697,7 @@ export function useProductSubResources({
         // The matrix-changing lists too: a discarded delete that survives the
         // save would fire again on the next one.
         setOptionValuesToAdd({});
+        setOptionLinkedValuesToAdd({});
         setOptionValuesToDelete({});
         setOptionsToCreate([]);
         setOptionsToDelete([]);
@@ -822,6 +832,12 @@ export function useProductSubResources({
    * assigns the GID, and the echo is what tells us which one.
    */
   const [optionValuesToAdd, setOptionValuesToAdd] = useState<Record<string, string[]>>({});
+  /** Metaobject entries queued on a LINKED option, by option id. The name is
+   *  carried alongside the GID only so the card can render the pending add;
+   *  the SAVE sends the GID, and Shopify takes the name from the entry. */
+  const [optionLinkedValuesToAdd, setOptionLinkedValuesToAdd] = useState<
+    Record<string, Array<{ id: string; name: string }>>
+  >({});
   /** Value GIDs the merchant removed — and with them, their variants. */
   const [optionValuesToDelete, setOptionValuesToDelete] = useState<Record<string, string[]>>({});
   /** Whole options to create, in the order the merchant added them. */
@@ -836,6 +852,29 @@ export function useProductSubResources({
   const [optionValueOrder, setOptionValueOrder] = useState<Record<string, string[]>>({});
   /** Bumped on every landed save — see `SubResourceState.savedNonce`. */
   const [savedNonce, setSavedNonce] = useState(0);
+
+  const handleAddLinkedOptionValue = useCallback(
+    (optionId: string, entry: { id: string; name: string }) => {
+      setOptionLinkedValuesToAdd((prev) => {
+        const list = prev[optionId] ?? [];
+        // Adding the same entry twice would ask Shopify for a duplicate value,
+        // which it refuses — and the refusal would take the merchant's other
+        // edits on that option with it.
+        if (list.some((e) => e.id === entry.id)) return prev;
+        return { ...prev, [optionId]: [...list, entry] };
+      });
+      setHasChanges(true);
+    },
+    [],
+  );
+
+  const handleRemoveLinkedOptionValue = useCallback((optionId: string, entryId: string) => {
+    setOptionLinkedValuesToAdd((prev) => ({
+      ...prev,
+      [optionId]: (prev[optionId] ?? []).filter((e) => e.id !== entryId),
+    }));
+    setHasChanges(true);
+  }, []);
 
   const handleAddOptionValue = useCallback((optionId: string, name: string) => {
     const clean = name.trim();
@@ -1230,6 +1269,7 @@ export function useProductSubResources({
           name?: string;
           valueUpdates?: { id: string; name: string }[];
           valuesToAdd?: string[];
+          valuesToAddLinked?: string[];
           valuesToDelete?: string[];
         }
       > = {};
@@ -1301,6 +1341,15 @@ export function useProductSubResources({
       for (const [optionId, removed] of Object.entries(optionValuesToDelete)) {
         if (removed.length === 0) continue;
         optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToDelete: removed };
+      }
+      // A LINKED option's additions travel as metaobject GIDs: its values are
+      // entries, not free text, and Shopify takes the name from the entry.
+      for (const [optionId, added] of Object.entries(optionLinkedValuesToAdd)) {
+        if (added.length === 0) continue;
+        optionsChanges[optionId] = {
+          ...(optionsChanges[optionId] ?? {}),
+          valuesToAddLinked: added.map((e) => e.id),
+        };
       }
 
       // Collect metafield value changes with validation
@@ -1452,7 +1501,7 @@ export function useProductSubResources({
         { method: "POST", action: "/app/products" }
       );
     }
-  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder]);
+  }, [hasChanges, isPrimaryLocale, selectedItem, primaryOptionEdits, primaryMetafieldEdits, optionTranslations, metafieldTranslations, currentLanguage, selectedMarketId, fetcher, dirtyOptionIds, dirtyOptionValueIds, dirtyMetafieldIds, optionValuesToAdd, optionLinkedValuesToAdd, optionValuesToDelete, optionsToCreate, optionsToDelete, optionOrder, optionValueOrder]);
 
   const resetChanges = useCallback(() => {
     // Reset foreign locale translations
@@ -1465,6 +1514,7 @@ export function useProductSubResources({
     // Reset primary locale edits
     setPrimaryOptionEdits({});
     setOptionValuesToAdd({});
+    setOptionLinkedValuesToAdd({});
     setOptionValuesToDelete({});
     setOptionsToCreate([]);
     setOptionsToDelete([]);
@@ -1602,6 +1652,7 @@ export function useProductSubResources({
       metafieldTranslations,
       primaryOptionEdits,
       optionValuesToAdd,
+      optionLinkedValuesToAdd,
       optionValuesToDelete,
       optionsToCreate,
       optionsToDelete,
@@ -1621,6 +1672,8 @@ export function useProductSubResources({
       handlePrimaryOptionNameChange,
       handlePrimaryOptionValuesChange,
       handleAddOptionValue,
+      handleAddLinkedOptionValue,
+      handleRemoveLinkedOptionValue,
       handleRemoveOptionValue,
       handleEditPendingValue,
       handleCreateOption,

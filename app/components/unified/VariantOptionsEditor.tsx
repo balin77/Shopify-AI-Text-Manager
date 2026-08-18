@@ -49,15 +49,18 @@
  * editor's ONE save bar carries, the same as the text fields.
  */
 
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
 import {
+  ActionList,
   Badge,
   BlockStack,
+  Box,
   Button,
   Card,
   Icon,
   InlineStack,
   Modal,
+  Popover,
   Tag,
   Text,
   TextField,
@@ -115,6 +118,8 @@ export interface VariantOptionsEditorProps {
   primaryOptions: Record<string, { name: string; values: string[] }>;
   /** Values added but not yet saved, per option id. */
   valuesToAdd: Record<string, string[]>;
+  /** Metaobject entries queued on a LINKED option, per option id. */
+  linkedValuesToAdd?: Record<string, Array<{ id: string; name: string }>>;
   /** Value GIDs removed but not yet saved, per option id. */
   valuesToDelete: Record<string, string[]>;
   /** Whole options added but not yet saved. */
@@ -125,6 +130,10 @@ export interface VariantOptionsEditorProps {
   onNameChange: (optionId: string, name: string) => void;
   onValuesChange: (optionId: string, values: string[]) => void;
   onAddValue: (optionId: string, name: string) => void;
+  /** Queue a metaobject entry on a LINKED option. */
+  onAddLinkedValue?: (optionId: string, entry: { id: string; name: string }) => void;
+  /** Drop a queued metaobject entry again. */
+  onRemoveLinkedValue?: (optionId: string, entryId: string) => void;
   onRemoveValue: (optionId: string, valueId: string, addedIndex?: number) => void;
   onEditPendingValue: (optionId: string, index: number, name: string) => void;
   onCreateOption: (name: string, values: string[]) => void;
@@ -152,12 +161,15 @@ export function VariantOptionsEditor({
   options,
   primaryOptions,
   valuesToAdd,
+  linkedValuesToAdd = {},
   valuesToDelete,
   optionsToCreate,
   optionsToDelete,
   onNameChange,
   onValuesChange,
   onAddValue,
+  onAddLinkedValue,
+  onRemoveLinkedValue,
   onRemoveValue,
   onEditPendingValue,
   onCreateOption,
@@ -193,6 +205,18 @@ export function VariantOptionsEditor({
   /** The dragged value order per option id, or absent while untouched. Local,
    *  because a drag has to feel immediate. */
   const [valueOrder, setValueOrder] = useState<Record<string, string[]>>({});
+  /** Which linked option's "add" popover is open. */
+  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  /**
+   * The metaobject entries a linked option could take, per option id.
+   *
+   * `undefined` = not fetched, `null` = the list could NOT be read. The two
+   * are different answers and the picker says so: an empty list rendered for a
+   * failed read would tell the merchant their shop has no colours.
+   */
+  const [choices, setChoices] = useState<
+    Record<string, Array<{ id: string; displayName: string; color?: string }> | null>
+  >({});
   /**
    * The pending confirmation, or null.
    *
@@ -286,6 +310,8 @@ export function VariantOptionsEditor({
     setOrder(null);
     setValueOrder({});
     setPendingConfirm(null);
+    setPickerFor(null);
+    setChoices({});
   }, [productId]);
 
   /**
@@ -302,6 +328,7 @@ export function VariantOptionsEditor({
     setImpact(null);
     setOrder(null);
     setValueOrder({});
+    setChoices({});
   }, [savedNonce]);
 
   const nameOf = (option: OptionData) =>
@@ -381,6 +408,108 @@ export function VariantOptionsEditor({
       setDragValue(null);
     },
   });
+
+  /**
+   * Loads the entries a linked option could take, once, when its picker opens.
+   *
+   * Addressed by ONE of the option's current metaobject GIDs: the cache knows
+   * which type a GID belongs to, while the option's `linkedMetafieldKey` is a
+   * metafield namespace/key that names the type only by coincidence.
+   */
+  const loadChoices = useCallback(
+    (option: OptionData) => {
+      if (choices[option.id] !== undefined) return;
+      const anchor = option.values.find((v) => v.linkedValue)?.linkedValue;
+      if (!anchor) {
+        // No GID to ask with. Reported as unreadable, never as "none exist".
+        setChoices((prev) => ({ ...prev, [option.id]: null }));
+        return;
+      }
+      fetch(`/api/metaobject-choices?metaobjectId=${encodeURIComponent(anchor)}`)
+        .then((r) => r.json())
+        .then((body) => {
+          setChoices((prev) => ({
+            ...prev,
+            [option.id]: body?.success ? body.entries : null,
+          }));
+        })
+        .catch(() => setChoices((prev) => ({ ...prev, [option.id]: null })));
+    },
+    [choices],
+  );
+
+  /** The colour a fetched choice carries, for a chip that is still pending. */
+  const choiceColour = (optionId: string, entryId: string) =>
+    (choices[optionId] ?? [])?.find((c) => c.id === entryId)?.color;
+
+  /**
+   * The picker's body.
+   *
+   * Three states, and they are deliberately different: still loading, could
+   * not be read, and read but nothing left to add. An empty list shown for a
+   * failed read would tell the merchant their shop has no colours.
+   */
+  const renderChoices = (option: OptionData) => {
+    const list = choices[option.id];
+    if (list === undefined) {
+      return (
+        <Box padding="300">
+          <Text as="p" tone="subdued">{t.loading || "Loading…"}</Text>
+        </Box>
+      );
+    }
+    if (list === null) {
+      return (
+        <Box padding="300">
+          <Text as="p" tone="subdued">
+            {t.choicesUnavailable || "The available entries could not be read."}
+          </Text>
+        </Box>
+      );
+    }
+    // Already ON the option, or already queued in this session.
+    const taken = new Set([
+      ...option.values.map((v) => v.linkedValue).filter(Boolean),
+      ...(linkedValuesToAdd[option.id] ?? []).map((e) => e.id),
+    ]);
+    const available = list.filter((entry) => !taken.has(entry.id));
+    if (available.length === 0) {
+      return (
+        <Box padding="300">
+          <Text as="p" tone="subdued">
+            {t.choicesAllUsed || "Every entry of this type is already in use."}
+          </Text>
+        </Box>
+      );
+    }
+    return (
+      <div style={{ maxHeight: "320px", overflowY: "auto" }}>
+        <ActionList
+          items={available.map((entry) => ({
+            content: entry.displayName,
+            prefix: <Swatch swatch={resolveSwatch(entry.displayName, { color: entry.color }, { isColourOption: true })} />,
+            onAction: () => {
+              onAddLinkedValue?.(option.id, { id: entry.id, name: entry.displayName });
+              setPickerFor(null);
+            },
+          }))}
+        />
+      </div>
+    );
+  };
+
+  /** The horizontal, wrapping value list. Shopify's arrangement, and the one
+   *  that fits how these are read: a handful of short words, not a form. */
+  const valueListStyle: CSSProperties = {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    alignItems: "center",
+  };
+  const valueChipStyle: CSSProperties = {
+    width: "var(--app-value-chip-width)",
+    maxWidth: "100%",
+  };
 
   /** Moves `fromId` to where `toId` sits, within one option. */
   const moveValue = (option: OptionData, fromId: string, toId: string) => {
@@ -583,48 +712,132 @@ export function VariantOptionsEditor({
                         which variant the storefront shows first. So: draggable,
                         not renameable. */}
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
-                    {values.map((value) => {
-                      const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
-                      return (
-                        <div key={value.id} {...valueDragProps(option, value.id)}>
-                          <InlineStack gap="200" blockAlign="center" wrap={false}>
-                            {value.id && (
-                              <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
-                                <Icon source={DragHandleIcon} tone="subdued" />
-                              </span>
-                            )}
-                            <Swatch swatch={swatch} />
-                            <Text as="span" variant="bodyMd">{value.name}</Text>
-                          </InlineStack>
-                        </div>
-                      );
-                    })}
-                    {onOpenMetaobjects && (
-                      <InlineStack>
+                    <div style={valueListStyle}>
+                      {values.map((value) => {
+                        const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
+                        return (
+                          <div key={value.id} style={valueChipStyle} {...valueDragProps(option, value.id)}>
+                            <Box
+                              background="bg-surface-secondary"
+                              borderRadius="200"
+                              padding="200"
+                              borderColor="border"
+                              borderWidth="025"
+                            >
+                              <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                {value.id && (
+                                  <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
+                                    <Icon source={DragHandleIcon} tone="subdued" />
+                                  </span>
+                                )}
+                                <Swatch swatch={swatch} />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <Text as="span" variant="bodyMd" truncate>{value.name}</Text>
+                                </div>
+                                <Button
+                                  icon={DeleteIcon}
+                                  variant="tertiary"
+                                  accessibilityLabel={t.removeValue || "Remove value"}
+                                  onClick={() =>
+                                    setPendingConfirm({
+                                      kind: "value",
+                                      optionId: option.id,
+                                      valueId: value.id,
+                                      body: deleteValueBody(option.name, value.name),
+                                    })
+                                  }
+                                  // Shopify keeps every option on at least one
+                                  // value, linked or not.
+                                  disabled={values.length <= 1}
+                                />
+                              </InlineStack>
+                            </Box>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Queued entries: shown before the save, or the
+                        merchant's own pick would look like it did not
+                        register. They carry no ProductOptionValue GID yet, so
+                        they cannot be dragged — only dropped again. */}
+                    {(linkedValuesToAdd[option.id] ?? []).length > 0 && (
+                      <div style={valueListStyle}>
+                        {(linkedValuesToAdd[option.id] ?? []).map((entry) => (
+                          <div key={entry.id} style={valueChipStyle}>
+                            <Box background="bg-surface-secondary" borderRadius="200" padding="200"
+                              borderColor="border" borderWidth="025">
+                              <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                <Swatch
+                                  swatch={resolveSwatch(
+                                    entry.name,
+                                    { color: choiceColour(option.id, entry.id) },
+                                    { isColourOption },
+                                  )}
+                                />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <Text as="span" variant="bodyMd" truncate>{entry.name}</Text>
+                                </div>
+                                <Badge tone="attention">{t.pendingBadge || "Not saved yet"}</Badge>
+                                <Button
+                                  icon={DeleteIcon}
+                                  variant="tertiary"
+                                  accessibilityLabel={t.removeValue || "Remove value"}
+                                  onClick={() => onRemoveLinkedValue?.(option.id, entry.id)}
+                                />
+                              </InlineStack>
+                            </Box>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <InlineStack gap="200" blockAlign="center">
+                      {onAddLinkedValue && (
+                        <Popover
+                          active={pickerFor === option.id}
+                          onClose={() => setPickerFor(null)}
+                          activator={
+                            <Button
+                              icon={PlusIcon}
+                              onClick={() => {
+                                loadChoices(option);
+                                setPickerFor(pickerFor === option.id ? null : option.id);
+                              }}
+                            >
+                              {t.addValue || "Add another value"}
+                            </Button>
+                          }
+                        >
+                          {renderChoices(option)}
+                        </Popover>
+                      )}
+                      {onOpenMetaobjects && (
                         <Button variant="plain" onClick={() => onOpenMetaobjects(option)}>
                           {t.editMetaobject || "Edit these values"}
                         </Button>
-                      </InlineStack>
-                    )}
+                      )}
+                    </InlineStack>
                   </BlockStack>
                 ) : (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
+                    <div style={valueListStyle}>
                     {values.map((value, index) => (
                       <div
                         key={value.id || `new-${index}`}
+                        style={valueChipStyle}
                         // Only SAVED values can move: a pending add has no
                         // Shopify id, so it cannot be given a position.
                         {...valueDragProps(option, value.id)}
                       >
-                      <InlineStack gap="200" blockAlign="center" wrap={false}>
+                      <InlineStack gap="100" blockAlign="center" wrap={false}>
                         {value.id && (
                           <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
                             <Icon source={DragHandleIcon} tone="subdued" />
                           </span>
                         )}
                         <Swatch swatch={resolveSwatch(value.name, swatches[value.id], { isColourOption })} />
-                        <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
                           <TextField
                             label={t.valueLabel || "Value"}
                             labelHidden
@@ -670,12 +883,19 @@ export function VariantOptionsEditor({
                           }}
                           // Shopify keeps every option on at least one value.
                           disabled={values.length <= 1}
+                          variant="tertiary"
                         />
                       </InlineStack>
                       </div>
                     ))}
+                    </div>
 
-                    <InlineStack gap="200" blockAlign="center" wrap={false}>
+                    <InlineStack gap="100" blockAlign="center" wrap={false}>
+                      {/* A spacer the width of a drag handle. The value rows
+                          above start with one and this row does not, so
+                          without it the add field sits 20px to their left --
+                          the kind of misalignment that reads as a mistake. */}
+                      <span style={{ width: "20px", flex: "0 0 auto" }} aria-hidden />
                       <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
                         <TextField
                           label={t.addValue || "Add another value"}

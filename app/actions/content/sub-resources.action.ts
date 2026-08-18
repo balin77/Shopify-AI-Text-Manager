@@ -778,6 +778,8 @@ export async function handleSavePrimarySubResources(
         name?: string;
         valueUpdates?: { id: string; name: string }[];
         valuesToAdd?: string[];
+        /** Metaobject GIDs, for a linked option — see `OptionValueChange`. */
+        valuesToAddLinked?: string[];
         valuesToDelete?: string[];
       }
     > = optionsChangesJson ? JSON.parse(optionsChangesJson) : {};
@@ -883,6 +885,7 @@ export async function handleSavePrimarySubResources(
         values: {
           toUpdate: changes.valueUpdates,
           toAdd: changes.valuesToAdd,
+          toAddLinked: changes.valuesToAddLinked,
           toDelete: changes.valuesToDelete,
         },
       });

@@ -1725,10 +1725,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       productId={selectedItem.id}
                       savedNonce={subResourceState.savedNonce}
                       valuesToAdd={subResourceState.optionValuesToAdd}
+                      linkedValuesToAdd={subResourceState.optionLinkedValuesToAdd}
                       valuesToDelete={subResourceState.optionValuesToDelete}
                       optionsToCreate={subResourceState.optionsToCreate}
                       optionsToDelete={subResourceState.optionsToDelete}
                       onAddOptionValue={subResourceHandlers.handleAddOptionValue}
+                      onAddLinkedOptionValue={subResourceHandlers.handleAddLinkedOptionValue}
+                      onRemoveLinkedOptionValue={subResourceHandlers.handleRemoveLinkedOptionValue}
                       onRemoveOptionValue={subResourceHandlers.handleRemoveOptionValue}
                       onEditPendingValue={subResourceHandlers.handleEditPendingValue}
                       onCreateOption={subResourceHandlers.handleCreateOption}
@@ -1763,6 +1766,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         deleteOptionConfirm: t.products?.deleteOptionConfirm,
                         deleteOptionTitle: t.products?.deleteOptionTitle,
                         editMetaobject: t.products?.editMetaobject,
+                        choicesUnavailable: t.products?.choicesUnavailable,
+                        choicesAllUsed: t.products?.choicesAllUsed,
+                        loading: t.common?.loading,
                         deleteValueTitle: t.products?.deleteValueTitle,
                         deleteValueCount: t.products?.deleteValueCount,
                         deleteValueUnknown: t.products?.deleteValueUnknown,

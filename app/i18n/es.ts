@@ -30,6 +30,8 @@ export const es: Translation = {
     deleteOptionTitle: "¿Eliminar esta variante?",
     deleteValueTitle: "¿Eliminar este valor?",
     editMetaobject: "Editar estos valores",
+    choicesUnavailable: "No se pudieron leer las entradas disponibles.",
+    choicesAllUsed: "Todas las entradas de este tipo ya están en uso.",
     deleteOptionConfirm: "Esto elimina la opción y reconstruye las variantes del producto en torno a las restantes.",
     deleteValueCount: "Esto elimina {n} variante(s), con su stock, precios y SKU. No se puede deshacer.",
     deleteValueUnknown: "Esto elimina las variantes que usan este valor, con su stock y precios. No se pudo leer cuántas son.",

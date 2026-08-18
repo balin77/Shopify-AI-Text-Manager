@@ -204,6 +204,15 @@ export interface OptionValueChange {
   toUpdate?: Array<{ id: string; name: string }>;
   /** New value names. Shopify assigns their GIDs. */
   toAdd?: string[];
+  /**
+   * New values on a METAOBJECT-LINKED option, as metaobject GIDs.
+   *
+   * A linked option's values are not free text -- each one IS a metaobject
+   * entry -- so it is added by naming the entry, and Shopify takes the display
+   * name from it. Sending a `name` here instead would either be rejected or
+   * create a value that no longer matches its own metaobject.
+   */
+  toAddLinked?: string[];
   /** Value GIDs to remove -- and with them, their variants. */
   toDelete?: string[];
 }
@@ -234,14 +243,25 @@ export async function applyOptionChange(
   // it away could empty the request entirely, and the "nothing to do" return
   // below would then answer a lost edit with success.
   if (toAdd.length !== requestedAdds.length) return "optionValueEmpty";
+  const toAddLinked = (params.values?.toAddLinked ?? []).filter((id) =>
+    id.startsWith("gid://shopify/Metaobject/"),
+  );
+  if (toAddLinked.length !== (params.values?.toAddLinked ?? []).length) return "optionValueEmpty";
   const toDelete = params.values?.toDelete ?? [];
   const toUpdate = (params.values?.toUpdate ?? []).map((v) => ({ id: v.id, name: v.name.trim() }));
   if (toUpdate.some((v) => !v.name)) return "optionValueEmpty";
 
-  const changesMatrix = toAdd.length > 0 || toDelete.length > 0;
+  const changesMatrix = toAdd.length > 0 || toAddLinked.length > 0 || toDelete.length > 0;
   const variables: Record<string, unknown> = { productId: params.productId, option };
   if (toUpdate.length > 0) variables.optionValuesToUpdate = toUpdate;
-  if (toAdd.length > 0) variables.optionValuesToAdd = toAdd.map((name) => ({ name }));
+  // Linked and plain adds ride in ONE list: an option is either linked or it
+  // is not, so in practice only one side is ever populated, and Shopify takes
+  // `linkedMetafieldValue` in place of `name` for the linked kind.
+  const adds = [
+    ...toAdd.map((name) => ({ name })),
+    ...toAddLinked.map((linkedMetafieldValue) => ({ linkedMetafieldValue })),
+  ];
+  if (adds.length > 0) variables.optionValuesToAdd = adds;
   if (toDelete.length > 0) variables.optionValuesToDelete = toDelete;
   if (changesMatrix) variables.variantStrategy = "MANAGE";
 
