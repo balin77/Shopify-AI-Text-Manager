@@ -19,6 +19,7 @@ import { SidebarTabBar } from "./SidebarTabBar";
 import { AttributeChecklist } from "./sidebar/AttributeChecklist";
 import type { AttributeRow } from "../services/attribute-checklist.shared";
 import { ActionTooltip } from "./ActionTooltip";
+import { analyzeReadability } from "../utils/readability";
 import {
   validateJsonLd,
   renderJsonLdScript,
@@ -120,6 +121,14 @@ interface ItemSidebarProps {
    * to "" so callers that only ever edit the primary locale need not pass it.
    */
   keywordLocale?: string;
+  /**
+   * The language the editor is CURRENTLY showing ("de", "fr-CA", …), used for
+   * the readability analysis. Distinct from `keywordLocale`, which follows the
+   * SeoKeyword convention where "" means the primary locale — readability needs
+   * to know WHICH language that is, because the reading-ease formula depends on
+   * it. Omitted ⇒ structure findings only, no reading-ease number.
+   */
+  contentLocale?: string;
   /** Display name of `keywordLocale`, for the scope hint. Optional. */
   keywordLocaleName?: string;
   /**
@@ -148,11 +157,13 @@ export function ItemSidebar({
   resourceId,
   resourceType,
   keywordLocale = "",
+  contentLocale,
   keywordLocaleName,
   onInsertKeywords,
   insertKeywordsLoading = false,
 }: ItemSidebarProps) {
   const { t } = useI18n();
+  const rd = t.seo.readability;
   const [copied, setCopied] = useState(false);
   const jsonLdString = useMemo(
     () => (structuredData ? renderJsonLdScript(structuredData) : ""),
@@ -165,6 +176,14 @@ export function ItemSidebar({
         : [],
     [structuredData, structuredDataPreviewMode],
   );
+  // Readability is REPORTED, never scored: folding it into the SEO score would
+  // silently move every shop's number and make the two halves of this tab
+  // argue with each other.
+  const readability = useMemo(
+    () => analyzeReadability(description, contentLocale),
+    [description, contentLocale],
+  );
+
   const { seoTitleSuffix, seoLimits } = useSeoSettings();
   const [showDetails, setShowDetails] = useState(false);
 
@@ -528,6 +547,77 @@ export function ItemSidebar({
                 </div>
               </InlineStack>
             ))}
+          </BlockStack>
+        )}
+
+        {/* Readability — reported, not scored. Yoast's signature check, built
+            the way the rest of this app reports: the structure findings hold in
+            every language, the reading-ease NUMBER only appears for the
+            languages that have a validated formula. */}
+        {!excludeDescription && (
+          <BlockStack gap="200">
+            <InlineStack gap="200" blockAlign="center" wrap>
+              <Text as="p" variant="headingSm" fontWeight="semibold">
+                {rd.title}
+              </Text>
+              {readability.readingEaseBand && (
+                <Badge
+                  tone={
+                    readability.readingEaseBand === "easy"
+                      ? "success"
+                      : readability.readingEaseBand === "medium"
+                        ? "attention"
+                        : "warning"
+                  }
+                >
+                  {`${rd.band[readability.readingEaseBand]} · ${readability.readingEase}/100`}
+                </Badge>
+              )}
+            </InlineStack>
+
+            {readability.tooShort ? (
+              <Text as="p" variant="bodySm" tone="subdued">
+                {rd.tooShort}
+              </Text>
+            ) : (
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {rd.stats
+                    .replace("{words}", String(readability.words))
+                    .replace("{sentences}", String(readability.sentences))
+                    .replace("{avg}", String(readability.avgSentenceWords))}
+                </Text>
+                {readability.readingEase === null && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {rd.noFormula}
+                  </Text>
+                )}
+                {readability.findings.length === 0 ? (
+                  <InlineStack gap="200" align="start">
+                    <div style={{ marginTop: "2px" }}>✅</div>
+                    <div style={{ flex: 1 }}>
+                      <Text as="p" variant="bodySm">
+                        {rd.allGood}
+                      </Text>
+                    </div>
+                  </InlineStack>
+                ) : (
+                  readability.findings.map((finding) => (
+                    <InlineStack key={finding.code} gap="200" align="start">
+                      <div style={{ marginTop: "2px" }}>💡</div>
+                      <div style={{ flex: 1 }}>
+                        <Text as="p" variant="bodySm">
+                          {Object.entries(finding.data ?? {}).reduce(
+                            (msg, [key, value]) => msg.replace(`{${key}}`, String(value)),
+                            rd.findings[finding.code],
+                          )}
+                        </Text>
+                      </div>
+                    </InlineStack>
+                  ))
+                )}
+              </BlockStack>
+            )}
           </BlockStack>
         )}
 

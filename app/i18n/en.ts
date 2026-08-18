@@ -1725,6 +1725,23 @@ export const en: Translation = {
       keywords: "Keywords",
       jsonLd: "JSON-LD",
     },
+    readability: {
+      title: "Readability",
+      tooShort: "Too little text for a readability analysis.",
+      stats: "{words} words · {sentences} sentences · avg {avg} words per sentence",
+      allGood: "Sentence and paragraph lengths look fine.",
+      noFormula: "There is no validated readability formula for this language, so we show the structure instead of a score. An English formula applied to another language produces a wrong number with a familiar name.",
+      band: {
+        easy: "easy to read",
+        medium: "medium",
+        hard: "hard",
+      },
+      findings: {
+        longSentences: "{count} of {sentences} sentences are longer than {limit} words. Shorter sentences read faster — and are quoted verbatim by AI answers more often.",
+        longParagraphs: "The longest paragraph has {words} words (guideline: {limit}). Split it up, or readers will skip it.",
+        noSubheadings: "{words} words without a single subheading. H2/H3 turn a wall of text into something people scan.",
+      },
+    },
     issuesTitle: "Found Issues",
     noIssuesTitle: "Analysis",
     recommendationsTitle: "Recommendations",

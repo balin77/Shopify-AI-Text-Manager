@@ -1719,6 +1719,23 @@ export const es: Translation = {
       keywords: "Keywords",
       jsonLd: "JSON-LD",
     },
+    readability: {
+      title: "Legibilidad",
+      tooShort: "Hay muy poco texto para analizar la legibilidad.",
+      stats: "{words} palabras · {sentences} frases · media de {avg} palabras por frase",
+      allGood: "La longitud de frases y párrafos está bien.",
+      noFormula: "No existe una fórmula de legibilidad validada para este idioma, así que mostramos la estructura en lugar de una puntuación. Aplicar una fórmula inglesa a otro idioma da un número equivocado con un nombre familiar.",
+      band: {
+        easy: "fácil de leer",
+        medium: "media",
+        hard: "difícil",
+      },
+      findings: {
+        longSentences: "{count} de {sentences} frases superan las {limit} palabras. Las frases cortas se leen más rápido y las respuestas de IA las citan literalmente con más frecuencia.",
+        longParagraphs: "El párrafo más largo tiene {words} palabras (referencia: {limit}). Divídelo o los lectores lo saltarán.",
+        noSubheadings: "{words} palabras sin un solo subtítulo. Con H2/H3 el texto se puede ojear en lugar de abandonarlo.",
+      },
+    },
     issuesTitle: "Problemas encontrados",
     noIssuesTitle: "Análisis",
     recommendationsTitle: "Recomendaciones",

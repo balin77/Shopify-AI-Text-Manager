@@ -1009,6 +1009,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         resourceId={keywordResourceType ? item.id : undefined}
         resourceType={keywordResourceType}
         keywordLocale={keywordLocale}
+        contentLocale={state.currentLanguage}
         keywordLocaleName={
           shopLocales.find((l) => l.locale === state.currentLanguage)?.name || state.currentLanguage
         }

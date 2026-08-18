@@ -1719,6 +1719,23 @@ export const de = {
       keywords: "Keywords",
       jsonLd: "JSON-LD",
     },
+    readability: {
+      title: "Lesbarkeit",
+      tooShort: "Zu wenig Text für eine Lesbarkeitsanalyse.",
+      stats: "{words} Wörter · {sentences} Sätze · ⌀ {avg} Wörter pro Satz",
+      allGood: "Satz- und Absatzlängen sind in Ordnung.",
+      noFormula: "Für diese Sprache gibt es keine geprüfte Lesbarkeitsformel — wir zeigen deshalb keine Punktzahl, sondern nur die Struktur. Eine englische Formel auf einen anderssprachigen Text angewandt ergibt eine falsche Zahl mit vertrautem Namen.",
+      band: {
+        easy: "leicht verständlich",
+        medium: "mittel",
+        hard: "schwer",
+      },
+      findings: {
+        longSentences: "{count} von {sentences} Sätzen sind länger als {limit} Wörter. Kürzere Sätze lesen sich schneller — und werden von KI-Antworten häufiger wörtlich zitiert.",
+        longParagraphs: "Der längste Absatz hat {words} Wörter (Richtwert: {limit}). Teile ihn auf, sonst überspringen Leser ihn.",
+        noSubheadings: "{words} Wörter ohne eine einzige Zwischenüberschrift. Mit H2/H3 wird der Text überflogen statt weggeklickt.",
+      },
+    },
     issuesTitle: "Gefundene Probleme",
     noIssuesTitle: "Analyse",
     recommendationsTitle: "Empfehlungen",
