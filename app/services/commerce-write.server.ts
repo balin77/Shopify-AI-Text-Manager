@@ -55,7 +55,10 @@ export type CommerceWarning =
   | "stockNoInventoryItem"
   | "stockNoBaseline"
   | "channelsNotConfirmed"
-  | "channelsFailed";
+  | "channelsFailed"
+  | "priceInvalid"
+  | "priceNotConfirmed"
+  | "priceFailed";
 
 export interface StockChange {
   /** gid://shopify/InventoryItem/... */
@@ -613,5 +616,138 @@ export async function applyInventoryItemFields(
       error: error instanceof Error ? error.message : String(error),
     });
     return "itemFieldsFailed";
+  }
+}
+
+
+/** One variant's selling prices, as the merchant typed them. `undefined` means
+ *  "not touched"; `""` on the compare-at price CLEARS it. */
+export interface VariantPriceFields {
+  price?: string;
+  compareAtPrice?: string;
+}
+
+/**
+ * Write the SELLING price of one variant.
+ *
+ * ── Why this has no compare-and-swap, and what that means ───────────────────
+ * Stock gets `compareQuantity`, so a number that moved under the merchant's
+ * feet is refused rather than overwritten. `productVariantsBulkUpdate` offers
+ * nothing equivalent: a price write overwrites whatever is there. That is a
+ * property of the API, not a decision — so this does the one thing it can do
+ * instead, which is to verify the ECHO: the price Shopify reports back must be
+ * the one that was sent, and only then is the cache mirrored. A silent
+ * normalisation ("9,90" → "9.90") is fine and expected; a DIFFERENT number
+ * means something else won, and that is reported rather than mirrored.
+ *
+ * The comma is accepted on input because a German merchant types one, and
+ * `parseDecimal` already folds it. What is refused is anything that is not a
+ * number: a bad scalar fails at the SCHEMA level, where `userErrors` never sees
+ * it and the whole call reads as a success while nothing was written.
+ */
+export async function applyVariantPrices(
+  admin: AdminApiContext,
+  db: PrismaClient,
+  shop: string,
+  params: { productId: string; variantId: string; variantGid: string; fields: VariantPriceFields },
+): Promise<CommerceWarning | undefined> {
+  const input: Record<string, unknown> = { id: params.variantGid };
+  const mirror: Record<string, unknown> = {};
+
+  if (params.fields.price !== undefined) {
+    // The price itself cannot be cleared — Shopify requires one on every
+    // variant — so an empty field is "leave it alone", not "set nothing".
+    const price = parseDecimal(params.fields.price);
+    if (price === null) return "priceInvalid";
+    input.price = price;
+    mirror.price = price;
+  }
+  if (params.fields.compareAtPrice !== undefined) {
+    if (params.fields.compareAtPrice.trim() === "") {
+      // The compare-at price CAN be cleared, and clearing it is how a merchant
+      // ends a sale — so "" has to reach Shopify as null rather than be
+      // dropped as "unchanged".
+      input.compareAtPrice = null;
+      mirror.compareAtPrice = null;
+    } else {
+      const compareAt = parseDecimal(params.fields.compareAtPrice);
+      if (compareAt === null) return "priceInvalid";
+      input.compareAtPrice = compareAt;
+      mirror.compareAtPrice = compareAt;
+    }
+  }
+
+  if (Object.keys(input).length <= 1) return undefined;
+
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        mutation updateVariantPrices($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            productVariants {
+              id
+              price
+              compareAtPrice
+            }
+            userErrors { field message }
+          }
+        }`,
+      { variables: { productId: params.productId, variants: [input] } },
+    );
+
+    const body = (await response.json()) as {
+      data?: {
+        productVariantsBulkUpdate?: {
+          productVariants?: Array<{ id?: string; price?: string | null; compareAtPrice?: string | null }> | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+
+    if (body.errors?.length) {
+      logger.warn("[Commerce] Price schema-level error", {
+        context: "Commerce", shop, error: body.errors[0]?.message,
+      });
+      return "priceFailed";
+    }
+    const payload = body.data?.productVariantsBulkUpdate;
+    if (payload?.userErrors?.length) {
+      logger.warn("[Commerce] Price userErrors", {
+        context: "Commerce", shop, error: payload.userErrors[0].message,
+      });
+      return "priceFailed";
+    }
+
+    const echoed = payload?.productVariants?.find((v) => v.id === params.variantGid);
+    // The echo rule. `userErrors: []` with no variant back is the silent no-op
+    // this app has been bitten by on every other write path.
+    if (!echoed) return "priceNotConfirmed";
+    // Compared as NUMBERS: Shopify answers "9.90" for a sent "9.9", and a
+    // string compare would report that identical price as unconfirmed.
+    const sameMoney = (sent: unknown, got: string | null | undefined) => {
+      if (sent === null) return got === null || got === undefined || got === "";
+      return Number(got ?? NaN) === Number(sent);
+    };
+    if (input.price !== undefined && !sameMoney(input.price, echoed.price)) return "priceNotConfirmed";
+    if (input.compareAtPrice !== undefined && !sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
+      return "priceNotConfirmed";
+    }
+
+    // Mirror what Shopify STORED, not what was sent — the same rule the theme
+    // path follows for normalised richtext.
+    if (echoed.price != null) mirror.price = echoed.price;
+    mirror.compareAtPrice = echoed.compareAtPrice ?? null;
+    await db.productVariant
+      .updateMany({ where: { id: params.variantId, product: { shop } }, data: mirror as never })
+      .catch(() => undefined);
+
+    return undefined;
+  } catch (error) {
+    logger.warn("[Commerce] Price write failed", {
+      context: "Commerce", shop,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "priceFailed";
   }
 }

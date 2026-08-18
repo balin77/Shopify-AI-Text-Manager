@@ -510,6 +510,10 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      price: "Price",
+      priceHint: "What the customer pays.",
+      compareAtPrice: "Compare-at price",
+      compareAtPriceHint: "The struck-through price. Empty = no sale.",
       discardConfirm: "Discard your unsaved changes?",
       cost: "Cost per item",
       costHint: "What you pay. Never shown to customers.",
@@ -554,6 +558,9 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      priceInvalid: "A price was not a number, so it was not saved.",
+      priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
+      priceFailed: "The price could not be saved.",
       activateNotConfirmed: "Shopify did not confirm the location, so it was not activated.",
       activateFailed: "The location could not be activated.",
       stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",

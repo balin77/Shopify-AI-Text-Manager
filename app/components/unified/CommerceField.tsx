@@ -90,6 +90,8 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
    */
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
 
+  /** Edited selling prices, keyed `variantId::price` / `::compareAtPrice`. */
+  const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
   /** Edited on-hand values, keyed `variantId::locationId`. */
   const [edits, setEdits] = useState<Record<string, string>>({});
   /** Ticked channels. Seeded from the load, then owned by the merchant. */
@@ -145,6 +147,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
         if (!keepEdits) {
           setEdits({});
           setItemEdits({});
+          setPriceEdits({});
         }
         // Reseeded ONLY when the edits are being dropped anyway. It used to run
         // unconditionally, so activating a location silently reverted an
@@ -296,7 +299,33 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     [productId, load, t],
   );
 
+  /**
+   * Which variants have a price the merchant changed.
+   *
+   * Compared against the LOADED value, and an empty price field counts as
+   * untouched rather than as a clear: Shopify requires a price on every
+   * variant, so "" cannot mean anything else. The compare-at price is the
+   * opposite — "" there is how a merchant ends a sale, so it IS a change.
+   */
+  const dirtyPrices = useMemo(() => {
+    const byVariant = new Map<string, { price?: string; compareAtPrice?: string }>();
+    for (const [key, value] of Object.entries(priceEdits)) {
+      const [variantId, field] = key.split("::");
+      const variant = data?.variants.find((v) => v.id === variantId);
+      if (!variant) continue;
+      if (field === "price") {
+        if (value.trim() === "" || value.trim() === (variant.price ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), price: value });
+      } else if (field === "compareAtPrice") {
+        if (value.trim() === (variant.compareAtPrice ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), compareAtPrice: value });
+      }
+    }
+    return [...byVariant.entries()];
+  }, [priceEdits, data]);
+
   const hasChanges =
+    dirtyPrices.length > 0 ||
     dirtyStock.length > 0 ||
     dirtyItemFields.length > 0 ||
     dirtyChannels.toPublish.length > 0 ||
@@ -313,6 +342,28 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     setNotices([]);
     const collected: string[] = [];
     try {
+      // Prices first: they are the cheapest write and the one a merchant is
+      // most likely to be watching. Each variant is its own call — the mutation
+      // takes a list, but a per-variant call keeps a rejected price from taking
+      // another variant's down with it, which is the same per-cell rule the
+      // bulk editor follows.
+      for (const [variantId, fields] of dirtyPrices) {
+        const variant = data.variants.find((v) => v.id === variantId);
+        if (!variant) continue;
+        const warnings = await postIsolated(
+          {
+            intent: "price",
+            productId,
+            variantId,
+            variantGid: variant.gid,
+            ...(fields.price !== undefined ? { price: fields.price } : {}),
+            ...(fields.compareAtPrice !== undefined ? { compareAtPrice: fields.compareAtPrice } : {}),
+          },
+          "priceFailed",
+        );
+        collected.push(...warnings);
+      }
+
       // Grouped per VARIANT: `inventorySetQuantities` is atomic per call, so a
       // merchant editing three locations of one variant cannot end up with one
       // written and two not.
@@ -417,7 +468,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     // the number that actually moved — and then KEEPS the merchant's input,
     // because that is exactly the case where they need it.
     load({ keepEdits: collected.length > 0 });
-  }, [data, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
+  }, [data, dirtyPrices, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
 
   /**
    * The editor's save bar drives this panel. Registered rather than lifted:
@@ -437,6 +488,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
   const discard = useCallback(() => {
     setEdits({});
     setItemEdits({});
+    setPriceEdits({});
     setNotices([]);
     setChannelState(
       Object.fromEntries((data?.channels ?? []).map((c) => [c.publicationId, c.isPublished])),
@@ -471,6 +523,10 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
         <Text as="p" variant="bodyMd">{label}</Text>
         <Banner tone="info">
           <p>{(t.planRequired as string) || "Stock and sales channels are part of the Pro plan."}</p>
+          {/* The one case where the bulk editor is still the answer: without
+              this panel there is nowhere else to price a multi-variant
+              product. */}
+          <p>{(t.variantPricesHint as string) || "Prices of several variants are edited in the bulk editor."}</p>
         </Banner>
       </BlockStack>
     );
@@ -572,18 +628,6 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           <BlockStack gap="200">
             <Text as="h3" variant="headingSm">{(t.stockHeading as string) || "Stock"}</Text>
 
-            {/* The one sentence that says where multi-variant prices live. It
-                used to be the price field's own note — and disappeared with
-                the field, leaving a merchant on a 12-variant product with no
-                price and no route to one. This panel owns stock, weight and
-                channels, NOT price, so it has to point rather than offer. */}
-            {data.variants.length > 1 && (
-              <Text as="p" variant="bodySm" tone="subdued">
-                {(t.variantPricesHint as string) ||
-                  "Prices of several variants are edited in the bulk editor."}
-              </Text>
-            )}
-
             {data.variantsTruncated && (
               <Text as="p" variant="bodySm" tone="subdued">
                 {(t.variantsTruncated as string) || "This product has more variants than were loaded. Edit the rest in the Shopify admin."}
@@ -615,6 +659,41 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
                     {variant.title}{variant.sku ? ` · ${variant.sku}` : ""}
                   </Text>
+
+                  {/* The SELLING prices, first and on their own row.
+                      They sit above the InventoryItem block because the field
+                      that used to be alone up here was `cost` — what the
+                      MERCHANT pays — and a merchant looking for "the price"
+                      read that one and got the wrong number. Now the two stand
+                      next to each other and each says which it is. */}
+                  <InlineStack gap="300" blockAlign="start" wrap>
+                    <Box minWidth="140px">
+                      <TextField
+                        label={(t.price as string) || "Price"}
+                        value={priceEdits[`${variant.id}::price`] ?? (variant.price ?? "")}
+                        onChange={(value) =>
+                          setPriceEdits((prev) => ({ ...prev, [`${variant.id}::price`]: value }))
+                        }
+                        autoComplete="off"
+                        inputMode="decimal"
+                        disabled={saving}
+                        helpText={(t.priceHint as string) || "What the customer pays."}
+                      />
+                    </Box>
+                    <Box minWidth="140px">
+                      <TextField
+                        label={(t.compareAtPrice as string) || "Compare-at price"}
+                        value={priceEdits[`${variant.id}::compareAtPrice`] ?? (variant.compareAtPrice ?? "")}
+                        onChange={(value) =>
+                          setPriceEdits((prev) => ({ ...prev, [`${variant.id}::compareAtPrice`]: value }))
+                        }
+                        autoComplete="off"
+                        inputMode="decimal"
+                        disabled={saving}
+                        helpText={(t.compareAtPriceHint as string) || "The struck-through price. Empty = no sale."}
+                      />
+                    </Box>
+                  </InlineStack>
 
                   {/* The InventoryItem's own settings. Shown for EVERY
                       variant, tracked or not: a cost and a customs code are

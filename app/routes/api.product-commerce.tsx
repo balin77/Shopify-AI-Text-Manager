@@ -53,6 +53,8 @@ import {
   type CommerceWarning,
   type InventoryItemFields,
   type StockChange,
+  applyVariantPrices,
+  type VariantPriceFields,
 } from "~/services/commerce-write.server";
 
 /** Stock and channels are a Pro feature, like the other commerce surfaces. */
@@ -63,6 +65,10 @@ export interface CommerceVariantView {
   gid: string;
   title: string;
   sku: string | null;
+  /** The SELLING price — what a customer pays. Not `cost`, which is what the
+   *  merchant pays and is the field that used to be alone in this panel. */
+  price: string | null;
+  compareAtPrice: string | null;
   inventoryItemId: string | null;
   /** null ⇒ never synced. false ⇒ Shopify keeps no count for this variant. */
   inventoryTracked: boolean | null;
@@ -241,6 +247,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
         gid,
         title: String(node.title ?? ""),
         sku: (node.sku as string | null) ?? null,
+        // Read straight off the node, NOT through `variantCommerceColumns`:
+        // price is not part of the commerce block (the regular product sync
+        // owns it), and folding it in would tie it to that block's
+        // all-or-nothing presence rule.
+        price: (node.price as string | null) ?? null,
+        compareAtPrice: (node.compareAtPrice as string | null) ?? null,
         inventoryItemId: columns.inventoryItemId ?? null,
         inventoryTracked: columns.inventoryTracked ?? null,
         cost: columns.cost ?? null,
@@ -378,6 +390,26 @@ export async function action({ request }: ActionFunctionArgs) {
       });
       return json({ success: false, warnings: ["activateFailed"] satisfies string[] });
     }
+  }
+
+  if (intent === "price") {
+    const variantId = getFormString(formData, "variantId");
+    const variantGid = getFormString(formData, "variantGid");
+    if (!variantGid.startsWith("gid://shopify/ProductVariant/")) {
+      return json({ success: false, error: "That is not a variant." }, { status: 400 });
+    }
+    const fields: VariantPriceFields = {};
+    if (formData.has("price")) fields.price = getFormString(formData, "price");
+    if (formData.has("compareAtPrice")) fields.compareAtPrice = getFormString(formData, "compareAtPrice");
+
+    const warning = await applyVariantPrices(admin, db, session.shop, {
+      productId,
+      variantId,
+      variantGid,
+      fields,
+    });
+    if (warning) warnings.push(warning);
+    return json({ success: warnings.length === 0, warnings });
   }
 
   if (intent === "stock") {

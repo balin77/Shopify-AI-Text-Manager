@@ -14,6 +14,7 @@ import {
   parseCountryCode,
   parseDecimal,
   parseQuantity,
+  applyVariantPrices,
 } from "../../app/services/commerce-write.server";
 
 const ITEM = "gid://shopify/InventoryItem/1";
@@ -207,6 +208,122 @@ describe("parseCountryCode", () => {
     expect(parseCountryCode(" de ")).toBe("DE");
     expect(parseCountryCode("Germany")).toBeNull();
     expect(parseCountryCode("D")).toBeNull();
+  });
+});
+
+/**
+ * The SELLING price.
+ *
+ * Its own block because it is the one money write in this module with NO
+ * compare-and-swap: `productVariantsBulkUpdate` overwrites whatever is there,
+ * and Shopify offers nothing like `compareQuantity`. The echo is therefore the
+ * only line of defence, and these tests are mostly about it holding.
+ */
+describe("applyVariantPrices", () => {
+  const VARIANT_GID = "gid://shopify/ProductVariant/9";
+  const PRODUCT_GID = "gid://shopify/Product/1";
+  const priceEcho = (price: string | null, compareAtPrice: string | null = null) => ({
+    data: {
+      productVariantsBulkUpdate: {
+        productVariants: [{ id: VARIANT_GID, price, compareAtPrice }],
+        userErrors: [],
+      },
+    },
+  });
+  const params = (fields: Record<string, string>) => ({
+    productId: PRODUCT_GID,
+    variantId: "9",
+    variantGid: VARIANT_GID,
+    fields,
+  });
+
+  function variantRecorder() {
+    const updates: Array<Record<string, unknown>> = [];
+    return {
+      updates,
+      db: {
+        productVariant: {
+          updateMany: vi.fn(async (args: Record<string, unknown>) => {
+            updates.push(args);
+            return { count: 1 };
+          }),
+        },
+      } as never,
+    };
+  }
+
+  it("folds a German comma and mirrors what Shopify STORED", async () => {
+    const admin = adminWith(priceEcho("9.90"));
+    const { db, updates } = variantRecorder();
+
+    const warning = await applyVariantPrices(admin, db, "s", params({ price: "9,90" }));
+
+    expect(warning).toBeUndefined();
+    const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+    expect(sent.variants[0].price).toBe("9.90");
+    expect((updates[0] as { data: { price: string } }).data.price).toBe("9.90");
+  });
+
+  it("accepts Shopify's own normalisation without calling it a mismatch", async () => {
+    // "9.9" sent, "9.90" echoed — the same money. A string compare would
+    // report that as unconfirmed and refuse to mirror it.
+    const admin = adminWith(priceEcho("9.90"));
+    const { db } = variantRecorder();
+
+    expect(await applyVariantPrices(admin, db, "s", params({ price: "9.9" }))).toBeUndefined();
+  });
+
+  it("refuses a DIFFERENT price rather than mirroring it", async () => {
+    // No compare-and-swap exists here, so this is the only thing standing
+    // between the merchant and a number they did not write.
+    const admin = adminWith(priceEcho("12.00"));
+    const { db, updates } = variantRecorder();
+
+    expect(await applyVariantPrices(admin, db, "s", params({ price: "9.90" }))).toBe("priceNotConfirmed");
+    expect(updates).toEqual([]);
+  });
+
+  it("treats a missing variant in the echo as unconfirmed", async () => {
+    // The silent no-op: `userErrors: []` and nothing written.
+    const admin = adminWith({ data: { productVariantsBulkUpdate: { productVariants: [], userErrors: [] } } });
+    const { db, updates } = variantRecorder();
+
+    expect(await applyVariantPrices(admin, db, "s", params({ price: "9.90" }))).toBe("priceNotConfirmed");
+    expect(updates).toEqual([]);
+  });
+
+  it("clears the compare-at price on an empty string", async () => {
+    // How a merchant ends a sale. "" must reach Shopify as null rather than be
+    // dropped as "unchanged".
+    const admin = adminWith(priceEcho("9.90", null));
+    const { db, updates } = variantRecorder();
+
+    const warning = await applyVariantPrices(admin, db, "s", params({ compareAtPrice: "" }));
+
+    expect(warning).toBeUndefined();
+    const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+    expect(sent.variants[0].compareAtPrice).toBeNull();
+    expect((updates[0] as { data: { compareAtPrice: unknown } }).data.compareAtPrice).toBeNull();
+  });
+
+  it("refuses a price that is not a number instead of forwarding it", async () => {
+    // A bad scalar fails at the SCHEMA level, where `userErrors` never sees it
+    // — the call would read as a success while nothing was written.
+    const admin = adminWith(priceEcho("9.90"));
+    const { db } = variantRecorder();
+
+    expect(await applyVariantPrices(admin, db, "s", params({ price: "sehr günstig" }))).toBe("priceInvalid");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
+  it("sends only the fields the caller touched", async () => {
+    const admin = adminWith(priceEcho("9.90"));
+    const { db } = variantRecorder();
+
+    await applyVariantPrices(admin, db, "s", params({ price: "9.90" }));
+
+    const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+    expect(Object.keys(sent.variants[0]).sort()).toEqual(["id", "price"]);
   });
 });
 

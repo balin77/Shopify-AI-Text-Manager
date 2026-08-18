@@ -69,6 +69,8 @@ export const SHOP_LOCATION_PAGE_SIZE = 50;
  * than offering a control that would fail.
  */
 export const VARIANT_COMMERCE_SELECTION = `
+                      price
+                      compareAtPrice
                       inventoryPolicy
                       inventoryItem {
                         id

@@ -506,6 +506,10 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      price: "Precio de venta",
+      priceHint: "Lo que paga la clienta.",
+      compareAtPrice: "Precio comparativo",
+      compareAtPriceHint: "El precio tachado. Vacío = sin oferta.",
       discardConfirm: "¿Descartar los cambios sin guardar?",
       cost: "Coste por artículo",
       costHint: "Lo que pagas tú. Nunca se muestra a los clientes.",
@@ -550,6 +554,9 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      priceInvalid: "Un precio no era un número, así que no se guardó.",
+      priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Recarga para ver el valor actual.",
+      priceFailed: "El precio no se pudo guardar.",
       activateNotConfirmed: "Shopify no confirmó la ubicación, así que no se activó.",
       activateFailed: "La ubicación no se pudo activar.",
       stockNoBaseline: "Una ubicación no tenía una cantidad actual con la que comparar, así que no se escribió. Recarga e inténtalo de nuevo.",

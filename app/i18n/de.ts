@@ -507,6 +507,10 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      price: "Verkaufspreis",
+      priceHint: "Was die Kundin bezahlt.",
+      compareAtPrice: "Vergleichspreis",
+      compareAtPriceHint: "Der durchgestrichene Preis. Leer = kein Angebot.",
       discardConfirm: "Ungespeicherte Änderungen verwerfen?",
       cost: "Einkaufspreis",
       costHint: "Was du bezahlst. Wird Kundinnen nie angezeigt.",
@@ -551,6 +555,9 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      priceInvalid: "Ein Preis war keine Zahl und wurde deshalb nicht gespeichert.",
+      priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, er wurde deshalb auch lokal nicht gespeichert. Lade neu, um den aktuellen Stand zu sehen.",
+      priceFailed: "Der Preis konnte nicht gespeichert werden.",
       activateNotConfirmed: "Shopify hat den Standort nicht bestätigt, er wurde deshalb nicht aktiviert.",
       activateFailed: "Der Standort konnte nicht aktiviert werden.",
       stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
