@@ -248,14 +248,67 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 | **P2.4 KI-Referral-Tracking** | ✅ | Storefront-Beacon + `SeoAiReferral` (aggregiert, ohne Besucherkennung), Auswertung in der AEO-Sektion. Grenzen (AI Overviews, unterdrückter Referrer) stehen in der UI. |
 | **P3 Readability** | ✅ | Struktur-Befunde in jeder Sprache, Reading-Ease-Zahl nur für EN/DE/ES (validierte Formeln), bewusst außerhalb des SEO-Scores. |
 | **P3 Keyword-Volumen** | ✅ (Erklärung) | Der Keywords-Tab sagt jetzt, *warum* dort keine Volumenschätzung steht — und dass GSC dieselbe Frage mit echten Daten beantwortet. |
-| **P2.5 Bild-Dateinamen-SEO** | ⏸ offen | Nicht umgesetzt: die Umbenennung ändert die CDN-URL jedes Bildes und berührt damit einen Schreibpfad, dessen Nebenwirkungen (Referenzen, Caches) erst gemessen werden sollten. Bewusste Entscheidung, keine vergessene Zeile. |
-| **P2.5 Speed-Eingriffe** | ⏸ offen | Theme-Eingriff (Lazy-Load, Minify) — erst die Produktfrage klären, ob wir fremde Themes anfassen wollen. |
-| **P3 Schema-Typen** | ⏸ offen | LocalBusiness/Video/HowTo: LocalBusiness braucht gepflegte Adress- und Öffnungszeitendaten; falsch ausgezeichnet ist es ein Google-Verstoß, nicht nur wirkungslos. |
+| **P2.5 Bild-Dateinamen-SEO** | ⛔ verworfen | Siehe §9. |
+| **P2.5 Speed-Eingriffe** | ⛔ Nicht-Ziel | Siehe §9 — Produktentscheidung 2026-08-18: keine Bearbeitung des Merchant-Theme-Codes. |
+| **P3 Schema-Typen** | ⏸ teils offen | LocalBusiness und VideoObject bleiben Kandidaten, HowTo ist erledigt — siehe §9. |
 | **P3 Long-Form-Generator** | ⏸ offen | Eigener Workflow (Outline → Abschnitte → interne Links), zu groß für diesen Durchgang. |
 
 **Was das an §3 ändert:** Die Zeilen `agents.md` (❌ → ✅), `AI-Sichtbarkeits-Tracking`
 (❌ → ⚠️, wir messen Ankünfte statt Prompt-Sichtbarkeit) und `Readability-Analyse`
 (❌ → ✅) sind damit gedreht; `Live-Crawl` läuft jetzt zusätzlich zeitgesteuert.
+
+---
+
+## 9. Entscheidungen zu den offenen Punkten (2026-08-18)
+
+### 9.1 Bild-Dateinamen-SEO — ⛔ verworfen
+
+Der Nutzen ist klein und der Preis konkret. Google nennt den Dateinamen als
+*einen* Hinweis auf den Bildinhalt, aber Alt-Text, Bildunterschrift und
+umgebender Text sind die stärkeren Signale — und die deckt die App bereits ab.
+Der Rest wäre Google-Bildersuche, dort meist marginal. Dass Konkurrenten es
+prominent bewerben, macht es zu einem guten *Verkaufsargument*, nicht zu einem
+guten Hebel.
+
+Dagegen: Eine Umbenennung ändert die CDN-URL jedes Bildes; alte URLs laufen
+danach in externen Caches, Social-Previews und direkt verlinkten Bildern ins
+Leere. Und in diesem Repo kommt ein echter Zielkonflikt dazu — die
+Bulk-Auto-Zuweisung liest den Dateinamen als **Konvention**
+(`ProductName_Variant1_..._Identifier.ext` → SKU/Image-Key-Matching,
+`parseFilenames.ts`). Ein „SEO-Rename" würde genau die Information zerstören,
+aus der das Matching seine Zuordnung zieht. Das ist kein Nebeneffekt, sondern
+ein Widerspruch im Modell.
+
+Vermarktet wird stattdessen der bestehende Vorsprung: KI-Alt-Texte **plus**
+deren Übersetzung — das hat in dieser Kategorie kein Konkurrent.
+
+### 9.2 Theme-Eingriffe (Lazy-Load, Minify) — ⛔ Nicht-Ziel
+
+**Produktentscheidung: Die App bietet keine Bearbeitung des Theme-Codes an.**
+Kein Injizieren von Markup in fremde Templates, keine Performance-Eingriffe,
+kein „Autopilot", der Sections oder Assets umschreibt. Ladezeit bleibt bei uns
+**Diagnose** (PageSpeed + echte Nutzerdaten), nicht Reparatur.
+
+Abgrenzung, damit die Regel später nicht das Falsche verbietet: app-eigene
+Theme-*Dateien* sind davon nicht betroffen — `templates/llms.txt.liquid`,
+`templates/agents.md.liquid`, die verwaltete `templates/robots.txt.liquid` und
+die Theme-Content-Übersetzungen. Diese Dateien gehören der App, sind
+einzeln zurücknehmbar und fassen den Theme-Code des Merchants nicht an.
+
+### 9.3 Erweiterte Schema-Typen — differenziert
+
+- **HowTo:** ⛔ gestrichen. Google hat die HowTo-Rich-Results 2023 abgeschafft;
+  der Aufwand zahlt auf nichts mehr ein. (Sekundärquellen-Stand — vor einer
+  Umkehr nachprüfen.)
+- **LocalBusiness:** Kandidat, aber nur als **Opt-in mit vom Merchant
+  eingetragenen Daten** (Adresse, Öffnungszeiten, Telefon). Googles Richtlinien
+  verlangen, dass Markup den tatsächlichen Seiteninhalt beschreibt; ein Shop
+  ohne Ladengeschäft, der sich als LocalBusiness auszeichnet, riskiert eine
+  manuelle Maßnahme wegen irreführendem Markup. Automatisch aus Shop-Daten
+  ableiten ist deshalb genau der falsche Weg — die Rechnungsadresse eines
+  reinen Onlineshops ist kein Ladengeschäft.
+- **VideoObject:** Kandidat mit gutem Fit — die Variant-Gallery unterstützt
+  bereits Video, die Daten (Thumbnail, Dauer) liegen also in Reichweite.
 
 ---
 
