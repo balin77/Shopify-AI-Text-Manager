@@ -559,6 +559,14 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      inventoryHeading: "Inventar",
+      identifiersHeading: "Mehr Details",
+      trackedLabel: "Inventar wird verfolgt",
+      trackedHint: "Shopify führt eine Anzahl und zieht sie bei jeder Bestellung ab. Aus gibt es gar keine Anzahl, und die Variante kann immer gekauft werden.",
+      continueSellingLabel: "Weiterverkaufen, auch wenn nicht vorrätig",
+      continueSellingHint: "Kundinnen können bei Bestand 0 bestellen. Aus zeigt Shopify die Variante als ausverkauft.",
+      skuLabel: "SKU (Artikelnummer)",
+      barcodeLabel: "Barcode (ISBN, UPC, GTIN usw.)",
       locationsColumn: "Standorte",
       unavailableColumn: "Nicht verfügbar",
       committedColumn: "Reserviert",
@@ -1486,6 +1494,8 @@ export const de = {
     browseFilesSearchPlaceholder: "Nach Dateinamen suchen…",
     browseFilesAddSelected: "Auswahl hinzufügen",
     optimisticTileBadge: "Speichern?",
+    processingTileBadge: "Wird verarbeitet…",
+    previewUnavailable: "Bild",
     browseFilesEmpty: "Keine passenden Dateien in deiner Shopify-Bibliothek.",
     browseFilesScopeCurrent: "Nur Dateien aus diesem Produkt",
     browseFilesScopeOther: "Anderes Produkt wählen…",

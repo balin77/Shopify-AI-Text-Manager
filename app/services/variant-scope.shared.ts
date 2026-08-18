@@ -113,7 +113,9 @@ export function buildVariantScopes(
   const scopes: VariantScope[] = variants.map((variant) => ({
     id: `variant::${variant.id}`,
     kind: "variant",
-    label: `${variant.title}${variant.sku ? ` · ${variant.sku}` : ""}`,
+    // The title alone. The SKU has its own editable field in the panel, and
+    // repeating it here made the picker's entries long enough to truncate.
+    label: variant.title,
     variantIds: [variant.id],
     images: pickScopeImages([variant], { max: 1 }),
   }));

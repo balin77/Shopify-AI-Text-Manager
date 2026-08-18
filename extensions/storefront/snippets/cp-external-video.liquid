@@ -1,0 +1,69 @@
+{%- comment -%}
+  Parses a YouTube/Vimeo watch URL into "<host>|<external_id>".
+
+  Input:  url  — the raw URL (a merchant-entered string, not sanitised)
+  Output: "youtube|dQw4w9WgXcQ", "vimeo|123456789", or NOTHING when the URL is
+          neither. Never a half answer: a host without an id would make the
+          caller build "https://www.youtube.com/embed/" and embed the YouTube
+          front page.
+
+  Why a snippet and not a third copy. This parser existed three times in
+  blocks/variant-gallery-embed.liquid and the copies had already DRIFTED: two
+  of them handled `youtube.com/embed/` and `youtube.com/shorts/`, the one for
+  the tail of `custom.variant_external_videos` did not — so a Shorts link
+  pasted there was silently dropped. Copies of a parser do not stay equal, and
+  the extension's 100 KiB Liquid budget makes a fourth copy expensive on top.
+
+  `{% render %}` is scope-ISOLATED — a snippet cannot assign back into its
+  caller — so the answer travels as printed text the caller captures:
+
+    {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
+    {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+    {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
+    {%- assign cp_ev_id   = cp_ev_pair | split: '|' | last  | default: '' -%}
+
+  The `strip` is not decoration: `capture` keeps every byte of whitespace the
+  snippet emits, and an id with a leading newline builds a broken embed URL.
+  `|` is safe as the separator because YouTube and Vimeo ids are alphanumeric
+  plus `-` and `_`.
+
+  No regex — Liquid has none — hence the split-pipe chains. Each id is cut at
+  `?`, `/` and `#` so a trailing query, path segment or fragment cannot end up
+  inside the id.
+{%- endcomment -%}
+{%- liquid
+  assign cp_s_url = url | strip
+  assign cp_s_host = blank
+  assign cp_s_id = blank
+
+  if cp_s_url contains 'youtube.com/watch' and cp_s_url contains 'v='
+    assign cp_s_host = 'youtube'
+    assign cp_s_tail = cp_s_url | split: 'v=' | last
+    assign cp_s_id = cp_s_tail | split: '&' | first | split: '#' | first
+  elsif cp_s_url contains 'youtu.be/'
+    assign cp_s_host = 'youtube'
+    assign cp_s_tail = cp_s_url | split: 'youtu.be/' | last
+    assign cp_s_id = cp_s_tail | split: '?' | first | split: '/' | first | split: '#' | first
+  elsif cp_s_url contains 'youtube.com/embed/'
+    assign cp_s_host = 'youtube'
+    assign cp_s_tail = cp_s_url | split: 'youtube.com/embed/' | last
+    assign cp_s_id = cp_s_tail | split: '?' | first | split: '/' | first | split: '#' | first
+  elsif cp_s_url contains 'youtube.com/shorts/'
+    assign cp_s_host = 'youtube'
+    assign cp_s_tail = cp_s_url | split: 'youtube.com/shorts/' | last
+    assign cp_s_id = cp_s_tail | split: '?' | first | split: '/' | first | split: '#' | first
+  elsif cp_s_url contains 'vimeo.com/'
+    assign cp_s_host = 'vimeo'
+    assign cp_s_tail = cp_s_url | split: 'vimeo.com/' | last
+    if cp_s_tail contains 'video/'
+      assign cp_s_tail = cp_s_tail | split: 'video/' | last
+    endif
+    assign cp_s_id = cp_s_tail | split: '?' | first | split: '/' | first | split: '#' | first
+  endif
+
+  if cp_s_host != blank and cp_s_id != blank
+    echo cp_s_host
+    echo '|'
+    echo cp_s_id
+  endif
+-%}

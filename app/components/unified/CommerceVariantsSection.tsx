@@ -47,8 +47,12 @@ import {
   Tooltip,
 } from "@shopify/polaris";
 import { HelpTooltip } from "../HelpTooltip";
+import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData, WEIGHT_UNITS } from "../../contexts/CommerceDataContext";
 import { buildVariantScopes, commonValue, type VariantScope } from "../../services/variant-scope.shared";
+
+/** The fields that live on the VARIANT rather than on its InventoryItem. */
+type VariantField = "price" | "compareAtPrice" | "barcode" | "inventoryPolicy";
 
 export function CommerceVariantsSection() {
   const commerce = useCommerceData();
@@ -85,11 +89,12 @@ export function CommerceVariantsSection() {
   const isBulk = members.length > 1;
 
   /** The value all members agree on, or "" when they differ. */
-  const priceValue = (field: "price" | "compareAtPrice"): string => {
+  /** Variant-level fields: the two prices, the barcode, the stock policy. */
+  const priceValue = (field: VariantField): string => {
     const values = members.map((m) => priceEdits[`${m.id}::${field}`] ?? (m[field] ?? ""));
     return commonValue(values) ?? "";
   };
-  const priceMixed = (field: "price" | "compareAtPrice"): boolean =>
+  const priceMixed = (field: VariantField): boolean =>
     isBulk && commonValue(members.map((m) => priceEdits[`${m.id}::${field}`] ?? (m[field] ?? ""))) === null;
 
   const setPrice = (field: string, value: string) =>
@@ -193,7 +198,9 @@ export function CommerceVariantsSection() {
         <BlockStack gap="200">
           <InlineStack gap="200" blockAlign="center">
             <Text as="p" variant="bodyMd" fontWeight="semibold">
-              {isBulk ? scope.label : `${first.title}${first.sku ? ` · ${first.sku}` : ""}`}
+              {/* The SKU is a FIELD now, below — appended to the title it was
+                  unreadable and uneditable at the same time. */}
+              {isBulk ? scope.label : first.title}
             </Text>
             {isBulk && (
               <Badge tone="attention">
@@ -340,6 +347,93 @@ export function CommerceVariantsSection() {
                     </InlineStack>
                     </>
                   ) : null}
+
+                  {/* ── Inventory switches ──────────────────────────────────
+                      Pill toggles rather than checkboxes: the row style this
+                      app uses for every setting of this kind. Both are
+                      per-variant facts, so they follow the same bulk rule as
+                      the fields above — on a group they show what the members
+                      AGREE on and say so when they do not. */}
+                  <SectionHeading
+                    text={(t.inventoryHeading as string) || "Inventory"}
+                    helpKey="commerceStock"
+                  />
+                  <BlockStack gap="200">
+                    <InlineStack gap="300" blockAlign="center" wrap={false}>
+                      <ToggleSwitch
+                        checked={itemValue("inventoryTracked", "true") === "true"}
+                        ariaLabel={(t.trackedLabel as string) || "Track quantity"}
+                        onChange={(checked) => setItem("inventoryTracked", String(checked))}
+                        disabled={saving || !first.inventoryItemId}
+                      />
+                      <BlockStack gap="050">
+                        <Text as="p" variant="bodyMd">
+                          {(t.trackedLabel as string) || "Track quantity"}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {itemMixed("inventoryTracked")
+                            ? ((t.mixedValues as string) || "Different values")
+                            : ((t.trackedHint as string) ||
+                              "Shopify keeps a count and lowers it with every order. Off, there is no count at all and the variant can always be bought.")}
+                        </Text>
+                      </BlockStack>
+                    </InlineStack>
+
+                    {/* Only while the item is TRACKED: untracked there is no
+                        zero for the policy to apply to, and a switch that
+                        decides nothing invites the merchant to think it
+                        does. */}
+                    {itemValue("inventoryTracked", "true") === "true" && (
+                      <InlineStack gap="300" blockAlign="center" wrap={false}>
+                        <ToggleSwitch
+                          checked={priceValue("inventoryPolicy") === "CONTINUE"}
+                          ariaLabel={(t.continueSellingLabel as string) || "Continue selling when out of stock"}
+                          onChange={(checked) => setPrice("inventoryPolicy", checked ? "CONTINUE" : "DENY")}
+                          disabled={saving}
+                        />
+                        <BlockStack gap="050">
+                          <Text as="p" variant="bodyMd">
+                            {(t.continueSellingLabel as string) || "Continue selling when out of stock"}
+                          </Text>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {priceMixed("inventoryPolicy")
+                              ? ((t.mixedValues as string) || "Different values")
+                              : ((t.continueSellingHint as string) ||
+                                "Customers can order it at zero stock. Off, Shopify shows it as sold out.")}
+                          </Text>
+                        </BlockStack>
+                      </InlineStack>
+                    )}
+                  </BlockStack>
+
+                  {/* ── The variant's own references ───────────────────────── */}
+                  <SectionHeading
+                    text={(t.identifiersHeading as string) || "More details"}
+                    helpKey="commerceStock"
+                  />
+                  <InlineStack gap="300" blockAlign="start" wrap>
+                    <Box minWidth="220px">
+                      <TextField
+                        label={(t.skuLabel as string) || "SKU (Stock Keeping Unit)"}
+                        value={itemValue("sku")}
+                        placeholder={mixedHint(itemMixed("sku"))}
+                        onChange={(value) => setItem("sku", value)}
+                        autoComplete="off"
+                        disabled={saving || !first.inventoryItemId}
+                      />
+                    </Box>
+                    <Box minWidth="220px">
+                      <TextField
+                        label={(t.barcodeLabel as string) || "Barcode (ISBN, UPC, GTIN, etc.)"}
+                        value={priceValue("barcode")}
+                        placeholder={mixedHint(priceMixed("barcode"))}
+                        onChange={(value) => setPrice("barcode", value)}
+                        autoComplete="off"
+                        disabled={saving}
+                      />
+                    </Box>
+                  </InlineStack>
+
           {/* Stock, for ONE variant only -- see the header. */}
           {isBulk ? (
             <Text as="p" variant="bodySm" tone="subdued">
@@ -488,13 +582,19 @@ function StockTable({
   disabled: boolean;
   t: Record<string, unknown>;
 }) {
+  // Roomier than the first cut, and the LAST column gets its own right-hand
+  // padding: the "on hand" input sat flush against the table's border.
   const cell: CSSProperties = {
-    padding: "8px 12px",
+    padding: "10px 14px",
     textAlign: "right",
     borderTop: "1px solid var(--p-color-border-secondary)",
     whiteSpace: "nowrap",
   };
-  const headCell: CSSProperties = { ...cell, borderTop: "none", textAlign: "right" };
+  const lastCell: CSSProperties = { ...cell, paddingRight: "20px" };
+  const firstCell: CSSProperties = { ...cell, textAlign: "left", paddingLeft: "20px" };
+  const headCell: CSSProperties = { ...cell, borderTop: "none" };
+  const headFirst: CSSProperties = { ...firstCell, borderTop: "none" };
+  const headLast: CSSProperties = { ...lastCell, borderTop: "none" };
   const num = (value: number | null) => (value == null ? "—" : String(value));
 
   /** Summed only over what is KNOWN, and absent when nothing is. A total that
@@ -519,11 +619,19 @@ function StockTable({
   })();
 
   return (
-    <Box borderColor="border" borderWidth="025" borderRadius="200" overflowX="scroll">
+    <Box
+      borderColor="border"
+      borderWidth="025"
+      borderRadius="200"
+      overflowX="scroll"
+      // Air around the table as well as inside it: pressed against the box's
+      // own edge it read as part of the border.
+      paddingBlock="200"
+    >
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
-            <th style={{ ...headCell, textAlign: "left" }}>
+            <th style={headFirst}>
               <Text as="span" variant="bodySm" tone="subdued">
                 {(t.locationsColumn as string) || "Locations"}
               </Text>
@@ -533,8 +641,8 @@ function StockTable({
               (t.committedColumn as string) || "Committed",
               (t.availableColumn as string) || "Available",
               (t.onHandColumn as string) || "On hand",
-            ].map((label) => (
-              <th key={label} style={headCell}>
+            ].map((label, index, all) => (
+              <th key={label} style={index === all.length - 1 ? headLast : headCell}>
                 <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
               </th>
             ))}
@@ -543,7 +651,7 @@ function StockTable({
         <tbody>
           {rows.map((row) => (
             <tr key={row.key}>
-              <td style={{ ...cell, textAlign: "left" }}>
+              <td style={firstCell}>
                 <Text as="span" variant="bodySm" tone={row.active ? undefined : "subdued"}>
                   {row.name}
                   {/* Deactivated locations keep their stock but take no
@@ -565,7 +673,7 @@ function StockTable({
               <td style={cell}><Text as="span" variant="bodySm">{num(row.unavailable)}</Text></td>
               <td style={cell}><Text as="span" variant="bodySm">{num(row.committed)}</Text></td>
               <td style={cell}><Text as="span" variant="bodySm">{num(row.available)}</Text></td>
-              <td style={cell}>
+              <td style={lastCell}>
                 <Box minWidth="86px" maxWidth="86px">
                   <TextField
                     label={(t.onHandColumn as string) || "On hand"}
@@ -588,7 +696,7 @@ function StockTable({
           ))}
           {rows.length > 1 && (
             <tr>
-              <td style={{ ...cell, textAlign: "left" }}>
+              <td style={firstCell}>
                 <Text as="span" variant="bodySm" fontWeight="semibold">
                   {(t.totalRow as string) || "Total"}
                 </Text>
@@ -596,7 +704,7 @@ function StockTable({
               <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(total((r) => r.unavailable))}</Text></td>
               <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(total((r) => r.committed))}</Text></td>
               <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(total((r) => r.available))}</Text></td>
-              <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(onHandTotal)}</Text></td>
+              <td style={lastCell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(onHandTotal)}</Text></td>
             </tr>
           )}
         </tbody>

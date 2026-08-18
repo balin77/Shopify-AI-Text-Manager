@@ -787,5 +787,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     droppedExternalUrlCount: droppedExternalUrls.length,
     dropped3dModelUrlCount: dropped3dModelUrls.length,
   });
-  return json({ success: true, droppedExternalUrls, dropped3dModelUrls });
+  // Hand every freshly created media node back with the staging URL it came
+  // from. Shopify processes a new MediaImage asynchronously: productCreateMedia
+  // returns the GID immediately but `image.url` stays null until processing
+  // finishes, and /api/product-variants can only report media that HAS a URL.
+  // Without this map the client had no way to tell "the image I just saved is
+  // still processing" from "the image is gone", so it dropped its optimistic
+  // tile on the post-save refetch and the merchant saw the upload vanish until
+  // a full page reload. With it, the client keeps the tile (and polls) until
+  // the GID shows up in the media map.
+  const createdMedia = newMedia
+    .map(m => ({
+      resourceUrl: m.resourceUrl,
+      mediaId: resourceUrlToGid[m.resourceUrl] ?? null,
+      kind: (m.kind ?? "image") as MediaKind,
+    }))
+    .filter((m): m is { resourceUrl: string; mediaId: string; kind: MediaKind } => m.mediaId !== null);
+  return json({ success: true, droppedExternalUrls, dropped3dModelUrls, createdMedia });
 };

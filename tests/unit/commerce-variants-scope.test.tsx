@@ -267,3 +267,62 @@ describe("the stock table", () => {
     expect([...row.querySelectorAll("td")].slice(1, 4).map((td) => td.textContent)).toEqual(["—", "—", "—"]);
   });
 });
+
+describe("the variant's own settings", () => {
+  it("edits SKU and barcode as FIELDS, not as part of the title", async () => {
+    // Both used to be readable only as a suffix on the variant's name —
+    // visible and uneditable at the same time.
+    ui();
+    await screen.findByLabelText("Variant");
+
+    const sku = (await screen.findByLabelText(/^SKU/)) as HTMLInputElement;
+    const barcode = (await screen.findByLabelText(/^Barcode/)) as HTMLInputElement;
+    fireEvent.change(sku, { target: { value: "BX-15" } });
+    fireEvent.change(barcode, { target: { value: "4006381333931" } });
+
+    expect(sku.value).toBe("BX-15");
+    expect(barcode.value).toBe("4006381333931");
+  });
+
+  it("hides the out-of-stock policy while the item is not tracked", async () => {
+    // Untracked there is no zero for it to apply to, and a switch that
+    // decides nothing invites the merchant to think it does.
+    ui();
+    await screen.findByLabelText("Variant");
+    expect(screen.getByText(/Continue selling/i)).toBeTruthy();
+
+    const tracked = screen.getAllByRole("switch")[0];
+    fireEvent.click(tracked);
+
+    await waitFor(() => expect(screen.queryByText(/Continue selling/i)).toBeNull());
+  });
+
+  it("says a group DISAGREES rather than picking one member's value", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          variants: [
+            variant("Weiss", "20cm", { sku: "A" }),
+            variant("Weiss", "30cm", { sku: "B" }),
+            variant("Rot", "20cm"),
+            variant("Rot", "30cm"),
+          ],
+          variantsTruncated: false,
+          channels: [],
+          channelsTruncated: false,
+          shopLocations: [],
+        }),
+      })),
+    );
+    ui();
+    await pick("All Weiss");
+
+    const sku = (await screen.findByLabelText(/^SKU/)) as HTMLInputElement;
+    expect(sku.value).toBe("");
+    expect(sku.placeholder).toMatch(/different/i);
+  });
+});
