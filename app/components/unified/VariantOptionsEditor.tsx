@@ -46,6 +46,7 @@ import {
   Card,
   Icon,
   InlineStack,
+  Modal,
   Tag,
   Text,
   TextField,
@@ -76,10 +77,16 @@ export interface VariantOptionsEditorProps {
   onRemoveValue: (optionId: string, valueId: string, addedIndex?: number) => void;
   onEditPendingValue: (optionId: string, index: number, name: string) => void;
   onCreateOption: (name: string, values: string[]) => void;
+  /** Drops a not-yet-saved option again, by its index in `optionsToCreate`. */
+  onCancelCreateOption?: (index: number) => void;
   onDeleteOption: (optionId: string) => void;
   onReorder: (orderedIds: string[]) => void;
   onTranslate?: (optionId: string) => void;
   translatingFieldIds?: Set<string>;
+  /** Bumped whenever a save lands. The variant counts are re-fetched: a save
+   *  that added a value multiplied the matrix, and the next delete dialog must
+   *  not name the number from before it. */
+  savedNonce?: number;
 
   t?: Record<string, string | undefined>;
 }
@@ -98,10 +105,12 @@ export function VariantOptionsEditor({
   onRemoveValue,
   onEditPendingValue,
   onCreateOption,
+  onCancelCreateOption,
   onDeleteOption,
   onReorder,
   onTranslate,
   translatingFieldIds = new Set(),
+  savedNonce = 0,
   t = {},
 }: VariantOptionsEditorProps) {
   const singleLocaleHint = useSingleLocaleHint();
@@ -117,6 +126,20 @@ export function VariantOptionsEditor({
    *  loaded, which the dialog reports rather than treating as zero. */
   const [impact, setImpact] = useState<Record<string, number> | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
+  /**
+   * The pending confirmation, or null.
+   *
+   * A Polaris Modal rather than `window.confirm`: inside the embedded admin
+   * iframe the native dialog is a focus trap, and the browser's "prevent
+   * additional dialogs" checkbox silently suppresses it -- which would delete
+   * a merchant's variants with NO confirmation at all. Same ruling as the plan
+   * downgrade and the image delete.
+   */
+  const [pendingConfirm, setPendingConfirm] = useState<
+    | { kind: "value"; optionId: string; valueId: string; body: string }
+    | { kind: "option"; optionId: string; body: string }
+    | null
+  >(null);
 
   /**
    * The order shown. Local, because a drag has to feel immediate — the pending
@@ -142,6 +165,7 @@ export function VariantOptionsEditor({
    */
   useEffect(() => {
     if (!openOptionId || impact !== null || !productId) return;
+
     let cancelled = false;
     fetch(`/api/product-option-impact?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
@@ -163,7 +187,23 @@ export function VariantOptionsEditor({
     setOpenOptionId(null);
     setDraft(null);
     setOrder(null);
+    setPendingConfirm(null);
   }, [productId]);
+
+  /**
+   * A landed save invalidates two things.
+   *
+   * The counts, because adding a value multiplies the matrix and the next
+   * delete dialog would otherwise name the pre-save number. And the local drag
+   * order, because a DISCARD clears the hook's pending order while this
+   * component would happily keep showing an arrangement that will never be
+   * saved.
+   */
+  useEffect(() => {
+    if (savedNonce === 0) return;
+    setImpact(null);
+    setOrder(null);
+  }, [savedNonce]);
 
   const nameOf = (option: OptionData) =>
     primaryOptions[option.id]?.name !== undefined ? primaryOptions[option.id].name : option.name;
@@ -193,18 +233,19 @@ export function VariantOptionsEditor({
     return [...existing, ...added];
   };
 
-  const confirmValueDelete = useCallback(
+  const deleteValueBody = useCallback(
     (optionName: string, valueName: string) => {
+      // The SAVED names, never the edited ones: the map is keyed on what
+      // Shopify reports in `selectedOptions`, so looking it up under a pending
+      // rename made every count read as unavailable.
       const count = impact?.[variantCountKey(optionName, valueName)];
-      const message =
-        count === undefined
-          ? t.deleteValueUnknown ||
+      return count === undefined
+        ? t.deleteValueUnknown ||
             "This deletes the variants that use this value, with their stock and prices. How many that is could not be read."
-          : (t.deleteValueCount || "This deletes {n} variant(s), including their stock, prices and SKUs.").replace(
-              "{n}",
-              String(count),
-            );
-      return window.confirm(`${message}`);
+        : (t.deleteValueCount || "This deletes {n} variant(s), including their stock, prices and SKUs.").replace(
+            "{n}",
+            String(count),
+          );
     },
     [impact, t],
   );
@@ -278,7 +319,7 @@ export function VariantOptionsEditor({
                         </InlineStack>
                         <InlineStack gap="100" wrap>
                           {values.map((value) => (
-                            <Tag key={value.id || `new-${value.name}`}>{value.name}</Tag>
+                            <Tag key={value.id || `new-${value.addedIndex}`}>{value.name}</Tag>
                           ))}
                         </InlineStack>
                       </BlockStack>
@@ -368,8 +409,13 @@ export function VariantOptionsEditor({
                               onRemoveValue(option.id, "", value.addedIndex);
                               return;
                             }
-                            if (!confirmValueDelete(nameOf(option), value.name)) return;
-                            onRemoveValue(option.id, value.id);
+                            const saved = option.values.find((v) => v.id === value.id);
+                            setPendingConfirm({
+                              kind: "value",
+                              optionId: option.id,
+                              valueId: value.id,
+                              body: deleteValueBody(option.name, saved?.name ?? value.name),
+                            });
                           }}
                           // Shopify keeps every option on at least one value.
                           disabled={values.length <= 1}
@@ -405,14 +451,15 @@ export function VariantOptionsEditor({
                   <Button
                     tone="critical"
                     variant="tertiary"
-                    onClick={() => {
-                      const message =
-                        t.deleteOptionConfirm ||
-                        "This removes the option and rebuilds the product's variants around the remaining ones.";
-                      if (!window.confirm(message)) return;
-                      onDeleteOption(option.id);
-                      setOpenOptionId(null);
-                    }}
+                    onClick={() =>
+                      setPendingConfirm({
+                        kind: "option",
+                        optionId: option.id,
+                        body:
+                          t.deleteOptionConfirm ||
+                          "This removes the option and rebuilds the product's variants around the remaining ones. Variants that become duplicates are deleted with their stock and prices.",
+                      })
+                    }
                     // The last option cannot go: Shopify keeps every product
                     // on at least one, and the server refuses it too.
                     disabled={visible.length <= 1}
@@ -433,15 +480,26 @@ export function VariantOptionsEditor({
             here that could be renamed or translated until the save lands. */}
         {optionsToCreate.map((created, index) => (
           <Card key={`pending-${index}`} background="bg-surface-secondary" padding="300">
-            <BlockStack gap="150">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="p" variant="bodyMd" fontWeight="semibold">{created.name}</Text>
-                <Badge tone="attention">{t.pendingBadge || "Not saved yet"}</Badge>
-              </InlineStack>
-              <InlineStack gap="100" wrap>
-                {created.values.map((value) => <Tag key={value}>{value}</Tag>)}
-              </InlineStack>
-            </BlockStack>
+            <InlineStack align="space-between" blockAlign="start" wrap={false}>
+              <BlockStack gap="150">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">{created.name}</Text>
+                  <Badge tone="attention">{t.pendingBadge || "Not saved yet"}</Badge>
+                </InlineStack>
+                <InlineStack gap="100" wrap>
+                  {created.values.map((value) => <Tag key={value}>{value}</Tag>)}
+                </InlineStack>
+              </BlockStack>
+              {/* Nothing has been written yet, so this takes nothing with it
+                  and needs no confirmation. Without it the only way out of a
+                  mistyped option was discarding every other edit too. */}
+              <Button
+                icon={DeleteIcon}
+                variant="tertiary"
+                accessibilityLabel={t.removeValue || "Remove value"}
+                onClick={() => onCancelCreateOption?.(index)}
+              />
+            </InlineStack>
           </Card>
         ))}
 
@@ -501,6 +559,37 @@ export function VariantOptionsEditor({
           </Card>
         )}
       </BlockStack>
+
+      <Modal
+        open={!!pendingConfirm}
+        onClose={() => setPendingConfirm(null)}
+        title={
+          pendingConfirm?.kind === "option"
+            ? t.deleteOptionTitle || "Delete this variant?"
+            : t.deleteValueTitle || "Delete this value?"
+        }
+        primaryAction={{
+          content: t.deleteOption || "Delete",
+          destructive: true,
+          onAction: () => {
+            if (!pendingConfirm) return;
+            if (pendingConfirm.kind === "value") {
+              onRemoveValue(pendingConfirm.optionId, pendingConfirm.valueId);
+            } else {
+              onDeleteOption(pendingConfirm.optionId);
+              setOpenOptionId(null);
+            }
+            setPendingConfirm(null);
+          },
+        }}
+        secondaryActions={[
+          { content: t.cancel || "Cancel", onAction: () => setPendingConfirm(null) },
+        ]}
+      >
+        <Modal.Section>
+          <Text as="p">{pendingConfirm?.body}</Text>
+        </Modal.Section>
+      </Modal>
     </Card>
   );
 }

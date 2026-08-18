@@ -36,6 +36,11 @@ interface SubResourceFetcherData {
   failedResources?: string[];
   failedOptions?: string[];
   failedMetafields?: string[];
+  /** Failure CODES from the option write paths; the client owns the wording. */
+  optionWarnings?: string[];
+  /** Create / delete / reorder failures, which carry no option id. */
+  structuralFailures?: number;
+  removedOptionIds?: string[];
 }
 
 export interface SubResourceState {
@@ -50,6 +55,9 @@ export interface SubResourceState {
   optionValuesToDelete: Record<string, string[]>;
   optionsToCreate: Array<{ name: string; values: string[] }>;
   optionsToDelete: string[];
+  /** Incremented on every landed save. The variants card drops its cached
+   *  variant counts on it — a save that added a value moved the matrix. */
+  savedNonce: number;
   /** Primary locale metafield edits keyed by metafield GID → value */
   primaryMetafieldEdits: Record<string, string>;
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
@@ -83,6 +91,10 @@ export interface SubResourceHandlers {
   /** Rename a value that exists only locally, by its index in the pending list. */
   handleEditPendingValue: (optionId: string, index: number, name: string) => void;
   handleCreateOption: (name: string, values: string[]) => void;
+  /** Drops a not-yet-saved option again. Nothing was written, so nothing is
+   *  lost — without it a mistyped option could only be undone by discarding
+   *  every other pending edit with it. */
+  handleCancelCreateOption: (index: number) => void;
   handleDeleteOption: (optionId: string) => void;
   handleReorderOptions: (orderedIds: string[]) => void;
   handlePrimaryMetafieldChange: (metafieldId: string, value: string) => void;
@@ -108,6 +120,10 @@ interface UseProductSubResourcesStrings {
   optionValuesEmpty?: string;
   metafieldValuesEmpty?: string;
   success?: string;
+  /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
+   *  Indexed rather than listed: the server owns the code list, and a missing
+   *  entry drops that reason instead of printing an English one. */
+  [optionWarning: `optionWarning_${string}`]: string | undefined;
 }
 
 interface UseProductSubResourcesProps {
@@ -295,6 +311,16 @@ export function useProductSubResources({
     setDirtyOptionIds(new Set());
     setDirtyOptionValueIds(new Set());
     setDirtyMetafieldIds(new Set());
+    // The structural lists too, and this half is not cosmetic: the save skips
+    // an option id it cannot find on the current item, but `optionsToCreate`
+    // carries NO id at all -- so a pending "add Material" left over from
+    // product A would be created on product B, multiplying B's variant matrix
+    // with `variantStrategy: CREATE`.
+    setOptionValuesToAdd({});
+    setOptionValuesToDelete({});
+    setOptionsToCreate([]);
+    setOptionsToDelete([]);
+    setOptionOrder(null);
     // Note: translatingFieldIds is now in the global AI operations store
     // and should NOT be cleared on item change — it's resource-specific.
 
@@ -581,13 +607,27 @@ export function useProductSubResources({
     if (data.actionType === "savePrimarySubResources") {
       const failedOptions = data.failedOptions || [];
       const failedMetafields = data.failedMetafields || [];
-      const totalFailed = failedOptions.length + failedMetafields.length;
+      // Create, delete and reorder failures have no id to report under, so
+      // counting only the two id-lists made every one of them read as a
+      // success -- green toast, pending lists cleared, merchant's edit gone.
+      const structuralFailures = data.structuralFailures || 0;
+      const totalFailed = failedOptions.length + failedMetafields.length + structuralFailures;
 
       if (totalFailed > 0) {
         // Some resources failed - show error and restore original values
         if (showInfoBox) {
+          // The warning codes carry the only specific reason there is (the
+          // last option cannot go, an empty name, an unconfirmed write), and
+          // the generic count alone leaves the merchant guessing.
+          const reasons = [...new Set(data.optionWarnings || [])]
+            .map((code) => strings[`optionWarning_${code}`] || "")
+            .filter(Boolean)
+            .join(" ");
           showInfoBox(
-            (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
+            [
+              (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
+              reasons,
+            ].filter(Boolean).join(" "),
             "critical",
             strings.saveFailed || "Save Failed"
           );
@@ -618,6 +658,17 @@ export function useProductSubResources({
           });
         }
 
+        // The structural lists go too. Left armed while `hasChanges` is
+        // cleared, the card would keep showing a deletion as applied with no
+        // save bar to undo it -- and the next unrelated edit would re-fire the
+        // whole queue. Reverting is what the message already promises.
+        setOptionValuesToAdd({});
+        setOptionValuesToDelete({});
+        setOptionsToCreate([]);
+        setOptionsToDelete([]);
+        setOptionOrder(null);
+        setSavedNonce((n) => n + 1);
+
         setHasChanges(false);
       } else {
         // All saved successfully
@@ -634,6 +685,7 @@ export function useProductSubResources({
         setOptionsToCreate([]);
         setOptionsToDelete([]);
         setOptionOrder(null);
+        setSavedNonce((n) => n + 1);
 
         setPrimaryMetafieldEdits({});
 
@@ -771,6 +823,8 @@ export function useProductSubResources({
   /** The option ids in the order the merchant dragged them into, or null while
    *  nothing has been dragged — an unchanged order must not be written. */
   const [optionOrder, setOptionOrder] = useState<string[] | null>(null);
+  /** Bumped on every landed save — see `SubResourceState.savedNonce`. */
+  const [savedNonce, setSavedNonce] = useState(0);
 
   const handleAddOptionValue = useCallback((optionId: string, name: string) => {
     const clean = name.trim();
@@ -810,6 +864,10 @@ export function useProductSubResources({
   const handleCreateOption = useCallback((name: string, values: string[]) => {
     setOptionsToCreate((prev) => [...prev, { name, values }]);
     setHasChanges(true);
+  }, []);
+
+  const handleCancelCreateOption = useCallback((index: number) => {
+    setOptionsToCreate((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleDeleteOption = useCallback((optionId: string) => {
@@ -1183,7 +1241,18 @@ export function useProductSubResources({
             }
             return;
           }
-          if (hasValuesChange && edit.values.some(v => v.trim() === "")) {
+          // A value the merchant renamed and then DELETED must not be sent as
+          // both a rename and a delete: Shopify rejects the contradiction, and
+          // because failures are per option that takes the other renames on
+          // the same option down with it. It also must not trip the
+          // empty-value guard below -- a value on its way out is allowed to
+          // read blank.
+          const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
+          const survivingEdits = originalOption.values
+            .map((v, i) => ({ id: v.id, name: edit.values[i], original: v.name }))
+            .filter((v) => !deletedHere.has(v.id));
+
+          if (hasValuesChange && survivingEdits.some(v => (v.name ?? "").trim() === "")) {
             if (showInfoBox) {
               showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical", strings.validationError || "Validation Error");
             } else {
@@ -1196,10 +1265,12 @@ export function useProductSubResources({
           if (hasNameChange) optionsChanges[optionId].name = edit.name;
           // For metaobject-linked options, only save name changes (not values)
           if (hasValuesChange && !originalOption.isLinked) {
-            // Only include values that actually changed
-            optionsChanges[optionId].valueUpdates = originalOption.values
-              .map((v, i) => ({ id: v.id, name: edit.values[i] }))
-              .filter((v, i) => v.name !== originalOption.values[i].name);
+            // Only include values that actually changed — and never one that
+            // is being deleted in the same save.
+            const updates = survivingEdits
+              .filter((v) => v.name !== v.original)
+              .map((v) => ({ id: v.id, name: v.name }));
+            if (updates.length > 0) optionsChanges[optionId].valueUpdates = updates;
           }
         }
       }
@@ -1235,8 +1306,20 @@ export function useProductSubResources({
         }
       }
 
+      // The order counts as changed only if it DIFFERS from the saved one:
+      // dragging an option away and back leaves `optionOrder` non-null, and a
+      // reorder that reorders nothing is a Shopify call with a chance of going
+      // wrong and no chance of achieving anything.
+      const savedOrder = [...(selectedItem.options ?? [])]
+        .sort((a, b) => a.position - b.position)
+        .map((o) => o.id);
+      const wantedOrder = (optionOrder ?? []).filter((id) => !optionsToDelete.includes(id));
+      const orderChanged =
+        optionOrder !== null &&
+        JSON.stringify(wantedOrder) !== JSON.stringify(savedOrder.filter((id) => !optionsToDelete.includes(id)));
+
       const hasStructuralChange =
-        optionsToCreate.length > 0 || optionsToDelete.length > 0 || optionOrder !== null;
+        optionsToCreate.length > 0 || optionsToDelete.length > 0 || orderChanged;
       if (
         Object.keys(optionsChanges).length === 0 &&
         Object.keys(metafieldChanges).length === 0 &&
@@ -1260,13 +1343,13 @@ export function useProductSubResources({
       if (optionsToDelete.length > 0) {
         formData.append("optionsToDelete", JSON.stringify(optionsToDelete));
       }
-      if (optionOrder) {
-        // Dragged order minus whatever is being deleted in the same save —
-        // naming a gone option would fail the reorder for all of them.
-        formData.append(
-          "optionOrder",
-          JSON.stringify(optionOrder.filter((id) => !optionsToDelete.includes(id))),
-        );
+      if (orderChanged) {
+        // Already minus whatever is being deleted in the same save — naming a
+        // gone option would fail the reorder for all of them. Options CREATED
+        // in the same save have no GID yet and so cannot appear here; the
+        // server runs creates first and Shopify appends them, which is where a
+        // merchant expects a brand-new variant to land.
+        formData.append("optionOrder", JSON.stringify(wantedOrder));
       }
 
       fetcher.submit(formData, { method: "POST", action: "/app/products" });
@@ -1334,6 +1417,10 @@ export function useProductSubResources({
     setOptionsToCreate([]);
     setOptionsToDelete([]);
     setOptionOrder(null);
+    // The card keeps the dragged order in its own state so a drag feels
+    // immediate; without this it would go on showing an arrangement that the
+    // discard just threw away.
+    setSavedNonce((n) => n + 1);
     setPrimaryMetafieldEdits({});
 
     // Reset flags
@@ -1465,6 +1552,7 @@ export function useProductSubResources({
       optionValuesToDelete,
       optionsToCreate,
       optionsToDelete,
+      savedNonce,
       primaryMetafieldEdits,
       translatingFieldIds,
       fallbackResourceIds,
@@ -1482,6 +1570,7 @@ export function useProductSubResources({
       handleRemoveOptionValue,
       handleEditPendingValue,
       handleCreateOption,
+      handleCancelCreateOption,
       handleDeleteOption,
       handleReorderOptions,
       handlePrimaryMetafieldChange,

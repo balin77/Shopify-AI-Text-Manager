@@ -155,9 +155,11 @@ describe("applyOptionChange", () => {
     });
 
     const values = JSON.parse((upserts[0] as { update: { values: string } }).update.values);
+    // The same shape the sync writes -- `linked` included, so a value that is
+    // not metaobject-backed says so rather than leaving the flag missing.
     expect(values).toEqual([
-      { id: "gid://shopify/ProductOptionValue/1", name: "Red" },
-      { id: "gid://shopify/ProductOptionValue/2", name: "Blue" },
+      { id: "gid://shopify/ProductOptionValue/1", name: "Red", linked: false },
+      { id: "gid://shopify/ProductOptionValue/2", name: "Blue", linked: false },
     ]);
   });
 
@@ -185,6 +187,63 @@ describe("applyOptionChange", () => {
     // Crucially: no deleteMany ran. A mirror of "no options" would wipe the
     // cache for a product whose options are untouched.
     expect(deletes).toEqual([]);
+  });
+
+  it("mirrors against the GID, which is what ProductOption.productId holds", async () => {
+    // `Product.id` is the GID (product-sync.service.ts writes it straight from
+    // GraphQL), so a numeric id matches no row: deleteMany cleans nothing, the
+    // caller's remainingCount counts 0, and the create branch violates the
+    // foreign key -- swallowed as "mirror failed", leaving a created option
+    // invisible until a full resync.
+    const admin = adminWith(echo("productOptionUpdate", OPTION_ECHO));
+    const { db, upserts, deletes } = dbRecorder();
+
+    await applyOptionChange(admin, db, "s", { productId: PRODUCT, optionId: OPTION, name: "Colour" });
+
+    expect((deletes[0] as { where: { productId: string } }).where.productId).toBe(PRODUCT);
+    expect((upserts[0] as { create: { productId: string } }).create.productId).toBe(PRODUCT);
+  });
+
+  it("keeps the metaobject link when it rewrites a row", async () => {
+    // Every one of these mutations echoes ALL of the product's options, so a
+    // rename of one rewrites the rows of the others. A mirror that dropped the
+    // link would make a metaobject-linked option look editable and
+    // translatable, which the app forbids for one.
+    const admin = adminWith(
+      echo("productOptionUpdate", [
+        {
+          id: OPTION,
+          name: "Colour",
+          position: 1,
+          linkedMetafield: { namespace: "shopify", key: "color-pattern" },
+          optionValues: [{ id: "gid://shopify/ProductOptionValue/1", name: "Red", linkedMetafieldValue: "red" }],
+        },
+      ]),
+    );
+    const { db, upserts } = dbRecorder();
+
+    await applyOptionChange(admin, db, "s", { productId: PRODUCT, optionId: OPTION, name: "Colour" });
+
+    const row = upserts[0] as { update: { values: string; linkedMetafieldKey: string | null } };
+    expect(row.update.linkedMetafieldKey).toBe("shopify--color-pattern");
+    expect(JSON.parse(row.update.values)).toEqual([
+      { id: "gid://shopify/ProductOptionValue/1", name: "Red", linked: true, linkedValue: "red" },
+    ]);
+  });
+
+  it("treats an EMPTY option echo as unconfirmed, and mirrors nothing", async () => {
+    // Shopify keeps every product on at least one option, so `[]` is a response
+    // that did not carry the block. Mirrored as data it becomes
+    // `deleteMany({ id: { notIn: [] } })`, which matches every row of a product
+    // whose options are untouched.
+    const admin = adminWith(echo("productOptionUpdate", []));
+    const { db, deletes, upserts } = dbRecorder();
+
+    expect(
+      await applyOptionChange(admin, db, "s", { productId: PRODUCT, optionId: OPTION, name: "Colour" }),
+    ).toBe("optionsNotConfirmed");
+    expect(deletes).toEqual([]);
+    expect(upserts).toEqual([]);
   });
 
   it("treats a missing product echo as unconfirmed", async () => {
@@ -282,6 +341,44 @@ describe("countVariantsPerValue", () => {
     expect(counts[variantCountKey("Colour", "Red")]).toBe(2);
     expect(counts[variantCountKey("Size", "S")]).toBe(2);
     expect(counts[variantCountKey("Colour", "Blue")]).toBe(1);
+  });
+
+  it("pages, so a product above 250 variants is not undercounted", async () => {
+    // An undercount is the quiet version of the zero this function refuses to
+    // report: it would be read as "fewer variants at stake than there are", on
+    // the number a merchant approves an irreversible delete with.
+    const pages = [
+      {
+        data: {
+          product: {
+            variants: {
+              nodes: [{ selectedOptions: [{ name: "Colour", value: "Red" }] }],
+              pageInfo: { hasNextPage: true, endCursor: "c1" },
+            },
+          },
+        },
+      },
+      {
+        data: {
+          product: {
+            variants: {
+              nodes: [{ selectedOptions: [{ name: "Colour", value: "Red" }] }],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          },
+        },
+      },
+    ];
+    const graphql = vi.fn(async (_doc: string, _opts: { variables: Record<string, unknown> }) => ({
+      json: async () => pages.shift(),
+    }));
+    const admin = { graphql } as never;
+
+    const counts = await countVariantsPerValue(admin, "s", PRODUCT);
+
+    expect(graphql).toHaveBeenCalledTimes(2);
+    expect(graphql.mock.calls[1]?.[1].variables.after).toBe("c1");
+    expect(counts[variantCountKey("Colour", "Red")]).toBe(2);
   });
 
   it("returns an empty map when the count fails, rather than zeros", async () => {

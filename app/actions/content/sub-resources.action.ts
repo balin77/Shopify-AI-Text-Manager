@@ -730,6 +730,31 @@ function safeParseList<T>(raw: string): T[] {
   }
 }
 
+/**
+ * The value GIDs an option currently has, from the cache.
+ *
+ * Only needed on the way OUT: once the option is deleted, nothing can name the
+ * `ContentTranslation` rows its values leave behind, and no other path in the
+ * app ever removes them.
+ */
+async function cachedOptionValueIds(
+  db: ContentActionHandlerContext["db"],
+  optionId: string,
+): Promise<string[]> {
+  try {
+    const row = await db.productOption.findUnique({ where: { id: optionId }, select: { values: true } });
+    const parsed: unknown = JSON.parse(row?.values ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    // The legacy `["string"]` shape carries no ids, so it yields none rather
+    // than throwing -- a missed cleanup, never a wrong delete.
+    return parsed
+      .map((v) => (typeof v === "object" && v && "id" in v ? String((v as { id: unknown }).id) : ""))
+      .filter((id) => isValidShopifyGID(id));
+  } catch {
+    return [];
+  }
+}
+
 export async function handleSavePrimarySubResources(
   ctx: ContentActionHandlerContext,
   formData: FormData,
@@ -764,6 +789,13 @@ export async function handleSavePrimarySubResources(
     const optionOrder: string[] = safeParseList(getFormString(formData, "optionOrder"));
     /** Failure CODES from the option writes — phrased by the client. */
     const optionWarnings: string[] = [];
+    /** Create / delete / reorder failures. They have no option id to report
+     *  under, so they are counted here -- see the response below. */
+    let structuralFailures = 0;
+    /** Options and values that no longer exist. Their translation rows have no
+     *  owner left, and nothing else in the app would ever remove them. */
+    const removedOptionIds: string[] = [];
+    const removedValueIds: string[] = [];
     const metafieldChanges: Record<string, string> = metafieldChangesJson
       ? JSON.parse(metafieldChangesJson) : {};
 
@@ -800,22 +832,37 @@ export async function handleSavePrimarySubResources(
         name: create.name,
         values: create.values,
       });
-      if (warning) optionWarnings.push(warning);
+      if (warning) {
+        optionWarnings.push(warning);
+        structuralFailures++;
+      }
     }
 
     for (const optionId of optionsToDelete) {
       if (!isValidShopifyGID(optionId)) continue;
+      // Read the value ids BEFORE the delete: afterwards the cache row is gone
+      // and nothing could name the translation rows they leave behind.
+      const cachedValueIds = await cachedOptionValueIds(db, optionId);
       const warning = await deleteOption(admin, db, session.shop, {
         productId,
         optionId,
         // Counted from the CACHE, which is the server's own state — a client
         // that under-reports it could talk this into deleting the last option.
-        remainingCount: await db.productOption.count({
-          where: { productId: productId.replace("gid://shopify/Product/", "") },
-        }),
+        // Keyed by the GID: that is what `Product.id` holds, and a numeric id
+        // matches no row at all -- which counted 0 and refused every delete as
+        // "the last option".
+        remainingCount: await db.productOption.count({ where: { productId } }),
       });
-      if (warning) optionWarnings.push(warning);
-      else savedOptions.push(optionId);
+      if (warning) {
+        optionWarnings.push(warning);
+        structuralFailures++;
+      } else {
+        // NOT savedOptions: a deleted option has no primary value to have
+        // changed, and the generic invalidation below would find no entry for
+        // it and skip it silently. Its translations are removed outright.
+        removedOptionIds.push(optionId);
+        removedValueIds.push(...cachedValueIds);
+      }
     }
 
     for (const [optionId, changes] of Object.entries(optionsChanges)) {
@@ -835,6 +882,7 @@ export async function handleSavePrimarySubResources(
         failedOptions.push(optionId);
       } else {
         savedOptions.push(optionId);
+        if (changes.valuesToDelete?.length) removedValueIds.push(...changes.valuesToDelete);
       }
     }
 
@@ -843,7 +891,10 @@ export async function handleSavePrimarySubResources(
         productId,
         orderedIds: optionOrder.filter(isValidShopifyGID),
       });
-      if (warning) optionWarnings.push(warning);
+      if (warning) {
+        optionWarnings.push(warning);
+        structuralFailures++;
+      }
     }
 
     // 3. Update metafields using metafieldsSet mutation
@@ -893,8 +944,15 @@ export async function handleSavePrimarySubResources(
     }
 
     // 4. Delete translations for changed fields in all foreign languages
-    const changedOptionIds = [...new Set([...savedOptions, ...Object.keys(optionsChanges)])];
-    const changedMetafieldIds = [...new Set([...savedMetafields, ...Object.keys(metafieldChanges)])];
+    //
+    // Only what was actually SAVED. Unioning in every requested id invalidated
+    // the foreign translations of a write Shopify REJECTED -- the primary value
+    // is unchanged, so the translations were still correct and are now gone.
+    // An id that appears in both lists (one value of an option saved, another
+    // failed) counts as failed: the option's primary text did move, but taking
+    // its translations on a half-applied write is the destructive reading.
+    const changedOptionIds = savedOptions.filter((id) => !failedOptions.includes(id));
+    const changedMetafieldIds = savedMetafields.filter((id) => !failedMetafields.includes(id));
 
     if (changedOptionIds.length > 0 || changedMetafieldIds.length > 0) {
       try {
@@ -1060,13 +1118,48 @@ export async function handleSavePrimarySubResources(
       }
     }
 
+    // 5. Translation rows whose OWNER is gone.
+    //
+    // A deleted option or value takes its Shopify resource with it, so there is
+    // nothing left to call `translationsRemove` on -- and nothing else in the
+    // app would ever visit these rows again. Left behind they are unbounded
+    // drift in a table the bulk editor reads. GIDs are never reused, so this
+    // cannot orphan a live translation.
+    if (removedOptionIds.length > 0 || removedValueIds.length > 0) {
+      try {
+        if (removedOptionIds.length > 0) {
+          await db.contentTranslation.deleteMany({
+            where: { resourceId: { in: removedOptionIds }, resourceType: "ProductOption" },
+          });
+        }
+        if (removedValueIds.length > 0) {
+          await db.contentTranslation.deleteMany({
+            where: { resourceId: { in: removedValueIds }, resourceType: "ProductOptionValue" },
+          });
+        }
+      } catch (err) {
+        // Cache hygiene, not correctness: the resource is gone either way.
+        logger.warn("[UnifiedContent] Failed to clean up translations of deleted options", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     return json({
       actionType: "savePrimarySubResources",
       success: true,
       savedOptions,
+      removedOptionIds,
       // Failure CODES — the client phrases them, this app ships in three
       // languages and the server has no business writing English here.
+      //
+      // `structuralFailures` counts the create/delete/reorder failures that
+      // have no option id to report under. Without it the client saw
+      // `failedOptions: []`, called the save a success, and cleared the
+      // pending lists -- destroying the merchant's edit and saying it was
+      // saved. This app treats that shape as the bug, not the nuisance.
       optionWarnings,
+      structuralFailures,
       failedOptions,
       savedMetafields,
       failedMetafields,

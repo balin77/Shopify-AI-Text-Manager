@@ -1698,12 +1698,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   </BlockStack>
                 </Card>
 
-                {/* Product Options Card */}
-                {config.contentType === "products" && subResourceState && subResourceHandlers &&
-                  selectedItem?.options && selectedItem.options.length > 0 && (
+                {/* Variants card. No `options.length > 0` gate: a product with
+                    only the default single variant has NO options (the loader
+                    drops Shopify's "Title" placeholder), and that is exactly
+                    the product for which "add a variant" is the point. The
+                    foreign-locale branch still renders nothing — there is no
+                    translation to make. */}
+                {config.contentType === "products" && subResourceState && subResourceHandlers && selectedItem && (
                   <div style={{ marginTop: "1rem" }}>
                     <OptionsField
-                      options={selectedItem.options}
+                      options={selectedItem.options ?? []}
                       isPrimaryLocale={state.currentLanguage === primaryLocale}
                       currentLanguage={state.currentLanguage}
                       shopLocales={shopLocales}
@@ -1719,6 +1723,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onPrimaryOptionValuesChange={subResourceHandlers.handlePrimaryOptionValuesChange}
                       primaryOptions={subResourceState.primaryOptionEdits}
                       productId={selectedItem.id}
+                      savedNonce={subResourceState.savedNonce}
                       valuesToAdd={subResourceState.optionValuesToAdd}
                       valuesToDelete={subResourceState.optionValuesToDelete}
                       optionsToCreate={subResourceState.optionsToCreate}
@@ -1727,6 +1732,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       onRemoveOptionValue={subResourceHandlers.handleRemoveOptionValue}
                       onEditPendingValue={subResourceHandlers.handleEditPendingValue}
                       onCreateOption={subResourceHandlers.handleCreateOption}
+                      onCancelCreateOption={subResourceHandlers.handleCancelCreateOption}
                       onDeleteOption={subResourceHandlers.handleDeleteOption}
                       onReorderOptions={subResourceHandlers.handleReorderOptions}
                       translatingFieldIds={subResourceState.translatingFieldIds}
@@ -1754,12 +1760,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         optionNamePlaceholder: t.products?.optionNamePlaceholder,
                         deleteOption: t.products?.deleteOption,
                         deleteOptionConfirm: t.products?.deleteOptionConfirm,
+                        deleteOptionTitle: t.products?.deleteOptionTitle,
+                        deleteValueTitle: t.products?.deleteValueTitle,
                         deleteValueCount: t.products?.deleteValueCount,
                         deleteValueUnknown: t.products?.deleteValueUnknown,
                         pendingBadge: t.products?.pendingBadge,
                         done: t.common?.done,
                         cancel: t.common?.cancel,
                         add: t.common?.add,
+                        valueLabel: t.products?.valueLabel,
+                        addValue: t.products?.addValue,
+                        removeValue: t.products?.removeValue,
                       }}
                     />
                   </div>

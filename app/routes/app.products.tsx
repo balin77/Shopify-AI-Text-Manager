@@ -493,6 +493,13 @@ export default function ProductsPage() {
       optionValuesEmpty: t.products.optionValuesEmpty,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
       success: t.products.successTitle,
+      // One per failure code the option write paths return. Keyed by code so
+      // the server can stay in codes and this app can stay in three languages.
+      optionWarning_optionsNotConfirmed: t.products.optionWarningNotConfirmed,
+      optionWarning_optionsFailed: t.products.optionWarningFailed,
+      optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
+      optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
+      optionWarning_optionLastOne: t.products.optionWarningLastOne,
     },
   });
 

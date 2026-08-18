@@ -13,8 +13,6 @@
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
-import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
-import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import type { ShopLocale } from "../../types/content-editor.types";
@@ -91,6 +89,8 @@ interface OptionsFieldProps {
   /** Primary option data (indexed by option ID) - used when editing primary locale */
   primaryOptions?: Record<string, { name: string; values: string[] }>;
 
+  /** Bumped on every landed save, so the card can drop cached variant counts. */
+  savedNonce?: number;
   /** The product's GID — the variants editor asks how many variants hang off a
    *  value before offering to delete it. */
   productId?: string;
@@ -103,6 +103,7 @@ interface OptionsFieldProps {
   onRemoveOptionValue?: (optionId: string, valueId: string, addedIndex?: number) => void;
   onEditPendingValue?: (optionId: string, index: number, name: string) => void;
   onCreateOption?: (name: string, values: string[]) => void;
+  onCancelCreateOption?: (index: number) => void;
   onDeleteOption?: (optionId: string) => void;
   onReorderOptions?: (orderedIds: string[]) => void;
 
@@ -141,6 +142,8 @@ interface OptionsFieldProps {
     addOption?: string;
     optionNamePlaceholder?: string;
     deleteOption?: string;
+    deleteOptionTitle?: string;
+    deleteValueTitle?: string;
     deleteOptionConfirm?: string;
     deleteValueCount?: string;
     deleteValueUnknown?: string;
@@ -171,6 +174,7 @@ export function OptionsField({
   onPrimaryOptionValuesChange,
   primaryOptions = {},
   productId = "",
+  savedNonce = 0,
   valuesToAdd = {},
   valuesToDelete = {},
   optionsToCreate = [],
@@ -179,6 +183,7 @@ export function OptionsField({
   onRemoveOptionValue,
   onEditPendingValue,
   onCreateOption,
+  onCancelCreateOption,
   onDeleteOption,
   onReorderOptions,
   translatingFieldIds = new Set(),
@@ -187,8 +192,6 @@ export function OptionsField({
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
-  // Single-language shop → the option translate buttons have no target locale.
-  const singleLocaleHint = useSingleLocaleHint();
 
   // Navigate to metaobjects page with optional type pre-selection
   const navigateToMetaobjects = (option: OptionData) => {
@@ -205,7 +208,10 @@ export function OptionsField({
     shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name
   );
 
-  if (!options || options.length === 0) {
+  // A product without options still gets the primary card: that is where "add
+  // a variant" lives, and a single-variant product is the one that needs it.
+  // In a foreign locale there is nothing to translate, so nothing renders.
+  if ((!options || options.length === 0) && !isPrimaryLocale) {
     return null;
   }
 
@@ -229,10 +235,12 @@ export function OptionsField({
         onRemoveValue={(id, valueId, addedIndex) => onRemoveOptionValue?.(id, valueId, addedIndex)}
         onEditPendingValue={(id, index, name) => onEditPendingValue?.(id, index, name)}
         onCreateOption={(name, values) => onCreateOption?.(name, values)}
+        onCancelCreateOption={(index) => onCancelCreateOption?.(index)}
         onDeleteOption={(id) => onDeleteOption?.(id)}
         onReorder={(ids) => onReorderOptions?.(ids)}
         onTranslate={onTranslate}
         translatingFieldIds={translatingFieldIds}
+        savedNonce={savedNonce}
         t={t as Record<string, string | undefined>}
       />
     );

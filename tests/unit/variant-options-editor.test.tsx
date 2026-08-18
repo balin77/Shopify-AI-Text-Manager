@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { VariantOptionsEditor } from "~/components/unified/VariantOptionsEditor";
@@ -51,6 +51,7 @@ const handlers = () => ({
   onCreateOption: vi.fn(),
   onDeleteOption: vi.fn(),
   onReorder: vi.fn(),
+  onCancelCreateOption: vi.fn(),
 });
 
 function ui(overrides: Record<string, unknown> = {}) {
@@ -125,11 +126,45 @@ describe("VariantOptionsEditor", () => {
     // The impact is fetched when the card opens.
     await screen.findByDisplayValue("Red");
 
-    const removeButtons = screen.getAllByRole("button", { name: /Remove value/i });
-    fireEvent.click(removeButtons[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /Remove value/i })[0]);
 
-    expect(window.confirm as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(expect.stringContaining("3"));
+    // A Polaris Modal, not `window.confirm`: inside the embedded admin iframe
+    // the native dialog is a focus trap, and the browser's "prevent additional
+    // dialogs" checkbox suppresses it entirely — deleting a merchant's
+    // variants with no confirmation at all.
+    expect(window.confirm as unknown as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(screen.getByText(/3 variant/i)).toBeTruthy();
+    // Nothing happens until the modal is answered.
+    expect(spies.onRemoveValue).not.toHaveBeenCalled();
+
+    // The card has a Delete button of its own, so the modal's is addressed
+    // through the dialog rather than by label.
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^Delete$/i }));
     expect(spies.onRemoveValue).toHaveBeenCalledWith(OPTION, "gid://shopify/ProductOptionValue/1");
+  });
+
+  it("keeps the value when the confirmation is dismissed", async () => {
+    const { spies } = ui();
+    fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Red");
+    fireEvent.click(screen.getAllByRole("button", { name: /Remove value/i })[0]);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel$/i }));
+
+    expect(spies.onRemoveValue).not.toHaveBeenCalled();
+  });
+
+  it("counts under the SAVED name, not the one being typed", async () => {
+    // The map is keyed on what Shopify reports in `selectedOptions`, so looking
+    // it up under a pending rename made every count read as unavailable.
+    const { spies } = ui({ primaryOptions: { [OPTION]: { name: "Colour", values: ["Crimson", "Blue"] } } });
+    fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Crimson");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Remove value/i })[0]);
+
+    expect(screen.getByText(/3 variant/i)).toBeTruthy();
+    expect(spies.onRemoveValue).not.toHaveBeenCalled();
   });
 
   it("says it could not count rather than showing a zero", async () => {
@@ -137,18 +172,11 @@ describe("VariantOptionsEditor", () => {
     // opposite of what an unanswered question means.
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, json: async () => ({ success: false }) })));
     ui();
-    fireEvent.click(screen.getByText("Size"));
-    await screen.findByDisplayValue("S");
-
-    // Size has one value, so its remove button is disabled — open Colour, whose
-    // values are not in the fetched (empty) map either.
-    cleanup();
-    ui();
     fireEvent.click(screen.getByText("Colour"));
     await screen.findByDisplayValue("Red");
     fireEvent.click(screen.getAllByRole("button", { name: /Remove value/i })[0]);
 
-    expect(window.confirm as unknown as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(expect.stringMatching(/could not be read/i));
+    expect(screen.getByText(/could not be read/i)).toBeTruthy();
   });
 
   it("refuses to remove the last value of an option", () => {
@@ -169,7 +197,7 @@ describe("VariantOptionsEditor", () => {
     const { spies } = ui({ options: [options[0]] });
     fireEvent.click(screen.getByText("Colour"));
 
-    const del = screen.getByRole("button", { name: /^Delete$/i });
+    const del = screen.getAllByRole("button", { name: /^Delete$/i })[0];
     expect(del.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(del);
     expect(spies.onDeleteOption).not.toHaveBeenCalled();
@@ -207,5 +235,41 @@ describe("VariantOptionsEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Done$/i }));
 
     expect(spies.onCreateOption).toHaveBeenCalledWith("Material", ["Cotton"]);
+  });
+});
+
+describe("VariantOptionsEditor — a product with no options yet", () => {
+  it("still offers to add one", () => {
+    // A single-variant product HAS no options (the loader drops Shopify's
+    // "Title" placeholder), and it is exactly the product for which adding one
+    // is the point.
+    ui({ options: [] });
+
+    expect(screen.getByRole("button", { name: /Add variant/i })).toBeTruthy();
+  });
+
+  it("lets a queued option be dropped again before it is saved", () => {
+    // Nothing has been written, so this takes nothing with it — without it the
+    // only way out of a mistyped option was discarding every other edit too.
+    const spies = handlers();
+    render(
+      <AppProvider i18n={en}>
+        <VariantOptionsEditor
+          productId="gid://shopify/Product/1"
+          options={options}
+          primaryOptions={{}}
+          valuesToAdd={{}}
+          valuesToDelete={{}}
+          optionsToCreate={[{ name: "Material", values: ["Cotton"] }]}
+          optionsToDelete={[]}
+          {...spies}
+        />
+      </AppProvider>,
+    );
+
+    const remove = screen.getAllByRole("button", { name: /Remove value/i });
+    fireEvent.click(remove[remove.length - 1]);
+
+    expect(spies.onCancelCreateOption).toHaveBeenCalledWith(0);
   });
 });
