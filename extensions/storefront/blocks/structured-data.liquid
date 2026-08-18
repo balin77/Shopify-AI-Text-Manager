@@ -476,7 +476,14 @@
   {%- assign v_upload_override = '' -%}
   {%- assign vud_raw = product.metafields.custom.video_upload_date.value -%}
   {%- if vud_raw != blank -%}
-    {%- assign v_upload_override = vud_raw | date: '%Y-%m-%d' -%}
+    {%- comment -%}
+      The metafield is type `date` and carries no time, but Google rejects a
+      date-only uploadDate ("invalid date/time value" + "missing timezone").
+      Midday UTC is the one stamp that lands on the merchant's chosen day in
+      every real timezone - midnight would read as the previous day west of
+      Greenwich and so would misreport a date a person stated.
+    {%- endcomment -%}
+    {%- assign v_upload_override = vud_raw | date: '%Y-%m-%d' | append: 'T12:00:00Z' -%}
   {%- endif -%}
   {%- assign v_upload_map = product.metafields.custom.video_upload_dates.value -%}
   {%- assign v_printed = 0 -%}
