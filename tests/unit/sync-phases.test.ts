@@ -20,7 +20,19 @@ describe("overallSyncPercent", () => {
       expect(overallSyncPercent(phase, 0)).toBeGreaterThan(0);
     }
     // The exact regression: 9th of 13 phases, at its own 0%.
-    expect(overallSyncPercent("onlineStoreExtras", 0)).toBe(62);
+    expect(overallSyncPercent("onlineStoreExtras", 0)).toBe(78);
+  });
+
+  it("gives the phase merchants wait through the largest share", () => {
+    const share = (phase: string) =>
+      overallSyncPercent(phase, 100) - overallSyncPercent(phase, 0);
+    const products = share("products");
+    for (const phase of SYNC_PHASE_ORDER.slice(1)) {
+      expect(share(phase)).toBeLessThan(products);
+    }
+    // Equal weights gave products 1/13 — LESS than the 1/8 of the stale list
+    // it replaced, so the longest phase would have looked more stuck, not less.
+    expect(products).toBeGreaterThan(100 / SYNC_PHASE_ORDER.length);
   });
 
   it("increases monotonically along the run order", () => {

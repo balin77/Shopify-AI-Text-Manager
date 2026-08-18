@@ -243,6 +243,18 @@ export interface SyncStats {
 // shop; entries are always removed on settle (see syncAllThemes).
 const inFlightThemeSyncs = new Map<string, Promise<number>>();
 
+/**
+ * An abort is not a sync failure. The initial-sync orchestrator asserts the
+ * abort signal from INSIDE the progress callback, so a `throw` can surface in
+ * any try block that reports progress — where a plain `catch` would log it as
+ * "resource type failed", skip orphan cleanup, and (on a single-type domain)
+ * let the empty-result health check raise a bogus data-loss error at the
+ * merchant. Every catch that wraps an onProgress call re-throws through this.
+ */
+function isAbortError(error: unknown): boolean {
+  return !!error && (error as { name?: string }).name === "AbortError";
+}
+
 export class BackgroundSyncService {
   private gateway: ShopifyApiGateway;
 
@@ -2074,6 +2086,7 @@ export class BackgroundSyncService {
             }
           }
         } catch (error) {
+          if (isAbortError(error)) throw error;
           logger.error(`[BackgroundSync] Error syncing theme type ${resourceTypeConfig.type}`, { error });
         }
       }
@@ -2456,6 +2469,7 @@ export class BackgroundSyncService {
           totalGroups++;
         }
       } catch (error) {
+        if (isAbortError(error)) throw error;
         anySourceFailed = true;
         logger.error(`[BackgroundSync] Error syncing ${rt.type} (domain=${domain})`, { error });
       }
