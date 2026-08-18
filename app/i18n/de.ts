@@ -196,6 +196,7 @@ export const de = {
     shopMetadata: "Shop-Metadaten",
     shopMetadataDescription: "Verwalten und übersetzen Sie Shop-Metafelder",
     menus: "Menüs",
+    menu: "Menü",
     menusDescription: "Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs",
     templates: "Vorlagen",
     templatesDescription: "Übersetzen Sie Theme-Standardinhalte, Vorlagen, Abschnittsgruppen und mehr",

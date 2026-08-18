@@ -199,6 +199,7 @@ export const en: Translation = {
     shopMetadata: "Shop Metadata",
     shopMetadataDescription: "Manage and translate shop metafields",
     menus: "Menus",
+    menu: "Menu",
     menusDescription: "Manage and translate your shop navigation and menus",
     templates: "Templates",
     templatesDescription: "Translate theme default content, templates, section groups and more",

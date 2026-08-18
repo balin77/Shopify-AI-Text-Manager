@@ -27,6 +27,10 @@
  * market-scoped menu translation behaves like a global one is UNMEASURED, and
  * the market selector would promise a behaviour nobody has verified.
  *
+ * The item column is the shared UnifiedItemList, not a bespoke one: below
+ * 900px `.desktop-only` hides it and the navbar's compact selector takes over,
+ * which only works for pages that register their items with ItemSelectorContext.
+ *
  * Still unmeasured and therefore not claimed anywhere in the UI: whether a
  * translated sub-item RENDERS in the storefront navigation. Shopify's own
  * editor writes the same resource, so it is likely — but likely is not
@@ -41,8 +45,6 @@ import {
   Text,
   BlockStack,
   InlineStack,
-  ResourceList,
-  ResourceItem,
   Banner,
   Button,
   TextField,
@@ -52,7 +54,8 @@ import { useI18n } from "../contexts/I18nContext";
 import { useNavigationHeight } from "../contexts/NavigationHeightContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { SubNavBar, type SubNavBarItem } from "../components/nav/SubNavBar";
-import { CONTENT_MAX_HEIGHT } from "../constants/layout";
+import { UnifiedItemList, type UnifiedItem } from "../components/unified/UnifiedItemList";
+import { useItemSelector } from "../contexts/ItemSelectorContext";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
 import {
@@ -289,6 +292,7 @@ export default function MenusPage() {
     useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
   const { getTotalNavHeight } = useNavigationHeight();
+  const { registerItems, clearItems } = useItemSelector();
   const fetcher = useFetcher<{
     success: boolean;
     error?: string;
@@ -327,6 +331,35 @@ export default function MenusPage() {
     if (parsedMenus.length > 0 && !selectedMenuId) setSelectedMenuId(parsedMenus[0].id);
   }, [parsedMenus, selectedMenuId]);
 
+  /** The menu picker's items, in the shape the shared list and the mobile
+   *  navbar selector both consume. Memoised because registerItems writes
+   *  context state on every call. */
+  const selectorItems: UnifiedItem[] = useMemo(
+    () => parsedMenus.map((m: any) => ({ id: m.id, title: m.title, subtitle: m.handle })),
+    [parsedMenus],
+  );
+
+  // Below 900px every other content tab hides its left column
+  // (`.desktop-only`) and hands selection to the navbar's compact selector —
+  // which only appears for pages that REGISTER their items here. This page
+  // did neither: the hand-built sidebar carried no `desktop-only` class, so
+  // it kept rendering at its flat 330px on a phone and squeezed the
+  // translation column down to a strip, and registering nothing meant there
+  // was no navbar selector to take over. Same wiring as every other tab now.
+  useEffect(() => {
+    registerItems({
+      items: selectorItems,
+      selectedItemId: selectedMenuId,
+      onItemSelect: (id: string) => setSelectedMenuId(id),
+      resourceName: {
+        singular: t.content?.menu || "Menu",
+        plural: t.content?.menus || "Menus",
+      },
+      t: { searchPlaceholder: t.content?.searchPlaceholder },
+    });
+  }, [selectorItems, selectedMenuId, registerItems, t]);
+  useEffect(() => () => clearItems(), [clearItems]);
+
   /** What Shopify currently holds for the active locale — the diff baseline. */
   const savedValues = useMemo(() => {
     const map: Record<string, string> = {};
@@ -344,7 +377,32 @@ export default function MenusPage() {
     setDraft({});
   }, [activeLocale]);
 
-  const changes = useMemo(() => diffMenuTranslations(savedValues, draft), [savedValues, draft]);
+  /**
+   * The link ids the merchant can currently SEE. The draft is keyed by Link
+   * GID across the whole shop, so without this scope an edit made in one menu
+   * would be published by a Save pressed in another — and the button would
+   * even show a count for changes that are nowhere on screen. Switching menus
+   * therefore parks edits rather than discarding them: they are still in the
+   * draft when the merchant comes back, they just cannot be saved from a menu
+   * they do not belong to.
+   */
+  const visibleLinkIds = useMemo(
+    () =>
+      new Set(
+        ((selectedMenu?.flat ?? []) as FlatMenuItem[])
+          .map((i) => i.linkId)
+          .filter((id): id is string => !!id),
+      ),
+    [selectedMenu],
+  );
+
+  const changes = useMemo(() => {
+    const scoped: Record<string, string> = {};
+    for (const [linkId, value] of Object.entries(draft)) {
+      if (visibleLinkIds.has(linkId)) scoped[linkId] = value;
+    }
+    return diffMenuTranslations(savedValues, scoped);
+  }, [savedValues, draft, visibleLinkIds]);
   const isSaving = fetcher.state !== "idle";
 
   /**
@@ -460,46 +518,33 @@ export default function MenusPage() {
             overflow: "hidden",
           }}
         >
-          {/* Left Sidebar - Menus List. Width from --app-list-column-width
-              (responsive.css :root), the same token every other item column of
-              the app spends — do not hardcode a width here. */}
-          <div style={{ width: "var(--app-list-column-width)", flexShrink: 0 }}>
-            <Card padding="0">
-              <div style={{ padding: "1rem", borderBottom: "1px solid #e1e3e5" }}>
-                <Text as="h2" variant="headingMd">
-                  {t.content?.menus || "Menus"} ({parsedMenus.length})
-                </Text>
-              </div>
-              <div style={{ maxHeight: CONTENT_MAX_HEIGHT, overflowY: "auto" }}>
-                {parsedMenus.length > 0 ? (
-                  <ResourceList
-                    resourceName={{ singular: "Menu", plural: "Menus" }}
-                    items={parsedMenus}
-                    renderItem={(item: any) => {
-                      const { id, title } = item;
-                      const isSelected = selectedMenuId === id;
-                      return (
-                        <ResourceItem id={id} onClick={() => setSelectedMenuId(id)}>
-                          <Text
-                            as="p"
-                            variant="bodyMd"
-                            fontWeight={isSelected ? "bold" : "regular"}
-                          >
-                            {title}
-                          </Text>
-                        </ResourceItem>
-                      );
-                    }}
-                  />
-                ) : (
-                  <div style={{ padding: "2rem", textAlign: "center" }}>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {t.content?.noEntries || "No menus found"}
-                    </Text>
-                  </div>
-                )}
-              </div>
-            </Card>
+          {/* The shared item column, not a hand-built one. Two things came
+              with the bespoke version and both were bugs: it was invisible to
+              the mobile navbar selector (see registerItems above), and it
+              hardcoded its own list chrome instead of the search, sorting and
+              pagination every other content tab has. UnifiedItemList owns its
+              own width token, so none is set here. `desktop-only` is what
+              hands the list over to the navbar below 900px. */}
+          <div className="desktop-only" style={{ flexShrink: 0, height: "100%" }}>
+            <UnifiedItemList
+              items={selectorItems}
+              selectedItemId={selectedMenuId}
+              onItemSelect={setSelectedMenuId}
+              resourceName={{
+                singular: t.content?.menu || "Menu",
+                plural: t.content?.menus || "Menus",
+              }}
+              searchPlaceholder={t.content?.searchPlaceholder}
+              sortOptions={[{ field: "title", label: t.content?.title || "Title" }]}
+              t={{
+                searchPlaceholder: t.content?.searchPlaceholder,
+                paginationOf: t.content?.paginationOf || "of",
+                paginationPrevious: t.content?.paginationPrevious || "Previous",
+                paginationNext: t.content?.paginationNext || "Next",
+                sortTooltip: t.content?.sortTooltip,
+                noItemsFound: t.content?.noEntries,
+              }}
+            />
           </div>
 
           {/* Middle: menu item translations */}

@@ -198,6 +198,7 @@ export const es: Translation = {
     shopMetadata: "Metadatos de la tienda",
     shopMetadataDescription: "Gestiona y traduce los metacampos de la tienda",
     menus: "Menús",
+    menu: "Menú",
     menusDescription: "Gestiona y traduce la navegación y menús de tu tienda",
     templates: "Plantillas",
     templatesDescription: "Traduce contenido predeterminado del tema, plantillas, grupos de secciones y más",
