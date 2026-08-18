@@ -21,10 +21,11 @@ import { ProductSyncService } from "./product-sync.service";
 import { ContentSyncService } from "./content-sync.service";
 import { BackgroundSyncService } from "./background-sync.service";
 import { logger } from "~/utils/logger.server";
+import type { SyncPhase, SyncPhaseMarker } from "./sync-phases.shared";
 import { getTranslation, DEFAULT_LOCALE, type Locale } from "~/i18n";
 
 export interface InitialSyncProgress {
-  phase: string;
+  phase: SyncPhase | SyncPhaseMarker;
   overallPercent: number;
   message: string;
   detailCurrent?: number;
@@ -93,8 +94,12 @@ export async function runInitialFullSync(
     return msg;
   };
 
+  // Typed against the shared phase list: a new phase must be registered in
+  // sync-phases.shared.ts, otherwise the nav banner cannot place it and its
+  // total collapses to the phase's own percent (how `onlineStoreExtras` came
+  // to report a stuck 0% on an upgrade re-sync).
   const emit = (
-    phase: string,
+    phase: SyncPhase | SyncPhaseMarker,
     overallPercent: number,
     message: string,
     detail?: { detailCurrent?: number; detailTotal?: number; detailMessage?: string },
