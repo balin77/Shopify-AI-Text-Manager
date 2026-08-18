@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRegisterCommerceSave } from "../../contexts/CommerceSaveContext";
 import {
   Badge,
   Banner,
@@ -63,6 +64,8 @@ interface LoadedState {
   variantsTruncated: boolean;
   channels: CommerceChannelView[];
   channelsTruncated: boolean;
+  /** Every location the SHOP has — see the "not stocked here" rows below. */
+  shopLocations: Array<{ id: string; name: string; isActive: boolean }>;
 }
 
 export function CommerceField({ productId, label, isPrimaryLocale, t }: CommerceFieldProps) {
@@ -131,6 +134,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           variantsTruncated: body.variantsTruncated === true,
           channels: body.channels ?? [],
           channelsTruncated: body.channelsTruncated === true,
+          shopLocations: body.shopLocations ?? [],
         });
         // A refused write reloads to SHOW the number that actually moved —
         // and must not also throw away what the merchant typed, or they have
@@ -239,6 +243,55 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     },
     [post],
   );
+
+  /** Which "stock here" button is in flight, as `variantId::locationId`. */
+  const [activating, setActivating] = useState<string | null>(null);
+
+  /**
+   * Start stocking this item at a location.
+   *
+   * Its own POST rather than a change collected for the save, because it is not
+   * an edit of a value — it creates the row the value would live in. Reloads on
+   * success so the new location arrives with its real (zero) quantity and its
+   * compare baseline, rather than being faked into the list client-side.
+   */
+  const activate = useCallback(
+    async (inventoryItemId: string, locationId: string, key: string) => {
+      setActivating(key);
+      try {
+        const body = new FormData();
+        body.set("intent", "activate");
+        body.set("productId", productId);
+        body.set("inventoryItemId", inventoryItemId);
+        body.set("locationId", locationId);
+        const response = await fetch("/api/product-commerce", { method: "POST", body });
+        const result = (await response.json()) as { success?: boolean; warnings?: string[] };
+        if (!result?.success) {
+          const code = result?.warnings?.[0];
+          setNotices([
+            (code && (t.warnings as Record<string, string> | undefined)?.[code]) ||
+              (t.saveFailed as string) ||
+              "The change could not be saved.",
+          ]);
+          return;
+        }
+        // KEEP the merchant's other edits: activating one location must not
+        // discard a quantity typed into another.
+        load({ keepEdits: true });
+      } catch {
+        setNotices([(t.saveFailed as string) || "The change could not be saved."]);
+      } finally {
+        setActivating(null);
+      }
+    },
+    [productId, load, t],
+  );
+
+  const hasChanges =
+    dirtyStock.length > 0 ||
+    dirtyItemFields.length > 0 ||
+    dirtyChannels.toPublish.length > 0 ||
+    dirtyChannels.toUnpublish.length > 0;
 
   const save = useCallback(async () => {
     if (!data) return;
@@ -351,6 +404,28 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     load({ keepEdits: collected.length > 0 });
   }, [data, dirtyStock, dirtyChannels, dirtyItemFields, itemEdits, loadedItemField, loadedOnHand, postIsolated, productId, load, t]);
 
+  /**
+   * The editor's save bar drives this panel. Registered rather than lifted:
+   * the quantities stay in THIS component's state, so a volatile number never
+   * enters the editor's flat value map where it would be stale by the time
+   * anyone pressed save. The compare-and-swap on the write is unchanged.
+   *
+   * The effect sits HERE, above the component's early returns — a hook below
+   * them changes the hook count between renders, which is exactly the crash
+   * this file shipped once already.
+   */
+  const registerCommerceSave = useRegisterCommerceSave();
+  useEffect(() => {
+    if (!isPrimaryLocale || planBlocked) {
+      registerCommerceSave(null);
+      return;
+    }
+    registerCommerceSave({ hasChanges, save });
+    // Unregistering on unmount matters: a stale `save` bound to the previous
+    // product would otherwise write that product's numbers.
+    return () => registerCommerceSave(null);
+  }, [registerCommerceSave, hasChanges, save, isPrimaryLocale, planBlocked]);
+
   if (!isPrimaryLocale) {
     return (
       <BlockStack gap="200">
@@ -389,11 +464,6 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     ? null
     : data.variants.find((v) => v.id === selectedVariantId) ?? data.variants[0];
 
-  const hasChanges =
-    dirtyStock.length > 0 ||
-    dirtyItemFields.length > 0 ||
-    dirtyChannels.toPublish.length > 0 ||
-    dirtyChannels.toUnpublish.length > 0;
   const publishedCount = data ? data.channels.filter((c) => channelState[c.publicationId]).length : 0;
 
   return (
@@ -644,7 +714,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                           {(t.levelsTruncated as string) || "This variant has stock at more locations than were loaded."}
                         </Text>
                       )}
-                      {variant.levels.length === 0 && (
+                      {variant.levels.length === 0 && data.shopLocations.length === 0 && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {(t.noLevels as string) || "No location holds stock of this variant."}
                         </Text>
@@ -663,11 +733,17 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                                 {!level.locationActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
                               </Text>
                             </Box>
-                            <Box minWidth="140px">
+                            {/* Sized for a number, not for a sentence. It was
+                                a full-width text input holding at most four
+                                digits, which made the stock list read like a
+                                form of paragraphs. */}
+                            <Box minWidth="86px" maxWidth="86px">
                               <TextField
                                 label={(t.onHand as string) || "On hand"}
                                 labelHidden
                                 type="number"
+                                inputMode="numeric"
+                                align="right"
                                 value={edits[key] ?? String(level.onHand ?? "")}
                                 onChange={(value) => setEdits((prev) => ({ ...prev, [key]: value }))}
                                 autoComplete="off"
@@ -687,6 +763,41 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                           </InlineStack>
                         );
                       })}
+
+                      {/* Locations the item is not stocked at.
+                          Shopify reports a level only where an item has been
+                          ACTIVATED, so these are absent from `levels` — and a
+                          merchant with three warehouses seeing one row
+                          reasonably concludes the panel is broken. Listing them
+                          is the difference between a missing answer and an
+                          answer of "none". */}
+                      {data.shopLocations
+                        .filter((location) => !variant.levels.some((l) => l.locationId === location.id))
+                        .map((location) => (
+                          <InlineStack key={`${variant.id}::${location.id}`} gap="300" blockAlign="center" wrap>
+                            <Box minWidth="180px">
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {location.name}
+                                {!location.isActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
+                              </Text>
+                            </Box>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {(t.notStockedHere as string) || "not stocked here"}
+                            </Text>
+                            {/* An inactive location takes no writes, so it gets
+                                no offer to start stocking at it. */}
+                            {location.isActive && variant.inventoryItemId && (
+                              <Button
+                                size="micro"
+                                disabled={saving || activating === `${variant.id}::${location.id}`}
+                                loading={activating === `${variant.id}::${location.id}`}
+                                onClick={() => activate(variant.inventoryItemId!, location.id, `${variant.id}::${location.id}`)}
+                              >
+                                {(t.activateHere as string) || "Stock here"}
+                              </Button>
+                            )}
+                          </InlineStack>
+                        ))}
                     </BlockStack>
                   )}
                 </BlockStack>
@@ -694,10 +805,11 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
             ))}
           </BlockStack>
 
-          <InlineStack gap="200">
-            <Button variant="primary" disabled={!hasChanges || saving} loading={saving} onClick={save}>
-              {(t.save as string) || "Save stock and channels"}
-            </Button>
+          {/* No save button of its own any more — the editor's save bar drives
+              this panel along with the text and the translations. The RELOAD
+              stays: stock moves under the merchant's feet, and re-reading it is
+              a thing they need on its own schedule, not on the save's. */}
+          <InlineStack gap="200" blockAlign="center">
             <Button
               disabled={saving}
               onClick={() => {
@@ -709,13 +821,12 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
             >
               {(t.reload as string) || "Reload"}
             </Button>
+            {saving && (
+              <Text as="span" variant="bodySm" tone="subdued">
+                {(t.savingStock as string) || "Saving stock…"}
+              </Text>
+            )}
           </InlineStack>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {/* Says WHY there is a separate button: this is not part of the
-                content save, and a merchant who expects it to be would
-                otherwise leave the page with stock unchanged. */}
-            {(t.separateSaveHint as string) || "Stock and channels are saved separately from the text — they are not part of the content save."}
-          </Text>
         </>
       )}
     </BlockStack>

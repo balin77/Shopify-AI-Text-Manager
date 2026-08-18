@@ -522,8 +522,6 @@ export const en: Translation = {
       saveFailed: "The change could not be saved.",
       retry: "Try again",
       reload: "Reload",
-      save: "Save stock and channels",
-      separateSaveHint: "Stock and channels are saved separately from the text — they are not part of the content save.",
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       channelsHeading: "Sales channels",
@@ -532,6 +530,9 @@ export const en: Translation = {
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
       scheduled: "Scheduled for {date}",
       variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
+      savingStock: "Saving stock…",
+      notStockedHere: "not stocked here",
+      activateHere: "Stock here",
       stockHeading: "Stock",
       variantSelectLabel: "Variant",
       variantsTruncated: "This product has more variants than were loaded. Edit the rest in the Shopify admin.",
@@ -548,6 +549,8 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      activateNotConfirmed: "Shopify did not confirm the location, so it was not activated.",
+      activateFailed: "The location could not be activated.",
       stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",
       itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
       itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
@@ -568,6 +571,7 @@ export const en: Translation = {
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.",
       priceFailed: "The price could not be saved. Everything else was saved.",
     },
+    attributesCardTitle: "Details",
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     // ONE enum vocabulary, at the top level because several surfaces render

@@ -68,6 +68,12 @@ beforeEach(() => {
         variantsTruncated: false,
         channels: [],
         channelsTruncated: false,
+        // Two warehouses, one of which the variant is not stocked at — the
+        // case that made a merchant think the panel was broken.
+        shopLocations: [
+          { id: "gid://shopify/Location/1", name: "Berlin", isActive: true },
+          { id: "gid://shopify/Location/2", name: "Spanien", isActive: true },
+        ],
       }),
     })),
   );
@@ -114,5 +120,19 @@ describe("CommerceField render states", () => {
     // ...and only the selected one has a box. Before this change there were
     // two of every field on screen, stacked.
     expect(screen.queryAllByLabelText(/Cost per item/i).length).toBe(1);
+  });
+
+  it("lists a location the variant is NOT stocked at, with a way in", async () => {
+    // Shopify reports an inventory level only where an item is activated, so
+    // the other warehouses are absent from `levels`. Absent read as "you have
+    // one location" is what this row exists to correct.
+    render(ui());
+
+    expect(await screen.findByText("Spanien")).toBeTruthy();
+    expect(screen.getByText("Berlin")).toBeTruthy();
+    // The fixture's variant has no levels at all, so BOTH warehouses are
+    // un-stocked — and both say so rather than being absent.
+    expect(screen.getAllByText(/not stocked here/i).length).toBe(2);
+    expect(screen.getAllByRole("button", { name: /Stock here/i }).length).toBe(2);
   });
 });

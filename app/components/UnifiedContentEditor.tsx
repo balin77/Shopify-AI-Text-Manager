@@ -6,6 +6,8 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
+import { isAttributeField } from "~/services/content-attributes.shared";
+import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useCreateItem } from "../hooks/useCreateItem";
 import { CreateItemModal } from "./create/CreateItemModal";
@@ -443,6 +445,109 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // showing the items (parity with Translate & Adapt). Server loader marks the
   // group with `embedTechnical` (theme-content-domain.server.ts).
   const isEmbedTechnical = !!(selectedItem as any)?.embedTechnical;
+
+  /**
+   * The stock/channels panel registers itself here, so the ONE save bar drives
+   * it alongside the content save and the sub-resource save. The panel keeps
+   * its own state and its own endpoint — a volatile quantity must not travel in
+   * the editor's value map — but it no longer carries a second Save button.
+   */
+  const commerceSave = useCommerceSaveRegistry();
+
+  /**
+   * Which fields this locale/type actually shows, and how one of them renders.
+   *
+   * Hoisted out of the JSX because the list is now split across TWO cards: the
+   * item's TEXT stays in the main card, its merchandising attributes moved to a
+   * card of their own below the product options and metafields. One renderer,
+   * two call sites — duplicating the props of `UnifiedFieldRenderer` is how the
+   * two halves would start behaving differently.
+   */
+  const visibleFields = useMemo(() => {
+    return fieldDefinitions.filter((field) => {
+      // The status/visibility control lives in the action bar above — ONE
+      // control per value. Two of them on one screen invite the question which
+      // counts, and the answer ("both, they write the same field") is not one a
+      // merchant should have to work out.
+      if (statusControl && field.key === statusControl.fieldKey) return false;
+      // §2.3 — the default price means "the first variant" and says so. That is
+      // only true while there IS one: with several, the per-variant panel owns
+      // pricing. Exactly ONE is therefore the only case this field can
+      // describe. `0` is not "no variants" — every product has at least one on
+      // Shopify — it is a row whose variants were never cached, and an empty
+      // price there ends in a refused save.
+      if (field.key === "price" && config.contentType === "products") {
+        const count = (selectedItem as { variantCount?: number | null } | null)?.variantCount;
+        if (count !== 1) return false;
+      }
+      return true;
+    });
+  }, [fieldDefinitions, statusControl, config.contentType, selectedItem]);
+
+  const contentFields = useMemo(() => visibleFields.filter((f) => !isAttributeField(f)), [visibleFields]);
+  const attributeFields = useMemo(() => visibleFields.filter((f) => isAttributeField(f)), [visibleFields]);
+
+  /**
+   * Primary-language editing writes to a theme file (themeFilesUpsert), which
+   * only exists for the `theme` domain. Read-only when that is off, when the
+   * rubric is a resource-backed theme-content family member (their original
+   * lives in the Shopify admin and the server rejects primary saves), or for
+   * app-embed technical fields, which are locked in every locale.
+   */
+  const isFieldReadOnly =
+    (isThemeContentType(config.contentType) &&
+      state.currentLanguage === primaryLocale &&
+      (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates")) ||
+    isEmbedTechnical;
+
+  const renderEditorField = (field: FieldDefinition) => (
+        <UnifiedFieldRenderer
+          key={field.key}
+          field={field}
+          value={helpers.getEditableValue(field.key)}
+          onChange={(value) => handlers.handleValueChange(field.key, value)}
+          suggestion={state.aiSuggestions[field.key]}
+          isPrimaryLocale={state.currentLanguage === primaryLocale}
+          isTranslated={helpers.isFieldTranslated(field.key)}
+          isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
+          isDataLoading={!state.isInitialDataReady}
+          sourceTextAvailable={!!selectedItem && !!getSourceText(selectedItem, field.key, primaryLocale)}
+          disableGeneration={isThemeContentType(config.contentType)}
+          isFallbackValue={state.fallbackFields?.has(field.key) || false}
+          fieldError={state.fieldErrors?.[field.key]}
+          readOnly={isFieldReadOnly}
+          embedTechnical={isEmbedTechnical}
+          selectedMarketId={state.selectedMarketId}
+          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? (userInstruction?: string) => handlers.handleGenerateAI(field.key, userInstruction) : undefined)}
+          onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
+          onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
+          onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
+          onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
+          onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
+          onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
+          onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
+          onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
+          onClear={isFieldReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
+          htmlMode={state.htmlModes[field.key] || "rendered"}
+          onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
+          shopLocales={shopLocales}
+          currentLanguage={state.currentLanguage}
+          primaryLocale={primaryLocale}
+          selectedItem={selectedItem}
+          contentType={config.contentType}
+          t={t}
+          state={state}
+          handlers={handlers}
+          fetcherState={fetcherState}
+          fetcherFormData={fetcherFormData}
+          validationOverlays={validationOverlays}
+          tagSuggestions={tagSuggestions}
+          attributesKnown={itemAttributesKnown}
+          currencyCode={currencyCode}
+          apiVersion={apiVersion}
+          onReloadAttributes={() => { void handleSyncAll(); }}
+        />
+  );
 
   // Single-language shop: every translate / copy-to-all-locales action has no
   // target and would only ever produce a "no target languages" warning. The
@@ -970,6 +1075,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // Tells every nested field/action whether translating is possible at all —
     // a single-language shop greys out the translate/copy-to-all buttons.
     <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
+    {/* The stock panel registers its save through this — see the save bar. */}
+    <commerceSave.Provider value={commerceSave.value}>
     <Page fullWidth>
       <div
         // `sidebar-panel-open` only bites below 1100px, where it swaps the item
@@ -1075,7 +1182,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   both mounted and only toggled via CSS. */}
               <AppSaveBar
                 id="unified-content-editor-save-bar"
-                hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false)}
+                hasChanges={state.hasChanges || (subResourceState?.hasChanges ?? false) || commerceSave.hasChanges}
                 loading={state.isSavingCurrentItem || (subResourceState?.isSaving ?? false)}
                 onSave={() => {
                   // Guard against double-submit: a long-running image save
@@ -1085,6 +1192,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   if (state.isSavingCurrentItem || subResourceState?.isSaving) return;
                   handlers.handleSave();
                   subResourceHandlers?.saveSubResources?.();
+                  // Third writer, same button. Its failures surface INSIDE the
+                  // panel (a refused stock write names the number that moved),
+                  // so nothing is awaited here and nothing can fail the save.
+                  void commerceSave.save?.();
                 }}
                 onDiscard={() => {
                   handlers.handleDiscard();
@@ -1506,101 +1617,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       </div>
                     )}
 
-                    {/* Dynamic Fields */}
-                    {!isFieldsLoading && (() => {
-                      // Primary-language editing writes to a theme file
-                      // (themeFilesUpsert), which only exists for the `theme`
-                      // domain (contentType "templates"). It is read-only when:
-                      //  - themeFilesUpsert is not enabled (templates), OR
-                      //  - the rubric is a resource-backed theme-content family
-                      //    member (System/Versand/Abo-Pläne/Filter) — those have
-                      //    no theme file, so their original lives in Shopify admin
-                      //    and the server rejects primary saves for them.
-                      const isTemplatePrimaryReadOnly = isThemeContentType(config.contentType)
-                        && state.currentLanguage === primaryLocale
-                        && (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates");
-
-                      // App-embed technical fields are locked in every locale.
-                      const isFieldReadOnly = isTemplatePrimaryReadOnly || isEmbedTechnical;
-
-                      return fieldDefinitions.filter((field) => {
-                        // The status/visibility switch lives in the action bar
-                        // above — ONE control per value. Two switches on one
-                        // screen invite the question which of them counts, and
-                        // the answer ("both, they write the same field") is not
-                        // one a merchant should have to work out.
-                        if (statusControl && field.key === statusControl.fieldKey) return false;
-                        // §2.3 — the default price means "the first variant"
-                        // and says so in its note. That is only true while
-                        // there IS one variant; with several, the per-variant
-                        // panel below owns pricing and stock. An UNKNOWN count
-                        // hides it too: showing a single price for a product
-                        // that may have twenty is the misleading direction.
-                        if (field.key === "price" && config.contentType === "products") {
-                          // Exactly ONE is the only case this field can
-                          // describe. `0` is not "no variants" — every product
-                          // has at least one on Shopify — it is a row whose
-                          // variants were never cached (they used to appear
-                          // only after opening the image manager), and showing
-                          // an empty price there ends in a refused save.
-                          const count = (selectedItem as { variantCount?: number | null } | null)?.variantCount;
-                          if (count !== 1) return false;
-                        }
-                        return true;
-                      }).map((field) => {
-                        if (field.type === "image-gallery" && imageGalleryReplacement) {
-                          return <div key={field.key}>{imageGalleryReplacement}</div>;
-                        }
-                        return (
-                        <UnifiedFieldRenderer
-                          key={field.key}
-                          field={field}
-                          value={helpers.getEditableValue(field.key)}
-                          onChange={(value) => handlers.handleValueChange(field.key, value)}
-                          suggestion={state.aiSuggestions[field.key]}
-                          isPrimaryLocale={state.currentLanguage === primaryLocale}
-                          isTranslated={helpers.isFieldTranslated(field.key)}
-                          isLoading={isGlobalAIActionRunning || loadingFieldKeys.has(field.key)}
-                          isDataLoading={!state.isInitialDataReady}
-                          sourceTextAvailable={!!getSourceText(selectedItem, field.key, primaryLocale)}
-                          disableGeneration={isThemeContentType(config.contentType)}
-                          isFallbackValue={state.fallbackFields?.has(field.key) || false}
-                          fieldError={state.fieldErrors?.[field.key]}
-                          readOnly={isFieldReadOnly}
-                          embedTechnical={isEmbedTechnical}
-                          selectedMarketId={state.selectedMarketId}
-                          onGenerateAI={isFieldReadOnly ? undefined : (field.supportsAI !== false ? (userInstruction?: string) => handlers.handleGenerateAI(field.key, userInstruction) : undefined)}
-                          onFormatAI={isFieldReadOnly ? undefined : (field.supportsFormatting !== false ? () => handlers.handleFormatAI(field.key) : undefined)}
-                          onTranslate={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateField(field.key) : undefined)}
-                          onTranslateToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleTranslateFieldToAllLocales(field.key) : undefined)}
-                          onCopy={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyField(field.key) : undefined)}
-                          onCopyToAllLocales={isEmbedTechnical ? undefined : (field.supportsTranslation !== false ? () => handlers.handleCopyFieldToAllLocales(field.key) : undefined)}
-                          onAcceptSuggestion={() => handlers.handleAcceptSuggestion(field.key)}
-                          onAcceptAndTranslate={() => handlers.handleAcceptAndTranslate(field.key)}
-                          onRejectSuggestion={() => handlers.handleRejectSuggestion(field.key)}
-                          onClear={isFieldReadOnly ? undefined : (field.key === "title" && state.currentLanguage === primaryLocale ? undefined : () => handlers.handleClearField(field.key))}
-                          htmlMode={state.htmlModes[field.key] || "rendered"}
-                          onToggleHtmlMode={() => handlers.handleToggleHtmlMode(field.key)}
-                          shopLocales={shopLocales}
-                          currentLanguage={state.currentLanguage}
-                          primaryLocale={primaryLocale}
-                          selectedItem={selectedItem}
-                          contentType={config.contentType}
-                          t={t}
-                          state={state}
-                          handlers={handlers}
-                          fetcherState={fetcherState}
-                          fetcherFormData={fetcherFormData}
-                          validationOverlays={validationOverlays}
-                          tagSuggestions={tagSuggestions}
-                          attributesKnown={itemAttributesKnown}
-                          currencyCode={currencyCode}
-                          apiVersion={apiVersion}
-                          onReloadAttributes={() => { void handleSyncAll(); }}
-                        />
-                        );
-                      });
-                    })()}
+                    {/* Dynamic Fields — the item's TEXT. Its merchandising
+                        attributes render in their own card further down. */}
+                    {!isFieldsLoading && contentFields.map((field) => {
+                      if (field.type === "image-gallery" && imageGalleryReplacement) {
+                        return <div key={field.key}>{imageGalleryReplacement}</div>;
+                      }
+                      return renderEditorField(field);
+                    })}
 
                     {/* Bottom Pagination (for easier navigation after scrolling) */}
                     {fieldPagination && fieldPagination.totalPages > 1 && onFieldPageChange && !isFieldsLoading && (
@@ -1708,6 +1732,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         translateButton: t.products?.translateMetafield,
                       }}
                     />
+                  </div>
+                )}
+
+                {/* Merchandising attributes — their own card, BELOW the
+                    options and metafields. They are facts ABOUT the item
+                    (status, vendor, tags, category, memberships, stock) rather
+                    than things it says, and mixed into the text fields they
+                    pushed the actual content off the first screen. */}
+                {attributeFields.length > 0 && !isFieldsLoading && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <Card padding="400">
+                      <BlockStack gap="400">
+                        <Text as="h2" variant="headingMd">
+                          {t.content?.attributesCardTitle || "Details"}
+                        </Text>
+                        {attributeFields.map((field) => renderEditorField(field))}
+                      </BlockStack>
+                    </Card>
                   </div>
                 )}
               </div>
@@ -2069,6 +2111,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         />
       )}
     </Page>
+    </commerceSave.Provider>
     </LocaleAvailabilityProvider>
   );
 }

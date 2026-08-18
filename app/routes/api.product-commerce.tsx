@@ -43,6 +43,7 @@ import {
   inventoryLevelRows,
   productPublicationRows,
   variantCommerceColumns,
+  SHOP_LOCATION_PAGE_SIZE,
 } from "~/services/commerce-sync.shared";
 import {
   applyInventoryItemFields,
@@ -148,6 +149,39 @@ export async function loader({ request }: LoaderFunctionArgs) {
       return json({ success: false, error: "That product no longer exists in Shopify." }, { status: 404 });
     }
 
+    /**
+     * The shop's OWN locations — deliberately a second query.
+     *
+     * `inventoryLevels` returns a level only where the item is ACTIVATED at a
+     * location, so a merchant with three warehouses saw the one his variant
+     * happened to be stocked at and concluded the panel was broken. It was not:
+     * Shopify simply has nothing to report for the other two. Listing them as
+     * "not stocked here" is the difference between a missing answer and an
+     * answer of "none".
+     *
+     * Its own call because nesting it under the product would multiply into the
+     * variant window's cost, and this list is per SHOP, not per variant. A
+     * failure here degrades to the old behaviour rather than failing the load.
+     */
+    let shopLocations: Array<{ id: string; name: string; isActive: boolean }> = [];
+    try {
+      const locationsResponse = await admin.graphql(
+        `#graphql
+          query commerceShopLocations {
+            locations(first: ${SHOP_LOCATION_PAGE_SIZE}, includeInactive: true) {
+              nodes { id name isActive }
+            }
+          }`,
+      );
+      const locationsBody = (await locationsResponse.json()) as {
+        data?: { locations?: { nodes?: Array<{ id: string; name: string; isActive: boolean }> } };
+      };
+      shopLocations = locationsBody.data?.locations?.nodes ?? [];
+    } catch {
+      // Leaves `shopLocations` empty, which renders exactly what this route
+      // showed before: the stocked locations only.
+    }
+
     // `Product.id` is the FULL GID in this schema (unlike `ProductVariant.id`,
     // which is numeric). Using a numeric id here violated the FK on every
     // `ProductPublication` insert — swallowed by the `.catch` below, so the
@@ -236,6 +270,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({
       success: true,
       variants,
+      // Every location the SHOP has, so the panel can show the ones this
+      // variant is not stocked at as exactly that — see the query above.
+      shopLocations,
       // Truncation is reported, never rounded down: a partial channel list read
       // as complete would say a product is off a channel it is on.
       variantsTruncated: ((product.variants as Record<string, unknown> | undefined)?.pageInfo as { hasNextPage?: boolean } | undefined)?.hasNextPage === true,
@@ -272,6 +309,70 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const warnings: CommerceWarning[] = [];
+
+  /**
+   * Start stocking this item at a location it is not stocked at yet.
+   *
+   * Shopify reports an inventory LEVEL only where the item has been activated,
+   * which is why a shop's other locations are absent rather than zero. This is
+   * the way in — and it is a write, so it carries the same rules as the rest of
+   * this route: ids validated here (the route is POST-reachable, and a bad
+   * scalar fails at the SCHEMA level where `userErrors` never sees it), and the
+   * result counted only when Shopify ECHOES the new level back.
+   */
+  if (intent === "activate") {
+    const inventoryItemId = getFormString(formData, "inventoryItemId");
+    const locationId = getFormString(formData, "locationId");
+    if (!inventoryItemId.startsWith("gid://shopify/InventoryItem/")) {
+      return json({ success: false, error: "That is not an inventory item." }, { status: 400 });
+    }
+    if (!locationId.startsWith("gid://shopify/Location/")) {
+      return json({ success: false, error: "That is not a location." }, { status: 400 });
+    }
+
+    try {
+      const response = await admin.graphql(
+        `#graphql
+          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!) {
+            inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+              inventoryLevel { id location { id } }
+              userErrors { field message }
+            }
+          }`,
+        { variables: { inventoryItemId, locationId } },
+      );
+      const activateBody = (await response.json()) as {
+        data?: {
+          inventoryActivate?: {
+            inventoryLevel?: { id?: string; location?: { id?: string } } | null;
+            userErrors?: Array<{ message?: string }>;
+          };
+        };
+        errors?: Array<{ message?: string }>;
+      };
+      if (activateBody.errors?.length) {
+        return json({ success: false, error: "The location could not be activated." }, { status: 502 });
+      }
+      const payload = activateBody.data?.inventoryActivate;
+      // The echo rule: `userErrors: []` is not the answer. The level has to
+      // come back, AND on the location that was asked for — otherwise the panel
+      // would show a location it cannot write to.
+      if (!payload?.inventoryLevel?.id || payload.inventoryLevel.location?.id !== locationId) {
+        logger.warn("[Commerce] inventoryActivate not confirmed", {
+          context: "Commerce", shop: session.shop, locationId,
+          detail: payload?.userErrors?.map((e) => e.message).join("; ") || "no level returned",
+        });
+        return json({ success: false, warnings: ["activateNotConfirmed"] satisfies string[] });
+      }
+      return json({ success: true });
+    } catch (error) {
+      logger.warn("[Commerce] inventoryActivate failed", {
+        context: "Commerce", shop: session.shop,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return json({ success: false, warnings: ["activateFailed"] satisfies string[] });
+    }
+  }
 
   if (intent === "stock") {
     const variantId = getFormString(formData, "variantId");

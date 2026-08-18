@@ -518,8 +518,6 @@ export const es: Translation = {
       saveFailed: "No se pudo guardar el cambio.",
       retry: "Reintentar",
       reload: "Recargar",
-      save: "Guardar inventario y canales",
-      separateSaveHint: "El inventario y los canales se guardan aparte del texto: no forman parte del guardado de contenido.",
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
       channelsHeading: "Canales de venta",
@@ -528,6 +526,9 @@ export const es: Translation = {
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
       variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
+      savingStock: "Guardando el stock…",
+      notStockedHere: "sin stock aquí",
+      activateHere: "Gestionar aquí",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
       variantsTruncated: "Este producto tiene más variantes de las que se cargaron. Edita el resto en el admin de Shopify.",
@@ -544,6 +545,8 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      activateNotConfirmed: "Shopify no confirmó la ubicación, así que no se activó.",
+      activateFailed: "La ubicación no se pudo activar.",
       stockNoBaseline: "Una ubicación no tenía una cantidad actual con la que comparar, así que no se escribió. Recarga e inténtalo de nuevo.",
       itemFieldsInvalid: "Un coste, un peso o un código de país no tenía un formato que Shopify acepte, así que esos ajustes no se escribieron.",
       itemFieldsNotConfirmed: "Shopify no confirmó los ajustes del artículo, así que tampoco se guardaron localmente.",
@@ -564,6 +567,7 @@ export const es: Translation = {
       priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Todo lo demás se guardó.",
       priceFailed: "El precio no se pudo guardar. Todo lo demás se guardó.",
     },
+    attributesCardTitle: "Detalles",
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     // UN solo vocabulario de enums, en el nivel superior porque varias

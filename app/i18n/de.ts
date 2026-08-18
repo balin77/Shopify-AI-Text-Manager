@@ -519,8 +519,6 @@ export const de = {
       saveFailed: "Die Änderung konnte nicht gespeichert werden.",
       retry: "Nochmal versuchen",
       reload: "Neu laden",
-      save: "Bestand und Kanäle speichern",
-      separateSaveHint: "Bestand und Kanäle werden getrennt vom Text gespeichert — sie sind nicht Teil des Inhalts-Speicherns.",
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
       channelsHeading: "Vertriebskanäle",
@@ -529,6 +527,9 @@ export const de = {
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
       variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
+      savingStock: "Bestand wird gespeichert…",
+      notStockedHere: "hier nicht bestandsgeführt",
+      activateHere: "Hier führen",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
       variantsTruncated: "Dieses Produkt hat mehr Varianten, als geladen wurden. Den Rest bearbeitest du im Shopify-Admin.",
@@ -545,6 +546,8 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      activateNotConfirmed: "Shopify hat den Standort nicht bestätigt, er wurde deshalb nicht aktiviert.",
+      activateFailed: "Der Standort konnte nicht aktiviert werden.",
       stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
       itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
       itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
@@ -565,6 +568,7 @@ export const de = {
       priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
       priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
     },
+    attributesCardTitle: "Details",
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
     // EIN Enum-Vokabular, auf oberster Ebene, weil mehrere Oberflächen

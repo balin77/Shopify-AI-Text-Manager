@@ -21,14 +21,13 @@
  */
 
 import { useMemo, useState } from "react";
+import { ChipCombobox } from "./ChipCombobox";
 import {
   BlockStack,
-  Box,
   Button,
   Icon,
   InlineStack,
   Select,
-  Tag,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -139,8 +138,6 @@ export function AttributeField({
   helpText,
   t,
 }: AttributeFieldProps) {
-  const [draftTag, setDraftTag] = useState("");
-
   // §2.4 / §3.5 — the field exists once per item, so a foreign locale can only
   // look at it. Saying so beats a control that accepts input and discards it.
   const notTranslatable = !isPrimaryLocale;
@@ -156,18 +153,6 @@ export function AttributeField({
     : readOnlyHint;
 
   const tags = useMemo(() => parseTags(value), [value]);
-  const openSuggestions = useMemo(
-    () => suggestions.filter((s) => !tags.some((tag) => tag.toLowerCase() === s.toLowerCase())),
-    [suggestions, tags],
-  );
-
-  const addTag = (raw: string) => {
-    const tag = raw.trim();
-    if (!tag) return;
-    onChange(serializeTags([...tags, tag]));
-    setDraftTag("");
-  };
-
   const control = (() => {
     switch (field.type) {
       case "select":
@@ -240,59 +225,22 @@ export function AttributeField({
         );
 
       case "tags":
+        // One line plus the chips that are actually set. It used to print
+        // every tag as a chip AND a permanently visible row of up to twelve
+        // suggestion buttons, which on a well-tagged product was taller than
+        // the description field.
         return (
-          <BlockStack gap="200">
-            <Text as="p" variant="bodyMd">{label}</Text>
-            {tags.length > 0 && (
-              <InlineStack gap="100" wrap>
-                {tags.map((tag) => (
-                  <Tag key={tag} onRemove={locked ? undefined : () => onChange(serializeTags(tags.filter((x) => x !== tag)))}>
-                    {tag}
-                  </Tag>
-                ))}
-              </InlineStack>
-            )}
-            {!locked && (
-              // Enter is how anyone types a list of tags; Polaris TextField
-              // exposes no key handler, so it is caught on the wrapper.
-              <div
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  addTag(draftTag);
-                }}
-              >
-                <Box width="100%">
-                  <TextField
-                    label={t.addTag || "Add tag"}
-                    labelHidden
-                    value={draftTag}
-                    onChange={setDraftTag}
-                    placeholder={t.addTag || "Add tag"}
-                    autoComplete="off"
-                    // Deliberately NOT committed on blur. Tabbing away from a
-                    // half-typed tag would add it and mark the item dirty —
-                    // and the merchant would not see why. Enter (below) and
-                    // the button are the two explicit ways in.
-                    connectedRight={
-                      <Button onClick={() => addTag(draftTag)} disabled={!draftTag.trim()}>
-                        {t.add || "Add"}
-                      </Button>
-                    }
-                  />
-                </Box>
-              </div>
-            )}
-            {!locked && openSuggestions.length > 0 && (
-              <InlineStack gap="100" wrap>
-                {openSuggestions.slice(0, 12).map((s) => (
-                  <Button key={s} size="micro" variant="tertiary" onClick={() => addTag(s)}>
-                    {s}
-                  </Button>
-                ))}
-              </InlineStack>
-            )}
-          </BlockStack>
+          <ChipCombobox
+            label={label}
+            selected={tags}
+            options={suggestions.map((tag) => ({ value: tag, label: tag }))}
+            onChange={(next) => onChange(serializeTags(next))}
+            readOnly={locked}
+            // A merchant invents tags; the suggestions are a convenience, not
+            // a vocabulary.
+            allowFreeText
+            placeholder={t.addTag || "Add tag"}
+          />
         );
 
       default:

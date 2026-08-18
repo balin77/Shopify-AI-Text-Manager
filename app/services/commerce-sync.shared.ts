@@ -50,6 +50,15 @@ export const VARIANT_COMMERCE_PAGE_SIZE = 25;
 export const INVENTORY_LEVEL_PAGE_SIZE = 10;
 /** Sales channels a shop can have. Not nested, so it costs its own size only. */
 export const PUBLICATION_PAGE_SIZE = 50;
+/**
+ * The shop's own locations, fetched in a query of their own.
+ *
+ * Not nested under the product on purpose: a per-SHOP list multiplied by the
+ * variant window is cost paid for the same rows over and over. Inactive ones
+ * are included — a deactivated location can still hold stock, and hiding it
+ * reads as stock that vanished.
+ */
+export const SHOP_LOCATION_PAGE_SIZE = 50;
 
 /**
  * The commerce fields of ONE variant.

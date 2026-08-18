@@ -24,6 +24,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { ChipCombobox } from "./ChipCombobox";
 import { BlockStack, Banner, Box, Button, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
 import type { CollectionOption } from "../../routes/api.product-taxonomy";
 
@@ -64,9 +65,6 @@ export interface CollectionsFieldProps {
   };
 }
 
-/** Above this many, scrolling a checkbox list stops being usable. */
-const FILTER_THRESHOLD = 12;
-
 export function CollectionsField({
   value,
   onChange,
@@ -82,7 +80,6 @@ export function CollectionsField({
   const [failed, setFailed] = useState(false);
   /** The cache holds more collections than one page — see the route's cap. */
   const [listTruncated, setListTruncated] = useState(false);
-  const [filter, setFilter] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -137,21 +134,6 @@ export function CollectionsField({
     return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));
   }, [options, memberships]);
 
-  const visible = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return rows;
-    // A ticked row always stays visible: filtering it away and then having the
-    // merchant assume the list is complete is how a membership gets dropped.
-    return rows.filter((r) => r.title.toLowerCase().includes(needle) || selected.has(r.id));
-  }, [rows, filter, selected]);
-
-  const toggle = (id: string, checked: boolean) => {
-    const next = new Set(selected);
-    if (checked) next.add(id);
-    else next.delete(id);
-    onChange([...next].join(","));
-  };
-
   if (!known) {
     return (
       <BlockStack gap="200">
@@ -194,47 +176,39 @@ export function CollectionsField({
         <Spinner size="small" accessibilityLabel={t.loading || "Loading collections"} />
       )}
 
-      {rows.length > FILTER_THRESHOLD && (
-        <TextField
-          label=""
-          labelHidden
-          value={filter}
-          onChange={setFilter}
-          autoComplete="off"
-          placeholder={t.filter || "Filter collections…"}
-          clearButton
-          onClearButtonClick={() => setFilter("")}
-        />
-      )}
-
       {rows.length === 0 && options !== null && !failed && (
         <Text as="p" variant="bodySm" tone="subdued">{t.none || "This shop has no collections yet."}</Text>
       )}
 
-      <BlockStack gap="100">
-        {visible.map((row) => (
-          <Checkbox
-            key={row.id}
-            label={row.title}
-            checked={selected.has(row.id)}
-            // Rule-based: shown ticked and locked. See the header — unticking
-            // it would be a save that apparently did nothing.
-            // Locked for rule-based AND for unknown. Ticking either one sends
-            // a `collectionsToJoin` Shopify refuses, and because
-            // `productUpdate` is atomic that refusal takes the merchant's text
-            // edits with it.
-            disabled={disabled || row.automated !== false}
-            helpText={
-              row.automated === true
-                ? t.automated || "Managed by this collection's rules"
-                : row.automated === null
-                  ? t.automatedUnknown || "Not loaded from Shopify yet — reload the collections to change this."
-                  : undefined
-            }
-            onChange={(checked) => toggle(row.id, checked)}
-          />
-        ))}
-      </BlockStack>
+      {/* One line plus the memberships that are actually set. It used to print
+          a checkbox row per collection IN THE SHOP — on a shop with fifty of
+          them, the product's own text started below the fold. */}
+      <ChipCombobox
+        label={label}
+        selected={[...selected]}
+        options={rows.map((row) => ({
+          value: row.id,
+          label: row.title,
+          // Rule-based AND unknown are both locked, and for the same reason in
+          // both directions: joining sends a `collectionsToJoin` Shopify
+          // refuses — and because `productUpdate` is atomic, that refusal takes
+          // the merchant's text edits with it — while leaving one is undone by
+          // the rule within seconds.
+          lockedReason:
+            row.automated === true
+              ? t.automated || "Managed by this collection's rules"
+              : row.automated === null
+                ? t.automatedUnknown || "Not loaded from Shopify yet — reload the collections to change this."
+                : undefined,
+        }))}
+        onChange={(next) => onChange(next.join(","))}
+        readOnly={disabled}
+        // A collection this app does not know is not one it can join: the id
+        // has to exist before it can be sent.
+        allowFreeText={false}
+        placeholder={t.filter || "Search collections…"}
+      />
+
     </BlockStack>
   );
 }
