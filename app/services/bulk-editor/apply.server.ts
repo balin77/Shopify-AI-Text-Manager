@@ -81,6 +81,7 @@ import {
   type ColumnDescriptor,
 } from "./columns.shared";
 import { moneyToDecimalString } from "../product-variant-sync.server";
+import { writeMetaobjectFields, type MetaobjectFieldWrite } from "../metaobject-write.server";
 
 interface ApplyContext {
   db: PrismaClient;
@@ -1555,6 +1556,10 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
   const columns = deps.columnsByType.metaobject;
   const failures: BulkFailure[] = [];
 
+  // The row's type is needed BEFORE the write for the cross-type guard below,
+  // so it is read here as well as inside the shared writer. Two cheap reads of
+  // one indexed row beat handing the writer a column model it has no business
+  // knowing about.
   const cached = await db.metaobject.findUnique({
     where: { shop_id: { shop, id } },
     select: { type: true },
@@ -1563,12 +1568,7 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
     return [failureOf(group, "This metaobject is not in the local cache — resync content first.")];
   }
 
-  interface FieldWrite {
-    columnId: string;
-    key: string;
-    value: string;
-  }
-  const writes: FieldWrite[] = [];
+  const writes: MetaobjectFieldWrite[] = [];
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
     if (!column || !column.editable || column.kind !== "mofield" || !column.moFieldKey) {
@@ -1598,78 +1598,21 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
     // "" clears the field value (MetaobjectFieldInput.value is a plain
     // String) — if a definition-level validation rejects the empty value,
     // Shopify answers with a userError and the cell fails visibly below.
-    writes.push({ columnId, key: column.moFieldKey, value: outgoing });
+    writes.push({ ref: columnId, key: column.moFieldKey, value: outgoing });
   }
   if (writes.length === 0) return failures;
 
-  const failAllWrites = (message: string) => {
-    for (const write of writes) failures.push(failureOf(group, message, write.columnId));
-  };
-
-  try {
-    const response = await gateway.graphql(METAOBJECT_UPDATE, {
-      variables: {
-        id,
-        metaobject: { fields: writes.map((w) => ({ key: w.key, value: w.value })) },
-      },
-    });
-    const data = (await response.json()) as {
-      data?: {
-        metaobjectUpdate?: {
-          metaobject?: {
-            id: string;
-            handle?: string;
-            displayName?: string;
-            type?: string;
-            fields?: { key: string; value: string | null; type: string }[] | null;
-          } | null;
-          userErrors?: { field?: string[] | string; message: string }[];
-        };
-      };
-      errors?: { message: string }[];
-    };
-    if (data.errors && data.errors.length > 0) {
-      failAllWrites(data.errors[0].message);
-      return failures;
-    }
-    const payload = data.data?.metaobjectUpdate;
-    const userErrors = payload?.userErrors ?? [];
-    if (userErrors.length > 0) {
-      failAllWrites(userErrors[0].message);
-      return failures;
-    }
-    // Echo check: the mutation returns the full metaobject — every written
-    // key must come back with OUR value, otherwise that cell failed silently.
-    const echoedFields = payload?.metaobject?.fields ?? [];
-    const confirmed: FieldWrite[] = [];
-    for (const write of writes) {
-      const echo = echoedFields?.find((f) => f.key === write.key);
-      if (!echo || (echo.value ?? "") !== write.value) {
-        failures.push(failureOf(group, "Shopify did not confirm the field write.", write.columnId));
-        continue;
-      }
-      confirmed.push(write);
-    }
-    if (confirmed.length > 0 && payload?.metaobject) {
-      // Mirror the ECHOED state wholesale — fields JSON, displayName (the
-      // label field may have been one of the writes) — same shape the sync
-      // writes.
-      await db.metaobject.update({
-        where: { shop_id: { shop, id } },
-        data: {
-          fields: echoedFields as object[],
-          ...(payload.metaobject.displayName !== undefined
-            ? { displayName: payload.metaobject.displayName ?? "" }
-            : {}),
-          lastSyncedAt: new Date(),
-        },
-      });
-      // Phase 4b: the confirmed primary field changes make their foreign
-      // MetaobjectTranslation rows stale — invalidate by field key.
-      await invalidateStaleForeignTranslations(deps, "metaobject", id, confirmed.map((w) => w.key));
-    }
-  } catch (err: unknown) {
-    failAllWrites(err instanceof Error ? err.message : String(err));
+  // ONE echo-verified metaobjectUpdate — the same call the single editor makes
+  // (metaobject-write.server.ts). Failures come back per `ref`, which is the
+  // column id, so a cell that Shopify refused stays red on its own.
+  const result = await writeMetaobjectFields({ gateway, db, shop, id, writes });
+  for (const failure of result.failures) {
+    failures.push(failureOf(group, failure.message, failure.ref));
+  }
+  if (result.confirmedKeys.length > 0) {
+    // Phase 4b: the confirmed primary field changes make their foreign
+    // MetaobjectTranslation rows stale — invalidate by field key.
+    await invalidateStaleForeignTranslations(deps, "metaobject", id, result.confirmedKeys);
   }
   return failures;
 }

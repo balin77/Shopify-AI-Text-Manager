@@ -1161,6 +1161,16 @@ model MetaobjectDefinition {
   /// treat `undefined` as "unknown" and re-sync, not as "optional".
   fieldDefinitions Json
 
+  /// PLAN_METAOBJECTS_EDITOR §7.2 — Shopify's `MetaobjectAccess.admin` for this
+  /// definition ("MERCHANT_READ_WRITE", "MERCHANT_READ", "PRIVATE", ...).
+  ///
+  /// NULL means UNKNOWN — the row predates the column or the sync could not
+  /// read it — and is NEVER read as "writable" or as "read-only". Only a value
+  /// this app KNOWS excludes writes locks the entry editor; unknown behaves as
+  /// it always did and offers a resync. Same discriminator rule as
+  /// `attributesSyncedAt`.
+  adminAccess String?
+
   lastSyncedAt DateTime @default(now())
 
   @@unique([shop, id])

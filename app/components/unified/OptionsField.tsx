@@ -36,7 +36,9 @@ export interface OptionData {
   position: number;
   values: OptionValueData[];
   isLinked?: boolean;  // true = metaobject-linked option
-  linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
+  /** The linked METAFIELD's `namespace--key` — see the note on OptionData in
+   *  content-editor.types.ts. Not the metaobject definition type. */
+  linkedMetafieldKey?: string;
 }
 
 export interface OptionTranslation {
@@ -209,7 +211,7 @@ export function OptionsField({
     // for Shopify's standard definitions, where the two happen to be spelled
     // the same; for a custom one it matches nothing and the page opens blank.
     const linkedGid = option.values.find((v) => v.linkedValue)?.linkedValue;
-    const selectValue = linkedGid || option.linkedMetaobjectType || option.name;
+    const selectValue = linkedGid || option.linkedMetafieldKey || option.name;
     handleNavigate("/app/metaobjects", {
       searchParams: new URLSearchParams({ select: selectValue }),
     });

@@ -44,6 +44,10 @@ export interface AISettingsForValidation {
 export interface LoaderContext {
   admin: ShopifyGraphQLClient;
   session: { shop: string };
+  /** The incoming request — a loader that has to read its own query string
+   *  (e.g. the metaobjects tab resolving `?select=` against the cache) would
+   *  otherwise have to be written outside this factory just for that. */
+  request: Request;
   db: PrismaClient;
   shopLocales: ShopLocale[];
   primaryLocale: string;
@@ -95,7 +99,7 @@ export function createContentLoader<T extends { id: string }, K extends string, 
       const primaryLocale = shopLocales.find((l: ShopLocale) => l.primary)?.locale || "en";
       const markets: MarketInfo[] = marketsResult.markets;
 
-      const ctx: LoaderContext = { admin, session, db, shopLocales, primaryLocale, aiSettings };
+      const ctx: LoaderContext = { admin, session, db, shopLocales, primaryLocale, aiSettings, request };
 
       // Route-specific: load items
       const { items, ids } = await config.loadData(ctx);

@@ -3,14 +3,16 @@ import { BlockStack, Card, InlineStack, Text } from "@shopify/polaris";
 import { SettingsTranslationProbeTab } from "./SettingsTranslationProbeTab";
 import { SettingsPageSpeedProbeTab } from "./SettingsPageSpeedProbeTab";
 import { SettingsCollectionModelProbeTab } from "./SettingsCollectionModelProbeTab";
+import { SettingsMetaobjectProbeTab } from "./SettingsMetaobjectProbeTab";
 
-export type ProbeSubTab = "translationprobe" | "pagespeedprobe" | "collectionprobe";
+export type ProbeSubTab = "translationprobe" | "pagespeedprobe" | "collectionprobe" | "metaobjectprobe";
 
 interface Props {
   /** Same per-probe gates as before — one flag per sub-tab, not one for the group. */
   showTranslationProbe: boolean;
   showPageSpeedProbe: boolean;
   showCollectionProbe: boolean;
+  showMetaobjectProbe: boolean;
   initialSubTab?: ProbeSubTab;
 }
 
@@ -30,12 +32,14 @@ export function SettingsProbesTab({
   showTranslationProbe,
   showPageSpeedProbe,
   showCollectionProbe,
+  showMetaobjectProbe,
   initialSubTab,
 }: Props) {
   const subTabs: { id: ProbeSubTab; label: string }[] = [
     ...(showTranslationProbe ? [{ id: "translationprobe" as ProbeSubTab, label: "Translation" }] : []),
     ...(showPageSpeedProbe ? [{ id: "pagespeedprobe" as ProbeSubTab, label: "PageSpeed" }] : []),
     ...(showCollectionProbe ? [{ id: "collectionprobe" as ProbeSubTab, label: "Collection Model" }] : []),
+    ...(showMetaobjectProbe ? [{ id: "metaobjectprobe" as ProbeSubTab, label: "Metaobjects" }] : []),
   ];
 
   // Hooks must run unconditionally, so the fallback tolerates an empty list and
@@ -93,6 +97,9 @@ export function SettingsProbesTab({
 
       {/* Collection-Model Probe (PLAN_CONTENT_CREATION Phase 0 dev tool) */}
       {selected === "collectionprobe" && showCollectionProbe && <SettingsCollectionModelProbeTab />}
+
+      {/* Metaobject Probe (PLAN_METAOBJECTS_EDITOR Phase 0 dev tool) */}
+      {selected === "metaobjectprobe" && showMetaobjectProbe && <SettingsMetaobjectProbeTab />}
     </BlockStack>
   );
 }

@@ -7,8 +7,18 @@
 import type { ContentEditorConfig, FieldDefinition } from "../types/content-editor.types";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
+import { ColorFieldEditor } from "../components/metaobjects/ColorFieldEditor";
+import { MetaobjectFileField } from "../components/metaobjects/MetaobjectFileField";
+import { MetaobjectRichTextField } from "../components/metaobjects/MetaobjectRichTextField";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "./create-fields.config";
+import {
+  metaobjectFieldValueFor,
+  isTranslatableMetaobjectFieldType,
+  metaobjectFieldSpecs,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "../services/metaobject-fields.shared";
 
 // ============================================================================
 // PLAN_CONTENT_CREATION §Phase 3 — merchandising attributes
@@ -769,46 +779,93 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
     return `${count} ${count === 1 ? 'entry' : 'entries'}`;
   },
 
-  // Metaobjects use dynamic fields - one field per metaobject entry
+  // Metaobjects use dynamic fields — one field per ENTRY x FIELD (§6.1).
   fieldDefinitions: [],
 
   // Enable dynamic field generation
   dynamicFields: true,
 
-  // Generate field definitions: One field per metaobject (showing only display_name/name)
+  /**
+   * One control per editable field of every loaded entry.
+   *
+   * The key is `<Metaobject GID>#<field key>` and NOT the bare GID it used to
+   * be: a bare GID can only ever address one field, which is why this page
+   * could edit nothing but the label. The GID stays in FRONT because the
+   * server recognises a metaobject form field by that prefix.
+   *
+   * `groupId` is the entry's GID, so the editor renders one CARD per entry
+   * instead of a flat wall of inputs whose labels ("Label", "Colour", "Label",
+   * …) would repeat with nothing saying which entry they belong to.
+   *
+   * `translationKey` is EMPTY for a colour or a file reference. Those have one
+   * value per shop, and `resolve()` short-circuits an empty translation key to
+   * the primary value — sent down the foreign chain instead they would resolve
+   * to "" and the next save in a foreign locale would clear them. Same rule as
+   * the merchandising attributes, same reason.
+   */
   getFieldDefinitions: (item) => {
     if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return [];
+    const definitionFields = (item as { fieldDefinitions?: MetaobjectDefinitionFieldLike[] })
+      .fieldDefinitions;
 
-    // Create one field per metaobject, showing only the display_name/name
-    return (item.metaobjects as MetaobjectEntry[]).map((metaobj) => {
-      // Find the display_name or name field
-      const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
+    const filePreviews =
+      (item as { filePreviews?: Record<string, string> }).filePreviews ?? {};
 
-      return {
-        key: metaobj.id, // Use metaobject ID as field key
-        type: "text" as const,
-        label: metaobj.displayName || metaobj.handle || metaobj.id.split('/').pop() || metaobj.id,
-        translationKey: metaobj.id, // Must match the translation key in translations array
-        required: false,
-        supportsAI: false,
-        supportsFormatting: false,
-        supportsTranslation: true,
-        helpText: `Metaobject: ${metaobj.handle || metaobj.id.split('/').pop()}`,
-      };
+    return (item.metaobjects as MetaobjectEntry[]).flatMap((metaobj) => {
+      const entryTitle =
+        metaobj.displayName || metaobj.handle || metaobj.id.split("/").pop() || metaobj.id;
+      return metaobjectFieldSpecs(metaobj as MetaobjectEntryLike, definitionFields)
+        // `unsupported` fields get NO control — the card names them with their
+        // type instead, because a field that silently disappears looks like a
+        // bug while one with a reason is an explanation (§6.1).
+        .filter((spec) => spec.role !== "unsupported")
+        .map((spec): FieldDefinition => ({
+          key: spec.compoundKey,
+          groupId: metaobj.id,
+          type: spec.role === "textarea" ? ("textarea" as const) : ("text" as const),
+          label: spec.label,
+          translationKey: isTranslatableMetaobjectFieldType(spec.fieldType) ? spec.compoundKey : "",
+          required: spec.required === true,
+          supportsAI: false,
+          supportsFormatting: false,
+          supportsTranslation: isTranslatableMetaobjectFieldType(spec.fieldType),
+          multiline: spec.role === "textarea" ? 4 : undefined,
+          helpText:
+            spec.role === "list"
+              ? `${entryTitle} — separate values with |`
+              : spec.role === "richText"
+                ? `${entryTitle} — rich text, read-only here`
+                : entryTitle,
+          // Three types need their own control rather than a text box. The
+          // closure is built HERE because this is the only place that has both
+          // the field's Shopify type and the item's cached file previews.
+          renderField:
+            spec.role === "color"
+              ? (props) => <ColorFieldEditor {...props} />
+              : spec.role === "file"
+                ? (props) => (
+                    <MetaobjectFileField {...props} previewUrl={filePreviews[props.value] } />
+                  )
+                : spec.role === "richText"
+                  ? (props) => <MetaobjectRichTextField {...props} />
+                  : undefined,
+        }));
     });
   },
 
-  // Custom value getter: Get display_name value for each metaobject
-  getFieldValue: (item, fieldKey) => {
-    if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return "";
-
-    // fieldKey is the metaobject ID
-    const metaobj = (item.metaobjects as MetaobjectEntry[]).find((m) => m.id === fieldKey);
-    if (!metaobj) return "";
-
-    // Find the label field value
-    const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
-
-    return labelField?.value || metaobj.displayName || "";
-  },
+  /**
+   * The value of ONE field of ONE entry, addressed by the compound key.
+   *
+   * A bare metaobject GID (what an older client sends) resolves to the entry's
+   * label field, so a stale tab shows the right text instead of an empty one —
+   * the SAVE path refuses that shape rather than guessing, which is where the
+   * guess would actually cost something.
+   */
+  getFieldValue: (item, fieldKey) =>
+    metaobjectFieldValueFor(
+      item?.metaobjects as MetaobjectEntryLike[] | undefined,
+      (item as { fieldDefinitions?: MetaobjectDefinitionFieldLike[] })?.fieldDefinitions,
+      fieldKey,
+      isMetaobjectLabelField,
+    ),
 };

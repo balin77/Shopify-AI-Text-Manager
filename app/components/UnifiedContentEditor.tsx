@@ -32,7 +32,8 @@ import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-ru
 import { buildAttributeChecklist, needsAttributeSync } from "../services/attribute-checklist.shared";
 import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import type { ReactNode } from "react";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
@@ -66,6 +67,12 @@ import { useSidebarPanel } from "../contexts/SidebarPanelContext";
 import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTooltip } from "../utils/contentEditor.utils";
 import { countImagesWithAltForLocale } from "../utils/field-validation.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
+import { isGidOfResource } from "../config/create-fields.config";
+import {
+  metaobjectFieldValueFor,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "../services/metaobject-fields.shared";
 import { useI18n } from "../contexts/I18nContext";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
@@ -149,6 +156,59 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
+
+  /**
+   * Optional: wrap each GROUP of dynamic fields in the page's own chrome.
+   *
+   * Fields carrying the same `groupId` are handed over together, in order, and
+   * whatever comes back is rendered in their place. The metaobjects tab uses
+   * it to draw one CARD per entry (title, handle, swatch, delete) around that
+   * entry's controls -- chrome the generic editor has no business knowing
+   * about. Without this prop nothing changes: the fields render as a flat list
+   * exactly as before.
+   */
+  renderFieldGroup?: (groupId: string, children: ReactNode[]) => ReactNode;
+
+  /**
+   * Optional: values the create form opens with.
+   *
+   * The metaobjects tab uses it to preselect the TYPE the merchant is already
+   * looking at. The picker stays visible -- they may have meant a different
+   * type -- but asking again for something the page already knows is how the
+   * create button came to feel like a detour.
+   */
+  createPrefill?: Record<string, string>;
+
+  /**
+   * Optional: lock every dynamic field, with the page saying why elsewhere.
+   *
+   * The metaobjects tab uses it for a definition Shopify does not let this app
+   * write (§7.2). It is one flag rather than one per field because this page
+   * shows one definition at a time, and an editor that can save some of its
+   * controls and not others has to explain that per control -- which is the
+   * card's job, not the field's.
+   */
+  fieldsReadOnly?: boolean;
+
+  /**
+   * Optional: told after a successful create, INCLUDING when the cache sync
+   * failed (`synced: false`). The editor's own handling stays as it was; a page
+   * that keeps its own list (the metaobjects entries) needs to reload it, and
+   * "created but not synced" is precisely the case where it must NOT jump to
+   * the new object.
+   */
+  onItemCreated?: (info: { id: string; resource: string; synced: boolean; title: string | null }) => void;
+
+  /**
+   * Optional: the group ids to render, in order — INCLUDING groups that have
+   * no editable field at all.
+   *
+   * Deriving the order from the fields alone would drop exactly the entry with
+   * nothing editable on it, and an entry that silently disappears is the bug
+   * this whole page is being fixed for. With no value here the order comes
+   * from the fields themselves.
+   */
+  fieldGroupOrder?: string[];
 
   /** Optional: Remix revalidator for non-destructive data reload */
   revalidator?: { state: "idle" | "loading"; revalidate: () => void };
@@ -239,6 +299,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
+    renderFieldGroup,
+    createPrefill,
+    fieldsReadOnly = false,
+    onItemCreated,
+    fieldGroupOrder,
     revalidator,
     sortOptions,
     themeSelector,
@@ -517,7 +582,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     (isThemeContentType(config.contentType) &&
       state.currentLanguage === primaryLocale &&
       (!ENABLE_THEME_PRIMARY_EDIT || config.contentType !== "templates")) ||
-    isEmbedTechnical;
+    isEmbedTechnical ||
+    // §7.2 — the page knows this definition refuses our writes.
+    fieldsReadOnly;
 
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
@@ -567,6 +634,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           onReloadAttributes={() => { void handleSyncAll(); }}
         />
   );
+
+  /** One dynamic field, with the product image gallery's replacement slot. */
+  const renderContentField = (field: FieldDefinition): ReactNode => {
+    if (field.type === "image-gallery" && imageGalleryReplacement) {
+      return <div key={field.key}>{imageGalleryReplacement}</div>;
+    }
+    return renderEditorField(field);
+  };
+
+  /**
+   * The dynamic fields, bucketed by `groupId`, in the order `fieldGroupOrder`
+   * names — or first-appearance order when it does not.
+   *
+   * `fieldGroupOrder` also contributes EMPTY groups: an entry whose fields are
+   * all read-only still gets its card, with the card saying why it is empty.
+   */
+  const groupedContentFields = useMemo((): Array<[string, FieldDefinition[]]> => {
+    const buckets = new Map<string, FieldDefinition[]>();
+    for (const id of fieldGroupOrder ?? []) buckets.set(id, []);
+    for (const field of contentFields) {
+      const id = field.groupId ?? field.key;
+      const bucket = buckets.get(id);
+      if (bucket) bucket.push(field);
+      else buckets.set(id, [field]);
+    }
+    return [...buckets.entries()];
+  }, [contentFields, fieldGroupOrder]);
 
   // Single-language shop: every translate / copy-to-all-locales action has no
   // target and would only ever produce a "no target languages" warning. The
@@ -682,6 +776,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // revalidation has already run, so the list needs a second look.
     onTranslated: () => revalidator?.revalidate(),
     onCreated: (info) => {
+      // A page with its own sub-list hears about EVERY create, synced or not:
+      // it is the "not synced" case that decides whether it may jump to the
+      // new object, so withholding it would leave that decision unmade.
+      onItemCreated?.({ id: info.id, resource: info.resource, synced: info.synced, title: info.title });
       // §1.6: select the new item and refresh. When the cache sync failed the
       // item is NOT in the list yet — the banner says so and offers a reload
       // rather than pretending the create failed.
@@ -723,13 +821,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     },
   });
 
-  /** Which resource a given item id IS — the blogs tab holds two kinds. */
+  /**
+   * Which resource a given item id IS — the blogs tab holds two kinds.
+   *
+   * `null` means "this item is not a deletable object", and that is a real
+   * answer, not a fallback: the metaobjects tab lists TYPES
+   * (`metaobject_type_<type>`), which have no delete API at all. It used to
+   * return the tab's single create-resource for ANY id, so the type row got a
+   * Delete button that reached `deleteContent` with a pseudo id and 400d —
+   * after the merchant had typed the type name into the confirmation. The id
+   * now has to carry the resource's own GID segment.
+   */
   const resourceOfItem = useCallback(
     (itemId: string): DeletableResource | null => {
       if (itemId.includes("/Blog/")) return "blog";
-      const single = createResources.length === 1 ? createResources[0] : null;
-      if (single) return single;
       if (itemId.includes("/Article/")) return "article";
+      const single = createResources.length === 1 ? createResources[0] : null;
+      if (single && isGidOfResource(itemId, single)) return single;
       return null;
     },
     [createResources],
@@ -813,11 +921,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // One creatable resource opens its form directly; the blogs tab has two
     // (an article and the blog it lives in) and asks first.
     if (createResources.length === 1) {
-      createItem.open(createResources[0]);
+      createItem.open(createResources[0], createPrefill);
       return;
     }
     setChooserOpen(true);
-  }, [createResources, createItem]);
+  }, [createResources, createItem, createPrefill]);
   handleAddItemRef.current = handleAddItem;
 
   const createDisabledReason = useMemo(() => {
@@ -1334,7 +1442,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           };
                         })()
                       : {}),
-                    ...(createResources.length > 0 && selectedItem
+                    ...(selectedItem && resourceOfItem(selectedItem.id) !== null
                       ? {
                           onDuplicate: () => handleDuplicateItem(selectedItem.id),
                           duplicateLabel: t.content?.duplicateButtonLabel || "Duplicate",
@@ -1515,7 +1623,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           t={(t.content?.statusToggle ?? {}) as Record<string, string>}
                         />
                       )}
-                      {createResources.length > 0 && selectedItem && (
+                      {selectedItem && resourceOfItem(selectedItem.id) !== null && (
                         <>
                           <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
                             {t.content?.duplicateButtonLabel || "Duplicate"}
@@ -1653,13 +1761,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     )}
 
                     {/* Dynamic Fields — the item's TEXT. Its merchandising
-                        attributes render in their own card further down. */}
-                    {!isFieldsLoading && contentFields.map((field) => {
-                      if (field.type === "image-gallery" && imageGalleryReplacement) {
-                        return <div key={field.key}>{imageGalleryReplacement}</div>;
-                      }
-                      return renderEditorField(field);
-                    })}
+                        attributes render in their own card further down.
+                        With `renderFieldGroup` the page wraps each group of
+                        them in its own chrome (the metaobjects tab draws one
+                        card per entry); without it this is the flat list it
+                        has always been. */}
+                    {!isFieldsLoading && !renderFieldGroup && contentFields.map(renderContentField)}
+                    {!isFieldsLoading && renderFieldGroup &&
+                      groupedContentFields.map(([groupId, fields]) => (
+                        <Fragment key={groupId}>
+                          {renderFieldGroup(groupId, fields.map(renderContentField))}
+                        </Fragment>
+                      ))}
 
                     {/* Bottom Pagination (for easier navigation after scrolling) */}
                     {fieldPagination && fieldPagination.totalPages > 1 && onFieldPageChange && !isFieldsLoading && (
@@ -2236,14 +2349,21 @@ function getSourceText(item: TranslatableContentItem, fieldKey: string, primaryL
     }
   }
 
-  // For metaobjects: fieldKey is a metaobject GID, look up the label field value
-  const itemWithMetaobjects = item as TranslatableContentItem & { metaobjects?: MetaobjectEntry[] };
-  if (fieldKey.startsWith("gid://shopify/Metaobject/") && itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
-    const metaobj = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
-    if (metaobj) {
-      const labelField = metaobj.fields?.find((f) => isMetaobjectLabelField(f.key));
-      return labelField?.value || metaobj.displayName || "";
-    }
+  // Metaobjects: the field key is `<Metaobject GID>#<field key>` (§6.1), so the
+  // ONE reader that understands that shape answers here too — a local lookup by
+  // bare GID would silently report "no source text" for every field and grey out
+  // every translate button on the page.
+  const itemWithMetaobjects = item as TranslatableContentItem & {
+    metaobjects?: MetaobjectEntry[];
+    fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+  };
+  if (fieldKey.startsWith("gid://shopify/Metaobject/")) {
+    return metaobjectFieldValueFor(
+      itemWithMetaobjects.metaobjects as MetaobjectEntryLike[] | undefined,
+      itemWithMetaobjects.fieldDefinitions,
+      fieldKey,
+      isMetaobjectLabelField,
+    );
   }
 
   return "";

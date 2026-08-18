@@ -13,6 +13,11 @@ import { isThemeContentType } from "~/utils/content-type-groups";
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
+import {
+  metaobjectFieldValueFor,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { RULES_UNREADABLE } from "../config/collection-rules.shared";
@@ -213,16 +218,21 @@ export function getItemFieldValue(
     return content?.value || "";
   }
 
-  // Metaobjects: Check metaobjects array
-  // fieldKey is the metaobject ID, find the metaobject and get its label field
-  const itemWithMetaobjects = item as { metaobjects?: MetaobjectEntry[] };
+  // Metaobjects: the field key is `<Metaobject GID>#<field key>` (§6.1). Only
+  // reached when no config was passed — METAOBJECTS_CONFIG has a getFieldValue
+  // and short-circuits above — but it answers through the SAME reader so the
+  // two cannot disagree about what a compound key means.
+  const itemWithMetaobjects = item as {
+    metaobjects?: MetaobjectEntry[];
+    fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+  };
   if (itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
-    const metaobject = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
-    if (metaobject) {
-      // Find the label field (display_name, name, or label)
-      const labelField = metaobject.fields?.find((f) => isMetaobjectLabelField(f.key));
-      return labelField?.value || metaobject.displayName || "";
-    }
+    return metaobjectFieldValueFor(
+      itemWithMetaobjects.metaobjects as MetaobjectEntryLike[] | undefined,
+      itemWithMetaobjects.fieldDefinitions,
+      fieldKey,
+      isMetaobjectLabelField,
+    );
   }
 
   // Standard content types: Common field mappings

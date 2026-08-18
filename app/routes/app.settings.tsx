@@ -437,6 +437,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // gate. The route additionally refuses its WRITE test outside
     // APP_ENV=development; a hidden tab is not a permission check.
     const showCollectionProbeTab = showTranslationProbeTab;
+    // PLAN_METAOBJECTS_EDITOR Phase 0: metaobject probe (V1-V5, M2) — same
+    // dev-only gate, and the route refuses itself outside development too
+    // because two of its four steps WRITE to the merchant's live shop.
+    const showMetaobjectProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -494,6 +498,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showSkuTab,
       showTranslationProbeTab,
       showCollectionProbeTab,
+      showMetaobjectProbeTab,
       showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
@@ -1193,7 +1198,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1210,7 +1215,8 @@ export default function SettingsPage() {
 
   // The three dev-only probes share ONE tab with a sub-tab strip. Their gates
   // stay per probe (unchanged), so the tab itself exists iff any of them is on.
-  const showProbesTab = showTranslationProbeTab || showPageSpeedProbeTab || showCollectionProbeTab;
+  const showProbesTab =
+    showTranslationProbeTab || showPageSpeedProbeTab || showCollectionProbeTab || showMetaobjectProbeTab;
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
@@ -1234,6 +1240,7 @@ export default function SettingsPage() {
     if (tabParam === "translationprobe") return showTranslationProbeTab ? "probes" : "setup";
     if (tabParam === "pagespeedprobe") return showPageSpeedProbeTab ? "probes" : "setup";
     if (tabParam === "collectionprobe") return showCollectionProbeTab ? "probes" : "setup";
+    if (tabParam === "metaobjectprobe") return showMetaobjectProbeTab ? "probes" : "setup";
     if (tabParam === "probes") return showProbesTab ? "probes" : "setup";
     if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
       return tabParam as Section;
@@ -1248,6 +1255,7 @@ export default function SettingsPage() {
     if (tabParam === "translationprobe" && showTranslationProbeTab) return "translationprobe";
     if (tabParam === "pagespeedprobe" && showPageSpeedProbeTab) return "pagespeedprobe";
     if (tabParam === "collectionprobe" && showCollectionProbeTab) return "collectionprobe";
+    if (tabParam === "metaobjectprobe" && showMetaobjectProbeTab) return "metaobjectprobe";
     return undefined;
   };
 
@@ -1661,6 +1669,7 @@ export default function SettingsPage() {
                   showTranslationProbe={showTranslationProbeTab}
                   showPageSpeedProbe={showPageSpeedProbeTab}
                   showCollectionProbe={showCollectionProbeTab}
+                  showMetaobjectProbe={showMetaobjectProbeTab}
                   initialSubTab={initialProbeSubTab}
                 />
               )}
