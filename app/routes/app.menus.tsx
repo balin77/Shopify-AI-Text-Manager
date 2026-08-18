@@ -123,7 +123,11 @@ export default function MenusPage() {
           no definite height here). It therefore has to subtract the bottom
           inset itself — the app shell's padding-bottom does not reach a box
           sized off the viewport. */}
-      <div className="app-page-width-full" style={{ height: `calc(var(--app-shell-height) - ${getTotalNavHeight()}px - var(--app-bottom-inset))`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
+      {/* Capped at the shared content width (.app-page-width-start,
+          responsive.css :root) — this page has no SEO-score sidebar, so nothing
+          else would stop the editor column from growing on a wide screen.
+          Left-aligned, so the menus list stays flush with the gutter. */}
+      <div className="app-page-width-start" style={{ height: `calc(var(--app-shell-height) - ${getTotalNavHeight()}px - var(--app-bottom-inset))`, display: "flex", gap: "1rem", padding: "1rem", overflow: "hidden" }}>
         {/* Left Sidebar - Menus List. Width from --app-list-column-width
             (responsive.css :root), the same token every other item column of
             the app spends — do not hardcode a width here. */}
