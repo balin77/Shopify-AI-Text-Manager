@@ -52,6 +52,7 @@ import { handleBulkEditorTranslate } from "./api-ai-handlers/bulk-editor-transla
 import { handleDistributeKeywords } from "./api-ai-handlers/keyword-distribution.handler";
 import { handleInsertKeyword } from "./api-ai-handlers/keyword-insert.handler";
 import { handleSeoRobotsAdvice } from "./api-ai-handlers/seo-robots-advice.handler";
+import { handleAiDiscoveryIntro } from "./api-ai-handlers/ai-discovery-intro.handler";
 import { handleGenerateTemplateTitles } from "./api-ai-handlers/template-titles.handler";
 
 // Actions that never call an AI provider — they only read/write the DB
@@ -162,6 +163,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return handleGenerateTemplateTitles(ctx);
       case "seoRobotsAdvice":
         return handleSeoRobotsAdvice(ctx);
+      case "aiDiscoveryIntro":
+        return handleAiDiscoveryIntro(ctx);
       default:
         return json({ success: false, error: `Unknown action: ${actionType}` }, { status: 400 });
     }

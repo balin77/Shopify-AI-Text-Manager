@@ -587,9 +587,21 @@ export function ItemSidebar({
                     .replace("{sentences}", String(readability.sentences))
                     .replace("{avg}", String(readability.avgSentenceWords))}
                 </Text>
-                {readability.readingEase === null && (
+                {readability.readingEase === null ? (
                   <Text as="p" variant="bodySm" tone="subdued">
                     {rd.noFormula}
+                  </Text>
+                ) : (
+                  /* Naming the formula is what stops the number from reading as
+                     universal: the same text scores lower in German than in
+                     English because German words carry more syllables, not
+                     because it reads worse. Without this the badge invites
+                     exactly the cross-language comparison it cannot support. */
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {rd.formulaNote.replace(
+                      "{formula}",
+                      rd.formulaName[readability.readingEaseFormula!],
+                    )}
                   </Text>
                 )}
                 {readability.findings.length === 0 ? (

@@ -28,6 +28,14 @@ import { meetsPlan } from "../../utils/planUtils";
 import type { Plan } from "../../config/plans";
 import { GET_THEMES, GET_THEME_FILES } from "../../graphql/content.queries";
 import { UPSERT_THEME_FILES, DELETE_THEME_FILES } from "../../graphql/content.mutations";
+import {
+  AI_DISCOVERY_INTRO_MAX_CHARS,
+  normalizeDiscoveryIntro,
+} from "./ai-discovery-intro.shared";
+
+// Re-exported so the service stays the one import for everything about these
+// files; the editor imports them from the shared module directly.
+export { AI_DISCOVERY_INTRO_MAX_CHARS, normalizeDiscoveryIntro };
 
 /**
  * AI crawler user-agents to audit in robots.txt (2026). Mix of training and
@@ -75,6 +83,23 @@ export interface LlmsTxtInput {
   description?: string | null;
   products: LlmsTxtItem[];
   collections: LlmsTxtItem[];
+  /**
+   * Merchant-authored opening paragraph, replacing the generated one. Only the
+   * PROSE is editable: the sections below it are a catalog projection and a
+   * hand-edited product list would go stale on the next price or handle change
+   * (and the auto-refresh would overwrite it anyway). Empty/undefined keeps the
+   * generated default.
+   */
+  intro?: string | null;
+}
+
+/**
+ * The generated opening sentence of agents.md — exported so the editor can
+ * prefill its box and offer "back to the generated text" without restating it.
+ */
+export function defaultAgentsIntro(shopName: string): string {
+  const name = oneLine(shopName) || "Shop";
+  return `This file describes ${mdText(name)} for AI assistants and shopping agents. It is maintained by the store owner.`;
 }
 
 function baseUrl(domain: string): string {
@@ -114,6 +139,12 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
   const summary = oneLine(input.description, 250);
   if (summary) {
     lines.push(`> ${summary}`);
+    lines.push("");
+  }
+
+  const intro = normalizeDiscoveryIntro(input.intro);
+  if (intro) {
+    lines.push(intro);
     lines.push("");
   }
 
@@ -168,9 +199,10 @@ export function buildAgentsMd(input: AgentsMdInput): string {
     lines.push(`> ${summary}`);
     lines.push("");
   }
-  lines.push(
-    `This file describes ${mdText(name)} for AI assistants and shopping agents. It is maintained by the store owner.`,
-  );
+  // The merchant's own words replace the generated sentence rather than being
+  // appended to it: two opening paragraphs saying the same thing in different
+  // registers is exactly what an agent quotes back at a customer.
+  lines.push(normalizeDiscoveryIntro(input.intro) || defaultAgentsIntro(name));
   lines.push("");
 
   if (input.collections.length > 0) {
@@ -734,6 +766,79 @@ export function buildRobotsAdvicePrompt(rules: RobotsRuleAssessment[], language:
   ].join("\n");
 }
 
+// ── AI-discovery intro: rewrite with AI ──────────────────────────────────────
+
+export interface DiscoveryIntroPromptInput {
+  file: AiDiscoveryFile;
+  shopName: string;
+  /** `shop.description`, for context — never copied verbatim. */
+  description?: string | null;
+  /** What the box holds right now. Empty on the first pass. */
+  current: string;
+  /** The merchant's instruction ("mention that we ship from Switzerland"). */
+  instruction: string;
+  /** UI language — the answer is written in the language of the FILE, see below. */
+  language: string;
+}
+
+/**
+ * Prompt for rewriting the merchant-authored intro of agents.md / llms.txt.
+ *
+ * Two constraints carry the weight. The output is a document fragment, not a
+ * chat reply, so the prompt forbids headings and lists: the intro sits between
+ * a generated `> summary` line and generated `##` sections, and a model that
+ * answers with its own "## About us" heading silently restructures the file.
+ * And it must not state prices, stock or delivery times — the whole point of
+ * `## Notes for agents` is that those live on the product page; an intro that
+ * promises "ships in 24h" turns a periodically regenerated file into a claim
+ * the shop has to keep true.
+ */
+export function buildDiscoveryIntroPrompt(input: DiscoveryIntroPromptInput): string {
+  const target =
+    input.file === "agents"
+      ? "agents.md, the file AI shopping assistants read before recommending or buying from this store"
+      : "llms.txt, the file AI crawlers read to understand what this store is";
+  const summary = oneLine(input.description, 400);
+  return [
+    `You are writing the opening paragraph of ${target}.`,
+    "",
+    `Store name: ${oneLine(input.shopName) || "Shop"}`,
+    summary ? `Store description: ${summary}` : "",
+    "",
+    input.current.trim()
+      ? "Current text:\n" + input.current.trim()
+      : "There is no text yet — write the first version.",
+    "",
+    "The merchant asks for this:",
+    input.instruction.trim(),
+    "",
+    "Rules:",
+    "- Answer with the paragraph text ONLY. No preamble, no explanation, no code fences.",
+    "- Plain prose. No Markdown headings, no bullet lists, no links.",
+    "- At most 3 short paragraphs, well under 1200 characters in total.",
+    "- Never state prices, stock levels, discounts or delivery times: this file is",
+    "  regenerated periodically and those belong on the product page.",
+    "- Do not invent facts about the store. Use only what is given above and what the",
+    "  merchant asked for.",
+    `- Write it in this language: ${input.language}.`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+/**
+ * Clean a model answer into an intro: strip code fences and any leading heading
+ * it added anyway, then normalize like stored input. Pure.
+ */
+export function parseDiscoveryIntroResponse(raw: string): string {
+  const cleaned = (raw || "")
+    .replace(/^\s*```(?:markdown|md|text)?\s*/i, "")
+    .replace(/```\s*$/, "")
+    .replace(/^\s*#{1,6}\s+.*(?:\n|$)/, "")
+    .trim();
+  return normalizeDiscoveryIntro(cleaned);
+}
+
 /**
  * Parse the model's advice, keeping only entries for paths we actually asked
  * about. Anything malformed, unknown or not explicitly `remove` degrades to
@@ -896,6 +1001,8 @@ export interface BuiltAiDiscovery extends BuiltLlmsTxt {
   /** agents.md content — same catalog, agent-facing document (buildAgentsMd). */
   agentsContent: string;
   policyCount: number;
+  /** The stored merchant intros used for this build; "" where none is set. */
+  intros: Record<AiDiscoveryFile, string>;
 }
 
 /**
@@ -923,7 +1030,7 @@ export async function buildAiDiscoveryForShop(
   domain: string,
   description = "",
 ): Promise<BuiltAiDiscovery> {
-  const [products, collections, policies] = await Promise.all([
+  const [products, collections, policies, settings] = await Promise.all([
     // ACTIVE only, and this one must stay that way: llms.txt is a published
     // file that hands crawlers a list of URLs. Listing unlisted products there
     // would publish exactly the direct links the status exists to keep
@@ -957,6 +1064,14 @@ export async function buildAiDiscoveryForShop(
       select: { title: true, type: true, body: true },
       orderBy: { type: "asc" },
     }),
+    // Read here rather than passed in by each caller: the staleness comparison,
+    // the background refresh and the merchant's own "generate" button all go
+    // through this builder, and an intro that only reached one of them would
+    // make the file report itself stale forever.
+    db.aISettings.findUnique({
+      where: { shop },
+      select: { aiDiscoveryIntroAgents: true, aiDiscoveryIntroLlms: true },
+    }),
   ]);
 
   const mappedProducts = products.map((p: any) => ({
@@ -973,12 +1088,16 @@ export async function buildAiDiscoveryForShop(
       url: `${base}${policyPath(p.type)}`,
     }));
 
+  const introLlms = normalizeDiscoveryIntro(settings?.aiDiscoveryIntroLlms);
+  const introAgents = normalizeDiscoveryIntro(settings?.aiDiscoveryIntroAgents);
+
   const content = buildLlmsTxt({
     shopName,
     domain,
     description,
     products: mappedProducts,
     collections: mappedCollections,
+    intro: introLlms,
   });
 
   const agentsContent = buildAgentsMd({
@@ -988,6 +1107,7 @@ export async function buildAiDiscoveryForShop(
     products: mappedProducts,
     collections: mappedCollections,
     policies: mappedPolicies,
+    intro: introAgents,
   });
 
   return {
@@ -996,6 +1116,7 @@ export async function buildAiDiscoveryForShop(
     productCount: products.length,
     collectionCount: collections.length,
     policyCount: mappedPolicies.length,
+    intros: { llms: introLlms, agents: introAgents },
   };
 }
 
@@ -1418,16 +1539,20 @@ export interface AeoAnalysis {
   /** What the *current* generated file would contain. */
   llmsProductCount: number;
   llmsCollectionCount: number;
-  /** First lines of the freshly built file, for the preview panel. */
-  llmsPreview: string;
   /** Public URL the file is served from, for the merchant to verify. */
   llmsUrl: string;
   /** Per-file status incl. live-delivery evidence (llms.txt AND agents.md). */
   aiDiscovery: Record<AiDiscoveryFile, AiDiscoveryStatus>;
-  /** First lines of the freshly built agents.md, for the preview panel. */
-  agentsPreview: string;
   /** Policies linked from the generated agents.md. */
   agentsPolicyCount: number;
+  /** The merchant's stored intro per file; "" where none is set. */
+  intros: Record<AiDiscoveryFile, string>;
+  /**
+   * What the intro would be with nothing stored — the editor prefills its box
+   * with this and offers it as "back to the generated text". llms.txt has no
+   * generated intro at all, so its default is the empty string.
+   */
+  defaultIntros: Record<AiDiscoveryFile, string>;
   /** `AEO_THEME_WRITES` — false hides/blocks every theme-writing action. */
   themeWrites: boolean;
   /** Merchant switch for the periodic llms.txt refresh (`AISettings`). */
@@ -1524,9 +1649,8 @@ export async function analyzeAeo(
 ): Promise<AeoAnalysis> {
   let llmsProductCount = 0;
   let llmsCollectionCount = 0;
-  let llmsPreview = "";
-  let agentsPreview = "";
   let agentsPolicyCount = 0;
+  const intros: Record<AiDiscoveryFile, string> = { llms: "", agents: "" };
   const base = baseUrl(llms.domain || shop);
   const aiDiscovery: Record<AiDiscoveryFile, AiDiscoveryStatus> = {
     llms: { ...EMPTY_DISCOVERY_STATUS, url: `${base}${AI_DISCOVERY_PATHS.llms}` },
@@ -1542,9 +1666,9 @@ export async function analyzeAeo(
     );
     llmsProductCount = built.productCount;
     llmsCollectionCount = built.collectionCount;
-    llmsPreview = built.content;
-    agentsPreview = built.agentsContent;
     agentsPolicyCount = built.policyCount;
+    intros.llms = built.intros.llms;
+    intros.agents = built.intros.agents;
 
     const freshFor: Record<AiDiscoveryFile, string> = {
       llms: built.content,
@@ -1599,11 +1723,11 @@ export async function analyzeAeo(
     llmsTxtUpToDate,
     llmsProductCount,
     llmsCollectionCount,
-    llmsPreview,
     llmsUrl: aiDiscovery.llms.url,
     aiDiscovery,
-    agentsPreview,
     agentsPolicyCount,
+    intros,
+    defaultIntros: { llms: "", agents: defaultAgentsIntro(llms.shopName) },
     themeWrites: themeWritesEnabled(),
     llmsAutoUpdate: llms.autoUpdate,
     shopDescriptionMissing: llms.description.trim().length === 0,

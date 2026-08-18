@@ -85,6 +85,17 @@ model AISettings {
   // through the in-app path skip the sweep entirely.
   llmsTxtLastAutoRunAt DateTime?
 
+  // Merchant-authored opening paragraph of the two AI-discovery files
+  // (SEO → AI search, step 2). Everything else in those documents is generated
+  // from the catalog and MUST stay generated — a hand-edited product list goes
+  // stale the moment a price or a handle changes, and the auto-refresh would
+  // overwrite it anyway. The intro is the one part no catalog query can know:
+  // who is behind the shop, where it ships, what it wants an agent to say
+  // about it. NULL means "use the generated default", which is what every shop
+  // starts with.
+  aiDiscoveryIntroAgents String?
+  aiDiscoveryIntroLlms   String?
+
   // "Übersetzungen mitführen" on SEO → interne Verlinkung. Accepting a
   // suggestion only wraps an existing word in an <a>, so the wording is
   // unchanged and the primary save's stale-translation purge would throw away
