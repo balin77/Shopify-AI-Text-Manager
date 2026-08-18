@@ -73,6 +73,9 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
   const [loadError, setLoadError] = useState<string | null>(null);
   const [planBlocked, setPlanBlocked] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** Mirrors `saving` for the re-entrancy guard: state read inside the same
+   *  handler is still the value from the render that scheduled it. */
+  const savingRef = useRef(false);
   const [notices, setNotices] = useState<string[]>([]);
 
   /**
@@ -143,9 +146,15 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           setEdits({});
           setItemEdits({});
         }
-        setChannelState(
-          Object.fromEntries((body.channels ?? []).map((c: CommerceChannelView) => [c.publicationId, c.isPublished])),
-        );
+        // Reseeded ONLY when the edits are being dropped anyway. It used to run
+        // unconditionally, so activating a location silently reverted an
+        // unticked sales channel — and with `dirtyChannels` back to empty the
+        // save bar vanished, telling the merchant there was nothing to save.
+        if (!keepEdits) {
+          setChannelState(
+            Object.fromEntries((body.channels ?? []).map((c: CommerceChannelView) => [c.publicationId, c.isPublished])),
+          );
+        }
       })
       .catch(() => {
         if (token !== loadToken.current) return;
@@ -294,7 +303,12 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     dirtyChannels.toUnpublish.length > 0;
 
   const save = useCallback(async () => {
-    if (!data) return;
+    // A second click while the first write is in flight would send the same
+    // `compareQuantity` twice: the second is refused and reported as "the stock
+    // changed meanwhile" — a frightening message caused by the merchant's own
+    // double click.
+    if (!data || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setNotices([]);
     const collected: string[] = [];
@@ -395,6 +409,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
         collected.push(...warnings.map((code) => t.warnings?.[code] || code));
       }
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
     setNotices(collected);
@@ -415,16 +430,29 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
    * this file shipped once already.
    */
   const registerCommerceSave = useRegisterCommerceSave();
+  /** What the save bar's Discard throws away here. Without it, discarding a
+   *  typed quantity left the bar visible and the write still armed: the next
+   *  Save for an unrelated title edit fired the stock change the merchant
+   *  believed they had dropped. */
+  const discard = useCallback(() => {
+    setEdits({});
+    setItemEdits({});
+    setNotices([]);
+    setChannelState(
+      Object.fromEntries((data?.channels ?? []).map((c) => [c.publicationId, c.isPublished])),
+    );
+  }, [data]);
+
   useEffect(() => {
     if (!isPrimaryLocale || planBlocked) {
       registerCommerceSave(null);
       return;
     }
-    registerCommerceSave({ hasChanges, save });
+    registerCommerceSave({ hasChanges, save, discard });
     // Unregistering on unmount matters: a stale `save` bound to the previous
     // product would otherwise write that product's numbers.
     return () => registerCommerceSave(null);
-  }, [registerCommerceSave, hasChanges, save, isPrimaryLocale, planBlocked]);
+  }, [registerCommerceSave, hasChanges, save, discard, isPrimaryLocale, planBlocked]);
 
   if (!isPrimaryLocale) {
     return (

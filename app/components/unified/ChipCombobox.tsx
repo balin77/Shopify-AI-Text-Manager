@@ -74,6 +74,13 @@ export function ChipCombobox({
 
   const byValue = useMemo(() => new Map(options.map((o) => [o.value, o])), [options]);
   const chosen = useMemo(() => new Set(selected), [selected]);
+  /** Case-INSENSITIVE, because Shopify collapses "Sale" and "sale" into one
+   *  tag. Without it, typing the other casing cleared the input and added
+   *  nothing, with no sign that anything had been refused. */
+  const chosenFolded = useMemo(
+    () => new Set(selected.map((v) => v.trim().toLowerCase())),
+    [selected],
+  );
 
   /**
    * What the dropdown offers.
@@ -89,7 +96,15 @@ export function ChipCombobox({
     return options
       .filter((o) => !chosen.has(o.value) && o.label.toLowerCase().includes(query))
       .slice(0, 20)
-      .map((o) => ({ value: o.value, label: o.label }));
+      .map((o) => ({
+        value: o.value,
+        // A locked option stays LISTED and carries its reason. Filtering it out
+        // would leave the merchant searching for a collection that is right
+        // there; offering it as a plain row made the click do nothing at all,
+        // with nothing said. Polaris has no disabled state here, so the reason
+        // rides in the label.
+        label: o.lockedReason ? `${o.label} — ${o.lockedReason}` : o.label,
+      }));
   }, [input, options, chosen]);
 
   const add = (value: string) => {
@@ -100,7 +115,7 @@ export function ChipCombobox({
     // not about which direction it is being changed in.
     if (option?.lockedReason) return;
     if (!option && !allowFreeText) return;
-    if (chosen.has(clean)) return;
+    if (chosenFolded.has(clean.toLowerCase())) return;
     onChange([...selected, clean]);
     setInput("");
   };

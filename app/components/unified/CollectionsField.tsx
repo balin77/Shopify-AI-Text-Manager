@@ -152,8 +152,8 @@ export function CollectionsField({
 
   return (
     <BlockStack gap="200">
-      <Text as="p" variant="bodyMd">{label}</Text>
-
+      {/* No label here — the combobox below renders it. Two of them stacked is
+          what the first cut showed. */}
       {failed && (
         <Banner tone="warning">
           <p>{t.lookupFailed || "The collection list could not be loaded, so only the current memberships are shown."}</p>

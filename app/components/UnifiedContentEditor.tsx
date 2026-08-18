@@ -1200,6 +1200,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 onDiscard={() => {
                   handlers.handleDiscard();
                   subResourceHandlers?.resetChanges?.();
+                  // Third writer, same button — as with Save. Without this a
+                  // discarded quantity stayed in the input AND kept the bar
+                  // visible, and the next unrelated Save fired the stock write
+                  // the merchant thought they had dropped.
+                  commerceSave.discard();
                 }}
                 saveText={t.content?.save || "Save"}
                 discardText={t.content?.discardChanges || "Discard"}

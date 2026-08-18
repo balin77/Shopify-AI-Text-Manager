@@ -177,9 +177,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
         data?: { locations?: { nodes?: Array<{ id: string; name: string; isActive: boolean }> } };
       };
       shopLocations = locationsBody.data?.locations?.nodes ?? [];
-    } catch {
+    } catch (error) {
       // Leaves `shopLocations` empty, which renders exactly what this route
-      // showed before: the stocked locations only.
+      // showed before: the stocked locations only. LOGGED rather than
+      // swallowed, because a silent empty list is indistinguishable from a shop
+      // with one location — the very confusion this query exists to end.
+      logger.warn("[Commerce] Shop locations could not be read", {
+        context: "Commerce", shop: session.shop,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     // `Product.id` is the FULL GID in this schema (unlike `ProductVariant.id`,

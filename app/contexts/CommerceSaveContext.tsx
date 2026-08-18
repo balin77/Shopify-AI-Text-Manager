@@ -20,13 +20,15 @@
  * nothing to do with it.
  */
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 
 export interface CommerceSaveApi {
   /** True while the panel holds unsaved stock, item-field or channel edits. */
   hasChanges: boolean;
   /** Runs the panel's own save. Never throws — failures surface in the panel. */
   save: () => Promise<void>;
+  /** Throws the panel's unsaved edits away, for the save bar's Discard. */
+  discard: () => void;
 }
 
 interface CommerceSaveContextValue {
@@ -46,30 +48,51 @@ const NOOP = () => undefined;
 /**
  * Provides the registry AND reports what is registered.
  *
- * Returns the current api as state rather than a ref: the save bar's `hasChanges`
- * has to RE-RENDER when the panel becomes dirty, which a ref cannot do.
+ * ── Why the functions live in a REF and only the flag is state ──────────────
+ * The first cut kept the whole api in state and compared identities before
+ * setting it. That looked careful and was a render loop: the editor builds the
+ * panel's `t` bag inline, so it is a new object every render; the panel's
+ * `save` closes over `t`, so it is a new function every render; the effect that
+ * registers depends on `save`, so it runs every render; and the identity
+ * compare could therefore never match. Each registration set state, which
+ * re-rendered the editor, which built a new `t` — until React gave up and the
+ * editor dropped into its error boundary. Opening any product did it.
+ *
+ * A ref for the functions and a BOOLEAN for the flag removes the cycle by
+ * construction: `setHasChanges(false)` when it is already false is a no-op in
+ * React, so a re-registration that changes nothing observable renders nothing.
+ * There is no identity to compare and nothing to get wrong later.
+ *
+ * Reading the functions through a ref is safe here because they are only ever
+ * called from an event handler (the save bar's buttons), never during render.
  */
 export function useCommerceSaveRegistry() {
-  const [api, setApi] = useState<CommerceSaveApi | null>(null);
+  const apiRef = useRef<CommerceSaveApi | null>(null);
+  const [hasChanges, setHasChanges] = useState(false);
 
   const register = useCallback((next: CommerceSaveApi | null) => {
-    // Compared field by field: the panel re-registers on every keystroke (its
-    // `hasChanges` is derived), and storing a fresh object each time would
-    // re-render the whole editor per character.
-    setApi((prev) => {
-      if (prev === next) return prev;
-      if (prev && next && prev.hasChanges === next.hasChanges && prev.save === next.save) return prev;
-      return next;
-    });
+    apiRef.current = next;
+    setHasChanges(next?.hasChanges === true);
   }, []);
 
   const value = useMemo(() => ({ register }), [register]);
+
+  // Stable identities: the save bar's props must not change every render
+  // either, and reading through the ref keeps these two functions constant for
+  // the lifetime of the editor.
+  const save = useCallback(async () => {
+    await apiRef.current?.save();
+  }, []);
+  const discard = useCallback(() => {
+    apiRef.current?.discard();
+  }, []);
 
   return {
     /** Wrap the editor subtree in this. */
     Provider: CommerceSaveContext.Provider,
     value,
-    hasChanges: api?.hasChanges === true,
-    save: api?.save,
+    hasChanges,
+    save,
+    discard,
   };
 }
