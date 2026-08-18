@@ -268,8 +268,14 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 würde die Bulk-Auto-Zuweisung brechen. Das stimmt nicht. `parseFilenames.ts`
 wertet den Dateinamen **beim Drop** aus und schreibt das Ergebnis in die
 Variantenzuordnung (`custom.variant_gallery` bzw. den Image-Key); danach liest
-kein Pfad den Dateinamen je wieder. Die Konvention lebt genau bis zum Upload,
-und nur dort.
+kein Pfad den Dateinamen je wieder **für die Zuordnung**. Die Konvention lebt
+genau bis zum Upload, und nur dort.
+
+Einen zweiten Leser gibt es allerdings, und den würde ein nachträgliches
+Umbenennen treffen: `image-alt-match.ts` ordnet Crawl-Befunde zu fehlenden
+Alt-Texten über den normalisierten Dateinamen-Stamm den `ProductImage`-Zeilen
+zu. Nach einer Massenumbenennung fehlt der „Alt-Text erzeugen"-Link so lange,
+bis der nächste Produkt-Sync die URLs neu einliest.
 
 Was bleibt, ist die nüchterne Nutzenfrage: Alt-Text, Bildunterschrift und
 umgebender Text sind die stärkeren Signale, und die deckt die App bereits ab.

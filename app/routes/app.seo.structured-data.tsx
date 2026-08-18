@@ -481,7 +481,6 @@ export default function SeoStructuredData() {
     "schemaOrganization",
     "schemaBreadcrumb",
     "schemaVideo",
-    "schemaFaq",
   ];
 
   const fixUrlFor = (kind: FixLinkKind): string | null => {

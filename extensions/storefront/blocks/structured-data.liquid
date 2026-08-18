@@ -457,7 +457,11 @@
   that stays out of reach.
 
   `duration` is milliseconds in Liquid and ISO-8601 in schema.org, hence the
-  divide/modulo. External videos have no duration and skip the property.
+  divide/modulo.
+
+  The cap counts VIDEOS EMITTED, not media scanned: `product.media` mixes
+  images and videos, so a `limit:` on the loop would silently skip the video of
+  a product whose first ten media are photos. External videos have no duration and skip the property.
 {%- endcomment -%}
 {%- if want_video and request.page_type == 'product' and product -%}
   {%- assign v_desc = product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500 -%}
@@ -466,7 +470,9 @@
   {%- if vud_raw != blank -%}
     {%- assign v_upload = vud_raw | date: '%Y-%m-%d' -%}
   {%- endif -%}
-  {%- for v_media in product.media limit: 10 -%}
+  {%- assign v_printed = 0 -%}
+  {%- for v_media in product.media -%}
+    {%- if v_printed >= 5 -%}{%- break -%}{%- endif -%}
     {%- if v_media.media_type == 'video' or v_media.media_type == 'external_video' -%}
       {%- liquid
         assign v_thumb = ''
@@ -522,14 +528,15 @@
   "@context": "https://schema.org",
   "@type": "VideoObject",
   "name": {{ v_media.alt | default: product.title | json }},
-  "description": {{ v_desc | json }},
   "thumbnailUrl": [{{ v_thumb | json }}]
+  {%- if v_desc != blank -%}, "description": {{ v_desc | json }}{%- endif -%}
   {%- if v_upload != blank -%}, "uploadDate": {{ v_upload | json }}{%- endif -%}
   {%- if v_content != blank -%}, "contentUrl": {{ v_content | json }}{%- endif -%}
   {%- if v_embed != blank -%}, "embedUrl": {{ v_embed | json }}{%- endif -%}
   {%- if v_duration != blank -%}, "duration": {{ v_duration | json }}{%- endif -%}
 }
 </script>
+        {%- assign v_printed = v_printed | plus: 1 -%}
       {%- endif -%}
     {%- endif -%}
   {%- endfor -%}

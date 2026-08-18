@@ -2014,7 +2014,7 @@ export const es: Translation = {
       schemaBreadcrumb: "Migas de pan (BreadcrumbList)",
       schemaVideo: "Vídeo (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "El vídeo y las FAQ se generan en la tienda —a partir de tus medios de producto y del metacampo \"custom.faq\"—, por eso no aparecen en la vista previa de abajo. El resultado enriquecido de vídeo de Google necesita además una fecha de subida que la tienda no expone: indícala en el metacampo de producto \"custom.video_upload_date\" (tipo fecha) si la quieres; si no, omitimos la propiedad en lugar de inventarla.",
+      schemaVideoNote: "El vídeo se genera en la tienda —a partir de tus medios de producto—, por eso no aparece en la vista previa de abajo. El resultado enriquecido de vídeo de Google necesita además una fecha de subida que la tienda no expone: indícala en el metacampo de producto \"custom.video_upload_date\" (tipo fecha) si la quieres; si no, omitimos la propiedad en lugar de inventarla. Las FAQ (FAQPage) se añaden en cuanto actives el interruptor en el editor de temas y el metacampo \"custom.faq\" tenga contenido: ambas cosas están desactivadas a propósito.",
       setBrandLogo: "Configurar logo en los activos de marca",
       openSampleProduct: "Abrir producto de ejemplo",
       openSampleArticle: "Abrir artículo de ejemplo",

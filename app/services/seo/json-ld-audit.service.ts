@@ -346,6 +346,19 @@ const EQUIVALENT_TYPE: Record<string, string> = {
 };
 
 /** Canonical name a type is counted under when looking for duplicates. */
+/**
+ * Types that legitimately appear MORE THAN ONCE on one page, so the duplicate
+ * rule must not fire on them.
+ *
+ * The rule exists to catch the classic Shopify defect: the theme emits a
+ * Product and an app emits a second one, and Google sees two claims about the
+ * same page. A page with three product videos carries three VideoObjects for
+ * the same reason it carries three videos — that is the markup working, not a
+ * collision. Without this exception our own storefront block would trip our own
+ * audit and blame the app for it.
+ */
+export const REPEATABLE_JSON_LD_TYPES = new Set(["VideoObject", "ImageObject"]);
+
 export function canonicalJsonLdType(type: string): string {
   return EQUIVALENT_TYPE[type] ?? type;
 }
@@ -471,7 +484,7 @@ export async function summarizeLiveJsonLd(
       canonical.set(c, (canonical.get(c) ?? 0) + 1);
     }
     for (const [t, n] of canonical) {
-      if (n > 1) {
+      if (n > 1 && !REPEATABLE_JSON_LD_TYPES.has(t)) {
         const list = duplicatePages.get(t) ?? [];
         if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
         duplicatePages.set(t, list);
@@ -496,7 +509,7 @@ export async function summarizeLiveJsonLd(
       canonical.set(c, (canonical.get(c) ?? 0) + 1);
     }
     for (const [t, n] of canonical) {
-      if (n <= 1) continue;
+      if (n <= 1 || REPEATABLE_JSON_LD_TYPES.has(t)) continue;
       duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
       if (appTypes.has(t)) duplicateAppCounts.set(t, (duplicateAppCounts.get(t) ?? 0) + 1);
     }

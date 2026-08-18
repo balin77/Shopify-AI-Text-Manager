@@ -2020,7 +2020,7 @@ export const en: Translation = {
       schemaBreadcrumb: "Breadcrumbs (BreadcrumbList)",
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "Video and FAQ are produced on the storefront — from your product media and the \"custom.faq\" metafield — so they do not appear in the preview below. Google's video rich result also needs an upload date the storefront does not expose: set the product metafield \"custom.video_upload_date\" (type date) if you want it, otherwise we omit the property rather than invent it.",
+      schemaVideoNote: "Video is produced on the storefront — from your product media — so it does not appear in the preview below. Google's video rich result also needs an upload date the storefront does not expose: set the product metafield \"custom.video_upload_date\" (type date) if you want it, otherwise we omit the property rather than invent it. FAQ (FAQPage) is added on top once you switch it on in the theme editor and the \"custom.faq\" metafield is filled — both are deliberately off by default.",
       setBrandLogo: "Set logo in shop brand assets",
       openSampleProduct: "Open sample product",
       openSampleArticle: "Open sample article",
