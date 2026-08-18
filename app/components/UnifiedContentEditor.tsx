@@ -1107,10 +1107,15 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         // would otherwise hide the editor for a frame while the sidebar column
         // is already unrendered — a blank content area until the effect below
         // resets `open` after paint.
-        // app-page-width-full states the width choice rather than leaving it
-        // implicit: the editor is a three-column workbench, so it takes the
-        // whole width (responsive.css :root owns the token).
-        className={`unified-content-editor-layout app-page-width-full${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
+        // The width class states the choice rather than leaving it implicit
+        // (responsive.css :root owns both tokens): WITH the item sidebar the
+        // editor is a three-column workbench and takes the whole width; WITHOUT
+        // it nothing caps the middle column and it just keeps growing on a wide
+        // screen, so the page gets the same reading width the SEO sections use
+        // — left-aligned, so the item list stays flush with the gutter.
+        // Keyed on config, not on `hasSidebar`: the latter also drops when no
+        // item is selected, and the page must not change width on selection.
+        className={`unified-content-editor-layout ${config.showItemSidebar ? "app-page-width-full" : "app-page-width-start"}${sidebarPanelOpen && hasSidebar ? " sidebar-panel-open" : ""}`}
         style={{
           // Fill the real available space via flexbox instead of a viewport
           // calc. The <Page> wrapper's content box (.Polaris-Page__Content) is

@@ -28,6 +28,14 @@
      --app-page-width-full     data grids that turn every extra pixel into
                                column width (the bulk editor).
 
+     The three classes above CENTRE their page. `.app-page-width-start` is the
+     same content width, left-aligned instead: on the content pages the left
+     column (UnifiedItemList) has to stay flush with the window gutter, so only
+     the right edge may be capped. That is the class for every content page
+     WITHOUT the item sidebar (the panel carrying the SEO-score tab) — with the
+     sidebar the editor is a three-column workbench that earns the full width,
+     without it the middle column just keeps growing on a 4K screen.
+
      Pages built on the .app-page-content frame (Polaris <Page fullWidth>) put
      the class on that same element — capping the frame keeps its inner scroll
      container and its padding intact. */
@@ -181,10 +189,22 @@ html {
    would silently win or lose by rule order. */
 .app-page-width,
 .app-page-width-narrow,
-.app-page-width-full {
+.app-page-width-full,
+.app-page-width-start {
   width: 100%;
-  margin-inline: auto;
   box-sizing: border-box;
+}
+.app-page-width,
+.app-page-width-narrow,
+.app-page-width-full {
+  margin-inline: auto;
+}
+/* Same reading width as .app-page-width, but anchored to the left instead of
+   centred — see the note in :root. Centring is what would move the item list
+   away from the gutter, which is the one thing these pages must NOT do. */
+.app-page-width-start {
+  max-width: var(--app-page-width-content);
+  margin-inline: 0 auto;
 }
 .app-page-width {
   max-width: var(--app-page-width-content);

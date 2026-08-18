@@ -1295,7 +1295,7 @@ model ShopInstallState {
   shop                      String    @id
   uninstalledAt             DateTime?
   // Set ONCE when the initial full sync (incl. product translations) completes
-  // successfully (api.sync-all-stream). Onboarding (app._index) and the
+  // successfully (initial-sync.service). Onboarding (app._index) and the
   // sync-stream products gate key off THIS marker, not db.product.count — a
   // Remix prefetch of the products loader populates db.product before the
   // initial sync runs, so a count-based gate would skip translations forever.
