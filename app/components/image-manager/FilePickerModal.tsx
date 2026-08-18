@@ -120,6 +120,8 @@ interface FilePickerModalProps {
 type KindFilter = "all" | "image" | "video" | "model";
 
 const PAGE_SIZE = 60;
+/** Upper bound for the data: URL preview fallback (see handlePreviewError). */
+const MAX_DATA_URL_PREVIEW_BYTES = 12 * 1024 * 1024;
 const UPLOAD_ACCEPT = [
   ...ALL_UPLOADABLE_MIME_TYPES,
   ".glb",
@@ -185,6 +187,27 @@ export function FilePickerModal({
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
 
+  // Tiles whose <img> failed to load. Two independent sources feed it, and
+  // both used to render the browser's broken-link icon:
+  //   • a library file Shopify is still processing — /api/files reports
+  //     previewUrl: "" for a MediaImage whose `image` is null, and
+  //     <img src=""> resolves to the document URL and fails;
+  //   • a local upload whose blob: URL the browser refuses to render.
+  // Either way the merchant gets a labelled placeholder instead, and for the
+  // upload case we re-derive the preview from the File as a data: URL.
+  const [brokenPreviews, setBrokenPreviews] = useState<Set<string>>(new Set());
+  // uniqueId → the File behind a pending upload, so a failed blob: preview
+  // can be regenerated. Kept in a ref (not in state) because it is only ever
+  // read from an event handler and would otherwise re-render every tile.
+  const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  // uniqueId → the preview URL currently in effect for that upload. The
+  // "immediate" commit path fires from an XHR callback that closed over the
+  // item as it was CREATED, so without this it would hand the parent the
+  // original blob: URL even after the data:-URL fallback replaced it — and
+  // the optimistic gallery tile would be broken for the same reason the modal
+  // tile was.
+  const pendingPreviewRef = useRef<Map<string, string>>(new Map());
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -202,6 +225,9 @@ export function FilePickerModal({
       setHasNextPage(false);
       setFiles([]);
       setPendingUploads([]);
+      setBrokenPreviews(new Set());
+      pendingFilesRef.current = new Map();
+      pendingPreviewRef.current = new Map();
       setUrlInput("");
       setUrlError(null);
     }
@@ -310,6 +336,10 @@ export function FilePickerModal({
       };
     });
 
+    for (let i = 0; i < newItems.length; i++) {
+      pendingFilesRef.current.set(newItems[i].uniqueId, accepted[i]);
+      pendingPreviewRef.current.set(newItems[i].uniqueId, newItems[i].previewUrl);
+    }
     setPendingUploads(prev => [...prev, ...newItems]);
     // In queue mode each upload is pre-selected so the merchant only needs
     // to hit the footer Add button once for a whole drop.
@@ -367,11 +397,13 @@ export function FilePickerModal({
                     source: "upload",
                     resourceUrl,
                     kind: item.kind,
-                    previewUrl: item.previewUrl,
+                    previewUrl: pendingPreviewRef.current.get(item.uniqueId) ?? item.previewUrl,
                     fileName: item.fileName,
                     mimeType: item.mimeType,
                     persistentPreviewUrl,
                   }]);
+                  pendingFilesRef.current.delete(item.uniqueId);
+                  pendingPreviewRef.current.delete(item.uniqueId);
                   setPendingUploads(prev => prev.filter(p => p.uniqueId !== item.uniqueId));
                 };
                 if (item.kind === "model") {
@@ -446,6 +478,50 @@ export function FilePickerModal({
       }
     }));
   }, [uploadCommitMode, onAdd, t, disallowModel]);
+
+  /** An <img> in the grid failed to load. Mark the tile so it renders a
+   *  labelled placeholder instead of the browser's broken-link icon, and —
+   *  when the tile is a local upload we still hold the File for — re-derive
+   *  the preview as a data: URL. A blob: URL that the browser will not render
+   *  is the only way a freshly picked image can fail here, and a data: URL
+   *  does not depend on the object-URL store at all. */
+  const handlePreviewError = useCallback((id: string) => {
+    setBrokenPreviews(prev => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    const file = pendingFilesRef.current.get(id);
+    if (!file) return;
+    // Images only. A video's blob: URL can NEVER render inside the tile's
+    // <img>, so onError always fires for one — base64-encoding every video
+    // under the size cap would burn memory (and push the string on into
+    // pendingProductNewMedia and the settling entry) for a preview that
+    // still cannot display. The placeholder is the right answer there.
+    if (classifyFile(file.type, file.name) !== "image") return;
+    // Retry exactly once. Without the data:-guard a data: URL that also fails
+    // to decode would loop: the fallback clears the broken flag, the <img>
+    // renders again, errors again, and we are back here.
+    if (pendingPreviewRef.current.get(id)?.startsWith("data:")) return;
+    // Cap the fallback: base64 inflates by ~33% and a large file would
+    // freeze the tab for a thumbnail.
+    if (file.size > MAX_DATA_URL_PREVIEW_BYTES) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl) return;
+      pendingPreviewRef.current.set(id, dataUrl);
+      setPendingUploads(cur => cur.map(u => (u.uniqueId === id ? { ...u, previewUrl: dataUrl } : u)));
+      setBrokenPreviews(cur => {
+        if (!cur.has(id)) return cur;
+        const next = new Set(cur);
+        next.delete(id);
+        return next;
+      });
+    };
+    reader.readAsDataURL(file);
+  }, []);
 
   const triggerFilePicker = useCallback(() => {
     fileInputRef.current?.click();
@@ -550,6 +626,12 @@ export function FilePickerModal({
 
   const renderTile = (item: { id: string; kind: MediaKind; previewUrl: string; alt: string | null }) => {
     const isSelected = selected.has(item.id);
+    const showPlaceholder = !item.previewUrl || brokenPreviews.has(item.id);
+    const placeholderLabel = item.kind === "model"
+      ? "3D"
+      : item.kind === "video" || item.kind === "external_video"
+        ? (t.imageManager.videoLabel ?? "Video")
+        : (t.imageManager.previewUnavailable ?? "Image");
     return (
       <div
         key={item.id}
@@ -569,12 +651,24 @@ export function FilePickerModal({
           background: "#f6f6f7",
         }}
       >
-        {item.kind === "model" && !item.previewUrl ? (
-          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "#616161", fontWeight: 700, fontSize: 18, letterSpacing: 0.5 }}>3D</div>
+        {showPlaceholder ? (
+          // Never render <img> without a usable src: an empty string resolves
+          // to the document URL and paints the browser's broken-link icon,
+          // which is what a still-processing library file and a rejected
+          // blob: URL both looked like.
+          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: 2, alignItems: "center", justifyContent: "center", padding: 4, textAlign: "center", color: "#616161", fontWeight: 700, fontSize: 14, letterSpacing: 0.5 }}>
+            <span>{placeholderLabel}</span>
+            {item.alt ? (
+              <span style={{ fontWeight: 400, fontSize: 9, lineHeight: "11px", color: "#8a8a8a", overflow: "hidden", wordBreak: "break-all", maxHeight: 22 }}>
+                {item.alt}
+              </span>
+            ) : null}
+          </div>
         ) : (
           <img
             src={item.previewUrl}
             alt={item.alt ?? ""}
+            onError={() => handlePreviewError(item.id)}
             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
           />
         )}

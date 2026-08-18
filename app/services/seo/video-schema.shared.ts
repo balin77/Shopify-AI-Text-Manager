@@ -55,13 +55,22 @@ export function numericMediaId(gid: string | null | undefined): string {
   return /^\d+$/.test(tail) ? tail : "";
 }
 
-/** ISO date (YYYY-MM-DD) of a Shopify timestamp, or "" when unusable. */
-export function isoDay(timestamp: string | null | undefined): string {
+/**
+ * Full ISO-8601 timestamp of a Shopify date, or "" when unusable.
+ *
+ * The TIME and the ZONE are part of the answer, not decoration: Google
+ * rejects a date-only `uploadDate` on a VideoObject ("invalid date/time
+ * value" plus "missing timezone" in the Rich Results Test, measured
+ * 2026-08-18 on a live shop). `File.createdAt` already carries both, so
+ * truncating to YYYY-MM-DD threw away the exact information Google asks for.
+ * `toISOString()` always renders UTC with a trailing Z, which is a zone.
+ */
+export function isoTimestamp(timestamp: string | null | undefined): string {
   const raw = (timestamp || "").trim();
   if (!raw) return "";
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10);
+  return parsed.toISOString();
 }
 
 export type VideoUploadDates = Record<string, string>;
@@ -87,11 +96,11 @@ export function videoUploadDatesFromMedia(
     const node = edge?.node;
     if (!node?.id || !node.createdAt) continue;
     const id = numericMediaId(node.id);
-    const day = isoDay(node.createdAt);
+    const stamp = isoTimestamp(node.createdAt);
     // A media node without a createdAt is an image (the fragment doesn't
     // select one) — silently skipped rather than stored as an empty date.
-    if (!id || !day) continue;
-    out[id] = day;
+    if (!id || !stamp) continue;
+    out[id] = stamp;
   }
   return out;
 }

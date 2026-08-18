@@ -34,6 +34,8 @@ export interface DeleteItemModalTexts {
   consequenceIrreversible?: string;
   /** Blog-only: articles go with it. */
   consequenceBlogArticles?: string;
+  /** Metaobject-only: products may reference the entry as an option value. */
+  consequenceMetaobjectUsage?: string;
   confirmPrompt?: string;
   mismatch?: string;
   cancel?: string;
@@ -99,6 +101,18 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
               {item.resource === "blog" && (
                 <List.Item>
                   {t.consequenceBlogArticles || "Every article in this blog is deleted with it."}
+                </List.Item>
+              )}
+              {/* A metaobject entry can be a product's option VALUE, and what
+                  Shopify does to those products when it disappears is measured
+                  by the Phase-0 probe rather than assumed. Until then the
+                  dialog names the worst case; the delete itself is refused
+                  server-side while any product still uses the entry, so this
+                  line is a warning, not the only guard. */}
+              {item.resource === "metaobject" && (
+                <List.Item>
+                  {t.consequenceMetaobjectUsage ||
+                    "Option values in products pointing at this entry can be lost with it."}
                 </List.Item>
               )}
               <List.Item>{t.consequenceTranslations || "All translations of this item are deleted."}</List.Item>

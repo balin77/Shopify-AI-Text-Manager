@@ -225,7 +225,7 @@ export const loader = createContentLoader({
         } catch { values = []; }
         // Option is linked if linkedMetafieldKey is set (most reliable) OR any value has linked flag
         const isLinked = !!opt.linkedMetafieldKey || values.some(v => v.linked);
-        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetaobjectType: opt.linkedMetafieldKey || undefined };
+        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetafieldKey: opt.linkedMetafieldKey || undefined };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
         // Shared predicate — the bulk editor's metafield columns use the SAME
@@ -1068,6 +1068,11 @@ export default function ProductsPage() {
               seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              // Media Shopify created on the last save but is still
+              // processing. Keeps the tile (and the media count) stable
+              // between the save and the moment the CDN URL appears.
+              settlingMedia={imageManagerState.settlingMedia}
+              onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
               primaryLocale={primaryLocale}

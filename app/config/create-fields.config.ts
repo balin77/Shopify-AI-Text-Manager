@@ -29,6 +29,31 @@ export type CreatableResource = "product" | "collection" | "page" | "article" | 
 export type DeletableResource = CreatableResource;
 
 /**
+ * The GID type segment each resource's ids carry.
+ *
+ * ONE map, because two places need the same answer and they must not drift:
+ * `deleteContent` refuses an id whose type disagrees with the named resource,
+ * and the editor decides whether the selected item IS a deletable object at
+ * all. The metaobjects tab is why the second one matters -- it lists TYPES
+ * (`metaobject_type_<type>`), and treating one as a metaobject produced a
+ * delete button that 400s AFTER the merchant typed the name into the
+ * confirmation dialog.
+ */
+export const GID_TYPE_BY_RESOURCE: Record<DeletableResource, string> = {
+  product: "Product",
+  collection: "Collection",
+  page: "Page",
+  article: "Article",
+  blog: "Blog",
+  metaobject: "Metaobject",
+};
+
+/** True when `gid` is an id of `resource` (and not, say, a pseudo item id). */
+export function isGidOfResource(gid: string, resource: DeletableResource): boolean {
+  return gid.includes(`/${GID_TYPE_BY_RESOURCE[resource]}/`);
+}
+
+/**
  * How a field is entered. The modal maps these to controls; the server maps
  * them to a validation rule. A new kind has to be handled in BOTH — which is
  * the point of naming them here rather than inferring from the key.

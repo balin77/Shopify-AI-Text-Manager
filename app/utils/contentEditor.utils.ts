@@ -13,6 +13,7 @@ import {
 } from "~/constants/shopifyFields";
 import { TIMING } from "~/constants/timing";
 import { extractReadableName } from "~/utils/templates-field-factory";
+import { parseMetaobjectFieldKey } from "../services/metaobject-fields.shared";
 import {
   ValidationOverlays,
   hasPrimaryContentMissing as fvHasPrimaryContentMissing,
@@ -333,16 +334,21 @@ export function getLocaleButtonTooltip(
       return extractReadableName(key);
     }
 
-    // Metaobjects: resolve metaobject ID to its display name
+    // Metaobjects: the key is `<Metaobject GID>#<field key>` (§6.1), so the
+    // entry is behind the FIRST half. Naming both — "Rot / colour" — is what
+    // makes a missing-translation list actionable now that one entry has
+    // several fields; the bare display name would list the same entry three
+    // times with no way to tell which field is meant.
     if (contentType === 'metaobjects') {
+      const parsed = parseMetaobjectFieldKey(key);
+      const entryId = parsed?.metaobjectId ?? key;
       const metaobjects = (selectedItem as { metaobjects?: MetaobjectEntry[] }).metaobjects;
-      if (metaobjects && Array.isArray(metaobjects)) {
-        const metaobj = metaobjects.find((m: MetaobjectEntry) => m.id === key);
-        if (metaobj) {
-          return metaobj.displayName || metaobj.handle || key.split('/').pop() || key;
-        }
-      }
-      return key.split('/').pop() || key;
+      const metaobj = Array.isArray(metaobjects)
+        ? metaobjects.find((m: MetaobjectEntry) => m.id === entryId)
+        : undefined;
+      const entryLabel =
+        metaobj?.displayName || metaobj?.handle || entryId.split('/').pop() || entryId;
+      return parsed ? `${entryLabel} / ${parsed.fieldKey}` : entryLabel;
     }
 
     // Handle product option fields (e.g., "option_1_name", "option_2_values")

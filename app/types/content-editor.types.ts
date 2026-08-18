@@ -101,7 +101,12 @@ export interface TranslatableContentItem {
     position: number;
     values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }>;  // ProductOptionValue GIDs; linkedValue = the metaobject GID behind a linked value
     isLinked?: boolean;   // true = metaobject-linked (values translated via Metaobjects, not here)
-    linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
+    /** The linked METAFIELD's `namespace--key` (e.g. "shopify--color-pattern"),
+     *  NOT the metaobject definition type. The two are spelled alike only for
+     *  Shopify's standard definitions; for a custom option (`custom--stoff` over
+     *  the definition `stoff`) they differ, which is why the metaobjects page
+     *  strips the namespace before matching and prefers a linked entry GID. */
+    linkedMetafieldKey?: string;
   }>;
   metafields?: Array<{
     id: string;           // gid://shopify/Metafield/...
@@ -267,6 +272,14 @@ export interface FieldRenderProps {
   onChange: (value: string) => void;
   field: FieldDefinition;
   disabled?: boolean;
+  /**
+   * The editor's own read-only verdict — theme content in the primary locale,
+   * an app-embed technical field, or a metaobject definition Shopify does not
+   * let this app write (§7.2). A custom renderer that ignores it presents an
+   * editable control whose save can only fail, which is what the flag exists
+   * to prevent.
+   */
+  readOnly?: boolean;
   suggestion?: string;
   isPrimaryLocale?: boolean;
   isTranslated?: boolean;
@@ -301,6 +314,17 @@ export interface FieldDefinition {
 
   /** Translation key used in Shopify API */
   translationKey: string;
+
+  /**
+   * Dynamic fields only: which CARD this field belongs to.
+   *
+   * The metaobjects tab builds one field per entry x definition field, and a
+   * flat list of them repeats every label ("Label", "Colour", "Label", ...)
+   * with nothing saying which entry it belongs to. Fields sharing a groupId
+   * are handed to the page's `renderFieldGroup` as one group; without one the
+   * editor renders the fields exactly as it always did.
+   */
+  groupId?: string;
 
   /** Optional help text */
   helpText?: string | ((value: string) => string);

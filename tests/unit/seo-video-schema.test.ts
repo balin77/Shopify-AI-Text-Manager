@@ -12,7 +12,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
   numericMediaId,
-  isoDay,
+  isoTimestamp,
   videoUploadDatesFromMedia,
   serializeVideoUploadDates,
   videoSchemaChanged,
@@ -37,27 +37,31 @@ describe("numericMediaId", () => {
   });
 });
 
-describe("isoDay", () => {
-  it("reduces a Shopify timestamp to a calendar day", () => {
-    expect(isoDay("2026-05-03T14:22:31Z")).toBe("2026-05-03");
+describe("isoTimestamp", () => {
+  it("keeps the time AND the zone, because Google rejects a date-only uploadDate", () => {
+    expect(isoTimestamp("2026-05-03T14:22:31Z")).toBe("2026-05-03T14:22:31.000Z");
+  });
+
+  it("normalises a zoned timestamp to UTC rather than dropping the offset", () => {
+    expect(isoTimestamp("2026-05-03T14:22:31+02:00")).toBe("2026-05-03T12:22:31.000Z");
   });
 
   it("returns empty for an unusable value instead of an Invalid Date", () => {
-    expect(isoDay("soon")).toBe("");
-    expect(isoDay(null)).toBe("");
+    expect(isoTimestamp("soon")).toBe("");
+    expect(isoTimestamp(null)).toBe("");
   });
 });
 
 describe("videoUploadDatesFromMedia", () => {
   const video = (id: string, createdAt: string) => ({ node: { id, createdAt } });
 
-  it("maps every video to its creation day", () => {
+  it("maps every video to its full creation timestamp", () => {
     expect(
       videoUploadDatesFromMedia([
         video("gid://shopify/Video/1", "2026-05-03T10:00:00Z"),
         video("gid://shopify/ExternalVideo/2", "2026-06-01T23:59:59Z"),
       ]),
-    ).toEqual({ "1": "2026-05-03", "2": "2026-06-01" });
+    ).toEqual({ "1": "2026-05-03T10:00:00.000Z", "2": "2026-06-01T23:59:59.000Z" });
   });
 
   it("ignores image media, which carry no createdAt", () => {

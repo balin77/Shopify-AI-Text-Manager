@@ -35,6 +35,7 @@ import {
   DELETE_PRODUCT,
 } from "~/graphql/content.mutations";
 import { purgeContentFromCache, type DeletableResource } from "~/services/content-delete.server";
+import { GID_TYPE_BY_RESOURCE, isGidOfResource } from "~/config/create-fields.config";
 import { isValidShopifyGID } from "~/utils/validation";
 
 const DELETABLE: DeletableResource[] = ["product", "collection", "page", "article", "blog", "metaobject"];
@@ -109,19 +110,54 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
   // agree. A page id sent as a product delete would otherwise reach
   // productDelete, which is the kind of mismatch a destructive path should
   // refuse rather than forward.
-  const expectedGidType = {
-    product: "Product",
-    collection: "Collection",
-    page: "Page",
-    article: "Article",
-    blog: "Blog",
-    metaobject: "Metaobject",
-  }[resource];
-  if (!gid.includes(`/${expectedGidType}/`)) {
+  const expectedGidType = GID_TYPE_BY_RESOURCE[resource];
+  if (!isGidOfResource(gid, resource)) {
     return json(
       { success: false, error: `Id ${gid} is not a ${expectedGidType}` },
       { status: 400 },
     );
+  }
+
+  // A metaobject entry that a product still uses as an option value is the one
+  // delete in this app whose blast radius reaches OTHER objects: depending on
+  // what PLAN_METAOBJECTS_EDITOR V5 measures, Shopify either refuses it, drops
+  // the option value (taking its variants, and their stock and prices, with it)
+  // or leaves a dead reference. Until that is measured the UI assumes the worst
+  // and so does this: the entry is only deletable when the usage is KNOWN and
+  // zero. "Unknown" is refused as firmly as "in use" -- a delete whose
+  // consequences nobody can name is exactly what the rule is for.
+  //
+  // The card disables the button for the same reason; this is not a duplicate
+  // of that check but its only real one, because `deleteContent` takes a direct
+  // POST and a client-side lock is not a lock.
+  if (resource === "metaobject") {
+    const { countLinkedOptionUsage } = await import("~/services/metaobject-usage.server");
+    const { liveProductCountForUsage } = await import("~/services/metaobject-usage.server");
+    const usage = (
+      await countLinkedOptionUsage(db, session.shop, [gid], () => liveProductCountForUsage(admin))
+    )[gid];
+    if (!usage || !usage.known) {
+      return json(
+        {
+          success: false,
+          errorKey: "metaobjectDeleteUsageUnknown" as const,
+          error:
+            "We cannot tell whether this entry is used as a product option value — sync your products and try again.",
+        },
+        { status: 409 },
+      );
+    }
+    if (usage.products > 0) {
+      return json(
+        {
+          success: false,
+          errorKey: "metaobjectDeleteInUse" as const,
+          usageProducts: usage.products,
+          error: `${usage.products} product(s) still use this entry as an option value. Remove it there first.`,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   try {

@@ -1,6 +1,9 @@
 # Metaobjekt-Editor — Plan (Phasen 0–5)
 
-**Status:** Entwurf, Umsetzung nicht begonnen.
+**Status:** Phasen 0–5 umgesetzt (2026-08-18). **Offen: die Messung selbst.**
+Die Probe-Route steht (Settings → Probes → Metaobjects), aber sie ist noch **nicht gegen einen echten Shop gelaufen** — V1–V5 und M2 in §2 sind weiterhin Vermutungen, und jede Oberfläche nimmt bis dahin die vorsichtige Lesart:
+- Eintrag löschen ist **nur bei bekannt 0 Verwendungen** möglich, serverseitig durchgesetzt (§5.4); „unbekannt" ist genauso gesperrt wie „in Benutzung".
+- Der Schreib-/Lese-Modus einer Definition (§7.2) hängt an Shopifys `MetaobjectAccess.admin`, das der Definitions-Sync jetzt mitholt — `null` heißt **unbekannt** und sperrt nichts. Fällt V1 negativ aus, ist die Sperre schon da und braucht nur den Wert.
 **Ziel:** `/app/metaobjects` vom reinen Übersetzungs-Fenster zu einer Arbeitsfläche machen — Einträge **anlegen und entfernen**, **alle** editierbaren Felder eines Eintrags bearbeiten (nicht nur das Label), und für Farb-Metaobjekte den **Swatch** (Farbwert und/oder Bild) sehen und setzen.
 **Auslöser:** Produktoptionen können auf Metaobjekte verweisen (Standard-Definition für Farben); der Produkt-Editor verlinkt seit [OptionsField.tsx:196-202](../../app/components/unified/OptionsField.tsx#L196-L202) genau hierher — und wer dort ankommt, kann heute fast nichts tun.
 **Baut auf:** [unified-content.actions.ts](../../app/actions/unified-content.actions.ts) (der EINE Action-Handler), [UnifiedContentEditor](../../app/components/UnifiedContentEditor.tsx), dem bereits ausgelieferten Create/Delete-Pfad aus [PLAN_CONTENT_CREATION.md](PLAN_CONTENT_CREATION.md) (§1.5/§1.8) und dem Metaobjekt-Schreibpfad des Bulk-Editors ([apply.server.ts:1541-1670](../../app/services/bulk-editor/apply.server.ts#L1541-L1670)).

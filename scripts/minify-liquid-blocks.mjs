@@ -50,14 +50,28 @@
  * Reports per-file and total sizes without writing anything. Exits non-zero if
  * the minified bundle would still hit Shopify's hard limit.
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Directory whose `*.liquid` files count against the extension Liquid budget. */
-export const BLOCKS_DIR = join(REPO_ROOT, 'extensions', 'storefront', 'blocks');
+/** Root of the ONE theme app extension. Names in the report are relative to it. */
+export const EXTENSION_DIR = join(REPO_ROOT, 'extensions', 'storefront');
+
+/** App blocks. */
+export const BLOCKS_DIR = join(EXTENSION_DIR, 'blocks');
+
+/**
+ * Snippets the blocks `{% render %}`. They count against the SAME 100 KiB
+ * budget as the blocks — Shopify measures the extension's Liquid, not one
+ * folder of it. Scanning only `blocks/` would make this check report
+ * "fits" while the deploy fails, which is worse than having no check.
+ */
+export const SNIPPETS_DIR = join(EXTENSION_DIR, 'snippets');
+
+/** Every directory whose `*.liquid` counts. Missing ones are skipped. */
+export const LIQUID_DIRS = [BLOCKS_DIR, SNIPPETS_DIR];
 
 /** Shopify's hard limit: 100 KiB of Liquid content per theme app extension. */
 export const LIQUID_LIMIT_BYTES = 100 * 1024;
@@ -288,11 +302,16 @@ export function minifyLiquid(source) {
  */
 
 /** List the `*.liquid` files that count against the extension Liquid budget. */
-export function listBlockFiles(dir = BLOCKS_DIR) {
-  return readdirSync(dir)
-    .filter((name) => name.endsWith('.liquid'))
-    .sort()
-    .map((name) => join(dir, name));
+export function listBlockFiles(dirs = LIQUID_DIRS) {
+  const list = Array.isArray(dirs) ? dirs : [dirs];
+  return list
+    .filter((dir) => existsSync(dir))
+    .flatMap((dir) =>
+      readdirSync(dir)
+        .filter((name) => name.endsWith('.liquid'))
+        .sort()
+        .map((name) => join(dir, name)),
+    );
 }
 
 /**
@@ -301,9 +320,9 @@ export function listBlockFiles(dir = BLOCKS_DIR) {
  * @param {string} [dir]
  * @returns {{blocks: BlockReport[], originalBytes: number, minifiedBytes: number}}
  */
-export function buildReport(dir = BLOCKS_DIR) {
-  const blocks = listBlockFiles(dir).map((path) => {
-    const name = path.slice(dir.length + 1);
+export function buildReport(dirs = LIQUID_DIRS) {
+  const blocks = listBlockFiles(dirs).map((path) => {
+    const name = path.slice(EXTENSION_DIR.length + 1).split(sep).join('/');
     const original = readFileSync(path, 'utf8');
     const minified = minifyLiquid(original);
     return {
@@ -358,7 +377,7 @@ export function printReport(report) {
 
 function runCheck() {
   const report = buildReport();
-  console.log(`\n[minify-liquid-blocks] ${BLOCKS_DIR}\n`);
+  console.log(`\n[minify-liquid-blocks] ${EXTENSION_DIR}\n`);
   printReport(report);
 
   if (report.minifiedBytes >= LIQUID_LIMIT_BYTES) {

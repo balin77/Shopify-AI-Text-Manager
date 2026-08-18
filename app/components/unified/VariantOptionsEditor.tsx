@@ -477,7 +477,7 @@ export function VariantOptionsEditor({
   const renderChoices = (option: OptionData) => {
     // The same answer the chips use — hardcoding `true` here gave one entry a
     // swatch in the picker and none the moment it was queued.
-    const isColourOption = looksLikeColourOption(option.name, option.linkedMetaobjectType);
+    const isColourOption = looksLikeColourOption(option.name, option.linkedMetafieldKey);
     const list = choices[option.id];
     if (list === undefined) {
       return (
@@ -620,7 +620,7 @@ export function VariantOptionsEditor({
           const isOpen = openOptionId === option.id;
           const values = valuesOf(option);
           // Gates the bare-hex rule only: on a Size option "DDD" is a cup size.
-          const isColourOption = looksLikeColourOption(option.name, option.linkedMetaobjectType);
+          const isColourOption = looksLikeColourOption(option.name, option.linkedMetafieldKey);
 
           if (!isOpen) {
             return (
