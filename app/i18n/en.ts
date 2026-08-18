@@ -540,6 +540,12 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      locationsColumn: "Locations",
+      unavailableColumn: "Unavailable",
+      committedColumn: "Committed",
+      availableColumn: "Available",
+      onHandColumn: "On hand",
+      totalRow: "Total",
       scopeSingle: "One variant",
       scopeAll: "All variants",
       scopeGroup: "All {value}",

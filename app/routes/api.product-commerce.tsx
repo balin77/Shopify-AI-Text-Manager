@@ -106,6 +106,20 @@ export interface CommerceVariantView {
     locationActive: boolean;
     onHand: number | null;
     available: number | null;
+    /** Sold but not yet shipped. Shopify's admin calls this "Reserviert". */
+    committed: number | null;
+    /**
+     * Damaged, quality control, safety stock — everything on hand that is
+     * neither available nor committed.
+     *
+     * DERIVED as `on_hand − available − committed`, which is Shopify's own
+     * definition, rather than summing four sub-buckets: each of those is a
+     * separate quantity name, and one name Shopify ever renames would fail the
+     * whole query at the schema level and take the panel with it. `null`
+     * whenever any of the three inputs is unknown — a missing part cannot make
+     * a total.
+     */
+    unavailable: number | null;
   }>;
   /** The location window was cut off — the totals below are not totals. */
   levelsTruncated: boolean;
@@ -123,6 +137,28 @@ async function requirePlan(shop: string): Promise<boolean> {
   return meetsPlan((settings?.subscriptionPlan || "free") as never, REQUIRED_PLAN);
 }
 
+/**
+ * `committed` per location, read off the live node.
+ *
+ * Not mirrored to the cache: it moves with every order, and a number that
+ * stale is worse than no number. Read here rather than in
+ * `inventoryLevelRows`, which builds the rows that DO get written.
+ */
+function committedByLocation(node: Record<string, unknown>): Map<string, number | null> {
+  const out = new Map<string, number | null>();
+  const item = node.inventoryItem as
+    | { inventoryLevels?: { nodes?: Array<Record<string, unknown>> } }
+    | undefined;
+  for (const level of item?.inventoryLevels?.nodes ?? []) {
+    const locationId = (level.location as { id?: string } | undefined)?.id;
+    if (!locationId) continue;
+    const quantities = (level.quantities ?? []) as Array<{ name?: string; quantity?: number | null }>;
+    const committed = quantities.find((q) => q?.name === "committed");
+    out.set(locationId, committed ? committed.quantity ?? null : null);
+  }
+  return out;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -136,15 +172,33 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   try {
+    /**
+     * Every variant, not the first page of them.
+     *
+     * The panel used to load one page of 25 and tell the merchant to edit the
+     * rest in the Shopify admin -- on a product with 30 variants, which is an
+     * ordinary product. The page SIZE stays 25 because each variant carries
+     * its inventory levels and a large page is an expensive query; it is the
+     * paging that was missing. The cap is 10 pages: Shopify allows up to 2048
+     * variants, but this app already treats 100 as the point where a product
+     * belongs in the bulk editor, so 250 is past every real case and still
+     * bounded.
+     */
+    const variantNodes: Array<Record<string, unknown>> = [];
+    let cursor: string | null = null;
+    let moreVariants = false;
+    let product: Record<string, unknown> | null = null;
+
+    for (let page = 0; page < 10; page++) {
     const response = await admin.graphql(
       `#graphql
-        query productCommerce($id: ID!) {
+        query productCommerce($id: ID!, $after: String) {
           product(id: $id) {
             id
             ${PRODUCT_PUBLICATIONS_SELECTION}
             featuredMedia { preview { image { url altText } } }
-            variants(first: ${VARIANT_COMMERCE_PAGE_SIZE}) {
-              pageInfo { hasNextPage }
+            variants(first: ${VARIANT_COMMERCE_PAGE_SIZE}, after: $after) {
+              pageInfo { hasNextPage endCursor }
               nodes {
                 id
                 title
@@ -156,7 +210,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
             }
           }
         }`,
-      { variables: { id: productId } },
+      { variables: { id: productId, after: cursor } },
     );
 
     const body = (await response.json()) as {
@@ -173,7 +227,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
       });
       return json({ success: false, error: "The stock and channel data could not be loaded." }, { status: 502 });
     }
-    const product = body.data?.product;
+    const pageProduct = body.data?.product;
+    if (!pageProduct) {
+      return json({ success: false, error: "That product no longer exists in Shopify." }, { status: 404 });
+    }
+    // The first page carries the product-level fields; later ones only add
+    // variants.
+    product = product ?? pageProduct;
+    const pageVariants = (pageProduct.variants as Record<string, unknown> | undefined) ?? {};
+    variantNodes.push(...(((pageVariants.nodes ?? []) as Array<Record<string, unknown>>)));
+    const pageInfo = pageVariants.pageInfo as { hasNextPage?: boolean; endCursor?: string | null } | undefined;
+    if (!pageInfo?.hasNextPage || !pageInfo.endCursor) break;
+    cursor = pageInfo.endCursor;
+    // Ran out of pages before Shopify ran out of variants — the ONE case where
+    // the "more than were loaded" note is true, and it is now rare enough to
+    // mean something.
+    if (page === 9) moreVariants = true;
+    }
+
     if (!product) {
       return json({ success: false, error: "That product no longer exists in Shopify." }, { status: 404 });
     }
@@ -222,10 +293,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // `ProductPublication` insert — swallowed by the `.catch` below, so the
     // loader silently never cached a single channel — and its `deleteMany`
     // then never cleared the GID-keyed rows the write path had created.
-    const variantNodes = ((product.variants as Record<string, unknown> | undefined)?.nodes ?? []) as Array<
-      Record<string, unknown>
-    >;
-
     // The product's featured image, as the fallback for a variant that has
     // none of its own. A product with one image and five variants is the
     // common case, and showing nothing there would make the picker look
@@ -313,6 +380,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
           locationActive: locationNames.get(row.locationId)?.isActive !== false,
           onHand: row.onHand,
           available: row.available,
+          committed: committedByLocation(node).get(row.locationId) ?? null,
+          unavailable: (() => {
+            const committed = committedByLocation(node).get(row.locationId) ?? null;
+            if (row.onHand == null || row.available == null || committed == null) return null;
+            return row.onHand - row.available - committed;
+          })(),
         })),
         levelsTruncated: levels?.hasMore === true,
       });
@@ -338,7 +411,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       shopLocations,
       // Truncation is reported, never rounded down: a partial channel list read
       // as complete would say a product is off a channel it is on.
-      variantsTruncated: ((product.variants as Record<string, unknown> | undefined)?.pageInfo as { hasNextPage?: boolean } | undefined)?.hasNextPage === true,
+      variantsTruncated: moreVariants,
       channels: (publications?.rows ?? []).map((row) => ({
         publicationId: row.publicationId,
         name: row.publicationName,
