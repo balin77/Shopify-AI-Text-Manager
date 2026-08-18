@@ -158,32 +158,11 @@
               {%- if cp_seen_urls contains url_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_urls = cp_seen_urls | append: url_token | append: ',' -%}
               {%- assign cp_url = entry_val | strip -%}
-              {%- assign cp_ev_host = blank -%}
-              {%- assign cp_ev_id = blank -%}
-              {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'v=' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '&' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtu.be/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtu.be/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtube.com/embed/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/embed/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtube.com/shorts/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/shorts/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'vimeo.com/' -%}
-                {%- assign cp_ev_host = 'vimeo' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'vimeo.com/' | last -%}
-                {%- if cp_ev_tail contains 'video/' -%}
-                  {%- assign cp_ev_tail = cp_ev_tail | split: 'video/' | last -%}
-                {%- endif -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- endif -%}
+              {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
+              {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
+              {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+              {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
+              {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
               {%- if cp_ev_host != blank and cp_ev_id != blank -%}
                 {%- if cp_ev_host == 'youtube' -%}
                   {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
@@ -305,24 +284,11 @@
               {%- assign url_tail_needle = ',' | append: url_tail_token | append: ',' -%}
               {%- if cp_seen_urls contains url_tail_needle -%}{%- continue -%}{%- endif -%}
               {%- assign cp_seen_urls = cp_seen_urls | append: url_tail_token | append: ',' -%}
-              {%- assign cp_ev_host = blank -%}
-              {%- assign cp_ev_id = blank -%}
-              {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'v=' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '&' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtu.be/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtu.be/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'vimeo.com/' -%}
-                {%- assign cp_ev_host = 'vimeo' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'vimeo.com/' | last -%}
-                {%- if cp_ev_tail contains 'video/' -%}
-                  {%- assign cp_ev_tail = cp_ev_tail | split: 'video/' | last -%}
-                {%- endif -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- endif -%}
+              {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
+              {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
+              {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+              {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
+              {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
               {%- if cp_ev_host != blank and cp_ev_id != blank -%}
                 {%- if cp_ev_host == 'youtube' -%}
                   {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
@@ -474,32 +440,11 @@
           {%- if cp_extvids != blank and cp_extvids.value != blank -%}
             {%- for cp_url_raw in cp_extvids.value -%}
               {%- assign cp_url = cp_url_raw | strip -%}
-              {%- assign cp_ev_host = blank -%}
-              {%- assign cp_ev_id = blank -%}
-              {%- if cp_url contains 'youtube.com/watch' and cp_url contains 'v=' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'v=' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '&' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtu.be/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtu.be/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtube.com/embed/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/embed/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'youtube.com/shorts/' -%}
-                {%- assign cp_ev_host = 'youtube' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'youtube.com/shorts/' | last -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- elsif cp_url contains 'vimeo.com/' -%}
-                {%- assign cp_ev_host = 'vimeo' -%}
-                {%- assign cp_ev_tail = cp_url | split: 'vimeo.com/' | last -%}
-                {%- if cp_ev_tail contains 'video/' -%}
-                  {%- assign cp_ev_tail = cp_ev_tail | split: 'video/' | last -%}
-                {%- endif -%}
-                {%- assign cp_ev_id = cp_ev_tail | split: '?' | first | split: '/' | first | split: '#' | first -%}
-              {%- endif -%}
+              {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
+              {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
+              {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+              {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
+              {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
               {%- if cp_ev_host != blank and cp_ev_id != blank -%}
                 {%- if cp_ev_host == 'youtube' -%}
                   {%- assign cp_ev_thumb = 'https://img.youtube.com/vi/' | append: cp_ev_id | append: '/hqdefault.jpg' -%}
