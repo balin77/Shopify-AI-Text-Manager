@@ -716,7 +716,7 @@
       "type": "checkbox",
       "id": "enable_video",
       "label": "Video (product pages, from your product media)",
-      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos on a product. Google's video rich result additionally needs an upload date, which the storefront does not expose - set the product metafield \"custom.video_upload_date\" (type date) and it is published; left unset the property is omitted rather than guessed.",
+      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos on a product. The upload date Google asks for is filled in automatically from the product sync; to state a different one, set the product metafield \"custom.video_upload_date\" (type date) and it wins.",
       "default": true
     },
     {
