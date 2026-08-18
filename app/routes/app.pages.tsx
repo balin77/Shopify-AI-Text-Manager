@@ -33,6 +33,14 @@ export const loader = createContentLoader({
   async loadData(ctx) {
     // Load pages directly from Shopify (not from DB)
     // This reduces database storage for multi-tenant SaaS
+    // `templateSuffix` / `isPublished` are the PLAN §2.2 attribute checklist.
+    // Pages are read LIVE here (not from the cache), so unlike the other three
+    // types there is no "written by an older sync" ambiguity: whatever comes
+    // back IS current, which is why the item below can report the block as
+    // known outright.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const pagesResponse = await ctx.admin.graphql(
       `#graphql
         query getPages {
@@ -43,11 +51,6 @@ export const loader = createContentLoader({
                 title
                 handle
                 body
-                # PLAN §2.2 attribute checklist. Pages are read LIVE here (not
-                # from the cache), so unlike the other three types there is no
-                # "written by an older sync" ambiguity: whatever comes back IS
-                # current, which is why the item below can report the block as
-                # known outright.
                 templateSuffix
                 isPublished
                 seoTitle: metafield(namespace: "global", key: "title_tag") { value }

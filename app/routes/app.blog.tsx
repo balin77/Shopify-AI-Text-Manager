@@ -34,7 +34,14 @@ export const loader = createContentLoader({
     const { ContentSyncService } = await import("../services/content-sync.service");
     const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    // Fetch blogs with their titles and article IDs from Shopify
+    // Fetch blogs with their titles and article IDs from Shopify.
+    //
+    // `templateSuffix` is PLAN §Phase 3 — a blog container's one merchandising
+    // attribute. Read LIVE, so unlike the cached types there is no "written by
+    // an older sync" ambiguity: whatever comes back IS current.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const blogsResponse = await ctx.admin.graphql(
       `#graphql
         query getBlogs {
@@ -44,9 +51,6 @@ export const loader = createContentLoader({
                 id
                 title
                 handle
-                # PLAN §Phase 3 — a blog container's one merchandising attribute.
-                # Read LIVE, so unlike the cached types there is no "written by
-                # an older sync" ambiguity: whatever comes back IS current.
                 templateSuffix
                 seoTitle: metafield(namespace: "global", key: "title_tag") { value }
                 seoDescription: metafield(namespace: "global", key: "description_tag") { value }

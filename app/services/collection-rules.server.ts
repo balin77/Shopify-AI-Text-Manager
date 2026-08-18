@@ -95,14 +95,17 @@ export async function applyCollectionRuleChange(
     // sources* fields live on CollectionUpdateInput only (PLAN §1.2 point 4),
     // and the same version gate above is what makes naming it safe: below
     // 2026-07 this mutation shape does not exist and is never sent.
+    // The echoed collection uses the SAME selection the sync uses. A narrower
+    // echo mirrored into "sourcesJson" would turn every source into an empty
+    // renderable one — the merchant's rules would read as deleted, and the
+    // next diff could delete a real source this editor may not touch.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const response = await admin.graphql(
       `#graphql
         mutation updateCollectionRules($collection: CollectionUpdateInput!) {
           collectionUpdate(collection: $collection) {
-            # The SAME selection the sync uses. A narrower echo mirrored into
-            # "sourcesJson" would turn every source into an empty renderable
-            # one — the merchant's rules would read as deleted, and the next
-            # diff could delete a real source this editor may not touch.
             collection { id ${COLLECTION_SOURCES_FIELDS} }
             userErrors { field message }
           }

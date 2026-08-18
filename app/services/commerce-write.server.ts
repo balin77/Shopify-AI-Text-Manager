@@ -115,20 +115,22 @@ export async function applyStockChanges(
   // and only an explicit `false` refuses.
   if (params.tracked === false) return "stockUntracked";
 
+  // `changes` is the echo that matters: the quantity Shopify STORED, per item
+  // and location. Without it "saved" is a claim about money nobody verified.
+  // It is filtered to on_hand — setting it ALSO produces an "available" ledger
+  // change (available = on_hand minus open commitments), and a map keyed only
+  // by item+location let that second entry shadow the first — a successful
+  // write then read as "not confirmed", or worse, confirmed against the wrong
+  // ledger.
+  //
+  // The prose stays out here on purpose: a `#` comment inside the document
+  // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
   try {
     const response = await admin.graphql(
       `#graphql
         mutation setOnHandQuantities($input: InventorySetQuantitiesInput!) {
           inventorySetQuantities(input: $input) {
             inventoryAdjustmentGroup {
-              # The echo that matters: the quantity Shopify STORED, per item and
-              # location. Without it "saved" is a claim about money nobody
-              # verified.
-              # Filtered to on_hand. Setting it ALSO produces an "available"
-              # ledger change (available = on_hand minus open commitments), and
-              # a map keyed only by item+location let that second entry shadow
-              # the first — a successful write then read as "not confirmed",
-              # or worse, confirmed against the wrong ledger.
               changes(quantityNames: ["on_hand"]) {
                 name
                 delta
@@ -278,14 +280,14 @@ export async function applyPublicationChanges(
     publicationIds: string[],
   ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
     if (publicationIds.length === 0) return { ok: true, confirmed: new Set() };
+    // `publishable` is the echo: which channels the product now sits on.
+    // Checked rather than assumed — this is the field the whole feature is
+    // about, and "no userErrors" has never meant "stored".
     const response = await admin.graphql(
       `#graphql
         mutation channelChange($id: ID!, $input: [PublicationInput!]!) {
           ${mutation}(id: $id, input: $input) {
             publishable {
-              # The echo: which channels the product now sits on. Checked
-              # rather than assumed — this is the field the whole feature is
-              # about, and "no userErrors" has never meant "stored".
               ... on Product {
                 id
                 resourcePublicationsV2(first: 50) {
@@ -527,15 +529,15 @@ export async function applyInventoryItemFields(
 
   if (Object.keys(input).length === 0) return undefined;
 
+  // `inventoryItem` is the echo, selected in full rather than as a bare id:
+  // these are settings a merchant sets once and trusts, so the cache must
+  // mirror what Shopify STORED, not what this app sent.
   try {
     const response = await admin.graphql(
       `#graphql
         mutation updateInventoryItem($id: ID!, $input: InventoryItemInput!) {
           inventoryItemUpdate(id: $id, input: $input) {
             inventoryItem {
-              # The echo. Selected in full rather than as a bare id: these are
-              # settings a merchant sets once and trusts, so the cache must
-              # mirror what Shopify STORED, not what this app sent.
               id
               tracked
               requiresShipping

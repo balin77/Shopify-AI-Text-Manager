@@ -34,6 +34,13 @@ export const VALID_CONTENT_TYPES = new Set([
   ...Object.keys(CONTENT_CONFIGS),
   'templates',
   'metaobjects',
+  // Menus have no CONTENT_CONFIGS entry — their only translatable field is a
+  // menu item's `title`, addressed on its own Link GID rather than through a
+  // field config. They reach exactly one action, `translateField`, which is
+  // pure (it translates and returns; it persists nothing). The menus page then
+  // saves through its own echo-verified path, so this entry widens what may be
+  // TRANSLATED, never what may be written.
+  'menus',
 ]);
 
 // ─── Shared types ─────────────────────────────────────────────────────────────

@@ -238,7 +238,7 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'menus' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
 
 /**
  * `select`, `tags` and `toggle` are the PLAN_CONTENT_CREATION §Phase 3

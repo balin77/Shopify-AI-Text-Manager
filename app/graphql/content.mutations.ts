@@ -64,6 +64,9 @@ export const REMOVE_TRANSLATIONS = `#graphql
   }
 `;
 
+// `templateSuffix` is echoed (PLAN §Phase 3) so the caller mirrors what
+// Shopify STORED. The prose stays outside the document: a `#` comment inside
+// it travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
 export const UPDATE_BLOG = `#graphql
   mutation updateBlog($id: ID!, $blog: BlogUpdateInput!) {
     blogUpdate(id: $id, blog: $blog) {
@@ -71,7 +74,6 @@ export const UPDATE_BLOG = `#graphql
         id
         title
         handle
-        # PLAN §Phase 3 — echoed so the caller mirrors what Shopify STORED.
         templateSuffix
       }
       userErrors {
@@ -82,6 +84,8 @@ export const UPDATE_BLOG = `#graphql
   }
 `;
 
+// `isPublished` / `templateSuffix` are PLAN §Phase 3 merchandising
+// attributes, echoed for the DB mirror.
 export const UPDATE_PAGE = `#graphql
   mutation updatePage($id: ID!, $page: PageUpdateInput!) {
     pageUpdate(id: $id, page: $page) {
@@ -90,7 +94,6 @@ export const UPDATE_PAGE = `#graphql
         title
         handle
         body
-        # PLAN §Phase 3 merchandising attributes, echoed for the DB mirror.
         isPublished
         templateSuffix
         seoTitle: metafield(namespace: "global", key: "title_tag") { value }
@@ -104,6 +107,8 @@ export const UPDATE_PAGE = `#graphql
   }
 `;
 
+// `sortOrder` / `templateSuffix` are PLAN §Phase 3 merchandising
+// attributes, echoed for the DB mirror.
 export const UPDATE_COLLECTION = `#graphql
   mutation updateCollection($input: CollectionInput!) {
     collectionUpdate(input: $input) {
@@ -112,7 +117,6 @@ export const UPDATE_COLLECTION = `#graphql
         title
         handle
         descriptionHtml
-        # PLAN §Phase 3 merchandising attributes, echoed for the DB mirror.
         sortOrder
         templateSuffix
         seo {
@@ -128,6 +132,8 @@ export const UPDATE_COLLECTION = `#graphql
   }
 `;
 
+// `author` / `tags` / `isPublished` / `templateSuffix` are PLAN §Phase 3
+// merchandising attributes, echoed for the DB mirror.
 export const UPDATE_ARTICLE = `#graphql
   mutation updateArticle($id: ID!, $article: ArticleUpdateInput!) {
     articleUpdate(id: $id, article: $article) {
@@ -137,7 +143,6 @@ export const UPDATE_ARTICLE = `#graphql
         handle
         body
         summary
-        # PLAN §Phase 3 merchandising attributes, echoed for the DB mirror.
         author { name }
         tags
         isPublished
