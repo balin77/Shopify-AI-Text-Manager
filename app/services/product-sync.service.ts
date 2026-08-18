@@ -15,6 +15,8 @@ import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 import { syncProductVariantRows, type ShopifySyncVariant } from './product-variant-sync.server';
+import { PRODUCT_VIDEO_MEDIA_FIELDS, videoUploadDatesFromMedia } from './seo/video-schema.shared';
+import { persistVideoSchema } from './seo/video-schema.server';
 import {
   PRODUCT_ATTRIBUTE_SELECTION,
   PRODUCT_COLLECTIONS_SELECTION,
@@ -54,13 +56,40 @@ interface TranslatableResourcesByIdsResponse {
   errors?: GraphQLError[];
 }
 
-/** Product media image from Shopify */
+/**
+ * Product media from Shopify. The selection asks for MediaImage AND (via
+ * PRODUCT_VIDEO_MEDIA_FIELDS) Video/ExternalVideo, so a node is one of two
+ * shapes: an image carries `image`, a video carries `createdAt`. Both stay
+ * optional rather than being split into a union — every existing reader tests
+ * for `image` and must keep compiling.
+ */
 interface ShopifyMediaImage {
   id: string;
   alt: string | null;
-  image: {
+  image?: {
     url: string;
   };
+  /** Only on Video / ExternalVideo — the file's creation date. */
+  createdAt?: string | null;
+}
+
+/** Media node that is certainly an IMAGE — the type guard every image path uses. */
+type ShopifyImageMedia = ShopifyMediaImage & { image: { url: string } };
+
+/**
+ * Image media of a product, videos excluded.
+ *
+ * Since the media selection also asks for Video/ExternalVideo, "has an id" is
+ * no longer enough to recognise an image — a video has one too, and letting it
+ * through would create ProductImage rows for videos and put video GIDs into
+ * the alt-text translation queries.
+ */
+function imageMediaNodes(
+  edges: GraphQLEdge<ShopifyMediaImage>[] | null | undefined,
+): ShopifyImageMedia[] {
+  return (edges ?? [])
+    .map((edge) => edge.node)
+    .filter((node): node is ShopifyImageMedia => !!node?.id && !!node.image?.url);
 }
 
 /** Product option value from Shopify */
@@ -219,6 +248,7 @@ export class ProductSyncService {
                             url
                           }
                         }
+                        ${PRODUCT_VIDEO_MEDIA_FIELDS}
                       }
                     }
                   }
@@ -376,9 +406,7 @@ export class ProductSyncService {
 
       // Save images
       if (cacheProductImages) {
-        const mediaImages = product.media?.edges
-          ?.filter((edge) => edge.node.id && edge.node.image?.url)
-          .map((edge) => edge.node) ?? [];
+        const mediaImages = imageMediaNodes(product.media?.edges);
 
         if (mediaImages.length > 0) {
           // Deleting ProductImage rows CASCADES away every
@@ -505,6 +533,27 @@ export class ProductSyncService {
         }
       }
       reportProgress();
+    }
+
+    // Video upload dates → product metafield. AFTER the write loop, because
+    // the mirror column it diffs against lives on the rows just written; and
+    // as ONE pass over the fetched products rather than per batch, so the
+    // common case (nothing changed) costs a single indexed read and no
+    // Shopify call at all. Never throws — it is not the sync's job.
+    // A cancelled sync must not keep writing to Shopify — the pass talks to
+    // the Admin API for every changed product and would run to completion long
+    // after the client disconnected.
+    checkAborted();
+    if (synced > 0) {
+      onProgress?.({ overallPercent: 60, message: "Video-Daten werden aktualisiert…" });
+      await persistVideoSchema(
+        this.admin as never,
+        db,
+        allProducts.map((product) => ({
+          productId: product.id,
+          uploadDates: videoUploadDatesFromMedia(product.media?.edges),
+        })),
+      );
     }
 
     // ==========================================
@@ -753,10 +802,7 @@ export class ProductSyncService {
           // 3c. Image alt-text translations (90-100%)
           const allMediaIds: string[] = [];
           for (const product of allProducts) {
-            const mediaImages = product.media?.edges
-              ?.filter((edge) => edge.node.id)
-              .map((edge) => edge.node.id) ?? [];
-            allMediaIds.push(...mediaImages);
+            allMediaIds.push(...imageMediaNodes(product.media?.edges).map((node) => node.id));
           }
 
           if (allMediaIds.length > 0) {
@@ -905,7 +951,22 @@ export class ProductSyncService {
   /**
    * Sync a single product with all its translations
    */
-  async syncProduct(productId: string, forceSync = false): Promise<void> {
+  /**
+   * Sync ONE product.
+   *
+   * `writeVideoSchema` exists because of a feedback loop, not as a preference:
+   * writing the video-date metafield changes the product, which makes Shopify
+   * fire `products/update`, which lands in webhooks.products.tsx and calls
+   * this method again. The diff would stop it after one extra pass (the mirror
+   * has advanced, so nothing is written), but the webhook path has nothing to
+   * contribute here anyway — the dates it would write are the ones that just
+   * caused it. So the webhook passes `false` and the loop cannot start at all.
+   */
+  async syncProduct(
+    productId: string,
+    forceSync = false,
+    options: { writeVideoSchema?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
@@ -1025,6 +1086,20 @@ export class ProductSyncService {
         subResources: subResFailedMarketIds,
       });
 
+      // Video upload dates → product metafield. AFTER the save (the mirror
+      // column it diffs against was just written) and outside it, because this
+      // talks to Shopify rather than the database. Skipped for the
+      // webhook-driven resync — see this method's doc comment.
+      if (options.writeVideoSchema !== false) {
+        const { db } = await import("../db.server");
+        await persistVideoSchema(this.admin as never, db, [
+          {
+            productId: productData.id,
+            uploadDates: videoUploadDatesFromMedia(productData.media?.edges),
+          },
+        ]);
+      }
+
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
       logger.error(`[ProductSync] Error syncing product ${productId}:`, error);
@@ -1048,9 +1123,7 @@ export class ProductSyncService {
     const altTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId: string }> = [];
 
     // Get all media images from product
-    const mediaImages = productData.media?.edges
-      ?.filter((edge) => edge.node.id) // Filter out non-MediaImage types
-      .map((edge) => edge.node) || [];
+    const mediaImages = imageMediaNodes(productData.media?.edges);
 
     if (mediaImages.length === 0) {
       logger.debug(`[ProductSync] No media images found for alt-text translations`);
@@ -1270,6 +1343,7 @@ export class ProductSyncService {
                       url
                     }
                   }
+                  ${PRODUCT_VIDEO_MEDIA_FIELDS}
                 }
               }
             }
@@ -1675,9 +1749,7 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values or failed market layers`);
     }
 
-    const mediaImages: ShopifyMediaImage[] = productData.media?.edges
-      ?.filter((edge) => edge.node.id && edge.node.image?.url)
-      .map((edge) => edge.node) || [];
+    const mediaImages: ShopifyImageMedia[] = imageMediaNodes(productData.media?.edges);
 
     // Use transaction to ensure all-or-nothing data consistency. Wrapped in
     // the race-retry: this is the webhook-driven sync that wipes+recreates

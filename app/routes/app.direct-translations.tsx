@@ -773,7 +773,12 @@ export default function DirectTranslationsPage() {
   return (
     <PlanAccessGate contentType="directTranslations">
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "16px", padding: "16px", boxSizing: "border-box" }}>
+        {/* Capped at .app-page-width-start (responsive.css :root) — this page
+            has no item sidebar, so nothing else would stop the right column
+            from growing on a wide screen. The cap includes the item column, so
+            the translation column beside it comes out at the same reading width
+            as an SEO page. Left-aligned: the list stays flush with the gutter. */}
+        <div className="app-page-width-start" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "var(--app-page-padding)", padding: "var(--app-page-padding)", boxSizing: "border-box" }}>
           {/* Left list is desktop-only; on mobile the navbar compact selector
               (fed via registerItems) takes over, like the other content tabs. */}
           <div className="desktop-only" style={{ flexShrink: 0, height: "100%" }}>

@@ -10,6 +10,7 @@ import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
+import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
 import { logger } from "./utils/logger.server";
 import { initSentryServer, captureServerError } from "./utils/sentry.server";
 
@@ -34,6 +35,7 @@ process.on('SIGTERM', () => {
   LlmsAutoRefreshService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
   SeoAuditAutoRunService.getInstance().stop();
+  SeoCrawlAutoRunService.getInstance().stop();
 });
 
 process.on('SIGINT', () => {
@@ -44,6 +46,7 @@ process.on('SIGINT', () => {
   LlmsAutoRefreshService.getInstance().stop();
   IndexNowAutoSubmitService.getInstance().stop();
   SeoAuditAutoRunService.getInstance().stop();
+  SeoCrawlAutoRunService.getInstance().stop();
 });
 
 export default async function handleRequest(

@@ -187,6 +187,7 @@ import { GscAutoSyncService } from "./services/seo/gsc-auto-sync.service";
 import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service";
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
+import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -230,6 +231,7 @@ const enhancedAuthenticate = {
     // waited for a human.
     IndexNowAutoSubmitService.getInstance().start();
     SeoAuditAutoRunService.getInstance().start();
+    SeoCrawlAutoRunService.getInstance().start();
 
     return { admin, session };
   }

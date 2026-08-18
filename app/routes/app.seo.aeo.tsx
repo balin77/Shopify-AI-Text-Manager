@@ -42,17 +42,58 @@ import { ToggleSwitch } from "../components/ToggleSwitch";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
+import { useAppNavigation } from "../hooks/useAppNavigation";
+import {
+  analyzeCatalogReadiness,
+  type CatalogReadinessCode,
+  type CatalogReadinessReport,
+} from "../services/seo/catalog-readiness.service";
+import {
+  loadAiReferralSummary,
+  type AiReferralSummary,
+} from "../services/seo/ai-referral.service";
 import {
   analyzeAeo,
   applyRobotsRuleRemovals,
-  generateAndUpsertLlmsTxt,
+  generateAndUpsertAiDiscovery,
   getShopIdentity,
+  removeAiDiscoveryOverride,
   themeWritesEnabled,
+  type AiDiscoveryFile,
+  type AiDiscoveryStatus,
   type RobotsAdvice,
   type RobotsCrawlerGroup,
   type RobotsRuleImpact,
 } from "../services/seo/aeo.service";
 import type { DataResponse } from "~/types/data-response";
+
+/** Placeholder status for the plan-gated loader branch — see the shape note below. */
+const GATED_DISCOVERY_STATUS: AiDiscoveryStatus = {
+  overridden: false,
+  upToDate: false,
+  liveAvailable: false,
+  liveServedByUs: false,
+  liveExcerpt: "",
+  url: "",
+};
+
+/** Same purpose as GATED_DISCOVERY_STATUS: keep both loader branches one shape. */
+const GATED_REFERRALS: AiReferralSummary = {
+  days: 30,
+  totalVisits: 0,
+  bySource: [],
+  topPages: [],
+};
+
+/** Same purpose as GATED_DISCOVERY_STATUS: keep both loader branches one shape. */
+const GATED_CATALOG_REPORT: CatalogReadinessReport = {
+  scanned: 0,
+  available: 0,
+  capped: false,
+  attributeDataKnown: false,
+  ready: 0,
+  buckets: [],
+};
 
 async function loadSettings(db: any, shop: string): Promise<{ plan: Plan; autoUpdate: boolean }> {
   const settings = await db.aISettings.findUnique({
@@ -89,6 +130,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       llmsCollectionCount: 0,
       llmsPreview: "",
       llmsUrl: "",
+      aiDiscovery: {
+        llms: GATED_DISCOVERY_STATUS,
+        agents: GATED_DISCOVERY_STATUS,
+      } as Record<AiDiscoveryFile, AiDiscoveryStatus>,
+      agentsPreview: "",
+      agentsPolicyCount: 0,
+      catalog: GATED_CATALOG_REPORT,
+      referrals: GATED_REFERRALS,
       themeWrites: false,
       llmsAutoUpdate: true,
       shopDescriptionMissing: false,
@@ -98,16 +147,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const { name, domain, description } = await getShopIdentity(admin, session.shop);
-  const analysis = await analyzeAeo(admin, session.shop, {
-    db,
-    shopName: name,
-    domain,
-    description,
-    autoUpdate,
-  });
+  const [analysis, catalog, referrals] = await Promise.all([
+    analyzeAeo(admin, session.shop, {
+      db,
+      shopName: name,
+      domain,
+      description,
+      autoUpdate,
+    }),
+    // DB-only and independent of the two Shopify-facing halves above, so they
+    // cost wall-clock time only if they are the slowest of the four.
+    //
+    // Both degrade to their empty shape instead of throwing: `analyzeAeo`
+    // swallows its own failures, so without these catches a hiccup in one of
+    // the two youngest queries would 500 the WHOLE section — including the
+    // robots.txt audit, which has nothing to do with either.
+    analyzeCatalogReadiness(db, session.shop).catch(() => GATED_CATALOG_REPORT),
+    loadAiReferralSummary(db, session.shop).catch(() => GATED_REFERRALS),
+  ]);
   return json({
     gated: false,
     ...analysis,
+    catalog,
+    referrals,
     themesUrl: `https://${session.shop}/admin/themes`,
     shopPrefsUrl: `https://${session.shop}/admin/online_store/preferences`,
   });
@@ -146,7 +208,28 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
       return json<ActionResult>({ ok: false, error: "theme_writes_disabled" }, { status: 403 });
     }
     const { name, domain, description } = await getShopIdentity(admin, session.shop);
-    const result = await generateAndUpsertLlmsTxt(admin, db, session.shop, name, domain, description);
+    const result = await generateAndUpsertAiDiscovery(
+      admin,
+      db,
+      session.shop,
+      name,
+      domain,
+      description,
+    );
+    return json<ActionResult>(result.ok ? { ok: true } : { ok: false, error: result.error || "failed" });
+  }
+
+  if (getFormString(form, "actionType") === "removeAiDiscoveryOverride") {
+    if (!themeWritesEnabled()) {
+      return json<ActionResult>({ ok: false, error: "theme_writes_disabled" }, { status: 403 });
+    }
+    // Only the two known filenames may be deleted — the value arrives from the
+    // client and `deleteThemeFile` would happily remove any theme file.
+    const file = getFormString(form, "file");
+    if (file !== "llms" && file !== "agents") {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const result = await removeAiDiscoveryOverride(admin, file);
     return json<ActionResult>(result.ok ? { ok: true } : { ok: false, error: result.error || "failed" });
   }
 
@@ -256,16 +339,37 @@ function CrawlerGroupDetail({ group }: { group: RobotsCrawlerGroup }) {
  * put the optional one first. They're now two selectable steps, access first.
  * The tile itself is shared with the structured-data section — see StepTile.
  */
-type AeoStep = "robots" | "llms";
+type AeoStep = "robots" | "llms" | "catalog";
+
+/** Items listed per catalog bucket before it collapses into a count. */
+const CATALOG_ITEMS_SHOWN = 8;
+
+/**
+ * Buckets whose field the bulk grid can actually edit today (`vendor` is a bulk
+ * column, the taxonomy category is not) and whose fix is a mass edit rather
+ * than per-product work.
+ */
+const BULK_FIXABLE_CODES: CatalogReadinessCode[] = ["brandMissing", "descriptionMissing"];
+
+/** Rendered order: the canonical path first, its mirror second. */
+const DISCOVERY_FILES: Array<{ file: AiDiscoveryFile; path: string }> = [
+  { file: "agents", path: "/agents.md" },
+  { file: "llms", path: "/llms.txt" },
+];
 
 export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const a = t.seo.aeoPage;
+  // Deep links go through the app navigation hook so the embedded session
+  // params survive — a bare <a> drops them and lands on a re-auth.
+  const { handleNavigate } = useAppNavigation();
   const fetcher = useFetcher<ActionResult>();
   const robotsFetcher = useFetcher<ActionResult>();
   const autoFetcher = useFetcher<ActionResult>();
+  const removeFetcher = useFetcher<ActionResult>();
   const [step, setStep] = useState<AeoStep>("robots");
+  const [previewFile, setPreviewFile] = useState<AiDiscoveryFile>("agents");
 
   const robotsBadge = !data.robotsAuditAvailable ? (
     <Badge>{a.statusUnknown}</Badge>
@@ -277,15 +381,57 @@ export default function SeoAeo() {
     <Badge tone="success">{a.robotsStatusOk}</Badge>
   );
 
-  // Three states, not two: a file that exists but no longer matches the catalog
-  // is the case the old present/absent badge could not express at all.
-  const llmsStatusBadge = !data.llmsTxtExists ? (
-    <Badge tone="attention">{a.llmsAbsent}</Badge>
-  ) : data.llmsTxtUpToDate ? (
-    <Badge tone="success">{a.llmsUpToDate}</Badge>
-  ) : (
-    <Badge tone="warning">{a.llmsStale}</Badge>
-  );
+  // Five states, not two. "Exists" and "is served" are different questions —
+  // agents.md is a path Shopify fills by itself, so a missing override is a
+  // normal state (the platform default is live), and a present override that
+  // the URL does not return is the failure worth a warning.
+  const discoveryStatus = (s: AiDiscoveryStatus) => {
+    if (!s.overridden) return s.liveAvailable ? "platformDefault" : "unknown";
+    if (!s.upToDate) return "stale";
+    return s.liveServedByUs ? "live" : s.liveAvailable ? "notServed" : "unknown";
+  };
+  const DISCOVERY_BADGE = {
+    live: { tone: "success" as const, key: "discoveryLive" as const },
+    stale: { tone: "warning" as const, key: "discoveryStale" as const },
+    notServed: { tone: "warning" as const, key: "discoveryNotServed" as const },
+    platformDefault: { tone: "info" as const, key: "discoveryPlatformDefault" as const },
+    unknown: { tone: undefined, key: "discoveryUnknown" as const },
+  };
+  const discoveryBadge = (s: AiDiscoveryStatus) => {
+    const b = DISCOVERY_BADGE[discoveryStatus(s)];
+    return <Badge tone={b.tone}>{a[b.key]}</Badge>;
+  };
+
+  // The step tile carries the worse of the two files: agents.md is the one
+  // agents read, so a healthy llms.txt must not make the step look done.
+  const STEP_BADGE_RANK = ["notServed", "stale", "unknown", "platformDefault", "live"] as const;
+  const worstDiscovery = ([data.aiDiscovery.agents, data.aiDiscovery.llms] as AiDiscoveryStatus[])
+    .map(discoveryStatus)
+    .sort((x, y) => STEP_BADGE_RANK.indexOf(x as never) - STEP_BADGE_RANK.indexOf(y as never))[0];
+  const llmsStatusBadge = (() => {
+    const b = DISCOVERY_BADGE[worstDiscovery as keyof typeof DISCOVERY_BADGE];
+    return <Badge tone={b.tone}>{a[b.key]}</Badge>;
+  })();
+
+  // "Nothing scanned" is not "all good": a shop whose products were never
+  // synced would otherwise get a green badge for an empty catalog.
+  const catalogBadge =
+    data.catalog.scanned === 0 ? (
+      <Badge>{a.statusUnknown}</Badge>
+    ) : data.catalog.buckets.length === 0 ? (
+      // "No findings" is only "complete" when everything was actually checked.
+      // With the attribute block unsynced, brand and category were skipped —
+      // claiming completeness for them would be a green badge over an unknown.
+      data.catalog.attributeDataKnown ? (
+        <Badge tone="success">{a.catalogBadgeComplete}</Badge>
+      ) : (
+        <Badge tone="attention">{a.catalogBadgePartial}</Badge>
+      )
+    ) : (
+      <Badge tone="warning">
+        {a.catalogBadgeGaps.replace("{count}", String(data.catalog.scanned - data.catalog.ready))}
+      </Badge>
+    );
 
   // Rules our own classifier couldn't settle — the only ones worth asking the
   // model about, and the only ones the removal flow will accept.
@@ -342,7 +488,8 @@ export default function SeoAeo() {
   };
 
   const PREVIEW_LINES = 12;
-  const allPreviewLines = data.llmsPreview.split("\n");
+  const previewSource = previewFile === "agents" ? data.agentsPreview : data.llmsPreview;
+  const allPreviewLines = previewSource.split("\n");
   const previewLines = allPreviewLines.slice(0, PREVIEW_LINES).join("\n");
   const previewTruncated = allPreviewLines.length > PREVIEW_LINES;
 
@@ -361,6 +508,17 @@ export default function SeoAeo() {
       verify_failed_rolled_back: a.robotsVerifyRolledBack,
     };
     return { tone: "critical" as const, msg: map[fetcher.data.error] || a.errorGeneric };
+  })();
+
+  const removeMsg = (() => {
+    if (removeFetcher.state !== "idle" || !removeFetcher.data) return null;
+    if (removeFetcher.data.ok) return { tone: "success" as const, msg: a.discoveryOverrideRemoved };
+    const map: Record<string, string> = {
+      theme_writes_disabled: a.themeWritesDisabled,
+      no_theme: a.errorNoTheme,
+      delete_failed: a.discoveryRemoveFailed,
+    };
+    return { tone: "critical" as const, msg: map[removeFetcher.data.error] || a.errorGeneric };
   })();
 
   const robotsMsg = (() => {
@@ -389,11 +547,16 @@ export default function SeoAeo() {
           </SeoHelpBanner>
 
           {genMsg && <Banner tone={genMsg.tone}>{genMsg.msg}</Banner>}
+          {removeMsg && <Banner tone={removeMsg.tone}>{removeMsg.msg}</Banner>}
           {robotsMsg && <Banner tone={robotsMsg.tone}>{robotsMsg.msg}</Banner>}
           {adviceError && <Banner tone="critical">{adviceError}</Banner>}
 
-          {/* Step selector — access (robots.txt) before orientation (llms.txt). */}
-          <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          {/* Step selector — access (robots.txt), then orientation (discovery
+              files), then the product data an answer engine compares on. The
+              order is a dependency chain: a bot that may not read the shop
+              never sees the files, and complete product data is worth nothing
+              if neither of the first two holds. */}
+          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
             <StepTile
               selected={step === "robots"}
               onSelect={() => setStep("robots")}
@@ -409,6 +572,14 @@ export default function SeoAeo() {
               title={a.stepGuideTitle}
               body={a.stepGuideBody}
               badge={llmsStatusBadge}
+            />
+            <StepTile
+              selected={step === "catalog"}
+              onSelect={() => setStep("catalog")}
+              kicker={a.stepCatalogKicker}
+              title={a.stepCatalogTitle}
+              body={a.stepCatalogBody}
+              badge={catalogBadge}
             />
           </InlineGrid>
 
@@ -543,7 +714,7 @@ export default function SeoAeo() {
           </Card>
           )}
 
-          {/* llms.txt */}
+          {/* AI-discovery files: agents.md (canonical) + llms.txt */}
           {step === "llms" && (
             <Card>
               <BlockStack gap="300">
@@ -557,18 +728,89 @@ export default function SeoAeo() {
                   {a.llmsBody}
                 </Text>
 
-                {/* What the file would contain right now — the old card showed
+                {/* One block per path. agents.md first: it is the file agents
+                    read, and llms.txt mirrors it unless overridden. */}
+                <BlockStack gap="300">
+                  {DISCOVERY_FILES.map(({ file, path }) => {
+                    const s = data.aiDiscovery[file];
+                    const status = discoveryStatus(s);
+                    return (
+                      <Box
+                        key={file}
+                        padding="300"
+                        borderWidth="025"
+                        borderColor="border"
+                        borderRadius="200"
+                      >
+                        <BlockStack gap="200">
+                          <InlineStack gap="200" blockAlign="center" wrap>
+                            <Text as="h4" variant="headingSm">
+                              {path}
+                            </Text>
+                            {discoveryBadge(s)}
+                            {file === "agents" && <Badge tone="attention">{a.discoveryCanonical}</Badge>}
+                          </InlineStack>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {a.discoveryExplain[file]}
+                          </Text>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {a.discoveryStatusLine[status]}
+                          </Text>
+
+                          {/* What the URL returns today, when it is not ours —
+                              evidence for "Shopify's default is live", instead
+                              of asking the merchant to take our word for it. */}
+                          {status === "platformDefault" && s.liveExcerpt && (
+                            <Box overflowX="scroll" background="bg-surface-secondary" padding="200" borderRadius="100">
+                              <pre style={{ margin: 0, fontSize: "0.7rem", lineHeight: 1.5 }}>
+                                {s.liveExcerpt}
+                              </pre>
+                            </Box>
+                          )}
+
+                          <InlineStack gap="200">
+                            {s.url && (
+                              <Button variant="plain" url={s.url} target="_blank">
+                                {a.llmsOpenLive}
+                              </Button>
+                            )}
+                            {s.overridden && (
+                              <Button
+                                variant="plain"
+                                tone="critical"
+                                disabled={!data.themeWrites}
+                                loading={removeFetcher.state !== "idle"}
+                                onClick={() =>
+                                  removeFetcher.submit(
+                                    { actionType: "removeAiDiscoveryOverride", file },
+                                    { method: "post" },
+                                  )
+                                }
+                              >
+                                {a.discoveryRemoveOverride}
+                              </Button>
+                            )}
+                          </InlineStack>
+                        </BlockStack>
+                      </Box>
+                    );
+                  })}
+                </BlockStack>
+
+                {/* What the files would contain right now — the old card showed
                     only a present/absent badge, which gave no evidence that the
                     button had done anything. */}
                 <Text as="p" variant="bodySm" tone="subdued">
                   {a.llmsContents
                     .replace("{products}", String(data.llmsProductCount))
-                    .replace("{collections}", String(data.llmsCollectionCount))}
+                    .replace("{collections}", String(data.llmsCollectionCount))
+                    .replace("{policies}", String(data.agentsPolicyCount))}
                 </Text>
 
-                {data.llmsTxtExists && !data.llmsTxtUpToDate && (
+                {(data.aiDiscovery.agents.overridden && !data.aiDiscovery.agents.upToDate) ||
+                (data.aiDiscovery.llms.overridden && !data.aiDiscovery.llms.upToDate) ? (
                   <Banner tone="warning">{a.llmsStaleHint}</Banner>
-                )}
+                ) : null}
 
                 {/* Without shop.description the file has no `> summary` line —
                     the one sentence that tells an LLM what this store even is.
@@ -627,7 +869,7 @@ export default function SeoAeo() {
                   </InlineStack>
                 </Box>
 
-                {data.llmsPreview && (
+                {previewSource && (
                   <Box
                     padding="300"
                     background="bg-surface-secondary"
@@ -640,14 +882,20 @@ export default function SeoAeo() {
                         <Text as="h4" variant="headingSm">
                           {a.llmsPreviewTitle}
                         </Text>
-                        {/* The preview is truncated, so the way to read the
-                            whole thing belongs right here, not only in the
-                            button row at the bottom of the card. */}
-                        {data.llmsTxtExists && data.llmsUrl && (
-                          <Button variant="plain" url={data.llmsUrl} target="_blank">
-                            {a.llmsOpenLive}
-                          </Button>
-                        )}
+                        {/* One preview area, switched — two stacked previews of
+                            near-identical Markdown made the card unreadable. */}
+                        <InlineStack gap="100">
+                          {DISCOVERY_FILES.map(({ file, path }) => (
+                            <Button
+                              key={file}
+                              size="micro"
+                              pressed={previewFile === file}
+                              onClick={() => setPreviewFile(file)}
+                            >
+                              {path}
+                            </Button>
+                          ))}
+                        </InlineStack>
                       </InlineStack>
                       <Box overflowX="scroll">
                         <pre style={{ margin: 0, fontSize: "0.75rem", lineHeight: 1.5 }}>
@@ -677,17 +925,205 @@ export default function SeoAeo() {
                     loading={fetcher.state !== "idle"}
                     onClick={() => fetcher.submit({ actionType: "generateLlms" }, { method: "post" })}
                   >
-                    {data.llmsTxtExists ? a.llmsUpdate : a.llmsGenerate}
+                    {data.aiDiscovery.agents.overridden || data.aiDiscovery.llms.overridden
+                      ? a.llmsUpdate
+                      : a.llmsGenerate}
                   </Button>
-                  {data.llmsTxtExists && data.llmsUrl && (
-                    <Button url={data.llmsUrl} target="_blank">
-                      {a.llmsOpenLive}
-                    </Button>
-                  )}
                 </InlineStack>
               </BlockStack>
             </Card>
           )}
+
+          {/* Catalog readiness for AI channels */}
+          {step === "catalog" && (
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h3" variant="headingMd">
+                    {a.catalogTitle}
+                  </Text>
+                  {catalogBadge}
+                </InlineStack>
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {a.catalogBody}
+                </Text>
+
+                {data.catalog.scanned === 0 ? (
+                  <Text as="p" tone="subdued">
+                    {a.catalogNoProducts}
+                  </Text>
+                ) : (
+                  <BlockStack gap="300">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(data.catalog.attributeDataKnown
+                        ? a.catalogSummary
+                        : a.catalogSummaryPartial
+                      )
+                        .replace("{ready}", String(data.catalog.ready))
+                        .replace("{scanned}", String(data.catalog.scanned))}
+                      {data.catalog.capped
+                        ? " " +
+                          a.catalogCapped
+                            .replace("{scanned}", String(data.catalog.scanned))
+                            .replace("{available}", String(data.catalog.available))
+                        : ""}
+                    </Text>
+
+                    {/* The attribute block was never synced for at least one
+                        scanned product, so brand and category are UNKNOWN for
+                        the catalog — reporting them as missing would turn a
+                        stale cache into a red finding. */}
+                    {!data.catalog.attributeDataKnown && (
+                      <Banner tone="info" title={a.catalogAttributesUnknownTitle}>
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd">{a.catalogAttributesUnknownBody}</Text>
+                          <InlineStack>
+                            <Button onClick={() => handleNavigate("/app/products")}>
+                              {a.catalogOpenProducts}
+                            </Button>
+                          </InlineStack>
+                        </BlockStack>
+                      </Banner>
+                    )}
+
+                    {data.catalog.buckets.length === 0 ? (
+                      <Banner tone={data.catalog.attributeDataKnown ? "success" : "info"}>
+                        {data.catalog.attributeDataKnown
+                          ? a.catalogAllReady
+                          : a.catalogAllReadyPartial}
+                      </Banner>
+                    ) : (
+                      data.catalog.buckets.map((bucket) => (
+                        <Box
+                          key={bucket.code}
+                          padding="300"
+                          borderWidth="025"
+                          borderColor="border"
+                          borderRadius="200"
+                        >
+                          <BlockStack gap="200">
+                            <InlineStack gap="200" blockAlign="center" wrap>
+                              <Text as="h4" variant="headingSm">
+                                {a.catalogCode[bucket.code].label}
+                              </Text>
+                              <Badge tone="warning">
+                                {a.catalogAffected.replace("{count}", String(bucket.count))}
+                              </Badge>
+                            </InlineStack>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {a.catalogCode[bucket.code].hint}
+                            </Text>
+                            <BlockStack gap="100">
+                              {bucket.items.slice(0, CATALOG_ITEMS_SHOWN).map((item) => (
+                                <InlineStack key={item.id} gap="200" blockAlign="center" wrap>
+                                  <Button
+                                    variant="plain"
+                                    onClick={() =>
+                                      handleNavigate("/app/products", {
+                                        searchParams: new URLSearchParams({ select: item.id }),
+                                      })
+                                    }
+                                  >
+                                    {item.title || item.handle}
+                                  </Button>
+                                </InlineStack>
+                              ))}
+                              {bucket.count > CATALOG_ITEMS_SHOWN && (
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  {a.catalogMore.replace(
+                                    "{count}",
+                                    String(bucket.count - CATALOG_ITEMS_SHOWN),
+                                  )}
+                                </Text>
+                              )}
+                            </BlockStack>
+                            {/* Only where the grid really has the column —
+                                offering "fix in bulk" for a field it cannot
+                                edit would send the merchant on a hunt. */}
+                            {BULK_FIXABLE_CODES.includes(bucket.code) && (
+                              <InlineStack>
+                                <Button onClick={() => handleNavigate("/app/bulk")}>
+                                  {a.catalogFixInBulk}
+                                </Button>
+                              </InlineStack>
+                            )}
+                          </BlockStack>
+                        </Box>
+                      ))
+                    )}
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+          )}
+
+          {/* Arrivals from AI assistants. Below the steps, not one of them: the
+              three steps are things to set up, this is what came of it. */}
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="h3" variant="headingMd">
+                  {a.referralTitle}
+                </Text>
+                <Badge tone={data.referrals.totalVisits > 0 ? "success" : undefined}>
+                  {a.referralWindow.replace("{days}", String(data.referrals.days))}
+                </Badge>
+              </InlineStack>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                {a.referralBody}
+              </Text>
+
+              {data.referrals.totalVisits === 0 ? (
+                <Banner tone="info">
+                  {a.referralNoneInWindow.replace("{days}", String(data.referrals.days))}
+                </Banner>
+              ) : (
+                <BlockStack gap="300">
+                  <Text as="p" variant="headingLg">
+                    {a.referralTotal
+                      .replace("{count}", String(data.referrals.totalVisits))
+                      .replace("{days}", String(data.referrals.days))}
+                  </Text>
+
+                  <BlockStack gap="100">
+                    {data.referrals.bySource.map((row) => (
+                      <InlineStack key={row.source} gap="200" align="space-between" blockAlign="center">
+                        <Text as="span" variant="bodyMd">
+                          {(a.referralSourceName as Record<string, string>)[row.source] || row.source}
+                        </Text>
+                        <Text as="span" variant="bodyMd" fontWeight="medium">
+                          {String(row.visits)}
+                        </Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+
+                  {data.referrals.topPages.length > 0 && (
+                    <BlockStack gap="100">
+                      <Text as="h4" variant="headingSm">
+                        {a.referralTopPages}
+                      </Text>
+                      {data.referrals.topPages.map((page) => (
+                        <InlineStack key={page.path} gap="200" align="space-between" blockAlign="center">
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {page.path}
+                          </Text>
+                          <Text as="span" variant="bodySm">
+                            {String(page.visits)}
+                          </Text>
+                        </InlineStack>
+                      ))}
+                    </BlockStack>
+                  )}
+                </BlockStack>
+              )}
+
+              {/* Stated, not hidden: what this number cannot see. */}
+              <Text as="p" variant="bodySm" tone="subdued">
+                {a.referralCaveat}
+              </Text>
+            </BlockStack>
+          </Card>
         </BlockStack>
       )}
     </SeoSectionLayout>

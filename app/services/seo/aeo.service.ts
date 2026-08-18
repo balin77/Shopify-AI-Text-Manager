@@ -2,9 +2,15 @@
  * Answer Engine Optimization (SEO_TAB_IMPLEMENTATION_PLAN.md Phase 7 / Anhang D1).
  *
  * Two AI-search levers that need no Google approval:
- *  - **llms.txt**: a Markdown summary of the store for AI crawlers, written to
- *    the native `templates/llms.txt.liquid` theme file via Admin GraphQL
- *    (Shopify serves it at `/llms.txt`). Writing a *new* additive file is safe.
+ *  - **AI-discovery files**: a Markdown summary of the store for AI crawlers and
+ *    shopping agents, written to the native `templates/llms.txt.liquid` and
+ *    `templates/agents.md.liquid` theme files via Admin GraphQL (Shopify serves
+ *    them at `/llms.txt` and `/agents.md`). Writing *new* additive files is safe.
+ *    Since ~May 2026 `/agents.md` is the canonical surface and `/llms.txt`
+ *    defaults to mirroring it, so writing only `llms.txt` leaves the file agents
+ *    actually read at Shopify's default — which is why both are written together
+ *    and why every claim about them is MEASURED against the live URL
+ *    (`probeAiDiscoveryDelivery`) rather than inferred from a successful upsert.
  *  - **robots.txt AI-crawler audit**: read-only check of the live robots.txt for
  *    AI bots that are blocked, classified rule by rule. Rewriting
  *    `robots.txt.liquid` is possible but treated as the footgun it is: it only
@@ -45,6 +51,13 @@ export const AI_CRAWLERS = [
 ];
 
 export const LLMS_TEMPLATE_FILENAME = "templates/llms.txt.liquid";
+/**
+ * `/agents.md` is the canonical AI-discovery surface since ~2026-05; Shopify
+ * serves a platform default and `/llms.txt` mirrors it unless a theme template
+ * overrides each path individually. Same template mechanism as llms.txt — one
+ * more filename, no new scope.
+ */
+export const AGENTS_TEMPLATE_FILENAME = "templates/agents.md.liquid";
 export const ROBOTS_TEMPLATE_FILENAME = "templates/robots.txt.liquid";
 
 // ── llms.txt ─────────────────────────────────────────────────────────────────
@@ -123,6 +136,78 @@ export function buildLlmsTxt(input: LlmsTxtInput): string {
     }
     lines.push("");
   }
+
+  return lines.join("\n").trimEnd() + "\n";
+}
+
+export interface AgentsMdInput extends LlmsTxtInput {
+  /** Shop policies (refund, shipping, …) with their storefront URLs. */
+  policies: Array<{ title: string; url: string }>;
+}
+
+/**
+ * Build an agents.md (Markdown) snapshot for shopping agents. Pure.
+ *
+ * Deliberately NOT the same document as llms.txt, even though both are built
+ * from the same catalog: llms.txt is a crawler-facing index, agents.md is read
+ * by an agent that may be about to BUY. So it says who is behind the store,
+ * links the policies that decide a purchase (returns, shipping) — Shopify's own
+ * default does not know which of them a merchant considers relevant — and
+ * states where authoritative price/stock live, since a cached list in a text
+ * file is exactly the thing an agent must not quote a price from.
+ */
+export function buildAgentsMd(input: AgentsMdInput): string {
+  const base = baseUrl(input.domain);
+  const name = oneLine(input.shopName) || "Shop";
+  const lines: string[] = [];
+
+  lines.push(`# ${name}`);
+  lines.push("");
+  const summary = oneLine(input.description, 250);
+  if (summary) {
+    lines.push(`> ${summary}`);
+    lines.push("");
+  }
+  lines.push(
+    `This file describes ${mdText(name)} for AI assistants and shopping agents. It is maintained by the store owner.`,
+  );
+  lines.push("");
+
+  if (input.collections.length > 0) {
+    lines.push("## Collections");
+    for (const c of input.collections) {
+      const url = base ? `${base}/collections/${c.handle}` : `/collections/${c.handle}`;
+      lines.push(`- [${mdText(c.title)}](${url})`);
+    }
+    lines.push("");
+  }
+
+  if (input.products.length > 0) {
+    lines.push("## Products");
+    for (const p of input.products) {
+      const url = base ? `${base}/products/${p.handle}` : `/products/${p.handle}`;
+      const desc = oneLine(p.description);
+      const title = mdText(p.title);
+      lines.push(desc ? `- [${title}](${url}): ${desc}` : `- [${title}](${url})`);
+    }
+    lines.push("");
+  }
+
+  if (input.policies.length > 0) {
+    lines.push("## Policies");
+    for (const p of input.policies) {
+      lines.push(`- [${mdText(p.title)}](${p.url})`);
+    }
+    lines.push("");
+  }
+
+  lines.push("## Notes for agents");
+  lines.push(
+    "- Prices, availability and variants are authoritative on the product page and in its structured data (JSON-LD); this file is a periodically regenerated summary and may lag.",
+  );
+  lines.push("- Product lists here are a selection, not the full catalog. Use the sitemap for completeness.");
+  if (base) lines.push(`- Sitemap: ${base}/sitemap.xml`);
+  lines.push("");
 
   return lines.join("\n").trimEnd() + "\n";
 }
@@ -801,31 +886,44 @@ export function themeWritesEnabled(): boolean {
 /** Max items per section in the generated llms.txt. */
 export const LLMS_MAX_PER_TYPE = 50;
 
-export interface GenerateLlmsResult {
-  ok: boolean;
-  error?: string;
-}
-
 export interface BuiltLlmsTxt {
   content: string;
   productCount: number;
   collectionCount: number;
 }
 
+export interface BuiltAiDiscovery extends BuiltLlmsTxt {
+  /** agents.md content — same catalog, agent-facing document (buildAgentsMd). */
+  agentsContent: string;
+  policyCount: number;
+}
+
 /**
- * Build the llms.txt this shop *should* have, from the DB cache. Split out of
- * `generateAndUpsertLlmsTxt` so the read-only analysis can build the same bytes
- * and compare them against what's in the theme — that comparison is what makes
- * "up to date / stale" possible without storing a hash anywhere.
+ * A shop policy's storefront path is its type in kebab case (`REFUND_POLICY` →
+ * `/policies/refund-policy`) — the record has no handle column. Derived rather
+ * than read from `ShopPolicy.url`, because that cached URL can carry the
+ * myshopify host while everything we publish outward has to use the primary
+ * domain.
  */
-export async function buildLlmsTxtForShop(
+export function policyPath(type: string): string {
+  return `/policies/${(type || "").trim().toLowerCase().replace(/_/g, "-")}`;
+}
+
+/**
+ * Build both AI-discovery documents this shop *should* have, from the DB cache.
+ * Split out of the upsert so the read-only analysis can build the same bytes and
+ * compare them against what is in the theme AND against what the live URL
+ * serves — those comparisons are what make "up to date / stale / not served"
+ * possible without storing a hash anywhere.
+ */
+export async function buildAiDiscoveryForShop(
   db: any,
   shop: string,
   shopName: string,
   domain: string,
   description = "",
-): Promise<BuiltLlmsTxt> {
-  const [products, collections] = await Promise.all([
+): Promise<BuiltAiDiscovery> {
+  const [products, collections, policies] = await Promise.all([
     // ACTIVE only, and this one must stay that way: llms.txt is a published
     // file that hands crawlers a list of URLs. Listing unlisted products there
     // would publish exactly the direct links the status exists to keep
@@ -850,83 +948,206 @@ export async function buildLlmsTxtForShop(
       orderBy: { handle: "asc" },
       take: LLMS_MAX_PER_TYPE,
     }),
+    // Only policies the merchant actually filled in: an empty ShopPolicy row is
+    // a page that isn't served, and linking one from agents.md would hand an
+    // agent a 404 for the very question (returns, shipping) it opened the file
+    // for. Ordered by type so the file only changes when a policy does.
+    db.shopPolicy.findMany({
+      where: { shop, NOT: { body: null } },
+      select: { title: true, type: true, body: true },
+      orderBy: { type: "asc" },
+    }),
   ]);
+
+  const mappedProducts = products.map((p: any) => ({
+    title: p.title,
+    handle: p.handle,
+    description: p.seoDescription || p.descriptionHtml,
+  }));
+  const mappedCollections = collections.map((c: any) => ({ title: c.title, handle: c.handle }));
+  const base = baseUrl(domain);
+  const mappedPolicies = policies
+    .filter((p: any) => (p.body || "").trim().length > 0)
+    .map((p: any) => ({
+      title: p.title || p.type,
+      url: `${base}${policyPath(p.type)}`,
+    }));
 
   const content = buildLlmsTxt({
     shopName,
     domain,
     description,
-    products: products.map((p: any) => ({
-      title: p.title,
-      handle: p.handle,
-      description: p.seoDescription || p.descriptionHtml,
-    })),
-    collections: collections.map((c: any) => ({ title: c.title, handle: c.handle })),
+    products: mappedProducts,
+    collections: mappedCollections,
   });
 
-  return { content, productCount: products.length, collectionCount: collections.length };
+  const agentsContent = buildAgentsMd({
+    shopName,
+    domain,
+    description,
+    products: mappedProducts,
+    collections: mappedCollections,
+    policies: mappedPolicies,
+  });
+
+  return {
+    content,
+    agentsContent,
+    productCount: products.length,
+    collectionCount: collections.length,
+    policyCount: mappedPolicies.length,
+  };
 }
 
 /**
- * Build llms.txt from the DB cache and upsert it into the published theme.
- * Returns ok:false (never throws) with a reason the route can map to i18n.
+ * llms.txt only, for the callers that never needed agents.md. Thin wrapper so
+ * there is exactly one query set and one builder pair behind both files.
+ */
+export async function buildLlmsTxtForShop(
+  db: any,
+  shop: string,
+  shopName: string,
+  domain: string,
+  description = "",
+): Promise<BuiltLlmsTxt> {
+  const built = await buildAiDiscoveryForShop(db, shop, shopName, domain, description);
+  return {
+    content: built.content,
+    productCount: built.productCount,
+    collectionCount: built.collectionCount,
+  };
+}
+
+/** Which of the two AI-discovery files a result line is about. */
+export type AiDiscoveryFile = "llms" | "agents";
+
+export const AI_DISCOVERY_TEMPLATES: Record<AiDiscoveryFile, string> = {
+  llms: LLMS_TEMPLATE_FILENAME,
+  agents: AGENTS_TEMPLATE_FILENAME,
+};
+
+/** Public path each file is served under. */
+export const AI_DISCOVERY_PATHS: Record<AiDiscoveryFile, string> = {
+  llms: "/llms.txt",
+  agents: "/agents.md",
+};
+
+export interface GenerateAiDiscoveryResult {
+  /** True when EVERY requested file was written (or was already current). */
+  ok: boolean;
+  /** Set when nothing could be attempted at all (no theme, writes disabled). */
+  error?: string;
+  /** Per-file outcome — a partial write is reported, never rounded up to ok. */
+  files: Partial<Record<AiDiscoveryFile, "written" | "unchanged" | "failed">>;
+}
+
+/**
+ * Build both AI-discovery files from the DB cache and upsert them into the
+ * published theme. Returns ok:false (never throws) with a reason the route can
+ * map to i18n.
+ *
+ * Both files are written in ONE action on purpose: since `/llms.txt` defaults to
+ * mirroring `/agents.md`, writing only one of them leaves a shop half-overridden
+ * in a way no merchant would predict from a button labelled "generate".
  *
  * `skipIfUnchanged` makes this safe to call from a background loop: it reads the
- * current file first and returns `ok:true` without writing when the content
+ * current file first and reports `unchanged` without writing when the content
  * already matches, so the periodic refresh doesn't touch the theme every cycle.
  */
-export async function generateAndUpsertLlmsTxt(
+export async function generateAndUpsertAiDiscovery(
   admin: AdminApiContext,
   db: any,
   shop: string,
   shopName: string,
   domain: string,
   description: string,
-  opts: { skipIfUnchanged?: boolean } = {},
-): Promise<GenerateLlmsResult> {
-  if (!themeWritesEnabled()) return { ok: false, error: "theme_writes_disabled" };
+  opts: { skipIfUnchanged?: boolean; files?: AiDiscoveryFile[] } = {},
+): Promise<GenerateAiDiscoveryResult> {
+  if (!themeWritesEnabled()) return { ok: false, error: "theme_writes_disabled", files: {} };
 
   const themeId = await getMainThemeId(admin);
-  if (!themeId) return { ok: false, error: "no_theme" };
+  if (!themeId) return { ok: false, error: "no_theme", files: {} };
 
-  const { content } = await buildLlmsTxtForShop(db, shop, shopName, domain, description);
-  const wrapped = wrapLlmsTxtForTheme(content);
+  const built = await buildAiDiscoveryForShop(db, shop, shopName, domain, description);
+  const contentFor: Record<AiDiscoveryFile, string> = {
+    llms: built.content,
+    agents: built.agentsContent,
+  };
 
-  if (opts.skipIfUnchanged) {
-    const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
-    if (existing !== null && llmsTxtMatches(existing, content)) return { ok: true };
+  const targets = opts.files ?? (["llms", "agents"] as AiDiscoveryFile[]);
+  const files: GenerateAiDiscoveryResult["files"] = {};
+
+  for (const file of targets) {
+    const filename = AI_DISCOVERY_TEMPLATES[file];
+    const content = contentFor[file];
+
+    if (opts.skipIfUnchanged) {
+      const existing = await readThemeFile(admin, themeId, filename);
+      if (existing !== null && llmsTxtMatches(existing, content)) {
+        files[file] = "unchanged";
+        continue;
+      }
+    }
+
+    const { userErrors, upserted } = await upsertThemeFile(
+      admin,
+      themeId,
+      filename,
+      wrapLlmsTxtForTheme(content),
+    );
+    // Same discipline as the translation writes: an empty `userErrors` is not
+    // proof anything was stored — require the filename in the echo.
+    files[file] = userErrors.length === 0 && upserted.includes(filename) ? "written" : "failed";
   }
 
-  const { userErrors, upserted } = await upsertThemeFile(
-    admin,
-    themeId,
-    LLMS_TEMPLATE_FILENAME,
-    wrapped,
-  );
-  if (userErrors.length > 0) return { ok: false, error: "upsert_failed" };
-  // Same discipline as the translation writes: an empty `userErrors` is not
-  // proof anything was stored — require the filename in the echo.
-  if (!upserted.includes(LLMS_TEMPLATE_FILENAME)) return { ok: false, error: "upsert_failed" };
-  return { ok: true };
+  const ok = targets.every((f) => files[f] === "written" || files[f] === "unchanged");
+  return ok ? { ok, files } : { ok, error: "upsert_failed", files };
 }
 
 /**
- * Does the theme's stored llms.txt already equal what we'd generate now? The
- * stored form is defanged and `{% raw %}`-wrapped, so unwrap it and compare
- * against the defanged fresh content. Pure.
+ * Remove our override of one AI-discovery file, handing the path back to
+ * Shopify's platform default. The counterpart to generating it: an override the
+ * merchant cannot undo from the app is one they have to undo in the theme code
+ * editor, and `/agents.md` is a file Shopify itself fills sensibly.
+ */
+export async function removeAiDiscoveryOverride(
+  admin: AdminApiContext,
+  file: AiDiscoveryFile,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!themeWritesEnabled()) return { ok: false, error: "theme_writes_disabled" };
+  const themeId = await getMainThemeId(admin);
+  if (!themeId) return { ok: false, error: "no_theme" };
+  const deleted = await deleteThemeFile(admin, themeId, AI_DISCOVERY_TEMPLATES[file]);
+  return deleted ? { ok: true } : { ok: false, error: "delete_failed" };
+}
+
+/**
+ * Does the theme's stored AI-discovery file already equal what we'd generate
+ * now? The stored form is defanged and `{% raw %}`-wrapped, so unwrap it and
+ * compare against the defanged fresh content. The same predicate answers the
+ * LIVE question, because Liquid strips the wrapper before serving: what the URL
+ * returns is the defanged content verbatim. Pure.
  */
 export function llmsTxtMatches(storedThemeFile: string, freshContent: string): boolean {
   return unwrapLlmsTxtFromTheme(storedThemeFile).trim() === defangLiquid(freshContent).trim();
 }
 
 /**
- * Periodic llms.txt refresh, called from the sync scheduler.
+ * Periodic AI-discovery refresh (llms.txt AND agents.md), called from the sync
+ * scheduler and the daily sweep. Name kept because both callers and the
+ * `llmsTxtLastAutoRunAt` stamp it drives are named for the original single file.
  *
- * Deliberately conservative on two counts. It only ever *updates* a file that
+ * Deliberately conservative on three counts. It only ever *updates* a file that
  * already exists — creating one is an explicit merchant decision, not something
- * a background loop should do behind their back. And it writes only when the
- * content actually differs, so the common case costs one theme read and no
- * write at all. Never throws: the caller is a scheduler cycle.
+ * a background loop should do behind their back, and for agents.md that
+ * decision means overriding a file Shopify fills by itself. It writes only when
+ * the content actually differs, so the common case costs two theme reads and no
+ * write at all. And it never throws: the caller is a scheduler cycle.
+ *
+ * The aggregate status is the worst thing that happened across the two files:
+ * one failed write makes the run "failed" even if the other succeeded, because
+ * the sweep uses this only for logging and "partly updated" is not a state
+ * anyone acts on differently.
  */
 export async function refreshLlmsTxtIfStale(
   admin: AdminApiContext,
@@ -960,21 +1181,43 @@ export async function refreshLlmsTxtIfStale(
     const themeId = await getMainThemeId(admin);
     if (!themeId) return "failed";
 
-    const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
-    if (!existing || unwrapLlmsTxtFromTheme(existing).trim().length === 0) return "absent";
+    const existingByFile: Partial<Record<AiDiscoveryFile, string>> = {};
+    for (const file of ["llms", "agents"] as AiDiscoveryFile[]) {
+      const existing = await readThemeFile(admin, themeId, AI_DISCOVERY_TEMPLATES[file]);
+      if (existing && unwrapLlmsTxtFromTheme(existing).trim().length > 0) {
+        existingByFile[file] = existing;
+      }
+    }
+    const present = Object.keys(existingByFile) as AiDiscoveryFile[];
+    // Neither file is ours — nothing to refresh, and creating one here would be
+    // exactly the behind-the-back write this function refuses to do.
+    if (present.length === 0) return "absent";
 
     const { name, domain, description } = await getShopIdentity(admin, shop);
-    const { content } = await buildLlmsTxtForShop(db, shop, name, domain, description);
-    if (llmsTxtMatches(existing, content)) return "unchanged";
+    const built = await buildAiDiscoveryForShop(db, shop, name, domain, description);
+    const contentFor: Record<AiDiscoveryFile, string> = {
+      llms: built.content,
+      agents: built.agentsContent,
+    };
 
-    const { userErrors, upserted } = await upsertThemeFile(
-      admin,
-      themeId,
-      LLMS_TEMPLATE_FILENAME,
-      wrapLlmsTxtForTheme(content),
-    );
-    if (userErrors.length > 0 || !upserted.includes(LLMS_TEMPLATE_FILENAME)) return "failed";
-    return "updated";
+    let updated = false;
+    let failed = false;
+    for (const file of present) {
+      const content = contentFor[file];
+      if (llmsTxtMatches(existingByFile[file]!, content)) continue;
+      const filename = AI_DISCOVERY_TEMPLATES[file];
+      const { userErrors, upserted } = await upsertThemeFile(
+        admin,
+        themeId,
+        filename,
+        wrapLlmsTxtForTheme(content),
+      );
+      if (userErrors.length > 0 || !upserted.includes(filename)) failed = true;
+      else updated = true;
+    }
+
+    if (failed) return "failed";
+    return updated ? "updated" : "unchanged";
   } catch {
     return "failed";
   }
@@ -1141,6 +1384,29 @@ export async function applyRobotsRuleRemovals(
   }
 }
 
+/**
+ * Live-delivery evidence for one AI-discovery path. `overridden` is what the
+ * THEME holds, `served*` is what the URL actually returns — they answer
+ * different questions, and only the second one is proof. A successful
+ * `themeFilesUpsert` says the file was stored, not that Shopify serves it from
+ * that path; for `/agents.md`, which the platform also fills by itself, that
+ * distinction is the whole point.
+ */
+export interface AiDiscoveryStatus {
+  /** Our template exists in the theme and is non-empty. */
+  overridden: boolean;
+  /** The stored template equals what we'd generate right now. */
+  upToDate: boolean;
+  /** The public URL answered with a body at all. */
+  liveAvailable: boolean;
+  /** The public URL serves exactly the content we generate. */
+  liveServedByUs: boolean;
+  /** First lines of what the URL currently serves — evidence, not a claim. */
+  liveExcerpt: string;
+  /** Public URL, for the merchant to open. */
+  url: string;
+}
+
 export interface AeoAnalysis {
   llmsTxtExists: boolean;
   /**
@@ -1156,6 +1422,12 @@ export interface AeoAnalysis {
   llmsPreview: string;
   /** Public URL the file is served from, for the merchant to verify. */
   llmsUrl: string;
+  /** Per-file status incl. live-delivery evidence (llms.txt AND agents.md). */
+  aiDiscovery: Record<AiDiscoveryFile, AiDiscoveryStatus>;
+  /** First lines of the freshly built agents.md, for the preview panel. */
+  agentsPreview: string;
+  /** Policies linked from the generated agents.md. */
+  agentsPolicyCount: number;
   /** `AEO_THEME_WRITES` — false hides/blocks every theme-writing action. */
   themeWrites: boolean;
   /** Merchant switch for the periodic llms.txt refresh (`AISettings`). */
@@ -1196,36 +1468,108 @@ export async function auditLiveRobots(
   return { available: true, crawlerGroups: groupCrawlerStatuses(auditRobotsTxt(txt)) };
 }
 
+/** How much of the served file is carried to the UI as evidence. */
+const LIVE_EXCERPT_CHARS = 700;
+
 /**
- * Read-only AEO status: does llms.txt exist in the theme, and which AI crawlers
- * does the live robots.txt block (fully or partially). Best-effort: failures
- * degrade to empty, never throw at the route.
+ * Fetch one AI-discovery URL and decide whether it serves OUR content. Read-only
+ * and never throws — an unreachable storefront degrades to "unknown", which the
+ * UI renders as such rather than as "not overridden".
+ */
+export async function probeAiDiscoveryDelivery(
+  url: string,
+  freshContent: string,
+): Promise<{ available: boolean; servedByUs: boolean; excerpt: string }> {
+  if (!url) return { available: false, servedByUs: false, excerpt: "" };
+  try {
+    const res = await fetch(url, {
+      redirect: "follow",
+      cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return { available: false, servedByUs: false, excerpt: "" };
+    const body = await res.text();
+    return {
+      available: body.trim().length > 0,
+      // Liquid strips the {% raw %} wrapper before serving, so the served bytes
+      // are the defanged content verbatim — the same predicate the theme
+      // comparison uses.
+      servedByUs: llmsTxtMatches(body, freshContent),
+      excerpt: body.slice(0, LIVE_EXCERPT_CHARS),
+    };
+  } catch {
+    return { available: false, servedByUs: false, excerpt: "" };
+  }
+}
+
+const EMPTY_DISCOVERY_STATUS: AiDiscoveryStatus = {
+  overridden: false,
+  upToDate: false,
+  liveAvailable: false,
+  liveServedByUs: false,
+  liveExcerpt: "",
+  url: "",
+};
+
+/**
+ * Read-only AEO status: what the theme holds and what the live URLs serve for
+ * both AI-discovery files, plus which AI crawlers the live robots.txt blocks
+ * (fully or partially). Best-effort: failures degrade to empty, never throw at
+ * the route.
  */
 export async function analyzeAeo(
   admin: AdminApiContext,
   shop: string,
   llms: { db: any; shopName: string; domain: string; description: string; autoUpdate: boolean },
 ): Promise<AeoAnalysis> {
-  let llmsTxtExists = false;
-  let llmsTxtUpToDate = false;
   let llmsProductCount = 0;
   let llmsCollectionCount = 0;
   let llmsPreview = "";
+  let agentsPreview = "";
+  let agentsPolicyCount = 0;
+  const base = baseUrl(llms.domain || shop);
+  const aiDiscovery: Record<AiDiscoveryFile, AiDiscoveryStatus> = {
+    llms: { ...EMPTY_DISCOVERY_STATUS, url: `${base}${AI_DISCOVERY_PATHS.llms}` },
+    agents: { ...EMPTY_DISCOVERY_STATUS, url: `${base}${AI_DISCOVERY_PATHS.agents}` },
+  };
   try {
-    const built = await buildLlmsTxtForShop(llms.db, shop, llms.shopName, llms.domain, llms.description);
+    const built = await buildAiDiscoveryForShop(
+      llms.db,
+      shop,
+      llms.shopName,
+      llms.domain,
+      llms.description,
+    );
     llmsProductCount = built.productCount;
     llmsCollectionCount = built.collectionCount;
     llmsPreview = built.content;
+    agentsPreview = built.agentsContent;
+    agentsPolicyCount = built.policyCount;
+
+    const freshFor: Record<AiDiscoveryFile, string> = {
+      llms: built.content,
+      agents: built.agentsContent,
+    };
 
     const themeId = await getMainThemeId(admin);
-    if (themeId) {
-      const existing = await readThemeFile(admin, themeId, LLMS_TEMPLATE_FILENAME);
-      llmsTxtExists = !!existing && unwrapLlmsTxtFromTheme(existing).trim().length > 0;
-      llmsTxtUpToDate = llmsTxtExists && llmsTxtMatches(existing!, built.content);
+    for (const file of ["llms", "agents"] as AiDiscoveryFile[]) {
+      const status = aiDiscovery[file];
+      if (themeId) {
+        const existing = await readThemeFile(admin, themeId, AI_DISCOVERY_TEMPLATES[file]);
+        status.overridden = !!existing && unwrapLlmsTxtFromTheme(existing).trim().length > 0;
+        status.upToDate = status.overridden && llmsTxtMatches(existing!, freshFor[file]);
+      }
+      const live = await probeAiDiscoveryDelivery(status.url, freshFor[file]);
+      status.liveAvailable = live.available;
+      status.liveServedByUs = live.servedByUs;
+      status.liveExcerpt = live.excerpt;
     }
   } catch {
     /* leave defaults */
   }
+
+  const llmsTxtExists = aiDiscovery.llms.overridden;
+  const llmsTxtUpToDate = aiDiscovery.llms.upToDate;
 
   let blockedCrawlers: string[] = [];
   let partiallyBlockedCrawlers: string[] = [];
@@ -1256,7 +1600,10 @@ export async function analyzeAeo(
     llmsProductCount,
     llmsCollectionCount,
     llmsPreview,
-    llmsUrl: `${baseUrl(llms.domain || shop)}/llms.txt`,
+    llmsUrl: aiDiscovery.llms.url,
+    aiDiscovery,
+    agentsPreview,
+    agentsPolicyCount,
     themeWrites: themeWritesEnabled(),
     llmsAutoUpdate: llms.autoUpdate,
     shopDescriptionMissing: llms.description.trim().length === 0,

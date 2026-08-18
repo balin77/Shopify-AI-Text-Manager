@@ -321,14 +321,22 @@ export default function MenusPage() {
     useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
   const { registerItems, clearItems } = useItemSelector();
-  const fetcher = useFetcher<{
+  type SaveResponse = {
     success: boolean;
     error?: string;
     saved?: Record<string, string[]>;
     failures?: Array<{ linkId: string; locale: string; message: string }>;
     /** Changes the server's per-request write budget did not reach. */
     deferred?: number;
-  }>();
+  };
+  /** The manual save bar. */
+  const fetcher = useFetcher<SaveResponse>();
+  /**
+   * The per-entry buttons' own save. A SECOND fetcher on purpose: sharing one
+   * would make the save bar spin for an action it did not start, and would let
+   * one response prune the other's draft bookkeeping.
+   */
+  const autoFetcher = useFetcher<SaveResponse>();
 
   const [selectedMenuId, setSelectedMenuId] = useState<string | null>(null);
   const [activeLocale, setActiveLocale] = useState<string>(primaryLocale);
@@ -341,6 +349,23 @@ export default function MenusPage() {
    */
   const [draftByLocale, setDraftByLocale] = useState<Record<string, Record<string, string>>>({});
   const [busyLinkIds, setBusyLinkIds] = useState<Set<string>>(new Set());
+  /**
+   * Values written by the translate / copy buttons while their save is in
+   * flight.
+   *
+   * Deliberately NOT the draft. Those buttons persist by themselves, so their
+   * result is never unsaved work and the save bar must not appear for it —
+   * a bar that pops up after an action that already saved asks the merchant to
+   * confirm something that is done. They are shown from here until the loader
+   * comes back carrying them, and only a FAILED one is moved into the draft,
+   * where the bar is then exactly right: there really is unsaved work.
+   */
+  const [autoPending, setAutoPending] = useState<Record<string, Record<string, string>>>({});
+  /** The last auto-save's outcome. See the settle effect for why it is state. */
+  const [autoFailures, setAutoFailures] = useState<
+    Array<{ linkId: string; locale: string; message: string }>
+  >([]);
+  const [autoError, setAutoError] = useState<string | undefined>(undefined);
   /** Exactly what the in-flight save submitted, captured at click time. */
   const submittedRef = useRef<Record<string, Array<{ linkId: string; value: string }>> | null>(null);
   const [translateError, setTranslateError] = useState<string | null>(null);
@@ -389,11 +414,14 @@ export default function MenusPage() {
       ((linkTranslations || {})[linkId] as LinkTranslationDTO | undefined)?.byLocale?.[locale] ?? "",
     [linkTranslations],
   );
-  /** What is on screen: the pending edit if there is one, else what is stored. */
+  /**
+   * What is on screen. A manual edit wins over an auto-saved value still in
+   * flight (the merchant typed later), and both win over what is stored.
+   */
   const valueFor = useCallback(
     (locale: string, linkId: string): string =>
-      draftByLocale[locale]?.[linkId] ?? savedFor(locale, linkId),
-    [draftByLocale, savedFor],
+      draftByLocale[locale]?.[linkId] ?? autoPending[locale]?.[linkId] ?? savedFor(locale, linkId),
+    [draftByLocale, autoPending, savedFor],
   );
   const isMissingIn = useCallback(
     (locale: string, linkId: string): boolean =>
@@ -535,58 +563,168 @@ export default function MenusPage() {
     [primaryLocale],
   );
 
-  /** Primary view: translate this entry into every other language. */
+  /**
+   * Persist one entry's values right away, through the SAME action the save
+   * bar uses — one echo-verified write path, no second one for buttons.
+   *
+   * The values go to `autoPending` rather than the draft, so the save bar
+   * never appears for work that is already on its way: these actions save by
+   * themselves, and a bar asking to confirm them afterwards is a question the
+   * merchant has no reason to answer.
+   */
+  const autoSave = useCallback(
+    (valuesByLocale: Record<string, string>, linkId: string) => {
+      const entries = Object.entries(valuesByLocale).filter(([, value]) => !!value.trim());
+      if (entries.length === 0) return;
+
+      setAutoPending((prev) => {
+        const next = { ...prev };
+        for (const [locale, value] of entries) {
+          next[locale] = { ...(next[locale] ?? {}), [linkId]: value };
+        }
+        return next;
+      });
+      // And drop any manual edit of the same field. `valueFor` resolves the
+      // draft FIRST, so a leftover draft entry would hide the value that was
+      // just saved, keep the save bar claiming an unsaved change, and let the
+      // next Save write the old text back over it.
+      setDraftByLocale((prev) => {
+        const next = { ...prev };
+        for (const [locale] of entries) {
+          if (!next[locale] || !(linkId in next[locale])) continue;
+          const bucket = { ...next[locale] };
+          delete bucket[linkId];
+          next[locale] = bucket;
+        }
+        return next;
+      });
+
+      const changesByLocale: Record<string, Array<{ linkId: string; value: string }>> = {};
+      for (const [locale, value] of entries) changesByLocale[locale] = [{ linkId, value }];
+
+      setAutoFailures([]);
+      setAutoError(undefined);
+      const fd = new FormData();
+      fd.set("changesByLocale", JSON.stringify(changesByLocale));
+      autoFetcher.submit(fd, { method: "post" });
+    },
+    [autoFetcher],
+  );
+
+  /**
+   * Settle every pending value when the auto-save answers.
+   *
+   * Confirmed ones simply drop — the loader revalidation carries them now.
+   * EVERYTHING else moves into the draft: a per-item failure, a transport
+   * error that saved nothing, a value the server's write budget did not
+   * reach. Only two outcomes are acceptable for a value the merchant can
+   * see — it is stored, or it is visibly unsaved with the save bar offering
+   * a retry. Leaving it "pending" would be a third one: shown as if saved,
+   * with its button spinning forever.
+   *
+   * A second auto-save still in flight can be rescued into the draft by this
+   * too. That is self-healing rather than wrong: when its own response lands
+   * the loader carries the same value, the diff against it is empty, and the
+   * save bar goes away by itself.
+   */
+  // Mirrored in a ref so the settle effect can read the pending values without
+  // depending on them (which would re-run it on its own writes) and without
+  // calling setState from inside another updater — updaters run in the render
+  // phase and StrictMode invokes them twice.
+  const autoPendingRef = useRef(autoPending);
+  useEffect(() => {
+    autoPendingRef.current = autoPending;
+  }, [autoPending]);
+
+  useEffect(() => {
+    const data = autoFetcher.data;
+    if (!data || autoFetcher.state !== "idle") return;
+
+    const pending = autoPendingRef.current;
+    const rescued: Array<{ locale: string; linkId: string; value: string }> = [];
+    for (const [locale, entries] of Object.entries(pending)) {
+      const confirmed = new Set(data.saved?.[locale] ?? []);
+      for (const [linkId, value] of Object.entries(entries)) {
+        if (!confirmed.has(linkId)) rescued.push({ locale, linkId, value });
+      }
+    }
+    if (rescued.length > 0) {
+      setDraftByLocale((draft) => {
+        const merged = { ...draft };
+        for (const r of rescued) {
+          merged[r.locale] = { ...(merged[r.locale] ?? {}), [r.linkId]: r.value };
+        }
+        return merged;
+      });
+    }
+    if (Object.keys(pending).length > 0) setAutoPending({});
+
+    // Held as state rather than read from the fetcher: `autoFetcher.data`
+    // survives until the NEXT auto-save, so a failure reported straight from it
+    // would still be on screen after the merchant fixed the same item through
+    // the save bar, with only a reload to clear it.
+    setAutoFailures(data.failures ?? []);
+    setAutoError(data.error);
+  }, [autoFetcher.data, autoFetcher.state]);
+
+  /** Primary view: translate this entry into every other language, and save. */
   const translateToAll = useCallback(
     (item: FlatMenuItem, sourceText: string) => {
       if (!item.linkId || !sourceText.trim()) return;
+      const linkId = item.linkId;
       setTranslateError(null);
-      void withBusy(item.linkId, async () => {
+      void withBusy(linkId, async () => {
+        const values: Record<string, string> = {};
         for (const locale of foreignLocales) {
           try {
-            const value = await translateOne(item.linkId as string, sourceText, locale);
-            if (value) setDraftValue(locale, item.linkId as string, value);
+            const value = await translateOne(linkId, sourceText, locale);
+            if (value) values[locale] = value;
           } catch (e) {
             setTranslateError(e instanceof Error ? e.message : String(e));
           }
         }
+        autoSave(values, linkId);
       });
     },
-    [foreignLocales, translateOne, setDraftValue, withBusy],
+    [foreignLocales, translateOne, autoSave, withBusy],
   );
 
-  /** Primary view: put the primary label into every other language unchanged. */
+  /** Primary view: put the primary label into every other language, and save. */
   const copyToAll = useCallback(
     (item: FlatMenuItem, sourceText: string) => {
       if (!item.linkId || !sourceText.trim()) return;
-      for (const locale of foreignLocales) setDraftValue(locale, item.linkId, sourceText);
+      const values: Record<string, string> = {};
+      for (const locale of foreignLocales) values[locale] = sourceText;
+      autoSave(values, item.linkId);
     },
-    [foreignLocales, setDraftValue],
+    [foreignLocales, autoSave],
   );
 
-  /** Foreign view: translate this entry from the primary language. */
+  /** Foreign view: translate this entry from the primary language, and save. */
   const translateFromPrimary = useCallback(
     (item: FlatMenuItem, sourceText: string) => {
       if (!item.linkId || !sourceText.trim()) return;
+      const linkId = item.linkId;
       setTranslateError(null);
-      void withBusy(item.linkId, async () => {
+      void withBusy(linkId, async () => {
         try {
-          const value = await translateOne(item.linkId as string, sourceText, activeLocale);
-          if (value) setDraftValue(activeLocale, item.linkId as string, value);
+          const value = await translateOne(linkId, sourceText, activeLocale);
+          if (value) autoSave({ [activeLocale]: value }, linkId);
         } catch (e) {
           setTranslateError(e instanceof Error ? e.message : String(e));
         }
       });
     },
-    [activeLocale, translateOne, setDraftValue, withBusy],
+    [activeLocale, translateOne, autoSave, withBusy],
   );
 
-  /** Foreign view: take the primary label over as-is. */
+  /** Foreign view: take the primary label over as-is, and save. */
   const copyFromPrimary = useCallback(
     (item: FlatMenuItem, sourceText: string) => {
       if (!item.linkId || !sourceText.trim()) return;
-      setDraftValue(activeLocale, item.linkId, sourceText);
+      autoSave({ [activeLocale]: sourceText }, item.linkId);
     },
-    [activeLocale, setDraftValue],
+    [activeLocale, autoSave],
   );
 
   // ── The menu picker ──────────────────────────────────────────────────────
@@ -663,7 +801,7 @@ export default function MenusPage() {
     const canTranslate = !!item.linkId && !!row?.translatable && !singleLocaleHint;
     const editable = canTranslate && !isPrimary;
     const value = isPrimary ? primaryTitle : item.linkId ? valueFor(activeLocale, item.linkId) : "";
-    const busy = !!item.linkId && busyLinkIds.has(item.linkId);
+    const busy = !!item.linkId && (busyLinkIds.has(item.linkId) || isAutoSaving(item.linkId));
 
     // The app's two translation-state colours, same classes as everywhere else:
     // BLUE on a primary field whose translation is missing somewhere, YELLOW on
@@ -761,7 +899,18 @@ export default function MenusPage() {
     [parsedMenus],
   );
 
-  const failures = fetcher.data?.failures ?? [];
+  /** A link is busy while its auto-save is in flight — `autoPending` holds it
+   *  from submit until the loader carries the value, which is exactly that
+   *  window. No extra state to keep in sync. */
+  const isAutoSaving = useCallback(
+    (linkId: string): boolean => Object.values(autoPending).some((byLink) => linkId in byLink),
+    [autoPending],
+  );
+
+  // Both save paths report into the same banner: a failure from a per-entry
+  // button is no less important than one from the save bar.
+  const failures = [...(fetcher.data?.failures ?? []), ...autoFailures];
+  const saveError = fetcher.data?.error ?? autoError;
 
   return (
     <PlanAccessGate contentType="menus">
@@ -785,14 +934,17 @@ export default function MenusPage() {
             inset PLUS a hardcoded 1rem of its own — visibly more padding than
             anywhere else. The width class caps the FRAME, adds no padding of
             its own, and <Page fullWidth> has to stay or Polaris' ~1000px cap
-            wins first.
+            wins first. `-start` rather than `-full`: this page has no item
+            sidebar, so nothing else stops the right column from growing on a
+            wide screen — capped at the item column PLUS the shared reading
+            width, left-aligned so the item column stays flush with the gutter.
 
             The frame also owns the height, which retires the viewport calc
             this page used to do by hand. `.app-page-content > *` makes its
             SINGLE child the scroll container, so the flex row below is that
             one child. */}
-        <div className="app-page-content app-page-width-full">
-          <div style={{ display: "flex", gap: "1rem", minHeight: 0, overflow: "hidden" }}>
+        <div className="app-page-content app-page-width-start">
+          <div style={{ display: "flex", gap: "var(--app-page-padding)", minHeight: 0, overflow: "hidden" }}>
             {/* The shared item column, not a hand-built one. Two things came with
                 the bespoke version and both were bugs: it was invisible to the
                 mobile navbar selector (see registerItems above), and it hardcoded
@@ -893,8 +1045,12 @@ export default function MenusPage() {
                       <Banner tone="critical">
                         <BlockStack gap="100">
                           <Text as="p">{t.content?.menuSaveFailed}</Text>
-                          {failures.map((f) => (
-                            <Text as="p" variant="bodySm" key={`${f.locale}-${f.linkId}`}>
+                          {/* Indexed: the same locale/link can legitimately
+                              appear from both save paths, and a shared React
+                              key would collapse them into one warning-emitting
+                              row. */}
+                          {failures.map((f, index) => (
+                            <Text as="p" variant="bodySm" key={`${index}-${f.locale}-${f.linkId}`}>
                               {titleForLink(f.linkId)} ({f.locale}): {f.message}
                             </Text>
                           ))}
@@ -905,12 +1061,12 @@ export default function MenusPage() {
                     {/* Every failure mode of the action reaches the merchant.
                         Reporting only the gated one made a 502 from the digest
                         re-read look like a Save button that does nothing. */}
-                    {fetcher.data?.error && (
+                    {saveError && (
                       <Banner tone="critical">
                         <p>
-                          {fetcher.data.error === "gated"
+                          {saveError === "gated"
                             ? t.content?.upgradeRequired || "Upgrade required"
-                            : `${t.content?.menuSaveFailed ?? ""} ${fetcher.data.error}`.trim()}
+                            : `${t.content?.menuSaveFailed ?? ""} ${saveError}`.trim()}
                         </p>
                       </Banner>
                     )}
