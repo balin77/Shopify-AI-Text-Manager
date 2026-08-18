@@ -189,11 +189,12 @@ export async function redactCustomerData(
  * incoming `shop_domain` (NEVER an unscoped/`startsWith` delete — that would
  * wipe other tenants, see regression R1).
  *
- * Coverage of all 57 models in prisma/schema.prisma:
+ * Coverage of all 59 models in prisma/schema.prisma:
  *
  *  • Explicitly deleted below (scope field in parentheses):
  *      Session, AISettings, AIInstructions, Task, Product, Collection,
- *      Article, Page, ShopPolicy, Menu, ContentTranslation, ThemeContent,
+ *      Article, Page, ShopPolicy, Menu, ProductCollection,
+ *      ContentTranslation, ThemeContent,
  *      ThemeTranslation, WebhookLog, WebhookRetry, OptionValueMemory,
  *      GroupedFieldTranslation, AltTextTemplate, MetaobjectDefinition,
  *      Metaobject, MetaobjectTranslation, ShopInstallState,
@@ -265,6 +266,34 @@ export async function redactShopData(
     logger.debug(`[GDPR] Deleted ${tasksDeleted.count} tasks`);
 
     // 5. Delete products (cascade will delete translations, images, etc.)
+    // ProductCollection cascades through Product, but is deleted explicitly
+    // anyway: it is shop-scoped in its own right, and a purge that depends on
+    // the FK would silently miss rows whose product row was already gone.
+    const productCollectionsDeleted = await tx.productCollection.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${productCollectionsDeleted.count} product-collection memberships`);
+
+    // PLAN_CONTENT_CREATION Phase 4 — the commerce tables. Same reasoning as
+    // ProductCollection above: they cascade through Product / ProductVariant,
+    // and are deleted explicitly anyway because they are shop-scoped in their
+    // own right and a purge that leans on the FK misses rows whose parent was
+    // already gone. InventoryLevel first — it references Location.
+    const inventoryLevelsDeleted = await tx.inventoryLevel.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${inventoryLevelsDeleted.count} inventory levels`);
+
+    const publicationsDeleted = await tx.productPublication.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${publicationsDeleted.count} product publications`);
+
+    const locationsDeleted = await tx.location.deleteMany({
+      where: { shop: shop_domain },
+    });
+    logger.debug(`[GDPR] Deleted ${locationsDeleted.count} locations`);
+
     const productsDeleted = await tx.product.deleteMany({
       where: { shop: shop_domain },
     });

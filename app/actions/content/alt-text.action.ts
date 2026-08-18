@@ -179,7 +179,14 @@ export async function handleGenerateAltText(
       data: { status: "queued", progress: 10 },
     });
 
-    const altText = await aiServiceWithTask.generateImageAltText(imageUrl, sanitizedProductTitle, prompt);
+    // §2.5e — the glossary applies to the ORIGINAL alt text too, not only to
+    // its translations. Same block as the `/api/ai` twin: this action is the
+    // OTHER entrance to the same feature.
+    const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
+    const altText = await aiServiceWithTask.generateImageAltText(imageUrl, sanitizedProductTitle, prompt, false, {
+      contextTexts: [sanitizedProductTitle],
+      locale: await resolveWrittenLocale(admin, session.shop, formData),
+    });
 
     await db.task.update({
       where: { id: task.id },
@@ -214,7 +221,7 @@ export async function handleGenerateAllAltTexts(
   ctx: ContentActionHandlerContext,
   formData: FormData,
 ): Promise<DataResponse> {
-  const { session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
+  const { admin, session, contentConfig, db, aiInstructions, itemId, provider, serviceConfig } = ctx;
 
   const imagesData = getFormJSON<Array<{ url: string }>>(formData, "imagesData");
   if (!imagesData) {
@@ -252,6 +259,10 @@ export async function handleGenerateAllAltTexts(
 
     const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
 
+    // One product, one language — resolved once for the whole batch (§2.5e).
+    const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
+    const writtenLocale = await resolveWrittenLocale(admin, session.shop, formData);
+
     for (let i = 0; i < imagesData.length; i++) {
       const image = imagesData[i];
       try {
@@ -261,7 +272,10 @@ export async function handleGenerateAllAltTexts(
           aiInstructions,
           language: mainLanguage,
         });
-        const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt);
+        const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt, false, {
+          contextTexts: [sanitizedProductTitle],
+          locale: writtenLocale,
+        });
         generatedAltTexts[i] = altText;
 
         const progressPercent = Math.round(10 + ((i + 1) / totalImages) * 90);

@@ -55,6 +55,10 @@ import {
   type TranslationInput,
 } from "./translations.server";
 import { logger } from "../../utils/logger.server";
+import { redirectResourceFor, wasEverLive, type RedirectableResource } from "../seo/handle-redirect.shared";
+// The single editor parses tags with exactly this function — one rule, so the
+// two surfaces cannot disagree about what a tag list is.
+import { parseTagList } from "../content-attributes.shared";
 import {
   groupDiffByRow,
   parseListMetafieldInput,
@@ -92,6 +96,10 @@ interface ApplyContext {
    * (which already has the shop locales) so applyBulkDiff makes no extra
    * fetch; omitted/empty ⇒ invalidation safely no-ops (e.g. in unit tests). */
   foreignLocales?: string[];
+  /** PLAN §Phase 3.3 — override the shop's "redirect on handle change" setting.
+   *  Omitted ⇒ read from `AISettings` once per run. Tests pass `false` to keep
+   *  the write paths free of redirect traffic. */
+  autoHandleRedirect?: boolean;
 }
 
 /** Settable `ProductStatus` values for `productUpdate`'s `ProductInput`.
@@ -154,6 +162,11 @@ interface PersistDeps {
    * write SUB-RESOURCE translations (metafield "value", option/value "name").
    * Loaded in ONE pass by applyBulkDiff, together with their digests. */
   subResourceCaches: Map<string, ProductSubResourceCache>;
+  /** PLAN §Phase 3.3 — the shop's "redirect when a handle changes" preference,
+   *  read ONCE per run. The setting is shop-level, so it has to hold on this
+   *  write path too; the single editor's per-save override has no equivalent
+   *  here (a grid has no per-row checkbox). */
+  autoHandleRedirect: boolean;
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -486,6 +499,9 @@ async function persistProductBaseFields(
   );
   if (remainingColumnIds.length === 0) return failures;
 
+  // §Phase 3.3 — read the old handle before productUpdate replaces it.
+  const capturedHandle = await captureHandleForRedirect(group, fields.handle, deps);
+
   try {
     // Minimal partial productUpdate — only the fields that changed are sent,
     // so everything else is left untouched by Shopify (omitted GraphQL input
@@ -496,6 +512,12 @@ async function persistProductBaseFields(
     if (fields.descriptionHtml !== undefined) input.descriptionHtml = fields.descriptionHtml;
     if (fields.productType !== undefined) input.productType = fields.productType;
     if (fields.status !== undefined) input.status = fields.status;
+    // §Phase 3.6. `tags` goes through the SAME parser as the single editor —
+    // trimmed, empties dropped, case-insensitively de-duplicated — because
+    // Shopify stores them that way and a grid cell full of stray commas would
+    // otherwise report a change on every subsequent save.
+    if (fields.vendor !== undefined) input.vendor = fields.vendor;
+    if (fields.tags !== undefined) input.tags = parseTagList(fields.tags);
     if (fields.seoTitle !== undefined || fields.seoDescription !== undefined) {
       input.seo = {
         title: fields.seoTitle !== undefined ? fields.seoTitle : untouchedSeo?.seoTitle ?? "",
@@ -503,17 +525,33 @@ async function persistProductBaseFields(
           fields.seoDescription !== undefined ? fields.seoDescription : untouchedSeo?.seoDescription ?? "",
       };
     }
+    // `product { id handle tags }` is the echo the mirror and the redirect
+    // read. Shopify normalises both of these — tags are trimmed and
+    // case-collapsed, and a handle is slugified ("Summer Sale" is stored as
+    // "summer-sale") — so the value this app SENT is not the value the shop
+    // holds. Mirroring or redirecting to the sent one records a handle that
+    // does not exist, and (per §Phase 3.3) a redirect onto a live page's own
+    // path makes that page unreachable.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const response = await gateway.graphql(
       `#graphql
         mutation seoBulkMetaProductUpdate($input: ProductInput!) {
           productUpdate(input: $input) {
+            product { id handle tags }
             userErrors { field message }
           }
         }`,
       { variables: { input } },
     );
     const data = (await response.json()) as {
-      data?: { productUpdate?: { userErrors?: { field?: string[] | string; message: string }[] } };
+      data?: {
+        productUpdate?: {
+          product?: { id: string; handle?: string; tags?: string[] } | null;
+          userErrors?: { field?: string[] | string; message: string }[];
+        };
+      };
       errors?: { message?: string }[];
     };
     // A SCHEMA-level GraphQL error (unknown enum value, wrong variable type)
@@ -533,12 +571,30 @@ async function persistProductBaseFields(
     const userErrors = data.data.productUpdate.userErrors ?? [];
     if (userErrors.length > 0) throw new Error(userErrors[0].message);
 
+    const echoedProduct = data.data.productUpdate.product ?? null;
+
     const dbData: Record<string, unknown> = { lastSyncedAt: new Date() };
     for (const key of Object.keys(fields)) dbData[key] = fields[key];
+    // The handle Shopify STORED, not the cell that was typed: Shopify
+    // slugifies it, so mirroring the raw cell would leave the cache claiming a
+    // handle the shop does not serve — and the grid reads that cache back.
+    if (fields.handle !== undefined && echoedProduct?.handle) dbData.handle = echoedProduct.handle;
+    // §Phase 3.6 — `tags` is a Prisma scalar LIST, not a string: the 1:1 copy
+    // above would hand Prisma the comma-joined cell and fail the whole row.
+    // Taken from Shopify's ECHO where there is one, because Shopify normalises
+    // tags (trim, case-collapse) and the cache is what the grid reads back.
+    if (fields.tags !== undefined) {
+      const echoedTags = echoedProduct?.tags;
+      dbData.tags = Array.isArray(echoedTags) ? echoedTags : parseTagList(fields.tags);
+    }
     await db.product.update({ where: { shop_id: { shop, id } }, data: dbData });
 
     // Phase 4b: the changed primary fields' foreign translations are now stale.
     await invalidateStaleForeignTranslations(deps, "product", id, translatableKeysForColumnIds(deps, "product", remainingColumnIds));
+
+    // §Phase 3.3 — only now, with the write confirmed: a redirect to a handle
+    // Shopify never stored would point the old URL at a 404.
+    await finishBulkHandleRedirect(capturedHandle, echoedProduct?.handle ?? fields.handle, group, deps);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     // productUpdate is one atomic mutation over every base cell — attribute
@@ -1269,6 +1325,21 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   for (const key of Object.keys(fields)) {
     dbData[key] = fields[key];
   }
+  /** Applied AFTER the write, because only then is Shopify's own value known.
+   *  Same reason as the product path: a slugified handle differs from the cell
+   *  that produced it, and the grid reads this cache back. */
+  const withEchoedHandle = () =>
+    fields.handle !== undefined && echoedResource?.handle
+      ? { ...dbData, handle: echoedResource.handle }
+      : dbData;
+
+  // §Phase 3.3 — read the old handle before the mutation below replaces it.
+  const capturedHandle = await captureHandleForRedirect(group, fields.handle, deps);
+  // What Shopify ECHOED back. Every one of these mutations returns the
+  // resource with its handle, and Shopify slugifies a handle it is given —
+  // so the stored value is the only safe basis for both the cache mirror and
+  // the redirect target.
+  let echoedResource: { handle?: string } | null = null;
 
   switch (type) {
     case "collection": {
@@ -1302,7 +1373,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
               : untouched?.seoDescription ?? "",
         };
       }
-      await contentService.updateCollection(id, {
+      echoedResource = await contentService.updateCollection(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.descriptionHtml !== undefined ? { descriptionHtml: fields.descriptionHtml } : {}),
@@ -1311,25 +1382,25 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         // call the single editor makes (shopify-content.service updateContent).
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
       });
-      await db.collection.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.collection.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
       break;
     }
     case "page": {
-      await contentService.updatePage(id, {
+      echoedResource = await contentService.updatePage(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
         ...(fields.seoDescription !== undefined ? { seoDescription: fields.seoDescription } : {}),
       });
-      await db.page.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.page.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
       break;
     }
     case "article": {
       // Article SEO title/description are stored as global.title_tag /
       // description_tag metafields, written inline by updateArticle() (see
       // ShopifyContentService.updateArticle) — same as Page/Blog.
-      await contentService.updateArticle(id, {
+      echoedResource = await contentService.updateArticle(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.body !== undefined ? { body: fields.body } : {}),
@@ -1339,7 +1410,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
         // See the collection branch — same inline alt write.
         ...(fields.imageAltText !== undefined ? { image: { altText: fields.imageAltText } } : {}),
       });
-      await db.article.update({ where: { shop_id: { shop, id } }, data: dbData });
+      await db.article.update({ where: { shop_id: { shop, id } }, data: withEchoedHandle() });
       break;
     }
     case "blog": {
@@ -1351,7 +1422,7 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
       // path as the single editor (app.blog.tsx → updateContent → updateBlog).
       // NO DB mirror: blog containers have no cache model — the grid's
       // post-save revalidation live-fetches the fresh state from Shopify.
-      await contentService.updateBlog(id, {
+      echoedResource = await contentService.updateBlog(id, {
         ...(fields.title !== undefined ? { title: fields.title } : {}),
         ...(fields.handle !== undefined ? { handle: fields.handle } : {}),
         ...(fields.seoTitle !== undefined ? { seoTitle: fields.seoTitle } : {}),
@@ -1406,6 +1477,10 @@ async function persistSingleMutationRow(group: BulkDiffRowGroup, deps: PersistDe
   if (fields.imageAltText !== undefined && (type === "collection" || type === "article")) {
     await invalidateStaleFeaturedImageAltTranslations(deps, type, id);
   }
+
+  // §Phase 3.3 — the write is confirmed (every branch above throws otherwise),
+  // so the old URL can now be pointed at the new one.
+  await finishBulkHandleRedirect(capturedHandle, echoedResource?.handle ?? fields.handle, group, deps);
 }
 
 /**
@@ -1633,6 +1708,310 @@ async function loadPrimaryHandle(
   }
 }
 
+// ── PLAN §Phase 3.3 / §A1 — redirect on a handle change, in bulk ────────────
+// The single editor is not the only place handles change: `field.handle` is an
+// editable column here too, and a 250-row save can rewrite as many URLs in one
+// go. The shop-level setting is a shop-level promise, so it has to hold on this
+// path as well — through the SAME decision module, never a second rule.
+//
+// Since the locale prefix was measured (see the header of
+// handle-redirect.shared.ts), the FOREIGN half is covered too: a translated
+// handle is a real storefront URL and editing it breaks that URL exactly the
+// same way. `captureTranslatedHandleForRedirect` below is that path, and it is
+// deliberately narrower — the rules live in `decideTranslatedHandleRedirect`.
+//
+// Note what this does NOT change: bulk-TRANSLATE only ever fills EMPTY
+// translations, and a locale that had no translated handle was being served
+// under the primary one, which stays live. Nothing breaks there, so nothing is
+// redirected — the decision reports `notTranslatedBefore` and stops.
+
+interface CapturedHandle {
+  resource: RedirectableResource;
+  previousHandle: string;
+  /** Was the OLD URL ever reachable? `false` ⇒ no redirect (a draft's address
+   *  is one nobody holds); `null` ⇒ unknown, which proceeds. */
+  previouslyLive: boolean | null;
+}
+
+/** The old handle, read BEFORE the write — afterwards it is gone. Returns null
+ *  whenever no redirect could come of it, so the common case costs nothing. */
+async function captureHandleForRedirect(
+  group: BulkDiffRowGroup,
+  nextHandle: string | undefined,
+  deps: PersistDeps,
+): Promise<CapturedHandle | null> {
+  if (!deps.autoHandleRedirect || nextHandle === undefined || group.locale !== "") return null;
+  const resource = redirectResourceFor(bulkRowTypeToResourceType(group.rowType), group.rowId);
+  if (!resource) return null;
+  // Blog containers have no cache model — their handle is only on Shopify.
+  const before =
+    group.rowType === "blog"
+      ? { handle: await loadBlogHandleForRedirect(deps, group.rowId), state: {} }
+      : await loadRedirectStateForRow(deps, group).catch(() => ({ handle: null, state: {} }));
+  if (!before.handle) return null;
+  return { resource, previousHandle: before.handle, previouslyLive: wasEverLive(resource, before.state) };
+}
+
+/** The row's pre-write handle plus what says whether its URL was reachable —
+ *  one query, since both come off the same cache row. */
+async function loadRedirectStateForRow(
+  deps: PersistDeps,
+  group: BulkDiffRowGroup,
+): Promise<{ handle: string | null; state: { status?: string | null; isPublished?: boolean | null; attributesKnown?: boolean } }> {
+  const where = { shop_id: { shop: deps.shop, id: group.rowId } };
+  switch (group.rowType) {
+    case "product": {
+      const row = await deps.db.product.findUnique({ where, select: { handle: true, status: true } });
+      return { handle: row?.handle ?? null, state: { status: row?.status ?? null } };
+    }
+    case "page": {
+      const row = await deps.db.page.findUnique({
+        where,
+        select: { handle: true, isPublished: true, attributesSyncedAt: true },
+      });
+      return {
+        handle: row?.handle ?? null,
+        state: { isPublished: row?.isPublished ?? null, attributesKnown: !!row?.attributesSyncedAt },
+      };
+    }
+    case "article": {
+      const row = await deps.db.article.findUnique({
+        where,
+        select: { handle: true, isPublished: true, attributesSyncedAt: true },
+      });
+      return {
+        handle: row?.handle ?? null,
+        state: { isPublished: row?.isPublished ?? null, attributesKnown: !!row?.attributesSyncedAt },
+      };
+    }
+    case "collection": {
+      const row = await deps.db.collection.findUnique({ where, select: { handle: true } });
+      // Visibility lives in publications — no scope, genuinely unknown.
+      return { handle: row?.handle ?? null, state: {} };
+    }
+    default:
+      return { handle: null, state: {} };
+  }
+}
+
+/** Applies a captured handle change. Never throws and never fails a cell: the
+ *  row is already written, and reporting a cell error here would tell the
+ *  merchant their edit did not land when it did. */
+async function finishBulkHandleRedirect(
+  captured: CapturedHandle | null,
+  nextHandle: string | undefined,
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<void> {
+  if (!captured || !nextHandle) return;
+  try {
+    const { applyHandleRedirect } = await import("../seo/handle-redirect.server");
+    await applyHandleRedirect(deps.gateway as never, deps.shop, {
+      resource: captured.resource,
+      previousHandle: captured.previousHandle,
+      nextHandle,
+      wanted: true,
+      previouslyLive: captured.previouslyLive,
+      blogHandle:
+        captured.resource === "article" ? await loadArticleBlogHandleForRedirect(deps, group.rowId) : undefined,
+    });
+  } catch {
+    // Best effort by design — see the block comment above.
+  }
+}
+
+interface CapturedTranslatedHandle {
+  resource: RedirectableResource;
+  previousHandle: string;
+  primaryHandle: string | null;
+  otherLocaleHandles: string[];
+  previouslyLive: boolean | null;
+  blogHandle: string | null;
+  blogHandleTranslatedInLocale: boolean;
+  previousHandleTakenElsewhere: boolean;
+}
+
+/**
+ * Everything the foreign-locale decision needs, read BEFORE the write.
+ *
+ * Returns null for every case that could not produce a redirect anyway, so the
+ * overwhelmingly common one — a translation row group with no handle cell —
+ * costs nothing, and the next commonest — a handle being translated for the
+ * FIRST time, which is every row bulk-translate writes — costs exactly one
+ * indexed read before bailing. Only a real rename pays the rest: the cache
+ * read, the collision lookup, and for articles the blog handle (a GraphQL
+ * round-trip) plus one more translation read. This runs per ROW.
+ */
+async function captureTranslatedHandleForRedirect(
+  group: BulkDiffRowGroup,
+  hasHandleCell: boolean,
+  deps: PersistDeps,
+): Promise<CapturedTranslatedHandle | null> {
+  // marketId: a market override is served to one market while a redirect row is
+  // shop-wide. The decision refuses it too; skipping the reads here means the
+  // common market-scoped save does not pay for a refusal.
+  if (!deps.autoHandleRedirect || !hasHandleCell || group.locale === "" || group.marketId !== "") return null;
+  const resource = redirectResourceFor(bulkRowTypeToResourceType(group.rowType), group.rowId);
+  if (!resource) return null;
+
+  try {
+    // One query for BOTH halves of rule 2: this locale's own previous value and
+    // every other locale's, which the unprefixed row would also answer for.
+    const handleRows = await deps.db.contentTranslation.findMany({
+      where: { shop: deps.shop, resourceId: group.rowId, key: "handle", marketId: "" },
+      select: { locale: true, value: true },
+    });
+    const previousHandle = handleRows.find((r) => r.locale === group.locale)?.value?.trim() ?? "";
+    // Nothing was translated before ⇒ the locale was served under the primary
+    // handle, which stays live. Bail before the remaining reads.
+    if (!previousHandle) return null;
+
+    const before =
+      group.rowType === "blog"
+        ? { handle: await loadBlogHandleForRedirect(deps, group.rowId), state: {} }
+        : await loadRedirectStateForRow(deps, group).catch(() => ({ handle: null, state: {} }));
+
+    let blogHandle: string | null = null;
+    let blogHandleTranslatedInLocale = false;
+    if (resource === "article") {
+      const article = await deps.db.article.findUnique({
+        where: { shop_id: { shop: deps.shop, id: group.rowId } },
+        select: { blogId: true },
+      });
+      if (article?.blogId) {
+        blogHandle = await loadBlogHandleForRedirect(deps, article.blogId);
+        const translatedBlogHandle = await deps.db.contentTranslation.findFirst({
+          where: {
+            shop: deps.shop,
+            resourceId: article.blogId,
+            key: "handle",
+            locale: group.locale,
+            marketId: "",
+          },
+          select: { value: true },
+        });
+        blogHandleTranslatedInLocale = !!translatedBlogHandle?.value?.trim();
+      }
+    }
+
+    // Only reachable on a real rename, which is what makes an unindexed lookup
+    // affordable here — see handleTakenByOtherResource.
+    const { handleTakenByOtherResource } = await import("../seo/handle-redirect.server");
+    const previousHandleTakenElsewhere = await handleTakenByOtherResource(
+      deps.db as never,
+      deps.shop,
+      resource,
+      previousHandle,
+      group.rowId,
+    );
+
+    return {
+      resource,
+      previousHandle,
+      previousHandleTakenElsewhere,
+      primaryHandle: before.handle,
+      otherLocaleHandles: handleRows.filter((r) => r.locale !== group.locale).map((r) => r.value),
+      previouslyLive: wasEverLive(resource, before.state),
+      blogHandle,
+      blogHandleTranslatedInLocale,
+    };
+  } catch {
+    // A redirect is a courtesy on a write that has to happen either way.
+    return null;
+  }
+}
+
+/** Applies a captured translated-handle change. `nextHandle` is `""` for a
+ *  CLEARED translation, which the decision reads as "back to the primary
+ *  handle". Never throws and never fails a cell — the translation is already
+ *  written, and a redirect failure must not read as a failed save. */
+async function finishTranslatedHandleRedirect(
+  captured: CapturedTranslatedHandle | null,
+  nextHandle: string | undefined,
+  group: BulkDiffRowGroup,
+  deps: PersistDeps,
+): Promise<void> {
+  if (!captured || nextHandle === undefined) return;
+  try {
+    const { applyTranslatedHandleRedirect } = await import("../seo/handle-redirect.server");
+    await applyTranslatedHandleRedirect(deps.gateway as never, deps.shop, {
+      resource: captured.resource,
+      marketId: group.marketId,
+      previousTranslatedHandle: captured.previousHandle,
+      nextTranslatedHandle: nextHandle,
+      primaryHandle: captured.primaryHandle,
+      otherLocaleHandles: captured.otherLocaleHandles,
+      previousHandleTakenElsewhere: captured.previousHandleTakenElsewhere,
+      wanted: true,
+      previouslyLive: captured.previouslyLive,
+      blogHandle: captured.blogHandle,
+      blogHandleTranslatedInLocale: captured.blogHandleTranslatedInLocale,
+    });
+  } catch {
+    // Best effort by design — see the block comment above.
+  }
+}
+
+/**
+ * The shop's "redirect on handle change" preference, read ONCE per run.
+ *
+ * Every failure mode resolves to the column's own default (on): the setting
+ * protects URLs, so the safe answer when the row cannot be read is to protect
+ * them. An unwanted redirect is one row a merchant can delete; a missed one is
+ * traffic nobody notices losing. The try/catch is not decoration — this runs
+ * under test doubles that carry only the models a given test needs.
+ */
+async function loadAutoHandleRedirect(db: PrismaClient, shop: string): Promise<boolean> {
+  try {
+    const row = await db.aISettings.findUnique({
+      where: { shop },
+      select: { seoAutoHandleRedirect: true },
+    });
+    return row?.seoAutoHandleRedirect !== false;
+  } catch {
+    return true;
+  }
+}
+
+/** The bulk row types that map onto the unified handler's resource names. */
+function bulkRowTypeToResourceType(rowType: BulkRowType): string {
+  switch (rowType) {
+    case "product":    return "Product";
+    case "collection": return "Collection";
+    case "page":       return "Page";
+    case "article":    return "Article";
+    case "blog":       return "Blog";
+    default:           return "";
+  }
+}
+
+async function loadBlogHandleForRedirect(deps: PersistDeps, blogId: string): Promise<string | null> {
+  try {
+    const response = await deps.gateway.graphql(
+      `#graphql
+        query bulkBlogHandleForRedirect($id: ID!) { blog(id: $id) { handle } }`,
+      { variables: { id: blogId } },
+    );
+    const data = (await response.json()) as { data?: { blog?: { handle?: string } } };
+    return data?.data?.blog?.handle ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadArticleBlogHandleForRedirect(deps: PersistDeps, articleId: string): Promise<string | null> {
+  try {
+    const article = await deps.db.article.findUnique({
+      where: { shop_id: { shop: deps.shop, id: articleId } },
+      select: { blogId: true },
+    });
+    if (!article?.blogId) return null;
+    return await loadBlogHandleForRedirect(deps, article.blogId);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Persists one foreign-locale row group (Plan §6): non-empty cells become ONE
  * verified translationsRegister, cleared cells ONE verified
@@ -1724,6 +2103,18 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
     }
   }
 
+  // §3.3 foreign half — captured BEFORE the write, because afterwards the old
+  // translated handle is gone. `writes` is re-scanned rather than reusing
+  // `handleIndex`: the duplicate-slug guard above may just have removed it.
+  const capturedTranslatedHandle = await captureTranslatedHandleForRedirect(
+    group,
+    writes.some((w) => w.key === "handle") || clears.some((c) => c.key === "handle"),
+    deps,
+  );
+  /** The handle translation Shopify CONFIRMED — `""` for a confirmed clear,
+   *  `undefined` while nothing is confirmed. */
+  let confirmedHandle: string | undefined;
+
   // ── Digest rule (§6.3, ONE strict rule): no digest ⇒ one re-fetch of the
   // resource ⇒ still none ⇒ cell error. No Shopify write, NO DB write.
   let digestsForResource = deps.digests.get(resourceId);
@@ -1769,7 +2160,7 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       ...(marketId ? { marketId } : {}),
     }));
     try {
-      const { confirmedKeys, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
+      const { confirmedKeys, confirmedValues, userErrors } = await registerAndVerify(gateway, resourceId, inputs);
       for (const write of ready) {
         if (!confirmedKeys.has(write.key)) {
           failures.push(
@@ -1786,6 +2177,12 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
+        // What Shopify ECHOED, not what was sent. The same rule the theme path
+        // already follows for autofix-normalised richtext: mirroring the raw
+        // value diverges the DB from the storefront, and for `handle` it would
+        // point the redirect at an address nobody serves.
+        const storedValue = confirmedValues.get(write.key) ?? write.value;
+        if (write.key === "handle") confirmedHandle = storedValue;
         if (group.rowType === "image") {
           // PRODUCT media mirror into ProductImageAltTranslation (keyed by the
           // ProductImage CACHE row) — the store the single editor and the SEO
@@ -1796,8 +2193,8 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           if (cacheId) {
             await db.productImageAltTranslation.upsert({
               where: { imageId_locale_marketId: { imageId: cacheId, locale, marketId } },
-              update: { altText: write.value },
-              create: { imageId: cacheId, locale, marketId, altText: write.value },
+              update: { altText: storedValue },
+              create: { imageId: cacheId, locale, marketId, altText: storedValue },
             });
           } else {
             await db.contentTranslation.upsert({
@@ -1810,13 +2207,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                   marketId,
                 },
               },
-              update: { value: write.value, digest: write.digest, resourceType: "MediaImage" },
+              update: { value: storedValue, digest: write.digest, resourceType: "MediaImage" },
               create: {
                 shop,
                 resourceId,
                 resourceType: "MediaImage",
                 key: write.key,
-                value: write.value,
+                value: storedValue,
                 locale,
                 marketId,
                 digest: write.digest,
@@ -1843,13 +2240,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                 marketId,
               },
             },
-            update: { value: write.value, outdated: false },
+            update: { value: storedValue, outdated: false },
             create: {
               shop,
               metaobjectId: resourceId,
               type: cached?.type ?? "",
               key: write.key,
-              value: write.value,
+              value: storedValue,
               locale,
               marketId,
               outdated: false,
@@ -1866,13 +2263,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
                 marketId,
               },
             },
-            update: { value: write.value, digest: write.digest, resourceType },
+            update: { value: storedValue, digest: write.digest, resourceType },
             create: {
               shop,
               resourceId,
               resourceType,
               key: write.key,
-              value: write.value,
+              value: storedValue,
               locale,
               marketId,
               digest: write.digest,
@@ -1911,6 +2308,9 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
+        // A cleared handle: the locale is served under the PRIMARY handle
+        // again, so the dead translated URL gets a redirect there.
+        if (clear.key === "handle") confirmedHandle = "";
         if (group.rowType === "image") {
           // Cleared alt translation — the row goes only because Shopify already
           // confirmed the removal above (CLAUDE.md).
@@ -1939,6 +2339,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       for (const clear of clears) failures.push(failureOf(group, message, clear.columnId));
     }
   }
+
+  // AFTER both loops: only a translation Shopify confirmed changed a URL, and
+  // an unconfirmed write leaves the old translated handle in place.
+  await finishTranslatedHandleRedirect(capturedTranslatedHandle, confirmedHandle, group, deps);
 
   return failures;
 }
@@ -2664,6 +3068,12 @@ export async function applyBulkDiff(
       ? await loadDigestsForRows(gateway, foreignResourceIds, [...foreignKeys])
       : new Map<string, Map<string, string>>();
 
+  // §Phase 3.3 — ONE read per run, not per row. A failed lookup falls back to
+  // the column's own default (on): the setting protects URLs, so the safe
+  // failure is to protect them, and an unwanted redirect is removable while a
+  // missed one costs traffic no one notices.
+  const autoHandleRedirect = ctx.autoHandleRedirect ?? (await loadAutoHandleRedirect(db, shop));
+
   const deps: PersistDeps = {
     db,
     shop,
@@ -2675,6 +3085,7 @@ export async function applyBulkDiff(
     featuredImageIds: new Map(),
     foreignLocales,
     subResourceCaches,
+    autoHandleRedirect,
   };
   const failures: BulkFailure[] = [];
   let saved = 0;

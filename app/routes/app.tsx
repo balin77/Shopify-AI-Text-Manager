@@ -1,3 +1,4 @@
+import { resolveApiVersionString } from "../utils/api-version";
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { Outlet, useLoaderData, useRouteError, useFetcher } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -200,6 +201,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       initialSync,
       extensionSetupHint,
       conditionalContent,
+      // PLAN_CONTENT_CREATION §1.4b — the client needs to know which Shopify
+      // API this deployment speaks, because `sources[]` (and therefore the
+      // collection rule editor) only exists from 2026-07. A deploy constant,
+      // not a per-shop value, but the client has no other way to see it.
+      shopifyApiVersion: resolveApiVersionString(),
     });
   } catch (error) {
     // Check if this is a redirect response (e.g., to /auth/login)

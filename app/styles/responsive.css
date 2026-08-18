@@ -32,9 +32,9 @@
      same content width, left-aligned instead: on the content pages the left
      column (UnifiedItemList) has to stay flush with the window gutter, so only
      the right edge may be capped. That is the class for every content page
-     WITHOUT the SEO-score sidebar — with the sidebar the editor is a
-     three-column workbench that earns the full width, without it the middle
-     column just keeps growing on a 4K screen.
+     WITHOUT the item sidebar (the panel carrying the SEO-score tab) — with the
+     sidebar the editor is a three-column workbench that earns the full width,
+     without it the middle column just keeps growing on a 4K screen.
 
      Pages built on the .app-page-content frame (Polaris <Page fullWidth>) put
      the class on that same element — capping the frame keeps its inner scroll

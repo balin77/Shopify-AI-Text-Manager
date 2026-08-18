@@ -1,9 +1,23 @@
+/**
+ * The editor's right-hand sidebar.
+ *
+ * Renamed from SeoSidebar in PLAN_CONTENT_CREATION Phase 1b: it stopped being
+ * SEO-only when the attribute tab arrived (Phase 2), which reports tags,
+ * vendor, category, status, price and channels — none of them SEO. The old
+ * name would have kept telling readers this file is narrower than it is.
+ *
+ * The i18n keys deliberately stay under `t.seo.sidebarTabs.*`. Renaming them
+ * would touch three language files for something no user can see.
+ */
+
 import { Card, BlockStack, Text, InlineStack, Badge, Button, ProgressBar, TextField } from "@shopify/polaris";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useFetcher } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { SidebarTabBar } from "./SidebarTabBar";
+import { AttributeChecklist } from "./sidebar/AttributeChecklist";
+import type { AttributeRow } from "../services/attribute-checklist.shared";
 import { ActionTooltip } from "./ActionTooltip";
 import {
   validateJsonLd,
@@ -45,7 +59,23 @@ interface SeoAnalysis {
   recommendations: string[];
 }
 
-interface SeoSidebarProps {
+interface ItemSidebarProps {
+  /**
+   * PLAN_CONTENT_CREATION §2 — the attribute checklist for this item.
+   *
+   * Omit it and the tab does not appear; the sidebar behaves exactly as it did
+   * before. Supplied for the four content types that HAVE merchandising
+   * attributes (product, collection, article, page) and for nothing else.
+   */
+  attributes?: {
+    rows: AttributeRow[];
+    needsSync: boolean;
+    onReload?: () => void;
+    /** Set in a foreign locale — the tab goes read-only with this reason. */
+    readOnlyReason?: string | null;
+    onJumpToField?: (field: string) => void;
+    adminUrl?: string;
+  };
   title: string;
   description: string;
   handle?: string;
@@ -102,7 +132,8 @@ interface SeoSidebarProps {
   insertKeywordsLoading?: boolean;
 }
 
-export function SeoSidebar({
+export function ItemSidebar({
+  attributes,
   title,
   description,
   handle,
@@ -120,7 +151,7 @@ export function SeoSidebar({
   keywordLocaleName,
   onInsertKeywords,
   insertKeywordsLoading = false,
-}: SeoSidebarProps) {
+}: ItemSidebarProps) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const jsonLdString = useMemo(
@@ -363,20 +394,29 @@ export function SeoSidebar({
   // isn't applicable to this caller (theme content has no JSON-LD, foreign
   // locales have no keyword tracking) — otherwise merchants would land on an
   // empty pane. With only "score" available, the tab bar is omitted.
-  type SidebarTab = "score" | "keywords" | "jsonld";
-  const availableTabs: SidebarTab[] = ["score"];
+  type SidebarTab = "attributes" | "score" | "keywords" | "jsonld";
+  // Attributes go FIRST when present (§2.1): it is the tab that answers "is
+  // this item actually finished", which is the question a merchant arrives
+  // with — the score answers "is it optimised", which comes after.
+  const availableTabs: SidebarTab[] = [];
+  if (attributes) availableTabs.push("attributes");
+  availableTabs.push("score");
   if (keywordTrackingEnabled) availableTabs.push("keywords");
   if (structuredData) availableTabs.push("jsonld");
   const [activeTab, setActiveTab] = useState<SidebarTab>("score");
-  const currentTab = availableTabs.includes(activeTab) ? activeTab : "score";
+  const currentTab = availableTabs.includes(activeTab) ? activeTab : availableTabs[0];
   const tabLabels = (t.seo as unknown as { sidebarTabs?: Record<string, string> }).sidebarTabs;
   const tabLabel = (id: SidebarTab): string => {
     const key = id === "jsonld" ? "jsonLd" : id;
-    return tabLabels?.[key] ?? (id === "jsonld" ? "JSON-LD" : id === "keywords" ? "Keywords" : "Score");
+    return (
+      tabLabels?.[key] ??
+      (id === "jsonld" ? "JSON-LD" : id === "keywords" ? "Keywords" : id === "attributes" ? "Attributes" : "Score")
+    );
   };
   // Each tab explains itself through the shared "?" popover (t.help.*), so the
   // panes stay free of permanent explanatory copy in a sidebar this narrow.
   const TAB_HELP_KEY: Record<SidebarTab, string> = {
+    attributes: "seoSidebarAttributes",
     score: "seoSidebarScore",
     keywords: "seoSidebarKeywords",
     jsonld: "seoSidebarJsonLd",
@@ -395,6 +435,23 @@ export function SeoSidebar({
           helpKey={TAB_HELP_KEY[currentTab]}
           containerStyle={{ marginTop: "-0.25rem" }}
         />
+
+        {currentTab === "attributes" && attributes && (
+          <AttributeChecklist
+            rows={attributes.rows}
+            needsSync={attributes.needsSync}
+            onReload={attributes.onReload}
+            readOnlyReason={attributes.readOnlyReason}
+            onJumpToField={attributes.onJumpToField}
+            adminUrl={attributes.adminUrl}
+            // The checklist prints raw values, so it needs the shared enum
+            // vocabulary — its own block has no place for it.
+            t={{
+              ...((t.seo as unknown as { attributes?: Record<string, unknown> }).attributes as object),
+              enumLabels: (t.content as { enumLabels?: Record<string, string> } | undefined)?.enumLabels,
+            } as never}
+          />
+        )}
 
         {currentTab === "score" && (
         <BlockStack gap="400">

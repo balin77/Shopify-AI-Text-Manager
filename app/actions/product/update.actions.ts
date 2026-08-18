@@ -11,6 +11,21 @@
 import { data as json } from "react-router";
 import { ShopifyApiGateway } from "~/services/shopify-api-gateway.service";
 import { sanitizeSlug } from "~/utils/slug.utils";
+// One rule per attribute, shared with the generic content path — the previous
+// generation of this code kept a per-resource copy of each and they drifted.
+import {
+  PRODUCT_COLLECTIONS_SELECTION,
+  productCollectionRows,
+  type ShopifyProductCollections,
+} from "~/services/attribute-sync.shared";
+import {
+  diffCollectionMembership,
+  isValidProductStatus,
+  parseCategoryId,
+  parseCollectionIds,
+  parseTagList,
+} from "~/services/content-attributes.shared";
+import { parseMoney } from "~/services/bulk-editor/columns.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
@@ -29,6 +44,25 @@ interface UpdateProductParams {
   seoTitle?: string;
   metaDescription?: string;
   productType?: string;
+  // ── PLAN_CONTENT_CREATION §Phase 3 merchandising attributes ──────────────
+  // Not translatable (Shopify stores one value per product), so these only
+  // ever arrive on a PRIMARY-locale save — the editor renders them read-only
+  // in every other locale and the write below refuses them anyway.
+  status?: string;
+  vendor?: string;
+  /** Comma-joined on the wire, split into Shopify's array before the write. */
+  tags?: string;
+  templateSuffix?: string;
+  /** Shopify taxonomy GID, or "" to clear. §Phase 3.1. */
+  category?: string;
+  /** Comma-joined collection GIDs — the membership the picker now shows. It is
+   *  turned into a JOIN/LEAVE diff against the CACHE, never written as a list
+   *  (see `diffCollectionMembership`). */
+  collections?: string;
+  /** Price of the DEFAULT variant, as the merchant typed it. Parsed server-side
+   *  with the same `parseMoney` the bulk grid uses — locale-specific money
+   *  input is a minefield and one parser is the only way both surfaces agree. */
+  price?: string;
   imageAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
@@ -69,6 +103,12 @@ export async function handleUpdateProduct(
   const changedFields: string[] = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
 
   // Parse changedAltTextIndices if present (for alt-text translation deletion when primary locale changes)
+  // §Phase 3 — a separate list from `changedFields`: see content-update.action.
+  const changedAttributesStr = getFormString(formData, "changedAttributeFields");
+  const changedAttributeFields: string[] = changedAttributesStr
+    ? safeJsonParse<string[]>(changedAttributesStr, [])
+    : [];
+
   const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
   const changedAltTextIndices: number[] = changedAltTextIndicesStr ? safeJsonParse<number[]>(changedAltTextIndicesStr, []) : [];
 
@@ -95,6 +135,20 @@ export async function handleUpdateProduct(
     seoTitle: getFormStringOrNull(formData, "seoTitle") ?? undefined,
     metaDescription: getFormStringOrNull(formData, "metaDescription") ?? undefined,
     productType: getFormStringOrNull(formData, "productType") ?? undefined,
+    // §Phase 3 attributes. Read on EVERY save and filtered by locale at the
+    // write, not here: an attribute arriving on a foreign-locale save is a
+    // client bug, and dropping it silently at parse time would hide it.
+    // `|| undefined`, not `?? undefined`: `getFormStringOrNull` returns "" for
+    // a present-but-empty field, and "" is not a status. Kept as "" it would
+    // fail the enum check and 400 the ENTIRE save — title, description and SEO
+    // with it — over a field the merchant never touched.
+    status: getFormStringOrNull(formData, "status") || undefined,
+    vendor: getFormStringOrNull(formData, "vendor") ?? undefined,
+    tags: getFormStringOrNull(formData, "tags") ?? undefined,
+    templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
+    category: getFormStringOrNull(formData, "category") ?? undefined,
+    collections: getFormStringOrNull(formData, "collections") ?? undefined,
+    price: getFormStringOrNull(formData, "price") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
     // Primary-locale saves are always global; only foreign locales carry a market.
@@ -138,7 +192,7 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop);
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop, changedAttributeFields);
     }
 
     // If alt-text saves failed, merge warning into the response
@@ -848,7 +902,10 @@ async function updatePrimaryProduct(
   params: UpdateProductParams,
   changedFields: string[] = [],
   changedAltTextIndices: number[] = [],
-  shop: string
+  shop: string,
+  /** §Phase 3 — the attributes the merchant actually touched. Empty ⇒ write
+   *  none of them; see the gate below for why that is the safe default. */
+  changedAttributeFields: string[] = [],
 ): Promise<DataResponse> {
   loggers.product("info", "Updating primary product", { productId, changedFields, changedAltTextIndices });
 
@@ -931,6 +988,128 @@ async function updatePrimaryProduct(
     mutationInput.productType = params.productType || "";
   }
 
+  // ── PLAN §Phase 3 merchandising attributes ────────────────────────────────
+  //
+  // Gated on `changedFields`, NOT on "the client sent it". A primary save
+  // carries EVERY field (buildFieldsForSave only filters for foreign locales),
+  // so writing on presence alone means editing a title also writes vendor,
+  // tags and template suffix — and on a shop whose products predate the
+  // attribute sync those arrive as "" because the cache holds the migration's
+  // defaults. The result is not a no-op: `productUpdate` REPLACES the tag
+  // list, so a title edit would delete every tag, clear the vendor and reset
+  // the theme template. `productType` two blocks up has carried exactly this
+  // guard for the same reason since long before these fields existed.
+  //
+  // No `changedFields` at all ⇒ write no attributes. A caller that does not
+  // say what changed cannot be distinguished from one that changed nothing,
+  // and of the two readings only this one is safe.
+  const attributeChanged = (key: string) => changedAttributeFields.includes(key);
+
+  if (params.status !== undefined && attributeChanged("status")) {
+    // An unrecognised status is REFUSED rather than sent: `status` is the one
+    // attribute whose bad value fails at the GraphQL SCHEMA level, which comes
+    // back as a top-level `errors` array with `data: null` and never reaches
+    // `userErrors` — so the whole save would read as a success while nothing
+    // was written (the false-success pattern in CLAUDE.md).
+    const status = params.status.trim().toUpperCase();
+    if (!isValidProductStatus(status)) {
+      return json(
+        { success: false, error: `Unknown product status "${params.status}".` },
+        { status: 400 },
+      );
+    }
+    mutationInput.status = status;
+  }
+  if (params.vendor !== undefined && attributeChanged("vendor")) {
+    mutationInput.vendor = params.vendor;
+  }
+  if (params.templateSuffix !== undefined && attributeChanged("templateSuffix")) {
+    // "" is meaningful here: it puts the product back on the theme's default
+    // template. Shopify accepts the empty string for exactly that.
+    mutationInput.templateSuffix = params.templateSuffix || null;
+  }
+  if (params.tags !== undefined && attributeChanged("tags")) {
+    // Shopify REPLACES the whole tag list on productUpdate, so this is a
+    // complete list, not an addition. Trimmed and emptied-dropped to match how
+    // Shopify itself stores them — otherwise a stray comma becomes a tag.
+    mutationInput.tags = parseTagList(params.tags);
+  }
+
+  // §Phase 3.1 — the product taxonomy. A malformed GID is REFUSED rather than
+  // forwarded: an ID of the wrong type fails at the SCHEMA level, which comes
+  // back as a top-level `errors` array with `data: null` and never reaches
+  // `userErrors` — the save would read as a success while nothing was written.
+  if (params.category !== undefined && attributeChanged("category")) {
+    const parsed = parseCategoryId(params.category);
+    if (!parsed.valid) {
+      return json(
+        { success: false, error: `"${params.category}" is not a product category.` },
+        { status: 400 },
+      );
+    }
+    // null is meaningful: it takes the product OUT of the taxonomy.
+    mutationInput.category = parsed.id;
+  }
+
+  // §Phase 3.1 — collection membership, as a DIFF against the cache.
+  //
+  // The BEFORE side never comes from the client: a payload that names an id as
+  // "left" must not be able to remove a membership this editor never showed.
+  // An AUTOMATED membership is refused outright — its rule would re-add the
+  // product within seconds, and the merchant would be looking at a save that
+  // apparently did nothing.
+  const membershipNotes: string[] = [];
+  if (params.collections !== undefined && attributeChanged("collections")) {
+    const cached = await db.productCollection.findMany({
+      where: { shop, productId },
+      select: { collectionId: true, automated: true },
+    });
+    // How each collection of the SHOP reads, for screening JOINS — `cached`
+    // has no row for a collection the product is not in yet, so it cannot
+    // answer "is this one rule-based". `attributesSyncedAt` is the
+    // discriminator: an unsynced row's `isSmart: false` is the migration's
+    // default, not a measurement, and is refused rather than trusted.
+    const knownCollections = new Map<string, boolean | null>(
+      (
+        await db.collection.findMany({
+          where: { shop },
+          select: { id: true, isSmart: true, attributesSyncedAt: true },
+        })
+      ).map((c) => [c.id, c.attributesSyncedAt ? c.isSmart === true : null] as const),
+    );
+    const diff = diffCollectionMembership(
+      cached,
+      parseCollectionIds(params.collections),
+      knownCollections,
+    );
+    if (diff.toJoin.length > 0) mutationInput.collectionsToJoin = diff.toJoin;
+    if (diff.toLeave.length > 0) mutationInput.collectionsToLeave = diff.toLeave;
+    if (diff.refusedAutomated.length > 0) membershipNotes.push("collectionsAutomatedKept");
+  }
+
+  // Which halves of §Phase 3.1 this save is actually writing. Used for BOTH
+  // the echo selection and the mirror, so the two can never disagree about
+  // whether the block is present.
+  const wroteCategory = mutationInput.category !== undefined;
+  const wroteMembership =
+    mutationInput.collectionsToJoin !== undefined || mutationInput.collectionsToLeave !== undefined;
+
+  // The echoed selection below is PLAN §Phase 3: `status`, `vendor`, `tags`
+  // and `templateSuffix` come back so the cache mirrors what Shopify STORED,
+  // not what this app sent. Shopify normalises tags (trim, dedupe, case) and
+  // can refuse a template suffix, so the sent value is not the stored one.
+  //
+  // The two interpolated selections are PLAN §Phase 3.1 — echoed ONLY when
+  // this save actually writes them. The membership selection is 100 nodes with
+  // a nested ruleSet, and a title fix, an SEO edit or an alt-text save has no
+  // use for any of it — the mirror below is already gated on the same
+  // predicate, so unconditional selection drained the cost bucket for data
+  // that was then discarded. Absent means productCollectionRows gets
+  // undefined, returns null, and the "skip the rebuild" path runs, which is
+  // the designed semantics rather than a special case.
+  //
+  // The prose stays out here on purpose: a `#` comment inside the document
+  // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
   const response = await gateway.graphql(
     `#graphql
       mutation updateProduct($input: ProductInput!) {
@@ -940,6 +1119,12 @@ async function updatePrimaryProduct(
             title
             handle
             descriptionHtml
+            status
+            vendor
+            tags
+            templateSuffix
+            ${wroteCategory ? "category { id fullName name }" : ""}
+            ${wroteMembership ? PRODUCT_COLLECTIONS_SELECTION : ""}
             seo {
               title
               description
@@ -960,6 +1145,25 @@ async function updatePrimaryProduct(
 
   const data = await response.json() as any;
 
+  // A SCHEMA-level error arrives as a top-level `errors` array with
+  // `data: null` and never as a userError. Before this check the line below
+  // dereferenced `data.data.productUpdate` and threw a TypeError, which the
+  // caller reported as a generic 500 — the merchant learned nothing about
+  // which field Shopify refused.
+  if (Array.isArray(data.errors) && data.errors.length > 0) {
+    logger.error("Shopify product update schema error", {
+      context: "UpdateProduct",
+      errors: data.errors,
+    });
+    return json(
+      { success: false, error: data.errors[0]?.message || "Shopify refused the update." },
+      { status: 500 },
+    );
+  }
+  if (!data.data?.productUpdate) {
+    return json({ success: false, error: "Shopify returned no result for this update." }, { status: 500 });
+  }
+
   if (data.data.productUpdate.userErrors.length > 0) {
     logger.error("Shopify product update error", {
       context: "UpdateProduct",
@@ -976,7 +1180,8 @@ async function updatePrimaryProduct(
 
   // Update local database
   try {
-    const updateData: Record<string, string | Date | null> = {};
+    // `string[]` is in the union for `tags` — a Prisma scalar list column.
+    const updateData: Record<string, string | string[] | boolean | Date | null> = {};
     if (params.title) updateData.title = params.title;
     if (params.descriptionHtml !== undefined) updateData.descriptionHtml = params.descriptionHtml || null;
     if (params.handle !== undefined) updateData.handle = params.handle || null;
@@ -989,12 +1194,80 @@ async function updatePrimaryProduct(
       updateData.productType = params.productType || null;
     }
 
+    // §Phase 3 attributes, mirrored from the ECHO rather than from the input:
+    // Shopify normalises tags and may reject a template suffix, so writing the
+    // sent value would leave the cache claiming something the shop does not
+    // hold — and the attribute checklist reads that cache.
+    const echoed = data.data.productUpdate.product as {
+      status?: string; vendor?: string; tags?: string[]; templateSuffix?: string | null;
+      category?: { id?: string; fullName?: string | null; name?: string | null } | null;
+      // The SHARED type, not a hand-written near-copy: this is exactly the
+      // drift the removed `as never` cast used to hide — the mapper requires
+      // every key of the selection, and a local shape that merely looks like
+      // it would stop the mirror writing without a word.
+      collections?: ShopifyProductCollections | null;
+    } | null;
+    // Mirrored only for what was actually WRITTEN — same gate as the mutation
+    // input above, or a title edit would mirror the cache's own defaults back
+    // over themselves and, worse, look like a real value afterwards.
+    if (mutationInput.status !== undefined && echoed?.status) updateData.status = echoed.status;
+    if (mutationInput.vendor !== undefined) updateData.vendor = echoed?.vendor ?? params.vendor ?? null;
+    if (mutationInput.templateSuffix !== undefined) {
+      updateData.templateSuffix = echoed?.templateSuffix ?? null;
+    }
+    // A scalar list, so it is written whole. Only when Shopify echoed one:
+    // mirroring `[]` because the echo was missing would WIPE the product's
+    // tags in the cache and light up the attribute checklist for a change the
+    // merchant never made.
+    if (mutationInput.tags !== undefined && Array.isArray(echoed?.tags)) {
+      updateData.tags = echoed.tags;
+    }
+
+    // §Phase 3.1 — the taxonomy. `fullName` is the whole path and is what the
+    // picker labels the category with; storing only the leaf would make the
+    // sidebar say "Shirts & Tops" for a category the merchant chose under
+    // "Apparel". Cleared to null when the merchant cleared it, which the echo
+    // reports as a missing category rather than an empty one.
+    if (wroteCategory) {
+      updateData.categoryId = echoed?.category?.id ?? null;
+      updateData.categoryName = echoed?.category?.fullName ?? echoed?.category?.name ?? null;
+    }
+
     // Always update lastSyncedAt
     updateData.lastSyncedAt = new Date();
 
-    await db.product.update({
-      where: { shop_id: { shop, id: productId } },
-      data: updateData,
+    // §Phase 3.1 — membership, rebuilt from the ECHO.
+    //
+    // `productCollectionRows` returns null when the block was not delivered,
+    // which is the caller's signal to SKIP the rebuild rather than wipe the
+    // memberships — the same rule the sync follows. It is also why the
+    // truncation flag rides along: "in N collections" must not read as
+    // complete when it is a cut-off list.
+    const membership = wroteMembership
+      ? productCollectionRows(shop, productId, echoed?.collections)
+      : null;
+    if (membership) updateData.hasMoreCollections = membership.hasMore;
+
+    // ONE transaction, exactly as the three sync sites do it. Without it a
+    // connection blip between the delete and the createMany leaves the product
+    // cached as a member of NOTHING while the save reports success — and
+    // because `attributesSyncedAt` is untouched, the picker then renders that
+    // emptiness as a confident "in no collections". The `hasMoreCollections`
+    // flag rides along for the same reason: it and the rows must not disagree.
+    await db.$transaction(async (tx) => {
+      await tx.product.update({
+        where: { shop_id: { shop, id: productId } },
+        data: updateData,
+      });
+
+      if (!membership) return;
+      // Delete-by-product then createMany, exactly as the sync does: the echo
+      // is the complete window, so a diff against it would only reintroduce
+      // the drift this rebuild exists to remove.
+      await tx.productCollection.deleteMany({ where: { shop, productId } });
+      if (membership.rows.length > 0) {
+        await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+      }
     });
 
     loggers.product("info", "Updated product in DB", {
@@ -1008,6 +1281,17 @@ async function updatePrimaryProduct(
       error: dbError instanceof Error ? dbError.message : String(dbError),
     });
     // Don't fail the entire request if DB update fails - Shopify is source of truth
+  }
+
+  // ── §Phase 3.2 — the default variant's price ──────────────────────────────
+  // A SECOND mutation, because price does not live on the product: Shopify
+  // keeps it on ProductVariant and `productUpdate` has no field for it. It runs
+  // after the product write and reports as a warning rather than a failure —
+  // the text edits above already landed, and telling the merchant the whole
+  // save failed would invite them to make it twice.
+  let priceWarning: string | undefined; // a CODE under t.content.priceWarnings
+  if (params.price !== undefined && changedAttributeFields.includes("price")) {
+    priceWarning = await updateDefaultVariantPrice(gateway, db, productId, params.price, shop);
   }
 
   // Delete translations for changed fields in all foreign languages
@@ -1269,5 +1553,104 @@ async function updatePrimaryProduct(
     }
   }
 
-  return json({ success: true, product: data.data.productUpdate.product });
+  return json({
+    success: true,
+    product: data.data.productUpdate.product,
+    // A price that could not be written is a warning on a save that otherwise
+    // worked — never a silent drop, which for a money field is the worst
+    // possible outcome.
+    // A code, not a sentence — the client phrases it (see the helper below).
+    ...(priceWarning ? { priceWarning } : {}),
+    // §Phase 3.1 — a rule-based membership the picker asked to remove was
+    // kept. Reported rather than silent: the merchant unticked a box and the
+    // product is still in the collection, and only this line explains why.
+    ...(membershipNotes.length > 0 ? { attributeWarnings: membershipNotes } : {}),
+  });
+}
+
+/**
+ * Writes the DEFAULT variant's price (PLAN_CONTENT_CREATION §Phase 3.2).
+ *
+ * Returns a warning CODE (never prose) or undefined. The app ships in three
+ * languages and only the client knows which one the merchant is reading, so the
+ * wording lives in `t.content.priceWarnings.*`. Never throws: the product save
+ * this accompanies has already landed, so a failure here must not be reported
+ * as a failed save.
+ *
+ * ── Three rules worth stating ──────────────────────────────────────────────
+ * 1. The variant is resolved SERVER-side, from the cache, scoped by shop. The
+ *    client never names it — a variant GID from a request body is an invitation
+ *    to write into another shop's catalogue.
+ * 2. Money is parsed with the bulk editor's `parseMoney`, not `parseFloat`.
+ *    "1.299,00" and "1,299.00" are the same amount to a merchant and wildly
+ *    different to `parseFloat`, and a bare "1.299" is genuinely ambiguous — it
+ *    is refused rather than silently rounded to 1.30.
+ * 3. The echo rule, strictly: the mirror is written only from the price Shopify
+ *    RETURNED. `userErrors: []` alone is not success, and a money value is the
+ *    last place to guess.
+ */
+async function updateDefaultVariantPrice(
+  gateway: ShopifyApiGateway,
+  db: PrismaClient,
+  productId: string,
+  rawPrice: string,
+  shop: string,
+): Promise<string | undefined> {
+  const parsed = parseMoney(rawPrice);
+  if (!parsed.ok) {
+    return parsed.error === "ambiguous" ? "priceAmbiguous" : "priceInvalid";
+  }
+  // Shopify's price is not nullable — an emptied field is not "remove the
+  // price", it is an unfinished edit.
+  if (parsed.value === null) return "priceEmpty";
+
+  try {
+    const variant = await db.productVariant.findFirst({
+      where: { productId, product: { shop } },
+      orderBy: { position: "asc" },
+      select: { id: true, shopifyGid: true },
+    });
+    if (!variant?.shopifyGid) return "priceNoVariant";
+
+    const response = await gateway.graphql(
+      `#graphql
+        mutation updateDefaultVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+            productVariants { id price }
+            userErrors { field message }
+          }
+        }`,
+      { variables: { productId, variants: [{ id: variant.shopifyGid, price: parsed.value }] } },
+    );
+    const body = (await response.json()) as {
+      data?: {
+        productVariantsBulkUpdate?: {
+          productVariants?: Array<{ id: string; price: string }> | null;
+          userErrors?: Array<{ message: string }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+
+    // A SCHEMA-level error arrives as a top-level `errors` array with
+    // `data: null` and never reaches `userErrors` — checking only the latter
+    // would read this as a success and mirror a price Shopify never stored.
+    if (body.errors?.length) return "priceFailed";
+    const payload = body.data?.productVariantsBulkUpdate;
+    if (payload?.userErrors?.length) return "priceFailed";
+
+    const echoed = payload?.productVariants?.find((v) => v.id === variant.shopifyGid);
+    if (!echoed?.price) return "priceNotConfirmed";
+
+    await db.productVariant
+      .update({ where: { id: variant.id }, data: { price: echoed.price } })
+      .catch(() => undefined);
+    return undefined;
+  } catch (error) {
+    loggers.product("warn", "Variant price write failed", {
+      productId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "priceFailed";
+  }
 }

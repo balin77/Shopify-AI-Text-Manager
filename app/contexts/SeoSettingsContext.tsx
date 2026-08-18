@@ -2,7 +2,7 @@
  * Seo Settings Context
  * Provides the shop-level SEO character-limits knobs throughout the app.
  *
- *  - `seoTitleSuffix`: when non-empty, the SeoSidebar and AI generation use
+ *  - `seoTitleSuffix`: when non-empty, the ItemSidebar and AI generation use
  *    an adjusted upper limit of (seoTitleMax - suffix.length).
  *  - `seoLimits`: merchant overrides for the length thresholds every scorer
  *    and every character-counter hint on the content editor consumes.

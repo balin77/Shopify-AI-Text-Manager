@@ -774,7 +774,7 @@ export default function DirectTranslationsPage() {
     <PlanAccessGate contentType="directTranslations">
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
         {/* Capped at the shared content width (.app-page-width-start,
-            responsive.css :root) — this page has no SEO-score sidebar, so
+            responsive.css :root) — this page has no item sidebar, so
             nothing else would stop the right column from growing on a wide
             screen. Left-aligned, so the item list stays flush with the gutter. */}
         <div className="app-page-width-start" style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", gap: "16px", padding: "16px", boxSizing: "border-box" }}>

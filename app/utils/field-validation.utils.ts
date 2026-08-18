@@ -228,6 +228,12 @@ export function hasPrimaryContentMissing(
   // does, so primary content is never "missing".
   if (contentType === 'directTranslations') return false;
 
+  // Menus: the primary labels are Shopify's own menu item titles. This app
+  // does not write them (renaming is menuUpdate's job, not translation), so a
+  // menu can never be missing primary content and the primary locale button
+  // must not pulse orange at a merchant who has nothing to fix here.
+  if (contentType === 'menus') return false;
+
   // Templates have dynamic fields in translatableContent
   if (isThemeContentType(contentType)) {
     const translatableContent = selectedItem.translatableContent;
@@ -320,6 +326,19 @@ export function hasLocaleMissingTranslations(
   }
 
   if (locale === primaryLocale) return false;
+
+  // Menus: the caller (app.menus.tsx) collapses a whole menu into ONE synthetic
+  // translation per locale, present only when EVERY item of that menu has a
+  // translation in it. A menu is a list of independent Link resources with no
+  // field config to enumerate, so the completeness verdict is the page's to
+  // compute and this helper's only job is to read it. Same shape as the
+  // directTranslations branch above, minus the primary locale — which the
+  // short-circuit right above has already excluded, because a menu's primary
+  // labels come from Shopify and are never a translation target.
+  if (contentType === 'menus') {
+    const trs = selectedItem.translations || [];
+    return !trs.some((t) => t.locale === locale && !isFieldEmpty(t.value));
+  }
 
   // Templates have dynamic fields in translatableContent
   if (isThemeContentType(contentType)) {

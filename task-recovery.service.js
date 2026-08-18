@@ -32,6 +32,11 @@ const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || 
 // recovery) keeps the default. Env-overridable.
 const LONG_TASK_TIMEOUT_MS = parseInt(process.env.LONG_TASK_TIMEOUT_MS || String(45 * 60 * 1000), 10);
 const LONG_RUNNING_TASK_TYPES = [
+  // A renamed blog gets one redirect per article, and Shopify redirects have
+  // no wildcards — a 200-article blog is 200 lookups plus 200 creates through
+  // a rate-limited API. Minutes, not seconds, so the short stuck-threshold
+  // would reap it while it is working (PLAN_CONTENT_CREATION §Phase 3.3).
+  'blogArticleRedirects',
   'bulkTranslation',
   'bulkAIGeneration',
   'altTextTemplateApply',

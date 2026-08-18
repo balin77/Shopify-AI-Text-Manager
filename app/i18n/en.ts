@@ -199,6 +199,7 @@ export const en: Translation = {
     shopMetadata: "Shop Metadata",
     shopMetadataDescription: "Manage and translate shop metafields",
     menus: "Menus",
+    menu: "Menu",
     menusDescription: "Manage and translate your shop navigation and menus",
     templates: "Templates",
     templatesDescription: "Translate theme default content, templates, section groups and more",
@@ -250,6 +251,15 @@ export const en: Translation = {
     saveChanges: "Save",
     discardChanges: "Discard",
     changesSaved: "Changes saved successfully!",
+    // PLAN §Phase 3.3 — what happened to the old URL after a handle change.
+    redirectCreated: "The old URL {path} now redirects to the new one.",
+    redirectNotConfirmed: "The old URL {path} could not be redirected — set it up under Shopify's URL redirects if the old link matters.",
+    redirectFailed: "The old URL {path} could not be redirected — set it up under Shopify's URL redirects if the old link matters.",
+    redirectBlogArticlesUncovered: "The old blog URL {path} now redirects to the new one — but the articles' own URLs changed too and are not covered.",
+    redirectShadowRemoved: "The old URL {path} now redirects to the new one. An existing redirect on the new URL was removed — it would have hidden the page.",
+    redirectMissingBlog: "The old article URL could not be redirected because its blog is unknown — set the redirect up manually if the old link matters.",
+    redirectLocaleBlogUnknown: "The old article URL was not redirected: this blog's handle is translated too, so the article's address in this language is not certain — set the redirect up manually if the old link matters.",
+    reload: "Reload",
     reloadSuccess: "Data reloaded from Shopify successfully!",
     reloadItemTooltip: "Reload only this entry's data from Shopify",
     reloadAllTooltip: "Reload all entries from Shopify",
@@ -289,7 +299,19 @@ export const en: Translation = {
       paragraph: "Paragraph",
       lineBreak: "Break",
     },
-    menuLimitation: "Menu links cannot be translated through this app due to a Shopify API limitation. Please translate your menus directly in Shopify Admin under \"Translate & Adapt\".",
+    menuSaveDeferred: "Not every change was written yet. Press save again — the rest is still here.",
+    menuTranslateAll: "Translate into all languages",
+    menuCopyAll: "Copy to all languages",
+    menuTranslateFromPrimary: "Translate from the primary language",
+    menuCopyFromPrimary: "Copy from the primary language",
+    menuMissingTranslations: "Missing translations",
+    menuTranslateFailed: "Translation failed",
+    menuIntro: "Translate menu items here — at every level, sub-items included. The primary-language labels and the menu structure itself are managed in the Shopify admin.",
+    menuPrimaryReadOnly: "This is your primary language. Pick another language above to edit translations.",
+    menuNeedsSecondLanguage: "Translating menus requires a second language in your shop.",
+    menuNotTranslatable: "Shopify offers no translatable resource for this menu item — it cannot be translated here.",
+    menuListIncomplete: "Not every menu link could be loaded from your shop. Items without a field may still be translatable — please reload the page.",
+    menuSaveFailed: "Some menu items were not saved:",
     unsavedChanges: "Unsaved Changes",
     discard: "Discard",
     save: "Save",
@@ -349,6 +371,11 @@ export const en: Translation = {
     selectItem: "Select item",
     // Field labels
     fieldLabels: {
+      collectionRules: "Automated rules",
+      images: "Images",
+      commerce: "Stock and sales channels",
+      category: "Product category",
+      collections: "Collections",
       productTitle: "Product Title",
       title: "Title",
       description: "Description",
@@ -361,6 +388,15 @@ export const en: Translation = {
       metaDescription: "Meta Description",
       productImages: "Product Images",
       featuredImage: "Featured Image",
+      // PLAN §Phase 3 — merchandising attributes.
+      status: "Status",
+      vendor: "Vendor",
+      tags: "Tags",
+      author: "Author",
+      sortOrder: "Sort order",
+      templateSuffix: "Theme template",
+      isPublished: "Visible in the online store",
+      price: "Price (default variant)",
     },
     // Resource names
     resourceNames: {
@@ -399,6 +435,340 @@ export const en: Translation = {
     // Setup
     syncAllContent: "Sync All Content",
     syncDescription: "This will sync all products, collections, and articles from Shopify to the database. Auto-updates via webhooks.",
+
+    // ── PLAN_CONTENT_CREATION §1.1/§1.2 — creating content ─────────────────
+    createButtonLabel: "Create",
+    createChooserTitle: "What would you like to create?",
+    // Two DIFFERENT refusals with different remedies — they must never share
+    // the same text (§1.2).
+    createPlanContentType: "Your plan does not include this content type.",
+    createPlanLimit: "You have reached your plan's limit for this content type.",
+    createUnavailable: "Nothing can be created here.",
+    createNeedsBlogFirst: "This shop has no blog yet. A post has to live in one, so create the blog first.",
+    // ── Deleting (two-step confirmation) ──────────────────────────────────
+    deleteButtonLabel: "Delete",
+    deletedMessage: "\u201c{name}\u201d was deleted.",
+    deleteModal: {
+      step1Title: "Delete \u201c{name}\u201d?",
+      step2Title: "Confirm deletion",
+      intro: "This removes the item from your Shopify store, not just from this app.",
+      consequenceTranslations: "All translations of this item are deleted.",
+      consequenceKeyword: "Its keyword assignment is removed.",
+      consequenceBlogArticles: "Every article in this blog is deleted with it.",
+      consequenceIrreversible: "This cannot be undone.",
+      confirmPrompt: "Type \u201c{name}\u201d to confirm.",
+      mismatch: "That does not match.",
+      cancel: "Cancel",
+      next: "Continue",
+      confirm: "Delete permanently",
+      deleting: "Deleting \u2026",
+    },
+    undoCreate: "Undo this create",
+    // ── Duplicating (§1.9) ────────────────────────────────────────────────
+    duplicateButtonLabel: "Duplicate",
+    duplicatePending: "The copy is being created. Reload in a moment to see it.",
+    rulesNeedApiUpgrade: "Automated collections need Shopify API {version}. Until this app moves to it, you can create collections and pick their products yourself.",
+    addTag: "Add tag",
+    // PLAN §3.1 — the rule change is its own mutation and can fail alone. Each
+    // message ends with what DID work, so the merchant does not save twice.
+    ruleWarnings: {
+      rulesRequireNewerApi: "Automatic collection rules need a newer Shopify API version than this app currently uses, so they were not changed. Everything else was saved.",
+      rulesUnreadable: "This collection's rules could not be read in a form this editor understands, so they were left untouched. Everything else was saved.",
+      rulesInvalid: "The collection rules were incomplete and were not saved. Everything else was saved.",
+      rulesNotConfirmed: "Shopify did not confirm the rule change, so it was not saved locally either. Everything else was saved.",
+      rulesFailed: "The collection rules could not be saved. Everything else was saved.",
+    },
+    // PLAN §3.2 — the price is a SECOND mutation, so it can fail on its own
+    // while the rest of the save lands. Each ends with what DID work, because
+    // a warning that only says "failed" invites the merchant to save again.
+    // PLAN §Phase 3.1 — the product-taxonomy picker. "No matches", "keep
+    // typing" and "the lookup broke" are three different things, and only one
+    // of them means the merchant should try different words.
+    taxonomy: {
+      unknown: "Not loaded from Shopify yet — reload this product to see its category.",
+      reload: "Reload",
+      search: "Search categories …",
+      searching: "Searching …",
+      keepTyping: "Type at least two characters.",
+      noMatches: "No category matches that.",
+      lookupFailed: "The category list could not be loaded. Try again in a moment.",
+      none: "Not set",
+      clear: "Clear",
+      broad: "(broad)",
+    },
+    // PLAN §Phase 3.1 — the membership picker.
+    collectionsField: {
+      reload: "Reload",
+      automatedUnknown: "Not loaded from Shopify yet — reload the collections to change this.",
+      listTruncated: "This shop has more collections than are listed here. Use the filter, or manage the rest in the Shopify admin.",
+      filter: "Filter collections …",
+      loading: "Loading collections",
+      lookupFailed: "The collection list could not be loaded, so only the current memberships are shown.",
+      automated: "Managed by this collection's rules",
+      truncated: "This product is in more collections than were loaded. Manage the rest in the Shopify admin.",
+      unknown: "Not loaded yet — reload this product to see its collections.",
+      none: "This shop has no collections yet.",
+    },
+    // PLAN §Phase 3.1 — attribute warnings. A code, phrased here, because the
+    // app ships in three languages.
+    attributeWarnings: {
+      collectionsAutomatedKept: "A rule-based collection was kept — its own rules decide who belongs to it. Everything else was saved.",
+    },
+    // PLAN Phase 4 — stock and sales channels. Saved on their own, because a
+    // volatile number carried in the editor's value map would be stale by the
+    // time the merchant pressed save.
+    commerce: {
+      pricesHeading: "Prices",
+      shippingHeading: "Shipping and customs",
+      price: "Price",
+      priceHint: "What the customer pays.",
+      compareAtPrice: "Compare-at price",
+      compareAtPriceHint: "The struck-through price. Empty = no sale.",
+      discardConfirm: "Discard your unsaved changes?",
+      cost: "Cost per item",
+      costHint: "What you pay. Never shown to customers.",
+      weight: "Weight",
+      weightUnit: "Unit",
+      hsCode: "HS code",
+      countryOfOrigin: "Country of origin",
+      requiresShipping: "Needs shipping",
+      taxableLabel: "Taxable: {v}",
+      yes: "yes",
+      no: "no",
+      loading: "Loading",
+      loadFailed: "Stock and channels could not be loaded.",
+      saveFailed: "The change could not be saved.",
+      retry: "Try again",
+      planRequired: "Stock and sales channels are part of the Pro plan.",
+      foreignLocale: "Stock and sales channels exist once per product, not per language.",
+      channelsHeading: "Sales channels",
+      noChannel: "On no channel — invisible",
+      noChannels: "This shop has no sales channels installed.",
+      channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
+      scheduled: "Scheduled for {date}",
+      variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
+      savingStock: "Saving stock…",
+      notStockedHere: "not stocked here",
+      stockHeading: "Stock",
+      variantSelectLabel: "Variant",
+      variantsTruncated: "This product has more variants than were loaded. Edit the rest in the Shopify admin.",
+      stockUnknown: "Not loaded yet — reload to see this variant's stock.",
+      stockUntracked: "Stock is not tracked for this variant — it can be sold without limit.",
+      stockNoItem: "This variant has no inventory record, so its stock cannot be edited here.",
+      levelsTruncated: "This variant has stock at more locations than were loaded.",
+      noLevels: "No location holds stock of this variant.",
+      locationInactive: "inactive",
+      onHand: "On hand",
+      availableLabel: "available: {n}",
+    },
+    // Codes from the stock and channel write paths. A quantity is money, so
+    // "not confirmed" is a distinct answer from "failed": only one of them
+    // means the merchant should look again before retrying.
+    commerceWarnings: {
+      priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Nothing was saved.",
+      priceInvalid: "A price was not a number, so it was not saved.",
+      priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
+      priceFailed: "The price could not be saved.",
+      activateNotConfirmed: "Shopify did not confirm the location, so it was not activated.",
+      activateFailed: "The location could not be activated.",
+      stockNoBaseline: "One location had no current quantity to compare against, so it was not written. Reload and try again.",
+      itemFieldsInvalid: "A cost, weight or country code was not in a form Shopify accepts, so those settings were not written.",
+      itemFieldsNotConfirmed: "Shopify did not confirm the item settings, so they were not saved locally either.",
+      itemFieldsFailed: "The item settings could not be saved.",
+      stockChangedMeanwhile: "The stock changed while you were editing, so nothing was written. Reload to see the current number.",
+      stockNotConfirmed: "Shopify did not confirm the new stock, so it was not saved locally either. Reload to see what it holds.",
+      stockFailed: "The stock could not be saved.",
+      stockUntracked: "This variant does not track stock, so no quantity was written.",
+      stockNoInventoryItem: "This variant has no inventory record, so its stock could not be written.",
+      channelsNotConfirmed: "Shopify did not confirm every channel change. Reload to see which ones landed.",
+      channelsFailed: "The sales channels could not be changed.",
+    },
+    priceWarnings: {
+      priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
+      priceInvalid: "The price could not be read as an amount. Everything else was saved.",
+      priceEmpty: "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.",
+      priceNoVariant: "The price could not be saved because this product's variants are not in the local cache yet — reload the product. Everything else was saved.",
+      priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.",
+      priceFailed: "The price could not be saved. Everything else was saved.",
+    },
+    attributesCardTitle: "Details",
+    attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
+    attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
+    // ONE enum vocabulary, at the top level because several surfaces render
+    // the same values: the create modal, the editor's attribute fields, its
+    // sidebar checklist and the commerce panel's weight unit. Keyed
+    // "<field>.<VALUE>" — a Shopify enum is never shown raw ("ALPHA_ASC" is
+    // not a sentence in any language).
+    //
+    // NOT yet the only one: the item list (`statusLabels`) and the bulk grid's
+    // status column still carry their own. Folding those in is worth doing,
+    // and until it happens this comment says so rather than claiming it.
+    enumLabels: {
+      "status.DRAFT": "Draft", "status.ACTIVE": "Active",
+      "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
+      "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
+      "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+      "sortOrder.PRICE_ASC": "Price, low to high", "sortOrder.PRICE_DESC": "Price, high to low",
+      "sortOrder.CREATED": "Oldest first", "sortOrder.CREATED_DESC": "Newest first",
+      "sortOrder.MOST_RELEVANT": "Relevance",
+      "commentPolicy.CLOSED": "Closed", "commentPolicy.MODERATED": "Moderated",
+      "commentPolicy.AUTO_PUBLISHED": "Auto-published",
+      "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
+      "weightUnit.OUNCES": "oz", "weightUnit.POUNDS": "lb",
+    },
+    // The explanatory line under an attribute field. Long-form on purpose:
+    // each one exists because merchants reliably assume the opposite.
+    attributeNotes: {
+      status: "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
+      price: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+      category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
+      collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
+      commerce: "Stock and channels are saved on their own — the buttons in this section, not the main save.",
+    },
+    templateSuffixHelp: "Empty = the theme's default template.",
+    statusToggle: {
+      statusLabel: "Status",
+      hidden: "Hidden",
+      unlistedHint: "Unlisted — reachable by direct link, hidden from listings and search.",
+      unknown: "Status not loaded — reload this item to change it.",
+      active: "Active",
+      activeHint: "Visible in your shop — as long as the product is on a sales channel.",
+      draftHint: "Draft — not visible in your shop.",
+      published: "Visible",
+      publishedHint: "Published and reachable in your shop.",
+      unpublishedHint: "Not published — the address returns a 404.",
+      archivedHint: "Archived — out of the catalogue and not for sale.",
+    },
+    duplicateModal: {
+      title: "Duplicate \u201c{name}\u201d",
+      intro: "Shopify copies everything \u2014 images, variants, options and metafields. You only need a name.",
+      newTitleLabel: "Title of the copy",
+      cancel: "Cancel",
+      confirm: "Duplicate",
+      draftNote: "The copy is created as a draft \u2014 it does not go live on its own.",
+    },
+    createResourceLabels: {
+      product: "Product",
+      collection: "Collection",
+      page: "Page",
+      article: "Blog post",
+      blog: "Blog",
+      metaobject: "Metaobject entry",
+    },
+    createdTitle: "\u201c{name}\u201d was created",
+    createdNotSyncedTitle: "Created — not visible in the list yet",
+    createdNotSyncedBody: "The item was created in Shopify. Only the local copy is missing — reload to see it. Do NOT create it a second time.",
+    createdHandle: "Handle: {handle}",
+    createModal: {
+      // PLAN §2.5a-d — the AI extras.
+      altText: "Alt text",
+      changeImage: "Change image",
+      chooseImage: "Choose image",
+      chooseImageTitle: "Choose an image",
+      createFailed: "Could not create",
+      altTextGenerating: "Writing alt text…",
+      keywordHint: "Goes into the AI prompt and becomes this item's main keyword.",
+      generateRest: "Write the rest with AI",
+      generateRestHint: "Only empty fields are filled — anything you wrote stays.",
+      generatingField: "Writing {field}…",
+      sendImageToAI: "Let the AI look at the image",
+      translateAfterwards: "Translate into all languages afterwards",
+      translateAfterwardsHint: "Runs right after creating, with the usual progress display.",
+      translatingAfterCreate: "Translating into your other languages…",
+      translateAfterwardsUnsupported: "This type is translated from its own editor after creating it.",
+      generateFailed: "These could not be written: {fields}",
+      keywordStuffed: "The text repeats your keyword more often than is good for it — worth a read.",
+      aiWarnings: {
+        allFailed: "The AI could not write any of the remaining fields.",
+      },
+      createWarnings: {
+        translateChainFailed: "The item was created, but translating it did not finish. Use \"Translate all\" on the item.",
+      },
+      seoScoreHeading: "SEO score",
+      seoScoreOutOf: "{n} of 100",
+      create: "Create",
+      cancel: "Cancel",
+      moreFields: "More fields",
+      fewerFields: "Fewer fields",
+      required: "Required",
+      handleHint: "Leave empty — Shopify derives the handle from the title. On a collision it appends a number.",
+      shopifyDefault: "Shopify default",
+      discardConfirm: "Discard your input?",
+      fields: {
+        title: "Title", description: "Description", body: "Content", summary: "Summary",
+        handle: "Handle", seoTitle: "SEO title", metaDescription: "Meta description",
+        keyword: "Keyword", image: "Image", status: "Status", price: "Price",
+        compareAtPrice: "Compare-at price", sku: "SKU", barcode: "Barcode",
+        productType: "Product type", vendor: "Vendor", tags: "Tags",
+        sortOrder: "Sort order", author: "Author", blog: "Blog",
+        commentPolicy: "Comments", metaobjectType: "Type",
+      },
+    },
+  },
+
+  // PLAN_CONTENT_CREATION §1.4b / §3.1 — the collection rule builder.
+  // ONE block for both surfaces: the create modal and the editor field render
+  // the same control, and two copies of these strings would drift.
+  collectionRules: {
+    heading: "Products must match",
+    exclusionsHeading: "Except products that match",
+    matchAll: "all of these",
+    matchAny: "any of these",
+    sourceTitle: "Name of this rule set",
+    addCondition: "Add condition",
+    addExclusion: "Add exclusion",
+    addSource: "Add another rule set",
+    removeCondition: "Remove",
+    removeSource: "Remove this rule set",
+    advanced: "Advanced",
+    simple: "Fewer options",
+    commaSeparated: "Comma-separated",
+    definitionPlaceholder: "Metafield definition ID",
+    noPreview: "Which products match becomes visible after saving.",
+    unavailable: "Rules are not available yet",
+    // A structure this editor cannot render is kept EXACTLY as it is — saying
+    // so is the point: the merchant must not think it was dropped.
+    readOnlyHeading: "Rule kept unchanged",
+    readOnlyBody: "This rule uses something this editor cannot show. It is left exactly as it is and saving here will not touch it.",
+    openInAdmin: "Open in Shopify admin",
+    unreadableTree: "This collection's rules could not be read in a form this editor understands, so they are left untouched. Manage them in the Shopify admin.",
+    requiresNewerApi: "Automatic collection rules need a newer Shopify API version than this app currently uses. Until then, manage them in the Shopify admin.",
+    kinds: {
+      productTag: "Product tag",
+      productTitle: "Product title",
+      productType: "Product type",
+      productVendor: "Vendor",
+      productCategory: "Category",
+      productStatus: "Status",
+      variantTitle: "Variant title",
+      variantPrice: "Price",
+      variantCompareAtPrice: "Compare-at price",
+      variantInventory: "Inventory quantity",
+      variantWeight: "Weight",
+      metafieldString: "Metafield (text)",
+      metafieldStringList: "Metafield (text list)",
+      metafieldInteger: "Metafield (whole number)",
+      metafieldDecimal: "Metafield (decimal)",
+      metafieldBoolean: "Metafield (yes/no)",
+      metafieldMetaobject: "Metafield (metaobject)",
+      metafieldMetaobjectList: "Metafield (metaobject list)",
+      collection: "Collection",
+    },
+    relations: {
+      EQUALS: "is equal to",
+      NOT_EQUALS: "is not equal to",
+      STARTS_WITH: "starts with",
+      ENDS_WITH: "ends with",
+      CONTAINS: "contains",
+      DOES_NOT_CONTAIN: "does not contain",
+      TAGGED_WITH: "is tagged with",
+      NOT_TAGGED_WITH: "is not tagged with",
+      GREATER_THAN: "is greater than",
+      LESS_THAN: "is less than",
+      IS_SET: "is set",
+      IS_NOT_SET: "is not set",
+      INCLUDES: "includes",
+    },
   },
 
   // Direct translations content type
@@ -574,6 +944,7 @@ export const en: Translation = {
     seoFeatureScheduledAudit: "Automatic nightly audit",
     seoFeatureProNote: "Search Console, score history and IndexNow from {plan}.",
     aiInstructionsEditable: "AI Instructions Editable",
+    add: "Add",
     yes: "Yes",
     no: "No",
     changePlan: "Change Plan",
@@ -746,6 +1117,8 @@ export const en: Translation = {
     maxRequestsPerMinute: "Max Requests / Minute",
     maxRequestsPerMinuteShort: "Max Requests/Min",
     seoSettings: "SEO",
+    autoHandleRedirect: "Redirect when a handle changes",
+    autoHandleRedirectHint: "When an item's handle changes in the primary language — in the editor or the bulk editor — the old URL is redirected to the new one automatically. Without this, existing links to the old address stop working.",
     seoTitleSuffix: "SEO Title Shop Suffix",
     seoAutoAuditHeading: "Automatic audit",
     seoAutoAuditLabel: "Nightly SEO audit",
@@ -1319,7 +1692,32 @@ export const en: Translation = {
     // button in the navigation.
     showPanel: "Show SEO score",
     hidePanel: "Back to content",
+    // ── PLAN_CONTENT_CREATION §2 — attribute tab ──────────────────────────
+    attributes: {
+      heading: "Completeness",
+      unknownBanner: "These details have not been fetched for this item yet. Reload it to see them — the grey dots are UNKNOWN, not missing.",
+      reload: "Reload this item",
+      adminHint: "Only visible in the Shopify admin.",
+      statuses: { unknown: "unknown" },
+      rows: {
+        status: "Status",
+        channels: "Sales channels",
+        tags: "Tags",
+        vendor: "Vendor",
+        category: "Category",
+        productType: "Product type",
+        collections: "In collections",
+        price: "Price",
+        sortOrder: "Sort order",
+        author: "Author",
+        published: "Published",
+        featuredImage: "Featured image",
+        template: "Theme template",
+        keyword: "Keyword",
+      },
+    },
     sidebarTabs: {
+      attributes: "Attributes",
       score: "Score",
       keywords: "Keywords",
       jsonLd: "JSON-LD",
@@ -2892,6 +3290,9 @@ export const en: Translation = {
       summary: "Summary",
       productType: "Product type",
       status: "Status",
+      // PLAN §3.6 — `tags` is one cell holding a LIST, so the heading says so.
+      vendor: "Vendor",
+      tags: "Tags (comma-separated)",
       handle: "Handle",
       seoTitle: "SEO title",
       seoDescription: "Meta description",
@@ -2943,6 +3344,9 @@ export const en: Translation = {
       },
     },
     readOnlyReasons: {
+      // PLAN §3.6 — the block was never fetched, so an empty cell here is
+      // "not loaded", not "empty". A resync is the way out.
+      attributesNotSynced: "This product's details have not been loaded from Shopify yet — reload the products, then edit this.",
       richText: "Rich-text content can't be edited in the grid — open the item in the editor.",
       linkedOption: "This option is linked to metaobjects and can't be edited here — use the editor.",
       missingOption: "This product has no option at this position.",
@@ -3013,6 +3417,9 @@ export const en: Translation = {
     allMarkets: "All markets",
     primaryLocaleSuffix: "(Primary)",
     notTranslatableTooltip: "This field is not translatable — it can only be edited in the primary language.",
+    // PLAN §3.6 — shown in a vendor/tags cell whose row predates the attribute
+    // sync. Empty there means "not fetched yet", not "the merchant left it blank".
+    unknownAttributeGhost: "not synced yet",
     unsavedOtherLocales: "Unsaved changes in {count} other languages/markets — saving writes all of them.",
     budgetExceeded: "This change needs about {calls} Shopify calls (limit {max}). Please save in several steps or narrow the filter.",
     cellLimitExceeded: "{cells} changed cells — maximum {max} per save. Please save in several steps or narrow the filter.",
@@ -3180,6 +3587,46 @@ export const en: Translation = {
 
   // Help Tooltips
   help: {
+    commercePrices: {
+      title: "The three prices",
+      summary:
+        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody.",
+      tips: [
+        "Empty compare-at price = no sale, and the struck-through number disappears",
+        "The price itself cannot be emptied — Shopify requires one on every variant",
+        "Cost is optional and only ever seen by you",
+      ],
+    },
+    commerceShipping: {
+      title: "Shipping and customs",
+      summary:
+        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad.",
+      tips: [
+        "Without a weight, weight-based shipping rates cannot be calculated",
+        "The country of origin is where the item was MADE, not where you ship it from",
+        "\"Needs shipping\" off = a digital product, and no address is asked for",
+      ],
+    },
+    commerceStock: {
+      title: "Stock per location",
+      summary:
+        "One row per location, holding the quantity ON HAND — everything physically there, including what is already reserved for open orders. A location with no row is one this item is not stocked at yet; type a number into it and it starts being stocked there when you save.",
+      tips: [
+        "\"available\" beside the field is on hand minus open orders, and cannot be edited directly",
+        "If the number changed elsewhere while you were editing, the save is refused rather than overwriting it",
+        "Untracked variants have no quantity at all — that is not the same as zero",
+      ],
+    },
+    commerceChannels: {
+      title: "Sales channels",
+      summary:
+        "Where this product may appear at all. Active status alone is not enough: a product on no channel is invisible everywhere, including your own storefront, and the Shopify admin does not say so on the product page either.",
+      tips: [
+        "Online Store is the channel your own shop reads",
+        "Unticking a channel hides the product there without changing its status",
+        "A scheduled channel shows its date and is not live yet",
+      ],
+    },
     // Keywords section
     keywordsLibraryTabs: {
       title: "Library & Assignments",
@@ -3212,6 +3659,16 @@ export const en: Translation = {
       ],
     },
     // Content editor — the three sidebar tabs
+    seoSidebarAttributes: {
+      title: "Attributes",
+      summary:
+        "The NON-SEO completeness of this item: status, sales channels, tags, vendor, category, price. Deliberately disjoint from the score, which judges titles, descriptions and alt text.",
+      tips: [
+        "Grey = UNKNOWN, not missing. A sync fetches these — before that, every red cross would be a guess",
+        "Status and sales channels are two separate rows: \u201cActive\u201d alone does NOT make a product visible, that needs a channel",
+        "In a foreign language the tab is read-only — tags, vendor and category exist once per item, not per language",
+      ],
+    },
     seoSidebarScore: {
       title: "SEO score",
       summary:

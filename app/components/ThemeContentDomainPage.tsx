@@ -1089,7 +1089,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
 
   // Mirrors the width choice UnifiedContentEditor makes for this config, so
   // everything stacked on this page ends at the same right edge.
-  const editorWidthClass = config.showSeoSidebar ? "app-page-width-full" : "app-page-width-start";
+  const editorWidthClass = config.showItemSidebar ? "app-page-width-full" : "app-page-width-start";
 
   return (
     <PlanAccessGate contentType={planContentType}>
@@ -1098,7 +1098,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         {/* Top padding (16px) matches the editor page's grey padding border
             below, so the gap nav→banner equals the gap banner→content. The
             width class is the same one the editor below picks for these pages
-            (no SEO sidebar → capped reading width, responsive.css :root) — a
+            (no item sidebar → capped reading width, responsive.css :root) — a
             banner running the full 4K width above a capped editor would read as
             two different pages. */}
         {infoBanner && (

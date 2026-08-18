@@ -15,6 +15,14 @@ import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 import { syncProductVariantRows, type ShopifySyncVariant } from './product-variant-sync.server';
+import {
+  PRODUCT_ATTRIBUTE_SELECTION,
+  PRODUCT_COLLECTIONS_SELECTION,
+  productAttributeColumns,
+  productCollectionRows,
+  type ShopifyProductAttributes,
+  type ShopifyProductCollections,
+} from './attribute-sync.shared';
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -81,7 +89,7 @@ interface ShopifyMetafield {
 }
 
 /** Product data from Shopify GraphQL */
-interface ShopifyProductData {
+interface ShopifyProductData extends ShopifyProductAttributes {
   id: string;
   title: string;
   descriptionHtml: string | null;
@@ -89,6 +97,8 @@ interface ShopifyProductData {
   status: string;
   productType: string | null;
   updatedAt: string;
+  /** PLAN_CONTENT_CREATION Phase 0 — membership window, see the shared module. */
+  collections?: ShopifyProductCollections | null;
   /** Variant window of the sync (Plan §5.1): first 100 only, NO pagination —
    * hasNextPage marks products whose remainder stays in the Shopify admin. */
   variants?: {
@@ -190,7 +200,7 @@ export class ProductSyncService {
                   handle
                   status
                   productType
-                  updatedAt
+                  updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
                   seo {
                     title
                     description
@@ -309,6 +319,13 @@ export class ProductSyncService {
       const hasMoreVariants = product.variants
         ? product.variants.pageInfo?.hasNextPage ?? false
         : undefined;
+      // PLAN_CONTENT_CREATION Phase 0. Same "only when delivered" rule as
+      // hasMoreVariants: an absent attribute block yields {} and leaves the
+      // stored values (and attributesSyncedAt) untouched — writing the
+      // defaults would erase what an earlier full sync established and would
+      // claim knowledge this response never carried.
+      const attributes = productAttributeColumns(product);
+      const membership = productCollectionRows(this.shop, product.id, product.collections);
       await tx.product.upsert({
         where: { shop_id: { shop: this.shop, id: product.id } },
         create: {
@@ -324,6 +341,8 @@ export class ProductSyncService {
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
           hasMoreVariants: hasMoreVariants ?? false,
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -338,10 +357,22 @@ export class ProductSyncService {
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
           ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
       });
+
+      // Collection membership: rebuilt per product, never accumulated. Skipped
+      // entirely when the query did not deliver the block (membership === null)
+      // — deleting then would report "in 0 collections" for data we never saw.
+      if (membership) {
+        await tx.productCollection.deleteMany({ where: { productId: product.id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      }
 
       // Save images
       if (cacheProductImages) {
@@ -1220,7 +1251,7 @@ export class ProductSyncService {
             handle
             status
             productType
-            updatedAt
+            updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
             seo {
               title
               description
@@ -1666,6 +1697,10 @@ export class ProductSyncService {
       const hasMoreVariants = productData.variants
         ? productData.variants.pageInfo?.hasNextPage ?? false
         : undefined;
+      // PLAN_CONTENT_CREATION Phase 0 — see the bulk path for the "only when
+      // delivered" rule these two encode.
+      const attributes = productAttributeColumns(productData);
+      const membership = productCollectionRows(this.shop, productData.id, productData.collections);
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1687,6 +1722,8 @@ export class ProductSyncService {
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
           hasMoreVariants: hasMoreVariants ?? false,
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -1701,10 +1738,21 @@ export class ProductSyncService {
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
           ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
       });
+
+      // Collection membership — rebuilt per product; skipped when the block
+      // was not delivered (see the bulk path).
+      if (membership) {
+        await tx.productCollection.deleteMany({ where: { productId: productData.id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      }
 
       // Check if user recently saved translations for this product
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data

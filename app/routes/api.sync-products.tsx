@@ -4,6 +4,12 @@ import { authenticate } from "../shopify.server";
 import { db, upsertProductMetafields } from "../db.server";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
+import {
+  PRODUCT_ATTRIBUTE_SELECTION,
+  PRODUCT_COLLECTIONS_SELECTION,
+  productAttributeColumns,
+  productCollectionRows,
+} from "../services/attribute-sync.shared";
 
 /**
  * API Route: Fast Product Sync (Bulk)
@@ -105,7 +111,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                   handle
                   status
                   productType
-                  updatedAt
+                  updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
                   seo {
                     title
                     description
@@ -199,6 +205,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       try {
         // Use transaction for each product to ensure consistency
         await db.$transaction(async (tx) => {
+          // PLAN_CONTENT_CREATION Phase 0 — this route is a THIRD full product
+          // write path next to the two in product-sync.service.ts. It has to
+          // fetch and map the attribute block through the same shared module,
+          // or a merchant who syncs from this button ends up with rows whose
+          // attributesSyncedAt stays null forever: permanently "unknown".
+          const attributes = productAttributeColumns(product);
+          const membership = productCollectionRows(shop, product.id, product.collections);
+
           // Upsert product
           await tx.product.upsert({
             where: {
@@ -216,6 +230,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               seoDescription: product.seo?.description || null,
               featuredImageUrl: product.featuredImage?.url || null,
               featuredImageAlt: product.featuredImage?.altText || null,
+              ...attributes,
+              ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
               shopifyUpdatedAt: new Date(product.updatedAt),
               lastSyncedAt: new Date(),
             },
@@ -229,10 +245,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               seoDescription: product.seo?.description || null,
               featuredImageUrl: product.featuredImage?.url || null,
               featuredImageAlt: product.featuredImage?.altText || null,
+              ...attributes,
+              ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
               shopifyUpdatedAt: new Date(product.updatedAt),
               lastSyncedAt: new Date(),
             },
           });
+
+          if (membership) {
+            await tx.productCollection.deleteMany({ where: { productId: product.id } });
+            if (membership.rows.length > 0) {
+              await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+            }
+          }
 
           // Save images if plan allows
           if (planLimits.cacheEnabled.productImages) {

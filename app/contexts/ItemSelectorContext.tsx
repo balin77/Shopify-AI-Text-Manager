@@ -29,12 +29,23 @@ interface ItemSelectorContextValue {
     selectedItemId: string | null;
     onItemSelect: (itemId: string) => void;
     resourceName: { singular: string; plural: string };
+    onAddItem?: (() => void) | null;
+    addDisabledReason?: string | null;
     t?: {
       searchPlaceholder?: string;
       noResults?: string;
       selectItem?: string;
     };
   }) => void;
+  /**
+   * PLAN_CONTENT_CREATION §1.2 — the create entry point for the MOBILE path.
+   * Without it the "+" exists only on the desktop list and creating is simply
+   * unreachable on a phone, which is not a degraded experience but a missing
+   * feature.
+   */
+  onAddItem: (() => void) | null;
+  /** Set when creating is refused — the button stays visible and explains. */
+  addDisabledReason: string | null;
   /** Clear items when leaving content editor page */
   clearItems: () => void;
 }
@@ -54,12 +65,16 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     noResults?: string;
     selectItem?: string;
   }>({});
+  const [onAddItem, setOnAddItem] = useState<(() => void) | null>(null);
+  const [addDisabledReason, setAddDisabledReason] = useState<string | null>(null);
 
   const registerItems = useCallback((config: {
     items: UnifiedItem[];
     selectedItemId: string | null;
     onItemSelect: (itemId: string) => void;
     resourceName: { singular: string; plural: string };
+    onAddItem?: (() => void) | null;
+    addDisabledReason?: string | null;
     t?: {
       searchPlaceholder?: string;
       noResults?: string;
@@ -71,6 +86,8 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     setOnItemSelect(() => config.onItemSelect);
     setResourceName(config.resourceName);
     setT(config.t || {});
+    setOnAddItem(() => config.onAddItem ?? null);
+    setAddDisabledReason(config.addDisabledReason ?? null);
   }, []);
 
   const clearItems = useCallback(() => {
@@ -79,6 +96,8 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     setOnItemSelect(null);
     setResourceName({ singular: "Item", plural: "Items" });
     setT({});
+    setOnAddItem(null);
+    setAddDisabledReason(null);
   }, []);
 
   const value = useMemo(() => ({
@@ -87,9 +106,11 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     onItemSelect,
     resourceName,
     t,
+    onAddItem,
+    addDisabledReason,
     registerItems,
     clearItems,
-  }), [items, selectedItemId, onItemSelect, resourceName, t, registerItems, clearItems]);
+  }), [items, selectedItemId, onItemSelect, resourceName, t, onAddItem, addDisabledReason, registerItems, clearItems]);
 
   return (
     <ItemSelectorContext.Provider value={value}>

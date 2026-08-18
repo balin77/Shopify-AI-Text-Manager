@@ -238,9 +238,29 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'menus' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
 
-export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
+/**
+ * `select`, `tags` and `toggle` are the PLAN_CONTENT_CREATION §Phase 3
+ * merchandising attributes. They differ from every type above them in one way
+ * that runs through the whole editor: they are NOT translatable. Shopify stores
+ * one value per item, not one per locale (`FIELD_TO_TRANSLATION_KEY` lists what
+ * is translatable, and none of these are on it), so in a foreign locale they
+ * render read-only with an explanation rather than looking editable and then
+ * silently writing the primary value.
+ */
+export type FieldType =
+  | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
+  | 'select' | 'tags' | 'toggle' | 'money' | 'collectionRules'
+  // §Phase 3.1 — two lookups the cache cannot answer alone. `taxonomy` is
+  // Shopify's own ~10k-node category tree (searched live); `collections` is
+  // the shop's collection list, read from this app's own cache.
+  | 'taxonomy' | 'collections'
+  // Phase 4 — stock per location and sales channels. Its own type because it
+  // loads LIVE and saves through its own endpoint: stock is volatile, so a
+  // number carried in the editor's flat value map would be stale by the time
+  // the merchant pressed save.
+  | 'commerce';
 
 export interface FieldRenderProps {
   value: string;
@@ -308,6 +328,27 @@ export interface FieldDefinition {
 
   /** Optional: Custom render function for special field types */
   renderField?: (props: FieldRenderProps) => React.ReactNode;
+
+  // ── PLAN_CONTENT_CREATION §Phase 3 — merchandising attributes ─────────────
+
+  /** `select` only. `labelKey` resolves under `t.content.fieldOptions`, with
+   *  `label` as the fallback so a missing translation degrades to English
+   *  rather than to a raw enum value. */
+  options?: Array<{ value: string; labelKey?: string; label: string }>;
+
+  /** `tags` only: suggestions for the autocomplete, gathered from the shop. */
+  suggestionsKey?: 'productTags' | 'articleTags';
+
+  /** `toggle` only: what the two states mean, e.g. published vs. hidden. */
+  toggleLabels?: { on: string; off: string };
+
+  /** Rendered under the control — for the things a merchant cannot see, like
+   *  "Active does not mean visible without a sales channel" (§2.3). */
+  attributeNote?: string;
+
+  /** `money` only: the shop currency, shown as a suffix. Currency is shop-wide,
+   *  never per field — the same rule the bulk editor's money columns follow. */
+  currencyCode?: string;
 }
 
 export interface ContentEditorConfig {
@@ -327,7 +368,23 @@ export interface ContentEditorConfig {
   displayNameSingular: string;
 
   /** Whether to show SEO sidebar */
-  showSeoSidebar?: boolean;
+  showItemSidebar?: boolean;
+
+  /**
+   * PLAN_CONTENT_CREATION §1.1/§2.6 — which resource the "+" button creates.
+   *
+   * A FLAG per config, not a global default, because create is impossible on
+   * several tabs and for different reasons: policies are a fixed set of six
+   * with no create API, the whole theme-content family has no creatable
+   * resources at all. Leaving it unset is how those tabs say so.
+   *
+   * `blogs` is the one tab with TWO creatable resources (the blog container
+   * and an article inside it), which is why this is a list.
+   */
+  createSupport?: {
+    /** Offered in the create menu, in this order. */
+    resources: Array<"product" | "collection" | "page" | "article" | "blog" | "metaobject">;
+  };
 
   /** Custom primary field getter (t is optional for i18n support) */
   getPrimaryField?: (item: TranslatableContentItem, t?: I18nTranslation) => string | undefined;

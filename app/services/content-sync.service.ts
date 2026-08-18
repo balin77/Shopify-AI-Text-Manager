@@ -13,9 +13,21 @@ import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
+// NOT `apiVersion` from shopify.server: importing that module boots the whole
+// embedded app (session storage, Prisma, billing) as a side effect. This
+// service only needs to KNOW the version it is talking to.
+import { resolveApiVersionString } from '../utils/api-version';
+import {
+  ARTICLE_ATTRIBUTE_SELECTION,
+  collectionAttributeSelection,
+  articleAttributeColumns,
+  collectionAttributeColumns,
+  type ShopifyArticleAttributes,
+  type ShopifyCollectionAttributes,
+} from './attribute-sync.shared';
 
 /** Collection data from Shopify GraphQL */
-interface ShopifyCollectionData {
+interface ShopifyCollectionData extends ShopifyCollectionAttributes {
   id: string;
   title: string;
   handle: string;
@@ -33,7 +45,7 @@ interface ShopifyCollectionData {
 }
 
 /** Article data from Shopify GraphQL */
-interface ShopifyArticleData {
+interface ShopifyArticleData extends ShopifyArticleAttributes {
   id: string;
   title: string;
   handle: string;
@@ -332,7 +344,7 @@ export class ContentSyncService {
             title
             handle
             descriptionHtml
-            updatedAt
+            updatedAt${collectionAttributeSelection(resolveApiVersionString())}
             image {
               id
               url
@@ -365,7 +377,7 @@ export class ContentSyncService {
             handle
             body
             summary
-            updatedAt
+            updatedAt${ARTICLE_ATTRIBUTE_SELECTION}
             image {
               id
               url
@@ -492,6 +504,11 @@ export class ContentSyncService {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
 
+    // PLAN_CONTENT_CREATION Phase 0. `{}` when the response did not carry the
+    // attribute block — the stored values (and attributesSyncedAt) then stay
+    // untouched instead of being overwritten with the migration defaults.
+    const attributes = collectionAttributeColumns(collectionData, resolveApiVersionString());
+
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
       // Upsert collection
@@ -512,6 +529,7 @@ export class ContentSyncService {
           imageAltText: collectionData.image?.altText || null,
           seoTitle: collectionData.seo?.title || null,
           seoDescription: collectionData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(collectionData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -523,6 +541,7 @@ export class ContentSyncService {
           imageAltText: collectionData.image?.altText || null,
           seoTitle: collectionData.seo?.title || null,
           seoDescription: collectionData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(collectionData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -584,6 +603,9 @@ export class ContentSyncService {
       logger.debug(`[ContentSync] Skipping ${skippedCount} translations with null/undefined values`);
     }
 
+    // PLAN_CONTENT_CREATION Phase 0 — see saveCollectionToDatabase.
+    const attributes = articleAttributeColumns(articleData);
+
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
       // Upsert article
@@ -607,6 +629,7 @@ export class ContentSyncService {
           imageAltText: articleData.image?.altText || null,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(articleData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -621,6 +644,7 @@ export class ContentSyncService {
           imageAltText: articleData.image?.altText || null,
           seoTitle: articleData.seo?.title || null,
           seoDescription: articleData.seo?.description || null,
+          ...attributes,
           shopifyUpdatedAt: new Date(articleData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -996,6 +1020,123 @@ export class ContentSyncService {
 
     return {
       ...article,
+      translations,
+    };
+  }
+
+  /**
+   * Sync a single BLOG CONTAINER (wrapper for manual reload).
+   *
+   * PLAN_CONTENT_CREATION Phase 0, step 4 — the explicit decision this step
+   * asked for: blogs get NO Prisma model. Their primary fields are already
+   * fetched live by the blog route's loader on every visit, so a cache row
+   * would be a second source of truth for data that is never stale; only the
+   * TRANSLATIONS need a store, and those already live in ContentTranslation
+   * with `resourceType: "Blog"`.
+   *
+   * What this fixes: the loader backfills blog translations only when a blog
+   * has NONE at all, so an edited translation could never be refreshed from
+   * Shopify — the reload button was simply missing for this one type. This is
+   * a real refresh (delete + recreate, scoped to the market layers that were
+   * successfully fetched, exactly like the article path).
+   *
+   * Returns null when the blog does not exist, so the route can answer 404-ish
+   * instead of reporting a successful no-op.
+   */
+  async syncSingleBlog(blogId: string): Promise<Record<string, unknown> | null> {
+    const gid = blogId.startsWith("gid://")
+      ? blogId
+      : `gid://shopify/Blog/${blogId}`;
+
+    const response = await this.admin.graphql(
+      `#graphql
+        query getBlog($id: ID!) {
+          blog(id: $id) {
+            id
+            title
+            handle
+            templateSuffix
+            commentPolicy
+            updatedAt
+          }
+        }`,
+      { variables: { id: gid } }
+    );
+
+    const data = await response.json();
+    if (data.errors?.length > 0) {
+      throw new Error(`GraphQL error in syncSingleBlog: ${data.errors[0].message}`);
+    }
+
+    const blog = data.data?.blog as
+      | { id: string; title: string; handle: string; templateSuffix: string | null; commentPolicy: string | null; updatedAt: string }
+      | null
+      | undefined;
+
+    if (!blog) {
+      logger.warn(`[ContentSync] Blog not found: ${gid}`);
+      return null;
+    }
+
+    const locales = await fetchShopLocales(this.graphqlFn());
+    const markets = await this.getMarkets();
+    const failedMarketIds = new Set<string>();
+
+    const allTranslations = await fetchAllTranslations(
+      this.graphqlFn(),
+      gid,
+      locales.filter((l) => !l.primary),
+      "Blog",
+      markets,
+      failedMarketIds
+    );
+
+    // Delete scope stays conservative: only the layers this run actually
+    // fetched. A market whose fetch errored keeps its existing rows rather
+    // than losing them to a partial refresh (same rule as collections).
+    const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
+    const layers = fetchedMarketLayers(effectiveMarkets);
+    const validTranslations = allTranslations.filter(
+      (t) => t.value != null && layers.includes(t.marketId || "")
+    );
+
+    const { db } = await import("../db.server");
+    await db.$transaction(async (tx) => {
+      await tx.contentTranslation.deleteMany({
+        where: {
+          shop: this.shop,
+          resourceId: gid,
+          resourceType: "Blog",
+          marketId: { in: layers },
+        },
+      });
+
+      if (validTranslations.length > 0) {
+        await tx.contentTranslation.createMany({
+          data: validTranslations.map((t) => ({
+            shop: this.shop,
+            resourceId: gid,
+            resourceType: "Blog",
+            key: t.key,
+            value: t.value as string,
+            locale: t.locale,
+            digest: t.digest || null,
+            marketId: t.marketId || "",
+          })),
+        });
+      }
+    });
+
+    const translations = await db.contentTranslation.findMany({
+      where: {
+        shop: this.shop,
+        resourceId: gid,
+        resourceType: "Blog",
+      },
+    });
+
+    return {
+      ...blog,
       translations,
     };
   }

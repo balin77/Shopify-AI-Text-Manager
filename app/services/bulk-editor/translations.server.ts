@@ -506,10 +506,24 @@ export interface TranslationUserError {
   message: string;
 }
 
-export interface VerifiedWriteResult {
+/** A removal confirms KEYS and nothing else — there is no stored value left to
+ *  echo, which is why it is its own type rather than a write with a hole. */
+export interface VerifiedRemoveResult {
   /** Keys Shopify echoed back — ONLY these may be mirrored into the DB. */
   confirmedKeys: Set<string>;
   userErrors: TranslationUserError[];
+}
+
+export interface VerifiedWriteResult extends VerifiedRemoveResult {
+  /**
+   * key → the value Shopify echoed back, where it sent one.
+   *
+   * The same rule the theme path already follows ("mirror the PUSHED value to
+   * DB, not the raw one"): what Shopify STORED is the truth, and it is what a
+   * URL built from a `handle` translation has to be built from. Absent for a
+   * key whose echo carried no value, so callers fall back to what they sent.
+   */
+  confirmedValues: Map<string, string>;
 }
 
 /**
@@ -532,7 +546,7 @@ export async function registerAndVerify(
   resourceId: string,
   inputs: TranslationInput[],
 ): Promise<VerifiedWriteResult> {
-  if (inputs.length === 0) return { confirmedKeys: new Set(), userErrors: [] };
+  if (inputs.length === 0) return { confirmedKeys: new Set(), confirmedValues: new Map(), userErrors: [] };
 
   const response = await gateway.graphql(TRANSLATE_CONTENT_VERIFIED, {
     variables: { resourceId, translations: inputs },
@@ -554,8 +568,9 @@ export async function registerAndVerify(
   const echoed = data.data?.translationsRegister?.translations ?? [];
 
   const confirmedKeys = new Set<string>();
+  const confirmedValues = new Map<string, string>();
   for (const input of inputs) {
-    const confirmed = echoed?.some(
+    const confirmed = echoed?.find(
       (t) =>
         t.key === input.key &&
         t.locale === input.locale &&
@@ -563,7 +578,14 @@ export async function registerAndVerify(
         // it doesn't (older echo shape), the app's own tracking governs.
         (!t.market?.id || !input.marketId || t.market.id === input.marketId),
     );
-    if (confirmed) confirmedKeys.add(input.key);
+    if (confirmed) {
+      confirmedKeys.add(input.key);
+      // What Shopify STORED, where it said so — the value a URL gets built
+      // from, and the value mirrored into the DB.
+      if (typeof confirmed.value === "string" && confirmed.value !== "") {
+        confirmedValues.set(input.key, confirmed.value);
+      }
+    }
   }
 
   if (confirmedKeys.size < inputs.length) {
@@ -575,7 +597,7 @@ export async function registerAndVerify(
       userErrors: userErrors.length,
     });
   }
-  return { confirmedKeys, userErrors };
+  return { confirmedKeys, confirmedValues, userErrors };
 }
 
 /**
@@ -594,7 +616,7 @@ export async function removeAndVerify(
   translationKeys: string[],
   locale: string,
   marketId: string,
-): Promise<VerifiedWriteResult> {
+): Promise<VerifiedRemoveResult> {
   if (translationKeys.length === 0) return { confirmedKeys: new Set(), userErrors: [] };
 
   const response = await gateway.graphql(REMOVE_TRANSLATIONS, {

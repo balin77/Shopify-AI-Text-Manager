@@ -196,6 +196,7 @@ export const de = {
     shopMetadata: "Shop-Metadaten",
     shopMetadataDescription: "Verwalten und übersetzen Sie Shop-Metafelder",
     menus: "Menüs",
+    menu: "Menü",
     menusDescription: "Verwalten und übersetzen Sie Ihre Shop-Navigation und Menüs",
     templates: "Vorlagen",
     templatesDescription: "Übersetzen Sie Theme-Standardinhalte, Vorlagen, Abschnittsgruppen und mehr",
@@ -247,6 +248,15 @@ export const de = {
     saveChanges: "Speichern",
     discardChanges: "Verwerfen",
     changesSaved: "Änderungen erfolgreich gespeichert!",
+    // PLAN §Phase 3.3 — Rückmeldung zur Weiterleitung nach einem Handle-Wechsel.
+    redirectCreated: "Die alte URL {path} leitet jetzt auf die neue weiter.",
+    redirectNotConfirmed: "Die alte URL {path} konnte nicht weitergeleitet werden — lege die Weiterleitung bei Bedarf unter Shopifys URL-Weiterleitungen selbst an.",
+    redirectFailed: "Die alte URL {path} konnte nicht weitergeleitet werden — lege die Weiterleitung bei Bedarf unter Shopifys URL-Weiterleitungen selbst an.",
+    redirectBlogArticlesUncovered: "Die alte Blog-URL {path} leitet jetzt auf die neue weiter — die URLs der Artikel in diesem Blog haben sich aber ebenfalls geändert und sind nicht abgedeckt.",
+    redirectShadowRemoved: "Die alte URL {path} leitet jetzt auf die neue weiter. Eine bestehende Weiterleitung auf der neuen URL wurde entfernt — sie hätte die Seite verdeckt.",
+    redirectMissingBlog: "Die alte Artikel-URL konnte nicht weitergeleitet werden, weil der Blog unbekannt ist — lege die Weiterleitung bei Bedarf selbst an.",
+    redirectLocaleBlogUnknown: "Die alte Artikel-URL wurde nicht weitergeleitet: Der Handle dieses Blogs ist ebenfalls übersetzt, dadurch ist die Adresse des Artikels in dieser Sprache nicht eindeutig — lege die Weiterleitung bei Bedarf selbst an.",
+    reload: "Neu laden",
     reloadSuccess: "Daten erfolgreich von Shopify neu geladen!",
     reloadItemTooltip: "Nur die Daten dieses Eintrags von Shopify neu laden",
     reloadAllTooltip: "Alle Einträge von Shopify neu laden",
@@ -286,7 +296,19 @@ export const de = {
       paragraph: "Absatz",
       lineBreak: "Umbruch",
     },
-    menuLimitation: "Menü-Links können aufgrund einer Shopify API-Einschränkung nicht über diese App übersetzt werden. Bitte übersetzen Sie Ihre Menüs direkt im Shopify Admin unter \"Translate & Adapt\".",
+    menuSaveDeferred: "Es wurden noch nicht alle Änderungen geschrieben. Bitte erneut speichern — die restlichen sind noch da.",
+    menuTranslateAll: "In alle Sprachen übersetzen",
+    menuCopyAll: "In alle Sprachen übertragen",
+    menuTranslateFromPrimary: "Aus der Hauptsprache übersetzen",
+    menuCopyFromPrimary: "Aus der Hauptsprache übertragen",
+    menuMissingTranslations: "Fehlende Übersetzungen",
+    menuTranslateFailed: "Übersetzung fehlgeschlagen",
+    menuIntro: "Menüpunkte werden hier übersetzt — auf jeder Ebene, auch Unterpunkte. Die Bezeichnungen der Hauptsprache und die Menüstruktur selbst werden im Shopify-Admin gepflegt.",
+    menuPrimaryReadOnly: "Das ist die Hauptsprache. Wähle oben eine andere Sprache, um Übersetzungen zu bearbeiten.",
+    menuNeedsSecondLanguage: "Für Menü-Übersetzungen wird eine zweite Sprache im Shop benötigt.",
+    menuNotTranslatable: "Für diesen Menüpunkt liefert Shopify keine übersetzbare Ressource — er kann hier nicht übersetzt werden.",
+    menuListIncomplete: "Es konnten nicht alle Menü-Links vom Shop geladen werden. Menüpunkte ohne Feld sind möglicherweise trotzdem übersetzbar — bitte Seite neu laden.",
+    menuSaveFailed: "Einige Menüpunkte wurden nicht gespeichert:",
     unsavedChanges: "Ungespeicherte Änderungen",
     discard: "Verwerfen",
     save: "Speichern",
@@ -346,6 +368,11 @@ export const de = {
     selectItem: "Eintrag auswählen",
     // Field labels
     fieldLabels: {
+      collectionRules: "Automatische Regeln",
+      images: "Bilder",
+      commerce: "Bestand und Vertriebskanäle",
+      category: "Produktkategorie",
+      collections: "Kategorien",
       productTitle: "Produkttitel",
       title: "Titel",
       description: "Beschreibung",
@@ -358,6 +385,15 @@ export const de = {
       metaDescription: "Meta-Beschreibung",
       productImages: "Produktbilder",
       featuredImage: "Hauptbild",
+      // PLAN §Phase 3 — Merchandising-Attribute.
+      status: "Status",
+      vendor: "Hersteller",
+      tags: "Tags",
+      author: "Autor",
+      sortOrder: "Sortierung",
+      templateSuffix: "Theme-Template",
+      isPublished: "Im Onlineshop sichtbar",
+      price: "Preis (Standardvariante)",
     },
     // Resource names
     resourceNames: {
@@ -396,9 +432,340 @@ export const de = {
     // Setup
     syncAllContent: "Alle Inhalte synchronisieren",
     syncDescription: "Dies synchronisiert alle Produkte, Kollektionen und Artikel von Shopify in die Datenbank. Auto-Updates über Webhooks.",
+
+    // ── PLAN_CONTENT_CREATION §1.1/§1.2 — Inhalte anlegen ──────────────────
+    createButtonLabel: "Neu anlegen",
+    createChooserTitle: "Was möchtest du anlegen?",
+    // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
+    // denselben Text bekommen (§1.2).
+    createPlanContentType: "Dein Tarif enthält diesen Inhaltstyp nicht.",
+    createPlanLimit: "Du hast das Limit deines Tarifs für diesen Inhaltstyp erreicht.",
+    createUnavailable: "Hier lässt sich nichts anlegen.",
+    createNeedsBlogFirst: "Dieser Shop hat noch keinen Blog. Ein Beitrag muss in einem liegen — lege also zuerst den Blog an.",
+    // ── Löschen (zweistufige Bestätigung) ─────────────────────────────────
+    deleteButtonLabel: "Löschen",
+    deletedMessage: "\u201e{name}\u201c wurde gelöscht.",
+    deleteModal: {
+      step1Title: "\u201e{name}\u201c löschen?",
+      step2Title: "Löschen bestätigen",
+      intro: "Das entfernt den Eintrag aus deinem Shopify-Shop, nicht nur aus dieser App.",
+      consequenceTranslations: "Alle Übersetzungen dieses Eintrags werden gelöscht.",
+      consequenceKeyword: "Die Keyword-Zuordnung wird entfernt.",
+      consequenceBlogArticles: "Alle Beiträge in diesem Blog werden mitgelöscht.",
+      consequenceIrreversible: "Das lässt sich nicht rückgängig machen.",
+      confirmPrompt: "Tippe \u201e{name}\u201c ein, um zu bestätigen.",
+      mismatch: "Das stimmt nicht überein.",
+      cancel: "Abbrechen",
+      next: "Weiter",
+      confirm: "Endgültig löschen",
+      deleting: "Wird gelöscht \u2026",
+    },
+    undoCreate: "Anlegen rückgängig machen",
+    // ── Duplizieren (§1.9) ────────────────────────────────────────────────
+    duplicateButtonLabel: "Duplizieren",
+    duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
+    rulesNeedApiUpgrade: "Automatisierte Kollektionen brauchen Shopify-API {version}. Bis diese App darauf umgestellt ist, kannst du Kollektionen anlegen und ihre Produkte selbst auswählen.",
+    addTag: "Tag hinzufügen",
+    // PLAN §3.1 — die Regeländerung ist eine eigene Mutation und kann für sich
+    // fehlschlagen. Jede Meldung sagt dazu, was gespeichert wurde.
+    ruleWarnings: {
+      rulesRequireNewerApi: "Automatische Kollektionsregeln brauchen eine neuere Shopify-API-Version als diese App derzeit nutzt — sie wurden nicht geändert. Alles Übrige wurde gespeichert.",
+      rulesUnreadable: "Die Regeln dieser Kollektion konnten nicht in einer Form gelesen werden, die dieser Editor versteht — sie blieben unangetastet. Alles Übrige wurde gespeichert.",
+      rulesInvalid: "Die Kollektionsregeln waren unvollständig und wurden nicht gespeichert. Alles Übrige wurde gespeichert.",
+      rulesNotConfirmed: "Shopify hat die Regeländerung nicht bestätigt, deshalb wurde sie auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
+      rulesFailed: "Die Kollektionsregeln konnten nicht gespeichert werden. Alles Übrige wurde gespeichert.",
+    },
+    // PLAN §3.2 — der Preis ist eine ZWEITE Mutation und kann für sich
+    // fehlschlagen, während der Rest gespeichert wurde. Jede Meldung sagt das
+    // dazu, sonst speichert der Händler ein zweites Mal.
+    // PLAN §Phase 3.1 — die Kategoriesuche. „Kein Treffer", „weitertippen" und
+    // „die Suche ist fehlgeschlagen" sind drei verschiedene Dinge, und nur
+    // eines davon heißt, dass andere Wörter helfen.
+    taxonomy: {
+      unknown: "Noch nicht von Shopify geladen — lade dieses Produkt neu, um seine Kategorie zu sehen.",
+      reload: "Neu laden",
+      search: "Kategorien durchsuchen …",
+      searching: "Wird gesucht …",
+      keepTyping: "Gib mindestens zwei Zeichen ein.",
+      noMatches: "Keine Kategorie passt dazu.",
+      lookupFailed: "Die Kategorieliste konnte nicht geladen werden. Versuch es gleich noch einmal.",
+      none: "Nicht gesetzt",
+      clear: "Entfernen",
+      broad: "(allgemein)",
+    },
+    // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
+    collectionsField: {
+      reload: "Neu laden",
+      automatedUnknown: "Noch nicht von Shopify geladen — lade die Kategorien neu, um das zu ändern.",
+      listTruncated: "Dieser Shop hat mehr Kategorien, als hier aufgelistet sind. Nutze den Filter, oder verwalte den Rest im Shopify-Admin.",
+      filter: "Kategorien filtern …",
+      loading: "Kategorien werden geladen",
+      lookupFailed: "Die Kategorieliste konnte nicht geladen werden — angezeigt werden nur die aktuellen Zuordnungen.",
+      automated: "Wird von den Regeln dieser Kategorie bestimmt",
+      truncated: "Dieses Produkt ist in mehr Kategorien, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
+      unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kategorien zu sehen.",
+      none: "Dieser Shop hat noch keine Kategorien.",
+    },
+    // PLAN §Phase 3.1 — Attribut-Warnungen. Ein Code, hier formuliert, weil die
+    // App in drei Sprachen ausgeliefert wird.
+    attributeWarnings: {
+      collectionsAutomatedKept: "Eine regelbasierte Kategorie wurde beibehalten — ihre eigenen Regeln entscheiden, wer dazugehört. Alles andere wurde gespeichert.",
+    },
+    // PLAN Phase 4 — Bestand und Vertriebskanäle. Werden separat gespeichert,
+    // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
+    // längst veraltet wäre.
+    commerce: {
+      pricesHeading: "Preise",
+      shippingHeading: "Versand und Zoll",
+      price: "Verkaufspreis",
+      priceHint: "Was die Kundin bezahlt.",
+      compareAtPrice: "Vergleichspreis",
+      compareAtPriceHint: "Der durchgestrichene Preis. Leer = kein Angebot.",
+      discardConfirm: "Ungespeicherte Änderungen verwerfen?",
+      cost: "Einkaufspreis",
+      costHint: "Was du bezahlst. Wird Kundinnen nie angezeigt.",
+      weight: "Gewicht",
+      weightUnit: "Einheit",
+      hsCode: "Zolltarifnummer",
+      countryOfOrigin: "Ursprungsland",
+      requiresShipping: "Muss versendet werden",
+      taxableLabel: "Steuerpflichtig: {v}",
+      yes: "ja",
+      no: "nein",
+      loading: "Wird geladen",
+      loadFailed: "Bestand und Kanäle konnten nicht geladen werden.",
+      saveFailed: "Die Änderung konnte nicht gespeichert werden.",
+      retry: "Nochmal versuchen",
+      planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
+      foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
+      channelsHeading: "Vertriebskanäle",
+      noChannel: "Auf keinem Kanal — unsichtbar",
+      noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
+      channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
+      scheduled: "Geplant für {date}",
+      variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
+      savingStock: "Bestand wird gespeichert…",
+      notStockedHere: "hier nicht bestandsgeführt",
+      stockHeading: "Bestand",
+      variantSelectLabel: "Variante",
+      variantsTruncated: "Dieses Produkt hat mehr Varianten, als geladen wurden. Den Rest bearbeitest du im Shopify-Admin.",
+      stockUnknown: "Noch nicht geladen — lade neu, um den Bestand dieser Variante zu sehen.",
+      stockUntracked: "Für diese Variante wird kein Bestand geführt — sie kann unbegrenzt verkauft werden.",
+      stockNoItem: "Diese Variante hat keinen Bestandsdatensatz, ihr Bestand lässt sich hier nicht bearbeiten.",
+      levelsTruncated: "Diese Variante hat Bestand an mehr Lagerorten, als geladen wurden.",
+      noLevels: "Kein Lagerort führt Bestand dieser Variante.",
+      locationInactive: "inaktiv",
+      onHand: "Vorhanden",
+      availableLabel: "verfügbar: {n}",
+    },
+    // Codes aus den Schreibpfaden für Bestand und Kanäle. Eine Menge ist Geld,
+    // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
+    // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
+    commerceWarnings: {
+      priceAmbiguous: "Der Preis ist mehrdeutig — schreib 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Es wurde nichts gespeichert.",
+      priceInvalid: "Ein Preis war keine Zahl und wurde deshalb nicht gespeichert.",
+      priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, er wurde deshalb auch lokal nicht gespeichert. Lade neu, um den aktuellen Stand zu sehen.",
+      priceFailed: "Der Preis konnte nicht gespeichert werden.",
+      activateNotConfirmed: "Shopify hat den Standort nicht bestätigt, er wurde deshalb nicht aktiviert.",
+      activateFailed: "Der Standort konnte nicht aktiviert werden.",
+      stockNoBaseline: "Für einen Lagerort gab es keine aktuelle Vergleichsmenge, deshalb wurde er nicht geschrieben. Lade neu und versuch es nochmal.",
+      itemFieldsInvalid: "Ein Einkaufspreis, ein Gewicht oder ein Ländercode war nicht in einer Form, die Shopify annimmt — diese Angaben wurden nicht geschrieben.",
+      itemFieldsNotConfirmed: "Shopify hat die Artikelangaben nicht bestätigt, deshalb wurden sie auch lokal nicht gespeichert.",
+      itemFieldsFailed: "Die Artikelangaben konnten nicht gespeichert werden.",
+      stockChangedMeanwhile: "Der Bestand hat sich während deiner Bearbeitung geändert, deshalb wurde nichts geschrieben. Lade neu, um die aktuelle Zahl zu sehen.",
+      stockNotConfirmed: "Shopify hat den neuen Bestand nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Lade neu, um zu sehen, was dort steht.",
+      stockFailed: "Der Bestand konnte nicht gespeichert werden.",
+      stockUntracked: "Diese Variante führt keinen Bestand, es wurde keine Menge geschrieben.",
+      stockNoInventoryItem: "Diese Variante hat keinen Bestandsdatensatz, ihr Bestand konnte nicht geschrieben werden.",
+      channelsNotConfirmed: "Shopify hat nicht jede Kanaländerung bestätigt. Lade neu, um zu sehen, welche angekommen sind.",
+      channelsFailed: "Die Vertriebskanäle konnten nicht geändert werden.",
+    },
+    priceWarnings: {
+      priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
+      priceInvalid: "Der Preis konnte nicht als Betrag gelesen werden. Alles Übrige wurde gespeichert.",
+      priceEmpty: "Der Preis war leer und wurde nicht gespeichert — Shopify verlangt für jede Variante einen Preis. Alles Übrige wurde gespeichert.",
+      priceNoVariant: "Der Preis konnte nicht gespeichert werden, weil die Varianten dieses Produkts noch nicht im lokalen Cache sind — lade das Produkt neu. Alles Übrige wurde gespeichert.",
+      priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
+      priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
+    },
+    attributesCardTitle: "Details",
+    attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
+    attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
+    // EIN Enum-Vokabular, auf oberster Ebene, weil mehrere Oberflächen
+    // dieselben Werte rendern: das Anlege-Modal, die Attributfelder im Editor,
+    // dessen Sidebar-Checkliste und die Gewichtseinheit im Handelsbereich.
+    // Schlüssel "<feld>.<WERT>" — ein Shopify-Enum wird nie roh angezeigt
+    // ("ALPHA_ASC" ist in keiner Sprache ein Satz).
+    //
+    // Noch NICHT das einzige: die Item-Liste (`statusLabels`) und die
+    // Status-Spalte im Bulk-Grid haben eigene. Das zusammenzuführen lohnt sich
+    // — bis dahin sagt dieser Kommentar es, statt es zu behaupten.
+    enumLabels: {
+      "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
+      "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
+      "sortOrder.MANUAL": "Manuell", "sortOrder.BEST_SELLING": "Bestseller",
+      "sortOrder.ALPHA_ASC": "A–Z", "sortOrder.ALPHA_DESC": "Z–A",
+      "sortOrder.PRICE_ASC": "Preis aufsteigend", "sortOrder.PRICE_DESC": "Preis absteigend",
+      "sortOrder.CREATED": "Älteste zuerst", "sortOrder.CREATED_DESC": "Neueste zuerst",
+      "sortOrder.MOST_RELEVANT": "Relevanz",
+      "commentPolicy.CLOSED": "Geschlossen", "commentPolicy.MODERATED": "Moderiert",
+      "commentPolicy.AUTO_PUBLISHED": "Automatisch veröffentlicht",
+      "weightUnit.GRAMS": "g", "weightUnit.KILOGRAMS": "kg",
+      "weightUnit.OUNCES": "oz", "weightUnit.POUNDS": "lb",
+    },
+    // Die Erklärzeile unter einem Attributfeld. Bewusst ausführlich: jede
+    // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
+    attributeNotes: {
+      status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Kanäle verwaltest du im Shopify-Admin.",
+      price: "Gilt für die erste Variante. Produkte mit mehreren Varianten bepreist du im Bulk-Editor.",
+      category: "Shopify nutzt die Kategorie für Steuersätze und für Marktplatz-Listings. Ein konkreter Typ ist besser als ein breiter Ast.",
+      collections: "Regelbasierte Kategorien werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
+      commerce: "Bestand und Kanäle werden eigenständig gespeichert — über die Buttons in diesem Bereich, nicht über das normale Speichern.",
+    },
+    templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
+    statusToggle: {
+      statusLabel: "Status",
+      hidden: "Versteckt",
+      unlistedHint: "Nicht gelistet — über den direkten Link erreichbar, aus Listen und Suche ausgeblendet.",
+      unknown: "Status nicht geladen — lade diesen Eintrag neu, um ihn zu ändern.",
+      active: "Aktiv",
+      activeHint: "In deinem Shop sichtbar — sofern das Produkt auf einem Vertriebskanal liegt.",
+      draftHint: "Entwurf — in deinem Shop nicht sichtbar.",
+      published: "Sichtbar",
+      publishedHint: "Veröffentlicht und in deinem Shop erreichbar.",
+      unpublishedHint: "Nicht veröffentlicht — die Adresse liefert einen 404.",
+      archivedHint: "Archiviert — aus dem Katalog genommen und nicht verkäuflich.",
+    },
+    duplicateModal: {
+      title: "\u201e{name}\u201c duplizieren",
+      intro: "Shopify kopiert alles mit \u2014 Bilder, Varianten, Optionen und Metafelder. Du brauchst nur einen Namen.",
+      newTitleLabel: "Titel der Kopie",
+      cancel: "Abbrechen",
+      confirm: "Duplizieren",
+      draftNote: "Die Kopie wird als Entwurf angelegt \u2014 sie geht nicht von selbst live.",
+    },
+    createResourceLabels: {
+      product: "Produkt",
+      collection: "Kollektion",
+      page: "Seite",
+      article: "Blogbeitrag",
+      blog: "Blog",
+      metaobject: "Metaobjekt-Eintrag",
+    },
+    createdTitle: "\u201e{name}\u201c wurde angelegt",
+    createdNotSyncedTitle: "Angelegt — in der Liste noch nicht sichtbar",
+    createdNotSyncedBody: "Der Eintrag wurde in Shopify angelegt. Nur die lokale Kopie fehlt noch — lade neu, um ihn zu sehen. Lege ihn NICHT ein zweites Mal an.",
+    createdHandle: "Handle: {handle}",
+    createModal: {
+      // PLAN §2.5a-d — die KI-Extras.
+      altText: "Alt-Text",
+      changeImage: "Bild wechseln",
+      chooseImage: "Bild wählen",
+      chooseImageTitle: "Bild wählen",
+      createFailed: "Konnte nicht angelegt werden",
+      altTextGenerating: "Alt-Text wird geschrieben …",
+      keywordHint: "Fließt in den KI-Prompt ein und wird zum Hauptkeyword dieses Eintrags.",
+      generateRest: "Rest von der KI schreiben lassen",
+      generateRestHint: "Es werden nur leere Felder gefüllt — was du geschrieben hast, bleibt.",
+      generatingField: "{field} wird geschrieben …",
+      sendImageToAI: "Die KI darf das Bild ansehen",
+      translateAfterwards: "Danach in alle Sprachen übersetzen",
+      translateAfterwardsHint: "Läuft direkt nach dem Anlegen, mit der gewohnten Fortschrittsanzeige.",
+      translatingAfterCreate: "Wird in deine anderen Sprachen übersetzt …",
+      translateAfterwardsUnsupported: "Dieser Typ wird nach dem Anlegen in seinem eigenen Editor übersetzt.",
+      generateFailed: "Diese konnten nicht geschrieben werden: {fields}",
+      keywordStuffed: "Der Text wiederholt dein Keyword öfter, als ihm guttut — lies ihn kurz gegen.",
+      aiWarnings: {
+        allFailed: "Die KI konnte keines der übrigen Felder schreiben.",
+      },
+      createWarnings: {
+        translateChainFailed: "Der Eintrag wurde angelegt, aber die Übersetzung ist nicht fertig geworden. Nutze „In alle Sprachen übersetzen\" am Eintrag.",
+      },
+      seoScoreHeading: "SEO-Score",
+      seoScoreOutOf: "{n} von 100",
+      create: "Anlegen",
+      cancel: "Abbrechen",
+      moreFields: "Mehr Felder",
+      fewerFields: "Weniger Felder",
+      required: "Pflichtfeld",
+      handleHint: "Leer lassen — Shopify leitet den Handle aus dem Titel ab. Bei einer Kollision hängt Shopify eine Zahl an.",
+      shopifyDefault: "Shopify-Standard",
+      discardConfirm: "Eingaben verwerfen?",
+      fields: {
+        title: "Titel", description: "Beschreibung", body: "Inhalt", summary: "Zusammenfassung",
+        handle: "Handle", seoTitle: "SEO-Titel", metaDescription: "Meta-Beschreibung",
+        keyword: "Keyword", image: "Bild", status: "Status", price: "Preis",
+        compareAtPrice: "Vergleichspreis", sku: "SKU", barcode: "Barcode",
+        productType: "Produkttyp", vendor: "Hersteller", tags: "Tags",
+        sortOrder: "Sortierung", author: "Autor", blog: "Blog",
+        commentPolicy: "Kommentare", metaobjectType: "Typ",
+      },
+    },
   },
 
   // Direct translations ("Direktübersetzungen") content type
+  // PLAN_CONTENT_CREATION §1.4b / §3.1 — der Regel-Baukasten für Kategorien.
+  // EIN Block für beide Oberflächen: Anlege-Dialog und Editor rendern
+  // dasselbe Steuerelement, zwei Kopien dieser Texte würden auseinanderlaufen.
+  collectionRules: {
+    heading: "Produkte müssen erfüllen",
+    exclusionsHeading: "Außer Produkte, die erfüllen",
+    matchAll: "alle davon",
+    matchAny: "eines davon",
+    sourceTitle: "Name dieses Regelsatzes",
+    addCondition: "Bedingung hinzufügen",
+    addExclusion: "Ausnahme hinzufügen",
+    addSource: "Weiteren Regelsatz hinzufügen",
+    removeCondition: "Entfernen",
+    removeSource: "Diesen Regelsatz entfernen",
+    advanced: "Erweitert",
+    simple: "Weniger Optionen",
+    commaSeparated: "Mit Komma getrennt",
+    definitionPlaceholder: "ID der Metafeld-Definition",
+    noPreview: "Welche Produkte passen, wird nach dem Speichern sichtbar.",
+    unavailable: "Regeln sind noch nicht verfügbar",
+    readOnlyHeading: "Regel bleibt unverändert",
+    readOnlyBody: "Diese Regel nutzt etwas, das dieser Editor nicht darstellen kann. Sie bleibt genau so, wie sie ist — Speichern rührt sie nicht an.",
+    openInAdmin: "Im Shopify-Admin öffnen",
+    unreadableTree: "Die Regeln dieser Kategorie ließen sich nicht in einer Form lesen, die dieser Editor versteht — sie bleiben unangetastet. Bearbeite sie im Shopify-Admin.",
+    requiresNewerApi: "Automatische Kategorie-Regeln brauchen eine neuere Shopify-API-Version, als diese App derzeit nutzt. Bis dahin verwaltest du sie im Shopify-Admin.",
+    kinds: {
+      productTag: "Produkt-Tag",
+      productTitle: "Produkttitel",
+      productType: "Produktart",
+      productVendor: "Hersteller",
+      productCategory: "Kategorie",
+      productStatus: "Status",
+      variantTitle: "Variantentitel",
+      variantPrice: "Preis",
+      variantCompareAtPrice: "Vergleichspreis",
+      variantInventory: "Lagerbestand",
+      variantWeight: "Gewicht",
+      metafieldString: "Metafeld (Text)",
+      metafieldStringList: "Metafeld (Textliste)",
+      metafieldInteger: "Metafeld (ganze Zahl)",
+      metafieldDecimal: "Metafeld (Dezimalzahl)",
+      metafieldBoolean: "Metafeld (ja/nein)",
+      metafieldMetaobject: "Metafeld (Metaobjekt)",
+      metafieldMetaobjectList: "Metafeld (Metaobjekt-Liste)",
+      collection: "Kategorie",
+    },
+    relations: {
+      EQUALS: "ist gleich",
+      NOT_EQUALS: "ist ungleich",
+      STARTS_WITH: "beginnt mit",
+      ENDS_WITH: "endet mit",
+      CONTAINS: "enthält",
+      DOES_NOT_CONTAIN: "enthält nicht",
+      TAGGED_WITH: "ist getaggt mit",
+      NOT_TAGGED_WITH: "ist nicht getaggt mit",
+      GREATER_THAN: "ist größer als",
+      LESS_THAN: "ist kleiner als",
+      IS_SET: "ist gesetzt",
+      IS_NOT_SET: "ist nicht gesetzt",
+      INCLUDES: "enthält",
+    },
+  },
   directTranslations: {
     title: "Direktübersetzungen",
     resourceSingular: "Direktübersetzung",
@@ -571,6 +938,7 @@ export const de = {
     seoFeatureScheduledAudit: "Automatischer Nacht-Audit",
     seoFeatureProNote: "Search Console, Score-Verlauf und IndexNow ab {plan}.",
     aiInstructionsEditable: "KI-Anweisungen bearbeitbar",
+    add: "Hinzufügen",
     yes: "Ja",
     no: "Nein",
     changePlan: "Plan ändern",
@@ -743,6 +1111,8 @@ export const de = {
     maxRequestsPerMinute: "Max Requests / Minute",
     maxRequestsPerMinuteShort: "Max Requests/Min",
     seoSettings: "SEO",
+    autoHandleRedirect: "Weiterleitung bei Handle-Änderung",
+    autoHandleRedirectHint: "Ändert sich der Handle eines Eintrags in der Hauptsprache — im Editor wie im Bulk-Editor —, wird die alte URL automatisch auf die neue weitergeleitet. Ohne diese Option laufen bestehende Links auf die alte Adresse ins Leere.",
     seoTitleSuffix: "SEO-Titel Shop-Suffix",
     seoAutoAuditHeading: "Automatischer Audit",
     seoAutoAuditLabel: "Nächtlicher SEO-Audit",
@@ -1316,7 +1686,32 @@ export const de = {
     // Spalte den Plan-Button in der Navigation.
     showPanel: "SEO-Score anzeigen",
     hidePanel: "Zurück zum Inhalt",
+    // ── PLAN_CONTENT_CREATION §2 — Attribute-Tab ──────────────────────────
+    attributes: {
+      heading: "Vollständigkeit",
+      unknownBanner: "Diese Angaben wurden für diesen Eintrag noch nicht geholt. Lade ihn neu, um sie zu sehen — die grauen Punkte sind UNBEKANNT, nicht fehlend.",
+      reload: "Eintrag neu laden",
+      adminHint: "Nur im Shopify-Admin sichtbar.",
+      statuses: { unknown: "unbekannt" },
+      rows: {
+        status: "Status",
+        channels: "Vertriebskanäle",
+        tags: "Tags",
+        vendor: "Hersteller",
+        category: "Kategorie",
+        productType: "Produkttyp",
+        collections: "In Kollektionen",
+        price: "Preis",
+        sortOrder: "Sortierung",
+        author: "Autor",
+        published: "Veröffentlicht",
+        featuredImage: "Titelbild",
+        template: "Theme-Template",
+        keyword: "Keyword",
+      },
+    },
     sidebarTabs: {
+      attributes: "Attribute",
       score: "Score",
       keywords: "Keywords",
       jsonLd: "JSON-LD",
@@ -2898,6 +3293,9 @@ export const de = {
       summary: "Zusammenfassung",
       productType: "Produkttyp",
       status: "Status",
+      // PLAN §3.6 — `tags` ist EINE Zelle mit einer LISTE, das sagt die Spalte.
+      vendor: "Hersteller",
+      tags: "Tags (kommagetrennt)",
       handle: "Handle",
       seoTitle: "SEO-Titel",
       seoDescription: "Meta-Description",
@@ -2949,6 +3347,9 @@ export const de = {
       },
     },
     readOnlyReasons: {
+      // PLAN §3.6 — der Attributblock wurde nie geladen; leer heißt hier
+      // "nicht geladen", nicht "leer". Ein Resync ist der Ausweg.
+      attributesNotSynced: "Die Details dieses Produkts wurden noch nicht von Shopify geladen — lade die Produkte neu und bearbeite das dann.",
       richText: "Rich-Text-Inhalte lassen sich nicht in der Tabelle bearbeiten — öffne den Eintrag im Editor.",
       linkedOption: "Diese Option ist mit Metaobjekten verknüpft und hier nicht bearbeitbar — nutze den Editor.",
       missingOption: "Dieses Produkt hat an dieser Position keine Option.",
@@ -3019,6 +3420,10 @@ export const de = {
     allMarkets: "Alle Märkte",
     primaryLocaleSuffix: "(Primär)",
     notTranslatableTooltip: "Dieses Feld ist nicht übersetzbar — es kann nur in der Primärsprache bearbeitet werden.",
+    // PLAN §3.6 — in einer Hersteller-/Tags-Zelle, deren Zeile vor dem
+    // Attribut-Sync geschrieben wurde. Leer heißt dort "noch nicht geladen",
+    // nicht "der Händler hat nichts eingetragen".
+    unknownAttributeGhost: "noch nicht synchronisiert",
     unsavedOtherLocales: "Ungespeicherte Änderungen in {count} weiteren Sprachen/Märkten — Speichern schreibt alle.",
     budgetExceeded: "Diese Änderung braucht ca. {calls} Shopify-Aufrufe (Limit {max}). Bitte in mehreren Schritten speichern oder den Filter enger ziehen.",
     cellLimitExceeded: "{cells} geänderte Zellen — Maximum {max} pro Speichervorgang. Bitte in mehreren Schritten speichern oder den Filter enger ziehen.",
@@ -3187,6 +3592,46 @@ export const de = {
 
   // Help Tooltips
   help: {
+    commercePrices: {
+      title: "Die drei Preise",
+      summary:
+        "Zwei davon sieht deine Kundin, einen nie. Der Verkaufspreis ist, was sie bezahlt. Der Vergleichspreis ist die durchgestrichene Zahl daneben — leer lassen, wenn es kein Angebot gibt. Der Einkaufspreis ist, was DU bezahlt hast; Shopify nutzt ihn für deine Margen-Auswertungen und zeigt ihn niemandem.",
+      tips: [
+        "Leerer Vergleichspreis = kein Angebot, die durchgestrichene Zahl verschwindet",
+        "Der Verkaufspreis selbst lässt sich nicht leeren — Shopify verlangt auf jeder Variante einen",
+        "Der Einkaufspreis ist optional und nur für dich sichtbar",
+      ],
+    },
+    commerceShipping: {
+      title: "Versand und Zoll",
+      summary:
+        "Was Transporteur und Zollformular brauchen. Das Gewicht bestimmt berechnete Versandtarife. Zolltarifnummer und Herkunftsland stehen auf Zollerklärungen bei Auslandsbestellungen — sie auszufüllen lohnt sich nur, wenn du ins Ausland versendest.",
+      tips: [
+        "Ohne Gewicht lassen sich gewichtsbasierte Versandtarife nicht berechnen",
+        "Das Herkunftsland ist, wo der Artikel HERGESTELLT wurde, nicht wo du ihn verschickst",
+        "\"Versand nötig\" aus = ein digitales Produkt, es wird keine Adresse abgefragt",
+      ],
+    },
+    commerceStock: {
+      title: "Bestand pro Standort",
+      summary:
+        "Eine Zeile pro Standort mit der Menge VOR ORT — alles, was physisch da ist, auch das schon für offene Bestellungen Reservierte. Ein Standort ohne Zeile ist einer, an dem dieser Artikel noch nicht geführt wird; schreib eine Zahl hinein, dann wird er beim Speichern dort geführt.",
+      tips: [
+        "\"verfügbar\" neben dem Feld ist der Bestand minus offene Bestellungen und nicht direkt änderbar",
+        "Hat sich die Zahl währenddessen anderswo geändert, wird gar nicht geschrieben statt überschrieben",
+        "Nicht bestandsgeführte Varianten haben gar keine Menge — das ist nicht dasselbe wie null",
+      ],
+    },
+    commerceChannels: {
+      title: "Vertriebskanäle",
+      summary:
+        "Wo dieses Produkt überhaupt erscheinen darf. Der Status \"aktiv\" allein genügt nicht: ein Produkt auf keinem Kanal ist überall unsichtbar, auch im eigenen Shop — und der Shopify-Admin sagt das auf der Produktseite ebenfalls nicht.",
+      tips: [
+        "Online Store ist der Kanal, den dein eigener Shop liest",
+        "Einen Kanal abwählen versteckt das Produkt dort, ohne den Status zu ändern",
+        "Ein geplanter Kanal zeigt sein Datum und ist noch nicht live",
+      ],
+    },
     // Keywords section
     keywordsLibraryTabs: {
       title: "Bibliothek & Zuordnungen",
@@ -3219,6 +3664,16 @@ export const de = {
       ],
     },
     // Content-Editor — die drei Sidebar-Tabs
+    seoSidebarAttributes: {
+      title: "Attribute",
+      summary:
+        "Die NICHT-SEO-Vollständigkeit dieses Eintrags: Status, Vertriebskanäle, Tags, Hersteller, Kategorie, Preis. Überschneidet sich bewusst nicht mit dem Score, der Titel, Beschreibungen und Alt-Texte bewertet.",
+      tips: [
+        "Grau = UNBEKANNT, nicht fehlend. Diese Angaben holt erst ein Sync — vorher wäre jedes rote Kreuz geraten",
+        "Status und Vertriebskanäle sind zwei Zeilen: „Aktiv“ allein macht ein Produkt NICHT sichtbar, dafür braucht es einen Kanal",
+        "In einer Fremdsprache ist der Tab read-only — Tags, Hersteller und Kategorie gibt es nur einmal pro Eintrag",
+      ],
+    },
     seoSidebarScore: {
       title: "SEO-Score",
       summary:

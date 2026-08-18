@@ -44,6 +44,11 @@ const CELL_ACTIONS_GUTTER = CELL_ACTIONS_ICON + 4;
 
 const IMAGE_COLUMN_WIDTH = 72;
 
+/** PLAN §Phase 3.6 — the columns fed by the Phase-0 attribute block, whose
+ *  emptiness is only meaningful once `attributesSyncedAt` is set. `status` is
+ *  NOT one of them: it predates that block and is non-null in the schema. */
+const ATTRIBUTE_BLOCK_COLUMN_IDS = new Set(["field.vendor", "field.tags"]);
+
 /** Field-colour state, mirroring the single editor: "untranslated" (yellow —
  * empty in the selected language) or "missingTranslation" (blue — primary set
  * but a foreign locale lacks it, primary view only); null = no colour. */
@@ -65,6 +70,13 @@ interface BulkGridProps {
   /** Ghost placeholder for an empty foreign cell — the primary value, or the
    * global translation under a market override (Plan §6.4). */
   ghostFor: (row: BulkRow, column: ColumnDescriptor) => string;
+  /** PLAN §2.4 / §3.6 — the word for "we have not fetched this yet", shown in
+   *  a `vendor`/`tags` cell whose row predates the attribute sync. Without it
+   *  an unsynced row is indistinguishable from a product whose vendor the
+   *  merchant genuinely left blank — the same trap as every other column of
+   *  that block, and here it would invite a merchant to "fix" data that is
+   *  merely unfetched. */
+  unknownAttributeGhost?: string;
   /** Field colour per cell (Plan §2) — see CellTranslationStatus. */
   translationStatus: (row: BulkRow, column: ColumnDescriptor) => CellTranslationStatus;
   /** Tooltip text for a blue "missingTranslation" cell — the foreign languages
@@ -113,6 +125,7 @@ export function BulkGrid({
   setEdit,
   isForeignLocale,
   ghostFor,
+  unknownAttributeGhost,
   translationStatus,
   translationTooltip,
   notTranslatableTooltip,
@@ -646,7 +659,9 @@ export function BulkGrid({
                       ghost={
                         isForeignLocale && !foreignReadOnly && resolved.editable
                           ? ghostFor(row, col)
-                          : undefined
+                          : ATTRIBUTE_BLOCK_COLUMN_IDS.has(col.id) && row.attributesKnown === false
+                            ? unknownAttributeGhost
+                            : undefined
                       }
                       showOpenInEditor={resolved.readOnlyReason === "richText"}
                       openInEditorLabel={openInEditorLabel}

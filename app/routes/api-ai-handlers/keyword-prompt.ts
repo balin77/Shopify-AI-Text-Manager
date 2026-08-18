@@ -17,6 +17,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { analyzeOnPage, getItemKeywords } from "~/services/seo/keywords.service";
 import { sanitizePromptInput } from "~/utils/prompt-sanitizer";
 import { getFormString } from "~/utils/form-data.utils";
@@ -46,6 +47,35 @@ export function resolveKeywordLocale(formData: FormData): string {
   return getFormString(formData, "keywordLocale") || "";
 }
 
+/**
+ * The locale the generated text will actually be IN (PLAN §2.5e).
+ *
+ * `resolveKeywordLocale` returns "" for the primary locale, which is exactly
+ * right for a keyword lookup — the keyword rows for the primary locale are
+ * stored under "". It is useless for the glossary, because a glossary rule's
+ * translations are keyed by real locale codes, and "" is not one: "" means
+ * "the primary locale", not "no language". Resolving it is a lookup, so it is
+ * done once, here, rather than in each generation handler.
+ *
+ * Returns "" only when the lookup itself failed. `getCachedShopLocales`
+ * resolves with `[]` on a swallowed error (never `catch` around it — it
+ * re-throws 401 on purpose so the request can re-authenticate). An empty
+ * locale degrades rather than breaks: the generation directive drops the
+ * house-term half, which is keyed by locale and would otherwise be guessed,
+ * and keeps the do-not-translate names, which hold in every language.
+ */
+export async function resolveWrittenLocale(
+  admin: AdminApiContext,
+  shop: string,
+  formData: FormData,
+): Promise<string> {
+  const requested = resolveKeywordLocale(formData);
+  if (requested) return requested;
+  const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
+  const locales = await getCachedShopLocales(admin, shop);
+  return locales.find((l) => l.primary)?.locale ?? "";
+}
+
 /** Sanitized, role-split view of an item's tracked keywords for prompt use. */
 export interface TrackedKeywords {
   /** The single primary keyword, or null when the item tracks none. */
@@ -57,6 +87,34 @@ export interface TrackedKeywords {
 }
 
 const EMPTY: TrackedKeywords = { primary: null, secondaries: [], all: [] };
+
+/** Generous next to the form's own 120, tight enough that no prompt is made of
+ *  keyword. A phrase longer than this is not a keyword. */
+const MAX_EXPLICIT_KEYWORD_CHARS = 200;
+
+/**
+ * The keyword set for a generation that has NO item yet (PLAN §2.5d).
+ *
+ * The create modal is the moment the merchant decides what the thing is
+ * ABOUT, and it is exactly the moment `loadTrackedKeywords` is blind: it keys
+ * off a `resourceId` that will not exist until the object is created. So the
+ * modal sends the keyword EXPLICITLY and this turns it into the same shape the
+ * DB path produces, so `keywordRequirementLines` and the stuffing guard behave
+ * identically on both entrances.
+ *
+ * Sanitized here, not at the caller: it is client-supplied text that ends up
+ * interpolated into a prompt, and one call site forgetting that is all it
+ * takes.
+ */
+export function explicitPrimaryKeyword(raw: string): TrackedKeywords {
+  // Bounded here, not at the form. The client field caps at 120 characters,
+  // but `/api/ai` is directly POST-reachable and this value is interpolated
+  // into the prompt twice (the requirement line and the stuffing retry).
+  // `sanitizePromptInput` deliberately does not truncate.
+  const primary = sanitizePromptInput(raw.trim().slice(0, MAX_EXPLICIT_KEYWORD_CHARS), { fieldType: "general" });
+  if (!primary) return EMPTY;
+  return { primary, secondaries: [], all: [primary] };
+}
 
 /**
  * Load an item's tracked keywords for one locale, sanitized for prompt

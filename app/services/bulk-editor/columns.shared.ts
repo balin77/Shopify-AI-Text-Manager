@@ -431,6 +431,20 @@ const COL_TITLE = fieldColumn("title", { translatable: true, inputType: "text", 
 const COL_DESCRIPTION_HTML = fieldColumn("descriptionHtml", { translatable: true, inputType: "textarea", minWidth: 280 });
 const COL_PRODUCT_TYPE = fieldColumn("productType", { translatable: true, inputType: "text", minWidth: 200, sortKey: "productType" });
 const COL_STATUS = fieldColumn("status", { translatable: false, inputType: "select", minWidth: 130, sortKey: "status" });
+// PLAN_CONTENT_CREATION §Phase 3.6 — the two merchandising attributes the
+// single editor gained in §3.1, pulled through to the grid where they are
+// worth most: vendor and tags are the fields a merchant fixes across a whole
+// catalogue, not one product at a time.
+//
+// Neither is translatable — Shopify stores one value per product — so they
+// carry `translatable: false` like `status`, which keeps them out of every
+// foreign-locale group by the same rule that already governs it.
+//
+// `tags` is a LIST behind one cell, comma-separated in the grid the same way
+// the single editor's chips serialise. Written whole, because that is what
+// `productUpdate` does with it: a cell edit REPLACES the product's tags.
+const COL_VENDOR = fieldColumn("vendor", { translatable: false, inputType: "text", minWidth: 160, sortKey: "vendor" });
+const COL_TAGS = fieldColumn("tags", { translatable: false, inputType: "text", minWidth: 220 });
 const COL_HANDLE = fieldColumn("handle", { translatable: true, inputType: "text", minWidth: 220, sortKey: "handle" });
 const COL_SEO_TITLE = fieldColumn("seoTitle", { translatable: true, inputType: "text", minWidth: 200, group: "seo" });
 const COL_SEO_DESCRIPTION = fieldColumn("seoDescription", { translatable: true, inputType: "textarea", minWidth: 280, group: "seo" });
@@ -484,6 +498,8 @@ export const BULK_COLUMNS_BY_TYPE: Record<BulkRowType, ColumnDescriptor[]> = {
     COL_DESCRIPTION_HTML,
     COL_PRODUCT_TYPE,
     COL_STATUS,
+    COL_VENDOR,
+    COL_TAGS,
     COL_HANDLE,
     COL_SEO_TITLE,
     COL_SEO_DESCRIPTION,
@@ -1051,6 +1067,13 @@ export interface BulkRow {
   descriptionHtml?: string;
   productType?: string;
   status?: string;
+  // §Phase 3.6. `tags` is a LIST behind one cell — comma-separated, written
+  // whole (productUpdate replaces the list rather than appending to it).
+  vendor?: string;
+  tags?: string;
+  /** False ⇒ `vendor`/`tags` above are the migration's defaults, not the
+   *  merchant's data (§2.4). The grid shows them as unknown, never as empty. */
+  attributesKnown?: boolean;
   body?: string;
   summary?: string;
   // Read-only display fields.
@@ -1140,7 +1163,13 @@ export type CellReadOnlyReason =
   | "missingMediaId" // image row lacks the MediaImage GID — resync needed
   | "wrongMetaobjectType" // mofield column of another definition type (Phase 5)
   | "listSeparatorInValue" // a list entry contains "|" — editing would shatter it (Finding 11)
-  | "altTextInImages"; // product main-image alt — edit it under the Images row type
+  | "altTextInImages" // product main-image alt — edit it under the Images row type
+  | "attributesNotSynced"; // PLAN §2.4 — the block was never fetched (see below)
+
+/** The columns fed by the Phase-0 attribute block, whose emptiness only means
+ *  something once `attributesSyncedAt` is set. `status` is NOT one of them — it
+ *  predates that block and is non-null in the schema. */
+const ATTRIBUTE_BLOCK_COLUMNS = new Set(["field.vendor", "field.tags"]);
 
 export interface ResolvedCell {
   /** Baseline display value of the cell (primary locale). */
@@ -1162,8 +1191,19 @@ function joinOptionValues(option: BulkRowOption): string {
  */
 export function resolveCellValue(row: BulkRow, column: ColumnDescriptor): ResolvedCell {
   switch (column.kind) {
-    case "field":
-      return { value: primaryValueForColumn(row, column), editable: column.editable };
+    case "field": {
+      const value = primaryValueForColumn(row, column);
+      // PLAN §2.4 / §3.6 — a cell whose row predates the attribute sync shows
+      // the migration's default, not the merchant's data. Read-only, because
+      // `productUpdate` REPLACES the tag list rather than merging it: typing
+      // one tag into an unsynced row would wipe the product's real tags, on a
+      // row the grid itself admits it does not know. The single editor locks
+      // the same fields for the same reason; a resync is the way out.
+      if (ATTRIBUTE_BLOCK_COLUMNS.has(column.id) && row.attributesKnown === false) {
+        return { value, editable: false, readOnlyReason: "attributesNotSynced" };
+      }
+      return { value, editable: column.editable };
+    }
     case "metafield": {
       const mf = row.metafields?.[column.id];
       const raw = mf?.value ?? "";
