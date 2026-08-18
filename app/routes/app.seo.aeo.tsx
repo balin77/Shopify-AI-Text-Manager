@@ -42,6 +42,12 @@ import { ToggleSwitch } from "../components/ToggleSwitch";
 import { getFormString } from "../utils/form-data.utils";
 import { meetsPlan } from "../utils/planUtils";
 import type { Plan } from "../config/plans";
+import { useAppNavigation } from "../hooks/useAppNavigation";
+import {
+  analyzeCatalogReadiness,
+  type CatalogReadinessCode,
+  type CatalogReadinessReport,
+} from "../services/seo/catalog-readiness.service";
 import {
   analyzeAeo,
   applyRobotsRuleRemovals,
@@ -65,6 +71,16 @@ const GATED_DISCOVERY_STATUS: AiDiscoveryStatus = {
   liveServedByUs: false,
   liveExcerpt: "",
   url: "",
+};
+
+/** Same purpose as GATED_DISCOVERY_STATUS: keep both loader branches one shape. */
+const GATED_CATALOG_REPORT: CatalogReadinessReport = {
+  scanned: 0,
+  available: 0,
+  capped: false,
+  attributeDataKnown: false,
+  ready: 0,
+  buckets: [],
 };
 
 async function loadSettings(db: any, shop: string): Promise<{ plan: Plan; autoUpdate: boolean }> {
@@ -108,6 +124,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       } as Record<AiDiscoveryFile, AiDiscoveryStatus>,
       agentsPreview: "",
       agentsPolicyCount: 0,
+      catalog: GATED_CATALOG_REPORT,
       themeWrites: false,
       llmsAutoUpdate: true,
       shopDescriptionMissing: false,
@@ -117,16 +134,22 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const { name, domain, description } = await getShopIdentity(admin, session.shop);
-  const analysis = await analyzeAeo(admin, session.shop, {
-    db,
-    shopName: name,
-    domain,
-    description,
-    autoUpdate,
-  });
+  const [analysis, catalog] = await Promise.all([
+    analyzeAeo(admin, session.shop, {
+      db,
+      shopName: name,
+      domain,
+      description,
+      autoUpdate,
+    }),
+    // DB-only and independent of the two Shopify-facing halves above, so it
+    // costs wall-clock time only if it is the slowest of the three.
+    analyzeCatalogReadiness(db, session.shop),
+  ]);
   return json({
     gated: false,
     ...analysis,
+    catalog,
     themesUrl: `https://${session.shop}/admin/themes`,
     shopPrefsUrl: `https://${session.shop}/admin/online_store/preferences`,
   });
@@ -296,7 +319,17 @@ function CrawlerGroupDetail({ group }: { group: RobotsCrawlerGroup }) {
  * put the optional one first. They're now two selectable steps, access first.
  * The tile itself is shared with the structured-data section — see StepTile.
  */
-type AeoStep = "robots" | "llms";
+type AeoStep = "robots" | "llms" | "catalog";
+
+/** Items listed per catalog bucket before it collapses into a count. */
+const CATALOG_ITEMS_SHOWN = 8;
+
+/**
+ * Buckets whose field the bulk grid can actually edit today (`vendor` is a bulk
+ * column, the taxonomy category is not) and whose fix is a mass edit rather
+ * than per-product work.
+ */
+const BULK_FIXABLE_CODES: CatalogReadinessCode[] = ["brandMissing", "descriptionMissing"];
 
 /** Rendered order: the canonical path first, its mirror second. */
 const DISCOVERY_FILES: Array<{ file: AiDiscoveryFile; path: string }> = [
@@ -308,6 +341,9 @@ export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const a = t.seo.aeoPage;
+  // Deep links go through the app navigation hook so the embedded session
+  // params survive — a bare <a> drops them and lands on a re-auth.
+  const { handleNavigate } = useAppNavigation();
   const fetcher = useFetcher<ActionResult>();
   const robotsFetcher = useFetcher<ActionResult>();
   const autoFetcher = useFetcher<ActionResult>();
@@ -356,6 +392,19 @@ export default function SeoAeo() {
     const b = DISCOVERY_BADGE[worstDiscovery as keyof typeof DISCOVERY_BADGE];
     return <Badge tone={b.tone}>{a[b.key]}</Badge>;
   })();
+
+  // "Nothing scanned" is not "all good": a shop whose products were never
+  // synced would otherwise get a green badge for an empty catalog.
+  const catalogBadge =
+    data.catalog.scanned === 0 ? (
+      <Badge>{a.statusUnknown}</Badge>
+    ) : data.catalog.buckets.length === 0 ? (
+      <Badge tone="success">{a.catalogBadgeComplete}</Badge>
+    ) : (
+      <Badge tone="warning">
+        {a.catalogBadgeGaps.replace("{count}", String(data.catalog.scanned - data.catalog.ready))}
+      </Badge>
+    );
 
   // Rules our own classifier couldn't settle — the only ones worth asking the
   // model about, and the only ones the removal flow will accept.
@@ -475,8 +524,12 @@ export default function SeoAeo() {
           {robotsMsg && <Banner tone={robotsMsg.tone}>{robotsMsg.msg}</Banner>}
           {adviceError && <Banner tone="critical">{adviceError}</Banner>}
 
-          {/* Step selector — access (robots.txt) before orientation (llms.txt). */}
-          <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+          {/* Step selector — access (robots.txt), then orientation (discovery
+              files), then the product data an answer engine compares on. The
+              order is a dependency chain: a bot that may not read the shop
+              never sees the files, and complete product data is worth nothing
+              if neither of the first two holds. */}
+          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
             <StepTile
               selected={step === "robots"}
               onSelect={() => setStep("robots")}
@@ -492,6 +545,14 @@ export default function SeoAeo() {
               title={a.stepGuideTitle}
               body={a.stepGuideBody}
               badge={llmsStatusBadge}
+            />
+            <StepTile
+              selected={step === "catalog"}
+              onSelect={() => setStep("catalog")}
+              kicker={a.stepCatalogKicker}
+              title={a.stepCatalogTitle}
+              body={a.stepCatalogBody}
+              badge={catalogBadge}
             />
           </InlineGrid>
 
@@ -842,6 +903,122 @@ export default function SeoAeo() {
                       : a.llmsGenerate}
                   </Button>
                 </InlineStack>
+              </BlockStack>
+            </Card>
+          )}
+
+          {/* Catalog readiness for AI channels */}
+          {step === "catalog" && (
+            <Card>
+              <BlockStack gap="400">
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="h3" variant="headingMd">
+                    {a.catalogTitle}
+                  </Text>
+                  {catalogBadge}
+                </InlineStack>
+                <Text as="p" variant="bodyMd" tone="subdued">
+                  {a.catalogBody}
+                </Text>
+
+                {data.catalog.scanned === 0 ? (
+                  <Text as="p" tone="subdued">
+                    {a.catalogNoProducts}
+                  </Text>
+                ) : (
+                  <BlockStack gap="300">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {a.catalogSummary
+                        .replace("{ready}", String(data.catalog.ready))
+                        .replace("{scanned}", String(data.catalog.scanned))}
+                      {data.catalog.capped
+                        ? " " +
+                          a.catalogCapped
+                            .replace("{scanned}", String(data.catalog.scanned))
+                            .replace("{available}", String(data.catalog.available))
+                        : ""}
+                    </Text>
+
+                    {/* The attribute block was never synced for at least one
+                        scanned product, so brand and category are UNKNOWN for
+                        the catalog — reporting them as missing would turn a
+                        stale cache into a red finding. */}
+                    {!data.catalog.attributeDataKnown && (
+                      <Banner tone="info" title={a.catalogAttributesUnknownTitle}>
+                        <BlockStack gap="200">
+                          <Text as="p" variant="bodyMd">{a.catalogAttributesUnknownBody}</Text>
+                          <InlineStack>
+                            <Button onClick={() => handleNavigate("/app/products")}>
+                              {a.catalogOpenProducts}
+                            </Button>
+                          </InlineStack>
+                        </BlockStack>
+                      </Banner>
+                    )}
+
+                    {data.catalog.buckets.length === 0 ? (
+                      <Banner tone="success">{a.catalogAllReady}</Banner>
+                    ) : (
+                      data.catalog.buckets.map((bucket) => (
+                        <Box
+                          key={bucket.code}
+                          padding="300"
+                          borderWidth="025"
+                          borderColor="border"
+                          borderRadius="200"
+                        >
+                          <BlockStack gap="200">
+                            <InlineStack gap="200" blockAlign="center" wrap>
+                              <Text as="h4" variant="headingSm">
+                                {a.catalogCode[bucket.code].label}
+                              </Text>
+                              <Badge tone="warning">
+                                {a.catalogAffected.replace("{count}", String(bucket.count))}
+                              </Badge>
+                            </InlineStack>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {a.catalogCode[bucket.code].hint}
+                            </Text>
+                            <BlockStack gap="100">
+                              {bucket.items.slice(0, CATALOG_ITEMS_SHOWN).map((item) => (
+                                <InlineStack key={item.id} gap="200" blockAlign="center" wrap>
+                                  <Button
+                                    variant="plain"
+                                    onClick={() =>
+                                      handleNavigate("/app/products", {
+                                        searchParams: new URLSearchParams({ select: item.id }),
+                                      })
+                                    }
+                                  >
+                                    {item.title || item.handle}
+                                  </Button>
+                                </InlineStack>
+                              ))}
+                              {bucket.count > CATALOG_ITEMS_SHOWN && (
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  {a.catalogMore.replace(
+                                    "{count}",
+                                    String(bucket.count - CATALOG_ITEMS_SHOWN),
+                                  )}
+                                </Text>
+                              )}
+                            </BlockStack>
+                            {/* Only where the grid really has the column —
+                                offering "fix in bulk" for a field it cannot
+                                edit would send the merchant on a hunt. */}
+                            {BULK_FIXABLE_CODES.includes(bucket.code) && (
+                              <InlineStack>
+                                <Button onClick={() => handleNavigate("/app/bulk")}>
+                                  {a.catalogFixInBulk}
+                                </Button>
+                              </InlineStack>
+                            )}
+                          </BlockStack>
+                        </Box>
+                      ))
+                    )}
+                  </BlockStack>
+                )}
               </BlockStack>
             </Card>
           )}
