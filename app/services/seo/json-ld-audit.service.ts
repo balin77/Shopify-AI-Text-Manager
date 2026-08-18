@@ -39,6 +39,7 @@ import {
 } from "../structured-data.service";
 import { MAX_AUDIT_ITEMS_PER_TYPE, MAX_PROBLEM_BUCKET_ITEMS } from "./audit.service";
 import type { MarkupTypeStat } from "./markup-activation.shared";
+import { loadCrawlMarkupPages } from "./crawl-markup-rows.server";
 
 export type JsonLdAuditItemType = "product" | "collection" | "article";
 
@@ -454,27 +455,9 @@ export async function summarizeLiveJsonLd(
   db: PrismaClient,
   shop: string,
 ): Promise<LiveJsonLdSummary | null> {
-  const snapshot = await db.seoCrawlSnapshot.findFirst({
-    where: { shop, status: { in: ["completed", "capped"] } },
-    orderBy: { startedAt: "desc" },
-    select: { id: true, startedAt: true, finishedAt: true, status: true },
-  });
-  if (!snapshot) return null;
-
-  const rows = await db.seoCrawlPage.findMany({
-    where: { shop, snapshotId: snapshot.id },
-    select: {
-      url: true,
-      statusCode: true,
-      resourceType: true,
-      jsonLdTypes: true,
-      jsonLdAppTypes: true,
-    },
-  });
-
-  // Only pages that actually served content can be judged on their markup — a
-  // 404 carrying no Product schema is not a structured-data problem.
-  const served = rows.filter((r) => r.statusCode >= 200 && r.statusCode < 400);
+  const loaded = await loadCrawlMarkupPages(db, shop);
+  if (!loaded) return null;
+  const { snapshot, judged } = loaded;
 
   // Catalog sizes, so the report can say "15 of 41 product pages crawled"
   // instead of presenting a partial crawl as the whole shop.
@@ -494,6 +477,15 @@ export async function summarizeLiveJsonLd(
   const duplicatePages = new Map<string, string[]>();
   // The example lists are capped, so the page COUNT has to be tallied
   // separately or a shop with six duplicate pages would report five.
+  //
+  // All four tallies below are keyed by "<canonical type>\n<resourceType>",
+  // never by the type alone. A shop-wide number cannot gate a page-scoped
+  // switch: our block emits FAQPage only on PRODUCT pages, so a theme's
+  // FAQPage on /pages/faq would otherwise read as "your theme already serves
+  // this, leave the switch off" about two markups that never meet. The gate
+  // sums the buckets a switch actually emits on (MarkupSwitch.scopes); a page
+  // has exactly one resourceType, so summation is exact.
+  const key = (type: string, resourceType: string) => `${type}\n${resourceType}`;
   const duplicateCounts = new Map<string, number>();
   /** Duplicated types where one of the copies is this app's. */
   const duplicateAppCounts = new Map<string, number>();
@@ -501,14 +493,14 @@ export async function summarizeLiveJsonLd(
   const canonicalPages = new Map<string, number>();
   const canonicalAppPages = new Map<string, number>();
 
-  for (const row of served) {
+  for (const row of judged) {
+    const rt = row.resourceType || "unknown";
     const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
     // typeCounts keep the RAW names (a merchant wants to see "BlogPosting"
     // when that is what the page carries); only the duplicate tally collapses
     // them, see canonicalJsonLdType.
-    const seen = new Map<string, number>();
-    for (const t of types) seen.set(t, (seen.get(t) ?? 0) + 1);
-    for (const t of seen.keys()) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
+    const seen = new Set(types);
+    for (const t of seen) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
 
     const appTypes = new Set(
       (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
@@ -521,44 +513,53 @@ export async function summarizeLiveJsonLd(
       canonical.set(c, (canonical.get(c) ?? 0) + 1);
     }
     for (const [t, n] of canonical) {
-      canonicalPages.set(t, (canonicalPages.get(t) ?? 0) + 1);
-      if (appTypes.has(t)) canonicalAppPages.set(t, (canonicalAppPages.get(t) ?? 0) + 1);
+      const k = key(t, rt);
+      canonicalPages.set(k, (canonicalPages.get(k) ?? 0) + 1);
+      if (appTypes.has(t)) canonicalAppPages.set(k, (canonicalAppPages.get(k) ?? 0) + 1);
       if (n <= 1 || REPEATABLE_JSON_LD_TYPES.has(t)) continue;
       const list = duplicatePages.get(t) ?? [];
       if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
       duplicatePages.set(t, list);
-      duplicateCounts.set(t, (duplicateCounts.get(t) ?? 0) + 1);
-      if (appTypes.has(t)) duplicateAppCounts.set(t, (duplicateAppCounts.get(t) ?? 0) + 1);
+      duplicateCounts.set(k, (duplicateCounts.get(k) ?? 0) + 1);
+      if (appTypes.has(t)) duplicateAppCounts.set(k, (duplicateAppCounts.get(k) ?? 0) + 1);
     }
   }
 
-  // A type this app emits that NO page carries any more still deserves a row:
-  // the activation gate reads these stats by type, and a missing entry would
-  // be indistinguishable from "zero pages" only by accident. Adding the app
-  // side of the union keeps the two halves symmetric.
-  for (const t of canonicalAppPages.keys()) {
-    if (!canonicalPages.has(t)) canonicalPages.set(t, canonicalAppPages.get(t) ?? 0);
-  }
-
   const typeStats: LiveJsonLdTypeStat[] = [...canonicalPages.entries()]
-    .map(([type, pages]) => ({
-      type,
-      pages,
-      appPages: canonicalAppPages.get(type) ?? 0,
-      duplicatePages: duplicateCounts.get(type) ?? 0,
-      appIsOneCopy: duplicateAppCounts.get(type) ?? 0,
-      repeatable: REPEATABLE_JSON_LD_TYPES.has(type),
-    }))
+    .map(([k, pages]) => {
+      const [type, resourceType] = k.split("\n");
+      return {
+        type,
+        resourceType,
+        pages,
+        appPages: canonicalAppPages.get(k) ?? 0,
+        duplicatePages: duplicateCounts.get(k) ?? 0,
+        appIsOneCopy: duplicateAppCounts.get(k) ?? 0,
+        repeatable: REPEATABLE_JSON_LD_TYPES.has(type),
+      };
+    })
     .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type));
+
+  // The duplicate ROWS stay shop-wide: they are a report ("this type is served
+  // twice on N pages"), not a gate, and splitting them by resourceType would
+  // list one finding several times.
+  const duplicateTotals = new Map<string, { pages: number; appIsOneCopy: number }>();
+  for (const [k, pages] of duplicateCounts) {
+    const type = k.split("\n")[0];
+    const acc = duplicateTotals.get(type) ?? { pages: 0, appIsOneCopy: 0 };
+    acc.pages += pages;
+    acc.appIsOneCopy += duplicateAppCounts.get(k) ?? 0;
+    duplicateTotals.set(type, acc);
+  }
 
   // "Marker seen anywhere" is proof the embed is on. Its absence proves
   // nothing on its own: a snapshot crawled before the marked block shipped
   // looks identical to one from a shop with the embed switched off.
-  const anyMarked = served.some((r) => !!r.jsonLdAppTypes);
+  const anyMarked = judged.some((r) => !!r.jsonLdAppTypes);
   const appEmbedDetected = anyMarked ? true : null;
 
   for (const [resourceType, expected] of Object.entries(EXPECTED_TYPE_BY_RESOURCE)) {
-    const ofType = served.filter((r) => r.resourceType === resourceType);
+    const ofType = judged.filter((r) => r.resourceType === resourceType);
     if (ofType.length === 0) continue;
     const missingExamples: string[] = [];
     let withMarkup = 0;
@@ -579,19 +580,24 @@ export async function summarizeLiveJsonLd(
   return {
     crawledAt: (snapshot.finishedAt ?? snapshot.startedAt).toISOString(),
     crawlStatus: snapshot.status,
-    pagesChecked: served.length,
-    notMeasured: served.length > 0 && served.every((r) => !r.jsonLdTypes),
+    pagesChecked: judged.length,
+    // TWO conditions, and the first one is the one that used to be missing:
+    // a snapshot with NO judged page at all (a password-protected storefront,
+    // a shop under maintenance, a crawl the bot shield blocked end to end)
+    // knows nothing, and reporting that as "no page serves any of these types"
+    // handed the activation gate a green light for every switch.
+    notMeasured: judged.length === 0 || judged.every((r) => !r.jsonLdTypes),
     coverage,
     typeCounts: [...pagesByType.entries()]
       .map(([type, pages]) => ({ type, pages }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
     typeStats,
-    duplicates: [...duplicateCounts.entries()]
-      .map(([type, pages]) => ({
+    duplicates: [...duplicateTotals.entries()]
+      .map(([type, acc]) => ({
         type,
-        pages,
+        pages: acc.pages,
         examples: duplicatePages.get(type) ?? [],
-        appIsOneCopy: duplicateAppCounts.get(type) ?? 0,
+        appIsOneCopy: acc.appIsOneCopy,
       }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
     appEmbedDetected,

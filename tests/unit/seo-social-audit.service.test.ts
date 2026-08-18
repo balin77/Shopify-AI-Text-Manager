@@ -98,6 +98,11 @@ describe("summarizeLiveSocial", () => {
     twitterTags: "",
     ogAppTags: "",
     socialKnown: true,
+    jsonLdTypes: "",
+    jsonLdAppTypes: "",
+    // The shared loader drops rows whose body was never parsed; the social
+    // report narrows once more on socialKnown.
+    indexabilityKnown: true,
     ...over,
   });
 
@@ -198,6 +203,20 @@ describe("summarizeLiveSocial", () => {
       "shop.myshopify.com",
     );
     expect(marked!.appEmbedDetected).toBe(true);
+  });
+
+  it("drops a row whose body this crawl never parsed", async () => {
+    // Shared with the JSON-LD half: a 2xx row past the BFS depth limit or one
+    // cheerio refused carries empty columns and must not read as "no tags".
+    const summary = await summarizeLiveSocial(
+      crawlDb([
+        page({ url: "https://s/p/1", ogTags: "og:title,og:image" }),
+        page({ url: "https://s/p/2", indexabilityKnown: false, socialKnown: false }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.pagesChecked).toBe(1);
+    expect(summary!.coverage.find((c) => c.resourceType === "product")!.total).toBe(1);
   });
 
   it("judges markup only on pages that actually served content", async () => {

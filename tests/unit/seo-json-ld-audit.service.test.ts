@@ -249,6 +249,11 @@ describe("summarizeLiveJsonLd", () => {
     resourceType: "product",
     jsonLdTypes: "",
     jsonLdAppTypes: "",
+    ogTags: "",
+    twitterTags: "",
+    ogAppTags: "",
+    socialKnown: false,
+    indexabilityKnown: false,
     ...over,
   });
 
@@ -452,6 +457,75 @@ describe("summarizeLiveJsonLd", () => {
     expect(summary!.duplicates).toEqual([]);
   });
 
+  // The two ways "nobody looked" used to come out as "nothing is served" — and
+  // from there, through the activation gate, as "safe to switch on".
+  it("reports a crawl with no served page at all as unmeasured", async () => {
+    // Password-protected storefront / maintenance / bot shield: every row 4xx.
+    // The old rule was `served.length > 0 && served.every(empty)`, so an empty
+    // `served` made notMeasured FALSE and every switch went green.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ statusCode: 401 }), page({ url: "https://s/p/2", statusCode: 503 })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.notMeasured).toBe(true);
+    expect(summary!.pagesChecked).toBe(0);
+  });
+
+  it("ignores a 2xx row whose body this crawl never parsed", async () => {
+    // runCrawl persists a row for every URL it touched but fills the markup
+    // columns only where it parsed a body — past CRAWL_BFS_MAX_DEPTH, on a
+    // cheerio failure, or on a 3xx (still inside the 200-399 served window) it
+    // does not. `indexabilityKnown` is set on the same line group, so it is the
+    // discriminator. Judging those rows as "no markup" told a merchant their
+    // deep-paginated product pages carry none.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/p/1", jsonLdTypes: "Product", indexabilityKnown: true }),
+        page({ url: "https://s/p/2", jsonLdTypes: "", indexabilityKnown: false }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.pagesChecked).toBe(1);
+    const product = summary!.typeStats.find((t) => t.type === "Product")!;
+    expect(product.pages).toBe(1);
+    // …and the coverage table does not report the unparsed page as missing.
+    const coverage = summary!.coverage.find((c) => c.resourceType === "product")!;
+    expect(coverage.total).toBe(1);
+    expect(coverage.withMarkup).toBe(1);
+    expect(coverage.missingExamples).toEqual([]);
+  });
+
+  it("falls back to every served row when NO row knows", async () => {
+    // A snapshot from before indexabilityKnown existed. Dropping everything
+    // there would report a shop with real markup as unmeasured.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "Product" })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.notMeasured).toBe(false);
+    expect(summary!.pagesChecked).toBe(1);
+  });
+
+  it("buckets the stats by page kind so a page-scoped switch is judged fairly", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/pages/faq", resourceType: "page", jsonLdTypes: "FAQPage" }),
+        page({ url: "https://s/p/1", resourceType: "product", jsonLdTypes: "Product" }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const faqOnPages = summary!.typeStats.find(
+      (t) => t.type === "FAQPage" && t.resourceType === "page",
+    )!;
+    expect(faqOnPages.pages).toBe(1);
+    // Our block emits FAQPage on product pages only — there is no bucket there,
+    // which is what keeps the switch from being warned about a page it never
+    // touches.
+    expect(
+      summary!.typeStats.some((t) => t.type === "FAQPage" && t.resourceType === "product"),
+    ).toBe(false);
+  });
+
   it("keeps the duplicate rows and the type stats in agreement", async () => {
     const summary = await summarizeLiveJsonLd(
       crawlDb([
@@ -465,9 +539,13 @@ describe("summarizeLiveJsonLd", () => {
       "shop.myshopify.com",
     );
     for (const dup of summary!.duplicates) {
-      const stat = summary!.typeStats.find((t) => t.type === dup.type)!;
-      expect(stat.duplicatePages).toBe(dup.pages);
-      expect(stat.appIsOneCopy).toBe(dup.appIsOneCopy);
+      // The duplicate ROWS are shop-wide (one finding, listed once); the stats
+      // are per page kind, so the comparison sums them.
+      const buckets = summary!.typeStats.filter((t) => t.type === dup.type);
+      const sum = (pick: (t: (typeof buckets)[number]) => number) =>
+        buckets.reduce((a, t) => a + pick(t), 0);
+      expect(sum((t) => t.duplicatePages)).toBe(dup.pages);
+      expect(sum((t) => t.appIsOneCopy)).toBe(dup.appIsOneCopy);
     }
   });
 });

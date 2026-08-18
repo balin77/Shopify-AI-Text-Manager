@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   activationGate,
   activationTone,
+  statForSwitch,
+  worstActivationVerdict,
   JSON_LD_SWITCHES,
   type MarkupTypeStat,
 } from "~/services/seo/markup-activation.shared";
@@ -15,6 +17,7 @@ import {
 
 const stat = (over: Partial<MarkupTypeStat> = {}): MarkupTypeStat => ({
   type: "Product",
+  resourceType: "product",
   pages: 0,
   appPages: 0,
   duplicatePages: 0,
@@ -148,5 +151,75 @@ describe("JSON_LD_SWITCHES", () => {
     expect(JSON_LD_SWITCHES.filter((s) => !s.defaultOn).map((s) => s.settingId)).toEqual([
       "enable_faq",
     ]);
+  });
+
+  it("scopes every page-guarded switch to the pages its block emits on", () => {
+    // Mirrors the `request.page_type` guards in structured-data.liquid. Only
+    // Organization has none.
+    const scopeOf = (id: string) => JSON_LD_SWITCHES.find((s) => s.settingId === id)!.scopes;
+    expect(scopeOf("enable_organization")).toBeNull();
+    expect(scopeOf("enable_product")).toEqual(["product"]);
+    expect(scopeOf("enable_faq")).toEqual(["product"]);
+    expect(scopeOf("enable_breadcrumb")).toEqual(["product", "collection", "article"]);
+  });
+});
+
+describe("statForSwitch", () => {
+  const s = (over: Partial<MarkupTypeStat>): MarkupTypeStat => stat(over);
+
+  it("ignores buckets outside the switch's scope", () => {
+    // The FAQ case: our block emits FAQPage on PRODUCT pages only, so a theme's
+    // FAQPage on /pages/faq is not a collision. Judging shop-wide told the
+    // merchant "your theme already serves this, leave the switch off" about two
+    // markups that never meet.
+    const stats = [
+      s({ type: "FAQPage", resourceType: "page", pages: 1 }),
+      s({ type: "FAQPage", resourceType: "product", pages: 0 }),
+    ];
+    expect(statForSwitch(stats, "FAQPage", ["product"])!.pages).toBe(0);
+    // …and shop-wide (scopes: null) still sees it.
+    expect(statForSwitch(stats, "FAQPage", null)!.pages).toBe(1);
+  });
+
+  it("sums the buckets a multi-scope switch emits on", () => {
+    const stats = [
+      s({ type: "BreadcrumbList", resourceType: "product", pages: 10, appPages: 10 }),
+      s({ type: "BreadcrumbList", resourceType: "collection", pages: 3, appPages: 1, duplicatePages: 2, appIsOneCopy: 1 }),
+      // Not in scope — our block emits no breadcrumb on a policy page.
+      s({ type: "BreadcrumbList", resourceType: "policy", pages: 4 }),
+    ];
+    const sum = statForSwitch(stats, "BreadcrumbList", ["product", "collection", "article"])!;
+    expect(sum.pages).toBe(13);
+    expect(sum.appPages).toBe(11);
+    expect(sum.duplicatePages).toBe(2);
+    expect(sum.appIsOneCopy).toBe(1);
+  });
+
+  it("returns undefined when nothing matches, which the gate reads as 'free'", () => {
+    expect(statForSwitch([], "Product", ["product"])).toBeUndefined();
+    expect(statForSwitch(undefined, "Product", ["product"])).toBeUndefined();
+    expect(
+      activationGate(statForSwitch([], "Product", ["product"]), measured).verdict,
+    ).toBe("free");
+  });
+});
+
+describe("verdict severity", () => {
+  it("does not let an unresolvable origin read as milder than a real warning", () => {
+    // With the embed OFF no page can carry the marker, so `originUnknown` is
+    // the PERMANENT state of exactly the merchant this section exists for:
+    // theme serving the type, about to tick the box. Ranking it below `unknown`
+    // (as the first cut did) put an `info` badge on the one screen that has to
+    // say "stop".
+    expect(worstActivationVerdict(["free", "originUnknown"])).toBe("originUnknown");
+    expect(worstActivationVerdict(["unknown", "originUnknown"])).toBe("originUnknown");
+    expect(activationTone("originUnknown")).toBe("warning");
+    // A real duplicate still outranks it.
+    expect(worstActivationVerdict(["originUnknown", "duplicateApp"])).toBe("duplicateApp");
+  });
+
+  it("keeps the repeatable non-verdict mild — there is nothing to act on", () => {
+    expect(worstActivationVerdict(["repeatableUnjudged", "unknown"])).toBe("unknown");
+    expect(activationTone("repeatableUnjudged")).toBe("info");
   });
 });

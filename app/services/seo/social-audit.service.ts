@@ -35,6 +35,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import type { MarkupTypeStat } from "./markup-activation.shared";
+import { loadCrawlMarkupPages } from "./crawl-markup-rows.server";
 
 /**
  * The tags `social-meta.liquid` emits, in the order it emits them. Each one is
@@ -129,37 +130,16 @@ export async function summarizeLiveSocial(
   db: PrismaClient,
   shop: string,
 ): Promise<LiveSocialSummary | null> {
-  const snapshot = await db.seoCrawlSnapshot.findFirst({
-    where: { shop, status: { in: ["completed", "capped"] } },
-    orderBy: { startedAt: "desc" },
-    select: { id: true, startedAt: true, finishedAt: true, status: true },
-  });
-  if (!snapshot) return null;
+  const loaded = await loadCrawlMarkupPages(db, shop);
+  if (!loaded) return null;
+  const { snapshot, judged } = loaded;
 
-  const rows = await db.seoCrawlPage.findMany({
-    where: { shop, snapshotId: snapshot.id },
-    select: {
-      url: true,
-      statusCode: true,
-      resourceType: true,
-      ogTags: true,
-      twitterTags: true,
-      ogAppTags: true,
-      socialKnown: true,
-    },
-  });
+  // A row this crawl never PARSED contributes nothing, in either direction —
+  // `loadCrawlMarkupPages` already dropped those. `socialKnown` narrows once
+  // more, to rows written after the og:* columns existed: a snapshot can know
+  // the JSON-LD half and not this one, since these columns are younger.
+  const measured = judged.filter((r) => r.socialKnown);
 
-  // Only pages that actually served content can be judged on their markup — a
-  // 404 carrying no og:image is not a social-markup problem.
-  const served = rows.filter((r) => r.statusCode >= 200 && r.statusCode < 400);
-
-  // A row this crawl never looked at contributes NOTHING, in either direction:
-  // counting it as "no tags" is the exact trap `socialKnown` exists for, and a
-  // mixed snapshot (some rows measured, some not) is a real state after a
-  // deploy mid-crawl.
-  const measured = served.filter((r) => r.socialKnown);
-
-  const pagesByTag = new Map<string, number>();
   const duplicateExamples = new Map<string, string[]>();
   const duplicateCounts = new Map<string, number>();
   const duplicateAppCounts = new Map<string, number>();
@@ -174,7 +154,6 @@ export async function summarizeLiveSocial(
     for (const t of tags) perPage.set(t, (perPage.get(t) ?? 0) + 1);
 
     for (const [tag, n] of perPage) {
-      pagesByTag.set(tag, (pagesByTag.get(tag) ?? 0) + 1);
       tagPages.set(tag, (tagPages.get(tag) ?? 0) + 1);
       if (appTags.has(tag)) tagAppPages.set(tag, (tagAppPages.get(tag) ?? 0) + 1);
       if (n <= 1) continue;
@@ -193,6 +172,9 @@ export async function summarizeLiveSocial(
   const typeStats: MarkupTypeStat[] = [...statTags]
     .map((tag) => ({
       type: tag,
+      // The social block carries no page-type guard — it emits on every page,
+      // so there is nothing to scope and the gate sums one shop-wide bucket.
+      resourceType: "",
       pages: tagPages.get(tag) ?? 0,
       appPages: tagAppPages.get(tag) ?? 0,
       duplicatePages: duplicateCounts.get(tag) ?? 0,
@@ -231,13 +213,14 @@ export async function summarizeLiveSocial(
     crawledAt: (snapshot.finishedAt ?? snapshot.startedAt).toISOString(),
     crawlStatus: snapshot.status,
     pagesChecked: measured.length,
-    // Every served page unmeasured (or nothing served at all) — the snapshot
-    // predates the columns. Note this is a KNOWN-ness check, not an emptiness
-    // check: a shop that genuinely serves no og:* has measured rows with empty
-    // columns and gets a real "nothing found" report.
+    // No measured row at all — the snapshot predates the columns, or the crawl
+    // never parsed a body (password-protected storefront, bot shield). Note
+    // this is a KNOWN-ness check, not an emptiness check: a shop that genuinely
+    // serves no og:* has measured rows with empty columns and gets a real
+    // "nothing found" report.
     notMeasured: measured.length === 0,
     coverage,
-    tagCounts: [...pagesByTag.entries()]
+    tagCounts: [...tagPages.entries()]
       .map(([tag, pages]) => ({ tag, pages }))
       .sort((a, b) => b.pages - a.pages || a.tag.localeCompare(b.tag)),
     duplicates: [...duplicateCounts.entries()]

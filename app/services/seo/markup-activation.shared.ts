@@ -35,6 +35,18 @@
  */
 export interface MarkupTypeStat {
   type: string;
+  /**
+   * The crawl `resourceType` these numbers are about ("product", "collection",
+   * "article", "page", "policy", "unknown"). One bucket per (type, page kind),
+   * because a shop-wide number cannot gate a page-scoped switch: our block
+   * emits FAQPage only on PRODUCT pages, so a theme's FAQPage on /pages/faq
+   * would otherwise read as "your theme already serves this, leave the switch
+   * off" about two markups that never meet.
+   *
+   * Empty string for a stat that is already shop-wide (the social tags, which
+   * ride on every page).
+   */
+  resourceType: string;
   /** Successfully served pages carrying it at least once. */
   pages: number;
   /** …of which carry a copy THIS app emitted (its `data-contentpilot` marker). */
@@ -63,7 +75,20 @@ export type ActivationVerdict =
   | "foreignOnly"
   /** Served on some pages by us and on others by someone else. */
   | "mixed"
-  /** Served, but this crawl cannot say by whom (it predates the marker). */
+  /**
+   * Served, but nothing can say by whom. TWO causes produce this and the data
+   * cannot tell them apart: the crawl predates the `data-contentpilot` marker,
+   * OR our embed is switched off — with the embed off no page can carry the
+   * marker, so `appEmbedDetected` is `null` forever and no amount of
+   * re-crawling resolves it.
+   *
+   * The second cause is the NORMAL state of the merchant this whole section
+   * was built for: embed off, theme serving the type, about to tick the box.
+   * So the copy must name both causes and give the conclusion that holds under
+   * either — do not switch it ON, and if it is already on, change nothing until
+   * a crawl can tell. Claiming one cause as fact (which the first cut did) is
+   * the inverse of the rule the rest of this module enforces.
+   */
   | "originUnknown"
   /** Repeatable type we co-deliver: same-page duplication is unjudgeable. */
   | "repeatableUnjudged"
@@ -97,7 +122,7 @@ export function activationGate(
   const empty = { pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false };
   if (!opts.measured) return { verdict: "unknown", ...empty };
 
-  const s: MarkupTypeStat = stat ?? { type: "", ...empty };
+  const s: MarkupTypeStat = stat ?? { type: "", resourceType: "", ...empty };
   const base = {
     pages: s.pages,
     appPages: s.appPages,
@@ -117,6 +142,7 @@ export function activationGate(
     // Without the marker we cannot claim the duplication is none of ours; with
     // it, "turn our switch off" would be the wrong advice, so say whose it is.
     return { verdict: opts.originKnown ? "duplicateForeign" : "originUnknown", ...base };
+
   }
 
   if (s.appPages === 0) {
@@ -149,8 +175,13 @@ const VERDICT_SEVERITY: Record<ActivationVerdict, number> = {
   duplicateForeign: 5,
   foreignOnly: 4,
   mixed: 4,
+  // Not milder than `unknown`, and deliberately as loud as `foreignOnly`: the
+  // type IS being served, we just cannot prove whose copy it is. That is a
+  // reason to stop before touching the switch, not a footnote. See the note on
+  // `originUnknown` in the type above for why this state is the NORMAL one for
+  // a shop whose embed is off — i.e. exactly the shop about to switch it on.
+  originUnknown: 4,
   unknown: 3,
-  originUnknown: 2,
   repeatableUnjudged: 2,
   appOnly: 1,
   free: 0,
@@ -180,6 +211,8 @@ export function activationTone(
     case "mixed":
       return "warning";
     case "originUnknown":
+      // As loud as foreignOnly, for the reason given at VERDICT_SEVERITY.
+      return "warning";
     case "repeatableUnjudged":
       return "info";
     case "unknown":
@@ -203,16 +236,58 @@ export interface MarkupSwitch {
   labelKey: string;
   /** Canonical schema type, matched against the crawl's typeStats. */
   type: string;
+  /**
+   * The crawl `resourceType`s this switch actually emits on, or `null` for a
+   * switch that emits everywhere. This is what keeps a page-scoped switch from
+   * being judged against a page it never touches — see MarkupTypeStat.
+   * Mirrors the `request.page_type` guards in structured-data.liquid; a change
+   * there has to be reflected here or the gate judges the wrong pages.
+   */
+  scopes: string[] | null;
   /** What the block ships with — a merchant who never touched it has this. */
   defaultOn: boolean;
 }
 
 export const JSON_LD_SWITCHES: MarkupSwitch[] = [
-  { settingId: "enable_organization", labelKey: "organization", type: "Organization", defaultOn: true },
-  { settingId: "enable_product", labelKey: "product", type: "Product", defaultOn: true },
-  { settingId: "enable_collection", labelKey: "collection", type: "CollectionPage", defaultOn: true },
-  { settingId: "enable_article", labelKey: "article", type: "Article", defaultOn: true },
-  { settingId: "enable_breadcrumb", labelKey: "breadcrumb", type: "BreadcrumbList", defaultOn: true },
-  { settingId: "enable_video", labelKey: "video", type: "VideoObject", defaultOn: true },
-  { settingId: "enable_faq", labelKey: "faq", type: "FAQPage", defaultOn: false },
+  // Organization carries no page-type guard in the block — it is emitted on
+  // every page, so it is judged against every page.
+  { settingId: "enable_organization", labelKey: "organization", type: "Organization", scopes: null, defaultOn: true },
+  { settingId: "enable_product", labelKey: "product", type: "Product", scopes: ["product"], defaultOn: true },
+  { settingId: "enable_collection", labelKey: "collection", type: "CollectionPage", scopes: ["collection"], defaultOn: true },
+  { settingId: "enable_article", labelKey: "article", type: "Article", scopes: ["article"], defaultOn: true },
+  { settingId: "enable_breadcrumb", labelKey: "breadcrumb", type: "BreadcrumbList", scopes: ["product", "collection", "article"], defaultOn: true },
+  { settingId: "enable_video", labelKey: "video", type: "VideoObject", scopes: ["product"], defaultOn: true },
+  { settingId: "enable_faq", labelKey: "faq", type: "FAQPage", scopes: ["product"], defaultOn: false },
 ];
+
+/**
+ * Fold the per-(type, page kind) buckets down to the ONE stat a switch is
+ * judged on. A page has exactly one `resourceType`, so the buckets are disjoint
+ * and summing them is exact rather than an approximation.
+ *
+ * Returns undefined when no bucket matches — which `activationGate` reads as
+ * "nothing serves it", the same as an explicit zero.
+ */
+export function statForSwitch(
+  stats: MarkupTypeStat[] | undefined,
+  type: string,
+  scopes: string[] | null,
+): MarkupTypeStat | undefined {
+  if (!stats) return undefined;
+  const matching = stats.filter(
+    (s) => s.type === type && (scopes === null || scopes.includes(s.resourceType)),
+  );
+  if (matching.length === 0) return undefined;
+  return matching.reduce<MarkupTypeStat>(
+    (acc, s) => ({
+      type,
+      resourceType: scopes === null ? "" : scopes.join(","),
+      pages: acc.pages + s.pages,
+      appPages: acc.appPages + s.appPages,
+      duplicatePages: acc.duplicatePages + s.duplicatePages,
+      appIsOneCopy: acc.appIsOneCopy + s.appIsOneCopy,
+      repeatable: acc.repeatable || s.repeatable,
+    }),
+    { type, resourceType: "", pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false },
+  );
+}

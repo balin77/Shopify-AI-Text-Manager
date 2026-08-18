@@ -50,6 +50,7 @@ import { summarizeLiveSocial, APP_SOCIAL_TAGS } from "../services/seo/social-aud
 import {
   activationGate,
   activationTone,
+  statForSwitch,
   worstActivationVerdict,
   JSON_LD_SWITCHES,
   type ActivationVerdict,
@@ -492,10 +493,16 @@ export default function SeoStructuredData() {
     <Badge>{live.badgeUnknown}</Badge>
   ) : anyDeliveryDuplicates ? (
     <Badge tone="critical">{live.badgeDuplicates}</Badge>
-  ) : anyDeliveryGaps || !jsonLdKnown || !socialKnown ? (
-    // One measured half and one unmeasured half is never "complete": the
-    // unmeasured half is exactly where an unnoticed duplicate would sit.
+  ) : anyDeliveryGaps ? (
     <Badge tone="warning">{live.badgeGaps}</Badge>
+  ) : !jsonLdKnown || !socialKnown ? (
+    // One measured half and one unmeasured half is never "complete" — the
+    // unmeasured half is exactly where an unnoticed duplicate would sit — but
+    // it is not "Gaps" either. The og:* columns ship with this version, so
+    // EVERY existing shop has an unmeasured social half until it re-crawls;
+    // labelling that "your pages are missing markup" would put a false finding
+    // on the most visible badge of the page.
+    <Badge tone="attention">{live.badgePartlyMeasured}</Badge>
   ) : (
     <Badge tone="success">{live.badgeOk}</Badge>
   );
@@ -521,10 +528,12 @@ export default function SeoStructuredData() {
   const jsonLdOriginKnown = liveJsonLd?.appEmbedDetected === true;
   const switchGates = JSON_LD_SWITCHES.map((sw) => ({
     ...sw,
-    gate: activationGate(
-      liveJsonLd?.typeStats?.find((ts) => ts.type === sw.type),
-      { measured: jsonLdMeasured, originKnown: jsonLdOriginKnown },
-    ),
+    // Scoped, never shop-wide: our block emits FAQPage on PRODUCT pages only,
+    // so a theme's FAQPage on /pages/faq must not be read as a collision.
+    gate: activationGate(statForSwitch(liveJsonLd?.typeStats, sw.type, sw.scopes), {
+      measured: jsonLdMeasured,
+      originKnown: jsonLdOriginKnown,
+    }),
   }));
 
   // The social block has ONE switch in the theme editor but nine tags behind
@@ -535,10 +544,12 @@ export default function SeoStructuredData() {
   const socialOriginKnown = liveSocial?.appEmbedDetected === true;
   const socialGates = APP_SOCIAL_TAGS.map((tag) => ({
     tag,
-    gate: activationGate(
-      liveSocial?.typeStats?.find((ts) => ts.type === tag),
-      { measured: socialMeasured, originKnown: socialOriginKnown },
-    ),
+    // The social block has no page-type guard, so its stats are already
+    // shop-wide and there is nothing to scope.
+    gate: activationGate(statForSwitch(liveSocial?.typeStats, tag, null), {
+      measured: socialMeasured,
+      originKnown: socialOriginKnown,
+    }),
   }));
 
   // One verdict for the tile, over both embeds. Worst wins, and "not measured"
