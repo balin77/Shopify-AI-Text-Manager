@@ -540,7 +540,12 @@ export class ProductSyncService {
     // as ONE pass over the fetched products rather than per batch, so the
     // common case (nothing changed) costs a single indexed read and no
     // Shopify call at all. Never throws — it is not the sync's job.
+    // A cancelled sync must not keep writing to Shopify — the pass talks to
+    // the Admin API for every changed product and would run to completion long
+    // after the client disconnected.
+    checkAborted();
     if (synced > 0) {
+      onProgress?.({ overallPercent: 60, message: "Video-Daten werden aktualisiert…" });
       await persistVideoSchema(
         this.admin as never,
         db,
@@ -946,7 +951,22 @@ export class ProductSyncService {
   /**
    * Sync a single product with all its translations
    */
-  async syncProduct(productId: string, forceSync = false): Promise<void> {
+  /**
+   * Sync ONE product.
+   *
+   * `writeVideoSchema` exists because of a feedback loop, not as a preference:
+   * writing the video-date metafield changes the product, which makes Shopify
+   * fire `products/update`, which lands in webhooks.products.tsx and calls
+   * this method again. The diff would stop it after one extra pass (the mirror
+   * has advanced, so nothing is written), but the webhook path has nothing to
+   * contribute here anyway — the dates it would write are the ones that just
+   * caused it. So the webhook passes `false` and the loop cannot start at all.
+   */
+  async syncProduct(
+    productId: string,
+    forceSync = false,
+    options: { writeVideoSchema?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
@@ -1065,6 +1085,20 @@ export class ProductSyncService {
         imageAlt: altFailedMarketIds,
         subResources: subResFailedMarketIds,
       });
+
+      // Video upload dates → product metafield. AFTER the save (the mirror
+      // column it diffs against was just written) and outside it, because this
+      // talks to Shopify rather than the database. Skipped for the
+      // webhook-driven resync — see this method's doc comment.
+      if (options.writeVideoSchema !== false) {
+        const { db } = await import("../db.server");
+        await persistVideoSchema(this.admin as never, db, [
+          {
+            productId: productData.id,
+            uploadDates: videoUploadDatesFromMedia(productData.media?.edges),
+          },
+        ]);
+      }
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
     } catch (error) {
@@ -2063,16 +2097,6 @@ export class ProductSyncService {
     }));
 
     logger.debug(`[ProductSync] ✓ Transaction completed successfully for product ${productData.id}`);
-
-    // Same pass as the bulk sync, for the single-product path the webhooks
-    // use: outside the transaction (it talks to Shopify) and after it (the
-    // mirror column it diffs against was just written).
-    await persistVideoSchema(this.admin as never, db, [
-      {
-        productId: productData.id,
-        uploadDates: videoUploadDatesFromMedia(productData.media?.edges),
-      },
-    ]);
   }
 
   /**

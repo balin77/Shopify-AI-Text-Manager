@@ -159,3 +159,50 @@ describe("PRODUCT_VIDEO_MEDIA_FIELDS", () => {
     expect(narrowRoute).not.toContain("PRODUCT_VIDEO_MEDIA_FIELDS");
   });
 });
+
+/**
+ * The two loop-breakers, pinned at their source.
+ *
+ * Both are invisible in a passing sync: a webhook feedback loop and a mirror
+ * that advances on an unconfirmed write only show up as churn on someone's
+ * production shop.
+ */
+describe("write-path safety rails", () => {
+  const sync = readFileSync(join(__dirname, "../../app/services/product-sync.service.ts"), "utf8");
+  const webhook = readFileSync(join(__dirname, "../../app/routes/webhooks.products.tsx"), "utf8");
+  const server = readFileSync(join(__dirname, "../../app/services/seo/video-schema.server.ts"), "utf8");
+  const mutations = readFileSync(join(__dirname, "../../app/graphql/content.mutations.ts"), "utf8");
+
+  it("never writes the metafield from the webhook-driven resync", () => {
+    // Writing it changes the product, which fires products/update, which lands
+    // right back here — the loop starts with this call.
+    expect(webhook).toContain("writeVideoSchema: false");
+    expect(sync).toContain("options.writeVideoSchema !== false");
+  });
+
+  it("stops the bulk pass when the sync was aborted", () => {
+    const passIndex = sync.indexOf("uploadDates: videoUploadDatesFromMedia(product.media?.edges)");
+    expect(passIndex).toBeGreaterThan(-1);
+    // The abort check sits immediately before the pass, not somewhere earlier.
+    expect(sync.slice(Math.max(0, passIndex - 700), passIndex)).toContain("checkAborted();");
+  });
+
+  it("confirms writes by owner id, which the shared mutation now selects", () => {
+    expect(mutations).toContain("owner {");
+    expect(server).toContain("m?.owner?.id");
+    // A value match would confirm the wrong product as soon as two carry the
+    // same map.
+    expect(server).not.toContain("byValue");
+  });
+
+  it("treats a missing mutation payload as unconfirmed, in BOTH directions", () => {
+    const setGuard = server.indexOf("const payload = body?.data?.metafieldsSet;");
+    const clearGuard = server.indexOf("const payload = body?.data?.metafieldsDelete;");
+    expect(setGuard).toBeGreaterThan(-1);
+    expect(clearGuard).toBeGreaterThan(-1);
+    // `data: null` (throttled / top-level error) also has an empty userErrors
+    // list, so emptiness alone must never count as success.
+    expect(server).toContain("if (!payload) return confirmed;");
+    expect(server).toContain("if (!payload || errors.length > 0) return confirmed;");
+  });
+});

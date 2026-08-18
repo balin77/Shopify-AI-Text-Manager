@@ -125,6 +125,18 @@ export async function persistVideoSchema(
     });
   }
 
+  // Callers are sync paths whose job is the catalog, so none of them acts on
+  // this — but an unconfirmed write leaves the mirror unadvanced and repeats on
+  // every sync, which is exactly the kind of quiet churn that is invisible
+  // without a line in the log.
+  if (result.failed > 0) {
+    logger.warn("[VideoSchema] Shopify did not confirm every video-date write", {
+      failed: result.failed,
+      written: result.written,
+      cleared: result.cleared,
+    });
+  }
+
   return result;
 }
 
@@ -153,11 +165,20 @@ async function setBatch(
         error: errors.map((e: any) => e?.message).join("; "),
       });
     }
-    // The echo carries the metafield, not its owner, so a written entry is
-    // recognised by its value — unique per product within this batch.
-    const written: any[] = body?.data?.metafieldsSet?.metafields ?? [];
-    const byValue = new Map(written.map((m: any) => [String(m?.value ?? ""), true]));
-    for (const entry of batch) if (byValue.has(entry.json)) confirmed.add(entry.productId);
+    // Confirmed by OWNER id (the mutation selects it), never by matching the
+    // value back: two products can legitimately carry the same map, and a
+    // value match would then confirm a write that never happened for one of
+    // them. A response without the payload (throttled, top-level error,
+    // `data: null`) confirms nothing at all.
+    const payload = body?.data?.metafieldsSet;
+    if (!payload) return confirmed;
+    const written: any[] = payload.metafields ?? [];
+    const owners = new Set(
+      written
+        .filter((m: any) => m?.namespace === VIDEO_SCHEMA_NAMESPACE && m?.key === VIDEO_SCHEMA_KEY)
+        .map((m: any) => String(m?.owner?.id ?? "")),
+    );
+    for (const entry of batch) if (owners.has(entry.productId)) confirmed.add(entry.productId);
   } catch (err) {
     logger.warn("[VideoSchema] metafieldsSet failed", {
       error: err instanceof Error ? err.message : String(err),
@@ -186,13 +207,21 @@ async function clearBatch(admin: AdminApiContext, productIds: string[]): Promise
         error: errors.map((e: any) => e?.message).join("; "),
       });
     }
-    const deleted: any[] = body?.data?.metafieldsDelete?.deletedMetafields ?? [];
-    const deletedOwners = new Set(deleted.map((d: any) => String(d?.ownerId ?? "")));
+    // The PAYLOAD's presence is the proof, not an empty `userErrors` list: a
+    // throttled or top-level-failed response has `data: null`, whose
+    // `userErrors` is empty too — and treating that as success would null the
+    // mirror while the metafield survives on Shopify. The diff would then see
+    // null === null forever, and the storefront would keep publishing an
+    // uploadDate for a video that no longer exists.
+    const payload = body?.data?.metafieldsDelete;
+    if (!payload || errors.length > 0) return confirmed;
+    const deletedOwners = new Set(
+      (payload.deletedMetafields ?? []).map((d: any) => String(d?.ownerId ?? "")),
+    );
     for (const ownerId of productIds) {
-      // Shopify reports nothing for an owner that had no metafield — which is
-      // exactly the state we want, so an absent echo counts as cleared only
-      // when there were no userErrors at all.
-      if (deletedOwners.has(ownerId) || errors.length === 0) confirmed.add(ownerId);
+      // Shopify reports nothing for an owner that had no metafield — with the
+      // payload present and no userErrors, that IS the state we wanted.
+      if (deletedOwners.has(ownerId) || deletedOwners.size === 0) confirmed.add(ownerId);
     }
   } catch (err) {
     logger.warn("[VideoSchema] metafieldsDelete failed", {

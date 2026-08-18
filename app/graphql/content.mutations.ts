@@ -283,6 +283,15 @@ export const METAFIELDS_SET = `#graphql
         key
         value
         type
+        # The echo carries no owner by itself, so a caller writing the same
+        # key for MANY owners in one call could only match by value — which
+        # collides as soon as two owners get identical content. Selecting the
+        # owner id makes "did THIS product's write land" answerable.
+        owner {
+          ... on Product {
+            id
+          }
+        }
       }
       userErrors {
         field
