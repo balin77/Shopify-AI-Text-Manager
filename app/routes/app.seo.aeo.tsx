@@ -49,6 +49,10 @@ import {
   type CatalogReadinessReport,
 } from "../services/seo/catalog-readiness.service";
 import {
+  loadAiReferralSummary,
+  type AiReferralSummary,
+} from "../services/seo/ai-referral.service";
+import {
   analyzeAeo,
   applyRobotsRuleRemovals,
   generateAndUpsertAiDiscovery,
@@ -71,6 +75,15 @@ const GATED_DISCOVERY_STATUS: AiDiscoveryStatus = {
   liveServedByUs: false,
   liveExcerpt: "",
   url: "",
+};
+
+/** Same purpose as GATED_DISCOVERY_STATUS: keep both loader branches one shape. */
+const GATED_REFERRALS: AiReferralSummary = {
+  days: 30,
+  totalVisits: 0,
+  bySource: [],
+  topPages: [],
+  everRecorded: false,
 };
 
 /** Same purpose as GATED_DISCOVERY_STATUS: keep both loader branches one shape. */
@@ -125,6 +138,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       agentsPreview: "",
       agentsPolicyCount: 0,
       catalog: GATED_CATALOG_REPORT,
+      referrals: GATED_REFERRALS,
       themeWrites: false,
       llmsAutoUpdate: true,
       shopDescriptionMissing: false,
@@ -134,7 +148,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const { name, domain, description } = await getShopIdentity(admin, session.shop);
-  const [analysis, catalog] = await Promise.all([
+  const [analysis, catalog, referrals] = await Promise.all([
     analyzeAeo(admin, session.shop, {
       db,
       shopName: name,
@@ -142,14 +156,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       description,
       autoUpdate,
     }),
-    // DB-only and independent of the two Shopify-facing halves above, so it
-    // costs wall-clock time only if it is the slowest of the three.
+    // DB-only and independent of the two Shopify-facing halves above, so they
+    // cost wall-clock time only if they are the slowest of the four.
     analyzeCatalogReadiness(db, session.shop),
+    loadAiReferralSummary(db, session.shop),
   ]);
   return json({
     gated: false,
     ...analysis,
     catalog,
+    referrals,
     themesUrl: `https://${session.shop}/admin/themes`,
     shopPrefsUrl: `https://${session.shop}/admin/online_store/preferences`,
   });
@@ -1022,6 +1038,76 @@ export default function SeoAeo() {
               </BlockStack>
             </Card>
           )}
+
+          {/* Arrivals from AI assistants. Below the steps, not one of them: the
+              three steps are things to set up, this is what came of it. */}
+          <Card>
+            <BlockStack gap="300">
+              <InlineStack gap="200" blockAlign="center" wrap>
+                <Text as="h3" variant="headingMd">
+                  {a.referralTitle}
+                </Text>
+                <Badge tone={data.referrals.totalVisits > 0 ? "success" : undefined}>
+                  {a.referralWindow.replace("{days}", String(data.referrals.days))}
+                </Badge>
+              </InlineStack>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                {a.referralBody}
+              </Text>
+
+              {!data.referrals.everRecorded ? (
+                <Banner tone="info">{a.referralNoneEver}</Banner>
+              ) : data.referrals.totalVisits === 0 ? (
+                <Text as="p" tone="subdued">
+                  {a.referralNoneInWindow.replace("{days}", String(data.referrals.days))}
+                </Text>
+              ) : (
+                <BlockStack gap="300">
+                  <Text as="p" variant="headingLg">
+                    {a.referralTotal
+                      .replace("{count}", String(data.referrals.totalVisits))
+                      .replace("{days}", String(data.referrals.days))}
+                  </Text>
+
+                  <BlockStack gap="100">
+                    {data.referrals.bySource.map((row) => (
+                      <InlineStack key={row.source} gap="200" align="space-between" blockAlign="center">
+                        <Text as="span" variant="bodyMd">
+                          {(a.referralSourceName as Record<string, string>)[row.source] || row.source}
+                        </Text>
+                        <Text as="span" variant="bodyMd" fontWeight="medium">
+                          {String(row.visits)}
+                        </Text>
+                      </InlineStack>
+                    ))}
+                  </BlockStack>
+
+                  {data.referrals.topPages.length > 0 && (
+                    <BlockStack gap="100">
+                      <Text as="h4" variant="headingSm">
+                        {a.referralTopPages}
+                      </Text>
+                      {data.referrals.topPages.map((page) => (
+                        <InlineStack key={page.path} gap="200" align="space-between" blockAlign="center">
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {page.path}
+                          </Text>
+                          <Text as="span" variant="bodySm">
+                            {String(page.visits)}
+                          </Text>
+                        </InlineStack>
+                      ))}
+                    </BlockStack>
+                  )}
+                </BlockStack>
+              )}
+
+              {/* Stated, not hidden: what this number cannot see. */}
+              <Text as="p" variant="bodySm" tone="subdued">
+                {a.referralCaveat}
+              </Text>
+            </BlockStack>
+          </Card>
         </BlockStack>
       )}
     </SeoSectionLayout>

@@ -1493,6 +1493,39 @@ model GoogleSearchConsoleConnection {
 // SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
 // design (it is served at keyLocation for verification), so it is intentionally
 // stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+// Visits that arrived from an AI assistant (ChatGPT, Perplexity, Claude, …).
+//
+// Aggregate ONLY: one row per (shop, source, UTC day, landing path) with a
+// counter. No visitor identifier, no cookie, no session, no IP — the beacon
+// sends the referrer's classified SOURCE, never the referrer itself, so a
+// referrer carrying a conversation id or a search term cannot land in the
+// database at all. That is what makes this reportable without a consent
+// dialog, and it is also why the report can never answer "which visitor".
+//
+// Day bucketing rather than raw hits keeps the table bounded (sources ×
+// paths × days) and is the granularity the report actually draws.
+model SeoAiReferral {
+  id       String   @id @default(cuid())
+  shop     String
+  // Normalized source key from classifyAiReferral (e.g. "chatgpt"), never the
+  // raw referrer.
+  source   String
+  // UTC day bucket. Date, not DateTime: the report groups by day and a
+  // timestamp would fragment every bucket by the millisecond.
+  day      DateTime @db.Date
+  // Landing path, query stripped (same rule as Seo404Hit).
+  path     String
+  pathHash String
+  count    Int      @default(1)
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, source, day, pathHash])
+  @@index([shop, day])
+  @@index([shop, source, day])
+}
+
 model SeoIndexNowConfig {
   shop             String    @id
   key              String // public IndexNow token (plaintext by design)
