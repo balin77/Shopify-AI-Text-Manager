@@ -13,8 +13,6 @@
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
-import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
-import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import type { ShopLocale } from "../../types/content-editor.types";
@@ -25,6 +23,11 @@ export interface OptionValueData {
   id: string;  // gid://shopify/ProductOptionValue/...
   name: string;
   linked?: boolean;  // true = metaobject-linked value
+  /** The METAOBJECT GID behind a linked value. The only identifier that
+   *  addresses the entry itself — the option's `linkedMetafieldKey` is a
+   *  metafield namespace/key and only coincides with the metaobject type for
+   *  Shopify's own standard definitions. */
+  linkedValue?: string;
 }
 
 export interface OptionData {
@@ -91,6 +94,8 @@ interface OptionsFieldProps {
   /** Primary option data (indexed by option ID) - used when editing primary locale */
   primaryOptions?: Record<string, { name: string; values: string[] }>;
 
+  /** Bumped on every landed save, so the card can drop cached variant counts. */
+  savedNonce?: number;
   /** The product's GID — the variants editor asks how many variants hang off a
    *  value before offering to delete it. */
   productId?: string;
@@ -103,8 +108,10 @@ interface OptionsFieldProps {
   onRemoveOptionValue?: (optionId: string, valueId: string, addedIndex?: number) => void;
   onEditPendingValue?: (optionId: string, index: number, name: string) => void;
   onCreateOption?: (name: string, values: string[]) => void;
+  onCancelCreateOption?: (index: number) => void;
   onDeleteOption?: (optionId: string) => void;
   onReorderOptions?: (orderedIds: string[]) => void;
+  onReorderOptionValues?: (optionId: string, orderedValueIds: string[]) => void;
 
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
   translatingFieldIds?: Set<string>;
@@ -141,6 +148,9 @@ interface OptionsFieldProps {
     addOption?: string;
     optionNamePlaceholder?: string;
     deleteOption?: string;
+    deleteOptionTitle?: string;
+    editMetaobject?: string;
+    deleteValueTitle?: string;
     deleteOptionConfirm?: string;
     deleteValueCount?: string;
     deleteValueUnknown?: string;
@@ -171,6 +181,7 @@ export function OptionsField({
   onPrimaryOptionValuesChange,
   primaryOptions = {},
   productId = "",
+  savedNonce = 0,
   valuesToAdd = {},
   valuesToDelete = {},
   optionsToCreate = [],
@@ -179,20 +190,26 @@ export function OptionsField({
   onRemoveOptionValue,
   onEditPendingValue,
   onCreateOption,
+  onCancelCreateOption,
   onDeleteOption,
   onReorderOptions,
+  onReorderOptionValues,
   translatingFieldIds = new Set(),
   missingTranslationIds,
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
-  // Single-language shop → the option translate buttons have no target locale.
-  const singleLocaleHint = useSingleLocaleHint();
 
   // Navigate to metaobjects page with optional type pre-selection
   const navigateToMetaobjects = (option: OptionData) => {
-    const selectValue = option.linkedMetaobjectType || option.name;
+    // The entry's own GID first: it addresses one metaobject unambiguously and
+    // lands the merchant ON it. `linkedMetafieldKey` is a metafield
+    // namespace/key ("custom--material") and equals the metaobject type only
+    // for Shopify's standard definitions, where the two happen to be spelled
+    // the same; for a custom one it matches nothing and the page opens blank.
+    const linkedGid = option.values.find((v) => v.linkedValue)?.linkedValue;
+    const selectValue = linkedGid || option.linkedMetaobjectType || option.name;
     handleNavigate("/app/metaobjects", {
       searchParams: new URLSearchParams({ select: selectValue }),
     });
@@ -205,7 +222,10 @@ export function OptionsField({
     shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name
   );
 
-  if (!options || options.length === 0) {
+  // A product without options still gets the primary card: that is where "add
+  // a variant" lives, and a single-variant product is the one that needs it.
+  // In a foreign locale there is nothing to translate, so nothing renders.
+  if ((!options || options.length === 0) && !isPrimaryLocale) {
     return null;
   }
 
@@ -229,10 +249,14 @@ export function OptionsField({
         onRemoveValue={(id, valueId, addedIndex) => onRemoveOptionValue?.(id, valueId, addedIndex)}
         onEditPendingValue={(id, index, name) => onEditPendingValue?.(id, index, name)}
         onCreateOption={(name, values) => onCreateOption?.(name, values)}
+        onCancelCreateOption={(index) => onCancelCreateOption?.(index)}
         onDeleteOption={(id) => onDeleteOption?.(id)}
         onReorder={(ids) => onReorderOptions?.(ids)}
+        onReorderValues={(id, valueIds) => onReorderOptionValues?.(id, valueIds)}
+        onOpenMetaobjects={navigateToMetaobjects}
         onTranslate={onTranslate}
         translatingFieldIds={translatingFieldIds}
+        savedNonce={savedNonce}
         t={t as Record<string, string | undefined>}
       />
     );

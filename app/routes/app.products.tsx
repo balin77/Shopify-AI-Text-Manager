@@ -212,12 +212,15 @@ export const loader = createContentLoader({
           return !isDefaultTitleOption({ name: opt.name, values: valNames });
         } catch { return true; }
       }).map((opt: any) => {
-        let values: Array<{ id: string; name: string; linked?: boolean }> = [];
+        let values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
-          // Support both new format [{id, name, linked}] and legacy ["string"] format
+          // Support both new format [{id, name, linked}] and legacy ["string"] format.
+          // `linkedValue` is the METAOBJECT GID behind a linked value — the only
+          // thing that addresses the entry itself, so the editor's link into
+          // /app/metaobjects can select it rather than guessing at a type.
           values = Array.isArray(parsed)
-            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked })
+            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked, linkedValue: v.linkedValue || undefined })
             : [];
         } catch { values = []; }
         // Option is linked if linkedMetafieldKey is set (most reliable) OR any value has linked flag
@@ -493,6 +496,13 @@ export default function ProductsPage() {
       optionValuesEmpty: t.products.optionValuesEmpty,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
       success: t.products.successTitle,
+      // One per failure code the option write paths return. Keyed by code so
+      // the server can stay in codes and this app can stay in three languages.
+      optionWarning_optionsNotConfirmed: t.products.optionWarningNotConfirmed,
+      optionWarning_optionsFailed: t.products.optionWarningFailed,
+      optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
+      optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
+      optionWarning_optionLastOne: t.products.optionWarningLastOne,
     },
   });
 

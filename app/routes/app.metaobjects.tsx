@@ -12,6 +12,10 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
+import {
+  resolveMetaobjectSelection,
+  type MetaobjectTypeItem,
+} from "../services/metaobject-select.shared";
 import { authenticate } from "../shopify.server";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
@@ -93,9 +97,31 @@ export const loader = createContentLoader({
       }
     }
 
+    // A `?select=` carrying a Metaobject GID -- what the product editor sends
+    // for a linked option value -- names an ENTRY, and this page's items are
+    // TYPES (`metaobject_type_<type>`). Only the server can bridge that: the
+    // cache knows which type an entry belongs to. Resolved here so the client
+    // has an id it can actually match, instead of a GID that matches nothing.
+    let selectedType: string | undefined;
+    const select = new URL(ctx.request.url).searchParams.get("select") ?? "";
+    if (select.startsWith("gid://shopify/Metaobject/")) {
+      try {
+        const entry = await db.metaobject.findFirst({
+          where: { shop: ctx.session.shop, id: select },
+          select: { type: true },
+        });
+        selectedType = entry?.type ?? undefined;
+      } catch {
+        // An unresolvable id is a page that opens where it usually does, which
+        // is what happened before this link existed.
+        selectedType = undefined;
+      }
+    }
+
     return {
       items: metaobjectTypes,
       ids: metaobjectTypes.map((t: any) => t.id),
+      selectedType,
     };
   },
 });
@@ -132,7 +158,8 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function MetaobjectsPage() {
-  const { metaobjects, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
+  const { metaobjects, shopLocales, primaryLocale, markets, error, aiSettings, selectedType } =
+    useLoaderData<typeof loader>() as ReturnType<typeof useLoaderData<typeof loader>> & { selectedType?: string };
   const fetcher = useFetcher<FetcherData>();
   const entryFetcher = useFetcher();
   const revalidator = useRevalidator();
@@ -160,17 +187,14 @@ export default function MetaobjectsPage() {
   }, [metaobjects, loadedEntries]);
 
   // Resolve ?select= URL param to an initial item ID (e.g. linked from product options)
+  // `selectedType` is set by the loader when `?select=` carried a Metaobject GID.
   const selectParam = searchParams.get("select");
-  const initialItemId = useMemo(() => {
-    if (!selectParam || metaobjects.length === 0) return undefined;
-    // Match by type handle (most reliable, e.g. "color") or definition name (e.g. "Color")
-    const match = metaobjects.find((m: any) =>
-      m.type?.toLowerCase() === selectParam.toLowerCase() ||
-      m.title?.toLowerCase() === selectParam.toLowerCase() ||
-      m.definitionName?.toLowerCase() === selectParam.toLowerCase()
-    );
-    return match?.id;
-  }, [selectParam, metaobjects]);
+  const initialItemId = useMemo(
+    // The rule lives in its own module because it is not testable inline —
+    // which is how it shipped wrong. See `metaobject-select.shared.ts`.
+    () => resolveMetaobjectSelection(metaobjects as MetaobjectTypeItem[], selectParam, selectedType),
+    [selectParam, selectedType, metaobjects],
+  );
 
   // Initialize unified content editor with augmented items
   const editor = useUnifiedContentEditor({

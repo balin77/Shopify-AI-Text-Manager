@@ -16,3 +16,37 @@
 export function variantCountKey(optionName: string, valueName: string): string {
   return `${optionName}\n${valueName}`;
 }
+
+/**
+ * The `optionValueOrder` form field, parsed.
+ *
+ * ALL OR NOTHING per option, and that is the whole point of this function
+ * existing. The payload is POSITIONAL: dropping one malformed id out of five
+ * does not sanitise the request, it applies a DIFFERENT order than the merchant
+ * dragged — quietly, and to real variants. An option whose list contains
+ * anything unusable is therefore skipped entirely, the same rule the attribute
+ * mappers follow when a response arrives half-delivered.
+ *
+ * Shape: `{ "<option gid>": ["<value gid>", …] }`. Anything else yields `{}`;
+ * a malformed payload must not fail the whole save, whose other halves are
+ * still valid.
+ */
+export function parseValueOrderPayload(
+  raw: string,
+  isValidGid: (id: string) => boolean,
+): Record<string, string[]> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string[]> = {};
+    for (const [optionId, ids] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!isValidGid(optionId) || !Array.isArray(ids)) continue;
+      const valid = ids.filter((id): id is string => typeof id === "string" && isValidGid(id));
+      if (valid.length > 0 && valid.length === ids.length) out[optionId] = valid;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}

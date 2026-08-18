@@ -276,7 +276,8 @@ export const PRODUCT_OPTION_UPDATE = `#graphql
           id
           name
           position
-          optionValues { id name }
+          linkedMetafield { namespace key }
+          optionValues { id name linkedMetafieldValue }
           values
         }
       }
@@ -299,7 +300,8 @@ export const PRODUCT_OPTIONS_CREATE = `#graphql
           id
           name
           position
-          optionValues { id name }
+          linkedMetafield { namespace key }
+          optionValues { id name linkedMetafieldValue }
           values
         }
       }
@@ -308,17 +310,24 @@ export const PRODUCT_OPTIONS_CREATE = `#graphql
   }
 `;
 
+// NOTE (outside the document -- a `#graphql` literal carries no comments):
+// `strategy: DEFAULT`, not NON_DESTRUCTIVE. Removing one option of a 2x2 matrix
+// necessarily deletes variants, so NON_DESTRUCTIVE would REFUSE the delete on
+// every product that has more than one option -- and refuse it as a generic
+// userError, after the merchant confirmed a dialog promising the opposite. The
+// confirmation names the consequence; the strategy has to match it.
 /** Removing a whole option collapses the matrix onto the remaining ones. */
 export const PRODUCT_OPTIONS_DELETE = `#graphql
   mutation productOptionsDelete($productId: ID!, $options: [ID!]!) {
-    productOptionsDelete(productId: $productId, options: $options, strategy: NON_DESTRUCTIVE) {
+    productOptionsDelete(productId: $productId, options: $options, strategy: DEFAULT) {
       product {
         id
         options {
           id
           name
           position
-          optionValues { id name }
+          linkedMetafield { namespace key }
+          optionValues { id name linkedMetafieldValue }
           values
         }
       }
@@ -337,7 +346,8 @@ export const PRODUCT_OPTIONS_REORDER = `#graphql
           id
           name
           position
-          optionValues { id name }
+          linkedMetafield { namespace key }
+          optionValues { id name linkedMetafieldValue }
           values
         }
       }

@@ -56,7 +56,8 @@ export interface EchoedOption {
   id: string;
   name: string;
   position: number;
-  optionValues: Array<{ id: string; name: string }>;
+  linkedMetafield?: { namespace?: string | null; key?: string | null } | null;
+  optionValues: Array<{ id: string; name: string; linkedMetafieldValue?: string | null }>;
 }
 
 interface MutationOutcome {
@@ -109,7 +110,11 @@ async function runOptionMutation(
       return { warning: "optionsFailed" };
     }
     const options = payload?.product?.options;
-    if (!options) return { warning: "optionsNotConfirmed" };
+    // An EMPTY array is not an answer either: Shopify keeps every product on at
+    // least one option, so `[]` is a response that did not carry the block.
+    // `!options` alone lets it through, and an empty list mirrored as data is a
+    // `notIn: []` that matches every row.
+    if (!options || options.length === 0) return { warning: "optionsNotConfirmed" };
     return { options };
   } catch (error) {
     logger.warn("[ProductOptions] failed", {
@@ -133,25 +138,54 @@ export async function mirrorOptions(
   productId: string,
   options: EchoedOption[],
 ): Promise<void> {
-  const numericProductId = productId.replace("gid://shopify/Product/", "");
+  // `Product.id` and therefore `ProductOption.productId` hold the GID -- that
+  // is what `product-sync.service.ts` writes and what every other reader
+  // queries by. Stripping the prefix here made the create branch violate the
+  // foreign key (swallowed as "mirror failed", so a created option stayed
+  // invisible) and made deleteMany and the caller's remainingCount match
+  // nothing at all.
+  if (options.length === 0) {
+    // An echo with no options is not a product without options: Shopify keeps
+    // every product on at least one. Read as data it would wipe the cache of a
+    // product whose options are untouched -- the same rule the attribute
+    // mappers follow for a narrower response.
+    logger.warn("[ProductOptions] empty echo, mirror skipped", {
+      context: "ProductOptions", productId,
+    });
+    return;
+  }
   try {
     const keep = options.map((o) => o.id);
     // Deleted options go, and their rows with them -- a stale option row is one
     // the editor would still offer to translate.
     await db.productOption.deleteMany({
-      where: { productId: numericProductId, id: { notIn: keep } },
+      where: { productId, id: { notIn: keep } },
     });
     for (const option of options) {
-      const values = JSON.stringify(option.optionValues.map((v) => ({ id: v.id, name: v.name })));
+      // The same shape the sync writes. A mirror that dropped `linked` would
+      // make a metaobject-linked option look editable and translatable, which
+      // is exactly what the app forbids for one.
+      const values = JSON.stringify(
+        option.optionValues.map((v) => ({
+          id: v.id,
+          name: v.name,
+          linked: !!v.linkedMetafieldValue,
+          linkedValue: v.linkedMetafieldValue || undefined,
+        })),
+      );
+      const linkedMetafieldKey = option.linkedMetafield
+        ? `${option.linkedMetafield.namespace}--${option.linkedMetafield.key}`
+        : null;
       await db.productOption.upsert({
         where: { id: option.id },
-        update: { name: option.name, position: option.position, values },
+        update: { name: option.name, position: option.position, values, linkedMetafieldKey },
         create: {
           id: option.id,
-          productId: numericProductId,
+          productId,
           name: option.name,
           position: option.position,
           values,
+          linkedMetafieldKey,
         },
       });
     }
@@ -194,7 +228,12 @@ export async function applyOptionChange(
     option.name = name;
   }
 
-  const toAdd = (params.values?.toAdd ?? []).map((n) => n.trim()).filter(Boolean);
+  const requestedAdds = params.values?.toAdd ?? [];
+  const toAdd = requestedAdds.map((n) => n.trim()).filter(Boolean);
+  // A requested add that is blank is REPORTED, not quietly dropped: filtering
+  // it away could empty the request entirely, and the "nothing to do" return
+  // below would then answer a lost edit with success.
+  if (toAdd.length !== requestedAdds.length) return "optionValueEmpty";
   const toDelete = params.values?.toDelete ?? [];
   const toUpdate = (params.values?.toUpdate ?? []).map((v) => ({ id: v.id, name: v.name.trim() }));
   if (toUpdate.some((v) => !v.name)) return "optionValueEmpty";
@@ -267,12 +306,31 @@ export async function deleteOption(
   return undefined;
 }
 
-/** Order only -- the one operation here that cannot lose a variant. */
+/**
+ * Order only -- the one operation here that cannot lose a variant.
+ *
+ * It reorders OPTIONS and, per option, their VALUES. Both matter to the
+ * merchant for the same reason: the first option and its first value decide
+ * which variant the storefront shows first, which is the one a customer sees
+ * before touching anything.
+ *
+ * `OptionReorderInput` carries a nested `values` list, so one call does both.
+ * Values are sent ONLY for options whose values actually moved -- restating an
+ * unchanged order is work with a chance of going wrong and none of achieving
+ * anything, and it would also make every option reorder depend on the value
+ * half being accepted.
+ */
 export async function reorderOptions(
   admin: AdminApiContext,
   db: PrismaClient,
   shop: string,
-  params: { productId: string; orderedIds: string[] },
+  params: {
+    productId: string;
+    orderedIds: string[];
+    /** Value GIDs in their new order, per option id. Omit an option to leave
+     *  its values alone. */
+    valueOrder?: Record<string, string[]>;
+  },
 ): Promise<OptionWriteWarning | undefined> {
   const outcome = await runOptionMutation(
     admin,
@@ -281,13 +339,100 @@ export async function reorderOptions(
     {
       productId: params.productId,
       // Shopify counts positions from 1.
-      options: params.orderedIds.map((id, index) => ({ id, position: index + 1 })),
+      options: params.orderedIds.map((id, index) => {
+        const values = params.valueOrder?.[id];
+        return values && values.length > 0
+          ? {
+              id,
+              position: index + 1,
+              values: values.map((valueId, valueIndex) => ({ id: valueId, position: valueIndex + 1 })),
+            }
+          : { id, position: index + 1 };
+      }),
     },
     "productOptionsReorder",
   );
   if (outcome.warning) return outcome.warning;
   await mirrorOptions(db, params.productId, outcome.options ?? []);
   return undefined;
+}
+
+/**
+ * The colour swatch Shopify holds for each option value, keyed by value GID.
+ *
+ * Its own query, and its own failure handling, on purpose. `swatch` is a newer
+ * field than most of what this app selects, and folding it into the product
+ * sync's option selection would mean that if it is ever absent or renamed, a
+ * SCHEMA-level error takes down the whole product sync -- for a decoration.
+ * Here the worst case is a card without swatches.
+ *
+ * Only values that HAVE a swatch appear. An absent key means "Shopify holds no
+ * swatch for this value", which the caller may then try to derive from the
+ * value's own name (see `product-option-swatch.shared.ts`).
+ */
+export async function fetchOptionSwatches(
+  admin: AdminApiContext,
+  shop: string,
+  productId: string,
+): Promise<Record<string, { color?: string; imageUrl?: string }>> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query productOptionSwatches($id: ID!) {
+          product(id: $id) {
+            options {
+              id
+              optionValues {
+                id
+                swatch {
+                  color
+                  image { image { url } }
+                }
+              }
+            }
+          }
+        }`,
+      { variables: { id: productId } },
+    );
+    const body = (await response.json()) as {
+      data?: {
+        product?: {
+          options?: Array<{
+            optionValues?: Array<{
+              id: string;
+              swatch?: { color?: string | null; image?: { image?: { url?: string | null } | null } | null } | null;
+            }>;
+          }>;
+        };
+      };
+      errors?: Array<{ message?: string }>;
+    };
+    // A schema-level error costs the swatches and nothing else.
+    if (body.errors?.length) {
+      logger.warn("[ProductOptions] swatch query rejected", {
+        context: "ProductOptions", shop, productId, error: body.errors[0]?.message,
+      });
+      return {};
+    }
+    const swatches: Record<string, { color?: string; imageUrl?: string }> = {};
+    for (const option of body.data?.product?.options ?? []) {
+      for (const value of option.optionValues ?? []) {
+        const color = value.swatch?.color ?? undefined;
+        const imageUrl = value.swatch?.image?.image?.url ?? undefined;
+        if (color || imageUrl) swatches[value.id] = { color, imageUrl };
+      }
+    }
+    return swatches;
+  } catch (error) {
+    // A re-auth `Response` is not a failed query -- swallowed, the request can
+    // never re-authenticate and every read here answers "unknown" forever.
+    if (error instanceof Response) throw error;
+    logger.warn("[ProductOptions] swatch query failed", {
+      context: "ProductOptions", shop, productId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  }
 }
 
 /**
@@ -308,33 +453,48 @@ export async function countVariantsPerValue(
   productId: string,
 ): Promise<Record<string, number>> {
   try {
-    const response = await admin.graphql(
-      `#graphql
-        query productOptionVariantCounts($id: ID!) {
-          product(id: $id) {
-            variants(first: 250) {
-              nodes { selectedOptions { name value } }
+    const counts: Record<string, number> = {};
+    let cursor: string | null = null;
+    // Shopify allows up to 2048 variants per product, so this terminates well
+    // inside the bound. It PAGES rather than taking the first 250: an
+    // undercount is the quiet version of the zero this function refuses to
+    // report, and it would be read as "fewer variants at stake than there are".
+    for (let page = 0; page < 10; page++) {
+      const response: Response = await admin.graphql(
+        `#graphql
+          query productOptionVariantCounts($id: ID!, $after: String) {
+            product(id: $id) {
+              variants(first: 250, after: $after) {
+                nodes { selectedOptions { name value } }
+                pageInfo { hasNextPage endCursor }
+              }
             }
-          }
-        }`,
-      { variables: { id: productId } },
-    );
-    const body = (await response.json()) as {
-      data?: {
-        product?: {
-          variants?: { nodes?: Array<{ selectedOptions?: Array<{ name: string; value: string }> }> };
+          }`,
+        { variables: { id: productId, after: cursor } },
+      );
+      const body = (await response.json()) as {
+        data?: {
+          product?: {
+            variants?: {
+              nodes?: Array<{ selectedOptions?: Array<{ name: string; value: string }> }>;
+              pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+            };
+          };
         };
       };
-    };
-    const counts: Record<string, number> = {};
-    for (const variant of body.data?.product?.variants?.nodes ?? []) {
-      for (const selected of variant.selectedOptions ?? []) {
-        const key = variantCountKey(selected.name, selected.value);
-        counts[key] = (counts[key] ?? 0) + 1;
+      const variants = body.data?.product?.variants;
+      for (const variant of variants?.nodes ?? []) {
+        for (const selected of variant.selectedOptions ?? []) {
+          const key = variantCountKey(selected.name, selected.value);
+          counts[key] = (counts[key] ?? 0) + 1;
+        }
       }
+      if (!variants?.pageInfo?.hasNextPage || !variants.pageInfo.endCursor) break;
+      cursor = variants.pageInfo.endCursor;
     }
     return counts;
   } catch (error) {
+    if (error instanceof Response) throw error;
     logger.warn("[ProductOptions] variant count failed", {
       context: "ProductOptions", shop, productId,
       error: error instanceof Error ? error.message : String(error),
