@@ -224,6 +224,7 @@ export const de = {
     metaobjectEntryCreated: "Neu angelegt",
     metaobjectEntryColorInvalid: "Bitte einen Hex-Farbwert angeben, z. B. #A1B2C3.",
     metaobjectEntryPickImage: "Bild wählen",
+    metaobjectEntryImagesOnly: "In diesem Feld k\u00f6nnen nur Bilder verwendet werden.",
     metaobjectEntryClearImage: "Bild entfernen",
     metaobjectEntryReadOnlyDefinition: "Einträge dieser Definition können von dieser App nicht geändert werden.",
     metaobjectEntryReadOnlyUnknown: "Ob diese Definition beschreibbar ist, ist unbekannt — bitte neu laden.",

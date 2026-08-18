@@ -253,7 +253,10 @@ export async function handleMetaobjectUpdate(
         // several. The bulk editor makes such a cell read-only for the same
         // reason; here the write is refused with the reason, which is the only
         // honest answer once the merchant HAS changed something.
-        if (metaobjectListValueIsAmbiguous(fieldType, stored)) {
+        //
+        // CLEARING is exempt: "" is not split, so it cannot shatter anything,
+        // and refusing it would leave such a field permanently unremovable.
+        if (field.value !== "" && metaobjectListValueIsAmbiguous(fieldType, stored)) {
           errors.push(
             `${field.fieldKey}: one of the list values contains "|", which this editor uses to separate them. Edit this field in the Shopify admin.`,
           );
@@ -427,7 +430,9 @@ export async function handleMetaobjectUpdate(
         if (storedTranslation !== "" && formatMetaobjectFieldValue(fieldType, storedTranslation) === field.value) {
           continue;
         }
-        if (metaobjectListValueIsAmbiguous(fieldType, storedTranslation)) {
+        // Same exemption as on the primary path: clearing a translation is a
+        // removal, not a split.
+        if (field.value !== "" && metaobjectListValueIsAmbiguous(fieldType, storedTranslation)) {
           errors.push(
             `${field.fieldKey}: one of the translated list values contains "|", which this editor uses to separate them. Edit this field in the Shopify admin.`,
           );

@@ -55,6 +55,15 @@ export function MetaobjectFileField({
       const item = items[0];
       if (!item) return;
       setError(null);
+      // `/api/create-shopify-file` creates an IMAGE, and this field's picker
+      // only filters by default rather than restricting — a merchant can
+      // switch to videos. Refusing here with the reason beats an opaque "could
+      // not be stored as a file" after the fact. A staged upload that is never
+      // materialised is a temporary object, so nothing is left in the library.
+      if ((item.source === "library" || item.source === "upload") && item.kind !== "image") {
+        setError(content.metaobjectEntryImagesOnly || "Only images can be used in this field.");
+        return;
+      }
       if (item.source === "library") {
         onChange(item.gid);
         setLocalPreview(item.previewUrl || null);
@@ -156,7 +165,11 @@ export function MetaobjectFileField({
       </InlineStack>
       {readOnly && (
         <Text as="span" variant="bodySm" tone="subdued">
-          {content.attributesForeignLocale || "This value exists once per shop, not per language."}
+          {/* Same two causes as the colour field — see the note there. */}
+          {!isPrimaryLocale
+            ? content.attributesForeignLocale || "This value exists once per shop, not per language."
+            : content.metaobjectEntryReadOnlyDefinition ||
+              "This app cannot change entries of this definition."}
         </Text>
       )}
       {open && (

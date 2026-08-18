@@ -90,7 +90,13 @@ export function ColorFieldEditor({
       </InlineStack>
       {readOnly && (
         <Text as="span" variant="bodySm" tone="subdued">
-          {content.attributesForeignLocale || "This value exists once per shop, not per language."}
+          {/* Two causes, two different sentences. "Exists once per shop" is
+              true of a foreign locale and FALSE of a §7.2 lock in the primary
+              one, where the field is not writable at all. */}
+          {!isPrimaryLocale
+            ? content.attributesForeignLocale || "This value exists once per shop, not per language."
+            : content.metaobjectEntryReadOnlyDefinition ||
+              "This app cannot change entries of this definition."}
         </Text>
       )}
     </BlockStack>

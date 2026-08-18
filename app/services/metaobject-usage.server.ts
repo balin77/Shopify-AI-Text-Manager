@@ -12,13 +12,18 @@
  * metaobject GID -- written by both the product sync and the option mirror, so
  * a linked option is recognisable without a Shopify round trip.
  *
- * The rows are narrowed by a SUBSTRING match on each requested GID rather than
- * by `linkedMetafieldKey`: that column is written by the normal sync but not by
- * its fallback path, and a row missing it would have made a used entry look
- * unused -- which unlocks exactly the destructive delete this module exists to
- * refuse. A substring can over-match (one GID is a prefix of another), never
- * under-match, and the JSON is parsed afterwards so a near-miss is dropped.
- * If the scan hits its cap the result is UNKNOWN rather than a partial count.
+ * The prefilter is ONE substring predicate over `ProductOption.values` looking
+ * for a LINKED value, OR'd with `linkedMetafieldKey`. Both writers of that
+ * column stringify `linked: !!linkedMetafieldValue`, so a linked option always
+ * carries the marker even on the sync path that omits `linkedMetafieldKey` --
+ * which is what made a used entry read as unused before, unlocking exactly the
+ * destructive delete this module exists to refuse. One predicate rather than
+ * one per requested GID: that column is an unindexed text column, and a
+ * statement that times out is swallowed into `lookupFailed`, which would leave
+ * usage permanently unknown and deletes permanently blocked on a large shop.
+ * The prefilter can only over-match; the JSON is parsed afterwards, so the
+ * ANSWER is exact. If the scan hits its cap the result is UNKNOWN rather than
+ * a partial count.
  *
  * The one Shopify call it does make is a product COUNT, and only when the cache
  * is empty: without it "no cached products" is permanently unknown, and a shop
@@ -35,6 +40,15 @@ import { logger } from "~/utils/logger.server";
 
 /** How many linked options one scan will look at before giving up. */
 export const LINKED_OPTION_SCAN_CAP = 5000;
+
+/**
+ * How a linked option value looks in the stringified `values` blob.
+ *
+ * Both writers build it with `JSON.stringify({ ..., linked: !!linkedMetafieldValue, ... })`,
+ * so the spelling is fixed and space-free. It is a PREFILTER only — the parse
+ * below decides.
+ */
+const LINKED_VALUE_MARKER = '"linked":true';
 
 export type MetaobjectUsage =
   /** Countable. `products` may legitimately be 0 -- that is a real answer. */
@@ -105,9 +119,11 @@ export async function countLinkedOptionUsage(
     }
 
     const options = await db.productOption.findMany({
-      // Substring prefilter on the exact GIDs — see the header. It can
-      // over-match and is verified by parsing below; it cannot miss a row.
-      where: { product: { shop }, OR: wanted.map((id) => ({ values: { contains: id } })) },
+      // See the header: one cheap superset, made exact by the parse below.
+      where: {
+        product: { shop },
+        OR: [{ linkedMetafieldKey: { not: null } }, { values: { contains: LINKED_VALUE_MARKER } }],
+      },
       select: { productId: true, values: true },
       take: LINKED_OPTION_SCAN_CAP + 1,
     });

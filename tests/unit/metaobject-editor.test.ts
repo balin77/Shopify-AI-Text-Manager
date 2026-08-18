@@ -26,6 +26,7 @@ import {
   metaobjectFieldRole,
   metaobjectFieldSpecs,
   metaobjectFieldValueFor,
+  metaobjectListValueIsAmbiguous,
   metaobjectWriteAccess,
   parseMetaobjectFieldInput,
   parseMetaobjectFieldKey,
@@ -394,5 +395,38 @@ describe("countLinkedOptionUsage", () => {
   it("answers for every requested id, so a missing key never has to be interpreted", async () => {
     const usage = await countLinkedOptionUsage(fakeDb(0, []), "shop.myshopify.com", [ENTRY, OTHER]);
     expect(Object.keys(usage).sort()).toEqual([ENTRY, OTHER].sort());
+  });
+});
+
+// ─── 7. The list separator hazard (review follow-up) ───────────────────────
+
+describe("metaobjectListValueIsAmbiguous", () => {
+  it("flags a list whose ENTRY contains the display separator", () => {
+    // The display form joins with " | " and the parser splits on "|", so such
+    // an entry would be shattered into several on the next save.
+    expect(metaobjectListValueIsAmbiguous("list.single_line_text_field", '["Rot|Blau","Grün"]')).toBe(true);
+    expect(metaobjectListValueIsAmbiguous("list.single_line_text_field", '["Rot","Blau"]')).toBe(false);
+  });
+
+  it("says nothing about types that are not lists", () => {
+    expect(metaobjectListValueIsAmbiguous("single_line_text_field", "a|b")).toBe(false);
+    expect(metaobjectListValueIsAmbiguous("color", "#ff0000")).toBe(false);
+  });
+
+  it("leaves a non-JSON value alone — it is shown verbatim, so it never round-trips", () => {
+    expect(metaobjectListValueIsAmbiguous("list.single_line_text_field", "not json|at all")).toBe(false);
+  });
+});
+
+describe("the display-form comparison that decides 'unchanged'", () => {
+  it("matches for a list that came back exactly as it was shown", () => {
+    // This is the check the save path uses instead of comparing storage forms:
+    // a list is shown as `A | B | C` and stored as JSON, so a byte comparison
+    // of the two would call an untouched field changed.
+    const stored = '["Rot","Blau"]';
+    const shown = formatMetaobjectFieldValue("list.single_line_text_field", stored);
+    expect(shown).toBe("Rot | Blau");
+    const reparsed = parseMetaobjectFieldInput("list.single_line_text_field", shown);
+    expect(reparsed).toEqual({ ok: true, value: stored });
   });
 });

@@ -226,6 +226,7 @@ export const es: Translation = {
     metaobjectEntryCreated: "Recién creada",
     metaobjectEntryColorInvalid: "Introduce un color hexadecimal, p. ej. #A1B2C3.",
     metaobjectEntryPickImage: "Elegir imagen",
+    metaobjectEntryImagesOnly: "En este campo solo se pueden usar im\u00e1genes.",
     metaobjectEntryClearImage: "Quitar imagen",
     metaobjectEntryReadOnlyDefinition: "Esta aplicación no puede modificar entradas de esta definición.",
     metaobjectEntryReadOnlyUnknown: "Se desconoce si esta definición admite escritura — vuelve a cargar.",

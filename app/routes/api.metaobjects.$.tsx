@@ -171,14 +171,25 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         typeof f.type === "string" ? f.type : f.type?.name ?? "",
       ]),
     );
-    /** The entry's own field type wins where the definition is out of date. */
-    const typeOfField = (metaobjectId: string, key: string): string => {
-      const entry = formattedMetaobjects.find((m) => m.id === metaobjectId);
-      const own = Array.isArray(entry?.fields)
-        ? (entry!.fields as Array<{ key: string; type?: string }>).find((f) => f.key === key)?.type
-        : undefined;
-      return own || fieldTypeByKey.get(key) || "";
-    };
+    // Definition FIRST, entry second — the same order `fieldTypeOf` (write
+    // path) and `metaobjectFieldSpecs` (editor) use. Reading the entry first
+    // would let a stale cached field type decide how a value is formatted here
+    // while the writer formats it by the definition, and the two disagreeing
+    // is exactly the double-encoding this formatting exists to prevent.
+    // Precomputed into one map: the alternative is a linear scan of every
+    // entry for every translation row, which at 250 entries x several locales
+    // is millions of comparisons per request.
+    const entryFieldTypes = new Map<string, string>();
+    for (const entry of formattedMetaobjects) {
+      const own = Array.isArray(entry.fields)
+        ? (entry.fields as Array<{ key: string; type?: string }>)
+        : [];
+      for (const field of own) {
+        if (field?.key) entryFieldTypes.set(`${entry.id}#${field.key}`, field.type ?? "");
+      }
+    }
+    const typeOfField = (metaobjectId: string, key: string): string =>
+      fieldTypeByKey.get(key) || entryFieldTypes.get(`${metaobjectId}#${key}`) || "";
 
     const translationsArray = translations
       .filter(t => (t.marketId ?? "") === "")
