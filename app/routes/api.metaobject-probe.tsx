@@ -55,6 +55,41 @@ const SAMPLE_LIMIT = 5;
  *  authority; this list only decides which ones get called out explicitly. */
 const CANDIDATE_REVERSE_FIELDS = ["referencedBy", "referencedByProducts", "usedBy"];
 
+/** Unwraps NON_NULL/LIST wrappers to the named type. `nodes` is `[T!]!`, i.e.
+ *  four levels deep — unwrapping too few is how step 2b first shipped blind. */
+function namedTypeOf(ref: any): string | undefined {
+  let cursor = ref;
+  for (let depth = 0; cursor && depth < 6; depth++) {
+    if (cursor.name) return cursor.name as string;
+    cursor = cursor.ofType;
+  }
+  return undefined;
+}
+
+/** Enough introspection wrappers for `[T!]!` and one to spare. */
+const TYPE_REF_FRAGMENT = `#graphql
+  fragment TypeRef on __Type {
+    kind
+    name
+    ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } }
+  }`;
+
+/**
+ * Did the SERVER reject the selection, or did we simply not get an answer?
+ *
+ * Only the first justifies concluding anything about the schema's shape. A
+ * throttled call that is read as "this connection has no `nodes`" would record
+ * an outage as a measurement.
+ */
+function isSelectionError(res: GraphQLCallResult): boolean {
+  if (res.networkError) return false;
+  return (res.errors ?? []).some((e) =>
+    /doesn't exist on type|Field '[^']+' doesn't exist|Cannot query field|didn't exist|is not defined on/i.test(
+      e.message ?? "",
+    ),
+  );
+}
+
 type GraphQLCallResult = {
   ok: boolean;
   data?: any;
@@ -108,6 +143,23 @@ export interface MetaobjectProbeReport {
   metaobjectTypeFields?: string[];
   metaobjectTypeFieldsError?: string;
   reverseRelationField?: string | null;
+  /**
+   * The reverse relation's SHAPE (step 2b). Its NAME being present is not
+   * enough to write a usage query against it: whether it pages through `nodes`
+   * or `edges`, what the node type is, and whether the connection can report a
+   * COUNT without paging all decide whether a live cross-check is one cheap
+   * call or an unbounded sweep. Absent when the step was not requested.
+   */
+  reverseRelation?: {
+    connectionType?: string;
+    connectionFields?: string[];
+    nodeType?: string;
+    nodeFields?: string[];
+    /** A live run against a real entry — the only thing that proves it works. */
+    liveShape?: "nodes" | "edges";
+    liveSample?: string;
+    error?: string;
+  };
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
   linkTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
   verdicts: string[];
@@ -288,6 +340,191 @@ export async function action({ request }: ActionFunctionArgs) {
       report.metaobjectTypeFieldsError = describeFailure(introspect);
       report.reverseRelationField = null;
       report.verdicts.push("V4 INCONCLUSIVE: the introspection call failed. Not a negative answer.");
+    }
+  }
+
+  // ---- Step 2b: the reverse relation's SHAPE (read-only, V4) ---------------
+  // Measured 2026-08-18: `Metaobject.referencedBy` EXISTS. That answers half of
+  // V4 and none of the half the delete path needs -- a usage query cannot be
+  // written against a field whose connection shape and node type are unknown,
+  // and guessing them is exactly what this probe exists to replace. Read-only,
+  // so it runs without the destructive steps.
+  //
+  // The field NAME comes from the same introspection step 1b does, so this step
+  // runs it itself when asked for on its own: the route takes a direct POST and
+  // `steps=references` alone must not silently measure nothing.
+  if (wants("references")) {
+    const shape: NonNullable<MetaobjectProbeReport["reverseRelation"]> = {};
+    /** Appends rather than overwrites: an early failure explains a later one. */
+    const noteError = (message: string) => {
+      shape.error = shape.error ? `${shape.error} | ${message}` : message;
+    };
+
+    let field = report.reverseRelationField ?? null;
+    if (!field) {
+      const names = await call(
+        `#graphql
+          query MetaobjectProbeReverseName {
+            __type(name: "Metaobject") { fields(includeDeprecated: true) { name } }
+          }`,
+      );
+      if (names.ok) {
+        const list: string[] = (names.data?.__type?.fields ?? []).map((f: any) => f.name);
+        field = CANDIDATE_REVERSE_FIELDS.find((c) => list.includes(c)) ?? null;
+        report.metaobjectTypeFields ??= list;
+        report.reverseRelationField ??= field;
+      } else {
+        noteError(`field lookup: ${describeFailure(names)}`);
+      }
+    }
+
+    if (!field) {
+      report.reverseRelation = shape;
+      report.verdicts.push(
+        `V4 SHAPE NOT MEASURED: ${shape.error ?? "Metaobject exposes none of " + CANDIDATE_REVERSE_FIELDS.join(", ")}.`,
+      );
+    } else {
+      // FOUR wrapper levels, not three: `nodes` is `[T!]!`, i.e.
+      // NON_NULL -> LIST -> NON_NULL -> OBJECT. Unwrapping one level too few
+      // leaves the node type undefined and makes this whole step report
+      // nothing, which is how it shipped the first time.
+      const connection = await call(
+        `#graphql
+          query MetaobjectProbeReverseShape {
+            __type(name: "Metaobject") {
+              fields(includeDeprecated: true) {
+                name
+                type { ...TypeRef }
+              }
+            }
+          }
+          ${TYPE_REF_FRAGMENT}`,
+      );
+      if (!connection.ok) {
+        noteError(`connection lookup: ${describeFailure(connection)}`);
+      } else {
+        const node = (connection.data?.__type?.fields ?? []).find((f: any) => f.name === field);
+        shape.connectionType = namedTypeOf(node?.type);
+      }
+
+      if (shape.connectionType) {
+        const inner = await call(
+          `#graphql
+            query MetaobjectProbeConnectionShape($name: String!) {
+              __type(name: $name) {
+                fields(includeDeprecated: true) {
+                  name
+                  type { ...TypeRef }
+                }
+              }
+            }
+            ${TYPE_REF_FRAGMENT}`,
+          { name: shape.connectionType },
+        );
+        if (inner.ok) {
+          const fields = inner.data?.__type?.fields ?? [];
+          shape.connectionFields = fields.map((f: any) => f.name);
+          const carrier = fields.find((f: any) => f.name === "nodes" || f.name === "edges");
+          shape.nodeType = namedTypeOf(carrier?.type);
+        } else {
+          noteError(`connection fields: ${describeFailure(inner)}`);
+        }
+      }
+
+      if (shape.nodeType) {
+        const nodeShape = await call(
+          `#graphql
+            query MetaobjectProbeNodeShape($name: String!) {
+              __type(name: $name) {
+                kind
+                fields(includeDeprecated: true) { name }
+                possibleTypes { name }
+              }
+            }`,
+          { name: shape.nodeType },
+        );
+        if (nodeShape.ok) {
+          const t = nodeShape.data?.__type;
+          // A UNION (which a "referenced by" node plausibly is) has no fields
+          // and lists its members instead. Both are reported; an empty answer
+          // is left empty rather than dressed up as the other one.
+          const fields: string[] = (t?.fields ?? []).map((f: any) => f.name);
+          shape.nodeFields =
+            fields.length > 0 ? fields : (t?.possibleTypes ?? []).map((f: any) => f.name);
+        } else {
+          // A failed call is not "this type has no fields" -- without this the
+          // report simply omits the line and "not measured" reads as "none".
+          noteError(`node shape: ${describeFailure(nodeShape)}`);
+        }
+      }
+
+      // A LIVE run is the only thing that proves the shape is usable.
+      const sample = await call(
+        `#graphql
+          query MetaobjectProbeReferenceSample($type: String!) {
+            metaobjects(type: $type, first: 1) { nodes { id displayName } }
+          }`,
+        { type: sampleType || STANDARD_COLOUR_TYPE },
+      );
+      const sampleId = sample.data?.metaobjects?.nodes?.[0]?.id ?? null;
+      if (!sample.ok) {
+        // Rule 1 of this file's header: a failed call is not a negative answer.
+        // Reported as "we could not ask", never as "that type has no entries".
+        noteError(`sample lookup: ${describeFailure(sample)}`);
+      } else if (!sampleId) {
+        noteError(`no entry of type "${sampleType || STANDARD_COLOUR_TYPE}" to run it against`);
+      } else {
+        // `nodes` first, `edges` only if the SELECTION was rejected. Shopify
+        // connections expose both, so any other failure (throttling, network)
+        // must not be recorded as "this connection uses edges" -- that would be
+        // a shape conclusion drawn from an outage.
+        const viaNodes = await call(
+          `#graphql
+            query MetaobjectProbeReferencedByNodes($id: ID!) {
+              metaobject(id: $id) {
+                id
+                ${field}(first: 5) { nodes { __typename } }
+              }
+            }`,
+          { id: sampleId },
+        );
+        if (viaNodes.ok) {
+          shape.liveShape = "nodes";
+          shape.liveSample = JSON.stringify(viaNodes.data?.metaobject ?? null).slice(0, 600);
+        } else if (isSelectionError(viaNodes)) {
+          const viaEdges = await call(
+            `#graphql
+              query MetaobjectProbeReferencedByEdges($id: ID!) {
+                metaobject(id: $id) {
+                  id
+                  ${field}(first: 5) { edges { node { __typename } } }
+                }
+              }`,
+            { id: sampleId },
+          );
+          if (viaEdges.ok) {
+            shape.liveShape = "edges";
+            shape.liveSample = JSON.stringify(viaEdges.data?.metaobject ?? null).slice(0, 600);
+          } else {
+            noteError(`nodes: ${describeFailure(viaNodes)} | edges: ${describeFailure(viaEdges)}`);
+          }
+        } else {
+          noteError(`live run: ${describeFailure(viaNodes)}`);
+        }
+      }
+
+      report.reverseRelation = shape;
+      report.verdicts.push(
+        shape.liveShape
+          ? `V4 SHAPE MEASURED: Metaobject.${field} pages through \`${shape.liveShape}\` of ${
+              shape.nodeType ?? "an unnamed type"
+            }; connection fields: ${(shape.connectionFields ?? []).join(", ") || "unknown"}. A live usage cross-check can be written against this${
+              (shape.connectionFields ?? []).some((f) => /count/i.test(f))
+                ? " and the connection reports a COUNT, so it needs no paging."
+                : " -- but the connection reports NO count field, so counting means paging, which is why the cache stays the primary source."
+            }`
+          : `V4 SHAPE NOT MEASURED: ${shape.error ?? "the live run produced no answer"}. The name exists; the form does not, so no usage query is written against it.`,
+      );
     }
   }
 

@@ -331,7 +331,30 @@ export function CreateItemModal({
   const errorFor = (key: string) => shownErrors.find((e) => e.field === key);
 
   const isDirty = Object.values(values).some((v) => v.trim().length > 0) || !!image;
-  const canSubmit = !submitting && !blocked && localErrors.length === 0 && ruleErrors.length === 0;
+
+  /**
+   * A dynamic option the loader marked DISABLED, with a reason.
+   *
+   * A metaobject definition whose REQUIRED fields include a type this app has
+   * no editor for is offered with its reason rather than filtered out (§1.5) —
+   * but it can also arrive PRESELECTED, because the metaobjects tab prefills
+   * the type the merchant is already looking at. Measured on a live shop
+   * (PLAN_METAOBJECTS_EDITOR §2.1): `shopify--color-pattern` is exactly such a
+   * definition — two of its three required fields are taxonomy references —
+   * so this is the standard colour type, not a corner case. Without this the
+   * Create button would be enabled on a payload Shopify is guaranteed to
+   * reject, which is the one thing that list of reasons exists to prevent.
+   */
+  const disabledOptionKey = useMemo(() => {
+    for (const [key, options] of Object.entries(dynamicOptions)) {
+      const selected = options.find((o) => o.value === values[key]);
+      if (selected?.disabled) return key;
+    }
+    return null;
+  }, [dynamicOptions, values]);
+
+  const canSubmit =
+    !submitting && !blocked && !disabledOptionKey && localErrors.length === 0 && ruleErrors.length === 0;
 
   /**
    * Drop `field.*` values belonging to a metaobject definition that is no
@@ -573,6 +596,7 @@ export function CreateItemModal({
       case "blogPicker":
       case "metaobjectType": {
         const options = dynamicOptions[field.key] ?? [];
+        const selectedOption = options.find((o) => o.value === value);
         return (
           <Select
             key={field.key}
@@ -580,8 +604,14 @@ export function CreateItemModal({
             options={[{ value: "", label: "—" }, ...options]}
             value={value}
             onChange={(v) => setValue(field.key, v)}
-            error={errorText}
-            helpText={options.find((o) => o.value === value)?.helpText}
+            // A disabled option that is nevertheless SELECTED (prefilled) shows
+            // its reason as an ERROR rather than as quiet help text: the Create
+            // button is off because of it, and a disabled button with no
+            // visible cause is the same dead end as a silently missing option.
+            // The reason is rendered ONCE — as the error when it explains a
+            // refusal, as help text otherwise.
+            error={errorText || (selectedOption?.disabled ? selectedOption.helpText || true : undefined)}
+            helpText={selectedOption?.disabled ? undefined : selectedOption?.helpText}
           />
         );
       }

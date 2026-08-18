@@ -237,6 +237,10 @@ describe("metaobjectWriteAccess", () => {
     expect(metaobjectWriteAccess("MERCHANT_READ")).toBe("readOnly");
     expect(metaobjectWriteAccess("PRIVATE")).toBe("readOnly");
     expect(metaobjectWriteAccess("MERCHANT_READ_WRITE")).toBe("writable");
+    // MEASURED (PLAN §2.1): this is what every Shopify STANDARD definition on
+    // the probed shop actually reports, `shopify--color-pattern` included. It
+    // must not lock the editor.
+    expect(metaobjectWriteAccess("PUBLIC_READ_WRITE")).toBe("writable");
     // A value this app has never seen is not evidence of a restriction.
     expect(metaobjectWriteAccess("SOMETHING_NEW")).toBe("writable");
   });

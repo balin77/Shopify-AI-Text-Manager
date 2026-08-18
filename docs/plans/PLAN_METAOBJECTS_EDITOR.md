@@ -1,7 +1,6 @@
 # Metaobjekt-Editor — Plan (Phasen 0–5)
 
-**Status:** Phasen 0–5 umgesetzt (2026-08-18). **Offen: die Messung selbst.**
-Die Probe-Route steht (Settings → Probes → Metaobjects), aber sie ist noch **nicht gegen einen echten Shop gelaufen** — V1–V5 und M2 in §2 sind weiterhin Vermutungen, und jede Oberfläche nimmt bis dahin die vorsichtige Lesart:
+**Status:** Phasen 0–5 umgesetzt (2026-08-18). **Messlauf 1 ist gefahren** — der schreibfreie Teil (§2.1): V2, V4 (dem Namen nach) und M2 sind beantwortet, **V1, V3 und V5 nicht**, weil die destruktiven Schritte 3 und 4 nicht gelaufen sind. Jede Oberfläche nimmt für die offenen Fragen weiter die vorsichtige Lesart:
 - Eintrag löschen ist **nur bei bekannt 0 Verwendungen** möglich, serverseitig durchgesetzt (§5.4); „unbekannt" ist genauso gesperrt wie „in Benutzung".
 - Der Schreib-/Lese-Modus einer Definition (§7.2) hängt an Shopifys `MetaobjectAccess.admin`, das der Definitions-Sync jetzt mitholt — `null` heißt **unbekannt** und sperrt nichts. Fällt V1 negativ aus, ist die Sperre schon da und braucht nur den Wert.
 **Ziel:** `/app/metaobjects` vom reinen Übersetzungs-Fenster zu einer Arbeitsfläche machen — Einträge **anlegen und entfernen**, **alle** editierbaren Felder eines Eintrags bearbeiten (nicht nur das Label), und für Farb-Metaobjekte den **Swatch** (Farbwert und/oder Bild) sehen und setzen.
@@ -101,11 +100,28 @@ Dieser Abschnitt trennt drei Sorten Aussage sauber, weil ein Plan, der eine unge
 - Metafield-/Metaobjekt-Feldtyp `color` ist ein Hex-String. **Das genaue Format** (`#RRGGBB`, Groß-/Kleinschreibung, Alpha erlaubt?) wird gemessen, nicht angenommen — siehe M2.
 - `metaobjectBulkDelete` existiert. Wird hier nicht benutzt (§9).
 
+### 2.1 Messergebnis — Lauf 1 (2026-08-18, `8c19f3-ce.myshopify.com`, API 2026-07, nur Schritte 1+2, schreibfrei)
+
+| | Frage | Ergebnis |
+|---|---|---|
+| **V2** | Wie sieht die Standard-Farbdefinition aus? | ✅ **BESTÄTIGT.** `shopify--color-pattern` existiert mit `label:single_line_text_field*`, `color:color`, `image:file_reference`, `color_taxonomy_reference:list.product_taxonomy_value_reference*`, `pattern_taxonomy_reference:product_taxonomy_value_reference*` (`*` = Pflichtfeld). Farbfeld = `color`, Bildfeld = `image`. |
+| **V4** | Gibt es eine Rückwärts-Beziehung? | ✅ **BESTÄTIGT dem NAMEN nach:** `Metaobject.referencedBy` existiert. **Seine FORM ist noch nicht gemessen** (Knotentyp, `nodes` vs. `edges`, ob eine Zählung ohne Durchblättern geht) — bis dahin wird sie nicht benutzt, siehe §5.1. |
+| **M2** | Echtes Format eines `color`-Werts | ✅ `#RRGGBB`, gemischte Groß-/Kleinschreibung im selben Shop (`#FFC0CB`, `#bdffca`). Kein Alpha beobachtet. Deckt sich mit `METAOBJECT_HEX_PATTERN`. |
+| **M2** | Welche Schlüssel meldet Shopify als übersetzbar? | ✅ Auf `shopify--color-pattern`: **nur `label`**. Und das ist hier ausnahmsweise ein echtes Negativ statt der Leerwert-Falle: `color` und beide Taxonomie-Felder waren in allen fünf Stichproben **gefüllt** und trotzdem nicht gelistet. `image` war überall `null`, seine Abwesenheit ist also weiterhin unschlüssig. |
+| **§7.2** | `access.admin` je Definition | Gemessen: **`PUBLIC_READ_WRITE`** auf allen zehn Standard-Definitionen. Der in §7.2 verkabelte Lesemodus greift damit auf diesem Shop nirgends. |
+| **V1** | Darf eine Dritt-App Standard-Einträge schreiben? | ⏳ **NICHT GEMESSEN** (Schreibtest nicht gelaufen). `PUBLIC_READ_WRITE` ist ein starkes Indiz dafür, dass die Antwort ja lautet — aber ein Indiz, keine Messung. |
+| **V3** | Leitet Shopify den Storefront-Swatch aus dem Farbfeld ab? | ⏳ **NICHT GEMESSEN.** |
+| **V5** | Was passiert beim Löschen eines verlinkten Eintrags? | ⏳ **NICHT GEMESSEN.** Die Oberfläche nimmt weiter (b) an. |
+
+**Die teuerste Zeile dieser Tabelle ist die, nach der niemand gefragt hat:** die Standard-Farbdefinition hat **drei** Pflichtfelder, und zwei davon sind `product_taxonomy_value_reference`. Diese App hat für diesen Typ keinen Editor, also liefert `metaobjectCreatability` für sie `unsupportedRequiredType` — **ein Farb-Eintrag kann von hier aus nicht ANGELEGT werden**, genau für den Typ, der den ganzen Plan ausgelöst hat. Bearbeiten, übersetzen und (nach V5) löschen bleiben davon unberührt; nur das „+" ist für diesen Typ mit Begründung gesperrt. Ein Taxonomie-Picker ist die Voraussetzung dafür und ist in diesem Plan kein Ziel — er gehört zu §9 und braucht seine eigene Entscheidung.
+
+**Zweite Konsequenz, angenehmer:** Die Aufhebung des Label-Filters im Sync (§6.1) liefert auf dieser Definition **exakt dieselbe Menge** wie vorher — `label` ist der einzige übersetzbare Schlüssel. Der Umbau ist damit gegen den realen Shop risikofrei, nicht nur plausibel.
+
 **Vermutung, ausdrücklich als solche markiert (Phase 0 misst sie):**
 - **V1:** Eine Dritt-App mit `write_metaobjects` darf Einträge einer **Shopify-STANDARD-Definition** (`shopify--…`) anlegen/ändern/löschen. Plausibel, weil Merchants dasselbe im Admin tun — aber Standard-Definitionen tragen ein `access { admin storefront }`-Regime, und ob unsere App darunter fällt, ist nicht dokumentierbar entscheidbar.
-- **V2:** Die Standard-Farbdefinition heißt `shopify--color-pattern` und trägt ein Label-Feld, ein Feld vom Typ `color` und ein Bildfeld (`file_reference`). Die einzige Repo-Spur ist ein Testwert für `linkedMetafieldKey` ([tests/unit/product-options.server.test.ts:228](../../tests/unit/product-options.server.test.ts#L228)) — und der beschreibt die **Metafield**-Namespace/Key-Kombination, nicht den Definitionstyp.
+- **V2 — ✅ beantwortet, siehe §2.1.** Die Standard-Farbdefinition heißt `shopify--color-pattern` und trägt ein Label-Feld, ein Feld vom Typ `color` und ein Bildfeld (`file_reference`). Die einzige Repo-Spur ist ein Testwert für `linkedMetafieldKey` ([tests/unit/product-options.server.test.ts:228](../../tests/unit/product-options.server.test.ts#L228)) — und der beschreibt die **Metafield**-Namespace/Key-Kombination, nicht den Definitionstyp.
 - **V3:** `ProductOptionValue.swatch` wird von Shopify **aus** diesen Feldern abgeleitet, d. h. unser `metaobjectUpdate` auf das Farbfeld ändert den Swatch im Shop.
-- **V4:** Es gibt eine Rückwärts-Beziehung (`Metaobject.referencedBy` o. ä.), über die sich live zählen lässt, welche Produkte einen Eintrag verwenden.
+- **V4 — ✅ dem Namen nach beantwortet, Form offen, siehe §2.1.** Es gibt eine Rückwärts-Beziehung (`Metaobject.referencedBy` o. ä.), über die sich live zählen lässt, welche Produkte einen Eintrag verwenden.
 - **V5:** Was beim Löschen eines verlinkten Eintrags passiert. Drei mögliche Welten, und der Unterschied ist gewaltig: **(a)** Shopify verweigert mit `userError`, **(b)** Shopify löscht, der Optionswert verschwindet und die zugehörigen Varianten werden mitgelöscht (das wäre derselbe Schaden, den [product-options.server.ts:9-21](../../app/services/product-options.server.ts#L9-L21) beim Löschen von Optionswerten beschreibt: Bestand, Preise, SKUs, Bildzuordnungen weg), **(c)** Shopify löscht und lässt einen toten Verweis stehen.
 
 **Bis V5 gemessen ist, nimmt die Oberfläche (b) an** und sagt das so. Das ist die einzige Annahme, bei der ein Irrtum den Merchant nichts kostet.

@@ -335,16 +335,21 @@ export type MetaobjectWriteAccess = "writable" | "readOnly" | "unknown";
  * `MERCHANT_READ` grants read-only Admin API access and `PRIVATE` restricts a
  * definition to the app that owns it, so neither accepts our `metaobjectUpdate`.
  * Anything else that came back is treated as writable — a value this app has
- * never seen is not evidence of a restriction.
+ * never seen is not evidence of a restriction, and that default is what carried
+ * the one value the probe actually found.
  *
- * This is a READ of a documented enum, not a measurement: PLAN_METAOBJECTS_EDITOR
- * V1 (may a third-party app write entries of a Shopify STANDARD definition?) is
- * answered by the Phase-0 probe, and if it disagrees with this mapping the
- * probe wins.
+ * MEASURED (2026-08-18, live shop, API 2026-07 — PLAN §2.1): all ten of that
+ * shop's Shopify STANDARD definitions report **`PUBLIC_READ_WRITE`**, including
+ * `shopify--color-pattern`. That is a strong indication that V1 (may a
+ * third-party app write entries of a standard definition?) is positive, but it
+ * is an indication, not a measurement: only the probe's WRITE test answers it,
+ * and if it disagrees with this mapping the probe wins.
  */
 export function metaobjectWriteAccess(adminAccess: string | null | undefined): MetaobjectWriteAccess {
   if (adminAccess === null || adminAccess === undefined || adminAccess === "") return "unknown";
   const normalized = adminAccess.toUpperCase();
   if (normalized === "MERCHANT_READ" || normalized === "PRIVATE") return "readOnly";
+  // PUBLIC_READ_WRITE and MERCHANT_READ_WRITE both land here, as does anything
+  // new — see the note above on why an unknown value is not a restriction.
   return "writable";
 }
