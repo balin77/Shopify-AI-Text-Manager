@@ -3,7 +3,8 @@
  *
  * Two things, and neither can come from the cache:
  *
- *   counts    How many variants hang off each option value -- the one number a
+ *   counts    (only with `?include=counts`) How many variants hang off each
+ *             option value -- the one number a
  *             merchant needs before deleting a value, because deleting it
  *             deletes those variants with their stock, prices, SKUs and image
  *             assignments. `ProductVariant` stores a display title ("Red / S")
@@ -36,11 +37,17 @@ export const loader = async (args: LoaderFunctionArgs) => {
     return json({ success: false, counts: {}, swatches: {} }, { status: 400 });
   }
 
+  // The counts are opt-in. Swatches are wanted the moment a product opens (a
+  // collapsed card is where the merchant reads the values), while the counts
+  // are up to ten pages of variants and are only wanted once a card is opened
+  // and a delete becomes possible. One route, two costs, asked for separately.
+  const wantsCounts = (url.searchParams.get("include") ?? "").split(",").includes("counts");
+
   // No plan gate: this reads nothing a merchant cannot see on the product page
   // itself, and gating it would leave the delete confirmation unable to name
   // the consequence — which is the opposite of what a gate should achieve.
   const [counts, swatches] = await Promise.all([
-    countVariantsPerValue(admin, session.shop, productId),
+    wantsCounts ? countVariantsPerValue(admin, session.shop, productId) : Promise.resolve({}),
     fetchOptionSwatches(admin, session.shop, productId),
   ]);
   return json({ success: true, counts, swatches });

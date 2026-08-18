@@ -49,7 +49,7 @@
  * editor's ONE save bar carries, the same as the text fields.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import {
   Badge,
   BlockStack,
@@ -226,20 +226,48 @@ export function VariantOptionsEditor({
   }, [options, optionsToDelete, order]);
 
   /**
-   * The variant impact, fetched once per product and only when an option is
-   * actually opened. It is a 250-variant query; putting it on every product
-   * open would pay for it on every product nobody edits.
+   * The SWATCHES, as soon as there is a product.
+   *
+   * Not gated on a card being open, and that is the fix for a real bug:
+   * collapsed cards are where the merchant READS the values, so a swatch that
+   * only appears once you open the card is missing exactly where it is wanted.
+   * The symptom was one lone chip on a collapsed card -- the values whose name
+   * the local colour table happens to know -- and the rest arriving on click.
+   *
+   * It is a cheap query (the options, no variants), which is why it can be
+   * afforded on every product open while the counts cannot.
    */
   useEffect(() => {
-    if (!openOptionId || impact !== null || !productId) return;
-
+    if (!productId) return;
     let cancelled = false;
     fetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}`)
       .then((r) => r.json())
       .then((body) => {
         if (cancelled) return;
-        setImpact(body?.success ? (body.counts as Record<string, number>) : {});
         setSwatches(body?.success ? ((body.swatches ?? {}) as Record<string, OptionValueSwatch>) : {});
+      })
+      .catch(() => {
+        // No swatches is the state the card already handles: the name alone.
+        if (!cancelled) setSwatches({});
+      });
+    return () => { cancelled = true; };
+  }, [productId, savedNonce]);
+
+  /**
+   * The variant impact, fetched once per product and only when an option is
+   * actually opened. It is a 250-variant query -- up to ten pages of it --
+   * so putting it on every product open would pay for it on every product
+   * nobody edits.
+   */
+  useEffect(() => {
+    if (!openOptionId || impact !== null || !productId) return;
+
+    let cancelled = false;
+    fetch(`/api/product-option-details?productId=${encodeURIComponent(productId)}&include=counts`)
+      .then((r) => r.json())
+      .then((body) => {
+        if (cancelled) return;
+        setImpact(body?.success ? (body.counts as Record<string, number>) : {});
       })
       .catch(() => {
         // An empty map is "we could not count", which the dialog says out loud.
@@ -319,6 +347,41 @@ export function VariantOptionsEditor({
     return [...ordered, ...added];
   };
 
+  /**
+   * The drag wiring for ONE value row.
+   *
+   * Both branches use it: a metaobject-linked option's values cannot be
+   * renamed here, but their ORDER is a property of the product, not of the
+   * metaobjects, so it is the merchant's to change -- and it decides which
+   * variant the storefront shows first.
+   */
+  const valueDragProps = (option: OptionData, valueId: string) => ({
+    draggable: !!valueId,
+    onDragStart: (event: DragEvent) => {
+      if (!valueId) return;
+      // Stops the OPTION card underneath from being dragged at the same time.
+      event.stopPropagation();
+      // Firefox does not START a drag unless dataTransfer carries something.
+      // Nothing reads it back -- the id is in state -- so it is optional:
+      // where the object is absent the drag still works from state alone.
+      event.dataTransfer?.setData("text/plain", valueId);
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+      setDragValue(valueId);
+    },
+    onDragEnd: () => setDragValue(null),
+    onDragOver: (event: DragEvent) => {
+      if (!valueId || !dragValue) return;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    onDrop: (event: DragEvent) => {
+      if (!valueId || !dragValue) return;
+      event.stopPropagation();
+      moveValue(option, dragValue, valueId);
+      setDragValue(null);
+    },
+  });
+
   /** Moves `fromId` to where `toId` sits, within one option. */
   const moveValue = (option: OptionData, fromId: string, toId: string) => {
     if (!fromId || !toId || fromId === toId) return;
@@ -387,7 +450,15 @@ export function VariantOptionsEditor({
               <div
                 key={option.id}
                 draggable
-                onDragStart={() => setDragId(option.id)}
+                onDragStart={(event) => {
+                  // Firefox does not START a drag unless dataTransfer carries
+                  // something. Nothing reads it back -- the id is in state --
+                  // but without this line the option cards do not move at all
+                  // in Firefox.
+                  event.dataTransfer?.setData("text/plain", option.id);
+                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                  setDragId(option.id);
+                }}
                 // Released over dead space, the id would otherwise stay set and
                 // the NEXT drop -- of anything -- would replay this move.
                 onDragEnd={() => setDragId(null)}
@@ -506,23 +577,28 @@ export function VariantOptionsEditor({
                     old card followed. */}
                 {option.isLinked ? (
                   <BlockStack gap="200">
-                    <InlineStack gap="100" wrap>
-                      {values.map((value) => {
-                        const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
-                        return (
-                          <Tag key={value.id}>
-                            {swatch ? (
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                                <Swatch swatch={swatch} />
-                                {value.name}
+                    {/* A linked option's values live in the metaobjects, so
+                        they are not editable here -- but their ORDER belongs
+                        to the product, not to the metaobjects, and it decides
+                        which variant the storefront shows first. So: draggable,
+                        not renameable. */}
+                    <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
+                    {values.map((value) => {
+                      const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
+                      return (
+                        <div key={value.id} {...valueDragProps(option, value.id)}>
+                          <InlineStack gap="200" blockAlign="center" wrap={false}>
+                            {value.id && (
+                              <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
+                                <Icon source={DragHandleIcon} tone="subdued" />
                               </span>
-                            ) : (
-                              value.name
                             )}
-                          </Tag>
-                        );
-                      })}
-                    </InlineStack>
+                            <Swatch swatch={swatch} />
+                            <Text as="span" variant="bodyMd">{value.name}</Text>
+                          </InlineStack>
+                        </div>
+                      );
+                    })}
                     {onOpenMetaobjects && (
                       <InlineStack>
                         <Button variant="plain" onClick={() => onOpenMetaobjects(option)}>
@@ -539,26 +615,7 @@ export function VariantOptionsEditor({
                         key={value.id || `new-${index}`}
                         // Only SAVED values can move: a pending add has no
                         // Shopify id, so it cannot be given a position.
-                        draggable={!!value.id}
-                        onDragStart={(event) => {
-                          if (!value.id) return;
-                          // Stops the OPTION card underneath from being
-                          // dragged at the same time.
-                          event.stopPropagation();
-                          setDragValue(value.id);
-                        }}
-                        onDragEnd={() => setDragValue(null)}
-                        onDragOver={(event) => {
-                          if (!value.id || !dragValue) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                        }}
-                        onDrop={(event) => {
-                          if (!value.id || !dragValue) return;
-                          event.stopPropagation();
-                          moveValue(option, dragValue, value.id);
-                          setDragValue(null);
-                        }}
+                        {...valueDragProps(option, value.id)}
                       >
                       <InlineStack gap="200" blockAlign="center" wrap={false}>
                         {value.id && (
