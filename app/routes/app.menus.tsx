@@ -17,13 +17,18 @@
  *     empty answer looks like from the inside — which is how the wrong claim
  *     got here in the first place.
  *
- * So this page stays read-only for ONE remaining reason: this app has never
- * registered a translation on such a Link and verified the echo. Readable, and
- * written by somebody else, is not the same claim as "our write path works" —
- * that gap is precisely the silent-no-op pattern the translation invariants in
- * CLAUDE.md exist for. Close it with the probe's write step first; the banner
- * text (t.content.menuLimitation) is wrong today and must be rewritten in the
- * same change that ships the write path.
+ *   - And our OWN write is confirmed end to end: register echoed, a fresh
+ *     read returned the value, remove took it away again with the removal
+ *     echoed — on a depth-3 item, the deepest level the shop has.
+ *
+ * So this page is read-only only because nobody has built the write path yet,
+ * NOT because the platform refuses. Enumerate via the flat
+ * translatableResources(resourceType: LINK) sweep, never via the menu's nested
+ * connection, and address each item by the Link GID derived from its MenuItem
+ * id. The banner text (t.content.menuLimitation) is factually wrong today and
+ * must be rewritten in the same change that ships that path. Still unmeasured,
+ * so do not assume either: that a translated sub-item RENDERS in the storefront
+ * navigation, and that a market-scoped translation behaves like the global one.
  */
 
 import { useState, useEffect, type ReactElement } from "react";
