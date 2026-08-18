@@ -169,6 +169,19 @@ model AISettings {
   // crawl take longer.
   seoCrawlExternalLinks Boolean @default(true)
 
+  // Merchant switch for the weekly automatic storefront crawl (Settings → SEO).
+  // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
+  // should get the delivery report without hunting for a checkbox — and ANDed
+  // into the sweep's due-query, so switching it off costs nothing per tick.
+  seoAutoCrawlEnabled Boolean @default(true)
+  // Last automatic storefront crawl for this shop — see
+  // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
+  // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
+  // lock, and only shops on a plan with seo.scheduledCrawl are selected.
+  // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
+  // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
+  lastAutoCrawlAt DateTime?
+
   // Keyword-aware translation: a translation into a foreign locale is
   // phrased so THAT locale's own tracked keyword survives, instead of being
   // a literal rendering of the primary text. Default on — it is what a
@@ -219,6 +232,8 @@ model AISettings {
 
   // Backs the nightly-audit sweep's due-query (audit-auto-run.service.ts).
   @@index([subscriptionPlan, lastAutoAuditAt])
+  // Same, for the weekly crawl sweep (crawl-auto-run.service.ts).
+  @@index([subscriptionPlan, lastAutoCrawlAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the

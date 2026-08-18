@@ -49,6 +49,14 @@ export interface SeoPlanLimits {
    */
   scheduledAudit: boolean;
   /**
+   * Weekly automatic storefront crawl (SeoCrawlAutoRunService) writing a fresh
+   * SeoCrawlSnapshot. Report-only, like the audit — it never rewrites content.
+   * Weekly rather than nightly because a crawl fetches every page of the shop:
+   * the cost scales with the catalog, and delivery problems (404s, redirect
+   * chains, orphans) do not appear and vanish within a day.
+   */
+  scheduledCrawl: boolean;
+  /**
    * Days of SeoScoreSnapshot / SeoKeywordSnapshot history kept and charted.
    * The newest snapshot always survives, so 0 means "current state, no trend".
    */
@@ -156,6 +164,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     // off here.
     seo: {
       scheduledAudit: false,
+      scheduledCrawl: false,
       scoreHistoryDays: 0,
       maxTrackedKeywords: 0,
       gscProperties: 0,
@@ -199,6 +208,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     // Search Console on Pro.
     seo: {
       scheduledAudit: false,
+      scheduledCrawl: false,
       scoreHistoryDays: 0,
       maxTrackedKeywords: 25,
       gscProperties: 0,
@@ -239,6 +249,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     // and Max throughput.
     seo: {
       scheduledAudit: false,
+      scheduledCrawl: false,
       scoreHistoryDays: 30,
       maxTrackedKeywords: 100,
       gscProperties: 1,
@@ -277,6 +288,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     // properties, 16-month window) and it moves bulk work faster.
     seo: {
       scheduledAudit: true,
+      scheduledCrawl: true,
       scoreHistoryDays: 365,
       maxTrackedKeywords: 1000,
       gscProperties: 1, // see SeoPlanLimits.gscProperties — multi-property is a follow-up

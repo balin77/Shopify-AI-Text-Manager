@@ -24,6 +24,8 @@ interface Settings {
   seoAutoHandleRedirect?: boolean;
   /** Nightly automatic store audit (Max plan). */
   seoAutoAuditEnabled: boolean;
+  /** Weekly automatic storefront crawl (Max plan). */
+  seoAutoCrawlEnabled: boolean;
   /** Stored merchant overrides; `null` = defaults from character-limits.ts. */
   seoLimits: Partial<SeoLimits> | null;
 }
@@ -132,6 +134,8 @@ export function SettingsSEOTab({
   // get, and the action re-checks server-side.
   const canScheduleAudit = canAccessSeoFeature(subscriptionPlan, "scheduledAudit");
   const scheduledAuditPlan = getMinimumPlanForSeoFeature("scheduledAudit");
+  const canScheduleCrawl = canAccessSeoFeature(subscriptionPlan, "scheduledCrawl");
+  const scheduledCrawlPlan = getMinimumPlanForSeoFeature("scheduledCrawl");
   const initialDraft = toDraft(settings.seoLimits ?? null);
 
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
@@ -148,6 +152,9 @@ export function SettingsSEOTab({
   const [seoAutoAuditEnabled, setSeoAutoAuditEnabled] = useState(
     settings.seoAutoAuditEnabled ?? true,
   );
+  const [seoAutoCrawlEnabled, setSeoAutoCrawlEnabled] = useState(
+    settings.seoAutoCrawlEnabled ?? true,
+  );
   const [limits, setLimits] = useState<Record<keyof SeoLimits, string>>(initialDraft);
   const [hasChanges, setHasChanges] = useState(false);
 
@@ -158,13 +165,15 @@ export function SettingsSEOTab({
     const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
     const redirectChanged = autoHandleRedirect !== (settings.seoAutoHandleRedirect ?? true);
     const autoAuditChanged = seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true);
-    const changed = suffixChanged || limitsChanged || redirectChanged || autoAuditChanged;
+    const autoCrawlChanged = seoAutoCrawlEnabled !== (settings.seoAutoCrawlEnabled ?? true);
+    const changed =
+      suffixChanged || limitsChanged || redirectChanged || autoAuditChanged || autoCrawlChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
     // initialDraft is derived from `settings` — including it in deps would
     // create a new object each render and loop indefinitely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, seoAutoAuditEnabled, limits, settings, onHasChangesChange]);
+  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, seoAutoAuditEnabled, seoAutoCrawlEnabled, limits, settings, onHasChangesChange]);
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -187,6 +196,9 @@ export function SettingsSEOTab({
         ...(canScheduleAudit && seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true)
           ? { seoAutoAuditEnabled: String(seoAutoAuditEnabled) }
           : {}),
+        ...(canScheduleCrawl && seoAutoCrawlEnabled !== (settings.seoAutoCrawlEnabled ?? true)
+          ? { seoAutoCrawlEnabled: String(seoAutoCrawlEnabled) }
+          : {}),
       },
       { method: "POST" },
     );
@@ -198,6 +210,7 @@ export function SettingsSEOTab({
     setAutoHandleRedirect(settings.seoAutoHandleRedirect ?? true);
     setLimits(toDraft(settings.seoLimits ?? null));
     setSeoAutoAuditEnabled(settings.seoAutoAuditEnabled ?? true);
+    setSeoAutoCrawlEnabled(settings.seoAutoCrawlEnabled ?? true);
   };
 
   const handleResetLimits = () => {
@@ -347,6 +360,36 @@ export function SettingsSEOTab({
                     "Ab dem {plan}-Plan verfügbar.").replace(
                     "{plan}",
                     PLAN_DISPLAY_NAMES[scheduledAuditPlan],
+                  )}
+                </Text>
+              )}
+            </BlockStack>
+          </InlineStack>
+
+          {/* Second unattended job, same section: both answer "what does the
+              app do while I'm not here". Separate switches because they cost
+              very different things — the audit reads the cache, the crawl
+              fetches every page of the storefront. */}
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <ToggleSwitch
+              checked={canScheduleCrawl && seoAutoCrawlEnabled}
+              disabled={!canScheduleCrawl}
+              onChange={setSeoAutoCrawlEnabled}
+            />
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoAutoCrawlLabel || "Wöchentlicher Website-Crawl"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoAutoCrawlDescription ||
+                  "Einmal pro Woche wird deine Storefront automatisch gecrawlt: kaputte Links, Serverfehler, Weiterleitungsketten und verwaiste Seiten. Es wird nur gelesen — keine Inhalte werden verändert."}
+              </Text>
+              {!canScheduleCrawl && scheduledCrawlPlan && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(t.settings.seoAutoAuditPlanHint ||
+                    "Ab dem {plan}-Plan verfügbar.").replace(
+                    "{plan}",
+                    PLAN_DISPLAY_NAMES[scheduledCrawlPlan],
                   )}
                 </Text>
               )}

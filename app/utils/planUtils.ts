@@ -290,6 +290,7 @@ export function getSeoLimits(plan: Plan): SeoPlanLimits {
  */
 export type SeoFeature =
   | "scheduledAudit"   // nightly automatic store audit (Max)
+  | "scheduledCrawl"   // weekly automatic storefront crawl (Max)
   | "scoreHistory"     // score/ranking trend over time (Pro 30d / Max 365d)
   | "keywords"         // target-keyword tracking (Basic+)
   | "searchConsole"    // Google Search Console integration (Pro+)
@@ -301,6 +302,8 @@ export function canAccessSeoFeature(plan: Plan, feature: SeoFeature): boolean {
   switch (feature) {
     case "scheduledAudit":
       return seo.scheduledAudit;
+    case "scheduledCrawl":
+      return seo.scheduledCrawl;
     case "scoreHistory":
       return seo.scoreHistoryDays > 0;
     case "keywords":
@@ -336,6 +339,11 @@ export function getMinimumPlanForSeoFeature(feature: SeoFeature): Plan | null {
 /** Nightly automatic audit — the headline Max differentiator. */
 export function canUseScheduledSeoAudit(plan: Plan): boolean {
   return getSeoLimits(plan).scheduledAudit;
+}
+
+/** Weekly automatic storefront crawl — the second unattended Max feature. */
+export function canUseScheduledSeoCrawl(plan: Plan): boolean {
+  return getSeoLimits(plan).scheduledCrawl;
 }
 
 /** Days of score/ranking history to keep and chart. 0 = newest snapshot only. */

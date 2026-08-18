@@ -460,6 +460,16 @@ export function SettingsPlanTab({
                             ✓ {t.settings.seoFeatureScheduledAudit}
                           </Text>
                         )}
+                        {planDetails.seo.scheduledCrawl && (
+                          <Text
+                            as="p"
+                            variant="bodySm"
+                            tone="success"
+                            fontWeight={highlights.rows.seoScheduledCrawl ? "bold" : undefined}
+                          >
+                            ✓ {t.settings.seoFeatureScheduledCrawl}
+                          </Text>
+                        )}
                         {/* Upsell line only when ALL three named unlocks are
                             still locked here, with the tier derived from the
                             config — otherwise re-tiering one of them would
