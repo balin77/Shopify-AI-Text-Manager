@@ -122,10 +122,11 @@ describe("CommerceField render states", () => {
     expect(screen.queryAllByLabelText(/Cost per item/i).length).toBe(1);
   });
 
-  it("lists a location the variant is NOT stocked at, with a way in", async () => {
+  it("gives an un-stocked location the same input as the others", async () => {
     // Shopify reports an inventory level only where an item is activated, so
-    // the other warehouses are absent from `levels`. Absent read as "you have
-    // one location" is what this row exists to correct.
+    // the other warehouses are absent from `levels`. They get a field rather
+    // than an "activate" button: typing a number IS what a merchant means by
+    // "stock it here", and the activation rides along with the save.
     render(ui());
 
     expect(await screen.findByText("Spanien")).toBeTruthy();
@@ -133,6 +134,8 @@ describe("CommerceField render states", () => {
     // The fixture's variant has no levels at all, so BOTH warehouses are
     // un-stocked — and both say so rather than being absent.
     expect(screen.getAllByText(/not stocked here/i).length).toBe(2);
-    expect(screen.getAllByRole("button", { name: /Stock here/i }).length).toBe(2);
+    // No button anywhere: the row is editable directly.
+    expect(screen.queryByRole("button", { name: /Stock here/i })).toBeNull();
+    expect(screen.getAllByLabelText(/On hand/i).length).toBe(2);
   });
 });

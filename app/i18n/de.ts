@@ -507,6 +507,8 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      pricesHeading: "Preise",
+      shippingHeading: "Versand und Zoll",
       price: "Verkaufspreis",
       priceHint: "Was die Kundin bezahlt.",
       compareAtPrice: "Vergleichspreis",
@@ -538,7 +540,6 @@ export const de = {
       variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
       savingStock: "Bestand wird gespeichert…",
       notStockedHere: "hier nicht bestandsgeführt",
-      activateHere: "Hier führen",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
       variantsTruncated: "Dieses Produkt hat mehr Varianten, als geladen wurden. Den Rest bearbeitest du im Shopify-Admin.",
@@ -3584,6 +3585,46 @@ export const de = {
 
   // Help Tooltips
   help: {
+    commercePrices: {
+      title: "Die drei Preise",
+      summary:
+        "Zwei davon sieht deine Kundin, einen nie. Der Verkaufspreis ist, was sie bezahlt. Der Vergleichspreis ist die durchgestrichene Zahl daneben — leer lassen, wenn es kein Angebot gibt. Der Einkaufspreis ist, was DU bezahlt hast; Shopify nutzt ihn für deine Margen-Auswertungen und zeigt ihn niemandem.",
+      tips: [
+        "Leerer Vergleichspreis = kein Angebot, die durchgestrichene Zahl verschwindet",
+        "Der Verkaufspreis selbst lässt sich nicht leeren — Shopify verlangt auf jeder Variante einen",
+        "Der Einkaufspreis ist optional und nur für dich sichtbar",
+      ],
+    },
+    commerceShipping: {
+      title: "Versand und Zoll",
+      summary:
+        "Was Transporteur und Zollformular brauchen. Das Gewicht bestimmt berechnete Versandtarife. Zolltarifnummer und Herkunftsland stehen auf Zollerklärungen bei Auslandsbestellungen — sie auszufüllen lohnt sich nur, wenn du ins Ausland versendest.",
+      tips: [
+        "Ohne Gewicht lassen sich gewichtsbasierte Versandtarife nicht berechnen",
+        "Das Herkunftsland ist, wo der Artikel HERGESTELLT wurde, nicht wo du ihn verschickst",
+        "\"Versand nötig\" aus = ein digitales Produkt, es wird keine Adresse abgefragt",
+      ],
+    },
+    commerceStock: {
+      title: "Bestand pro Standort",
+      summary:
+        "Eine Zeile pro Standort mit der Menge VOR ORT — alles, was physisch da ist, auch das schon für offene Bestellungen Reservierte. Ein Standort ohne Zeile ist einer, an dem dieser Artikel noch nicht geführt wird; schreib eine Zahl hinein, dann wird er beim Speichern dort geführt.",
+      tips: [
+        "\"verfügbar\" neben dem Feld ist der Bestand minus offene Bestellungen und nicht direkt änderbar",
+        "Hat sich die Zahl währenddessen anderswo geändert, wird gar nicht geschrieben statt überschrieben",
+        "Nicht bestandsgeführte Varianten haben gar keine Menge — das ist nicht dasselbe wie null",
+      ],
+    },
+    commerceChannels: {
+      title: "Vertriebskanäle",
+      summary:
+        "Wo dieses Produkt überhaupt erscheinen darf. Der Status \"aktiv\" allein genügt nicht: ein Produkt auf keinem Kanal ist überall unsichtbar, auch im eigenen Shop — und der Shopify-Admin sagt das auf der Produktseite ebenfalls nicht.",
+      tips: [
+        "Online Store ist der Kanal, den dein eigener Shop liest",
+        "Einen Kanal abwählen versteckt das Produkt dort, ohne den Status zu ändern",
+        "Ein geplanter Kanal zeigt sein Datum und ist noch nicht live",
+      ],
+    },
     // Keywords section
     keywordsLibraryTabs: {
       title: "Bibliothek & Zuordnungen",

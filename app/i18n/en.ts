@@ -510,6 +510,8 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      pricesHeading: "Prices",
+      shippingHeading: "Shipping and customs",
       price: "Price",
       priceHint: "What the customer pays.",
       compareAtPrice: "Compare-at price",
@@ -541,7 +543,6 @@ export const en: Translation = {
       variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
       savingStock: "Saving stock…",
       notStockedHere: "not stocked here",
-      activateHere: "Stock here",
       stockHeading: "Stock",
       variantSelectLabel: "Variant",
       variantsTruncated: "This product has more variants than were loaded. Edit the rest in the Shopify admin.",
@@ -3579,6 +3580,46 @@ export const en: Translation = {
 
   // Help Tooltips
   help: {
+    commercePrices: {
+      title: "The three prices",
+      summary:
+        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody.",
+      tips: [
+        "Empty compare-at price = no sale, and the struck-through number disappears",
+        "The price itself cannot be emptied — Shopify requires one on every variant",
+        "Cost is optional and only ever seen by you",
+      ],
+    },
+    commerceShipping: {
+      title: "Shipping and customs",
+      summary:
+        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad.",
+      tips: [
+        "Without a weight, weight-based shipping rates cannot be calculated",
+        "The country of origin is where the item was MADE, not where you ship it from",
+        "\"Needs shipping\" off = a digital product, and no address is asked for",
+      ],
+    },
+    commerceStock: {
+      title: "Stock per location",
+      summary:
+        "One row per location, holding the quantity ON HAND — everything physically there, including what is already reserved for open orders. A location with no row is one this item is not stocked at yet; type a number into it and it starts being stocked there when you save.",
+      tips: [
+        "\"available\" beside the field is on hand minus open orders, and cannot be edited directly",
+        "If the number changed elsewhere while you were editing, the save is refused rather than overwriting it",
+        "Untracked variants have no quantity at all — that is not the same as zero",
+      ],
+    },
+    commerceChannels: {
+      title: "Sales channels",
+      summary:
+        "Where this product may appear at all. Active status alone is not enough: a product on no channel is invisible everywhere, including your own storefront, and the Shopify admin does not say so on the product page either.",
+      tips: [
+        "Online Store is the channel your own shop reads",
+        "Unticking a channel hides the product there without changing its status",
+        "A scheduled channel shows its date and is not live yet",
+      ],
+    },
     // Keywords section
     keywordsLibraryTabs: {
       title: "Library & Assignments",

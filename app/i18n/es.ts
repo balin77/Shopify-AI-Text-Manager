@@ -506,6 +506,8 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      pricesHeading: "Precios",
+      shippingHeading: "Envío y aduanas",
       price: "Precio de venta",
       priceHint: "Lo que paga la clienta.",
       compareAtPrice: "Precio comparativo",
@@ -537,7 +539,6 @@ export const es: Translation = {
       variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
       savingStock: "Guardando el stock…",
       notStockedHere: "sin stock aquí",
-      activateHere: "Gestionar aquí",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
       variantsTruncated: "Este producto tiene más variantes de las que se cargaron. Edita el resto en el admin de Shopify.",
@@ -3576,6 +3577,46 @@ export const es: Translation = {
 
   // Help Tooltips
   help: {
+    commercePrices: {
+      title: "Los tres precios",
+      summary:
+        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie.",
+      tips: [
+        "Precio comparativo vacío = sin oferta, y la cifra tachada desaparece",
+        "El precio de venta no se puede vaciar — Shopify exige uno en cada variante",
+        "El precio de compra es opcional y solo lo ves tú",
+      ],
+    },
+    commerceShipping: {
+      title: "Envío y aduanas",
+      summary:
+        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero.",
+      tips: [
+        "Sin peso no se pueden calcular tarifas de envío por peso",
+        "El país de origen es donde se FABRICÓ el artículo, no desde dónde lo envías",
+        "\"Requiere envío\" desactivado = producto digital, y no se pide dirección",
+      ],
+    },
+    commerceStock: {
+      title: "Stock por ubicación",
+      summary:
+        "Una fila por ubicación con la cantidad EN EXISTENCIA — todo lo que está físicamente allí, incluido lo ya reservado para pedidos abiertos. Una ubicación sin fila es una donde este artículo aún no se gestiona; escribe un número y empezará a gestionarse allí al guardar.",
+      tips: [
+        "\"disponible\" junto al campo es existencias menos pedidos abiertos, y no se edita directamente",
+        "Si la cifra cambió en otro sitio mientras editabas, no se escribe nada en lugar de sobrescribir",
+        "Las variantes sin seguimiento no tienen cantidad — no es lo mismo que cero",
+      ],
+    },
+    commerceChannels: {
+      title: "Canales de venta",
+      summary:
+        "Dónde puede aparecer este producto. El estado \"activo\" por sí solo no basta: un producto sin canal es invisible en todas partes, incluida tu propia tienda, y el admin de Shopify tampoco lo dice en la página del producto.",
+      tips: [
+        "Online Store es el canal que lee tu propia tienda",
+        "Desmarcar un canal lo oculta allí sin cambiar su estado",
+        "Un canal programado muestra su fecha y todavía no está activo",
+      ],
+    },
     // Keywords section
     keywordsLibraryTabs: {
       title: "Biblioteca y Asignaciones",

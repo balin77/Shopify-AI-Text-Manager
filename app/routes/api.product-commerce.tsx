@@ -349,15 +349,20 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     try {
+      // The quantity rides along: `inventoryActivate` takes it, so starting to
+      // stock an item at a location and saying how many there are is ONE call.
+      // A merchant types a number into the row; they do not press "activate"
+      // and then type.
+      const quantity = parseQuantity(getFormString(formData, "quantity"));
       const response = await admin.graphql(
         `#graphql
-          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!) {
-            inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+          mutation commerceActivateInventory($inventoryItemId: ID!, $locationId: ID!, $onHand: Decimal) {
+            inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId, onHand: $onHand) {
               inventoryLevel { id location { id } }
               userErrors { field message }
             }
           }`,
-        { variables: { inventoryItemId, locationId } },
+        { variables: { inventoryItemId, locationId, onHand: quantity === null ? null : String(quantity) } },
       );
       const activateBody = (await response.json()) as {
         data?: {

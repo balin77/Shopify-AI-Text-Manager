@@ -33,6 +33,16 @@ export interface CommerceSaveApi {
 
 interface CommerceSaveContextValue {
   register: (api: CommerceSaveApi | null) => void;
+  /**
+   * Bumped by the editor's own reload buttons.
+   *
+   * The panel used to carry a Reload of its own, which made three of them on
+   * one screen — one over the item list, one in the language bar, one here.
+   * The panel still has to re-read (it loads live and the editor's cache
+   * refresh does not touch it), so the signal travels DOWN instead: the
+   * editor bumps this, the panel watches it.
+   */
+  reloadNonce: number;
 }
 
 const CommerceSaveContext = createContext<CommerceSaveContextValue | null>(null);
@@ -42,6 +52,11 @@ const CommerceSaveContext = createContext<CommerceSaveContextValue | null>(null)
 export function useRegisterCommerceSave(): (api: CommerceSaveApi | null) => void {
   const ctx = useContext(CommerceSaveContext);
   return ctx?.register ?? NOOP;
+}
+
+/** Changes whenever the editor's reload ran. `0` outside the provider. */
+export function useCommerceReloadNonce(): number {
+  return useContext(CommerceSaveContext)?.reloadNonce ?? 0;
 }
 const NOOP = () => undefined;
 
@@ -69,13 +84,17 @@ const NOOP = () => undefined;
 export function useCommerceSaveRegistry() {
   const apiRef = useRef<CommerceSaveApi | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   const register = useCallback((next: CommerceSaveApi | null) => {
     apiRef.current = next;
     setHasChanges(next?.hasChanges === true);
   }, []);
 
-  const value = useMemo(() => ({ register }), [register]);
+  const value = useMemo(() => ({ register, reloadNonce }), [register, reloadNonce]);
+
+  /** Called from the editor's reload handler. */
+  const requestReload = useCallback(() => setReloadNonce((n) => n + 1), []);
 
   // Stable identities: the save bar's props must not change every render
   // either, and reading through the ref keeps these two functions constant for
@@ -94,5 +113,6 @@ export function useCommerceSaveRegistry() {
     hasChanges,
     save,
     discard,
+    requestReload,
   };
 }

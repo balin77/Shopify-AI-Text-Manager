@@ -24,7 +24,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRegisterCommerceSave } from "../../contexts/CommerceSaveContext";
+import { useCommerceReloadNonce, useRegisterCommerceSave } from "../../contexts/CommerceSaveContext";
+import { HelpTooltip } from "../HelpTooltip";
 import {
   Badge,
   Banner,
@@ -37,6 +38,7 @@ import {
   Spinner,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
 
 /** Shopify's `WeightUnit` enum — an unknown value fails at the SCHEMA level. */
@@ -165,6 +167,23 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
       });
   }, [productId, t.loadFailed]);
 
+  /**
+   * The editor's reload buttons, arriving as a counter.
+   *
+   * Skipped on the first value so mounting does not fetch twice — the effect
+   * below already loads. A reload DISCARDS typed values, which is the same
+   * cost the panel's own button had; the difference is that there is now one
+   * place on the screen that means "re-read this item" instead of three.
+   */
+  const reloadNonce = useCommerceReloadNonce();
+  const seenNonce = useRef(reloadNonce);
+  useEffect(() => {
+    if (seenNonce.current === reloadNonce) return;
+    seenNonce.current = reloadNonce;
+    if (!isPrimaryLocale) return;
+    load();
+  }, [reloadNonce, isPrimaryLocale, load]);
+
   useEffect(() => {
     if (!isPrimaryLocale) return;
     load();
@@ -256,49 +275,6 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
     [post],
   );
 
-  /** Which "stock here" button is in flight, as `variantId::locationId`. */
-  const [activating, setActivating] = useState<string | null>(null);
-
-  /**
-   * Start stocking this item at a location.
-   *
-   * Its own POST rather than a change collected for the save, because it is not
-   * an edit of a value — it creates the row the value would live in. Reloads on
-   * success so the new location arrives with its real (zero) quantity and its
-   * compare baseline, rather than being faked into the list client-side.
-   */
-  const activate = useCallback(
-    async (inventoryItemId: string, locationId: string, key: string) => {
-      setActivating(key);
-      try {
-        const body = new FormData();
-        body.set("intent", "activate");
-        body.set("productId", productId);
-        body.set("inventoryItemId", inventoryItemId);
-        body.set("locationId", locationId);
-        const response = await fetch("/api/product-commerce", { method: "POST", body });
-        const result = (await response.json()) as { success?: boolean; warnings?: string[] };
-        if (!result?.success) {
-          const code = result?.warnings?.[0];
-          setNotices([
-            (code && (t.warnings as Record<string, string> | undefined)?.[code]) ||
-              (t.saveFailed as string) ||
-              "The change could not be saved.",
-          ]);
-          return;
-        }
-        // KEEP the merchant's other edits: activating one location must not
-        // discard a quantity typed into another.
-        load({ keepEdits: true });
-      } catch {
-        setNotices([(t.saveFailed as string) || "The change could not be saved."]);
-      } finally {
-        setActivating(null);
-      }
-    },
-    [productId, load, t],
-  );
-
   /**
    * Which variants have a price the merchant changed.
    *
@@ -368,21 +344,48 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
       // merchant editing three locations of one variant cannot end up with one
       // written and two not.
       const byVariant = new Map<string, Array<{ locationId: string; quantity: number; compare: number }>>();
+      /** Locations that have to be ACTIVATED before they can hold a number. */
+      const activations: Array<{ variantId: string; locationId: string; quantity: string; gid: string }> = [];
       for (const [key, value] of dirtyStock) {
         const [variantId, locationId] = key.split("::");
         const compare = loadedOnHand(variantId, locationId);
-        // No loaded value ⇒ nothing to compare against, and a write without a
-        // comparison is exactly the silent overwrite this feature avoids. But
-        // it is SAID: dropping a typed quantity with no message, and then
-        // clearing the field on the reload, is how a stock correction
-        // disappears without anyone noticing.
+        // No loaded value has TWO causes, and they need opposite treatment.
         if (compare === null) {
+          const variant = data.variants.find((v) => v.id === variantId);
+          const known = variant?.levels.some((l) => l.locationId === locationId);
+          if (!known && variant?.inventoryItemId) {
+            // The location is simply not stocked yet — a number typed into one
+            // of those rows IS the request to start stocking it. Activation
+            // and the quantity are ONE call, so this is not a compare-less
+            // overwrite: there is nothing there to overwrite.
+            activations.push({ variantId, locationId, quantity: value.trim(), gid: variant.inventoryItemId });
+            continue;
+          }
+          // The other cause: a level this app knows about but has no number
+          // for. A write without a comparison is exactly the silent overwrite
+          // this feature avoids — but it is SAID, because dropping a typed
+          // quantity and then clearing the field on the reload is how a stock
+          // correction disappears with nobody noticing.
           collected.push((t.warnings?.stockNoBaseline as string) || "stockNoBaseline");
           continue;
         }
         const list = byVariant.get(variantId) ?? [];
         list.push({ locationId, quantity: Number.parseInt(value, 10), compare });
         byVariant.set(variantId, list);
+      }
+
+      for (const activation of activations) {
+        const warnings = await postIsolated(
+          {
+            intent: "activate",
+            productId,
+            inventoryItemId: activation.gid,
+            locationId: activation.locationId,
+            quantity: activation.quantity,
+          },
+          "activateFailed",
+        );
+        collected.push(...warnings);
       }
 
       for (const [variantId, list] of byVariant) {
@@ -581,6 +584,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
           <BlockStack gap="200">
             <InlineStack gap="200" blockAlign="center">
               <Text as="h3" variant="headingSm">{(t.channelsHeading as string) || "Sales channels"}</Text>
+              <HelpTooltip helpKey="commerceChannels" />
               {/* §2.3 — the trap this feature exists for. Not a subtle hint:
                   a product on no channel is invisible everywhere. */}
               {publishedCount === 0 && (
@@ -599,7 +603,11 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                 {(t.noChannels as string) || "This shop has no sales channels installed."}
               </Text>
             ) : (
-              data.channels.map((channel) => (
+              /* Horizontal, wrapping. A shop has a handful of channels with
+                 short names, and one full-width row each turned six words into
+                 six lines. */
+              <InlineStack gap="400" wrap>
+              {data.channels.map((channel) => (
                 <Checkbox
                   key={channel.publicationId}
                   label={channel.name || channel.publicationId}
@@ -620,13 +628,17 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                     setChannelState((prev) => ({ ...prev, [channel.publicationId]: checked }))
                   }
                 />
-              ))
+              ))}
+              </InlineStack>
             )}
           </BlockStack>
 
           {/* ── Stock ──────────────────────────────────────────────────── */}
           <BlockStack gap="200">
-            <Text as="h3" variant="headingSm">{(t.stockHeading as string) || "Stock"}</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Text as="h3" variant="headingSm">{(t.stockHeading as string) || "Stock"}</Text>
+              <HelpTooltip helpKey="commerceStock" />
+            </InlineStack>
 
             {data.variantsTruncated && (
               <Text as="p" variant="bodySm" tone="subdued">
@@ -660,39 +672,45 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                     {variant.title}{variant.sku ? ` · ${variant.sku}` : ""}
                   </Text>
 
-                  {/* The SELLING prices, first and on their own row.
-                      They sit above the InventoryItem block because the field
-                      that used to be alone up here was `cost` — what the
-                      MERCHANT pays — and a merchant looking for "the price"
-                      read that one and got the wrong number. Now the two stand
-                      next to each other and each says which it is. */}
+                  {/* ── Prices ─────────────────────────────────────────
+                      All three on ONE row, because the confusion they cause is
+                      the difference BETWEEN them: the field that used to sit up
+                      here alone was `cost`, what the merchant pays, and anyone
+                      looking for "the price" read it. Side by side, each one
+                      names itself against the other two.
+
+                      The explanations moved into tooltips: three lines of prose
+                      under three inputs is taller than the inputs themselves,
+                      and it is text a merchant reads once. */}
+                  <SectionHeading text={(t.pricesHeading as string) || "Prices"} helpKey="commercePrices" />
                   <InlineStack gap="300" blockAlign="start" wrap>
-                    <Box minWidth="140px">
-                      <TextField
-                        label={(t.price as string) || "Price"}
-                        value={priceEdits[`${variant.id}::price`] ?? (variant.price ?? "")}
-                        onChange={(value) =>
-                          setPriceEdits((prev) => ({ ...prev, [`${variant.id}::price`]: value }))
-                        }
-                        autoComplete="off"
-                        inputMode="decimal"
+                    <MoneyField
+                      label={(t.price as string) || "Price"}
+                      help={(t.priceHint as string) || "What the customer pays."}
+                      value={priceEdits[`${variant.id}::price`] ?? (variant.price ?? "")}
+                      onChange={(value) =>
+                        setPriceEdits((prev) => ({ ...prev, [`${variant.id}::price`]: value }))
+                      }
+                      disabled={saving}
+                    />
+                    <MoneyField
+                      label={(t.compareAtPrice as string) || "Compare-at price"}
+                      help={(t.compareAtPriceHint as string) || "The struck-through price. Empty = no sale."}
+                      value={priceEdits[`${variant.id}::compareAtPrice`] ?? (variant.compareAtPrice ?? "")}
+                      onChange={(value) =>
+                        setPriceEdits((prev) => ({ ...prev, [`${variant.id}::compareAtPrice`]: value }))
+                      }
+                      disabled={saving}
+                    />
+                    {variant.inventoryItemId && (
+                      <MoneyField
+                        label={(t.cost as string) || "Cost per item"}
+                        help={(t.costHint as string) || "What you pay. Never shown to customers."}
+                        value={itemEdits[`${variant.id}::cost`] ?? (variant.cost ?? "")}
+                        onChange={(value) => setItemEdits((prev) => ({ ...prev, [`${variant.id}::cost`]: value }))}
                         disabled={saving}
-                        helpText={(t.priceHint as string) || "What the customer pays."}
                       />
-                    </Box>
-                    <Box minWidth="140px">
-                      <TextField
-                        label={(t.compareAtPrice as string) || "Compare-at price"}
-                        value={priceEdits[`${variant.id}::compareAtPrice`] ?? (variant.compareAtPrice ?? "")}
-                        onChange={(value) =>
-                          setPriceEdits((prev) => ({ ...prev, [`${variant.id}::compareAtPrice`]: value }))
-                        }
-                        autoComplete="off"
-                        inputMode="decimal"
-                        disabled={saving}
-                        helpText={(t.compareAtPriceHint as string) || "The struck-through price. Empty = no sale."}
-                      />
-                    </Box>
+                    )}
                   </InlineStack>
 
                   {/* The InventoryItem's own settings. Shown for EVERY
@@ -700,18 +718,12 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                       facts about the item, not about whether Shopify counts
                       it. Locked when there is no InventoryItem to write to. */}
                   {variant.inventoryItemId ? (
+                    <>
+                    <SectionHeading
+                      text={(t.shippingHeading as string) || "Shipping and customs"}
+                      helpKey="commerceShipping"
+                    />
                     <InlineStack gap="300" blockAlign="start" wrap>
-                      <Box minWidth="140px">
-                        <TextField
-                          label={(t.cost as string) || "Cost per item"}
-                          value={itemEdits[`${variant.id}::cost`] ?? (variant.cost ?? "")}
-                          onChange={(value) => setItemEdits((prev) => ({ ...prev, [`${variant.id}::cost`]: value }))}
-                          autoComplete="off"
-                          inputMode="decimal"
-                          disabled={saving}
-                          helpText={(t.costHint as string) || "What you pay. Never shown to customers."}
-                        />
-                      </Box>
                       <Box minWidth="120px">
                         <TextField
                           label={(t.weight as string) || "Weight"}
@@ -758,7 +770,6 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                           autoComplete="off"
                           maxLength={2}
                           disabled={saving}
-                          helpText={(t.countryHint as string) || "Two letters, e.g. DE"}
                         />
                       </Box>
                       <Box minWidth="180px">
@@ -792,6 +803,7 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                         </Text>
                       </Box>
                     </InlineStack>
+                    </>
                   ) : null}
 
                   {variant.inventoryTracked === null && (
@@ -875,36 +887,51 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
                           Shopify reports a level only where an item has been
                           ACTIVATED, so these are absent from `levels` — and a
                           merchant with three warehouses seeing one row
-                          reasonably concludes the panel is broken. Listing them
-                          is the difference between a missing answer and an
-                          answer of "none". */}
+                          reasonably concludes the panel is broken.
+
+                          They get the SAME input as the others rather than an
+                          "activate" button: typing a number is what a merchant
+                          means by "stock it here", and a button that has to be
+                          pressed first is a step the machine can take itself.
+                          The activation rides along with the save — Shopify's
+                          `inventoryActivate` takes the quantity, so it is one
+                          call, not two. */}
                       {data.shopLocations
                         .filter((location) => !variant.levels.some((l) => l.locationId === location.id))
-                        .map((location) => (
-                          <InlineStack key={`${variant.id}::${location.id}`} gap="300" blockAlign="center" wrap>
-                            <Box minWidth="180px">
+                        .map((location) => {
+                          const key = `${variant.id}::${location.id}`;
+                          return (
+                            <InlineStack key={key} gap="300" blockAlign="center" wrap>
+                              <Box minWidth="180px">
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  {location.name}
+                                  {!location.isActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
+                                </Text>
+                              </Box>
+                              <Box minWidth="86px" maxWidth="86px">
+                                <TextField
+                                  label={(t.onHand as string) || "On hand"}
+                                  labelHidden
+                                  type="number"
+                                  inputMode="numeric"
+                                  align="right"
+                                  // Empty, not "0": the variant genuinely has
+                                  // no count here, and a pre-filled 0 would
+                                  // read as "we hold none" rather than "we do
+                                  // not stock this here".
+                                  value={edits[key] ?? ""}
+                                  placeholder="–"
+                                  onChange={(value) => setEdits((prev) => ({ ...prev, [key]: value }))}
+                                  autoComplete="off"
+                                  disabled={saving || !location.isActive || !variant.inventoryItemId}
+                                />
+                              </Box>
                               <Text as="span" variant="bodySm" tone="subdued">
-                                {location.name}
-                                {!location.isActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
+                                {(t.notStockedHere as string) || "not stocked here"}
                               </Text>
-                            </Box>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {(t.notStockedHere as string) || "not stocked here"}
-                            </Text>
-                            {/* An inactive location takes no writes, so it gets
-                                no offer to start stocking at it. */}
-                            {location.isActive && variant.inventoryItemId && (
-                              <Button
-                                size="micro"
-                                disabled={saving || activating === `${variant.id}::${location.id}`}
-                                loading={activating === `${variant.id}::${location.id}`}
-                                onClick={() => activate(variant.inventoryItemId!, location.id, `${variant.id}::${location.id}`)}
-                              >
-                                {(t.activateHere as string) || "Stock here"}
-                              </Button>
-                            )}
-                          </InlineStack>
-                        ))}
+                            </InlineStack>
+                          );
+                        })}
                     </BlockStack>
                   )}
                 </BlockStack>
@@ -912,30 +939,66 @@ export function CommerceField({ productId, label, isPrimaryLocale, t }: Commerce
             ))}
           </BlockStack>
 
-          {/* No save button of its own any more — the editor's save bar drives
-              this panel along with the text and the translations. The RELOAD
-              stays: stock moves under the merchant's feet, and re-reading it is
-              a thing they need on its own schedule, not on the save's. */}
-          <InlineStack gap="200" blockAlign="center">
-            <Button
-              disabled={saving}
-              onClick={() => {
-                // Reloading discards typed values. Asking is cheap; silently
-                // losing a stock correction is not.
-                if (hasChanges && !window.confirm((t.discardConfirm as string) || "Discard your unsaved changes?")) return;
-                load();
-              }}
-            >
-              {(t.reload as string) || "Reload"}
-            </Button>
-            {saving && (
-              <Text as="span" variant="bodySm" tone="subdued">
-                {(t.savingStock as string) || "Saving stock…"}
-              </Text>
-            )}
-          </InlineStack>
+          {saving && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {(t.savingStock as string) || "Saving stock…"}
+            </Text>
+          )}
         </>
       )}
     </BlockStack>
+  );
+}
+
+/** A small group heading with the app's usual "?" beside it. Three inputs in a
+ *  row need a word saying what the row IS; a bare row of labels does not. */
+function SectionHeading({ text, helpKey }: { text: string; helpKey: string }) {
+  return (
+    <InlineStack gap="100" blockAlign="center">
+      <Text as="h4" variant="headingXs">{text}</Text>
+      <HelpTooltip helpKey={helpKey} />
+    </InlineStack>
+  );
+}
+
+/**
+ * A money input sized for money, with its explanation on hover.
+ *
+ * The explanation used to be `helpText` under the field. Under three fields in
+ * a row that is three lines of prose taller than the inputs themselves — and it
+ * is text a merchant reads once and then never again.
+ */
+function MoneyField({
+  label,
+  help,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  help: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Box minWidth="130px" maxWidth="150px">
+      <Tooltip content={help} preferredPosition="above">
+        {/* The tooltip wraps the whole control, label included: hovering the
+            LABEL is what a merchant does when they are unsure what a field
+            means. */}
+        <div>
+          <TextField
+            label={label}
+            value={value}
+            onChange={onChange}
+            autoComplete="off"
+            inputMode="decimal"
+            align="right"
+            disabled={disabled}
+          />
+        </div>
+      </Tooltip>
+    </Box>
   );
 }

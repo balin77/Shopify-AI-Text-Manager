@@ -7,6 +7,16 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "~/services/content-attributes.shared";
+
+/**
+ * Attribute field types that need the editor's full width.
+ *
+ * Everything else is a short answer — a vendor, a status, a template name — and
+ * shares a row. These four are lists or panels: a tag combobox with chips, a
+ * membership picker, the rule builder and the stock panel all grow downwards
+ * and would be squeezed into a column half their useful width.
+ */
+const WIDE_ATTRIBUTE_FIELDS = new Set(["tags", "collections", "collectionRules", "commerce"]);
 import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useCreateItem } from "../hooks/useCreateItem";
@@ -347,9 +357,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   const { registerItems, clearItems } = useItemSelector();
 
   // Combined reload handler: refresh main editor + sub-resources
+  /** Set once the registry below exists — `handleReloadComplete` is declared
+   *  before it and a ref is cheaper than reordering the whole component. */
+  const commerceSaveRef = useRef<(() => void) | null>(null);
+
   const handleReloadComplete = useCallback(() => {
     helpers.triggerDataRefresh();
     subResourceHandlers?.resetForReload?.();
+    // The stock panel reads LIVE from its own endpoint, so a cache refresh
+    // does not reach it. It used to carry a third Reload button for that;
+    // the signal goes down from the editor's buttons instead.
+    commerceSaveRef.current?.();
   }, [helpers, subResourceHandlers]);
 
   // Use effective field definitions (dynamic for templates, static for other content types)
@@ -453,6 +471,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
    * the editor's value map — but it no longer carries a second Save button.
    */
   const commerceSave = useCommerceSaveRegistry();
+  commerceSaveRef.current = commerceSave.requestReload;
 
   /**
    * Which fields this locale/type actually shows, and how one of them renders.
@@ -1752,7 +1771,30 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Text as="h2" variant="headingMd">
                           {t.content?.attributesCardTitle || "Details"}
                         </Text>
-                        {attributeFields.map((field) => renderEditorField(field))}
+                        {/* Two columns where the field does not need a line
+                            of its own. A vendor is one word and a status is
+                            one dropdown; giving each the full width of the
+                            editor turned eight short answers into eight rows
+                            of mostly empty space. The wide ones keep the full
+                            width — a tag list, a membership picker and the
+                            stock panel all use it. */}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                            gap: "1rem",
+                            alignItems: "start",
+                          }}
+                        >
+                          {attributeFields.map((field) => (
+                            <div
+                              key={field.key}
+                              style={WIDE_ATTRIBUTE_FIELDS.has(field.type) ? { gridColumn: "1 / -1" } : undefined}
+                            >
+                              {renderEditorField(field)}
+                            </div>
+                          ))}
+                        </div>
                       </BlockStack>
                     </Card>
                   </div>
