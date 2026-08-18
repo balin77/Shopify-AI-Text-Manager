@@ -1486,6 +1486,8 @@ export const es: Translation = {
     browseFilesSearchPlaceholder: "Buscar por nombre de archivo…",
     browseFilesAddSelected: "Añadir selección",
     optimisticTileBadge: "¿Guardar?",
+    processingTileBadge: "Procesando…",
+    previewUnavailable: "Imagen",
     browseFilesEmpty: "No hay archivos coincidentes en tu biblioteca de Shopify.",
     browseFilesScopeCurrent: "Solo archivos usados en este producto",
     browseFilesScopeOther: "Elige otro producto…",

@@ -1068,6 +1068,11 @@ export default function ProductsPage() {
               seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              // Media Shopify created on the last save but is still
+              // processing. Keeps the tile (and the media count) stable
+              // between the save and the moment the CDN URL appears.
+              settlingMedia={imageManagerState.settlingMedia}
+              onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
               primaryLocale={primaryLocale}

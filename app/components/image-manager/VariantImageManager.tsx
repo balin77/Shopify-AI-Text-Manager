@@ -14,6 +14,12 @@ import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl, classifyFile } from "../../utils/mediaKind";
+import {
+  settlingPollDelayMs,
+  unsettledMediaEntries,
+  resolvedMediaIds,
+  type SettlingMediaEntry,
+} from "./settling-media";
 
 // Prefer sortable items (compound id '::') over plain container droppables;
 // fall back to closestCenter when pointer is outside all droppables.
@@ -117,6 +123,17 @@ interface VariantImageManagerProps {
    *  ready to be persisted to custom.variant_gallery_order. */
   onGalleryOrderChange?: (variantGalleryOrder: Record<string, string>) => void;
   onVariantsLoaded?: (variants: VariantWithGallery[]) => void;
+  /** Media Shopify has already created for this product (productCreateMedia
+   *  returned the GID) but has not finished processing. `/api/product-variants`
+   *  can only report media that HAS a URL, so between the save and the end of
+   *  Shopify's processing the entry is missing from every fetched map — which
+   *  is exactly why a fresh upload used to vanish from the gallery until a
+   *  page reload. We keep rendering the local preview under the real GID and
+   *  poll until the GID appears. Owned by useVariantImageManager. */
+  settlingMedia?: SettlingMediaEntry[];
+  /** Reports the settling media that has since shown up (or belongs to another
+   *  product) so the hook can drop it from its list. */
+  onSettlingMediaResolved?: (mediaIds: string[]) => void;
   resetKey?: number;
   variantReloadKey?: number;
   currentLanguage?: string;
@@ -171,6 +188,8 @@ export function VariantImageManager({
   imageManagerSettings,
   onPendingChange,
   onVariantsLoaded,
+  settlingMedia,
+  onSettlingMediaResolved,
   resetKey,
   variantReloadKey,
   currentLanguage,
@@ -251,6 +270,10 @@ export function VariantImageManager({
   // task creation and a fresh image fetch, causing URL-based lookups to miss still-running images.
   const [convertingImageUrls, setConvertingImageUrls] = useState<Set<string>>(new Set());
   const [refreshedProductImages, setRefreshedProductImages] = useState<ProductImageRef[] | null>(null);
+  // Re-arm trigger + budget for the settling-media poll (see below).
+  const [settlingPollTick, setSettlingPollTick] = useState(0);
+  const settlingPollAttemptRef = useRef(0);
+  const prevUnsettledKeyRef = useRef("");
   const [deleteConfirm, setDeleteConfirm] = useState<{ urls: string[]; affectedVariantCount: number } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const webpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -378,11 +401,17 @@ export function VariantImageManager({
   // Extracted so it can be called both on product selection (full reset) and on image reload
   // (variants-only refresh, no pending-state reset). The resetState flag controls whether
   // pending galleries / selection / exclusions are cleared before fetching.
-  const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean) => {
+  // `silent` suppresses the loading spinner. Used by the settling-media poll
+  // below, which re-fetches every few seconds: without it the whole variant
+  // list would blink through its spinner on every tick.
+  const fetchVariantsForProduct = useCallback((pid: string, resetState: boolean, opts?: { silent?: boolean }) => {
     const reqId = ++variantsReqIdRef.current;
     const isStale = () => variantsReqIdRef.current !== reqId;
-    setIsLoadingVariants(true);
-    setVariantError(null);
+    if (!opts?.silent) setIsLoadingVariants(true);
+    // A silent poll must not clear a genuine error banner either — it is
+    // forbidden from re-raising one, so clearing would leave the section
+    // showing an empty state where a real failure had been reported.
+    if (!opts?.silent) setVariantError(null);
     if (resetState) {
       setPendingVariantGalleries({});
       setSelectedGalleryItems(new Map());
@@ -517,7 +546,16 @@ export function VariantImageManager({
           }
         }
       })
-      .catch(() => { if (!isStale()) setVariantError(t.imageManager.variantsLoadError); })
+      // A silent poll must not raise the load-error banner: it runs in the
+      // background after a successful save, and a transient network blip
+      // there would read as "your save failed".
+      .catch(() => { if (!isStale() && !opts?.silent) setVariantError(t.imageManager.variantsLoadError); })
+      // Clearing is NOT gated on `silent`: every call shares variantsReqIdRef,
+      // so a poll tick landing while a non-silent load is in flight makes that
+      // load stale — it skips its own clear — and a silent-only clear would
+      // leave the spinner up forever, with the variant list replaced by it
+      // until the next save or product switch. Whoever is the current request
+      // owns the flag.
       .finally(() => { if (!isStale()) setIsLoadingVariants(false); });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -880,6 +918,65 @@ export function VariantImageManager({
   const effectiveProductImages = refreshedProductImages ?? productImages;
   currentImagesRef.current = effectiveProductImages;
 
+  // ── Saved-but-still-processing media ───────────────────────────────────
+  // Shopify's productCreateMedia returns the GID immediately but keeps
+  // processing the file; until it finishes, `image.url` is null and
+  // /api/product-variants reports the node not at all (see its mediaMap
+  // build — a MediaImage without a URL is skipped). Presence in
+  // shopifyMediaMap is therefore the readiness signal, uniformly for every
+  // kind: a video / model whose poster hasn't rendered yet is missing from
+  // that map too.
+  const unsettledMedia = useMemo(
+    () => unsettledMediaEntries(settlingMedia ?? [], productId, shopifyMediaMap),
+    [settlingMedia, productId, shopifyMediaMap],
+  );
+  // Stable identity for the poll effect — a raw array would restart the
+  // timer on every render.
+  const unsettledKey = useMemo(
+    () => unsettledMedia.map(m => m.mediaId).sort().join("|"),
+    [unsettledMedia],
+  );
+
+  // Report everything that has arrived (or belongs to a product we left) so
+  // the hook drops it. Runs down to a no-op once the list is empty.
+  useEffect(() => {
+    const entries = settlingMedia ?? [];
+    if (entries.length === 0) return;
+    const resolved = resolvedMediaIds(entries, productId, shopifyMediaMap);
+    if (resolved.length > 0) onSettlingMediaResolved?.(resolved);
+  }, [settlingMedia, shopifyMediaMap, productId, onSettlingMediaResolved]);
+
+  // Bounded re-poll while anything is still processing. Backs off from 1.5s
+  // to 10s (~55s of patience in total); after that we stop asking but KEEP
+  // the tiles — an image that is on Shopify but slow must not disappear from
+  // the gallery, which is the whole bug this block exists for. The next
+  // product open / reload reconciles it.
+  useEffect(() => {
+    if (!productId || unsettledKey === "") {
+      settlingPollAttemptRef.current = 0;
+      prevUnsettledKeyRef.current = "";
+      return;
+    }
+    if (prevUnsettledKeyRef.current !== unsettledKey) {
+      // Set changed — either a new save or one of them landed. Either way
+      // progress was made, so the patience budget starts over.
+      prevUnsettledKeyRef.current = unsettledKey;
+      settlingPollAttemptRef.current = 0;
+    }
+    const attempt = settlingPollAttemptRef.current;
+    const delay = settlingPollDelayMs(attempt);
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      settlingPollAttemptRef.current = attempt + 1;
+      setSettlingPollTick(tick => tick + 1);
+      fetchVariantsForProduct(productId, false, { silent: true });
+    }, delay);
+    return () => clearTimeout(timer);
+    // settlingPollTick is the re-arm trigger: without it the effect would
+    // fire once and never schedule the next poll when nothing changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unsettledKey, settlingPollTick, productId]);
+
   // GID → URL map: DB-cached productImages merged with the authoritative Shopify media map.
   // shopifyMediaMap is fetched fresh from Shopify on every product load, so gallery images
   // always resolve even when the DB cache is stale or incomplete.
@@ -897,17 +994,34 @@ export function VariantImageManager({
       effectiveProductImages.filter(img => img.mediaId).map(img => [img.mediaId, img.url])
     ),
     ...shopifyMediaMap,
+    // Saved media Shopify is still processing: the variant metafield already
+    // holds the real GID, but no map can resolve it to a URL yet, and the
+    // gallery render .filter(Boolean)s anything unresolved — so the tile the
+    // merchant just saved would silently drop out of the variant gallery.
+    // The local preview stands in until the CDN URL arrives.
+    ...Object.fromEntries(
+      unsettledMedia
+        .filter(m => m.previewUrl)
+        .map(m => [m.mediaId, m.previewUrl as string])
+    ),
     ...Object.fromEntries(
       pendingProductNewMedia
         .filter(m => m.previewUrl && m.resourceUrl)
         .map(m => [m.resourceUrl, m.previewUrl as string])
     ),
-  }), [effectiveProductImages, shopifyMediaMap, pendingProductNewMedia]);
+  }), [effectiveProductImages, shopifyMediaMap, pendingProductNewMedia, unsettledMedia]);
 
   const urlToGid: Record<string, string> = useMemo(() => ({
     ...Object.fromEntries(effectiveProductImages.filter(img => img.mediaId).map(img => [img.url, img.mediaId])),
     ...Object.fromEntries(Object.entries(shopifyMediaMap).map(([gid, url]) => [url, gid])),
-  }), [effectiveProductImages, shopifyMediaMap]);
+    // A settling tile stands in for media that EXISTS on Shopify, so its
+    // preview URL has to resolve to the real GID like any other tile —
+    // otherwise a reorder or a delete performed while Shopify is still
+    // processing would silently skip it.
+    ...Object.fromEntries(
+      unsettledMedia.filter(m => m.previewUrl).map(m => [m.previewUrl as string, m.mediaId])
+    ),
+  }), [effectiveProductImages, shopifyMediaMap, unsettledMedia]);
 
   // Variants that have no effective main image (neither native Shopify main nor any gallery image
   // at position 0 that would be promoted on save). Used for tooltip, pulse, and dot indicator.
@@ -990,6 +1104,24 @@ export function VariantImageManager({
         map[previewUrl] = { kind: pending.kind, isPending: true };
       }
     }
+    // Saved-but-still-processing media: keyed by the local preview URL,
+    // which is what displayedProductUrls carries for them. isProcessing
+    // drives the spinner + badge (distinct from isPending, which means
+    // "not saved yet" — these ARE saved).
+    for (const m of unsettledMedia) {
+      if (!m.previewUrl) continue;
+      // previewUrl is set on the meta as well as being the key: the model
+      // branch of SortableThumbnail renders meta.previewUrl (the tile's own
+      // URL is not a renderable image for a .glb), so without it a settling
+      // 3D tile would fall back to the bare "3D" placeholder even though we
+      // have its snapshot right here.
+      map[m.previewUrl] = {
+        ...(map[m.previewUrl] ?? {}),
+        kind: m.kind,
+        previewUrl: m.previewUrl,
+        isProcessing: true,
+      };
+    }
     // Surface mediaMetaMap's previewUrl on every keyed entry. For .glb
     // model URLs (variant_3d_models), the only renderable preview is the
     // client-generated snapshot stored at upload time — without copying
@@ -1031,7 +1163,7 @@ export function VariantImageManager({
       }
     }
     return map;
-  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia, variants, pendingVariant3dModels, pendingVariant3dPreviews]);
+  }, [effectiveProductImages, convertingImageUrls, shopifyMediaMap, mediaMetaMap, pendingProductNewMedia, unsettledMedia, variants, pendingVariant3dModels, pendingVariant3dPreviews]);
 
   // All GIDs currently assigned to any variant gallery (including injected main images)
   const assignedGids = useMemo(() => {
@@ -1068,8 +1200,20 @@ export function VariantImageManager({
     const pendingPreviews = pendingProductNewMedia
       .map(p => p.previewUrl)
       .filter((u): u is string => typeof u === "string" && u.length > 0 && !baseUrls.includes(u));
-    return [...baseUrls, ...pendingPreviews];
-  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia]);
+    // Media that IS saved but is still being processed by Shopify. It cannot
+    // be in baseUrls (no CDN URL exists yet), so without this the product
+    // gallery loses the image between the save and the end of processing —
+    // and the media count silently stays put, which reads as "the upload was
+    // thrown away".
+    const settlingPreviews = unsettledMedia
+      // Its GID is known, so it obeys the same "hide what a variant already
+      // uses" filter as every other saved tile.
+      .filter(m => showAll || variants.length === 0 || !assignedGids.has(m.mediaId))
+      .map(m => m.previewUrl)
+      .filter((u): u is string => typeof u === "string" && u.length > 0
+        && !baseUrls.includes(u) && !pendingPreviews.includes(u));
+    return [...baseUrls, ...settlingPreviews, ...pendingPreviews];
+  }, [showAll, pendingProductImageOrder, effectiveProductImages, urlToGid, assignedGids, variants.length, pendingProductNewMedia, unsettledMedia]);
 
   // Detect whether the product gallery overflows the single-row collapsed height
   useEffect(() => {
@@ -1937,6 +2081,10 @@ export function VariantImageManager({
       return base.filter(url => !urlSet.has(url));
     });
     setRefreshedProductImages(effectiveProductImages.filter(img => !urlSet.has(img.url)));
+    // A deleted node can never turn up in shopifyMediaMap, so a settling
+    // entry for it would keep its tile on screen forever — draggable into a
+    // variant gallery with a GID that no longer exists. Retire it here.
+    if (gids.length > 0) onSettlingMediaResolved?.(gids);
     setSelectedGalleryItems(m => {
       const next = new Map(m);
       urls.forEach(url => next.delete(`product::${url}`));
@@ -1964,7 +2112,7 @@ export function VariantImageManager({
       // non-critical: local state already reflects deletion
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;

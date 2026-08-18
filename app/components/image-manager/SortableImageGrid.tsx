@@ -168,6 +168,7 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
   const filename = extractFilename(url);
   const isConverting = Boolean(meta?.isConverting);
   const isPending = Boolean(meta?.isPending);
+  const isProcessing = Boolean(meta?.isProcessing);
 
   const tileBorder = isSelected ? "2px solid #005bd3" : (isMain ? "2px solid #e6a817" : "2px solid #e1e3e5");
   const tileBoxShadow = isMain
@@ -416,8 +417,8 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
           {hasAlt ? t.imageManager.altBadge : t.imageManager.noAltBadge}
         </div>
 
-        {/* Conversion spinner overlay */}
-        {isConverting && (
+        {/* Conversion / Shopify-processing spinner overlay */}
+        {(isConverting || isProcessing) && (
           <div style={{
             position: "absolute",
             inset: 0,
@@ -461,6 +462,25 @@ function SortableThumbnail({ sortableId, url, containerId, isSelected, meta, onS
         {/* Pending / unsaved badge — sits on top so the merchant immediately
             sees which tiles still need a Save click. The transparent body
             (set on the outer wrapper) reinforces the "ghost"/draft state. */}
+        {isProcessing && !isPending && (
+          <div style={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            background: "#5c6ac4",
+            color: "white",
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "2px 6px",
+            borderRadius: 3,
+            lineHeight: "14px",
+            pointerEvents: "none",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.2)",
+            letterSpacing: 0.3,
+          }}>
+            {t.imageManager.processingTileBadge ?? "Processing…"}
+          </div>
+        )}
         {isPending && (
           <div style={{
             position: "absolute",

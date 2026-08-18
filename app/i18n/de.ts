@@ -1486,6 +1486,8 @@ export const de = {
     browseFilesSearchPlaceholder: "Nach Dateinamen suchen…",
     browseFilesAddSelected: "Auswahl hinzufügen",
     optimisticTileBadge: "Speichern?",
+    processingTileBadge: "Wird verarbeitet…",
+    previewUnavailable: "Bild",
     browseFilesEmpty: "Keine passenden Dateien in deiner Shopify-Bibliothek.",
     browseFilesScopeCurrent: "Nur Dateien aus diesem Produkt",
     browseFilesScopeOther: "Anderes Produkt wählen…",
