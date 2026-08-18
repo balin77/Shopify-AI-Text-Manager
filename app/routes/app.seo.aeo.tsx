@@ -83,7 +83,6 @@ const GATED_REFERRALS: AiReferralSummary = {
   totalVisits: 0,
   bySource: [],
   topPages: [],
-  everRecorded: false,
 };
 
 /** Same purpose as GATED_DISCOVERY_STATUS: keep both loader branches one shape. */
@@ -158,8 +157,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
     // DB-only and independent of the two Shopify-facing halves above, so they
     // cost wall-clock time only if they are the slowest of the four.
-    analyzeCatalogReadiness(db, session.shop),
-    loadAiReferralSummary(db, session.shop),
+    //
+    // Both degrade to their empty shape instead of throwing: `analyzeAeo`
+    // swallows its own failures, so without these catches a hiccup in one of
+    // the two youngest queries would 500 the WHOLE section — including the
+    // robots.txt audit, which has nothing to do with either.
+    analyzeCatalogReadiness(db, session.shop).catch(() => GATED_CATALOG_REPORT),
+    loadAiReferralSummary(db, session.shop).catch(() => GATED_REFERRALS),
   ]);
   return json({
     gated: false,
@@ -415,7 +419,14 @@ export default function SeoAeo() {
     data.catalog.scanned === 0 ? (
       <Badge>{a.statusUnknown}</Badge>
     ) : data.catalog.buckets.length === 0 ? (
-      <Badge tone="success">{a.catalogBadgeComplete}</Badge>
+      // "No findings" is only "complete" when everything was actually checked.
+      // With the attribute block unsynced, brand and category were skipped —
+      // claiming completeness for them would be a green badge over an unknown.
+      data.catalog.attributeDataKnown ? (
+        <Badge tone="success">{a.catalogBadgeComplete}</Badge>
+      ) : (
+        <Badge tone="attention">{a.catalogBadgePartial}</Badge>
+      )
     ) : (
       <Badge tone="warning">
         {a.catalogBadgeGaps.replace("{count}", String(data.catalog.scanned - data.catalog.ready))}
@@ -944,7 +955,10 @@ export default function SeoAeo() {
                 ) : (
                   <BlockStack gap="300">
                     <Text as="p" variant="bodySm" tone="subdued">
-                      {a.catalogSummary
+                      {(data.catalog.attributeDataKnown
+                        ? a.catalogSummary
+                        : a.catalogSummaryPartial
+                      )
                         .replace("{ready}", String(data.catalog.ready))
                         .replace("{scanned}", String(data.catalog.scanned))}
                       {data.catalog.capped
@@ -973,7 +987,11 @@ export default function SeoAeo() {
                     )}
 
                     {data.catalog.buckets.length === 0 ? (
-                      <Banner tone="success">{a.catalogAllReady}</Banner>
+                      <Banner tone={data.catalog.attributeDataKnown ? "success" : "info"}>
+                        {data.catalog.attributeDataKnown
+                          ? a.catalogAllReady
+                          : a.catalogAllReadyPartial}
+                      </Banner>
                     ) : (
                       data.catalog.buckets.map((bucket) => (
                         <Box
@@ -1055,12 +1073,10 @@ export default function SeoAeo() {
                 {a.referralBody}
               </Text>
 
-              {!data.referrals.everRecorded ? (
-                <Banner tone="info">{a.referralNoneEver}</Banner>
-              ) : data.referrals.totalVisits === 0 ? (
-                <Text as="p" tone="subdued">
+              {data.referrals.totalVisits === 0 ? (
+                <Banner tone="info">
                   {a.referralNoneInWindow.replace("{days}", String(data.referrals.days))}
-                </Text>
+                </Banner>
               ) : (
                 <BlockStack gap="300">
                   <Text as="p" variant="headingLg">

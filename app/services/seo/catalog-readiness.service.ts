@@ -80,7 +80,14 @@ export interface CatalogReadinessReport {
    * gap.
    */
   attributeDataKnown: boolean;
-  /** Products with no finding at all. */
+  /**
+   * Products with no finding at all — which means "none among the checks that
+   * RAN". With `attributeDataKnown` false, brand and category were not checked,
+   * so a product can be counted here without either being set. Anything
+   * rendering this number has to qualify it in that state; the AEO section
+   * switches to its "partly checked" wording rather than claiming completeness
+   * for two fields nobody looked at.
+   */
   ready: number;
   /** Worst bucket first. */
   buckets: CatalogReadinessBucket[];

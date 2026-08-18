@@ -192,11 +192,16 @@ export interface AiReferralSummary {
   bySource: AiReferralSourceStat[];
   /** Busiest landing pages across all sources, capped. */
   topPages: AiReferralPageStat[];
-  /** True once anything was ever recorded — separates "no visits in the window"
-   *  from "the beacon has never reported anything", which usually means the app
-   *  embed is not enabled. */
-  everRecorded: boolean;
 }
+
+/*
+ * There is deliberately no "has anything ever been recorded" flag. The table is
+ * pruned after REFERRAL_RETENTION_DAYS, so a live row count answers "in the
+ * retention window", not "ever" — and a shop that got AI visits a year ago and
+ * none since would be told the beacon has never reported anything and that its
+ * app embed is probably off. One honest empty state that mentions the embed as
+ * a possible cause beats two states where one of them can be wrong.
+ */
 
 export const TOP_REFERRAL_PAGES = 10;
 
@@ -208,7 +213,7 @@ export async function loadAiReferralSummary(
 ): Promise<AiReferralSummary> {
   const since = referralDay(new Date(now.getTime() - (days - 1) * 86_400_000));
 
-  const [bySourceRaw, byPathRaw, everCount] = await Promise.all([
+  const [bySourceRaw, byPathRaw] = await Promise.all([
     db.seoAiReferral.groupBy({
       by: ["source"],
       where: { shop, day: { gte: since } },
@@ -221,7 +226,6 @@ export async function loadAiReferralSummary(
       orderBy: { _sum: { count: "desc" } },
       take: TOP_REFERRAL_PAGES,
     }),
-    db.seoAiReferral.count({ where: { shop } }),
   ]);
 
   const bySource = bySourceRaw
@@ -233,7 +237,6 @@ export async function loadAiReferralSummary(
     totalVisits: bySource.reduce((sum, r) => sum + r.visits, 0),
     bySource,
     topPages: byPathRaw.map((r) => ({ path: r.path, visits: r._sum.count ?? 0 })),
-    everRecorded: everCount > 0,
   };
 }
 

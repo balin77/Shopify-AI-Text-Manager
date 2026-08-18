@@ -1490,9 +1490,6 @@ model GoogleSearchConsoleConnection {
   lastKeywordSyncAt DateTime?
 }
 
-// SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
-// design (it is served at keyLocation for verification), so it is intentionally
-// stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
 // Visits that arrived from an AI assistant (ChatGPT, Perplexity, Claude, …).
 //
 // Aggregate ONLY: one row per (shop, source, UTC day, landing path) with a
@@ -1525,6 +1522,10 @@ model SeoAiReferral {
   @@index([shop, day])
   @@index([shop, source, day])
 }
+
+// SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
+// design (it is served at keyLocation for verification), so it is intentionally
+// stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
 
 model SeoIndexNowConfig {
   shop             String    @id

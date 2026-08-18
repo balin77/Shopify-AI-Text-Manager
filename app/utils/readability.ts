@@ -71,7 +71,13 @@ export interface ReadabilityReport {
   findings: ReadabilityFinding[];
 }
 
-/** Vowel characters per language family, for the syllable estimate. */
+/**
+ * Vowel characters per language family, for the syllable estimate. Global
+ * regexes, shared: `String.match` with a global pattern ignores `lastIndex`
+ * and returns every match, so one instance can be reused for the whole text.
+ * Building one per word is what made this hot — the analysis runs inside a
+ * memo keyed on the live editor value, i.e. on every keystroke.
+ */
 const VOWELS: Record<string, RegExp> = {
   en: /[aeiouy]+/g,
   de: /[aeiouyäöü]+/g,
@@ -157,7 +163,7 @@ function sentences(text: string): string[] {
  * dictionary does this, and the formulas were calibrated on counts like it.
  */
 export function estimateSyllables(word: string, vowels: RegExp): number {
-  const groups = word.toLowerCase().match(new RegExp(vowels.source, "g"));
+  const groups = word.toLowerCase().match(vowels);
   return Math.max(1, groups ? groups.length : 0);
 }
 
@@ -166,15 +172,29 @@ export function analyzeReadability(
   locale?: string | null,
 ): ReadabilityReport {
   const blocks = textBlocks(html);
-  const allSentences = blocks.flatMap((b) => sentences(b));
-  const allWords = blocks.flatMap((b) => words(b));
+
+  // ONE tokenization pass for the whole text: every later number is derived
+  // from these arrays instead of re-splitting the block, the sentence and the
+  // paragraph separately (three passes over a description on every keystroke).
+  const allWords: string[] = [];
+  let sentenceCount = 0;
+  let longSentences = 0;
+  let longestParagraphWords = 0;
+
+  for (const block of blocks) {
+    let blockWords = 0;
+    for (const sentence of sentences(block)) {
+      const sentenceWords = words(sentence);
+      sentenceCount++;
+      if (sentenceWords.length > LONG_SENTENCE_WORDS) longSentences++;
+      blockWords += sentenceWords.length;
+      for (const word of sentenceWords) allWords.push(word);
+    }
+    if (blockWords > longestParagraphWords) longestParagraphWords = blockWords;
+  }
 
   const wordCount = allWords.length;
-  const sentenceCount = allSentences.length;
   const paragraphCount = blocks.length;
-
-  const longSentences = allSentences.filter((s) => words(s).length > LONG_SENTENCE_WORDS).length;
-  const longestParagraphWords = blocks.reduce((max, b) => Math.max(max, words(b).length), 0);
   const hasSubheadings = SUBHEADING_TAGS.test(html || "");
 
   const avgSentenceWords =
@@ -198,7 +218,8 @@ export function analyzeReadability(
     if (sentenceCount > 0 && longSentences / sentenceCount > LONG_SENTENCE_SHARE_LIMIT) {
       findings.push({
         code: "longSentences",
-        data: { count: longSentences, total: sentenceCount, limit: LONG_SENTENCE_WORDS },
+        // Key names ARE the i18n placeholders — `{sentences}` in every locale.
+        data: { count: longSentences, sentences: sentenceCount, limit: LONG_SENTENCE_WORDS },
       });
     }
     if (longestParagraphWords > LONG_PARAGRAPH_WORDS) {

@@ -71,6 +71,11 @@ describe("analyzeReadability — structure", () => {
     const report = analyzeReadability(mostlyLong, "de");
     expect(report.findings.map((f) => f.code)).toContain("longSentences");
     expect(report.longSentences).toBe(4);
+    // The data keys ARE the i18n placeholders: a rename here leaves "{sentences}"
+    // rendered literally in the sidebar.
+    expect(Object.keys(report.findings.find((f) => f.code === "longSentences")!.data!).sort()).toEqual(
+      ["count", "limit", "sentences"],
+    );
   });
 
   it("flags a wall of text", () => {
