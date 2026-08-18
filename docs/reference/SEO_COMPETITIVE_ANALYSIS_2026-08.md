@@ -250,7 +250,7 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 | **P3 Keyword-Volumen** | ✅ (Erklärung) | Der Keywords-Tab sagt jetzt, *warum* dort keine Volumenschätzung steht — und dass GSC dieselbe Frage mit echten Daten beantwortet. |
 | **P2.5 Bild-Dateinamen-SEO** | 📋 notiert | Nicht eingeplant, aber als Idee festgehalten — Benennung beim Upload zuerst, nachträgliches Umbenennen als Option. Siehe §9.1. |
 | **P2.5 Speed-Eingriffe** | ⛔ Nicht-Ziel | Siehe §9 — Produktentscheidung 2026-08-18: keine Bearbeitung des Merchant-Theme-Codes. |
-| **P3 VideoObject** | ✅ | Storefront-Block emittiert VideoObject für Shopify- und YouTube-/Vimeo-Videos; `uploadDate` nur aus dem Metafeld, nie geraten — siehe §9.3. |
+| **P3 VideoObject** | ✅ | Storefront-Block emittiert VideoObject für Shopify- und YouTube-/Vimeo-Videos; das von Google verlangte `uploadDate` holt der Produkt-Sync aus der Admin API und legt es als Metafeld ab — siehe §9.3. |
 | **P3 Schema-Typen (Rest)** | ⏸ teils offen | LocalBusiness bleibt Kandidat (nur als Opt-in), HowTo gestrichen — siehe §9.3. |
 | **P3 Long-Form-Generator** | ⏸ offen | Eigener Workflow (Outline → Abschnitte → interne Links), zu groß für diesen Durchgang. |
 
@@ -328,8 +328,33 @@ einzeln zurücknehmbar und fassen den Theme-Code des Merchants nicht an.
   manuelle Maßnahme wegen irreführendem Markup. Automatisch aus Shop-Daten
   ableiten ist deshalb genau der falsche Weg — die Rechnungsadresse eines
   reinen Onlineshops ist kein Ladengeschäft.
-- **VideoObject:** Kandidat mit gutem Fit — die Variant-Gallery unterstützt
-  bereits Video, die Daten (Thumbnail, Dauer) liegen also in Reichweite.
+- **VideoObject:** ✅ umgesetzt (2026-08-18). Der Storefront-Block emittiert
+  VideoObject für Shopify-Videos **und** eingebettete YouTube-/Vimeo-Videos
+  eines Produkts, mit Thumbnail, `contentUrl` bzw. `embedUrl` und Dauer
+  (Liquid liefert Millisekunden, schema.org will ISO-8601). Eigener
+  Opt-out-Schalter im Theme-Editor.
+
+  **Das Upload-Datum ist gelöst** (zweiter Schritt, gleicher Tag). Googles
+  Video-Rich-Result verlangt `uploadDate`, und die Storefront gibt kein
+  Erstellungsdatum für Medien her. Die Admin API gibt es (`File.createdAt` auf
+  `Video`/`ExternalVideo`), also holt der Produkt-Sync es mit — dieselbe
+  `media`-Abfrage, nur zwei Fragmente mehr — und die App legt eine
+  `{Medien-ID: Datum}`-Karte im Metafeld `custom.video_upload_dates` ab, die
+  der Block pro Video ausliest. Vier Dinge tragen dabei:
+  die **numerische** Medien-ID als Schlüssel (Liquids `media.id` ist eine
+  Zahl, eine GID-Karte wäre auf der Storefront nie auffindbar); ein
+  **diff-getriebener** Schreibpfad gegen die Spiegelspalte
+  `Product.videoSchemaJson`, sodass ein unveränderter Katalog null
+  Shopify-Aufrufe kostet; „keine Videos" als `metafieldsDelete` statt `{}`
+  (leere Werte lehnt `metafieldsSet` ab); und die Beschränkung auf die drei
+  Abfragepfade mit vollem `media(first: 250)`-Fenster —
+  `api.sync-missing-products` holt nur 20 Medien und könnte „keine Videos"
+  nicht von „außerhalb des Fensters" unterscheiden.
+
+  Das manuelle Metafeld `custom.video_upload_date` bleibt als Merchant-Override
+  und **gewinnt**: wer die echte Erstveröffentlichung kennt (etwa auf YouTube),
+  soll sie setzen können. Gibt es beides nicht, bleibt die Angabe weg statt
+  geraten zu werden.
 
 ---
 
