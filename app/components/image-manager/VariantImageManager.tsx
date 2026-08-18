@@ -408,7 +408,10 @@ export function VariantImageManager({
     const reqId = ++variantsReqIdRef.current;
     const isStale = () => variantsReqIdRef.current !== reqId;
     if (!opts?.silent) setIsLoadingVariants(true);
-    setVariantError(null);
+    // A silent poll must not clear a genuine error banner either — it is
+    // forbidden from re-raising one, so clearing would leave the section
+    // showing an empty state where a real failure had been reported.
+    if (!opts?.silent) setVariantError(null);
     if (resetState) {
       setPendingVariantGalleries({});
       setSelectedGalleryItems(new Map());
@@ -547,7 +550,13 @@ export function VariantImageManager({
       // background after a successful save, and a transient network blip
       // there would read as "your save failed".
       .catch(() => { if (!isStale() && !opts?.silent) setVariantError(t.imageManager.variantsLoadError); })
-      .finally(() => { if (!isStale() && !opts?.silent) setIsLoadingVariants(false); });
+      // Clearing is NOT gated on `silent`: every call shares variantsReqIdRef,
+      // so a poll tick landing while a non-silent load is in flight makes that
+      // load stale — it skips its own clear — and a silent-only clear would
+      // leave the spinner up forever, with the variant list replaced by it
+      // until the next save or product switch. Whoever is the current request
+      // owns the flag.
+      .finally(() => { if (!isStale()) setIsLoadingVariants(false); });
   }, [t.imageManager.variantsLoadError, onVariantsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -2072,6 +2081,10 @@ export function VariantImageManager({
       return base.filter(url => !urlSet.has(url));
     });
     setRefreshedProductImages(effectiveProductImages.filter(img => !urlSet.has(img.url)));
+    // A deleted node can never turn up in shopifyMediaMap, so a settling
+    // entry for it would keep its tile on screen forever — draggable into a
+    // variant gallery with a GID that no longer exists. Retire it here.
+    if (gids.length > 0) onSettlingMediaResolved?.(gids);
     setSelectedGalleryItems(m => {
       const next = new Map(m);
       urls.forEach(url => next.delete(`product::${url}`));
@@ -2099,7 +2112,7 @@ export function VariantImageManager({
       // non-critical: local state already reflects deletion
     }
     setIsDeleting(false);
-  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId]);
+  }, [deleteConfirm, urlToGid, variants, effectiveProductImages, productId, onSettlingMediaResolved]);
 
   const handleGenerateAltFromSku = useCallback((_variantId: string, selectedGids: string[]) => {
     if (!selectedGids.length) return;

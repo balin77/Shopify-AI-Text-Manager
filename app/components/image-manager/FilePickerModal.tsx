@@ -493,13 +493,20 @@ export function FilePickerModal({
       return next;
     });
     const file = pendingFilesRef.current.get(id);
+    if (!file) return;
+    // Images only. A video's blob: URL can NEVER render inside the tile's
+    // <img>, so onError always fires for one — base64-encoding every video
+    // under the size cap would burn memory (and push the string on into
+    // pendingProductNewMedia and the settling entry) for a preview that
+    // still cannot display. The placeholder is the right answer there.
+    if (classifyFile(file.type, file.name) !== "image") return;
     // Retry exactly once. Without the data:-guard a data: URL that also fails
     // to decode would loop: the fallback clears the broken flag, the <img>
     // renders again, errors again, and we are back here.
     if (pendingPreviewRef.current.get(id)?.startsWith("data:")) return;
-    // Cap the fallback: base64 inflates by ~33% and a 50 MB video would
-    // freeze the tab for a thumbnail nobody needs.
-    if (!file || file.size > MAX_DATA_URL_PREVIEW_BYTES) return;
+    // Cap the fallback: base64 inflates by ~33% and a large file would
+    // freeze the tab for a thumbnail.
+    if (file.size > MAX_DATA_URL_PREVIEW_BYTES) return;
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = typeof reader.result === "string" ? reader.result : "";
