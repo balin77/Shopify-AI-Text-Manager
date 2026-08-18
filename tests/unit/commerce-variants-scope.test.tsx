@@ -180,3 +180,90 @@ describe("stock", () => {
     expect(await screen.findByText(/one variant at a time/i)).toBeTruthy();
   });
 });
+
+describe("the stock table", () => {
+  /** Two warehouses, like Shopify's own product page. */
+  const stocked = [
+    variant("Weiss", "20cm", {
+      levels: [
+        { locationId: "l1", locationName: "Schweiz", locationActive: true, onHand: 20, available: 20, committed: 0, unavailable: 0 },
+        { locationId: "l2", locationName: "Spanien", locationActive: true, onHand: 10, available: 8, committed: 2, unavailable: 0 },
+      ],
+    }),
+  ];
+
+  function withLevels() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          variants: stocked,
+          variantsTruncated: false,
+          channels: [],
+          channelsTruncated: false,
+          shopLocations: [],
+        }),
+      })),
+    );
+  }
+
+  it("shows one row per location and a total", async () => {
+    withLevels();
+    ui();
+
+    expect(await screen.findByText("Schweiz")).toBeTruthy();
+    expect(screen.getByText("Spanien")).toBeTruthy();
+    const total = screen.getByText("Total").closest("tr")!;
+    // 20 + 10 on hand, 20 + 8 available, 0 + 2 committed.
+    expect([...total.querySelectorAll("td")].map((td) => td.textContent)).toEqual([
+      "Total", "0", "2", "28", "30",
+    ]);
+  });
+
+  it("moves the on-hand total with what is typed", async () => {
+    // The number a merchant is deciding against has to be the one they are
+    // looking at, not the one that was loaded.
+    withLevels();
+    ui();
+    await screen.findByText("Schweiz");
+
+    const inputs = screen.getAllByLabelText(/On hand/i) as HTMLInputElement[];
+    fireEvent.change(inputs[0], { target: { value: "25" } });
+
+    const total = screen.getByText("Total").closest("tr")!;
+    expect([...total.querySelectorAll("td")].map((td) => td.textContent).at(-1)).toBe("35");
+  });
+
+  it("shows an em dash, never a zero, for a number it does not have", async () => {
+    // `tracked: false` and "never synced" both arrive as null, and 0 would
+    // tell a merchant they are sold out of something they can sell freely.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          variants: [
+            variant("Weiss", "20cm", {
+              levels: [
+                { locationId: "l1", locationName: "Schweiz", locationActive: true, onHand: null, available: null, committed: null, unavailable: null },
+              ],
+            }),
+          ],
+          variantsTruncated: false,
+          channels: [],
+          channelsTruncated: false,
+          shopLocations: [],
+        }),
+      })),
+    );
+    ui();
+
+    const row = (await screen.findByText("Schweiz")).closest("tr")!;
+    expect([...row.querySelectorAll("td")].slice(1, 4).map((td) => td.textContent)).toEqual(["—", "—", "—"]);
+  });
+});

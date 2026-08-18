@@ -84,7 +84,7 @@ export const VARIANT_COMMERCE_SELECTION = `
                           pageInfo { hasNextPage }
                           nodes {
                             location { id name isActive }
-                            quantities(names: ["available", "on_hand"]) { name quantity }
+                            quantities(names: ["available", "on_hand", "committed"]) { name quantity }
                           }
                         }
                       }
@@ -299,6 +299,9 @@ export function inventoryLevelRows(
       // something they can sell without limit.
       onHand: byName.has("on_hand") ? byName.get("on_hand") ?? null : null,
       available: byName.has("available") ? byName.get("available") ?? null : null,
+      // `committed` rides along in the QUERY but is not mirrored: it moves with
+      // every order and the cache has no column for it. The panel reads it off
+      // the live response instead.
     });
   }
 

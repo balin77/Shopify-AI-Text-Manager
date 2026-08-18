@@ -558,6 +558,12 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      locationsColumn: "Ubicaciones",
+      unavailableColumn: "No disponible",
+      committedColumn: "Comprometido",
+      availableColumn: "Disponible",
+      onHandColumn: "En existencias",
+      totalRow: "Total",
       scopeSingle: "Una variante",
       scopeAll: "Todas las variantes",
       scopeGroup: "Todas {value}",

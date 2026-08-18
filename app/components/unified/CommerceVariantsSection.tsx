@@ -33,7 +33,7 @@
  * single variant only, and the panel says why rather than hiding it.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import {
   Badge,
   BlockStack,
@@ -143,11 +143,9 @@ export function CommerceVariantsSection() {
 
   return (
     <BlockStack gap="300">
-      <InlineStack gap="200" blockAlign="center">
-        <Text as="h3" variant="headingSm">{(t.stockHeading as string) || "Stock"}</Text>
-        <HelpTooltip helpKey="commerceStock" />
-      </InlineStack>
-
+      {/* No heading here. "Bestand" over the whole block titled the prices and
+          the shipping settings too; it sits over the locations table, which is
+          the thing it names. */}
       {data.variantsTruncated && (
         <Text as="p" variant="bodySm" tone="subdued">
           {(t.variantsTruncated as string) || "This product has more variants than were loaded. Edit the rest in the Shopify admin."}
@@ -372,6 +370,14 @@ export function CommerceVariantsSection() {
 
                   {first.inventoryTracked === true && first.inventoryItemId && (
                     <BlockStack gap="200">
+                      {/* The heading belongs HERE, over the locations it
+                          describes — above the variant it read as a title for
+                          the prices and the shipping settings too. */}
+                      <InlineStack gap="200" blockAlign="center">
+                        <Text as="h4" variant="headingXs">{(t.stockHeading as string) || "Stock"}</Text>
+                        <HelpTooltip helpKey="commerceStock" />
+                      </InlineStack>
+
                       {first.levelsTruncated && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {(t.levelsTruncated as string) || "This variant has stock at more locations than were loaded."}
@@ -379,118 +385,223 @@ export function CommerceVariantsSection() {
                       )}
                       {first.levels.length === 0 && data.shopLocations.length === 0 && (
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {(t.noLevels as string) || "No location holds stock of this first."}
+                          {(t.noLevels as string) || "No location holds stock of this variant."}
                         </Text>
                       )}
-                      {first.levels.map((level) => {
-                        const key = `${first.id}::${level.locationId}`;
-                        return (
-                          <InlineStack key={key} gap="300" blockAlign="center" wrap>
-                            <Box minWidth="180px">
-                              <Text as="span" variant="bodySm" tone={level.locationActive ? undefined : "subdued"}>
-                                {level.locationName || level.locationId}
-                                {/* Deactivated locations keep their stock but
-                                    take no writes. Greyed, never hidden — a
-                                    location that vanishes reads as stock that
-                                    disappeared. */}
-                                {!level.locationActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
-                              </Text>
-                            </Box>
-                            {/* Sized for a number, not for a sentence. It was
-                                a full-width text input holding at most four
-                                digits, which made the stock list read like a
-                                form of paragraphs. */}
-                            <Box minWidth="86px" maxWidth="86px">
-                              <TextField
-                                label={(t.onHand as string) || "On hand"}
-                                labelHidden
-                                type="number"
-                                inputMode="numeric"
-                                align="right"
-                                value={edits[key] ?? String(level.onHand ?? "")}
-                                onChange={(value) => setEdits((prev) => ({ ...prev, [key]: value }))}
-                                autoComplete="off"
-                                disabled={saving || !level.locationActive}
-                              />
-                            </Box>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {/* `available` is DERIVED (on hand minus open
-                                  commitments), so it is shown and never
-                                  edited — writing it would contradict the
-                                  commitments it is computed from. */}
-                              {((t.availableLabel as string) || "available: {n}").replace(
-                                "{n}",
-                                level.available == null ? "—" : String(level.available),
-                              )}
-                            </Text>
-                          </InlineStack>
-                        );
-                      })}
 
-                      {/* Locations the item is not stocked at.
-                          Shopify reports a level only where an item has been
-                          ACTIVATED, so these are absent from `levels` — and a
-                          merchant with three warehouses seeing one row
-                          reasonably concludes the panel is broken.
+                      {/* Shopify's own arrangement: one row per location, the
+                          four numbers as columns, and a total. A stacked list
+                          of "Berlin — [20] available: 20" made the merchant
+                          add up their own warehouses. */}
+                      <StockTable
+                        rows={[
+                          ...first.levels.map((level) => ({
+                            key: `${first.id}::${level.locationId}`,
+                            name: level.locationName || level.locationId,
+                            active: level.locationActive,
+                            stocked: true,
+                            unavailable: level.unavailable,
+                            committed: level.committed,
+                            available: level.available,
+                            onHand: level.onHand,
+                          })),
+                          /* Locations the item is not stocked at. Shopify
+                             reports a level only where an item has been
+                             ACTIVATED, so these are absent from `levels` — and
+                             a merchant with three warehouses seeing one row
+                             reasonably concludes the panel is broken.
 
-                          They get the SAME input as the others rather than an
-                          "activate" button: typing a number is what a merchant
-                          means by "stock it here", and a button that has to be
-                          pressed first is a step the machine can take itself.
-                          The activation rides along with the save — Shopify's
-                          `inventoryActivate` takes the quantity, so it is one
-                          call, not two. */}
-                      {/* Suppressed entirely when the level window was cut
-                          off: locations 11+ of a variant stocked at more than
-                          `INVENTORY_LEVEL_PAGE_SIZE` places are missing from
-                          `levels` while present in `shopLocations`, and would
-                          be listed as "not stocked here" WITH an input that
-                          routes into activation — writing a quantity over a
-                          real one with no compare-and-swap. The truncation
-                          notice above already says the list is incomplete. */}
-                      {(first.levelsTruncated ? [] : data.shopLocations)
-                        .filter((location) => !first.levels.some((l) => l.locationId === location.id))
-                        .map((location) => {
-                          const key = `${first.id}::${location.id}`;
-                          return (
-                            <InlineStack key={key} gap="300" blockAlign="center" wrap>
-                              <Box minWidth="180px">
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  {location.name}
-                                  {!location.isActive ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
-                                </Text>
-                              </Box>
-                              <Box minWidth="86px" maxWidth="86px">
-                                <TextField
-                                  label={(t.onHand as string) || "On hand"}
-                                  labelHidden
-                                  type="number"
-                                  inputMode="numeric"
-                                  align="right"
-                                  // Empty, not "0": the variant genuinely has
-                                  // no count here, and a pre-filled 0 would
-                                  // read as "we hold none" rather than "we do
-                                  // not stock this here".
-                                  value={edits[key] ?? ""}
-                                  placeholder="–"
-                                  onChange={(value) => setEdits((prev) => ({ ...prev, [key]: value }))}
-                                  autoComplete="off"
-                                  disabled={saving || !location.isActive || !first.inventoryItemId}
-                                />
-                              </Box>
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {(t.notStockedHere as string) || "not stocked here"}
-                              </Text>
-                            </InlineStack>
-                          );
-                        })}
+                             They get the SAME input as the others rather than
+                             an "activate" button: typing a number is what a
+                             merchant means by "stock it here", and the
+                             activation rides along with the save.
+
+                             Suppressed entirely when the level window was cut
+                             off: locations 11+ of a variant stocked at more
+                             than `INVENTORY_LEVEL_PAGE_SIZE` places are
+                             missing from `levels` while present in
+                             `shopLocations`, and would be offered an input
+                             that routes into activation — writing a quantity
+                             over a real one with no compare-and-swap. */
+                          ...(first.levelsTruncated ? [] : data.shopLocations)
+                            .filter((location) => !first.levels.some((l) => l.locationId === location.id))
+                            .map((location) => ({
+                              key: `${first.id}::${location.id}`,
+                              name: location.name,
+                              active: location.isActive && !!first.inventoryItemId,
+                              stocked: false,
+                              unavailable: null,
+                              committed: null,
+                              available: null,
+                              onHand: null,
+                            })),
+                        ]}
+                        edits={edits}
+                        onEdit={(key: string, value: string) => setEdits((prev) => ({ ...prev, [key]: value }))}
+                        disabled={saving}
+                        t={t}
+                      />
                     </BlockStack>
                   )}
+
             </>
           )}
         </BlockStack>
       </Box>
     </BlockStack>
+  );
+}
+
+interface StockRow {
+  key: string;
+  name: string;
+  active: boolean;
+  /** False for a location the item is not activated at — see the caller. */
+  stocked: boolean;
+  unavailable: number | null;
+  committed: number | null;
+  available: number | null;
+  onHand: number | null;
+}
+
+/**
+ * The locations table, in the shape Shopify's own product page uses.
+ *
+ * Four numbers per location and a total. Only ON HAND is editable: `available`
+ * is derived (on hand minus open commitments) and writing it would contradict
+ * them, `committed` belongs to orders, and `unavailable` is what is left over.
+ *
+ * A missing number is an em dash, never a zero. `tracked: false` and "never
+ * synced" both arrive here as `null`, and 0 would tell a merchant they are
+ * sold out of something they can sell without limit.
+ */
+function StockTable({
+  rows,
+  edits,
+  onEdit,
+  disabled,
+  t,
+}: {
+  rows: StockRow[];
+  edits: Record<string, string>;
+  onEdit: (key: string, value: string) => void;
+  disabled: boolean;
+  t: Record<string, unknown>;
+}) {
+  const cell: CSSProperties = {
+    padding: "8px 12px",
+    textAlign: "right",
+    borderTop: "1px solid var(--p-color-border-secondary)",
+    whiteSpace: "nowrap",
+  };
+  const headCell: CSSProperties = { ...cell, borderTop: "none", textAlign: "right" };
+  const num = (value: number | null) => (value == null ? "—" : String(value));
+
+  /** Summed only over what is KNOWN, and absent when nothing is. A total that
+   *  silently skipped an unknown row would be a smaller number presented as
+   *  the truth. */
+  const total = (pick: (row: StockRow) => number | null) => {
+    const known = rows.map(pick).filter((v): v is number => v != null);
+    return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+  };
+  /** The on-hand total counts what is TYPED, so the figure moves with the edit. */
+  const onHandTotal = (() => {
+    const values = rows.map((row) => {
+      const edited = edits[row.key];
+      if (edited !== undefined && edited.trim() !== "") {
+        const parsed = Number.parseInt(edited, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+      return row.onHand;
+    });
+    const known = values.filter((v): v is number => v != null);
+    return known.length === 0 ? null : known.reduce((a, b) => a + b, 0);
+  })();
+
+  return (
+    <Box borderColor="border" borderWidth="025" borderRadius="200" overflowX="scroll">
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{ ...headCell, textAlign: "left" }}>
+              <Text as="span" variant="bodySm" tone="subdued">
+                {(t.locationsColumn as string) || "Locations"}
+              </Text>
+            </th>
+            {[
+              (t.unavailableColumn as string) || "Unavailable",
+              (t.committedColumn as string) || "Committed",
+              (t.availableColumn as string) || "Available",
+              (t.onHandColumn as string) || "On hand",
+            ].map((label) => (
+              <th key={label} style={headCell}>
+                <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <td style={{ ...cell, textAlign: "left" }}>
+                <Text as="span" variant="bodySm" tone={row.active ? undefined : "subdued"}>
+                  {row.name}
+                  {/* Deactivated locations keep their stock but take no
+                      writes. Greyed, never hidden — a location that vanishes
+                      reads as stock that disappeared. */}
+                  {!row.active ? ` (${(t.locationInactive as string) || "inactive"})` : ""}
+                </Text>
+                {/* A location the item is not ACTIVATED at says so. In a table
+                    of dashes it would otherwise be indistinguishable from a
+                    location whose numbers merely could not be read — and the
+                    difference is what the whole row is here to show. */}
+                {!row.stocked && (
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {" "}
+                    {(t.notStockedHere as string) || "not stocked here"}
+                  </Text>
+                )}
+              </td>
+              <td style={cell}><Text as="span" variant="bodySm">{num(row.unavailable)}</Text></td>
+              <td style={cell}><Text as="span" variant="bodySm">{num(row.committed)}</Text></td>
+              <td style={cell}><Text as="span" variant="bodySm">{num(row.available)}</Text></td>
+              <td style={cell}>
+                <Box minWidth="86px" maxWidth="86px">
+                  <TextField
+                    label={(t.onHandColumn as string) || "On hand"}
+                    labelHidden
+                    type="number"
+                    inputMode="numeric"
+                    align="right"
+                    // Empty, not "0", for a location the variant is not
+                    // stocked at: a pre-filled 0 would read as "we hold none"
+                    // rather than "we do not stock this here".
+                    value={edits[row.key] ?? (row.stocked ? String(row.onHand ?? "") : "")}
+                    placeholder={row.stocked ? undefined : "–"}
+                    onChange={(value) => onEdit(row.key, value)}
+                    autoComplete="off"
+                    disabled={disabled || !row.active}
+                  />
+                </Box>
+              </td>
+            </tr>
+          ))}
+          {rows.length > 1 && (
+            <tr>
+              <td style={{ ...cell, textAlign: "left" }}>
+                <Text as="span" variant="bodySm" fontWeight="semibold">
+                  {(t.totalRow as string) || "Total"}
+                </Text>
+              </td>
+              <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(total((r) => r.unavailable))}</Text></td>
+              <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(total((r) => r.committed))}</Text></td>
+              <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(total((r) => r.available))}</Text></td>
+              <td style={cell}><Text as="span" variant="bodySm" fontWeight="semibold">{num(onHandTotal)}</Text></td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </Box>
   );
 }
 

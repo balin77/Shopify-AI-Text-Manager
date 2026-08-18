@@ -559,6 +559,12 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      locationsColumn: "Standorte",
+      unavailableColumn: "Nicht verfügbar",
+      committedColumn: "Reserviert",
+      availableColumn: "Verfügbar",
+      onHandColumn: "Auf Lager",
+      totalRow: "Gesamt",
       scopeSingle: "Eine Variante",
       scopeAll: "Alle Varianten",
       scopeGroup: "Alle {value}",
