@@ -67,6 +67,8 @@ import { getLocalizedLanguageName, hasPrimaryContentMissing, getLocaleButtonTool
 import { countImagesWithAltForLocale } from "../utils/field-validation.utils";
 import type { MetaobjectEntry, ValidationOverlays } from "../utils/contentEditor.utils";
 import { useI18n } from "../contexts/I18nContext";
+import { CommerceDataProvider } from "../contexts/CommerceDataContext";
+import { CommerceVariantsSection } from "./unified/CommerceVariantsSection";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
@@ -1097,6 +1099,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     <LocaleAvailabilityProvider hasMultipleLocales={hasMultipleLocales}>
     {/* The stock panel registers its save through this — see the save bar. */}
     <commerceSave.Provider value={commerceSave.value}>
+    {/* One live load, one set of pending edits, one registration — consumed by
+        the channels field in the attributes card AND by the variants section
+        inside the variants card. Two loads would mean two `compareQuantity`
+        baselines for the same stock. */}
+    <CommerceDataProvider
+      productId={config.contentType === "products" ? String(selectedItem?.id ?? "") : ""}
+      isPrimaryLocale={state.currentLanguage === primaryLocale}
+      t={{
+        ...((t.content?.commerce ?? {}) as Record<string, string>),
+        warnings: (t.content?.commerceWarnings ?? {}) as Record<string, string>,
+        // The shared enum vocabulary — this panel's weight unit is the same
+        // kind of value as the status and sort-order options above.
+        enumLabels: (t.content?.enumLabels ?? {}) as Record<string, string>,
+      }}
+    >
     <Page fullWidth>
       <div
         // `sidebar-panel-open` only bites below 1100px, where it swaps the item
@@ -1724,6 +1741,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       primaryOptions={subResourceState.primaryOptionEdits}
                       productId={selectedItem.id}
                       savedNonce={subResourceState.savedNonce}
+                      footer={<CommerceVariantsSection />}
                       valuesToAdd={subResourceState.optionValuesToAdd}
                       linkedValuesToAdd={subResourceState.optionLinkedValuesToAdd}
                       valuesToDelete={subResourceState.optionValuesToDelete}
@@ -1768,6 +1786,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         editMetaobject: t.products?.editMetaobject,
                         choicesUnavailable: t.products?.choicesUnavailable,
                         choicesAllUsed: t.products?.choicesAllUsed,
+                        choicesTruncated: t.products?.choicesTruncated,
+                        choicesSyncedAt: t.products?.choicesSyncedAt,
                         loading: t.common?.loading,
                         deleteValueTitle: t.products?.deleteValueTitle,
                         deleteValueCount: t.products?.deleteValueCount,
@@ -2208,6 +2228,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
         />
       )}
     </Page>
+    </CommerceDataProvider>
     </commerceSave.Provider>
     </LocaleAvailabilityProvider>
   );

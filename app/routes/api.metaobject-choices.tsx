@@ -17,16 +17,22 @@
  * -- Read from the cache, not from Shopify -----------------------------------
  * These entries are already synced (`Metaobject`), they change rarely, and the
  * picker opens on a click. A live query would pay a round trip for a list the
- * app already holds. The cost is that an entry created in Shopify since the
- * last sync is missing — which is why the response reports the cache's age, so
- * the UI can offer a reload rather than let the merchant conclude the entry
- * does not exist.
+ * app already holds.
+ *
+ * The cost is real and is REPORTED rather than hidden: an entry created in
+ * Shopify since the last metaobject sync is not in the cache, so the response
+ * carries `syncedAt` and the picker says when the list was read. Without that,
+ * a missing entry is indistinguishable from one that does not exist, and the
+ * merchant goes looking for a bug.
  */
 
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { metaobjectSwatchColor } from "~/services/metaobject-choice.shared";
+
+/** How many entries one picker shows. */
+const CHOICE_LIMIT = 250;
 
 export interface MetaobjectChoice {
   id: string;
@@ -57,13 +63,23 @@ export const loader = async (args: LoaderFunctionArgs) => {
   // had no colours.
   if (!anchor) return json({ success: false, type: null, entries: [] });
 
+  // Bounded. A shop with thousands of entries of one type would otherwise
+  // serialise all of them into one response per popover open — and the picker
+  // is a scrollable list with no search, so nobody would reach the end anyway.
+  // The cap is REPORTED, never silent.
   const rows = await db.metaobject.findMany({
     where: { shop: session.shop, type: anchor.type },
-    select: { id: true, displayName: true, handle: true, fields: true },
+    // `fields` is the whole JSON blob of every entry and only one hex is taken
+    // out of it — but Prisma cannot project into JSON, so it is read and
+    // discarded here rather than shipped to the client.
+    select: { id: true, displayName: true, handle: true, fields: true, lastSyncedAt: true },
     orderBy: { displayName: "asc" },
+    take: CHOICE_LIMIT + 1,
   });
+  const truncated = rows.length > CHOICE_LIMIT;
+  const shown = truncated ? rows.slice(0, CHOICE_LIMIT) : rows;
 
-  const entries: MetaobjectChoice[] = rows.map((row) => ({
+  const entries: MetaobjectChoice[] = shown.map((row) => ({
     id: row.id,
     // A blank display name would render as an unclickable gap; the handle is
     // always there and is what Shopify falls back to as well.
@@ -71,5 +87,19 @@ export const loader = async (args: LoaderFunctionArgs) => {
     color: metaobjectSwatchColor(row.fields),
   }));
 
-  return json({ success: true, type: anchor.type, entries });
+  return json({
+    success: true,
+    type: anchor.type,
+    entries,
+    truncated,
+    // The oldest row's stamp: the list is only as fresh as its stalest entry.
+    syncedAt: shown.reduce<string | null>(
+      (oldest, row) => {
+        const stamp = row.lastSyncedAt?.toISOString?.() ?? null;
+        if (!stamp) return oldest;
+        return !oldest || stamp < oldest ? stamp : oldest;
+      },
+      null,
+    ),
+  });
 };

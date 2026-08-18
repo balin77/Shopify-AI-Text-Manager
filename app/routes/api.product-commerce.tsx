@@ -80,6 +80,26 @@ export interface CommerceVariantView {
   weightUnit: string | null;
   harmonizedSystemCode: string | null;
   countryCodeOfOrigin: string | null;
+  /**
+   * The variant's OWN image, or the product's featured one when it has none.
+   *
+   * Shown beside the picker so a merchant editing "Weiss / 20cm" can see which
+   * thing that is. Not cached: `ProductVariant.imageKey` and `galleryJson`
+   * belong to the image manager and mean something else (an assignment the
+   * merchant made there), so reading them here would show one panel's state in
+   * another's control.
+   */
+  imageUrl: string | null;
+  imageAlt: string | null;
+  /**
+   * Which value of which option this variant is — `[{name: "Farbe", value:
+   * "Weiss"}, …]`, exactly as Shopify reports it.
+   *
+   * The grouping the bulk scopes are built from. Derived from the TITLE it
+   * could not be: a title is "Weiss / 20cm", and splitting it on " / " breaks
+   * on any value that contains the separator.
+   */
+  selectedOptions: Array<{ name: string; value: string }>;
   levels: Array<{
     locationId: string;
     locationName: string;
@@ -122,12 +142,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
           product(id: $id) {
             id
             ${PRODUCT_PUBLICATIONS_SELECTION}
+            featuredMedia { preview { image { url altText } } }
             variants(first: ${VARIANT_COMMERCE_PAGE_SIZE}) {
               pageInfo { hasNextPage }
               nodes {
                 id
                 title
                 sku
+                image { url altText }
+                selectedOptions { name value }
                 ${VARIANT_COMMERCE_SELECTION}
               }
             }
@@ -203,6 +226,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
       Record<string, unknown>
     >;
 
+    // The product's featured image, as the fallback for a variant that has
+    // none of its own. A product with one image and five variants is the
+    // common case, and showing nothing there would make the picker look
+    // broken for exactly the merchants with the simplest catalogue.
+    const productPreview = (product.featuredMedia as { preview?: { image?: { url?: string; altText?: string } } } | null)
+      ?.preview?.image;
+    const productImageUrl = productPreview?.url ?? null;
+    const productImageAlt = productPreview?.altText ?? null;
+
     const variants: CommerceVariantView[] = [];
     for (const node of variantNodes) {
       const gid = String(node.id ?? "");
@@ -262,6 +294,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
         weightUnit: columns.weightUnit ?? null,
         harmonizedSystemCode: columns.harmonizedSystemCode ?? null,
         countryCodeOfOrigin: columns.countryCodeOfOrigin ?? null,
+        // The variant's own image, else the product's featured one. Read off
+        // the node like `price`, not through the commerce block: it is not
+        // part of that block and folding it in would tie it to the block's
+        // all-or-nothing presence rule.
+        imageUrl:
+          ((node.image as { url?: string } | null)?.url ?? null) || productImageUrl,
+        imageAlt:
+          ((node.image as { altText?: string | null } | null)?.altText ?? null) || productImageAlt,
+        selectedOptions: Array.isArray(node.selectedOptions)
+          ? (node.selectedOptions as Array<{ name?: unknown; value?: unknown }>)
+              .map((o) => ({ name: String(o?.name ?? ""), value: String(o?.value ?? "") }))
+              .filter((o) => o.name && o.value)
+          : [],
         levels: (levels?.rows ?? []).map((row) => ({
           locationId: row.locationId,
           locationName: locationNames.get(row.locationId)?.name ?? "",

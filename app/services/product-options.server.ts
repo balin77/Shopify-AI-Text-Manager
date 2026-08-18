@@ -271,6 +271,34 @@ export async function applyOptionChange(
 
   const outcome = await runOptionMutation(admin, shop, PRODUCT_OPTION_UPDATE, variables, "productOptionUpdate");
   if (outcome.warning) return outcome.warning;
+
+  // The ECHO decides, and `userErrors: []` is not the echo.
+  //
+  // Shopify can accept the call and store nothing -- the historic bug pattern
+  // this app names in its own architecture notes. It matters most for the
+  // LINKED add, whose input shape has never been measured against a live shop:
+  // if `linkedMetafieldValue` is silently ignored the response is a perfectly
+  // healthy one with the option unchanged, and without this check the save
+  // reports success while the merchant's pick is simply gone.
+  const echoed = outcome.options?.find((o) => o.id === params.optionId);
+  if (echoed) {
+    const linkedValues = new Set(
+      echoed.optionValues.map((v) => v.linkedMetafieldValue).filter((v): v is string => !!v),
+    );
+    if (toAddLinked.some((id) => !linkedValues.has(id))) return "optionsNotConfirmed";
+
+    const names = new Set(echoed.optionValues.map((v) => v.name));
+    if (toAdd.some((name) => !names.has(name))) return "optionsNotConfirmed";
+
+    const ids = new Set(echoed.optionValues.map((v) => v.id));
+    if (toDelete.some((id) => ids.has(id))) return "optionsNotConfirmed";
+
+    // A rename is confirmed by the new name being there -- Shopify skips a
+    // value update it considers a no-op, and a skipped rename that reports
+    // success is the same silent no-op one level down.
+    if (toUpdate.some((v) => !names.has(v.name))) return "optionsNotConfirmed";
+  }
+
   await mirrorOptions(db, params.productId, outcome.options ?? []);
   return undefined;
 }

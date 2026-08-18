@@ -390,3 +390,29 @@ describe("adding members to a metaobject-linked option", () => {
     ]);
   });
 });
+
+describe("an option deleted in the same save", () => {
+  it("does not carry its queued edits along", () => {
+    // They address a GID that no longer exists: Shopify rejects them, the save
+    // reports "changes have been reverted", and the merchant is told the
+    // opposite of what happened — the delete succeeded and is irreversible.
+    const { result } = setup();
+
+    act(() => result.current.handlers.handleAddOptionValue(OPTION, "Green"));
+    act(() =>
+      result.current.handlers.handleAddLinkedOptionValue(OPTION, {
+        id: "gid://shopify/Metaobject/77",
+        name: "Ocean",
+      }),
+    );
+    act(() =>
+      result.current.handlers.handleRemoveOptionValue(OPTION, "gid://shopify/ProductOptionValue/1"),
+    );
+    act(() => result.current.handlers.handlePrimaryOptionNameChange(OPTION, "Farbton"));
+    act(() => result.current.handlers.handleDeleteOption(OPTION));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(JSON.parse(submitted().optionsChanges)[OPTION]).toBeUndefined();
+    expect(JSON.parse(submitted().optionsToDelete)).toEqual([OPTION]);
+  });
+});

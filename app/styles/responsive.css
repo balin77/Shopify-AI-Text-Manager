@@ -93,6 +93,9 @@
   --app-editor-sidebar-max-width: 600px;
   --app-short-field-width: 380px;
   --app-value-chip-width: 230px;
+  /* Polaris' Icon box. Spent where a row has to line up with one that starts
+     with a drag handle but has no handle of its own. */
+  --app-drag-handle-width: 20px;
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a

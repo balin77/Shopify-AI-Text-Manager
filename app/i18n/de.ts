@@ -30,6 +30,8 @@ export const de = {
     editMetaobject: "Diese Werte bearbeiten",
     choicesUnavailable: "Die verfügbaren Einträge konnten nicht gelesen werden.",
     choicesAllUsed: "Alle Einträge dieses Typs sind bereits in Verwendung.",
+    choicesTruncated: "Es werden nur die ersten Einträge angezeigt. Der Rest wird im Shopify-Admin verwaltet.",
+    choicesSyncedAt: "Aus der letzten Synchronisation gelesen — lade das Produkt neu, wenn ein Eintrag fehlt.",
     deleteOptionConfirm: "Damit wird die Option entfernt und die Varianten des Produkts werden um die verbleibenden herum neu gebildet.",
     deleteValueCount: "Damit werden {n} Variante(n) gelöscht, samt Bestand, Preisen und SKUs. Das lässt sich nicht rückgängig machen.",
     deleteValueUnknown: "Damit werden die Varianten gelöscht, die diesen Wert benutzen, samt Bestand und Preisen. Wie viele das sind, konnte nicht gelesen werden.",
@@ -535,6 +537,12 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      scopeSingle: "Eine Variante",
+      scopeAll: "Alle Varianten",
+      scopeGroup: "Alle {value}",
+      scopeCount: "{n} Varianten",
+      mixedValues: "Unterschiedliche Werte",
+      stockNotBulk: "Der Bestand ist eine Anzahl pro Variante und Standort und wird deshalb einzeln bearbeitet.",
       pricesHeading: "Preise",
       shippingHeading: "Versand und Zoll",
       price: "Verkaufspreis",

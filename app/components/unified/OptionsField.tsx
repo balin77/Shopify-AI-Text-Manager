@@ -96,6 +96,8 @@ interface OptionsFieldProps {
 
   /** Bumped on every landed save, so the card can drop cached variant counts. */
   savedNonce?: number;
+  /** Rendered inside the variants card, below a divider. */
+  footer?: React.ReactNode;
   /** The product's GID — the variants editor asks how many variants hang off a
    *  value before offering to delete it. */
   productId?: string;
@@ -155,6 +157,8 @@ interface OptionsFieldProps {
     editMetaobject?: string;
     choicesUnavailable?: string;
     choicesAllUsed?: string;
+    choicesTruncated?: string;
+    choicesSyncedAt?: string;
     loading?: string;
     deleteValueTitle?: string;
     deleteOptionConfirm?: string;
@@ -188,6 +192,7 @@ export function OptionsField({
   primaryOptions = {},
   productId = "",
   savedNonce = 0,
+  footer,
   valuesToAdd = {},
   linkedValuesToAdd = {},
   valuesToDelete = {},
@@ -269,6 +274,7 @@ export function OptionsField({
         onTranslate={onTranslate}
         translatingFieldIds={translatingFieldIds}
         savedNonce={savedNonce}
+        footer={footer}
         t={t as Record<string, string | undefined>}
       />
     );

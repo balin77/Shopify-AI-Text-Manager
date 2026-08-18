@@ -21,6 +21,8 @@ import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { CommerceField } from "~/components/unified/CommerceField";
+import { CommerceVariantsSection } from "~/components/unified/CommerceVariantsSection";
+import { CommerceDataProvider } from "~/contexts/CommerceDataContext";
 
 const PRODUCT = "gid://shopify/Product/1";
 
@@ -40,18 +42,24 @@ const variant = (id: string, title: string) => ({
   inventoryPolicy: "DENY",
   levels: [],
   levelsTruncated: false,
+  imageUrl: null,
+  imageAlt: null,
+  selectedOptions: [],
 });
 
-function ui(props: Partial<Parameters<typeof CommerceField>[0]> = {}) {
+/**
+ * The panel is two views over ONE provider now: the channels field stayed in
+ * the attributes card, the variant half moved into the variants card. Both are
+ * mounted here, because the hook-ordering crash this file exists to catch can
+ * come from either.
+ */
+function ui(props: { isPrimaryLocale?: boolean } = {}) {
   return (
     <AppProvider i18n={en}>
-      <CommerceField
-        productId={PRODUCT}
-        label="Stock and sales channels"
-        isPrimaryLocale
-        t={{}}
-        {...props}
-      />
+      <CommerceDataProvider productId={PRODUCT} isPrimaryLocale={props.isPrimaryLocale ?? true} t={{}}>
+        <CommerceField label="Stock and sales channels" />
+        <CommerceVariantsSection />
+      </CommerceDataProvider>
     </AppProvider>
   );
 }
@@ -115,8 +123,10 @@ describe("CommerceField render states", () => {
     render(ui());
 
     const picker = (await screen.findByLabelText("Variant")) as HTMLSelectElement;
-    // Both variants are OPTIONS of one picker...
-    expect([...picker.options].map((o) => o.textContent)).toEqual(["S", "M"]);
+    // Both variants are OPTIONS of one picker, alongside the bulk scope. The
+    // fixture's variants report no `selectedOptions`, so there are no groups —
+    // only the two variants and "all".
+    expect([...picker.options].map((o) => o.textContent)).toEqual(["S", "M", "All variants"]);
     // ...and only the selected one has a box. Before this change there were
     // two of every field on screen, stacked.
     expect(screen.queryAllByLabelText(/Cost per item/i).length).toBe(1);

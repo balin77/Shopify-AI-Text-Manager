@@ -49,7 +49,7 @@
  * editor's ONE save bar carries, the same as the text fields.
  */
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
 import {
   ActionList,
   Badge,
@@ -59,11 +59,13 @@ import {
   Card,
   Icon,
   InlineStack,
+  Divider,
   Modal,
   Popover,
   Tag,
   Text,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
 import { DeleteIcon, DragHandleIcon, PlusIcon } from "@shopify/polaris-icons";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
@@ -153,6 +155,15 @@ export interface VariantOptionsEditorProps {
    *  not name the number from before it. */
   savedNonce?: number;
 
+  /**
+   * Rendered inside this card, below a divider.
+   *
+   * The variant-level editor (prices, shipping, stock) goes here: it describes
+   * the combinations the options above produce, and it used to sit two cards
+   * away from the list that names them.
+   */
+  footer?: ReactNode;
+
   t?: Record<string, string | undefined>;
 }
 
@@ -181,6 +192,7 @@ export function VariantOptionsEditor({
   onTranslate,
   translatingFieldIds = new Set(),
   savedNonce = 0,
+  footer,
   t = {},
 }: VariantOptionsEditorProps) {
   const singleLocaleHint = useSingleLocaleHint();
@@ -215,7 +227,15 @@ export function VariantOptionsEditor({
    * failed read would tell the merchant their shop has no colours.
    */
   const [choices, setChoices] = useState<
-    Record<string, Array<{ id: string; displayName: string; color?: string }> | null>
+    Record<
+      string,
+      | {
+          entries: Array<{ id: string; displayName: string; color?: string }>;
+          truncated: boolean;
+          syncedAt: string | null;
+        }
+      | null
+    >
   >({});
   /**
    * The pending confirmation, or null.
@@ -418,7 +438,10 @@ export function VariantOptionsEditor({
    */
   const loadChoices = useCallback(
     (option: OptionData) => {
-      if (choices[option.id] !== undefined) return;
+      // A FAILED read is retried on the next open: `null` used to be
+      // `!== undefined` too, so one dropped request left the picker dead for
+      // the rest of the session.
+      if (choices[option.id]) return;
       const anchor = option.values.find((v) => v.linkedValue)?.linkedValue;
       if (!anchor) {
         // No GID to ask with. Reported as unreadable, never as "none exist".
@@ -430,7 +453,9 @@ export function VariantOptionsEditor({
         .then((body) => {
           setChoices((prev) => ({
             ...prev,
-            [option.id]: body?.success ? body.entries : null,
+            [option.id]: body?.success
+              ? { entries: body.entries ?? [], truncated: body.truncated === true, syncedAt: body.syncedAt ?? null }
+              : null,
           }));
         })
         .catch(() => setChoices((prev) => ({ ...prev, [option.id]: null })));
@@ -440,7 +465,7 @@ export function VariantOptionsEditor({
 
   /** The colour a fetched choice carries, for a chip that is still pending. */
   const choiceColour = (optionId: string, entryId: string) =>
-    (choices[optionId] ?? [])?.find((c) => c.id === entryId)?.color;
+    choices[optionId]?.entries.find((c) => c.id === entryId)?.color;
 
   /**
    * The picker's body.
@@ -450,6 +475,9 @@ export function VariantOptionsEditor({
    * failed read would tell the merchant their shop has no colours.
    */
   const renderChoices = (option: OptionData) => {
+    // The same answer the chips use — hardcoding `true` here gave one entry a
+    // swatch in the picker and none the moment it was queued.
+    const isColourOption = looksLikeColourOption(option.name, option.linkedMetaobjectType);
     const list = choices[option.id];
     if (list === undefined) {
       return (
@@ -468,11 +496,15 @@ export function VariantOptionsEditor({
       );
     }
     // Already ON the option, or already queued in this session.
+    // Values on their way out are NOT taken: a merchant who deleted "Red" and
+    // reopens the picker should see Red offered again, or the chip list and
+    // the picker contradict each other with no explanation.
+    const removed = new Set(valuesToDelete[option.id] ?? []);
     const taken = new Set([
-      ...option.values.map((v) => v.linkedValue).filter(Boolean),
+      ...option.values.filter((v) => !removed.has(v.id)).map((v) => v.linkedValue).filter(Boolean),
       ...(linkedValuesToAdd[option.id] ?? []).map((e) => e.id),
     ]);
-    const available = list.filter((entry) => !taken.has(entry.id));
+    const available = list.entries.filter((entry) => !taken.has(entry.id));
     if (available.length === 0) {
       return (
         <Box padding="300">
@@ -484,10 +516,26 @@ export function VariantOptionsEditor({
     }
     return (
       <div style={{ maxHeight: "320px", overflowY: "auto" }}>
+        {/* The cache's age and its cap, both SAID. A missing entry is
+            otherwise indistinguishable from one that does not exist, and the
+            merchant goes looking for a bug in the wrong place. */}
+        {(list.truncated || list.syncedAt) && (
+          <Box padding="200">
+            <Text as="p" variant="bodySm" tone="subdued">
+              {list.truncated
+                ? (t.choicesTruncated || "Only the first entries are shown. Manage the rest in the Shopify admin.")
+                : (t.choicesSyncedAt || "Read from the last sync — reload the product if an entry is missing.")}
+            </Text>
+          </Box>
+        )}
         <ActionList
           items={available.map((entry) => ({
             content: entry.displayName,
-            prefix: <Swatch swatch={resolveSwatch(entry.displayName, { color: entry.color }, { isColourOption: true })} />,
+            prefix: (
+              <Swatch
+                swatch={resolveSwatch(entry.displayName, { color: entry.color }, { isColourOption })}
+              />
+            ),
             onAction: () => {
               onAddLinkedValue?.(option.id, { id: entry.id, name: entry.displayName });
               setPickerFor(null);
@@ -777,7 +825,24 @@ export function VariantOptionsEditor({
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <Text as="span" variant="bodyMd" truncate>{entry.name}</Text>
                                 </div>
-                                <Badge tone="attention">{t.pendingBadge || "Not saved yet"}</Badge>
+                                {/* A dot, not a Badge. Polaris badges are
+                                    nowrap and do not shrink, and "Noch nicht
+                                    gespeichert" is 135px of unshrinkable
+                                    chrome in a 230px chip -- it left about
+                                    13px for the name the chip exists to
+                                    show. */}
+                                <Tooltip content={t.pendingBadge || "Not saved yet"}>
+                                  <span
+                                    aria-label={t.pendingBadge || "Not saved yet"}
+                                    style={{
+                                      width: "8px",
+                                      height: "8px",
+                                      flex: "0 0 auto",
+                                      borderRadius: "50%",
+                                      background: "var(--p-color-bg-fill-caution)",
+                                    }}
+                                  />
+                                </Tooltip>
                                 <Button
                                   icon={DeleteIcon}
                                   variant="tertiary"
@@ -895,8 +960,11 @@ export function VariantOptionsEditor({
                           above start with one and this row does not, so
                           without it the add field sits 20px to their left --
                           the kind of misalignment that reads as a mistake. */}
-                      <span style={{ width: "20px", flex: "0 0 auto" }} aria-hidden />
-                      <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
+                      <span style={{ width: "var(--app-drag-handle-width)", flex: "0 0 auto" }} aria-hidden />
+                      {/* The same width as a value chip, so the row below them
+                          lines up with the row above rather than running 150px
+                          past it. */}
+                      <div style={{ flex: 1, maxWidth: "var(--app-value-chip-width)" }}>
                         <TextField
                           label={t.addValue || "Add another value"}
                           labelHidden
@@ -1032,6 +1100,13 @@ export function VariantOptionsEditor({
               </InlineStack>
             </BlockStack>
           </Card>
+        )}
+
+        {footer && (
+          <>
+            <Divider />
+            {footer}
+          </>
         )}
       </BlockStack>
 

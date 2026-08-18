@@ -1278,7 +1278,9 @@ export function useProductSubResources({
       // Collect option name and value changes with validation
       for (const [optionId, edit] of Object.entries(primaryOptionEdits)) {
         const originalOption = selectedItem.options?.find(o => o.id === optionId);
-        if (!originalOption) {
+        // Same rule as the passes below: an option on its way out cannot be
+        // renamed, and asking would fail the whole save.
+        if (!originalOption || optionsToDelete.includes(optionId)) {
           continue;
         }
 
@@ -1334,18 +1336,24 @@ export function useProductSubResources({
       // Values added and removed. Their own pass: a merchant can add a colour
       // without renaming anything, and the loop above only visits options that
       // carry a text edit.
+      // An option being deleted in the same save takes its queued edits with
+      // it. Sent, they address a GID that no longer exists: Shopify rejects
+      // them, the save reports "changes have been reverted", and the merchant
+      // is told the opposite of what happened -- the delete succeeded and is
+      // irreversible. The value-order pass already filtered this; the add and
+      // remove passes did not.
       for (const [optionId, added] of Object.entries(optionValuesToAdd)) {
-        if (added.length === 0) continue;
+        if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
         optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToAdd: added };
       }
       for (const [optionId, removed] of Object.entries(optionValuesToDelete)) {
-        if (removed.length === 0) continue;
+        if (removed.length === 0 || optionsToDelete.includes(optionId)) continue;
         optionsChanges[optionId] = { ...(optionsChanges[optionId] ?? {}), valuesToDelete: removed };
       }
       // A LINKED option's additions travel as metaobject GIDs: its values are
       // entries, not free text, and Shopify takes the name from the entry.
       for (const [optionId, added] of Object.entries(optionLinkedValuesToAdd)) {
-        if (added.length === 0) continue;
+        if (added.length === 0 || optionsToDelete.includes(optionId)) continue;
         optionsChanges[optionId] = {
           ...(optionsChanges[optionId] ?? {}),
           valuesToAddLinked: added.map((e) => e.id),

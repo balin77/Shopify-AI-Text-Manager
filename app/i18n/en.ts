@@ -33,6 +33,8 @@ export const en: Translation = {
     editMetaobject: "Edit these values",
     choicesUnavailable: "The available entries could not be read.",
     choicesAllUsed: "Every entry of this type is already in use.",
+    choicesTruncated: "Only the first entries are shown. Manage the rest in the Shopify admin.",
+    choicesSyncedAt: "Read from the last sync — reload the product if an entry is missing.",
     deleteOptionConfirm: "This removes the option and rebuilds the product's variants around the remaining ones.",
     deleteValueCount: "This deletes {n} variant(s), including their stock, prices and SKUs. It cannot be undone.",
     deleteValueUnknown: "This deletes the variants that use this value, including their stock and prices. How many that is could not be read.",
@@ -538,6 +540,12 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      scopeSingle: "One variant",
+      scopeAll: "All variants",
+      scopeGroup: "All {value}",
+      scopeCount: "{n} variants",
+      mixedValues: "Different values",
+      stockNotBulk: "Stock is a count per variant and per location, so it is edited one variant at a time.",
       pricesHeading: "Prices",
       shippingHeading: "Shipping and customs",
       price: "Price",
