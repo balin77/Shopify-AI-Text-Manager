@@ -320,3 +320,23 @@ describe("reordering VALUES", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 });
+
+describe("a drag that was abandoned or undone", () => {
+  it("does not reorder an option that the same save deletes", () => {
+    // Its order has nothing left to change, and keeping it would force a
+    // reorder call whose entire content is restating unmoved positions.
+    const { result } = setup();
+
+    act(() =>
+      result.current.handlers.handleReorderOptionValues(OPTION, [
+        "gid://shopify/ProductOptionValue/1b",
+        "gid://shopify/ProductOptionValue/1",
+      ]),
+    );
+    act(() => result.current.handlers.handleDeleteOption(OPTION));
+    act(() => result.current.handlers.saveSubResources());
+
+    expect(submitted().optionValueOrder).toBeUndefined();
+    expect(submitted().optionOrder).toBeUndefined();
+  });
+});

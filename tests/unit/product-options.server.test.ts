@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
+import { parseValueOrderPayload } from "~/services/product-options.shared";
 import {
   applyOptionChange,
   countVariantsPerValue,
@@ -415,5 +416,45 @@ describe("countVariantsPerValue", () => {
     // Option and value names are free text and both can contain a slash or a
     // space, which would make two different pairs collide on one key.
     expect(variantCountKey("A/B", "C")).not.toBe(variantCountKey("A", "B/C"));
+  });
+});
+
+describe("parseValueOrderPayload", () => {
+  const gid = (id: string) => id.startsWith("gid://shopify/");
+
+  it("takes a well-formed map", () => {
+    expect(
+      parseValueOrderPayload(
+        JSON.stringify({ "gid://shopify/ProductOption/1": ["gid://shopify/ProductOptionValue/2", "gid://shopify/ProductOptionValue/1"] }),
+        gid,
+      ),
+    ).toEqual({
+      "gid://shopify/ProductOption/1": ["gid://shopify/ProductOptionValue/2", "gid://shopify/ProductOptionValue/1"],
+    });
+  });
+
+  it("drops the WHOLE option when one id is unusable", () => {
+    // This is a positional payload: filtering the bad id out would not
+    // sanitise the request, it would apply a different order than the merchant
+    // dragged — quietly, to real variants.
+    expect(
+      parseValueOrderPayload(
+        JSON.stringify({
+          "gid://shopify/ProductOption/1": ["gid://shopify/ProductOptionValue/1", "nonsense", "gid://shopify/ProductOptionValue/2"],
+          "gid://shopify/ProductOption/2": ["gid://shopify/ProductOptionValue/3"],
+        }),
+        gid,
+      ),
+    ).toEqual({ "gid://shopify/ProductOption/2": ["gid://shopify/ProductOptionValue/3"] });
+  });
+
+  it("survives anything that is not the expected shape", () => {
+    // A malformed payload must not fail the save, whose other halves are valid.
+    expect(parseValueOrderPayload("", gid)).toEqual({});
+    expect(parseValueOrderPayload("{oops", gid)).toEqual({});
+    expect(parseValueOrderPayload("[]", gid)).toEqual({});
+    expect(parseValueOrderPayload("null", gid)).toEqual({});
+    expect(parseValueOrderPayload(JSON.stringify({ "gid://shopify/ProductOption/1": "not a list" }), gid)).toEqual({});
+    expect(parseValueOrderPayload(JSON.stringify({ nonsense: ["gid://shopify/ProductOptionValue/1"] }), gid)).toEqual({});
   });
 });

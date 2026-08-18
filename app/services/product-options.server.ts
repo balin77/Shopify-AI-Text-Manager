@@ -424,6 +424,9 @@ export async function fetchOptionSwatches(
     }
     return swatches;
   } catch (error) {
+    // A re-auth `Response` is not a failed query -- swallowed, the request can
+    // never re-authenticate and every read here answers "unknown" forever.
+    if (error instanceof Response) throw error;
     logger.warn("[ProductOptions] swatch query failed", {
       context: "ProductOptions", shop, productId,
       error: error instanceof Error ? error.message : String(error),
@@ -491,6 +494,7 @@ export async function countVariantsPerValue(
     }
     return counts;
   } catch (error) {
+    if (error instanceof Response) throw error;
     logger.warn("[ProductOptions] variant count failed", {
       context: "ProductOptions", shop, productId,
       error: error instanceof Error ? error.message : String(error),

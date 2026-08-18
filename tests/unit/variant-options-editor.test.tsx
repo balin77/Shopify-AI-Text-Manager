@@ -284,12 +284,15 @@ describe("VariantOptionsEditor — colours and order", () => {
     await screen.findByDisplayValue("Red");
 
     const painted = [...container.querySelectorAll("span[aria-hidden]")]
-      .map((el) => (el as HTMLElement).style.background)
+      .map((el) => (el as HTMLElement).style.backgroundColor)
       .filter(Boolean);
 
-    // "Blue" carries a swatch from Shopify; "Red" is a basic colour word.
-    expect(painted.some((b) => b.includes("rgb(0, 0, 255)") || b.includes("#0000FF"))).toBe(true);
-    expect(painted.length).toBeGreaterThanOrEqual(2);
+    // "Blue" carries a swatch from Shopify (#0000FF) — and is ALSO a colour
+    // word (#1976D2), so this asserts that Shopify's own value wins.
+    expect(painted).toContain("#0000FF");
+    expect(painted).not.toContain("#1976D2");
+    // "Red" has no Shopify swatch and falls to the word table.
+    expect(painted).toContain("#D32F2F");
   });
 
   it("reports a value drag as a new order", async () => {
@@ -331,5 +334,48 @@ describe("VariantOptionsEditor — colours and order", () => {
     // is this app's own metaobjects page.
     fireEvent.click(screen.getByRole("button", { name: /Edit these values/i }));
     expect(spies.onOpenMetaobjects).toHaveBeenCalled();
+  });
+});
+
+describe("VariantOptionsEditor — an abandoned drag", () => {
+  it("does not replay a released value drag on the next drop", () => {
+    // Released over dead space the id stayed set, and the next drop of
+    // anything replayed the move — a reorder the merchant never asked for,
+    // with the save bar going dirty behind it.
+    const { spies } = ui();
+    fireEvent.click(screen.getByText("Colour"));
+
+    const rows = screen.getAllByDisplayValue(/Red|Blue/).map((input) => input.closest("[draggable]")!);
+    fireEvent.dragStart(rows[0]);
+    fireEvent.dragEnd(rows[0]);
+
+    fireEvent.dragOver(rows[1]);
+    fireEvent.drop(rows[1]);
+
+    expect(spies.onReorderValues).not.toHaveBeenCalled();
+  });
+
+  it("does not paint a hex-shaped SIZE", async () => {
+    // "DDD" is a bra cup size and also a valid three-digit hex.
+    const { container } = ui({
+      options: [
+        {
+          id: SECOND,
+          name: "Size",
+          position: 1,
+          values: [
+            { id: "gid://shopify/ProductOptionValue/9", name: "DDD" },
+            { id: "gid://shopify/ProductOptionValue/10", name: "EEE" },
+          ],
+        },
+      ],
+    });
+    fireEvent.click(screen.getByText("Size"));
+    await screen.findByDisplayValue("DDD");
+
+    const painted = [...container.querySelectorAll("span[aria-hidden]")]
+      .map((el) => (el as HTMLElement).style.backgroundColor)
+      .filter(Boolean);
+    expect(painted).toEqual([]);
   });
 });

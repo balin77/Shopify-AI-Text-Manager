@@ -1340,7 +1340,10 @@ export function useProductSubResources({
       const movedValueOrder: Record<string, string[]> = {};
       for (const [optionId, ids] of Object.entries(optionValueOrder)) {
         const option = selectedItem.options?.find((o) => o.id === optionId);
-        if (!option) continue;
+        // An option being deleted in the same save has no order left to have
+        // changed, and keeping it would force a reorder call whose entire
+        // content is restating positions nobody moved.
+        if (!option || optionsToDelete.includes(optionId)) continue;
         const deletedHere = new Set(optionValuesToDelete[optionId] ?? []);
         const saved = option.values.map((v) => v.id).filter((id) => id && !deletedHere.has(id));
         const wanted = ids.filter((id) => !deletedHere.has(id) && saved.includes(id));
@@ -1391,6 +1394,13 @@ export function useProductSubResources({
         formData.append("optionOrder", JSON.stringify(orderToSend));
       }
       if (valueOrderChanged) {
+        // UNMEASURED: values ADDED in the same save have no GID yet, so a
+        // reorder that follows an add names only the values that already
+        // existed. Whether `productOptionsReorder` accepts a partial value
+        // list or demands the complete set is not established -- if it demands
+        // it, this reorder fails and says so (the save reports a structural
+        // failure), rather than applying a wrong order silently. Worth one
+        // probe against a live shop before relying on the combination.
         formData.append("optionValueOrder", JSON.stringify(movedValueOrder));
       }
 

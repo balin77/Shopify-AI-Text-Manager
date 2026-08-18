@@ -23,7 +23,7 @@
  *   deleting an option  collapses the matrix onto the remaining options
  *
  * The delete confirmation therefore names the NUMBER of variants at stake,
- * fetched live when the card is opened (`/api/product-option-impact`). When
+ * fetched live when the card is opened (`/api/product-option-details`). When
  * that count is unavailable the dialog says so rather than showing a zero — a
  * zero would read as "nothing depends on this, delete freely", which is the
  * opposite of what an unanswered question means.
@@ -66,7 +66,11 @@ import { DeleteIcon, DragHandleIcon, PlusIcon } from "@shopify/polaris-icons";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import { variantCountKey } from "../../services/product-options.shared";
-import { resolveSwatch, type OptionValueSwatch } from "../../services/product-option-swatch.shared";
+import {
+  looksLikeColourOption,
+  resolveSwatch,
+  type OptionValueSwatch,
+} from "../../services/product-option-swatch.shared";
 import type { OptionData } from "./OptionsField";
 
 /**
@@ -90,7 +94,15 @@ function Swatch({ swatch }: { swatch: ReturnType<typeof resolveSwatch> }) {
         // A border so white and very light colours are still a visible chip
         // rather than a hole in the card.
         border: "1px solid var(--p-color-border)",
-        background: swatch.imageUrl ? `center / cover no-repeat url(${JSON.stringify(swatch.imageUrl)})` : swatch.color,
+        // The colour sits UNDER the image, so an image that 404s or is blocked
+        // by CSP falls back to the known colour instead of an empty chip. The
+        // URL is pinned to `https?://` without quotes or parens by
+        // `resolveSwatch`; the quoting here is the second half of that.
+        backgroundColor: swatch.color,
+        backgroundImage: swatch.imageUrl ? `url(${JSON.stringify(swatch.imageUrl)})` : undefined,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
       }}
     />
   );
@@ -174,8 +186,9 @@ export function VariantOptionsEditor({
   /** Shopify's own swatches, keyed by value GID. Fetched with the counts. */
   const [swatches, setSwatches] = useState<Record<string, OptionValueSwatch>>({});
   const [dragId, setDragId] = useState<string | null>(null);
-  /** The value being dragged, as `optionId::valueId` — a value only ever
-   *  moves within its own option. */
+  /** The GID of the value being dragged. A value only ever moves within its
+   *  own option: `moveValue` looks both ids up in ONE option's list and bails
+   *  when either is absent. */
   const [dragValue, setDragValue] = useState<string | null>(null);
   /** The dragged value order per option id, or absent while untouched. Local,
    *  because a drag has to feel immediate. */
@@ -366,6 +379,8 @@ export function VariantOptionsEditor({
         {visible.map((option) => {
           const isOpen = openOptionId === option.id;
           const values = valuesOf(option);
+          // Gates the bare-hex rule only: on a Size option "DDD" is a cup size.
+          const isColourOption = looksLikeColourOption(option.name, option.linkedMetaobjectType);
 
           if (!isOpen) {
             return (
@@ -373,6 +388,9 @@ export function VariantOptionsEditor({
                 key={option.id}
                 draggable
                 onDragStart={() => setDragId(option.id)}
+                // Released over dead space, the id would otherwise stay set and
+                // the NEXT drop -- of anything -- would replay this move.
+                onDragEnd={() => setDragId(null)}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={() => {
                   if (!dragId || dragId === option.id) return;
@@ -427,7 +445,7 @@ export function VariantOptionsEditor({
                         </InlineStack>
                         <InlineStack gap="100" wrap>
                           {values.map((value) => {
-                            const swatch = resolveSwatch(value.name, swatches[value.id]);
+                            const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
                             return (
                               <Tag key={value.id || `new-${value.addedIndex}`}>
                                 {swatch ? (
@@ -490,7 +508,7 @@ export function VariantOptionsEditor({
                   <BlockStack gap="200">
                     <InlineStack gap="100" wrap>
                       {values.map((value) => {
-                        const swatch = resolveSwatch(value.name, swatches[value.id]);
+                        const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
                         return (
                           <Tag key={value.id}>
                             {swatch ? (
@@ -529,6 +547,7 @@ export function VariantOptionsEditor({
                           event.stopPropagation();
                           setDragValue(value.id);
                         }}
+                        onDragEnd={() => setDragValue(null)}
                         onDragOver={(event) => {
                           if (!value.id || !dragValue) return;
                           event.preventDefault();
@@ -547,7 +566,7 @@ export function VariantOptionsEditor({
                             <Icon source={DragHandleIcon} tone="subdued" />
                           </span>
                         )}
-                        <Swatch swatch={resolveSwatch(value.name, swatches[value.id])} />
+                        <Swatch swatch={resolveSwatch(value.name, swatches[value.id], { isColourOption })} />
                         <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
                           <TextField
                             label={t.valueLabel || "Value"}
@@ -695,7 +714,7 @@ export function VariantOptionsEditor({
                 <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
                 {draft.values.map((value, index) => (
                   <InlineStack key={index} gap="200" blockAlign="center" wrap={false}>
-                    <Swatch swatch={resolveSwatch(value)} />
+                    <Swatch swatch={resolveSwatch(value, null, { isColourOption: looksLikeColourOption(draft.name) })} />
                     <div style={{ flex: 1, maxWidth: "var(--app-short-field-width)" }}>
                       <TextField
                         label={t.valueLabel || "Value"}
