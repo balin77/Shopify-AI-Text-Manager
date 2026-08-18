@@ -36,6 +36,7 @@ const SITE_WIDE_TASK_MESSAGE_KEY: Record<string, string> = {
   seoJsonLdAudit: "jsonLdAuditCompleted",
   seoInternalLinks: "internalLinksCompleted",
   seoRobotsAdvice: "robotsAdviceCompleted",
+  aiDiscoveryIntro: "discoveryIntroCompleted",
   // The bulk editor's write task. Its type stays `seoBulkMeta` for historical
   // reasons (CLAUDE.md) — the message must not repeat that name at merchants.
   seoBulkMeta: "bulkEditorSaveCompleted",
@@ -49,6 +50,7 @@ const SITE_WIDE_TASK_FALLBACK: Record<string, string> = {
   seoJsonLdAudit: "JSON-LD check finished",
   seoInternalLinks: "Internal link suggestions ready",
   seoRobotsAdvice: "robots.txt analysis finished",
+  aiDiscoveryIntro: "AI suggestion for the opening text is ready",
   seoBulkMeta: "Bulk editor: changes saved",
   bulkEditorTranslate: "Bulk editor: translation finished",
 };

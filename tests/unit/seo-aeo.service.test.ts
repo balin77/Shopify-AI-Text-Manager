@@ -20,6 +20,11 @@ import {
   policyPath,
   AI_DISCOVERY_TEMPLATES,
   AI_DISCOVERY_PATHS,
+  AI_DISCOVERY_INTRO_MAX_CHARS,
+  buildDiscoveryIntroPrompt,
+  defaultAgentsIntro,
+  normalizeDiscoveryIntro,
+  parseDiscoveryIntroResponse,
 } from "~/services/seo/aeo.service";
 
 /** Phase 7 AEO pure logic: llms.txt generation + robots.txt AI-crawler audit. */
@@ -691,6 +696,106 @@ describe("buildAgentsMd", () => {
 
   it("differs from the llms.txt built from the same catalog (not one file twice)", () => {
     expect(buildAgentsMd(base)).not.toBe(buildLlmsTxt(base));
+  });
+});
+
+/**
+ * The merchant-authored intro is the ONE editable part of both documents. Two
+ * rules matter here: it REPLACES the generated opening sentence (two intros
+ * saying the same thing in different registers is what an agent quotes back),
+ * and it never reaches the catalog sections — those stay generated, because a
+ * hand-edited product list is stale at the next price change.
+ */
+describe("AI-discovery intro", () => {
+  const base = {
+    shopName: "Acme",
+    domain: "shop.com",
+    description: "We sell great things",
+    products: [{ title: "Blue Shoe", handle: "blue-shoe" }],
+    collections: [{ title: "Footwear", handle: "footwear" }],
+    policies: [{ title: "Refund policy", url: "https://shop.com/policies/refund-policy" }],
+  };
+
+  it("replaces the generated agents.md sentence instead of stacking on it", () => {
+    const out = buildAgentsMd({ ...base, intro: "Wir sind eine Manufaktur aus Bern." });
+    expect(out).toContain("Wir sind eine Manufaktur aus Bern.");
+    expect(out).not.toContain("It is maintained by the store owner.");
+  });
+
+  it("keeps the generated sentence when nothing is stored", () => {
+    expect(buildAgentsMd({ ...base, intro: "" })).toContain(defaultAgentsIntro("Acme"));
+    expect(buildAgentsMd(base)).toContain(defaultAgentsIntro("Acme"));
+  });
+
+  it("leaves the catalog sections generated either way", () => {
+    const out = buildAgentsMd({ ...base, intro: "Custom." });
+    expect(out).toContain("- [Footwear](https://shop.com/collections/footwear)");
+    expect(out).toContain("- [Blue Shoe](https://shop.com/products/blue-shoe)");
+    expect(out).toContain("## Notes for agents");
+  });
+
+  it("sits after the summary line in llms.txt, before the sections", () => {
+    const out = buildLlmsTxt({ ...base, intro: "Handgemacht in der Schweiz." });
+    expect(out.indexOf("> We sell great things")).toBeLessThan(out.indexOf("Handgemacht"));
+    expect(out.indexOf("Handgemacht")).toBeLessThan(out.indexOf("## Products"));
+  });
+
+  it("treats a whitespace-only intro as unset, so no blank paragraph is emitted", () => {
+    expect(normalizeDiscoveryIntro("  \n\n ")).toBe("");
+    expect(buildLlmsTxt({ ...base, intro: "  \n\n " })).toBe(buildLlmsTxt(base));
+  });
+
+  it("caps and tidies stored text", () => {
+    expect(normalizeDiscoveryIntro("a\r\n\r\n\r\n\r\nb")).toBe("a\n\nb");
+    expect(normalizeDiscoveryIntro("x".repeat(5000))).toHaveLength(AI_DISCOVERY_INTRO_MAX_CHARS);
+  });
+
+  it("still goes through the Liquid defang when written to the theme", () => {
+    const out = buildAgentsMd({ ...base, intro: "Use {{ shop.name }} carefully" });
+    const wrapped = wrapLlmsTxtForTheme(out);
+    expect(wrapped).toContain("{ { shop.name }}");
+    expect(llmsTxtMatches(wrapped, out)).toBe(true);
+  });
+});
+
+describe("buildDiscoveryIntroPrompt / parseDiscoveryIntroResponse", () => {
+  const input = {
+    file: "agents" as const,
+    shopName: "Acme",
+    description: "We sell great things",
+    current: "Old text",
+    instruction: "shorter, mention Swiss shipping",
+    language: "de",
+  };
+
+  it("names the document, carries the merchant's instruction and forbids structure", () => {
+    const prompt = buildDiscoveryIntroPrompt(input);
+    expect(prompt).toContain("agents.md");
+    expect(prompt).toContain("shorter, mention Swiss shipping");
+    expect(prompt).toContain("Old text");
+    expect(prompt).toContain("No Markdown headings");
+    // The whole point of "## Notes for agents" is that these live on the
+    // product page — an intro promising them would outlive its own truth.
+    expect(prompt).toContain("Never state prices");
+    expect(prompt).toContain("de");
+  });
+
+  it("describes llms.txt differently from agents.md", () => {
+    expect(buildDiscoveryIntroPrompt({ ...input, file: "llms" })).toContain("llms.txt");
+  });
+
+  it("says so when there is no text yet, rather than sending an empty section", () => {
+    expect(buildDiscoveryIntroPrompt({ ...input, current: "" })).toContain("no text yet");
+  });
+
+  it("strips code fences and a heading the model added anyway", () => {
+    expect(parseDiscoveryIntroResponse("```markdown\n## About us\nWir sind Acme.\n```")).toBe(
+      "Wir sind Acme.",
+    );
+  });
+
+  it("returns empty for an empty answer, so the caller can refuse it", () => {
+    expect(parseDiscoveryIntroResponse("   ")).toBe("");
   });
 });
 

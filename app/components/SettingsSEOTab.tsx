@@ -13,6 +13,7 @@ import {
 } from "@shopify/polaris";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DEFAULT_SEO_LIMITS, resolveSeoLimits, type SeoLimits } from "../utils/character-limits";
 import { meetsPlan, canAccessSeoFeature, getMinimumPlanForSeoFeature, type Plan } from "../utils/planUtils";
 import { PLAN_DISPLAY_NAMES } from "../config/plans";
@@ -136,6 +137,14 @@ export function SettingsSEOTab({
   const scheduledAuditPlan = getMinimumPlanForSeoFeature("scheduledAudit");
   const canScheduleCrawl = canAccessSeoFeature(subscriptionPlan, "scheduledCrawl");
   const scheduledCrawlPlan = getMinimumPlanForSeoFeature("scheduledCrawl");
+  /** Tooltip for a switch the plan does not grant. Null plan ⇒ no tooltip. */
+  const planHint = (plan: Plan | null | undefined) =>
+    plan
+      ? (t.settings.seoAutoAuditPlanHint || "Ab dem {plan}-Plan verfügbar.").replace(
+          "{plan}",
+          PLAN_DISPLAY_NAMES[plan],
+        )
+      : undefined;
   const initialDraft = toDraft(settings.seoLimits ?? null);
 
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
@@ -341,11 +350,17 @@ export function SettingsSEOTab({
             {t.settings.seoAutoAuditHeading || "Automatischer Audit"}
           </Text>
           <InlineStack gap="300" blockAlign="center" wrap={false}>
-            <ToggleSwitch
-              checked={canScheduleAudit && seoAutoAuditEnabled}
-              disabled={!canScheduleAudit}
-              onChange={setSeoAutoAuditEnabled}
-            />
+            {/* A disabled control dispatches no pointer events, so the tooltip
+                needs the wrapper — a bare Polaris <Tooltip> around it never
+                opens. The plan hint below the label stays: the tooltip answers
+                "why can't I click this", the line answers "what would I get". */}
+            <DisabledActionTooltip hint={canScheduleAudit ? undefined : planHint(scheduledAuditPlan)}>
+              <ToggleSwitch
+                checked={canScheduleAudit && seoAutoAuditEnabled}
+                disabled={!canScheduleAudit}
+                onChange={setSeoAutoAuditEnabled}
+              />
+            </DisabledActionTooltip>
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
                 {t.settings.seoAutoAuditLabel || "Nächtlicher SEO-Audit"}
@@ -371,11 +386,13 @@ export function SettingsSEOTab({
               very different things — the audit reads the cache, the crawl
               fetches every page of the storefront. */}
           <InlineStack gap="300" blockAlign="center" wrap={false}>
-            <ToggleSwitch
-              checked={canScheduleCrawl && seoAutoCrawlEnabled}
-              disabled={!canScheduleCrawl}
-              onChange={setSeoAutoCrawlEnabled}
-            />
+            <DisabledActionTooltip hint={canScheduleCrawl ? undefined : planHint(scheduledCrawlPlan)}>
+              <ToggleSwitch
+                checked={canScheduleCrawl && seoAutoCrawlEnabled}
+                disabled={!canScheduleCrawl}
+                onChange={setSeoAutoCrawlEnabled}
+              />
+            </DisabledActionTooltip>
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
                 {t.settings.seoAutoCrawlLabel || "Wöchentlicher Website-Crawl"}

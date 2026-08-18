@@ -101,7 +101,14 @@ export function HelpTooltip({ helpKey, position = "above" }: HelpTooltipProps) {
         >
           <Modal.Section>
             <BlockStack gap="400">
-              <Text as="p">{helpContent.details}</Text>
+              {(Array.isArray(helpContent.details)
+                ? helpContent.details
+                : [helpContent.details as string]
+              ).map((paragraph, i) => (
+                <Text key={i} as="p">
+                  {paragraph}
+                </Text>
+              ))}
               {helpContent.examples && helpContent.examples.length > 0 && (
                 <div className="help-tooltip-examples">
                   <Text as="p" variant="bodySm" fontWeight="semibold">

@@ -32,6 +32,7 @@ import {
   Checkbox,
   Divider,
   List,
+  TextField,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -52,6 +53,10 @@ import {
   loadAiReferralSummary,
   type AiReferralSummary,
 } from "../services/seo/ai-referral.service";
+import {
+  AI_DISCOVERY_INTRO_MAX_CHARS,
+  normalizeDiscoveryIntro,
+} from "../services/seo/ai-discovery-intro.shared";
 import {
   analyzeAeo,
   applyRobotsRuleRemovals,
@@ -128,14 +133,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       llmsTxtUpToDate: false,
       llmsProductCount: 0,
       llmsCollectionCount: 0,
-      llmsPreview: "",
       llmsUrl: "",
       aiDiscovery: {
         llms: GATED_DISCOVERY_STATUS,
         agents: GATED_DISCOVERY_STATUS,
       } as Record<AiDiscoveryFile, AiDiscoveryStatus>,
-      agentsPreview: "",
       agentsPolicyCount: 0,
+      intros: { llms: "", agents: "" } as Record<AiDiscoveryFile, string>,
+      defaultIntros: { llms: "", agents: "" } as Record<AiDiscoveryFile, string>,
       catalog: GATED_CATALOG_REPORT,
       referrals: GATED_REFERRALS,
       themeWrites: false,
@@ -200,6 +205,27 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     });
     return json<ActionResult>({ ok: true });
   }
+  // Storing the merchant's intro is a DB write, not a theme write, so it is
+  // deliberately reachable without AEO_THEME_WRITES: the text can be prepared
+  // (and improved with AI) long before the file may be published.
+  if (getFormString(form, "actionType") === "setAiDiscoveryIntro") {
+    const file = getFormString(form, "file");
+    if (file !== "llms" && file !== "agents") {
+      return json<ActionResult>({ ok: false, error: "invalid" }, { status: 400 });
+    }
+    const value = normalizeDiscoveryIntro(getFormString(form, "intro"));
+    const column = file === "agents" ? "aiDiscoveryIntroAgents" : "aiDiscoveryIntroLlms";
+    // Cleared box ⇒ NULL, not "": the generator treats both the same, but a
+    // stored empty string would make "the merchant wrote nothing" and "the
+    // merchant deleted their text" indistinguishable in the database.
+    await db.aISettings.upsert({
+      where: { shop: session.shop },
+      update: { [column]: value || null },
+      create: { shop: session.shop, [column]: value || null },
+    });
+    return json<ActionResult>({ ok: true });
+  }
+
   if (getFormString(form, "actionType") === "generateLlms") {
     // Server-side gate. Hiding the button is not enough — this action is
     // POST-reachable directly, and without the Shopify approval every
@@ -357,6 +383,146 @@ const DISCOVERY_FILES: Array<{ file: AiDiscoveryFile; path: string }> = [
   { file: "llms", path: "/llms.txt" },
 ];
 
+/**
+ * The one editable part of an AI-discovery file: its opening paragraph.
+ *
+ * Everything else in those documents is a catalog projection and stays
+ * generated — a hand-edited product list is stale at the next price change and
+ * the auto-refresh would overwrite it anyway. The intro is what no query can
+ * know, so it is the merchant's, with an AI pass that suggests INTO the box and
+ * never past it: nothing reaches a published file without an explicit save and
+ * a subsequent generate.
+ */
+function DiscoveryIntroEditor({
+  file,
+  stored,
+  fallback,
+}: {
+  file: AiDiscoveryFile;
+  stored: string;
+  /** What the generator would write with nothing stored ("" for llms.txt). */
+  fallback: string;
+}) {
+  const { t } = useI18n();
+  const a = t.seo.aeoPage;
+  const saveFetcher = useFetcher<ActionResult>();
+
+  const baseline = stored || fallback;
+  const [text, setText] = useState(baseline);
+  const [instruction, setInstruction] = useState("");
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const dirty = normalizeDiscoveryIntro(text) !== normalizeDiscoveryIntro(baseline);
+  const saving = saveFetcher.state !== "idle";
+
+  const runAi = async () => {
+    if (!instruction.trim()) {
+      setAiError(a.introAiMissingInstruction);
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    try {
+      const fd = new FormData();
+      // /api/ai reads the action from `action` and rejects anything without a
+      // contentType in VALID_CONTENT_TYPES — same shape as the robots advice.
+      fd.set("action", "aiDiscoveryIntro");
+      fd.set("contentType", "products");
+      fd.set("file", file);
+      fd.set("instruction", instruction);
+      fd.set("current", text);
+      const res = await fetch("/api/ai", { method: "POST", body: fd });
+      const j = await res.json();
+      if (!j?.success || typeof j.text !== "string" || !j.text) {
+        setAiError(a.introAiFailed);
+        return;
+      }
+      setText(j.text);
+    } catch {
+      setAiError(a.introAiFailed);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  return (
+    <BlockStack gap="200">
+      <Text as="h5" variant="headingSm">
+        {a.introTitle}
+      </Text>
+      <Text as="p" variant="bodySm" tone="subdued">
+        {a.introHint}
+      </Text>
+      <TextField
+        label={a.introTitle}
+        labelHidden
+        value={text}
+        onChange={setText}
+        multiline={4}
+        autoComplete="off"
+        maxLength={AI_DISCOVERY_INTRO_MAX_CHARS}
+        placeholder={a.introPlaceholder}
+        helpText={a.introChars
+          .replace("{count}", String(text.length))
+          .replace("{max}", String(AI_DISCOVERY_INTRO_MAX_CHARS))}
+      />
+
+      {saveFetcher.state === "idle" && saveFetcher.data && (
+        <Banner tone={saveFetcher.data.ok ? "success" : "critical"}>
+          {saveFetcher.data.ok ? a.introSaved : a.introSaveFailed}
+        </Banner>
+      )}
+      {aiError && <Banner tone="critical">{aiError}</Banner>}
+
+      <InlineStack gap="200" wrap>
+        <Button
+          disabled={!dirty}
+          loading={saving}
+          onClick={() =>
+            saveFetcher.submit(
+              { actionType: "setAiDiscoveryIntro", file, intro: text },
+              { method: "post" },
+            )
+          }
+        >
+          {a.introSave}
+        </Button>
+        <Button variant="plain" onClick={() => setAiOpen((v) => !v)}>
+          {a.introAiToggle}
+        </Button>
+        {normalizeDiscoveryIntro(text) !== normalizeDiscoveryIntro(fallback) && (
+          <Button variant="plain" onClick={() => setText(fallback)}>
+            {a.introReset}
+          </Button>
+        )}
+      </InlineStack>
+
+      {aiOpen && (
+        <BlockStack gap="200">
+          <TextField
+            label={a.introAiLabel}
+            value={instruction}
+            onChange={setInstruction}
+            autoComplete="off"
+            multiline={2}
+            placeholder={a.introAiPlaceholder}
+          />
+          <Text as="p" variant="bodySm" tone="subdued">
+            {a.introAiHint}
+          </Text>
+          <InlineStack>
+            <Button loading={aiLoading} onClick={runAi}>
+              {a.introAiRun}
+            </Button>
+          </InlineStack>
+        </BlockStack>
+      )}
+    </BlockStack>
+  );
+}
+
 export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
@@ -369,7 +535,6 @@ export default function SeoAeo() {
   const autoFetcher = useFetcher<ActionResult>();
   const removeFetcher = useFetcher<ActionResult>();
   const [step, setStep] = useState<AeoStep>("robots");
-  const [previewFile, setPreviewFile] = useState<AiDiscoveryFile>("agents");
 
   const robotsBadge = !data.robotsAuditAvailable ? (
     <Badge>{a.statusUnknown}</Badge>
@@ -486,12 +651,6 @@ export default function SeoAeo() {
       setAdviceLoading(false);
     }
   };
-
-  const PREVIEW_LINES = 12;
-  const previewSource = previewFile === "agents" ? data.agentsPreview : data.llmsPreview;
-  const allPreviewLines = previewSource.split("\n");
-  const previewLines = allPreviewLines.slice(0, PREVIEW_LINES).join("\n");
-  const previewTruncated = allPreviewLines.length > PREVIEW_LINES;
 
   const genMsg = (() => {
     if (fetcher.state !== "idle" || !fetcher.data) return null;
@@ -757,15 +916,22 @@ export default function SeoAeo() {
                             {a.discoveryStatusLine[status]}
                           </Text>
 
-                          {/* What the URL returns today, when it is not ours —
-                              evidence for "Shopify's default is live", instead
-                              of asking the merchant to take our word for it. */}
-                          {status === "platformDefault" && s.liveExcerpt && (
-                            <Box overflowX="scroll" background="bg-surface-secondary" padding="200" borderRadius="100">
-                              <pre style={{ margin: 0, fontSize: "0.7rem", lineHeight: 1.5 }}>
-                                {s.liveExcerpt}
-                              </pre>
-                            </Box>
+                          {/* What the URL returns today — for EVERY status, not
+                              just the platform default. It is the only evidence
+                              on the page that does not come from us, and with
+                              the preview panel gone it is also where a merchant
+                              reads their own file back. */}
+                          {s.liveExcerpt && (
+                            <BlockStack gap="100">
+                              <Text as="h5" variant="headingSm">
+                                {a.liveExcerptTitle}
+                              </Text>
+                              <Box overflowX="scroll" background="bg-surface-secondary" padding="200" borderRadius="100">
+                                <pre style={{ margin: 0, fontSize: "0.7rem", lineHeight: 1.5 }}>
+                                  {s.liveExcerpt}
+                                </pre>
+                              </Box>
+                            </BlockStack>
                           )}
 
                           <InlineStack gap="200">
@@ -791,6 +957,14 @@ export default function SeoAeo() {
                               </Button>
                             )}
                           </InlineStack>
+
+                          <Divider />
+
+                          <DiscoveryIntroEditor
+                            file={file}
+                            stored={data.intros[file]}
+                            fallback={data.defaultIntros[file]}
+                          />
                         </BlockStack>
                       </Box>
                     );
@@ -868,48 +1042,6 @@ export default function SeoAeo() {
                     </BlockStack>
                   </InlineStack>
                 </Box>
-
-                {previewSource && (
-                  <Box
-                    padding="300"
-                    background="bg-surface-secondary"
-                    borderWidth="025"
-                    borderColor="border"
-                    borderRadius="200"
-                  >
-                    <BlockStack gap="200">
-                      <InlineStack gap="200" blockAlign="center" align="space-between" wrap>
-                        <Text as="h4" variant="headingSm">
-                          {a.llmsPreviewTitle}
-                        </Text>
-                        {/* One preview area, switched — two stacked previews of
-                            near-identical Markdown made the card unreadable. */}
-                        <InlineStack gap="100">
-                          {DISCOVERY_FILES.map(({ file, path }) => (
-                            <Button
-                              key={file}
-                              size="micro"
-                              pressed={previewFile === file}
-                              onClick={() => setPreviewFile(file)}
-                            >
-                              {path}
-                            </Button>
-                          ))}
-                        </InlineStack>
-                      </InlineStack>
-                      <Box overflowX="scroll">
-                        <pre style={{ margin: 0, fontSize: "0.75rem", lineHeight: 1.5 }}>
-                          {previewLines}
-                        </pre>
-                      </Box>
-                      {previewTruncated && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {a.llmsPreviewTruncated}
-                        </Text>
-                      )}
-                    </BlockStack>
-                  </Box>
-                )}
 
                 {/* llms.txt is a 2024 community proposal, not a ratified
                     standard, and no major provider has confirmed its crawlers
@@ -1074,8 +1206,19 @@ export default function SeoAeo() {
               </Text>
 
               {data.referrals.totalVisits === 0 ? (
+                /* "Nothing yet" and "the beacon never ran" look identical from
+                   here, and the second is the likelier one right after install.
+                   Naming the app embed beats letting a merchant conclude the
+                   feature is broken. */
                 <Banner tone="info">
-                  {a.referralNoneInWindow.replace("{days}", String(data.referrals.days))}
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">
+                      {a.referralNoneInWindow.replace("{days}", String(data.referrals.days))}
+                    </Text>
+                    <Text as="p" variant="bodySm">
+                      {a.referralNoneHint}
+                    </Text>
+                  </BlockStack>
                 </Banner>
               ) : (
                 <BlockStack gap="300">
