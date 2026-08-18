@@ -510,6 +510,14 @@
             assign v_mp4 = v_media.sources | last
           endif
           assign v_content = v_mp4.url
+          # Shopify source URLs are PROTOCOL-RELATIVE ("//cdn...") and Google
+          # requires an absolute contentUrl - same treatment as the images.
+          if v_content != blank
+            assign v_content_scheme = v_content | slice: 0, 2
+            if v_content_scheme == '//'
+              assign v_content = v_content | prepend: 'https:'
+            endif
+          endif
         else
           if v_media.host == 'youtube'
             assign v_embed = 'https://www.youtube.com/embed/' | append: v_media.external_id
