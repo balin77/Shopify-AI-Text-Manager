@@ -29,6 +29,7 @@ import { Semaphore } from "../../utils/semaphore";
 import { parseRobots, type RobotsGroup } from "./aeo.service";
 import { resolveGscPagePath, resolvePathsToResources } from "./url-resolver.server";
 import { isPrivateOrLoopbackHost } from "../../utils/private-host";
+import { logger } from "../../utils/logger.server";
 import { stripLocalePrefix } from "./locale-path.shared";
 import {
   normalizeExternalUrl,
@@ -95,6 +96,18 @@ export function coolDownDurationMs(baseMs: number, retryAfterSec: number | null)
   const asked = retryAfterSec != null && retryAfterSec > 0 ? retryAfterSec * 1000 : 0;
   return Math.min(MAX_COOLDOWN_MS, Math.max(baseMs, asked));
 }
+/**
+ * Share of the reported progress the crawl loop itself owns; the external-link
+ * pass owns the rest, and the finalizer writes the last percent.
+ *
+ * The two phases are not comparable in length and the second one has its own
+ * count, so a single scale over pages alone stops moving the moment the last
+ * page is fetched — and then persistence, head drift and up to
+ * EXTERNAL_CHECK_BUDGET_MS of link checking run behind a bar that has frozen.
+ */
+export const CRAWL_PHASE_MAX_PERCENT = 90;
+/** Longest silence between two progress writes (see `heartbeatMaxIntervalMs`). */
+const HEARTBEAT_MAX_INTERVAL_MS = 10_000;
 /** Parallel requests. Deliberately low: the storefront edge counts requests
  *  per IP, and the whole crawl runs from one server address. */
 const CRAWL_CONCURRENCY = 2;
@@ -104,6 +117,12 @@ const CRAWL_CONCURRENCY = 2;
 const RETRY_AFTER_MAX_MS = 5_000;
 /** Fallback pause before the single 429 retry when no `Retry-After` was sent. */
 const RATE_LIMIT_BACKOFF_MS = 2_000;
+/** Deadline for reading a response BODY, armed after the headers are in. Same
+ *  order as REQUEST_TIMEOUT_MS: this is the second half of one request. */
+const BODY_READ_TIMEOUT_MS = 10_000;
+/** Race marker for that deadline — a symbol, so it can never be confused with a
+ *  legitimate `ReadableStreamReadResult` or with a body that read as `""`. */
+const TIMED_OUT = Symbol("body-read-timeout");
 /** Bytes of a non-HTML block page read purely to identify the blocker. */
 const BLOCK_BODY_SNIFF_BYTES = 8 * 1024;
 /** Request spacing: the starting floor, the ceiling the adaptive backoff
@@ -776,33 +795,95 @@ interface FetchOutcome {
   xRobotsTag: string;
 }
 
-async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
+/**
+ * Read a response body, capped at `maxBytes`.
+ *
+ * Returns `null` when the read FAILED — a stalled connection, an abort from
+ * the request timeout, a decode error. That is deliberately not the same value
+ * as `""`: a partial body is worse than no body here, because a `<head>` cut
+ * halfway through parses cleanly and reports a page as missing its canonical
+ * or its title. The caller turns a null into the same status-0 outcome a
+ * network error produces, which the retry already covers.
+ */
+async function readBodyCapped(
+  res: Response,
+  maxBytes: number,
+  /**
+   * The request's abort controller, aborted when the deadline below expires so
+   * the connection is actually torn down rather than left downloading into a
+   * body nobody will read.
+   */
+  controller?: AbortController,
+  timeoutMs: number = BODY_READ_TIMEOUT_MS,
+): Promise<string | null> {
+  // The deadline is enforced HERE rather than left to the abort alone: whether
+  // an abort errors an already-returned body stream is up to the fetch
+  // implementation, and this must free the worker either way — that slot is one
+  // of only CRAWL_CONCURRENCY, so two stalled bodies is a crawl that stops
+  // making progress at all.
+  let expired = false;
+  let fire: () => void = () => {};
+  const deadline = new Promise<typeof TIMED_OUT>((resolve) => {
+    fire = () => {
+      expired = true;
+      resolve(TIMED_OUT);
+    };
+  });
+  const timer = setTimeout(fire, timeoutMs);
+  const giveUp = () => {
+    controller?.abort();
+    return null;
+  };
+
   const reader = res.body?.getReader?.();
+  // No readable stream (a mocked or non-standard fetch): one buffered read,
+  // under the same deadline — an unbounded `text()` is the stall this guards.
   if (!reader) {
     try {
-      const text = await res.text();
+      const text = await Promise.race([res.text().catch(() => null), deadline]);
+      if (text === TIMED_OUT || expired) return giveUp();
+      if (text === null) return null;
       return text.length > maxBytes ? text.slice(0, maxBytes) : text;
-    } catch {
-      return "";
+    } finally {
+      clearTimeout(timer);
     }
   }
+
   const decoder = new TextDecoder();
   let received = 0;
   let out = "";
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    received += value.byteLength;
-    out += decoder.decode(value, { stream: true });
-    if (received >= maxBytes) {
-      try {
-        await reader.cancel();
-      } catch {
-        /* best-effort */
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const read = reader.read();
+      // The losing side of the race is abandoned, and it rejects as soon as the
+      // abort below lands — with nothing attached that surfaces as an
+      // unhandledRejection from a read nobody is waiting for any more.
+      read.catch(() => {});
+      const next = await Promise.race([read, deadline]);
+      if (next === TIMED_OUT || expired) return giveUp();
+      if (next.done) break;
+      received += next.value.byteLength;
+      out += decoder.decode(next.value, { stream: true });
+      if (received >= maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* best-effort */
+        }
+        break;
       }
-      break;
     }
+  } catch {
+    // Uncaught, this rejected all the way out of `fetchAndProcess`, whose
+    // promise nothing catches: the page was dropped without a record and
+    // without incrementing the counter the progress bar reads.
+    return null;
+  } finally {
+    clearTimeout(timer);
+    // Tear the stream down too: the abort in `giveUp` closes the connection,
+    // this releases the reader we walked away from.
+    if (expired) reader.cancel().catch(() => {});
   }
   return out;
 }
@@ -813,6 +894,7 @@ async function fetchOnceWithRedirects(
   userAgent: string,
   canonicalHost: string,
   aliasHosts: string[],
+  bodyTimeoutMs: number,
 ): Promise<FetchOutcome> {
   const started = Date.now();
   let currentUrl = startUrl;
@@ -915,12 +997,31 @@ async function fetchOnceWithRedirects(
     // Discard non-HTML content types after the headers (§3.1) — never buffer
     // the body of an image/PDF/etc, and never traverse links out of it.
     if (contentType.toLowerCase().includes("text/html")) {
-      body = await readBodyCapped(res, MAX_BODY_BYTES);
+      body = await readBodyCapped(res, MAX_BODY_BYTES, controller, bodyTimeoutMs);
+      // A read that failed is not an empty page: a `<head>` cut halfway
+      // through parses cleanly and would be reported as a page missing its
+      // title or its canonical. Report it as the network failure it is — the
+      // status-0 outcome the retry in `fetchWithRetry` already covers.
+      if (body === null) {
+        return {
+          status: 0,
+          finalUrl: currentUrl,
+          // Empty, like every other status-0 outcome: the response is being
+          // reported as one that never arrived, so it describes no content.
+          contentType: "",
+          body: null,
+          responseMs: Date.now() - started,
+          hops,
+          block: null,
+          xRobotsTag: "",
+        };
+      }
     } else if (isBotBlockStatus(res.status)) {
       // A block page is worth a small read even when it isn't served as HTML —
       // it's what tells a Cloudflare interstitial apart from a bare 403. Never
-      // parsed as content (the cheerio path is 2xx-only).
-      body = await readBodyCapped(res, BLOCK_BODY_SNIFF_BYTES);
+      // parsed as content (the cheerio path is 2xx-only). A failed read only
+      // costs the attribution here, so the status stands either way.
+      body = await readBodyCapped(res, BLOCK_BODY_SNIFF_BYTES, controller, bodyTimeoutMs);
     }
     return {
       status: res.status,
@@ -974,20 +1075,23 @@ async function fetchWithRetry(
   userAgent: string,
   canonicalHost: string,
   aliasHosts: string[],
+  bodyTimeoutMs: number,
 ): Promise<FetchOutcome> {
-  const first = await fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
+  const once = () =>
+    fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts, bodyTimeoutMs);
+  const first = await once();
 
   if (first.status === 429) {
     const waitMs = rateLimitRetryDelayMs(first.block);
     if (waitMs === null) return first;
     await sleep(waitMs);
-    return fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
+    return once();
   }
 
   const shouldRetry = first.status === 0 || (first.status >= 500 && first.status < 600);
   if (!shouldRetry) return first;
   await sleep(500);
-  return fetchOnceWithRedirects(fetchImpl, url, userAgent, canonicalHost, aliasHosts);
+  return once();
 }
 
 interface SitemapDoc {
@@ -1015,6 +1119,7 @@ async function fetchSitemapDoc(
   fetchImpl: typeof fetch,
   sitemapUrl: string,
   userAgent: string,
+  bodyTimeoutMs: number,
 ): Promise<SitemapDoc | null> {
   try {
     const controller = new AbortController();
@@ -1032,7 +1137,10 @@ async function fetchSitemapDoc(
     // Same capped-read helper as page fetches (§ cheap fix 9) — an
     // unbounded `res.text()` here let a pathological/malicious sitemap
     // buffer an arbitrarily large response into memory.
-    const text = await readBodyCapped(res, MAX_BODY_BYTES);
+    const text = await readBodyCapped(res, MAX_BODY_BYTES, controller, bodyTimeoutMs);
+    // A half-read sitemap is not a short sitemap: parsing it would seed a
+    // truncated URL list and look like a complete one.
+    if (text === null) return null;
     const $ = cheerio.load(text, { xmlMode: true });
     const pageUrls: string[] = [];
     $("url > loc").each((_, el) => {
@@ -1099,9 +1207,33 @@ export interface RunCrawlDeps {
    *  take real wall-clock throttling out of the picture. */
   spacingMs?: number;
   maxPages?: number;
-  onProgress?: (pagesCrawled: number, totalDiscovered: number) => void | Promise<void>;
+  /**
+   * Progress heartbeat.
+   *
+   * `percent` is computed HERE and must be reported verbatim: a run has two
+   * phases of very different length and only this function knows which one it
+   * is in, so a caller deriving a percentage from the two page counts would
+   * park the bar for the whole tail (see CRAWL_PHASE_MAX_PERCENT).
+   *
+   * `totalToCrawl` is the number of pages that will actually be FETCHED
+   * (`pagesStarted`), never `discovered.size`. Discovered counts every URL the
+   * crawl has seen, including the ones past `maxPages` it will never request —
+   * a denominator that keeps growing while the numerator stops is what made a
+   * capped crawl freeze its progress bar at a fixed percentage and stay there
+   * for the rest of the run.
+   */
+  onProgress?: (
+    pagesCrawled: number,
+    totalToCrawl: number,
+    percent: number,
+  ) => void | Promise<void>;
   /** Heartbeat cadence in pages (§3.5: every 25). */
   heartbeatEvery?: number;
+  /** Longest gap between two heartbeats, whatever the page cadence. A crawl
+   *  parked in a cool-down or throttled to MAX_SPACING_MS completes no pages
+   *  for minutes, and a bar that has not moved in five minutes reads as a
+   *  hung run — this is also the write the stuck-task reaper watches. */
+  heartbeatMaxIntervalMs?: number;
   /**
    * PLAN_SEO_CRAWL_EXPANSION §6.5 — run the external-link pass after the crawl.
    * Default ON, but a merchant can turn it off: it is the only part of this app
@@ -1109,6 +1241,10 @@ export interface RunCrawlDeps {
    * the crawl take longer.
    */
   checkExternalLinks?: boolean;
+  /** Deadline for reading a response BODY, armed once the headers are in. Same
+   *  test seam as `coolDownMs` / `spacingMs`: a real stall is 10s of wall clock,
+   *  which no unit test should spend. */
+  bodyTimeoutMs?: number;
   /** Overrides for the external pass, used by tests to keep it instant. */
   externalBudgetMs?: number;
   externalTimeoutMs?: number;
@@ -1190,8 +1326,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     coolDownMs = BLOCK_COOLDOWN_MS,
     spacingMs: spacingOverride,
     maxPages = DEFAULT_MAX_CRAWL_PAGES,
+    bodyTimeoutMs = BODY_READ_TIMEOUT_MS,
     onProgress,
     heartbeatEvery = 25,
+    heartbeatMaxIntervalMs = HEARTBEAT_MAX_INTERVAL_MS,
     checkExternalLinks = true,
     externalBudgetMs,
     externalTimeoutMs,
@@ -1267,6 +1405,9 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   /** Longest `Retry-After` seen since the last cool-down, in seconds. */
   let askedRetryAfterSec: number | null = null;
   let outstanding = 0;
+  /** True until the sitemap seed is finished and the root URL is queued — see
+   *  the note in `spawn`'s `finally`. */
+  let seeding = true;
   let resolveDone: () => void = () => {};
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
@@ -1320,9 +1461,46 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     inboundCounts.set(to, (inboundCounts.get(to) ?? 0) + 1);
   };
 
+  /** Last heartbeat, so the time-based floor below has something to compare
+   *  against. */
+  let lastHeartbeatAt = Date.now();
+
+  /**
+   * Where the crawl loop is, as a share of its own phase.
+   *
+   * Deliberately NOT clamped to the highest value seen so far. A BFS learns its
+   * own size as it goes, so the ratio dips whenever a page contributes a batch
+   * of new links — and a bar that may only rise handles that by standing still
+   * instead, which is the exact symptom this whole change is about. A number
+   * that occasionally steps back and then converges beats one that parks.
+   */
+  const crawlPhasePercent = () => {
+    if (pagesStarted <= 0) return 0;
+    const share = pagesCompleted / pagesStarted;
+    return Math.min(CRAWL_PHASE_MAX_PERCENT, Math.round(share * CRAWL_PHASE_MAX_PERCENT));
+  };
+
+  const heartbeat = async () => {
+    // Stamped BEFORE the awaited write, and stamped even with no callback: two
+    // workers landing on the same tick would otherwise both pass the gate, and
+    // a run without an `onProgress` would treat every check as overdue.
+    lastHeartbeatAt = Date.now();
+    if (!onProgress) return;
+    await onProgress(pagesCompleted, pagesStarted, crawlPhasePercent());
+  };
+
+  /**
+   * Beat on the page cadence OR after `heartbeatMaxIntervalMs` of silence.
+   *
+   * The page cadence alone is not enough: at MAX_SPACING_MS the 25th page is
+   * two minutes away, and a cool-down completes no pages at all for up to five.
+   * Both are healthy states of a throttled crawl, and both used to look
+   * identical to a crash from the outside.
+   */
   const maybeHeartbeat = async () => {
-    if (onProgress && pagesCompleted % heartbeatEvery === 0) {
-      await onProgress(pagesCompleted, discovered.size);
+    if (!onProgress) return;
+    if (pagesCompleted % heartbeatEvery === 0 || Date.now() - lastHeartbeatAt >= heartbeatMaxIntervalMs) {
+      await heartbeat();
     }
   };
 
@@ -1334,6 +1512,11 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       const remaining = coolDownUntil - Date.now();
       if (remaining <= 0) return;
       await sleep(Math.min(remaining, 500));
+      // A cool-down is the longest a healthy crawl ever stands still. Without
+      // a beat from in here the task row goes untouched for up to five
+      // minutes at a time — three of those in a row is most of the reaper's
+      // window, spent on a run that is doing exactly what it should.
+      if (Date.now() - lastHeartbeatAt >= heartbeatMaxIntervalMs) await heartbeat();
     }
   };
 
@@ -1341,7 +1524,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     if (abortedError) return;
     await awaitCoolDown();
     if (abortedError) return;
-    const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain]);
+    const outcome = await fetchWithRetry(fetchImpl, url, userAgent, primaryDomain, [myshopifyDomain], bodyTimeoutMs);
     pagesCompleted += 1;
 
     if (isBotBlockStatus(outcome.status)) {
@@ -1492,7 +1675,20 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       .run(() => (abortedError ? Promise.resolve() : fetchAndProcess(url, depth)))
       .finally(() => {
         outstanding -= 1;
-        if (outstanding === 0) resolveDone();
+        // A transient zero BETWEEN two seeding awaits is not the end of the
+        // crawl: `done` resolves once and stays resolved, so resolving it early
+        // made `await done` return while workers were still fetching and ran the
+        // whole post-crawl analysis over a half-finished crawl.
+        if (outstanding === 0 && !seeding) resolveDone();
+      })
+      // One page's failure is one page: without this the rejection leaves
+      // through the process-wide `unhandledRejection` handler in server.js,
+      // which is a log line in a place nobody connects to a crawl.
+      .catch((err: unknown) => {
+        logger.warn("[SeoCrawl] Page task failed", {
+          url,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
   };
 
@@ -1543,7 +1739,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       }
     };
 
-    const root = await fetchSitemapDoc(fetchImpl, sitemapUrl, userAgent);
+    const root = await fetchSitemapDoc(fetchImpl, sitemapUrl, userAgent, bodyTimeoutMs);
     if (root) {
       seed(root.pageUrls);
       // Expand the index one level. Routed through the semaphore like every
@@ -1564,7 +1760,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       const docs = await Promise.all(
         subs.map((sub) =>
           semaphore.run(() =>
-            abortedError ? Promise.resolve(null) : fetchSitemapDoc(fetchImpl, sub, userAgent),
+            abortedError ? Promise.resolve(null) : fetchSitemapDoc(fetchImpl, sub, userAgent, bodyTimeoutMs),
           ),
         ),
       );
@@ -1573,8 +1769,12 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       }
     }
   }
+  seeding = false;
   tryEnqueue(rootUrl, 0, null, null);
 
+  // Checked AFTER the flag is cleared: everything seeded may already have
+  // finished, in which case there is nothing left to wait for and `done` was
+  // deliberately never resolved.
   if (outstanding > 0) {
     await done;
   }
@@ -1709,7 +1909,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     await db.seoCrawlBrokenLink.createMany({ data: brokenLinkRows });
   }
 
-  if (onProgress) await onProgress(pagesCompleted, discovered.size);
+  // The crawl loop is done, whatever the ratio said on the way: report its
+  // phase as complete rather than leaving the bar wherever the last page
+  // landed.
+  if (onProgress) await onProgress(pagesCompleted, pagesStarted, CRAWL_PHASE_MAX_PERCENT);
 
   // ---- §6.2/§6.3: external-link pass -------------------------------------
   // Runs only AFTER the crawl is persisted, and can therefore never cost the
@@ -1728,9 +1931,20 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
         timeoutMs: externalTimeoutMs,
         lookupImpl: externalLookupImpl,
         // The crawl loop's heartbeat has stopped by now, so without this the
-        // merchant watches a frozen progress bar for up to two minutes.
-        onProgress: async () => {
-          if (onProgress) await onProgress(pagesCompleted, discovered.size);
+        // merchant watches a frozen progress bar for up to two minutes. The
+        // pass has its OWN count, so it maps onto the remaining percent
+        // instead of re-reporting the page numbers — repeating those kept the
+        // task row fresh for the reaper while showing the merchant exactly the
+        // frozen bar this callback exists to prevent. Never 100: the finalizer
+        // writes that, after this pass is persisted.
+        onProgress: async (checked, total) => {
+          if (!onProgress) return;
+          const share = total > 0 ? Math.min(1, checked / total) : 0;
+          const percent = Math.min(
+            99,
+            CRAWL_PHASE_MAX_PERCENT + Math.round(share * (100 - CRAWL_PHASE_MAX_PERCENT - 1)),
+          );
+          await onProgress(pagesCompleted, pagesStarted, percent);
         },
       });
       // `results` now includes the not-checked leftovers, so "checked" is the

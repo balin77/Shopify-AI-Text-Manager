@@ -34,6 +34,7 @@ import {
   pruneOldCrawlSnapshots,
   CRAWL_PAGINATION_MAX,
   CRAWL_DENYLIST_PATHS,
+  CRAWL_PHASE_MAX_PERCENT,
 } from "~/services/seo/crawl.service";
 import { parseRobots } from "~/services/seo/aeo.service";
 import { resolveGscPagePath } from "~/services/seo/url-resolver.server";
@@ -1625,6 +1626,361 @@ describe("runCrawl — external links (PLAN_SEO_CRAWL_EXPANSION §6)", () => {
     // The crawl itself is unaffected.
     expect(summary.status).toBe("completed");
     expect(db.__created.pages.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * §3.5 — what the merchant's progress bar is allowed to say.
+ *
+ * The bar used to be `pagesCrawled / discovered.size`, and `discovered` counts
+ * every URL the crawl has SEEN — including the ones past the page cap it will
+ * never request. On a capped shop the denominator therefore kept growing while
+ * the numerator stopped, so the percentage settled on a value below 100 and
+ * stayed there for the rest of the run: persistence, head drift and up to two
+ * minutes of external-link checking, all behind a bar that looked hung.
+ */
+describe("runCrawl — progress reporting (§3.5)", () => {
+  const server = setupServer();
+  beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+  afterEach(() => server.resetHandlers());
+  afterAll(() => server.close());
+
+  function makeDb() {
+    return {
+      product: { findMany: async () => [] },
+      collection: { findMany: async () => [] },
+      page: { findMany: async () => [] },
+      article: { findMany: async () => [] },
+      seoCrawlPage: { createMany: async ({ data }: any) => ({ count: data.length }) },
+      seoCrawlBrokenLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
+      seoCrawlExternalLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
+    } as any;
+  }
+
+  /** A home page linking to `count` sub-pages, each linking back. */
+  function siteWithPages(count: number) {
+    const links = Array.from({ length: count }, (_, i) => `<a href="/p/${i}">p${i}</a>`).join("");
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", links))),
+      http.get(`${BASE}/p/:n`, ({ params }) =>
+        HttpResponse.html(html(`p${params.n} – Acme`, `<h1>p${params.n}</h1><p>hello</p>`)),
+      ),
+    );
+  }
+
+  it("reports the crawl phase as complete even when the page cap left URLs undiscovered", async () => {
+    // 40 links, cap of 10: `discovered` ends far above what was fetched, which
+    // is exactly the shape that used to park the bar.
+    siteWithPages(40);
+    const beats: { crawled: number; total: number; percent: number }[] = [];
+
+    const summary = await runCrawl("snap-progress-capped", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 10,
+      spacingMs: 0,
+      checkExternalLinks: false,
+      heartbeatEvery: 1,
+      onProgress: (crawled, total, percent) => {
+        beats.push({ crawled, total, percent });
+      },
+    });
+
+    expect(summary.status).toBe("capped");
+    expect(summary.totalDiscovered).toBeGreaterThan(summary.pagesCrawled);
+
+    // The LAST beat is the one the merchant is left looking at.
+    const last = beats.at(-1)!;
+    expect(last.percent).toBe(CRAWL_PHASE_MAX_PERCENT);
+    // The denominator is the pages actually queued, never `discovered`.
+    expect(last.total).toBe(summary.pagesCrawled);
+    expect(last.total).toBeLessThan(summary.totalDiscovered);
+    // Nothing may report a percentage above the crawl phase's share here —
+    // the external pass owns the rest and did not run.
+    expect(Math.max(...beats.map((b) => b.percent))).toBe(CRAWL_PHASE_MAX_PERCENT);
+  });
+
+  it("moves the percentage past the crawl phase while the external-link pass runs", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html(
+            "Home – Acme",
+            `<a href="https://partner-a.example.com/x">a</a>
+             <a href="https://partner-b.example.com/y">b</a>`,
+          ),
+        ),
+      ),
+      http.head("https://partner-a.example.com/x", () => new HttpResponse(null, { status: 200 })),
+      http.head("https://partner-b.example.com/y", () => new HttpResponse(null, { status: 200 })),
+    );
+    const beats: number[] = [];
+
+    const summary = await runCrawl("snap-progress-external", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: true,
+      externalTimeoutMs: 500,
+      externalLookupImpl: async () => ["93.184.216.34"],
+      onProgress: (_crawled, _total, percent) => {
+        beats.push(percent);
+      },
+    });
+
+    expect(summary.externalChecked).toBeGreaterThan(0);
+    // The tail moved, and it never claims the run is finished — the finalizer
+    // in crawl-run.server.ts writes the last percent.
+    const tail = Math.max(...beats);
+    expect(tail).toBeGreaterThan(CRAWL_PHASE_MAX_PERCENT);
+    expect(tail).toBeLessThan(100);
+  });
+
+  it("beats on time as well as on pages, so a cool-down is not silence", async () => {
+    const COOLDOWN_PATHS = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(
+          html("Home – Acme", COOLDOWN_PATHS.map((p) => `<a href="/${p}">${p}</a>`).join("")),
+        ),
+      ),
+      // Every sub-page refuses, so the run hits BOT_BLOCK_THRESHOLD and parks.
+      // More pages than the threshold on purpose: the ones behind it are what
+      // park in `awaitCoolDown`, and they are the only workers in a position to
+      // beat while nothing is completing.
+      ...COOLDOWN_PATHS.map((p) =>
+        http.get(`${BASE}/${p}`, () =>
+          new HttpResponse("Verifying your connection...", {
+            status: 429,
+            headers: { "retry-after": "0", "cf-mitigated": "challenge" },
+          }),
+        ),
+      ),
+    );
+    let beats = 0;
+
+    await runCrawl("snap-progress-cooldown", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      coolDownMs: 60,
+      checkExternalLinks: false,
+      // Far beyond this crawl's page count, so the PAGE cadence can produce no
+      // beat at all: every beat below the final one came from the time floor.
+      heartbeatEvery: 10_000,
+      heartbeatMaxIntervalMs: 10,
+      resolveNsImpl: async () => [],
+      onProgress: () => {
+        beats += 1;
+      },
+    });
+
+    // > 1, not > 0: the end of the crawl loop always reports once. Before the
+    // time floor existed that single beat was the whole run — a throttled crawl
+    // and a crashed one looked identical from the outside, and a cool-down long
+    // enough (up to five minutes, three of them) ate most of the stuck-task
+    // reaper's window while the crawl was doing exactly what it should.
+    expect(beats).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * A body that never arrives.
+ *
+ * `fetch` resolves as soon as the HEADERS are in, and the request timeout was
+ * cleared on that line — so the body read below it had no deadline of ours at
+ * all. A host that sends headers and then stalls held one of only two
+ * concurrency slots until the runtime's own body timeout (minutes), and two
+ * such pages stopped the crawl making progress entirely. The rejection, when it
+ * finally came, propagated out of a promise nothing catches: the page was
+ * dropped without a record and without a beat.
+ */
+/**
+ * When the crawl is allowed to consider itself finished.
+ *
+ * `done` resolves once and stays resolved, and the seed phase has awaits in it:
+ * a sitemap that lists pages of its own AND a sub-sitemap could drain those
+ * pages to zero outstanding while the sub-sitemap fetch was still in flight.
+ * That resolved the barrier early, so `await done` returned the moment the root
+ * seed queued anything and the whole post-crawl analysis — resolution, head
+ * drift, both `createMany`s — ran over a crawl that was still fetching.
+ */
+describe("runCrawl — the end of the crawl loop", () => {
+  const server = setupServer();
+  beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+  afterEach(() => server.resetHandlers());
+  afterAll(() => server.close());
+
+  function makeDb() {
+    const pages: any[] = [];
+    return {
+      __pages: pages,
+      product: { findMany: async () => [] },
+      collection: { findMany: async () => [] },
+      page: { findMany: async () => [] },
+      article: { findMany: async () => [] },
+      seoCrawlPage: {
+        createMany: async ({ data }: any) => {
+          pages.push(...data);
+          return { count: data.length };
+        },
+      },
+      seoCrawlBrokenLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
+      seoCrawlExternalLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
+    } as any;
+  }
+
+  it("waits for pages a slow sub-sitemap seeded after the first batch already drained", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      // Both shapes in one document: a page of its own plus a sub-sitemap.
+      http.get(`${BASE}/sitemap.xml`, () =>
+        HttpResponse.xml(
+          `<?xml version="1.0"?><root>
+             <url><loc>${BASE}/from-root-sitemap</loc></url>
+             <sitemap><loc>${BASE}/sitemap_sub.xml</loc></sitemap>
+           </root>`,
+        ),
+      ),
+      // Slow enough that the page above has certainly finished by the time this
+      // answers — the transient "nothing outstanding" the barrier must ignore.
+      http.get(`${BASE}/sitemap_sub.xml`, async () => {
+        await new Promise((r) => setTimeout(r, 150));
+        return HttpResponse.xml(
+          `<?xml version="1.0"?><urlset><url><loc>${BASE}/from-sub-sitemap</loc></url></urlset>`,
+        );
+      }),
+      http.get(`${BASE}/`, () => HttpResponse.html(html("Home – Acme", ""))),
+      http.get(`${BASE}/from-root-sitemap`, () =>
+        HttpResponse.html(html("Root sitemap page – Acme", "<h1>a</h1><p>hi</p>")),
+      ),
+      http.get(`${BASE}/from-sub-sitemap`, () =>
+        HttpResponse.html(html("Sub sitemap page – Acme", "<h1>b</h1><p>hi</p>")),
+      ),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-seed-barrier", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: false,
+    });
+
+    const urls = db.__pages.map((p: any) => p.url);
+    // All three, and persisted — the page the sub-sitemap contributed is the one
+    // that used to be missing from the snapshot it belongs to.
+    expect(urls).toContain(`${BASE}/from-root-sitemap`);
+    expect(urls).toContain(`${BASE}/from-sub-sitemap`);
+    expect(urls).toContain(`${BASE}/`);
+    expect(summary.pagesCrawled).toBe(3);
+  });
+});
+
+describe("runCrawl — a stalled response body (§3.3)", () => {
+  const server = setupServer();
+  beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
+  afterEach(() => server.resetHandlers());
+  afterAll(() => server.close());
+
+  function makeDb() {
+    const pages: any[] = [];
+    return {
+      __pages: pages,
+      product: { findMany: async () => [] },
+      collection: { findMany: async () => [] },
+      page: { findMany: async () => [] },
+      article: { findMany: async () => [] },
+      seoCrawlPage: {
+        createMany: async ({ data }: any) => {
+          pages.push(...data);
+          return { count: data.length };
+        },
+      },
+      seoCrawlBrokenLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
+      seoCrawlExternalLink: { createMany: async ({ data }: any) => ({ count: data.length }) },
+    } as any;
+  }
+
+  it("gives up on the stalled page, records it as unreachable, and finishes the crawl", async () => {
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home – Acme", `<a href="/stalls">stalls</a><a href="/fine">fine</a>`)),
+      ),
+      http.get(`${BASE}/fine`, () => HttpResponse.html(html("Fine – Acme", "<h1>Fine</h1><p>hi</p>"))),
+      // Headers, then a chunk, then nothing — ever.
+      http.get(`${BASE}/stalls`, () => {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("<html><head><title>Half"));
+            // No close(), no further chunks: the read parks here.
+          },
+        });
+        return new HttpResponse(stream, { headers: { "content-type": "text/html" } });
+      }),
+    );
+
+    const db = makeDb();
+    const summary = await runCrawl("snap-stalled-body", {
+      db,
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      checkExternalLinks: false,
+      bodyTimeoutMs: 40,
+    });
+
+    // The run completed rather than parking until the reaper stepped in, and
+    // the page that DID answer was still crawled.
+    expect(summary.status).toBe("completed");
+    const byUrl = new Map<string, any>(db.__pages.map((p: any) => [p.url, p]));
+    expect(byUrl.get(`${BASE}/fine`)?.statusCode).toBe(200);
+
+    // The stalled page is recorded, and recorded as unreachable — the counter
+    // the progress bar reads counted it too. It used to be dropped outright:
+    // no row, no count, and the rejection escaping into a promise nothing
+    // catches.
+    const stalled = byUrl.get(`${BASE}/stalls`);
+    expect(stalled).toBeTruthy();
+    expect(stalled.statusCode).toBe(0);
+    expect(summary.pagesCrawled).toBe(3);
+
+    // NOT a 200 with a half-parsed head: the partial `<title>Half` must never
+    // be stored as what the page serves, or the report calls a healthy page
+    // one that is missing its canonical and its description.
+    expect(stalled.title).toBeNull();
+    expect(stalled.indexabilityKnown).toBe(false);
   });
 });
 
