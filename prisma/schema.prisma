@@ -1795,6 +1795,25 @@ model SeoCrawlPage {
   // above holds the end of the chain; the hop count is the report value.
   redirectHops Int @default(0)
 
+  // PLAN_MARKUP_ACTIVATION §2.1 — Open Graph / Twitter Cards, measured exactly
+  // like jsonLdTypes above and for the same reason: most themes set og:title
+  // and og:image themselves, and two og:image tags on one page are for
+  // Facebook/LinkedIn what two Product nodes are for Google.
+  //
+  // Full property names, comma-separated, REPEATS PRESERVED ("og:image,
+  // og:image" = two tags, which is what makes duplication detectable).
+  ogTags      String  @default("")
+  twitterTags String  @default("")
+  // The subset THIS app's social-meta block emitted, identified by its
+  // data-contentpilot attribute — holds both namespaces, since the names carry
+  // their own prefix. Same purpose as jsonLdAppTypes: the delivered HTML tells
+  // nobody otherwise which of two copies is ours.
+  ogAppTags   String  @default("")
+  // The discriminator, same shape as indexabilityKnown: "" above means EITHER
+  // "nothing served" OR "row written before these columns existed". Only ever
+  // true when this crawl actually parsed a body and looked.
+  socialKnown Boolean @default(false)
+
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@unique([snapshotId, url])

@@ -46,9 +46,11 @@ import {
 import { getMainThemeId, readThemeFile } from "../services/seo/aeo.service";
 import { summarizeLiveJsonLd } from "../services/seo/json-ld-audit.service";
 import type { JsonLdAuditAggregate, JsonLdAuditItemType } from "../services/seo/json-ld-audit.service";
+import { summarizeLiveSocial, APP_SOCIAL_TAGS } from "../services/seo/social-audit.service";
 import {
   activationGate,
   activationTone,
+  worstActivationVerdict,
   JSON_LD_SWITCHES,
   type ActivationVerdict,
 } from "../services/seo/markup-activation.shared";
@@ -387,7 +389,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // What the storefront ACTUALLY serves, from the last crawl. Best-effort: a
   // read failure (or a snapshot older than the jsonLdTypes column) must never
   // sink this page — the in-app preview and batch report stand on their own.
-  const liveJsonLd = await summarizeLiveJsonLd(db, shop).catch(() => null);
+  // Both halves read the SAME snapshot, deliberately in one place: two
+  // separate single-flight queries would let the two reports drift apart by a
+  // crawl and there is no way for a merchant to notice that from the page.
+  const [liveJsonLd, liveSocial] = await Promise.all([
+    summarizeLiveJsonLd(db, shop).catch(() => null),
+    summarizeLiveSocial(db, shop).catch(() => null),
+  ]);
 
   return json({
     previews,
@@ -397,6 +405,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     jsonLdAudit,
     jsonLdAuditRunning: !!runningJsonLdAuditTask,
     liveJsonLd,
+    liveSocial,
   });
 };
 
@@ -440,6 +449,7 @@ export default function SeoStructuredData() {
     jsonLdAudit,
     jsonLdAuditRunning,
     liveJsonLd,
+    liveSocial,
   } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
@@ -447,6 +457,7 @@ export default function SeoStructuredData() {
   const b = (s as any).batch as Record<string, string>;
   const warningCopy = (s as any).warnings as Record<string, string>;
   const live = (s as any).live as Record<string, string>;
+  const soc = (s as any).social as Record<string, any>;
 
   /** Every app embed is activated in Settings → Setup, not from here. */
   const openEmbedSettings = () =>
@@ -460,14 +471,30 @@ export default function SeoStructuredData() {
   // step 1's numbers.
   const [step, setStep] = useState<"delivery" | "data" | "activate">("delivery");
 
-  // Each tile carries its own verdict. "Unknown" is a real state for both and
-  // must not be dressed up as a clean result: no crawl yet on the left, never
-  // run on the right.
-  const deliveryBadge = !liveJsonLd || liveJsonLd.notMeasured ? (
+  // Each tile carries its own verdict. "Unknown" is a real state for all three
+  // and must not be dressed up as a clean result: no crawl yet on the left,
+  // never run in the middle, nothing measured to gate against on the right.
+  //
+  // Step 1 now covers BOTH markup families, so its badge is the worse of the
+  // two. A shop with clean JSON-LD and two og:image tags on every page is not
+  // a "complete" delivery, and one badge that only looked at half of it would
+  // be the same "measure after you act" mistake one level down.
+  const jsonLdKnown = !!liveJsonLd && !liveJsonLd.notMeasured;
+  const socialKnown = !!liveSocial && !liveSocial.notMeasured;
+  const anyDeliveryDuplicates =
+    (jsonLdKnown && liveJsonLd!.duplicates.length > 0) ||
+    (socialKnown && liveSocial!.duplicates.length > 0);
+  const anyDeliveryGaps =
+    (jsonLdKnown && liveJsonLd!.coverage.some((c) => c.withMarkup < c.total)) ||
+    (socialKnown &&
+      liveSocial!.coverage.some((c) => c.withTitle < c.total || c.withImage < c.total));
+  const deliveryBadge = !jsonLdKnown && !socialKnown ? (
     <Badge>{live.badgeUnknown}</Badge>
-  ) : liveJsonLd.duplicates.length > 0 ? (
+  ) : anyDeliveryDuplicates ? (
     <Badge tone="critical">{live.badgeDuplicates}</Badge>
-  ) : liveJsonLd.coverage.some((c) => c.withMarkup < c.total) ? (
+  ) : anyDeliveryGaps || !jsonLdKnown || !socialKnown ? (
+    // One measured half and one unmeasured half is never "complete": the
+    // unmeasured half is exactly where an unnoticed duplicate would sit.
     <Badge tone="warning">{live.badgeGaps}</Badge>
   ) : (
     <Badge tone="success">{live.badgeOk}</Badge>
@@ -490,7 +517,7 @@ export default function SeoStructuredData() {
   // measured", which yields grey, never green. `originKnown` is the weaker
   // second flag — only a crawl that saw our marker somewhere can read
   // "appPages === 0" as "none of these are ours".
-  const jsonLdMeasured = !!liveJsonLd && !liveJsonLd.notMeasured;
+  const jsonLdMeasured = jsonLdKnown;
   const jsonLdOriginKnown = liveJsonLd?.appEmbedDetected === true;
   const switchGates = JSON_LD_SWITCHES.map((sw) => ({
     ...sw,
@@ -500,18 +527,98 @@ export default function SeoStructuredData() {
     ),
   }));
 
-  // One verdict for the tile. Worst wins, and "not measured" is its own state
-  // rather than the best of the three — the whole point is that an unmeasured
-  // shop gets no green light.
-  const activationBadge = !jsonLdMeasured ? (
-    <Badge>{act.badgeUnknown as string}</Badge>
-  ) : switchGates.some((g) => g.gate.verdict === "duplicateApp" || g.gate.verdict === "duplicateForeign") ? (
-    <Badge tone="critical">{act.badgeConflict as string}</Badge>
-  ) : switchGates.some((g) => g.gate.verdict === "foreignOnly" || g.gate.verdict === "mixed") ? (
-    <Badge tone="warning">{act.badgeReview as string}</Badge>
-  ) : (
-    <Badge tone="success">{act.badgeReady as string}</Badge>
-  );
+  // The social block has ONE switch in the theme editor but nine tags behind
+  // it, and a theme that sets og:title while leaving twitter:* alone is the
+  // normal case — so each tag is gated separately and the embed's verdict is
+  // the worst of them.
+  const socialMeasured = socialKnown;
+  const socialOriginKnown = liveSocial?.appEmbedDetected === true;
+  const socialGates = APP_SOCIAL_TAGS.map((tag) => ({
+    tag,
+    gate: activationGate(
+      liveSocial?.typeStats?.find((ts) => ts.type === tag),
+      { measured: socialMeasured, originKnown: socialOriginKnown },
+    ),
+  }));
+
+  // One verdict for the tile, over both embeds. Worst wins, and "not measured"
+  // is its own rung rather than the best of the set — the whole point is that
+  // an unmeasured shop gets no green light, and that a measured conflict in
+  // one family is not softened by the other family being fine.
+  const activationWorst = worstActivationVerdict([
+    ...switchGates.map((g) => g.gate.verdict),
+    ...socialGates.map((g) => g.gate.verdict),
+  ]);
+  const activationBadge =
+    activationWorst === "unknown" ? (
+      <Badge>{act.badgeUnknown as string}</Badge>
+    ) : activationWorst === "duplicateApp" || activationWorst === "duplicateForeign" ? (
+      <Badge tone="critical">{act.badgeConflict as string}</Badge>
+    ) : activationWorst === "foreignOnly" || activationWorst === "mixed" ? (
+      <Badge tone="warning">{act.badgeReview as string}</Badge>
+    ) : activationWorst === "originUnknown" || activationWorst === "repeatableUnjudged" ? (
+      <Badge tone="info">{act.badgePartial as string}</Badge>
+    ) : (
+      <Badge tone="success">{act.badgeReady as string}</Badge>
+    );
+
+  /**
+   * One switch, one verdict. Shared by the seven JSON-LD switches and the nine
+   * social tags — they differ only in what "the switch" is called, and giving
+   * them two renderers is how the two halves would drift apart.
+   */
+  const renderGateRow = ({
+    key,
+    label,
+    settingId,
+    gate,
+    defaultOn,
+    examples,
+  }: {
+    key: string;
+    label: string;
+    /** The `block.settings.*` id, or the raw tag name — shown verbatim so the
+     *  merchant can find the same string in the theme editor / page source. */
+    settingId: string;
+    gate: ReturnType<typeof activationGate>;
+    /** Undefined where the switch has no per-item default (the social tags all
+     *  ride on one embed toggle). */
+    defaultOn?: boolean;
+    examples: string[];
+  }) => {
+    const showExamples = gate.verdict === "duplicateApp" || gate.verdict === "duplicateForeign";
+    return (
+      <Box key={key} padding="300" borderWidth="025" borderColor="border" borderRadius="200">
+        <BlockStack gap="150">
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
+            <Badge tone={activationTone(gate.verdict)}>
+              {(act.verdictLabels as Record<string, string>)[gate.verdict]}
+            </Badge>
+            <Text as="span" variant="bodySm" tone="subdued">{settingId}</Text>
+          </InlineStack>
+          <Text as="p" variant="bodySm">{verdictText(gate.verdict, gate)}</Text>
+          {/* Several VideoObjects on one page are three product videos, not a
+              collision — the duplicate rule is off for those types, so a clean
+              result there means "not checked", never "checked and fine". */}
+          {gate.repeatable && gate.pages > 0 && (
+            <Text as="p" variant="bodySm" tone="subdued">{act.repeatableCaveat as string}</Text>
+          )}
+          {/* A merchant who never opened the theme editor has the shipped
+              default, so "which state am I in" is answerable from here. */}
+          {defaultOn !== undefined && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {defaultOn ? (act.defaultOn as string) : (act.defaultOff as string)}
+            </Text>
+          )}
+          {showExamples &&
+            examples.map((u) => (
+              <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+            ))}
+        </BlockStack>
+      </Box>
+    );
+  };
 
   /** Verdict copy, with the measured numbers substituted in. */
   const verdictText = (verdict: ActivationVerdict, g: { pages: number; appPages: number; duplicatePages: number; appIsOneCopy: number }) =>
@@ -652,8 +759,12 @@ export default function SeoStructuredData() {
         </InlineGrid>
 
         {/* Step 1 — what the storefront actually serves (from the last crawl).
-            The only place in the app that reads a real page. */}
+            The only place in the app that reads a real page. Both markup
+            families are read off the SAME snapshot: JSON-LD for Google, Open
+            Graph / Twitter for the link previews, and each half answers the
+            same two questions — is it delivered, and is it delivered twice. */}
         {step === "delivery" && (
+          <BlockStack gap="400">
           <Card>
             <BlockStack gap="300">
               <Text as="h3" variant="headingMd">{live.title}</Text>
@@ -780,6 +891,131 @@ export default function SeoStructuredData() {
               )}
             </BlockStack>
           </Card>
+
+          {/* The social half. Same snapshot, same two questions — most themes
+              set og:title and og:image themselves, and two og:image tags on one
+              page are for Facebook and LinkedIn what two Product nodes are for
+              Google: the scraper picks one, and not the merchant. */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingMd">{soc.title as string}</Text>
+              <Text as="p" variant="bodyMd" tone="subdued">{soc.intro as string}</Text>
+
+              {!liveSocial ? (
+                <Banner tone="info">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">{live.noCrawl}</Text>
+                    <div>
+                      <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
+                    </div>
+                  </BlockStack>
+                </Banner>
+              ) : liveSocial.notMeasured ? (
+                // A snapshot from before the og:* columns existed. Reporting it
+                // as "no social markup anywhere" would be a false alarm — the
+                // same trap the JSON-LD half already guards against.
+                <Banner tone="info">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd">{soc.notMeasured as string}</Text>
+                    <div>
+                      <Button onClick={() => handleNavigate("/app/seo/crawl")}>{live.goToCrawl}</Button>
+                    </div>
+                  </BlockStack>
+                </Banner>
+              ) : (
+                <BlockStack gap="300">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {live.basis
+                      .replace("{time}", new Date(liveSocial.crawledAt).toLocaleString())
+                      .replace("{pages}", String(liveSocial.pagesChecked))}
+                  </Text>
+
+                  {liveSocial.coverage.length > 0 && (
+                    <DataTable
+                      columnContentTypes={["text", "numeric", "numeric", "numeric", "text"]}
+                      headings={[
+                        live.colPageType,
+                        live.colCrawled,
+                        soc.colTitle as string,
+                        soc.colImage as string,
+                        soc.colMissingExamples as string,
+                      ]}
+                      rows={liveSocial.coverage.map((row) => [
+                        (soc.pageTypes as Record<string, string>)[row.resourceType] ||
+                          row.resourceType,
+                        String(row.total),
+                        `${row.withTitle} / ${row.total}`,
+                        `${row.withImage} / ${row.total}`,
+                        row.missingExamples.length === 0 ? (
+                          <Badge tone="success">{live.allCovered}</Badge>
+                        ) : (
+                          <BlockStack gap="050">
+                            {row.missingExamples.map((u) => (
+                              <Text as="span" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                            ))}
+                          </BlockStack>
+                        ),
+                      ])}
+                    />
+                  )}
+
+                  {liveSocial.duplicates.length > 0 && (
+                    <Banner tone="warning">
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodyMd">{soc.duplicatesHint as string}</Text>
+                        {liveSocial.duplicates.map((dup) => (
+                          <BlockStack gap="050" key={dup.tag}>
+                            <Text as="p" variant="bodySm" fontWeight="semibold">
+                              {(soc.duplicateRow as string)
+                                .replace("{tag}", dup.tag)
+                                .replace("{pages}", String(dup.pages))}
+                            </Text>
+                            {/* Same rule as the JSON-LD half: switching our own
+                                embed off only helps where one copy is ours. */}
+                            <Text as="p" variant="bodySm">
+                              {dup.appIsOneCopy > 0
+                                ? (soc.duplicateFromApp as string).replace(
+                                    "{pages}",
+                                    String(dup.appIsOneCopy),
+                                  )
+                                : liveSocial.appEmbedDetected
+                                  ? (soc.duplicateNotFromApp as string)
+                                  : (soc.duplicateSourceUnknown as string)}
+                            </Text>
+                            {dup.examples.map((u) => (
+                              <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
+                            ))}
+                          </BlockStack>
+                        ))}
+                      </BlockStack>
+                    </Banner>
+                  )}
+
+                  <Text as="p" variant="bodySm">
+                    {liveSocial.appEmbedDetected
+                      ? (soc.appEmbedOn as string)
+                      : (soc.appEmbedUnknown as string)}
+                  </Text>
+
+                  <BlockStack gap="100">
+                    <Text as="p" variant="bodySm" fontWeight="semibold">{soc.tagsFound as string}</Text>
+                    {liveSocial.tagCounts.length === 0 ? (
+                      <Text as="p" variant="bodySm" tone="subdued">{soc.noTags as string}</Text>
+                    ) : (
+                      <InlineStack gap="200" wrap>
+                        {liveSocial.tagCounts.map((tc) => (
+                          <Badge key={tc.tag}>
+                            {live.typeCount.replace("{type}", tc.tag).replace("{pages}", String(tc.pages))}
+                          </Badge>
+                        ))}
+                      </InlineStack>
+                    )}
+                  </BlockStack>
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+          </BlockStack>
         )}
 
         {/* Step 2 — whether the CATALOG carries the data a rich result needs.
@@ -1014,89 +1250,99 @@ export default function SeoStructuredData() {
                 <Text as="h2" variant="headingLg">{act.title as string}</Text>
                 <Text as="p" variant="bodyMd" tone="subdued">{act.intro as string}</Text>
 
-                {!jsonLdMeasured ? (
-                  // The core rule of this section, restated in place: a missing
-                  // measurement is not a free pass. No crawl ⇒ no verdict, only
-                  // the invitation to run step 1.
-                  <Banner tone="info">
-                    <BlockStack gap="200">
-                      <Text as="p" variant="bodyMd">
-                        {liveJsonLd ? (act.notMeasured as string) : (act.noCrawl as string)}
-                      </Text>
-                      <div>
-                        <Button onClick={() => handleNavigate("/app/seo/crawl")}>
-                          {live.goToCrawl}
-                        </Button>
-                      </div>
-                    </BlockStack>
-                  </Banner>
-                ) : (
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {(act.basis as string)
-                      .replace("{time}", new Date(liveJsonLd!.crawledAt).toLocaleString())
-                      .replace("{pages}", String(liveJsonLd!.pagesChecked))}
-                  </Text>
-                )}
-
-                {jsonLdMeasured && !jsonLdOriginKnown && (
-                  // Without the marker every "not ours" reading collapses to
-                  // "we could not tell" — say so once, at the top, instead of
-                  // repeating it under all seven switches.
-                  <Banner tone="info">{act.originUnknownHint as string}</Banner>
-                )}
-
+                {/* The two embeds are gated separately and each carries its
+                    OWN measured-ness: the social columns are younger than the
+                    JSON-LD ones, so a snapshot can easily know one and not the
+                    other, and one shared banner would claim knowledge for a
+                    half nobody looked at. */}
                 <BlockStack gap="300">
                   <Text as="h3" variant="headingMd">{act.switchesTitle as string}</Text>
-                  {switchGates.map((sw) => {
-                    const dup = liveJsonLd?.duplicates.find((d) => d.type === sw.type);
-                    const showExamples =
-                      sw.gate.verdict === "duplicateApp" || sw.gate.verdict === "duplicateForeign";
-                    return (
-                      <Box
-                        key={sw.settingId}
-                        padding="300"
-                        borderWidth="025"
-                        borderColor="border"
-                        borderRadius="200"
-                      >
-                        <BlockStack gap="150">
-                          <InlineStack gap="200" blockAlign="center" wrap>
-                            <Text as="span" variant="bodyMd" fontWeight="semibold">
-                              {(act.switches as Record<string, string>)[sw.labelKey]}
-                            </Text>
-                            <Badge tone={activationTone(sw.gate.verdict)}>
-                              {(act.verdictLabels as Record<string, string>)[sw.gate.verdict]}
-                            </Badge>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              {sw.settingId}
-                            </Text>
-                          </InlineStack>
-                          <Text as="p" variant="bodySm">
-                            {verdictText(sw.gate.verdict, sw.gate)}
-                          </Text>
-                          {/* Several VideoObjects on one page are three product
-                              videos, not a collision — the duplicate rule is off
-                              for those types, so a clean result there means "not
-                              checked", never "checked and fine". */}
-                          {sw.gate.repeatable && sw.gate.pages > 0 && (
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              {act.repeatableCaveat as string}
-                            </Text>
-                          )}
-                          {/* A merchant who never opened the theme editor has
-                              the shipped default, so "which state am I in" is
-                              answerable without leaving this page. */}
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {sw.defaultOn ? (act.defaultOn as string) : (act.defaultOff as string)}
-                          </Text>
-                          {showExamples &&
-                            dup?.examples.map((u) => (
-                              <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
-                            ))}
-                        </BlockStack>
-                      </Box>
-                    );
-                  })}
+                  {!jsonLdMeasured ? (
+                    // The core rule of this section, restated in place: a
+                    // missing measurement is not a free pass. No crawl ⇒ no
+                    // verdict, only the invitation to run step 1.
+                    <Banner tone="info">
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodyMd">
+                          {liveJsonLd ? (act.notMeasured as string) : (act.noCrawl as string)}
+                        </Text>
+                        <div>
+                          <Button onClick={() => handleNavigate("/app/seo/crawl")}>
+                            {live.goToCrawl}
+                          </Button>
+                        </div>
+                      </BlockStack>
+                    </Banner>
+                  ) : (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(act.basis as string)
+                        .replace("{time}", new Date(liveJsonLd!.crawledAt).toLocaleString())
+                        .replace("{pages}", String(liveJsonLd!.pagesChecked))}
+                    </Text>
+                  )}
+                  {jsonLdMeasured && !jsonLdOriginKnown && (
+                    // Without the marker every "not ours" reading collapses to
+                    // "we could not tell" — say so once instead of repeating it
+                    // under all seven switches.
+                    <Banner tone="info">{act.originUnknownHint as string}</Banner>
+                  )}
+                  {switchGates.map((sw) =>
+                    renderGateRow({
+                      key: sw.settingId,
+                      label: (act.switches as Record<string, string>)[sw.labelKey],
+                      settingId: sw.settingId,
+                      gate: sw.gate,
+                      defaultOn: sw.defaultOn,
+                      examples: liveJsonLd?.duplicates.find((d) => d.type === sw.type)?.examples ?? [],
+                    }),
+                  )}
+                </BlockStack>
+
+                {/* Open Graph / Twitter. One embed toggle in the theme editor,
+                    nine tags behind it — and a theme that sets og:title while
+                    leaving twitter:* alone is the normal case, so a single
+                    verdict for the whole embed would hide the half that
+                    matters. */}
+                <BlockStack gap="300">
+                  <Text as="h3" variant="headingMd">{act.socialSwitchesTitle as string}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {act.socialSwitchesBody as string}
+                  </Text>
+                  {!socialMeasured ? (
+                    <Banner tone="info">
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodyMd">
+                          {liveSocial ? (act.socialNotMeasured as string) : (act.noCrawl as string)}
+                        </Text>
+                        <div>
+                          <Button onClick={() => handleNavigate("/app/seo/crawl")}>
+                            {live.goToCrawl}
+                          </Button>
+                        </div>
+                      </BlockStack>
+                    </Banner>
+                  ) : (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(act.basis as string)
+                        .replace("{time}", new Date(liveSocial!.crawledAt).toLocaleString())
+                        .replace("{pages}", String(liveSocial!.pagesChecked))}
+                    </Text>
+                  )}
+                  {socialMeasured && !socialOriginKnown && (
+                    <Banner tone="info">{act.socialOriginUnknownHint as string}</Banner>
+                  )}
+                  {socialGates.map((sg) =>
+                    renderGateRow({
+                      key: sg.tag,
+                      label: sg.tag,
+                      // Proper nouns, identical in all three shipped
+                      // languages — an i18n key here would only be a place for
+                      // them to drift apart.
+                      settingId: sg.tag.startsWith("og:") ? "Open Graph" : "Twitter Card",
+                      gate: sg.gate,
+                      examples: liveSocial?.duplicates.find((d) => d.tag === sg.tag)?.examples ?? [],
+                    }),
+                  )}
                 </BlockStack>
               </BlockStack>
             </Card>

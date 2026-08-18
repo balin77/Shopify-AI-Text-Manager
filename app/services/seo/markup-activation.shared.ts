@@ -135,6 +135,36 @@ export function activationGate(
   return { verdict: "mixed", ...base };
 }
 
+/**
+ * Severity order for rolling several switches into ONE tile badge. Worst wins,
+ * and `unknown` is NOT the mildest state: an unmeasured shop must not inherit
+ * the green badge of the switches that happened to come back clean.
+ *
+ * The caller decides how to render `unknown` — the structured-data section
+ * short-circuits the whole tile to grey when nothing was measured at all,
+ * which is the honest reading when the flag is global rather than per switch.
+ */
+const VERDICT_SEVERITY: Record<ActivationVerdict, number> = {
+  duplicateApp: 5,
+  duplicateForeign: 5,
+  foreignOnly: 4,
+  mixed: 4,
+  unknown: 3,
+  originUnknown: 2,
+  repeatableUnjudged: 2,
+  appOnly: 1,
+  free: 0,
+};
+
+/** The worst of several verdicts. `free` for an empty list — nothing to warn about. */
+export function worstActivationVerdict(verdicts: ActivationVerdict[]): ActivationVerdict {
+  let worst: ActivationVerdict = "free";
+  for (const v of verdicts) {
+    if (VERDICT_SEVERITY[v] > VERDICT_SEVERITY[worst]) worst = v;
+  }
+  return worst;
+}
+
 /** Polaris tone for a verdict badge. `unknown` stays neutral on purpose. */
 export function activationTone(
   verdict: ActivationVerdict,
