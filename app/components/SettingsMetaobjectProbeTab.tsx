@@ -62,6 +62,7 @@ interface ProbeReport {
     nodeFields?: string[];
     liveShape?: "nodes" | "edges";
     liveSample?: string;
+    nodeSelection?: string;
     error?: string;
   };
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
@@ -133,6 +134,7 @@ function formatMarkdown(r: ProbeReport): string {
     lines.push(`- Node type: **${rr.nodeType ?? "unknown"}**`);
     if (rr.nodeFields?.length) lines.push(`- Node fields / members: ${rr.nodeFields.join(", ")}`);
     lines.push(`- Live run: ${rr.liveShape ? `works via \`${rr.liveShape}\`` : "not proven"}`);
+    if (rr.nodeSelection) lines.push(`- Node selection used: \`${rr.nodeSelection}\``);
     if (rr.liveSample) {
       lines.push("");
       lines.push("```json");

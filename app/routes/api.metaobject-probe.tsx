@@ -66,6 +66,51 @@ function namedTypeOf(ref: any): string | undefined {
   return undefined;
 }
 
+/** The KIND of the named type behind any wrappers — SCALAR/ENUM need no
+ *  sub-selection, everything else does. */
+function leafKindOf(ref: any): string | undefined {
+  let cursor = ref;
+  for (let depth = 0; cursor && depth < 6; depth++) {
+    if (cursor.name) return cursor.kind as string;
+    cursor = cursor.ofType;
+  }
+  return undefined;
+}
+
+/**
+ * A selection set that asks a node for everything it can answer WITHOUT the
+ * probe knowing its schema.
+ *
+ * Scalars and enums go in bare; an OBJECT, UNION or INTERFACE goes in as
+ * `field { __typename }`, which is valid for every composite type. That second
+ * half is the point: on `MetafieldRelation` the field that names the
+ * referencing PRODUCT is `referencer`, an object — a scalar-only selection
+ * leaves out exactly the thing a usage count needs and then reports that the
+ * question was answered.
+ *
+ * A field with a REQUIRED argument is skipped: selecting it without one is a
+ * hard error that `isSelectionError` does not recognise, so a single such
+ * field would make a working connection read as "shape not measured".
+ */
+function liveNodeSelection(fields: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>): string {
+  const parts = ["__typename"];
+  for (const field of fields) {
+    const needsArgument = (field.args ?? []).some((a) => leafKindOf(a.type) !== undefined && isRequiredArg(a.type));
+    if (needsArgument) continue;
+    const kind = leafKindOf(field.type);
+    if (kind === "SCALAR" || kind === "ENUM") parts.push(field.name);
+    else if (kind === "OBJECT" || kind === "UNION" || kind === "INTERFACE") {
+      parts.push(`${field.name} { __typename }`);
+    }
+  }
+  return parts.join(" ");
+}
+
+/** NON_NULL at the OUTERMOST level means the argument has to be supplied. */
+function isRequiredArg(ref: any): boolean {
+  return ref?.kind === "NON_NULL";
+}
+
 /** Enough introspection wrappers for `[T!]!` and one to spare. */
 const TYPE_REF_FRAGMENT = `#graphql
   fragment TypeRef on __Type {
@@ -158,6 +203,8 @@ export interface MetaobjectProbeReport {
     /** A live run against a real entry — the only thing that proves it works. */
     liveShape?: "nodes" | "edges";
     liveSample?: string;
+    /** The selection the live run used — reused by the link test's own V4 step. */
+    nodeSelection?: string;
     error?: string;
   };
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
@@ -355,6 +402,9 @@ export async function action({ request }: ActionFunctionArgs) {
   // `steps=references` alone must not silently measure nothing.
   if (wants("references")) {
     const shape: NonNullable<MetaobjectProbeReport["reverseRelation"]> = {};
+    /** The selection the live run asks the node for. `__typename` alone until
+     *  the node type has been introspected. */
+    let nodeSelection = "__typename";
     /** Appends rather than overwrites: an early failure explains a later one. */
     const noteError = (message: string) => {
       shape.error = shape.error ? `${shape.error} | ${message}` : message;
@@ -424,8 +474,40 @@ export async function action({ request }: ActionFunctionArgs) {
         if (inner.ok) {
           const fields = inner.data?.__type?.fields ?? [];
           shape.connectionFields = fields.map((f: any) => f.name);
-          const carrier = fields.find((f: any) => f.name === "nodes" || f.name === "edges");
-          shape.nodeType = namedTypeOf(carrier?.type);
+          // `nodes` FIRST, explicitly. A plain `find` over both names takes
+          // whichever the schema lists earlier, and on
+          // MetafieldRelationConnection that is `edges` — which made run 2
+          // report the EDGE type (MetafieldRelationEdge, fields `cursor, node`)
+          // as the node type.
+          const nodesField = fields.find((f: any) => f.name === "nodes");
+          if (nodesField) {
+            shape.nodeType = namedTypeOf(nodesField.type);
+          } else {
+            // An edges-ONLY connection: the element of `edges` is the EDGE, and
+            // the node is one hop further in. Reading the edge as the node
+            // would build `edges { node { cursor } }`, which errors, and a
+            // perfectly good connection would be reported as unmeasurable.
+            const edgeType = namedTypeOf(fields.find((f: any) => f.name === "edges")?.type);
+            if (edgeType) {
+              const edgeShape = await call(
+                `#graphql
+                  query MetaobjectProbeEdgeShape($name: String!) {
+                    __type(name: $name) {
+                      fields(includeDeprecated: true) { name type { ...TypeRef } }
+                    }
+                  }
+                  ${TYPE_REF_FRAGMENT}`,
+                { name: edgeType },
+              );
+              if (edgeShape.ok) {
+                shape.nodeType = namedTypeOf(
+                  (edgeShape.data?.__type?.fields ?? []).find((f: any) => f.name === "node")?.type,
+                );
+              } else {
+                noteError(`edge shape: ${describeFailure(edgeShape)}`);
+              }
+            }
+          }
         } else {
           noteError(`connection fields: ${describeFailure(inner)}`);
         }
@@ -437,10 +519,15 @@ export async function action({ request }: ActionFunctionArgs) {
             query MetaobjectProbeNodeShape($name: String!) {
               __type(name: $name) {
                 kind
-                fields(includeDeprecated: true) { name }
+                fields(includeDeprecated: true) {
+                  name
+                  type { ...TypeRef }
+                  args { name type { ...TypeRef } }
+                }
                 possibleTypes { name }
               }
-            }`,
+            }
+            ${TYPE_REF_FRAGMENT}`,
           { name: shape.nodeType },
         );
         if (nodeShape.ok) {
@@ -448,9 +535,16 @@ export async function action({ request }: ActionFunctionArgs) {
           // A UNION (which a "referenced by" node plausibly is) has no fields
           // and lists its members instead. Both are reported; an empty answer
           // is left empty rather than dressed up as the other one.
-          const fields: string[] = (t?.fields ?? []).map((f: any) => f.name);
+          const fields: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }> =
+            t?.fields ?? [];
           shape.nodeFields =
-            fields.length > 0 ? fields : (t?.possibleTypes ?? []).map((f: any) => f.name);
+            fields.length > 0
+              ? fields.map((f) => f.name)
+              : (t?.possibleTypes ?? []).map((f: any) => f.name);
+          // What the live run may ask for. Run 2 selected only `__typename` and
+          // therefore could not say whether a relation names the PRODUCT that
+          // uses the entry — which is the only thing a usage count needs.
+          if (fields.length > 0) nodeSelection = liveNodeSelection(fields);
         } else {
           // A failed call is not "this type has no fields" -- without this the
           // report simply omits the line and "not measured" reads as "none".
@@ -483,7 +577,7 @@ export async function action({ request }: ActionFunctionArgs) {
             query MetaobjectProbeReferencedByNodes($id: ID!) {
               metaobject(id: $id) {
                 id
-                ${field}(first: 5) { nodes { __typename } }
+                ${field}(first: 5) { nodes { ${nodeSelection} } }
               }
             }`,
           { id: sampleId },
@@ -497,7 +591,7 @@ export async function action({ request }: ActionFunctionArgs) {
               query MetaobjectProbeReferencedByEdges($id: ID!) {
                 metaobject(id: $id) {
                   id
-                  ${field}(first: 5) { edges { node { __typename } } }
+                  ${field}(first: 5) { edges { node { ${nodeSelection} } } }
                 }
               }`,
             { id: sampleId },
@@ -513,6 +607,7 @@ export async function action({ request }: ActionFunctionArgs) {
         }
       }
 
+      shape.nodeSelection = nodeSelection;
       report.reverseRelation = shape;
       report.verdicts.push(
         shape.liveShape
@@ -604,7 +699,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // ---- Step 4: link + delete test (destructive, opt-in) --------------------
   if (wants("link")) {
-    report.linkTest = await runLinkTest(call, writeType, definitions, report.reverseRelationField ?? null);
+    report.linkTest = await runLinkTest(
+      call,
+      writeType,
+      definitions,
+      report.reverseRelationField ?? null,
+      // Measured by step 2b when it ran; `__typename` alone otherwise, which is
+      // why the two steps are worth ticking together.
+      report.reverseRelation?.nodeSelection ?? "__typename",
+    );
     if (report.linkTest.verdict) report.verdicts.push(report.linkTest.verdict);
   }
 
@@ -616,6 +719,101 @@ export async function action({ request }: ActionFunctionArgs) {
   });
 
   return json({ success: true, report });
+}
+
+
+/**
+ * Is this stored value something worth COPYING into a required field?
+ *
+ * `""` obviously not — but neither is `"[]"`, `"null"` or `"{}"`: a list field
+ * whose source entry happens to be empty would be copied into a REQUIRED field
+ * and reproduce the exact "can't be blank" refusal the borrowing exists to
+ * avoid, while looking like a value in the report.
+ */
+function carriesAValue(raw: string | null | undefined): boolean {
+  const value = (raw ?? "").trim();
+  if (value === "" || value === "null") return false;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.length > 0;
+    if (parsed && typeof parsed === "object") return Object.keys(parsed).length > 0;
+  } catch {
+    // Not JSON — a plain non-empty string is a value.
+  }
+  return true;
+}
+
+/**
+ * Field values for a throwaway entry of `type`, or the reason there are none.
+ *
+ * A required field this probe cannot invent a value for is not a dead end:
+ * MEASURED on a live shop (run 2), every Shopify STANDARD definition requires
+ * a `product_taxonomy_value_reference`, so an inventing-only seeder skips the
+ * write test on every one of them and V1 stays unanswerable forever.
+ *
+ * The way out is not to guess a taxonomy GID -- it is to COPY one the shop
+ * already uses, read off an EXISTING entry of the same definition. That is a
+ * value Shopify has already accepted for this exact field, which is the only
+ * kind of value worth putting in a throwaway. A definition with no existing
+ * entry to copy from is skipped, honestly and by name.
+ */
+async function seedFieldsFor(
+  call: (query: string, variables?: Record<string, unknown>) => Promise<GraphQLCallResult>,
+  definition: DefinitionShape,
+  labelValue: string,
+): Promise<{ ok: true; fields: Array<{ key: string; value: string }>; borrowed: string[] } | { ok: false; reason: string }> {
+  const fields: Array<{ key: string; value: string }> = [];
+  const needsBorrowing: string[] = [];
+
+  for (const field of definition.fieldDefinitions) {
+    if (field.required !== true) continue;
+    if (field.type === "color") fields.push({ key: field.key, value: "#123456" });
+    else if (field.type === "single_line_text_field" || field.type === "multi_line_text_field") {
+      fields.push({ key: field.key, value: labelValue });
+    } else if (field.type === "list.single_line_text_field") {
+      fields.push({ key: field.key, value: JSON.stringify([labelValue]) });
+    } else {
+      needsBorrowing.push(field.key);
+    }
+  }
+
+  if (needsBorrowing.length === 0) return { ok: true, fields, borrowed: [] };
+
+  const existing = await call(
+    `#graphql
+      query MetaobjectProbeSeedSource($type: String!, $first: Int!) {
+        metaobjects(type: $type, first: $first) {
+          nodes { id fields { key value } }
+        }
+      }`,
+    { type: definition.type, first: 20 },
+  );
+  if (!existing.ok) {
+    // A failed lookup is not "there is nothing to copy" -- the same rule the
+    // rest of this file follows. The test is skipped as UNMEASURED.
+    return {
+      ok: false,
+      reason: `could not read existing entries of "${definition.type}" to copy required values from (${describeFailure(existing)}). Skipped WITHOUT answering V1.`,
+    };
+  }
+
+  const entries: Array<{ fields?: Array<{ key: string; value: string | null }> }> =
+    existing.data?.metaobjects?.nodes ?? [];
+  const borrowed: string[] = [];
+  for (const key of needsBorrowing) {
+    const found = entries
+      .flatMap((e) => e.fields ?? [])
+      .find((f) => f.key === key && carriesAValue(f.value));
+    if (!found) {
+      return {
+        ok: false,
+        reason: `required field "${key}" is of a type this probe cannot invent, and no existing entry of "${definition.type}" has a value to copy. Skipped WITHOUT answering V1.`,
+      };
+    }
+    fields.push({ key, value: found.value! });
+    borrowed.push(key);
+  }
+  return { ok: true, fields, borrowed };
 }
 
 /**
@@ -641,20 +839,17 @@ async function runWriteTest(
   // Every REQUIRED field has to carry something Shopify accepts, or the create
   // fails for a reason that says nothing about V1.
   const colourField = definition.fieldDefinitions.find((f) => f.type === "color");
-  const seed: Array<{ key: string; value: string }> = [];
-  for (const field of definition.fieldDefinitions) {
-    if (field.required !== true) continue;
-    if (field.type === "color") seed.push({ key: field.key, value: "#123456" });
-    else if (field.type === "single_line_text_field" || field.type === "multi_line_text_field") {
-      seed.push({ key: field.key, value: "contentpilot probe" });
-    } else if (field.type === "list.single_line_text_field") {
-      seed.push({ key: field.key, value: JSON.stringify(["contentpilot probe"]) });
-    } else {
-      return {
-        attempted: false,
-        skippedReason: `Required field "${field.key}" is of type "${field.type}", which this probe cannot seed. Skipped WITHOUT answering V1.`,
-      };
-    }
+  const seeded = await seedFieldsFor(call, definition, "contentpilot probe");
+  if (!seeded.ok) {
+    return { attempted: false, skippedReason: seeded.reason };
+  }
+  const seed = seeded.fields;
+  if (seeded.borrowed.length > 0) {
+    steps.push({
+      step: "seed required fields",
+      ok: true,
+      detail: `copied from an existing entry of this definition: ${seeded.borrowed.join(", ")}`,
+    });
   }
 
   let createdId: string | null = null;
@@ -680,16 +875,29 @@ async function runWriteTest(
     });
 
     if (!createdId) {
-      const refused = createErrors.length > 0;
+      const detail = createErrors.map((e: any) => `${e.code ?? ""} ${e.message}`.trim()).join("; ");
+      // A refusal is only a V1 answer when it is about ACCESS. Now that the
+      // seeder borrows real values the create actually runs, so most refusals
+      // are about the PAYLOAD -- a handle collision with a leftover throwaway,
+      // a taxonomy value the definition does not accept, a validation rule.
+      // Publishing "this definition is read-only for us" off one of those would
+      // send Phase 4 down the §7.2 branch on a definition that writes fine.
+      const accessRefusal =
+        createErrors.length > 0 &&
+        createErrors.some((e: any) =>
+          /access|denied|not authorized|unauthorized|permission|forbidden|scope/i.test(
+            `${e.code ?? ""} ${e.message ?? ""}`,
+          ),
+        );
       return {
         attempted: true,
         steps,
         leftovers,
-        verdict: refused
-          ? `V1 NEGATIVE for "${type}": Shopify REFUSED the create (${createErrors
-              .map((e: any) => `${e.code ?? ""} ${e.message}`.trim())
-              .join("; ")}). Phase 4 takes the read-only branch (§7.2) for this definition.`
-          : `V1 INCONCLUSIVE for "${type}": the call never produced an answer (${describeFailure(created)}). NOT a negative -- re-run.`,
+        verdict: accessRefusal
+          ? `V1 NEGATIVE for "${type}": Shopify refused the create on ACCESS grounds (${detail}). Phase 4 takes the read-only branch (§7.2) for this definition.`
+          : createErrors.length > 0
+            ? `V1 INCONCLUSIVE for "${type}": the create was refused, but for the PAYLOAD rather than for access (${detail}). That says nothing about whether this app may write here -- fix the payload and re-run.`
+            : `V1 INCONCLUSIVE for "${type}": the call never produced an answer (${describeFailure(created)}). NOT a negative -- re-run.`,
       };
     }
 
@@ -807,6 +1015,9 @@ async function runLinkTest(
   type: string,
   definitions: DefinitionShape[],
   reverseRelationField: string | null,
+  /** The selection step 2b measured for a relation node. `__typename` alone
+   *  would waste the ONE run that has a self-created referencing product. */
+  reverseNodeSelection: string,
 ): Promise<MetaobjectProbeReport["linkTest"]> {
   const steps: StepOutcome[] = [];
   const leftovers: string[] = [];
@@ -826,13 +1037,37 @@ async function runLinkTest(
     };
   }
 
+  // Every REQUIRED field, the same way the write test does it — inventing what
+  // it can and COPYING the rest from an existing entry. Run 2 died exactly
+  // here ("Base color can't be blank; Base pattern can't be blank"): the link
+  // target could not be created, so V3, V4's semantics and V5 all went
+  // unmeasured for want of two taxonomy references the shop already had.
+  const seeded = await seedFieldsFor(call, definition, "ContentPilot Probe Colour");
+  if (!seeded.ok) {
+    return { attempted: false, skippedReason: seeded.reason };
+  }
+
   let entryId: string | null = null;
   let productId: string | null = null;
   try {
-    const fields: Array<{ key: string; value: string }> = [
-      { key: labelField.key, value: "ContentPilot Probe Colour" },
-    ];
-    if (colourField) fields.push({ key: colourField.key, value: "#0a7f5f" });
+    const fields = [...seeded.fields];
+    const setField = (key: string, value: string) => {
+      const at = fields.findIndex((f) => f.key === key);
+      if (at >= 0) fields[at] = { key, value };
+      else fields.push({ key, value });
+    };
+    setField(labelField.key, "ContentPilot Probe Colour");
+    // The colour is the VALUE V3 is about, so it overrides whatever the seeder
+    // put there — a borrowed colour would make "did the swatch move?" untestable.
+    if (colourField) setField(colourField.key, "#0a7f5f");
+
+    if (seeded.borrowed.length > 0) {
+      steps.push({
+        step: "seed required fields",
+        ok: true,
+        detail: `copied from an existing entry of this definition: ${seeded.borrowed.join(", ")}`,
+      });
+    }
 
     const created = await call(
       `#graphql
@@ -962,7 +1197,7 @@ async function runLinkTest(
           query MetaobjectProbeReverse($id: ID!) {
             metaobject(id: $id) {
               id
-              ${reverseRelationField}(first: 10) { nodes { __typename } }
+              ${reverseRelationField}(first: 10) { nodes { ${reverseNodeSelection} } }
             }
           }`,
         { id: entryId },
