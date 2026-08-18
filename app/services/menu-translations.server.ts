@@ -44,12 +44,18 @@ export const MENU_LINK_KEY = "title";
  * node and Shopify prices a query by its whole selection, not by its rows: at
  * 250 nodes a five-language shop would blow the max query cost, the sweep
  * would throw, and every menu item would render disabled — the feature
- * failing exactly on the shops that need it most. The cap then rises with the
- * same factor so the total reach stays put.
+ * failing exactly on the shops that need it most.
+ *
+ * The PAGE COUNT is capped flat rather than raised to compensate. Scaling it
+ * up would have kept the reach at 2000 links by turning a five-language shop
+ * into 40 sequential round trips inside a loader that also re-runs after every
+ * save — trading a query-cost error for a timeout. A shop past the cap gets
+ * `truncated`, which the page states plainly ("not every menu link could be
+ * loaded"); a timeout would give it nothing and say nothing.
  */
 const SWEEP_MAX_NODES = 250;
 const SWEEP_MIN_NODES = 25;
-const SWEEP_MAX_LINKS = 2000;
+const SWEEP_MAX_PAGES = 10;
 
 export interface LinkTranslationRow {
   linkId: string;
@@ -115,7 +121,7 @@ export async function fetchShopLinkTranslations(
     SWEEP_MAX_NODES,
     Math.max(SWEEP_MIN_NODES, Math.floor(SWEEP_MAX_NODES / Math.max(1, wanted.length))),
   );
-  const pageCap = Math.ceil(SWEEP_MAX_LINKS / pageSize);
+  const pageCap = SWEEP_MAX_PAGES;
 
   const rows = new Map<string, LinkTranslationRow>();
   let after: string | null = null;
@@ -432,12 +438,17 @@ export async function refreshMenuCache(
       if (item.linkId) liveLinkIds.push(item.linkId);
     }
   }
+  if (liveLinkIds.length === 0) {
+    // An empty live set makes "notIn []" match EVERY row — the cleanup would
+    // delete the shop's entire menu-item translation history on a read that
+    // returned no items. And a shop that genuinely has no menu items is
+    // indistinguishable from a read that came back thin, so the safe answer
+    // is the same either way: keep the rows. Orphans cost storage; this
+    // mistake costs the merchant their translations.
+    return;
+  }
   const orphaned = await db.contentTranslation.deleteMany({
-    where: {
-      shop,
-      resourceType: MENU_LINK_RESOURCE_TYPE,
-      ...(liveLinkIds.length > 0 ? { resourceId: { notIn: liveLinkIds } } : {}),
-    },
+    where: { shop, resourceType: MENU_LINK_RESOURCE_TYPE, resourceId: { notIn: liveLinkIds } },
   });
   if (orphaned.count > 0) {
     logger.info("[MENU-TRANSLATIONS] Removed translations of deleted menu items", {
