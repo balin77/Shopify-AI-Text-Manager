@@ -16,6 +16,10 @@ import {
   AI_CRAWLERS,
   wrapLlmsTxtForTheme,
   unwrapLlmsTxtFromTheme,
+  buildAgentsMd,
+  policyPath,
+  AI_DISCOVERY_TEMPLATES,
+  AI_DISCOVERY_PATHS,
 } from "~/services/seo/aeo.service";
 
 /** Phase 7 AEO pure logic: llms.txt generation + robots.txt AI-crawler audit. */
@@ -626,5 +630,86 @@ describe("llms.txt {% raw %} wrapping (Liquid injection guard)", () => {
   it("unwrap is a no-op on content that was never wrapped (pre-existing assets)", () => {
     const plain = "# Shop\n\n- [A](https://x/products/a)\n";
     expect(unwrapLlmsTxtFromTheme(plain)).toBe(plain);
+  });
+});
+
+describe("buildAgentsMd", () => {
+  const base = {
+    shopName: "Acme",
+    domain: "shop.com",
+    description: "We sell great things",
+    products: [{ title: "Blue Shoe", handle: "blue-shoe", description: "Comfy shoe" }],
+    collections: [{ title: "Footwear", handle: "footwear" }],
+    policies: [{ title: "Refund policy", url: "https://shop.com/policies/refund-policy" }],
+  };
+
+  it("renders summary, collections, products, policies and the agent notes", () => {
+    const out = buildAgentsMd(base);
+    expect(out).toContain("# Acme");
+    expect(out).toContain("> We sell great things");
+    expect(out).toContain("## Collections");
+    expect(out).toContain("- [Footwear](https://shop.com/collections/footwear)");
+    expect(out).toContain("- [Blue Shoe](https://shop.com/products/blue-shoe): Comfy shoe");
+    expect(out).toContain("## Policies");
+    expect(out).toContain("- [Refund policy](https://shop.com/policies/refund-policy)");
+    expect(out).toContain("## Notes for agents");
+    expect(out).toContain("https://shop.com/sitemap.xml");
+    expect(out.endsWith("\n")).toBe(true);
+  });
+
+  it("puts collections before products — an agent orients by category first", () => {
+    const out = buildAgentsMd(base);
+    expect(out.indexOf("## Collections")).toBeLessThan(out.indexOf("## Products"));
+  });
+
+  it("omits empty sections rather than printing bare headings", () => {
+    const out = buildAgentsMd({ ...base, collections: [], policies: [], products: [] });
+    expect(out).not.toContain("## Collections");
+    expect(out).not.toContain("## Products");
+    expect(out).not.toContain("## Policies");
+    // The agent notes always stay: they are what makes the file safe to act on.
+    expect(out).toContain("## Notes for agents");
+  });
+
+  it("escapes Markdown special characters in titles, like the llms.txt builder", () => {
+    const out = buildAgentsMd({
+      ...base,
+      products: [{ title: "Shoe [Red]\nNEW", handle: "shoe" }],
+    });
+    expect(out).toContain("- [Shoe \\[Red\\] NEW](https://shop.com/products/shoe)");
+  });
+
+  it("is defanged and unwrappable through the same theme wrapper as llms.txt", () => {
+    const out = buildAgentsMd({
+      ...base,
+      products: [{ title: "{{ product.title }}", handle: "p" }],
+    });
+    const wrapped = wrapLlmsTxtForTheme(out);
+    expect(wrapped).toContain("{ { product.title }}");
+    expect(llmsTxtMatches(wrapped, out)).toBe(true);
+  });
+
+  it("differs from the llms.txt built from the same catalog (not one file twice)", () => {
+    expect(buildAgentsMd(base)).not.toBe(buildLlmsTxt(base));
+  });
+});
+
+describe("policyPath", () => {
+  it("turns a policy type into its storefront path", () => {
+    expect(policyPath("REFUND_POLICY")).toBe("/policies/refund-policy");
+    expect(policyPath("TERMS_OF_SERVICE")).toBe("/policies/terms-of-service");
+  });
+
+  it("tolerates the lowercase and padded forms a cache row can hold", () => {
+    expect(policyPath(" shipping_policy ")).toBe("/policies/shipping-policy");
+  });
+});
+
+describe("AI_DISCOVERY_TEMPLATES / AI_DISCOVERY_PATHS", () => {
+  it("maps each file to its theme template and its public path", () => {
+    expect(AI_DISCOVERY_TEMPLATES.agents).toBe("templates/agents.md.liquid");
+    expect(AI_DISCOVERY_TEMPLATES.llms).toBe("templates/llms.txt.liquid");
+    expect(AI_DISCOVERY_PATHS.agents).toBe("/agents.md");
+    expect(AI_DISCOVERY_PATHS.llms).toBe("/llms.txt");
   });
 });
