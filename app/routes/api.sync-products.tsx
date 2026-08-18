@@ -2,6 +2,11 @@ import { data as json } from "react-router";
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db, upsertProductMetafields } from "../db.server";
+import {
+  PRODUCT_VIDEO_MEDIA_FIELDS,
+  videoUploadDatesFromMedia,
+} from "../services/seo/video-schema.shared";
+import { persistVideoSchema } from "../services/seo/video-schema.server";
 import { getPlanLimits } from "../utils/planUtils";
 import { logger } from "~/utils/logger.server";
 import {
@@ -130,6 +135,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                             url
                           }
                         }
+                        ${PRODUCT_VIDEO_MEDIA_FIELDS}
                       }
                     }
                   }
@@ -331,6 +337,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         failed++;
         errors.push(`${product.id}: Failed to sync products`);
       }
+    }
+
+    // Video upload dates → product metafield (services/seo/video-schema.*).
+    // After the write loop, so the mirror column it diffs against exists; one
+    // pass for the whole set, and no Shopify call at all when nothing changed.
+    if (synced > 0) {
+      await persistVideoSchema(
+        admin as never,
+        db,
+        allProducts.map((product: any) => ({
+          productId: product.id,
+          uploadDates: videoUploadDatesFromMedia(product.media?.edges),
+        })),
+      );
     }
 
     logger.info("[SYNC-PRODUCTS] Complete", { context: "SyncProducts", synced, discovered, failed, total: allProducts.length });

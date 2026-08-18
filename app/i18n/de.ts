@@ -2018,7 +2018,7 @@ export const de = {
       schemaBreadcrumb: "Breadcrumbs (BreadcrumbList)",
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "Video entsteht erst auf der Storefront — aus deinen Produkt-Medien — und taucht deshalb in der Vorschau unten nicht auf. Für Googles Video-Rich-Result fehlt ein Upload-Datum, das die Storefront nicht liefert: trage es bei Bedarf im Produkt-Metafeld \"custom.video_upload_date\" (Typ Datum) ein, sonst lassen wir die Angabe weg statt sie zu erfinden. FAQ (FAQPage) kommt zusätzlich dazu, sobald du den Schalter im Theme-Editor einschaltest und das Metafeld \"custom.faq\" gefüllt ist — beides ist bewusst standardmäßig aus.",
+      schemaVideoNote: "Video entsteht erst auf der Storefront — aus deinen Produkt-Medien — und taucht deshalb in der Vorschau unten nicht auf. Das von Google verlangte Upload-Datum holt die App beim Produkt-Sync aus der Shopify-API und legt es als Metafeld \"custom.video_upload_dates\" ab; die Storefront liest es dort. Willst du für ein Produkt ein anderes Datum ausweisen (z. B. die Erstveröffentlichung auf YouTube), trägst du es im Metafeld \"custom.video_upload_date\" ein — deine Angabe gewinnt. Ohne beides lassen wir die Angabe weg statt sie zu erfinden. FAQ (FAQPage) kommt dazu, sobald du den Schalter im Theme-Editor einschaltest und das Metafeld \"custom.faq\" gefüllt ist — beides ist bewusst standardmäßig aus.",
       setBrandLogo: "Logo in Shop-Markenassets festlegen",
       openSampleProduct: "Beispielprodukt öffnen",
       openSampleArticle: "Beispielartikel öffnen",

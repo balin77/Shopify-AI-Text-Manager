@@ -2020,7 +2020,7 @@ export const en: Translation = {
       schemaBreadcrumb: "Breadcrumbs (BreadcrumbList)",
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "Video is produced on the storefront — from your product media — so it does not appear in the preview below. Google's video rich result also needs an upload date the storefront does not expose: set the product metafield \"custom.video_upload_date\" (type date) if you want it, otherwise we omit the property rather than invent it. FAQ (FAQPage) is added on top once you switch it on in the theme editor and the \"custom.faq\" metafield is filled — both are deliberately off by default.",
+      schemaVideoNote: "Video is produced on the storefront — from your product media — so it does not appear in the preview below. The upload date Google requires is fetched from the Shopify API during the product sync and stored in the \"custom.video_upload_dates\" metafield, which the storefront reads. If you want a different date for a product (say the original YouTube publication), set the \"custom.video_upload_date\" metafield — yours wins. With neither, we omit the property rather than invent it. FAQ (FAQPage) is added once you switch it on in the theme editor and the \"custom.faq\" metafield is filled — both are deliberately off by default.",
       setBrandLogo: "Set logo in shop brand assets",
       openSampleProduct: "Open sample product",
       openSampleArticle: "Open sample article",

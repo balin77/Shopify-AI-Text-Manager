@@ -446,15 +446,13 @@
   the video (contentUrl for hosted, embedUrl for external). Without either
   there is nothing a consumer could do with the entry.
 
-  `uploadDate` is Google's third required property for the video rich result
-  and the storefront does NOT expose it — Liquid's media objects carry no
-  creation date. It therefore comes from the optional product metafield
-  `custom.video_upload_date` (type `date`) and is otherwise OMITTED. Same rule
-  as `custom.price_valid_until` above: the app never invents a date, and a
-  guessed upload date on a video is exactly the kind of fabrication that makes
-  markup untrustworthy. Without it the markup is still valid schema.org and
-  still read by AI answer engines — it is only the Google video rich result
-  that stays out of reach.
+  `uploadDate` is one of Google's REQUIRED properties for the video rich
+  result and Liquid's media objects carry no creation date. It comes from two
+  metafields instead, merchant first: `custom.video_upload_date` (a date the
+  merchant set for the product) wins, otherwise the per-media map in
+  `custom.video_upload_dates`, which the app maintains from the Admin API's
+  `File.createdAt` during the product sync. Both absent ⇒ the property is
+  OMITTED, never guessed — same rule as `custom.price_valid_until` above.
 
   `duration` is milliseconds in Liquid and ISO-8601 in schema.org, hence the
   divide/modulo.
@@ -465,16 +463,36 @@
 {%- endcomment -%}
 {%- if want_video and request.page_type == 'product' and product -%}
   {%- assign v_desc = product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500 -%}
-  {%- assign v_upload = '' -%}
+  {%- comment -%}
+    Two date sources, merchant first. `custom.video_upload_dates` is the map
+    the APP maintains from the Admin API's `File.createdAt` (one entry per
+    media id, written by the product sync — see services/seo/video-schema.*),
+    which is what makes the rich result reachable without anyone typing a date.
+    `custom.video_upload_date` stays as the merchant's manual override for the
+    whole product: they may know the real first-publication date (a video
+    that ran on YouTube long before it was added here), and a person's stated
+    fact outranks our derived one.
+  {%- endcomment -%}
+  {%- assign v_upload_override = '' -%}
   {%- assign vud_raw = product.metafields.custom.video_upload_date.value -%}
   {%- if vud_raw != blank -%}
-    {%- assign v_upload = vud_raw | date: '%Y-%m-%d' -%}
+    {%- assign v_upload_override = vud_raw | date: '%Y-%m-%d' -%}
   {%- endif -%}
+  {%- assign v_upload_map = product.metafields.custom.video_upload_dates.value -%}
   {%- assign v_printed = 0 -%}
   {%- for v_media in product.media -%}
     {%- if v_printed >= 5 -%}{%- break -%}{%- endif -%}
     {%- if v_media.media_type == 'video' or v_media.media_type == 'external_video' -%}
       {%- liquid
+        # Per-video date from the app's map, keyed by the NUMERIC media id
+        # (Liquid's `media.id` is the number, the map is written with the same
+        # form). `| append: ''` forces the string key a JSON object has.
+        assign v_upload = v_upload_override
+        if v_upload == '' and v_upload_map
+          assign v_media_key = v_media.id | append: ''
+          assign v_upload = v_upload_map[v_media_key] | default: ''
+        endif
+
         assign v_thumb = ''
         if v_media.preview_image
           assign v_thumb = v_media.preview_image | image_url: width: 1200

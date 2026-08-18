@@ -2014,7 +2014,7 @@ export const es: Translation = {
       schemaBreadcrumb: "Migas de pan (BreadcrumbList)",
       schemaVideo: "Vídeo (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "El vídeo se genera en la tienda —a partir de tus medios de producto—, por eso no aparece en la vista previa de abajo. El resultado enriquecido de vídeo de Google necesita además una fecha de subida que la tienda no expone: indícala en el metacampo de producto \"custom.video_upload_date\" (tipo fecha) si la quieres; si no, omitimos la propiedad en lugar de inventarla. Las FAQ (FAQPage) se añaden en cuanto actives el interruptor en el editor de temas y el metacampo \"custom.faq\" tenga contenido: ambas cosas están desactivadas a propósito.",
+      schemaVideoNote: "El vídeo se genera en la tienda —a partir de tus medios de producto—, por eso no aparece en la vista previa de abajo. La fecha de subida que exige Google se obtiene de la API de Shopify durante la sincronización de productos y se guarda en el metacampo \"custom.video_upload_dates\", que la tienda lee. Si quieres indicar otra fecha para un producto (por ejemplo la publicación original en YouTube), rellena el metacampo \"custom.video_upload_date\": la tuya manda. Sin ninguna de las dos, omitimos la propiedad en lugar de inventarla. Las FAQ (FAQPage) se añaden en cuanto actives el interruptor en el editor de temas y el metacampo \"custom.faq\" tenga contenido: ambas cosas están desactivadas a propósito.",
       setBrandLogo: "Configurar logo en los activos de marca",
       openSampleProduct: "Abrir producto de ejemplo",
       openSampleArticle: "Abrir artículo de ejemplo",

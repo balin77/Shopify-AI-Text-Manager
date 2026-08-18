@@ -147,20 +147,20 @@ model AISettings {
   deepseekMaxRequestsPerMinute Int? @default(60)
 
   // SEO Title suffix (shop name appended by Shopify theme)
-  seoTitleSuffixEnabled Boolean @default(false)
+  seoTitleSuffixEnabled Boolean   @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
   // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
   // entitled shop gets the trend without hunting for a checkbox; the sweep
   // filters on it IN THE QUERY, so switching it off costs nothing per tick.
   // Independent of the plan gate: both must hold for a scan to happen.
-  seoAutoAuditEnabled Boolean @default(true)
+  seoAutoAuditEnabled   Boolean   @default(true)
   // Last automatic (nightly) SEO audit run for this shop — see
   // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
   // the sweep's "is this shop due" query and is stamped on every path
   // (success, skip, error) so a broken shop cannot win it forever. Backoff
   // stamp, NOT a lock. Only shops on a plan with seo.scheduledAudit are ever
   // selected.
-  lastAutoAuditAt DateTime?
+  lastAutoAuditAt       DateTime?
 
   // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
   // after the storefront crawl. Default ON (the report is worth little
@@ -173,14 +173,14 @@ model AISettings {
   // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
   // should get the delivery report without hunting for a checkbox — and ANDed
   // into the sweep's due-query, so switching it off costs nothing per tick.
-  seoAutoCrawlEnabled Boolean @default(true)
+  seoAutoCrawlEnabled Boolean   @default(true)
   // Last automatic storefront crawl for this shop — see
   // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
   // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
   // lock, and only shops on a plan with seo.scheduledCrawl are selected.
   // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
   // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
-  lastAutoCrawlAt DateTime?
+  lastAutoCrawlAt     DateTime?
 
   // Keyword-aware translation: a translation into a foreign locale is
   // phrased so THAT locale's own tracked keyword survives, instead of being
@@ -489,6 +489,17 @@ model Product {
   // that the remainder lives in the Shopify admin; the full sync deliberately
   // does NOT paginate variants (§5.1).
   hasMoreVariants Boolean @default(false)
+
+  // Mirror of the product-video upload dates this app last wrote to the
+  // `custom.video_upload_dates` metafield (services/seo/video-schema.*).
+  // Liquid cannot know when a video was uploaded, and `uploadDate` is one of
+  // Google's required VideoObject properties — so the sync carries the Admin
+  // API's `File.createdAt` into a metafield the storefront block reads back.
+  // This column exists to make that write DIFF-driven: null means "nothing
+  // written / no videos", and a value equal to the freshly built one means no
+  // Shopify call at all. It mirrors what was PUSHED (and echoed), never what
+  // was merely intended.
+  videoSchemaJson String? @db.Text
 
   // ── PLAN_CONTENT_CREATION Phase 0 — merchandising attributes ──────────────
   // Everything below is fetched by the product sync from Phase 0 on. Rows
@@ -1562,16 +1573,16 @@ model SeoIndexNowConfig {
   // Stamped by the background sweep on EVERY path (success, skip, error) so an
   // ineligible shop can't win the "due" query forever — same guard the
   // llms/GSC sweeps document. NOT a lock.
-  lastAutoRunAt DateTime?
+  lastAutoRunAt    DateTime?
   // Rolling monthly submission quota (PlanLimits.seo.monthlyIndexNowSubmissions).
   // `submitPeriod` is the UTC "YYYY-MM" key the counter belongs to — the same
   // convention as the image-operation quota, so a new month resets the counter
   // lazily on the next write instead of needing a cron. Usage data, not
   // entitlement data: never touched by planCacheCleanup.
-  submitPeriod  String?
-  submitCount   Int       @default(0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  submitPeriod     String?
+  submitCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Drives the sweep's due-query (index-now-auto-submit.service.ts).
   @@index([enabled, lastAutoRunAt])
