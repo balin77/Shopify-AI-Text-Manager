@@ -311,22 +311,57 @@ describe("removeAndVerify", () => {
     expect(confirmedKeys.size).toBe(0);
   });
 
-  it("does not let a MARKET override count as the global translation surviving", async () => {
-    const { gateway } = fakeGateway((query: string) =>
+  it("asks the re-read in the SAME market layer it removed from", async () => {
+    // The whole correctness of the re-read. `translations(marketId: null)`
+    // returns the GLOBAL layer only, so filtering a global-only result against
+    // a non-empty marketId discards every row and reports "nothing present" —
+    // which confirmed EVERY unechoed market key and deleted the local row
+    // while the storefront kept serving the override.
+    const { gateway, calls } = fakeGateway((query: string) =>
       query.includes("translationsRemove")
         ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
         : {
             data: {
               translatableResource: {
                 translations: [
-                  { key: "title", value: "market only", market: { id: "gid://shopify/Market/3" } },
+                  { key: "title", value: "still here", market: { id: "gid://shopify/Market/3" } },
                 ],
               },
             },
           },
     );
+    const { confirmedKeys } = await removeAndVerify(
+      gateway,
+      PRODUCT_ID,
+      ["title"],
+      LOCALE,
+      "gid://shopify/Market/3",
+    );
+    // The override survived on Shopify ⇒ NOT confirmed ⇒ the local row stays.
+    expect(confirmedKeys.has("title")).toBe(false);
+    const reread = calls.find((c) => c.variables?.translationKeys === undefined);
+    expect(reread?.variables?.marketId).toBe("gid://shopify/Market/3");
+  });
+
+  it("asks the GLOBAL layer with marketId null", async () => {
+    const { gateway, calls } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: { translations: [] } } },
+    );
+    await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
+    const reread = calls.find((c) => c.variables?.translationKeys === undefined);
+    expect(reread?.variables?.marketId).toBeNull();
+  });
+
+  it("treats a NULL translations list as inconclusive, like an absent resource", async () => {
+    const { gateway } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: { translations: null } } },
+    );
     const { confirmedKeys } = await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
-    expect(confirmedKeys.has("title")).toBe(true);
+    expect(confirmedKeys.size).toBe(0);
   });
 
   it("passes marketIds: null for a global removal", async () => {
@@ -366,14 +401,13 @@ describe("removeAndVerifyAcrossLocales (Phase 4b invalidation)", () => {
     // Not echoed → not confirmed → the caller keeps those local rows.
     expect(confirmedPairs.has(`fr${LOCALE_KEY_SEP}title`)).toBe(false);
     expect(confirmedPairs.has(`de${LOCALE_KEY_SEP}body_html`)).toBe(false);
-    // The REMOVAL is still one call for all locales — that is the point of
-    // this function and it has not changed. The extra calls are the re-reads
-    // an unechoed pair now triggers, one per locale that has a gap, and here
-    // they answer with nothing usable so nothing extra is confirmed.
-    const removals = calls.filter((c) => c.variables?.translationKeys !== undefined);
-    expect(removals).toHaveLength(1);
-    expect(removals[0].variables?.locales).toEqual(["de", "fr"]);
-    expect(removals[0].variables?.marketIds).toBeNull();
+    // ONE call, all locales at once, and NO verification re-read: this sweep
+    // runs per row and per sub-resource, so a re-read per locale would
+    // multiply into thousands of queries for a stale local row the next sync
+    // corrects anyway. The asymmetry with `removeAndVerify` is deliberate.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].variables?.locales).toEqual(["de", "fr"]);
+    expect(calls[0].variables?.marketIds).toBeNull();
   });
 
   it("no-ops without keys or locales (no Shopify call)", async () => {
@@ -701,14 +735,16 @@ describe("estimateCalls", () => {
     expect(estimateCalls(diff, productColumns)).toBe(2);
   });
 
-  it("foreign group: register + remove + one digest batch", () => {
+  it("foreign group: register + remove + its re-read + one digest batch", () => {
     const diff = [
       foreignEntry("field.title", "Titre"),
       foreignEntry("field.descriptionHtml", "<p>Corps</p>"),
       foreignEntry("field.handle", ""), // clear
     ];
-    // 1 register + 1 remove + 1 digest batch.
-    expect(estimateCalls(diff, productColumns)).toBe(3);
+    // 1 register + (1 remove + 1 verification re-read) + 1 digest batch. The
+    // re-read only fires when Shopify echoes nothing, so this over-estimates
+    // the common case — the only direction this guard may err in.
+    expect(estimateCalls(diff, productColumns)).toBe(4);
   });
 
   it("digest batches scale with unique foreign resources at DIGEST_BATCH_CHUNK", () => {

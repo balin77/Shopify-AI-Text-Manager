@@ -61,6 +61,7 @@ import { createContentLoader } from "~/utils/loader-factory.server";
 import { logger } from "~/utils/logger.server";
 import type { FetcherData } from "~/types/content-editor.types";
 import {
+  isTranslatableMetaobjectFieldType,
   metaobjectFieldSpecs,
   metaobjectWriteAccess,
   type MetaobjectDefinitionFieldLike,
@@ -359,15 +360,23 @@ export default function MetaobjectsPage() {
     () => (loaded?.metaobjects ?? []).map((m) => m.id),
     [loaded],
   );
+  /** The editor's current language, as one value both the usage gate and the
+   *  card's `compact` read — two derivations would drift. */
+  const isPrimaryLanguage = editor.state.currentLanguage === primaryLocale;
   const usageKeyRef = useRef<string>("");
   useEffect(() => {
     if (visibleEntryIds.length === 0) return;
+    // Usage exists for the DELETE button and its line, and a language tab
+    // renders neither. Without this gate every page of entries on a foreign
+    // locale still paid a round trip and a scan of the product cache for a
+    // number nobody was going to see.
+    if (!isPrimaryLanguage) return;
     const key = visibleEntryIds.join(",");
     if (usageKeyRef.current === key) return;
     usageKeyRef.current = key;
     usageFetcher.load(`/api/metaobject-usage?ids=${encodeURIComponent(key)}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEntryIds]);
+  }, [visibleEntryIds, isPrimaryLanguage]);
 
   useEffect(() => {
     if (usageFetcher.state !== "idle" || !usageFetcher.data?.success) return;
@@ -530,6 +539,7 @@ export default function MetaobjectsPage() {
     () => ({
       handleLabel: t.content?.metaobjectEntryHandle,
       noEditableFields: t.content?.metaobjectEntryNoEditableFields,
+      noTranslatableFields: t.content?.metaobjectEntryNoTranslatableFields,
       unsupportedTitle: t.content?.metaobjectEntryUnsupportedTitle,
       unsupportedHint: t.content?.metaobjectEntryUnsupportedHint,
       deleteLabel: t.content?.metaobjectEntryDelete,
@@ -579,7 +589,7 @@ export default function MetaobjectsPage() {
       // it is actually editable — in a foreign locale or on a refused
       // definition it stays in the body as a read-only field, because a
       // popover behind a dot is a place to EDIT, not a place to hide a value.
-      const colourEditable = writeAccess !== "readOnly" && editor.state.currentLanguage === primaryLocale;
+      const colourEditable = writeAccess !== "readOnly" && isPrimaryLanguage;
       const colourEntry =
         colourSpec && colourEditable
           ? rendered.find((r) => r.field.key === colourSpec.compoundKey)
@@ -590,8 +600,18 @@ export default function MetaobjectsPage() {
       // column two of them no longer fit on a line, which is the layout the
       // grid exists to avoid.
       const specByKey = new Map(specs.map((spec) => [spec.compoundKey, spec]));
+      // On a LANGUAGE tab, only the fields that actually carry a translation.
+      // A colour, a file reference and a taxonomy value have one value per
+      // shop, so they render read-only there — controls that cannot be used,
+      // three of them per card, on every card. Before this page had cards, a
+      // foreign locale was the input and its buttons, and that was right.
       const bodyFields = rendered
         .filter((r) => r !== colourEntry)
+        .filter(
+          (r) =>
+            isPrimaryLanguage ||
+            isTranslatableMetaobjectFieldType(specByKey.get(r.field.key)?.fieldType ?? ""),
+        )
         .map((r) => {
           const spec = specByKey.get(r.field.key);
           return {
@@ -620,6 +640,8 @@ export default function MetaobjectsPage() {
           unsupportedFields={specs
             .filter((s) => s.role === "unsupported")
             .map((s) => ({ label: s.label, fieldType: s.fieldType }))}
+          // A language tab shows the translatable fields and nothing else.
+          compact={!isPrimaryLanguage}
           justCreated={justCreatedId === entry.id}
           readOnlyReason={writeAccess === "readOnly" ? "refused" : undefined}
           usage={entryUsage}
@@ -650,8 +672,7 @@ export default function MetaobjectsPage() {
       cardTexts,
       handleNavigate,
       writeAccess,
-      editor.state.currentLanguage,
-      primaryLocale,
+      isPrimaryLanguage,
       t,
     ],
   );

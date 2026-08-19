@@ -683,6 +683,9 @@ export async function removeAndVerify(
       logger.warn("[BULK] removal re-read failed — unechoed keys stay unconfirmed", {
         context: "Bulk",
         resourceId,
+        locale,
+        marketId: marketId || "(global)",
+        keys: unconfirmed,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -709,11 +712,24 @@ export async function removeAndVerify(
 }
 
 /**
- * Which keys still CARRY a translation in this locale.
+ * Which keys still CARRY a translation in this locale AND this layer.
  *
- * The market rule mirrors `translationsRemove`: with no `marketId` the GLOBAL
- * layer is the target, so a market OVERRIDE left behind does not count as the
- * global one surviving — and with a `marketId` only that market's row does.
+ * `marketId` goes into the QUERY, not just into a filter afterwards. That is
+ * the whole correctness of this function: `translations(marketId: null)`
+ * returns the GLOBAL layer only — the rule `fetchAllTranslations` is built on,
+ * one pass per layer — so a client-side filter of a global-only result against
+ * a non-empty `marketId` discards every row and reports "nothing present" for
+ * ANY market removal. That confirmed every unechoed market key unconditionally
+ * and deleted the local row while the storefront kept serving the override:
+ * exactly the divergence the echo rule exists to prevent, and guaranteed
+ * rather than occasional. The filter below stays as a belt-and-braces check.
+ *
+ * Two deliberate readings of the answer. A row whose value is `""` counts as
+ * ABSENT — the storefront falls back to the primary text either way, so the
+ * merchant's intent is reached. And a locale SPELLING this resource does not
+ * have (asking `de` where Shopify holds `de-DE`) reads as "nothing there" and
+ * confirms; the removal was sent under the same spelling, so the two cannot be
+ * told apart from here, and this is stated rather than papered over.
  */
 async function translatedKeysForLocale(
   gateway: ShopifyApiGateway,
@@ -723,16 +739,16 @@ async function translatedKeysForLocale(
 ): Promise<Set<string>> {
   const response = await gateway.graphql(
     `#graphql
-      query verifyTranslationRemoval($resourceId: ID!, $locale: String!) {
+      query verifyTranslationRemoval($resourceId: ID!, $locale: String!, $marketId: ID) {
         translatableResource(resourceId: $resourceId) {
-          translations(locale: $locale) {
+          translations(locale: $locale, marketId: $marketId) {
             key
             value
             market { id }
           }
         }
       }`,
-    { variables: { resourceId, locale } },
+    { variables: { resourceId, locale, marketId: marketId || null } },
   );
   const data = (await response.json()) as {
     data?: {
@@ -750,8 +766,14 @@ async function translatedKeysForLocale(
   // `translatableContent` trap in CLAUDE.md wearing a different hat.
   const resource = data.data?.translatableResource;
   if (!resource) throw new Error("translatableResource did not answer");
+  // A NULL list is the same ambiguity one level down: it is not "everything is
+  // gone", it is "this query carried no list". Only an actual array — empty or
+  // not — is an answer.
+  if (!Array.isArray(resource.translations)) {
+    throw new Error("translatableResource carried no translations list");
+  }
   const present = new Set<string>();
-  for (const row of resource.translations ?? []) {
+  for (const row of resource.translations) {
     const rowMarket = row.market?.id ?? "";
     if (rowMarket !== marketId) continue;
     if (row.value === null || row.value === "") continue;
@@ -810,31 +832,18 @@ export async function removeAndVerifyAcrossLocales(
   const confirmedPairs = new Set<string>();
   for (const t of echoed ?? []) confirmedPairs.add(`${t.locale}${LOCALE_KEY_SEP}${t.key}`);
 
-  // The same rule as the single-locale removal above: an unechoed pair is not
-  // a failure, it is an unanswered question. `translationsRemove` echoes what
-  // it DELETED, so a key that carried nothing on Shopify comes back empty and
-  // the stale local row would survive a purge that had nothing left to do.
+  // NO re-read here, deliberately, and the asymmetry with `removeAndVerify`
+  // above is the point. This function is the §6.6 invalidation sweep: it runs
+  // PER ROW and per sub-resource (metafields, options, option values, image
+  // alts), so one re-read per locale per gap is a multiplication — 200 products
+  // x 8 sub-resources x 5 locales is ~9000 extra queries at 10 req/s, a
+  // quarter of an hour of nothing but verification inside one task.
   //
-  // Bounded on purpose: one re-read per locale that actually has an unechoed
-  // key, and none at all in the normal case where everything echoed.
-  const locales_with_gaps = locales.filter((locale) =>
-    translationKeys.some((key) => !confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`)),
-  );
-  for (const locale of locales_with_gaps) {
-    try {
-      const present = await translatedKeysForLocale(gateway, resourceId, locale, marketId);
-      for (const key of translationKeys) {
-        if (!present.has(key)) confirmedPairs.add(`${locale}${LOCALE_KEY_SEP}${key}`);
-      }
-    } catch (error) {
-      // A failed re-read confirms nothing; those pairs stay unconfirmed.
-      logger.warn("[BULK] removal re-read failed for a locale — pairs stay unconfirmed", {
-        context: "Bulk",
-        resourceId,
-        locale,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  // And it buys almost nothing. An unconfirmed removal here leaves a stale
+  // LOCAL row that the next sync corrects, with no cell failure and nothing
+  // the merchant has to act on. The single-locale path is where an unconfirmed
+  // removal is a dead end — the merchant clears a field, is told it was kept,
+  // and can never clear it — which is why the re-read lives there and the cost
+  // is one query per group that actually has a gap.
   return { confirmedPairs, userErrors };
 }

@@ -1547,12 +1547,18 @@ export function groupDiffByRow(diff: BulkDiffEntry[]): BulkDiffRowGroup[] {
  *   CLEARED (Plan §7/§14 no. 4 — clearing global.title_tag/description_tag
  *   needs the extra delete call; setting rides inside blogUpdate);
  * - foreign group: 1 translationsRegister (any non-empty cell) +
- *   1 translationsRemove (any cleared cell);
+ *   1 translationsRemove (any cleared cell) PLUS 1 verification re-read for it
+ *     — an unechoed removal is re-checked against the resource's current
+ *     translations, so a clear costs two calls in the worst case;
  * - plus ceil(unique foreign resources / DIGEST_BATCH_CHUNK) digest batches.
  *
  * `columns` is the (current type's) descriptor universe — unknown column ids
  * are counted as one call each (defensive over-estimate, never under).
  */
+/** A cleared foreign cell: `translationsRemove`, plus the re-read that
+ *  verifies an unechoed removal instead of reporting a dead end. */
+const CLEAR_CELL_CALLS = 2;
+
 export function estimateCalls(
   diff: BulkDiffEntry[],
   columns: ColumnDescriptor[],
@@ -1592,7 +1598,11 @@ export function estimateCalls(
       calls += featuredAltEntries.length * FEATURED_ALT_TRANSLATION_CALLS;
       const hasWrites = ownEntries.some(([, v]) => v !== "");
       const hasClears = ownEntries.some(([, v]) => v === "");
-      calls += (hasWrites ? 1 : 0) + (hasClears ? 1 : 0);
+      // A clear is TWO calls in the worst case: the removal, plus the
+      // verification re-read when Shopify echoes nothing back. The re-read only
+      // fires on a gap, so this over-estimates the common case — which is the
+      // only direction this guard is allowed to err in.
+      calls += (hasWrites ? 1 : 0) + (hasClears ? CLEAR_CELL_CALLS : 0);
       if (hasWrites) foreignDigestResources.add(group.rowId);
       for (const [columnId, value] of subEntries) {
         const column = columnById.get(columnId);
