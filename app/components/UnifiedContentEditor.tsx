@@ -12,6 +12,7 @@ import {
   shouldRenderDetailsSections,
   detailsSectionLabel,
   HEADLESS_DETAILS_SECTIONS,
+  ownsItsSectionTitle,
 } from "~/config/details-sections";
 
 /**
@@ -89,7 +90,6 @@ import {
 import { useI18n } from "../contexts/I18nContext";
 import { CommerceDataProvider } from "../contexts/CommerceDataContext";
 import { CommerceVariantsSection } from "./unified/CommerceVariantsSection";
-import { CommerceChannelsHeaderExtras } from "./unified/CommerceField";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
@@ -2263,18 +2263,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           return (
                             <Card key={key} background="bg-surface-secondary" padding="300">
                               <BlockStack gap="300">
-                                {/* The title row is where a section's help
-                                    bubble and its alarm belong — beside the
-                                    name they are about, not repeated on a
-                                    second heading inside the subcard. So far
-                                    only "publishing" has any; the field below
-                                    it stopped printing its own label. */}
-                                <InlineStack gap="200" blockAlign="center" wrap>
+                                {/* "publishing" draws its OWN title, and must:
+                                    its field lays the sales channels, regions
+                                    and B2B catalogs out as columns, and their
+                                    headings only line up when the section's
+                                    title is the first column's heading rather
+                                    than a line above the grid. A title here as
+                                    well is how the word came to stand twice. */}
+                                {!ownsItsSectionTitle(section.id) && (
                                   <Text as="h3" variant="bodyMd" fontWeight="semibold">
                                     {detailsSectionLabel(t, section.id)}
                                   </Text>
-                                  {section.id === "publishing" && <CommerceChannelsHeaderExtras />}
-                                </InlineStack>
+                                )}
                                 {renderAttributeGrid(section.fields)}
                               </BlockStack>
                             </Card>

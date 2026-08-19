@@ -419,11 +419,12 @@ export function UnifiedFieldRenderer(
       // moved into the variants card and the two share one load, one set of
       // pending edits and one registration with the save bar.
       //
-      // No `label`: the Details card's "publishing" subcard is already titled
-      // "Vertriebskanäle", and the field printed the same word again directly
-      // under it. The help bubble and the §2.3 alarm moved up onto that title
-      // as `CommerceChannelsHeaderExtras`.
-      <CommerceField />
+      // `label` is the SECTION's title here, not a field label: the subcard
+      // draws none (`ownsItsSectionTitle`), because the panel lays its three
+      // lists out as columns and their headings only line up when this one is
+      // the first column's heading. It carries the help bubble and the §2.3
+      // alarm with it.
+      <CommerceField label={translatedFieldLabel} />
     );
   }
 

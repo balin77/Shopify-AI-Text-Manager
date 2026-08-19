@@ -98,6 +98,20 @@ export function shouldRenderDetailsSections<F>(blocks: DetailsSection<F>[]): boo
   return blocks.filter((block) => block.id !== null && !HEADLESS_DETAILS_SECTIONS.has(block.id)).length > 1;
 }
 
+/**
+ * Does this section's own content draw the heading, so the subcard must not?
+ *
+ * "publishing" does: its field lays the sales channels, regions and B2B
+ * catalogs out as side-by-side columns, and the column titles only line up
+ * when the section's title IS the first column's heading instead of a line
+ * above the grid. It also carries the help bubble and the "on no channel"
+ * alarm, both of which belong beside the name they are about. A subcard title
+ * on top of that is how the word came to stand twice.
+ */
+export function ownsItsSectionTitle(id: DetailsSectionId): boolean {
+  return id === "publishing";
+}
+
 /** Resolve a section's heading from the i18n bundle, with an English fallback. */
 export function detailsSectionLabel(
   t: { content?: { detailsSections?: Partial<Record<DetailsSectionId, string>> } },
