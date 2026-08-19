@@ -461,6 +461,16 @@ export interface LiveJsonLdSummary {
    * question at all, which is why the section used to call it "unknown".
    */
   appEmbedDetected: boolean | null;
+  /**
+   * How many products / collections / articles the shop HAS, independent of
+   * what the crawl reached. Its own field rather than something the caller
+   * reads off `coverage`: a coverage row only exists for a resourceType the
+   * crawl actually saw, so deriving it there yields a number exactly when
+   * it is not needed and nothing when it is. The activation gate needs the
+   * opposite — it asks "does this shop even HAVE article pages" precisely
+   * about the kind no article page was crawled for.
+   */
+  catalogTotals: Record<string, number>;
 }
 
 const MAX_LIVE_EXAMPLES = 5;
@@ -659,5 +669,6 @@ export async function summarizeLiveJsonLd(
       }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
     appEmbedDetected,
+    catalogTotals,
   };
 }

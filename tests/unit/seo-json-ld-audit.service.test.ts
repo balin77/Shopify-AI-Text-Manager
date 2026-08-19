@@ -592,4 +592,22 @@ describe("summarizeLiveJsonLd", () => {
       expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(0);
     });
   });
+
+  describe("catalogTotals — the sizes the crawl did NOT measure", () => {
+    it("reports a kind the crawl never reached, which is the only case it is for", async () => {
+      // The regression this guards: the activation gate asks "does this shop
+      // even HAVE article pages" precisely about the kind no article page was
+      // crawled for. Deriving that from `coverage` yielded a number exactly
+      // when it was not needed — coverage rows exist only for kinds the crawl
+      // reached — and nothing in the only case it is needed, which turned a
+      // blogless shop's breadcrumb switch into "not measured" for good.
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([page({ resourceType: "product", jsonLdTypes: "Product" })]),
+        "shop.myshopify.com",
+      );
+      expect(summary!.coverage.some((c) => c.resourceType === "article")).toBe(false);
+      expect(summary!.catalogTotals.article).toBe(0);
+      expect(summary!.catalogTotals.product).toBe(3);
+    });
+  });
 });
