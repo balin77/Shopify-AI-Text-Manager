@@ -954,19 +954,17 @@ export class ProductSyncService {
   /**
    * Sync ONE product.
    *
-   * `writeVideoSchema` exists because of a feedback loop, not as a preference:
-   * writing the video-date metafield changes the product, which makes Shopify
-   * fire `products/update`, which lands in webhooks.products.tsx and calls
-   * this method again. The diff would stop it after one extra pass (the mirror
-   * has advanced, so nothing is written), but the webhook path has nothing to
-   * contribute here anyway — the dates it would write are the ones that just
-   * caused it. So the webhook passes `false` and the loop cannot start at all.
+   * This WRITES the video-date metafield, webhook-driven runs included. That
+   * write changes the product and makes Shopify fire `products/update`, which
+   * lands in webhooks.products.tsx and calls this method again — but the pass
+   * is diff-driven against `Product.videoSchemaJson`, which the product upsert
+   * never touches, so the echo run finds nothing to write and the sequence
+   * ends after exactly one extra pass. Skipping it on the webhook path (what
+   * this did first) bought nothing and cost the case the feature exists for:
+   * a merchant who adds a video in the Shopify admin fires ONLY that webhook,
+   * and would have had no `uploadDate` until the next full catalog sync.
    */
-  async syncProduct(
-    productId: string,
-    forceSync = false,
-    options: { writeVideoSchema?: boolean } = {},
-  ): Promise<void> {
+  async syncProduct(productId: string, forceSync = false): Promise<void> {
     logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
@@ -1088,9 +1086,8 @@ export class ProductSyncService {
 
       // Video upload dates → product metafield. AFTER the save (the mirror
       // column it diffs against was just written) and outside it, because this
-      // talks to Shopify rather than the database. Skipped for the
-      // webhook-driven resync — see this method's doc comment.
-      if (options.writeVideoSchema !== false) {
+      // talks to Shopify rather than the database.
+      {
         const { db } = await import("../db.server");
         await persistVideoSchema(this.admin as never, db, [
           {

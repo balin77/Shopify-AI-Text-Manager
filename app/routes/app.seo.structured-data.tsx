@@ -587,6 +587,12 @@ export default function SeoStructuredData() {
     gate: activationGate(statForSwitch(liveJsonLd?.typeStats, sw.type, sw.scopes), {
       measured: jsonLdMeasured,
       originKnown: jsonLdOriginKnown,
+      // "No bucket" is ambiguous — it is what an untouched page kind and an
+      // UNCRAWLED one look like alike. A switch is only judged where the crawl
+      // actually saw at least one page of its scope.
+      scopeCovered: (sw.scopes ?? []).some(
+        (rt) => (liveJsonLd?.scopePages?.[rt] ?? 0) > 0,
+      ),
     }),
   }));
 

@@ -132,3 +132,31 @@ export function videoSchemaChanged(
 ): boolean {
   return (storedJson ?? null) !== nextJson;
 }
+
+/**
+ * Batch indices a `userErrors` list blames, from the `field` path Shopify
+ * returns for a bulk metafield mutation (`["metafields", "3", "ownerId"]`).
+ *
+ * Returns null when ANY error cannot be attributed to an index — the caller
+ * then trusts only what Shopify explicitly echoed, because an unattributable
+ * error could belong to any entry and confirming the rest would advance a
+ * mirror past a write that never happened. Pure.
+ *
+ * This exists because failure in these mutations is per ENTRY, not per call:
+ * one stale product id among 25 must not strand the other 24, which would then
+ * be retried on every sync forever.
+ */
+export function failedBatchIndices(
+  errors: Array<{ field?: unknown } | null | undefined>,
+): Set<number> | null {
+  const indices = new Set<number>();
+  for (const err of errors) {
+    const path: unknown[] = Array.isArray(err?.field) ? (err.field as unknown[]) : [];
+    const index = path
+      .map((segment) => Number(segment))
+      .find((n) => Number.isInteger(n) && n >= 0);
+    if (index === undefined) return null;
+    indices.add(index);
+  }
+  return indices;
+}

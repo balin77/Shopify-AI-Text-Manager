@@ -57,7 +57,16 @@ const STEPS: Array<{ key: string; label: string; question: string }> = [
   },
   { key: "read", label: "Read", question: "What does the variant hold right now?" },
   { key: "write", label: "Write", question: "Does a 500 g / 1 kg measurement stick?" },
-  { key: "clear", label: "Clear", question: "Can it be removed again?" },
+  {
+    key: "clear",
+    label: "Clear",
+    question: "Can it be removed again? Three ways are tried, in order.",
+  },
+  {
+    key: "hide",
+    label: "Hide",
+    question: "Failing that, can showUnitPrice switch it off on the storefront?",
+  },
   { key: "restored", label: "Restored", question: "Was the variant put back the way it was?" },
 ];
 
@@ -107,13 +116,14 @@ export function SettingsUnitPriceProbeTab() {
    *  button dead with nothing saying why. */
   const variant = product?.variants.find((v) => v.gid === variantGid) ?? product?.variants[0];
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (mode: "probe" | "clear" = "probe") => {
     setRunning(true);
     setError(null);
     try {
       const body = new FormData();
       body.set("productGid", productGid);
       body.set("variantGid", variantGid || variant?.gid || "");
+      body.set("mode", mode);
       const res = await fetch("/api/unit-price-probe", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
@@ -163,8 +173,12 @@ export function SettingsUnitPriceProbeTab() {
           </Text>
           <Banner tone="warning">
             <p>
-              This WRITES to the variant you pick — 500&nbsp;g per 1&nbsp;kg — and then puts back
-              whatever was there. Use a product you do not mind touching.
+              This WRITES to the variant you pick — 500&nbsp;g per 1&nbsp;kg — and then tries to put
+              back whatever was there. <b>It may not manage to</b>: the measured behaviour is that
+              Shopify accepts a removal and keeps the value, so the report says plainly when the
+              variant was left carrying the probe's measurement. <b>Remove the measurement</b> runs
+              only the removal ladder, which is how that is cleaned up. Use a product you do not
+              mind touching.
             </p>
           </Banner>
 
@@ -210,8 +224,21 @@ export function SettingsUnitPriceProbeTab() {
           )}
 
           <InlineStack gap="200">
-            <Button variant="primary" onClick={run} loading={running} disabled={!canRun}>
+            <Button
+              variant="primary"
+              onClick={() => void run("probe")}
+              loading={running}
+              disabled={!canRun}
+            >
               Run probe
+            </Button>
+            {/* The probe can only put the variant back if something is able to
+                take the measurement off, and the first live run established
+                that the obvious way does not. Re-running the whole probe is
+                NOT the cleanup: it would read the leftover as the state to
+                restore and put it back at the end. */}
+            <Button onClick={() => void run("clear")} loading={running} disabled={!canRun}>
+              Remove the measurement
             </Button>
             {markdown && (
               <Button onClick={() => void navigator.clipboard?.writeText(markdown)}>
