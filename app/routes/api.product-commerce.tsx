@@ -604,6 +604,14 @@ export async function action({ request }: ActionFunctionArgs) {
     if (formData.has("compareAtPrice")) fields.compareAtPrice = getFormString(formData, "compareAtPrice");
     if (formData.has("barcode")) fields.barcode = getFormString(formData, "barcode");
     if (formData.has("inventoryPolicy")) fields.inventoryPolicy = getFormString(formData, "inventoryPolicy");
+    if (formData.has("taxable")) {
+      // Drop-and-report rather than coerce, the same rule `tracked` follows:
+      // anything unrecognised would otherwise mean "not taxed".
+      const raw = getFormString(formData, "taxable");
+      if (raw === "true") fields.taxable = true;
+      else if (raw === "false") fields.taxable = false;
+      else warnings.push("priceInvalid");
+    }
 
     const warning = await applyVariantPrices(admin, db, session.shop, {
       productId,

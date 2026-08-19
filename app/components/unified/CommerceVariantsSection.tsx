@@ -40,7 +40,7 @@ import {
   Box,
   Banner,
   Button,
-  Checkbox,
+  Collapsible,
   Divider,
   InlineStack,
   Select,
@@ -56,12 +56,15 @@ import { useCommerceData, WEIGHT_UNITS } from "../../contexts/CommerceDataContex
 import { buildVariantScopes, commonValue, type VariantScope } from "../../services/variant-scope.shared";
 
 /** The fields that live on the VARIANT rather than on its InventoryItem. */
-type VariantField = "price" | "compareAtPrice" | "barcode" | "inventoryPolicy";
+type VariantField = "price" | "compareAtPrice" | "barcode" | "inventoryPolicy" | "taxable";
 
 export function CommerceVariantsSection() {
   const commerce = useCommerceData();
   /** The chosen scope id, or null while none has been picked. */
   const [scopeId, setScopeId] = useState<string | null>(null);
+  /** Whether the customs details are folded open. Closed by default, the way
+   *  Shopify folds them: most merchants never touch an HS code. */
+  const [customsOpen, setCustomsOpen] = useState(false);
 
   const variants = commerce?.data?.variants ?? [];
   const t = commerce?.t ?? {};
@@ -119,12 +122,19 @@ export function CommerceVariantsSection() {
 
   /** The value all members agree on, or "" when they differ. */
   /** Variant-level fields: the two prices, the barcode, the stock policy. */
-  const priceValue = (field: VariantField): string => {
-    const values = members.map((m) => priceEdits[`${m.id}::${field}`] ?? (m[field] ?? ""));
-    return commonValue(values) ?? "";
+  /** STRINGIFIED: `taxable` is a boolean on the variant, and comparing it to
+   *  "true" without this is always false — the switch showed off for a taxed
+   *  variant and writing it back would have untaxed it. */
+  const priceValueOf = (member: (typeof members)[number], field: VariantField): string => {
+    const edited = priceEdits[`${member.id}::${field}`];
+    if (edited !== undefined) return edited;
+    const loaded = (member as unknown as Record<string, unknown>)[field];
+    return loaded == null ? "" : String(loaded);
   };
+  const priceValue = (field: VariantField): string =>
+    commonValue(members.map((m) => priceValueOf(m, field))) ?? "";
   const priceMixed = (field: VariantField): boolean =>
-    isBulk && commonValue(members.map((m) => priceEdits[`${m.id}::${field}`] ?? (m[field] ?? ""))) === null;
+    isBulk && commonValue(members.map((m) => priceValueOf(m, field))) === null;
 
   /**
    * Whether the members DISAGREE on a field as it was loaded — ignoring what
@@ -191,6 +201,36 @@ export function CommerceVariantsSection() {
       }
       return next;
     });
+
+  /**
+   * Prices and shipping side by side where the editor is wide enough, stacked
+   * where it is not. `auto-fit` rather than a breakpoint: this panel sits in a
+   * column whose width the merchant DRAGS, so a media query would answer the
+   * wrong question.
+   */
+  const sectionGrid: CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    gap: "12px",
+    // STRETCH, not start: side by side the two cards are read as a pair, and
+    // one ending 40px above the other looks like a mistake rather than like
+    // less content. Each card fills the row's height (`minHeight="100%"`
+    // below), so the taller one sets it.
+    alignItems: "stretch",
+  };
+
+  /**
+   * Whether the scope is a PHYSICAL product.
+   *
+   * Off, nothing else in the shipping card applies: there is no weight to
+   * declare and no customs to clear, so every input below is disabled rather
+   * than left to be filled in with numbers Shopify will ignore. A mixed group
+   * counts as physical — some of it is, and disabling the fields would take
+   * the merchant's ability to fix the half that needs them.
+   */
+  const isPhysical =
+    itemMixed("requiresShipping") ||
+    itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true";
 
   /** "Mixed" as a placeholder, so an empty bulk field is not read as "empty". */
   const mixedHint = (mixed: boolean) =>
@@ -259,21 +299,25 @@ export function CommerceVariantsSection() {
         )}
       </InlineStack>
 
-      <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-        <BlockStack gap="200">
-          <InlineStack gap="200" blockAlign="center">
-            <Text as="p" variant="bodyMd" fontWeight="semibold">
-              {/* The SKU is a FIELD now, below — appended to the title it was
-                  unreadable and uneditable at the same time. */}
-              {isBulk ? scope.label : first.title}
-            </Text>
-            {isBulk && (
-              <Badge tone="attention">
-                {((t.scopeCount as string) || "{n} variants").replace("{n}", String(members.length))}
-              </Badge>
-            )}
-          </InlineStack>
+      {/* No title: the picker above already says which variant or group this
+          is, and repeating it put the same words twice on one screen. The ROW
+          stays, at a fixed height, because the badge lives in it — without the
+          reservation the whole panel jumped every time the merchant switched
+          from one variant to a group. */}
+      <div style={{ minHeight: "20px" }}>
+        {isBulk && (
+          <Badge tone="attention">
+            {((t.scopeCount as string) || "{n} variants").replace("{n}", String(members.length))}
+          </Badge>
+        )}
+      </div>
 
+      {/* Prices and shipping are short enough to sit SIDE BY SIDE where the
+          editor is wide, and stack where it is not. Inventory gets its own
+          full-width card: it holds a table. */}
+      <div style={sectionGrid}>
+        <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
+          <BlockStack gap="300">
                   {/* ── Prices ─────────────────────────────────────────
                       All three on ONE row, because the confusion they cause is
                       the difference BETWEEN them: the field that used to sit up
@@ -318,18 +362,60 @@ export function CommerceVariantsSection() {
                     )}
                   </InlineStack>
 
-                  {/* The InventoryItem's own settings. Shown for EVERY
-                      variant, tracked or not: a cost and a customs code are
-                      facts about the item, not about whether Shopify counts
-                      it. Locked when there is no InventoryItem to write to. */}
+                  {/* Shopify puts this under the prices, and it belongs there:
+                      it is a property of the PRICE, not of the item. A pill
+                      rather than a bare checkbox — the row style this app uses
+                      for a setting of this kind. */}
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                    <ToggleSwitch
+                      checked={priceValue("taxable") === "true"}
+                      indeterminate={priceMixed("taxable")}
+                      ariaLabel={(t.taxableSwitch as string) || "Charge tax on this variant"}
+                      onChange={(checked) => setPrice("taxable", String(checked))}
+                      disabled={saving}
+                    />
+                    <Text as="p" variant="bodyMd">
+                      {priceMixed("taxable")
+                        ? (t.mixedValues as string) || "Different values"
+                        : (t.taxableSwitch as string) || "Charge tax on this variant"}
+                    </Text>
+                  </InlineStack>
+          </BlockStack>
+        </Box>
+
+        {/* The InventoryItem's own settings. Shown for EVERY variant, tracked
+            or not: a weight and a customs code are facts about the item, not
+            about whether Shopify counts it. */}
+        <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
+          <BlockStack gap="300">
                   {first.inventoryItemId ? (
                     <>
-                    <SectionHeading
-                      text={(t.shippingHeading as string) || "Shipping and customs"}
-                      helpKey="commerceShipping"
-                    />
-                    <InlineStack gap="300" blockAlign="start" wrap>
-                      <Box minWidth="120px">
+                    <InlineStack align="space-between" blockAlign="center" wrap={false}>
+                      <SectionHeading
+                        text={(t.shippingHeading as string) || "Shipping and customs"}
+                        helpKey="commerceShipping"
+                      />
+                      {/* Shopify's "Physisches Produkt" switch, in the same
+                          corner. It IS `requiresShipping`; a digital product
+                          turns it off and the whole customs block below stops
+                          applying. */}
+                      <InlineStack gap="200" blockAlign="center" wrap={false}>
+                        <Text as="span" variant="bodySm" tone="subdued">
+                          {(t.requiresShipping as string) || "Physical product"}
+                        </Text>
+                        <ToggleSwitch
+                          checked={itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true"}
+                          indeterminate={itemMixed("requiresShipping")}
+                          ariaLabel={(t.requiresShipping as string) || "Physical product"}
+                          onChange={(checked) => setItem("requiresShipping", String(checked))}
+                          disabled={saving}
+                        />
+                      </InlineStack>
+                    </InlineStack>
+                    {/* Weight and its unit are a number and a word — sized
+                        for that, not for the column they used to fill. */}
+                    <InlineStack gap="200" blockAlign="start" wrap={false}>
+                      <Box minWidth="96px" maxWidth="110px">
                         <TextField
                           label={(t.weight as string) || "Weight"}
                           value={itemValue("weight")}
@@ -337,10 +423,11 @@ export function CommerceVariantsSection() {
                           onChange={(value) => setItem("weight", value)}
                           autoComplete="off"
                           inputMode="decimal"
-                          disabled={saving}
+                          align="right"
+                          disabled={saving || !isPhysical}
                         />
                       </Box>
-                      <Box minWidth="140px">
+                      <Box minWidth="104px" maxWidth="124px">
                         <Select
                           label={(t.weightUnit as string) || "Unit"}
                           // `GRAMS` is not a unit anybody writes on a label.
@@ -359,77 +446,56 @@ export function CommerceVariantsSection() {
                           ]}
                           value={itemMixed("weightUnit") ? "" : (itemValue("weightUnit") || "KILOGRAMS")}
                           onChange={(value) => setItem("weightUnit", value)}
-                          disabled={saving}
+                          disabled={saving || !isPhysical}
                         />
                       </Box>
-                      <Box minWidth="140px">
-                        <TextField
-                          label={(t.hsCode as string) || "HS code"}
-                          value={itemValue("harmonizedSystemCode")}
-                          placeholder={mixedHint(itemMixed("harmonizedSystemCode"))}
-                          onChange={(value) =>
-                            setItem("harmonizedSystemCode", value)
-                          }
-                          autoComplete="off"
-                          disabled={saving}
-                        />
-                      </Box>
-                      <Box minWidth="120px">
+                    </InlineStack>
+
+                    {/* Customs, folded away. Shopify folds them for the same
+                        reason: an HS code and a country of origin matter to
+                        the merchants who ship across a border and to nobody
+                        else, and unfolded they doubled the height of a card
+                        that otherwise holds two small fields. */}
+                    <Button
+                      variant="plain"
+                      disclosure={customsOpen ? "up" : "down"}
+                      onClick={() => setCustomsOpen((open) => !open)}
+                      disabled={!isPhysical}
+                    >
+                      {(t.customsDetails as string) || "More details"}
+                    </Button>
+                    <Collapsible open={customsOpen && isPhysical} id="commerce-customs">
+                      <BlockStack gap="300">
                         <TextField
                           label={(t.countryOfOrigin as string) || "Country of origin"}
                           value={itemValue("countryCodeOfOrigin")}
                           placeholder={mixedHint(itemMixed("countryCodeOfOrigin"))}
-                          onChange={(value) =>
-                            setItem("countryCodeOfOrigin", value)
-                          }
+                          onChange={(value) => setItem("countryCodeOfOrigin", value)}
                           autoComplete="off"
                           maxLength={2}
-                          disabled={saving}
+                          disabled={saving || !isPhysical}
                         />
-                      </Box>
-                      <Box minWidth="180px">
-                        <Checkbox
-                          label={(t.requiresShipping as string) || "Needs shipping"}
-                          // "indeterminate" rather than a flat unchecked box:
-                          // over a group whose members differ, an empty box
-                          // asserts that NONE of them needs shipping.
-                          checked={
-                            itemMixed("requiresShipping")
-                              ? "indeterminate"
-                              : itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true"
-                          }
-                          helpText={
-                            itemMixed("requiresShipping")
-                              ? ((t.mixedValues as string) || "Different values")
-                              : undefined
-                          }
-                          disabled={saving}
-                          onChange={(checked) =>
-                            setItem("requiresShipping", String(checked))
-                          }
+                        <TextField
+                          label={(t.hsCode as string) || "HS code"}
+                          value={itemValue("harmonizedSystemCode")}
+                          placeholder={mixedHint(itemMixed("harmonizedSystemCode"))}
+                          onChange={(value) => setItem("harmonizedSystemCode", value)}
+                          autoComplete="off"
+                          disabled={saving || !isPhysical}
                         />
-                      </Box>
-                      {/* Read-only on purpose: this app reads `taxable` off the
-                          VARIANT, and writing it would mean a second mutation
-                          against a different object. A field whose read and
-                          write disagree about where it lives is a field that
-                          reverts on the next sync. */}
-                      <Box minWidth="160px">
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          {((t.taxableLabel as string) || "Taxable: {v}").replace(
-                            "{v}",
-                            first.taxable == null
-                              ? "—"
-                              : first.taxable
-                                ? (t.yes as string) || "yes"
-                                : (t.no as string) || "no",
-                          )}
-                        </Text>
-                      </Box>
-                    </InlineStack>
+                      </BlockStack>
+                    </Collapsible>
                     </>
                   ) : null}
+          </BlockStack>
+        </Box>
+      </div>
 
+      {/* Inventory keeps a card of its OWN and the full width: it holds a
+          table, and squeezing that beside the prices would put four numeric
+          columns into half a screen. */}
+      <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+        <BlockStack gap="300">
                   {/* ── Inventory switches ──────────────────────────────────
                       Pill toggles rather than checkboxes: the row style this
                       app uses for every setting of this kind. Both are
@@ -493,34 +559,6 @@ export function CommerceVariantsSection() {
                     )}
                   </BlockStack>
 
-                  {/* ── The variant's own references ───────────────────────── */}
-                  <SectionHeading
-                    text={(t.identifiersHeading as string) || "More details"}
-                    helpKey="commerceStock"
-                  />
-                  <InlineStack gap="300" blockAlign="start" wrap>
-                    <Box minWidth="220px">
-                      <TextField
-                        label={(t.skuLabel as string) || "SKU (Stock Keeping Unit)"}
-                        value={itemValue("sku")}
-                        placeholder={mixedHint(itemMixed("sku"))}
-                        onChange={(value) => setItem("sku", value)}
-                        autoComplete="off"
-                        disabled={saving || !first.inventoryItemId}
-                      />
-                    </Box>
-                    <Box minWidth="220px">
-                      <TextField
-                        label={(t.barcodeLabel as string) || "Barcode (ISBN, UPC, GTIN, etc.)"}
-                        value={priceValue("barcode")}
-                        placeholder={mixedHint(priceMixed("barcode"))}
-                        onChange={(value) => setPrice("barcode", value)}
-                        autoComplete="off"
-                        disabled={saving}
-                      />
-                    </Box>
-                  </InlineStack>
-
           {/* Stock, for ONE variant only -- see the header. */}
           {isBulk ? (
             <Text as="p" variant="bodySm" tone="subdued">
@@ -560,7 +598,7 @@ export function CommerceVariantsSection() {
                           describes — above the variant it read as a title for
                           the prices and the shipping settings too. */}
                       <InlineStack gap="200" blockAlign="center">
-                        <Text as="h4" variant="headingXs">{(t.stockHeading as string) || "Stock"}</Text>
+                        <Text as="h4" variant="headingSm" fontWeight="bold">{(t.stockHeading as string) || "Stock"}</Text>
                         <HelpTooltip helpKey="commerceStock" />
                       </InlineStack>
 
@@ -633,6 +671,32 @@ export function CommerceVariantsSection() {
 
             </>
           )}
+
+          {/* The variant's own references, UNDER the table. No heading: two
+              labelled fields do not need a word above them saying that more
+              detail follows. */}
+          <InlineStack gap="300" blockAlign="start" wrap>
+            <Box minWidth="220px">
+              <TextField
+                label={(t.skuLabel as string) || "SKU (Stock Keeping Unit)"}
+                value={itemValue("sku")}
+                placeholder={mixedHint(itemMixed("sku"))}
+                onChange={(value) => setItem("sku", value)}
+                autoComplete="off"
+                disabled={saving || !first.inventoryItemId}
+              />
+            </Box>
+            <Box minWidth="220px">
+              <TextField
+                label={(t.barcodeLabel as string) || "Barcode (ISBN, UPC, GTIN, etc.)"}
+                value={priceValue("barcode")}
+                placeholder={mixedHint(priceMixed("barcode"))}
+                onChange={(value) => setPrice("barcode", value)}
+                autoComplete="off"
+                disabled={saving}
+              />
+            </Box>
+          </InlineStack>
         </BlockStack>
       </Box>
     </BlockStack>
@@ -824,8 +888,11 @@ function StockTable({
  *  row need a word saying what the row IS; a bare row of labels does not. */
 function SectionHeading({ text, helpKey }: { text: string; helpKey: string }) {
   return (
+    // Bolder and a size up: at headingXs these read as captions, and the
+    // sections they name are the only thing telling three rows of inputs
+    // apart.
     <InlineStack gap="100" blockAlign="center">
-      <Text as="h4" variant="headingXs">{text}</Text>
+      <Text as="h4" variant="headingSm" fontWeight="bold">{text}</Text>
       <HelpTooltip helpKey={helpKey} />
     </InlineStack>
   );

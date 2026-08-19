@@ -218,7 +218,6 @@ export const de = {
     metaobjectEntryUnsupportedHint: "Diese Felder haben in dieser App keinen Editor. Sie im Shopify-Admin bearbeiten.",
     metaobjectEntryRichTextHint: "Rich-Text wird nur angezeigt — im Shopify-Admin bearbeiten.",
     metaobjectEntryDelete: "Eintrag löschen",
-    metaobjectEntryDeleteUsageUnknown: "Unbekannt, ob dieser Eintrag verwendet wird — bitte zuerst die Produkte synchronisieren.",
     metaobjectEntryDeleteInUse: "Dieser Eintrag wird von {products} Produkt(en) als Optionswert verwendet. Entfernen Sie ihn zuerst dort.",
     metaobjectEntryUsageChecking: "Verwendung wird geprüft …",
     metaobjectEntryUsageNone: "Wird von keinem Produkt als Optionswert verwendet.",
@@ -502,7 +501,7 @@ export const de = {
       next: "Weiter",
       confirm: "Endgültig löschen",
       deleting: "Wird gelöscht \u2026",
-      consequenceMetaobjectUsage: "Optionswerte in Produkten, die auf diesen Eintrag zeigen, k\u00f6nnen dabei verloren gehen.",
+      consequenceMetaobjectUsage: "Shopify verweigert das L\u00f6schen, solange ein Produkt den Eintrag als Optionswert benutzt \u2014 dort zuerst entfernen.",
     },
     undoCreate: "Anlegen rückgängig machen",
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
@@ -559,8 +558,9 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      customsDetails: "Weitere Details",
+      taxableSwitch: "Steuer auf diese Variante erheben",
       inventoryHeading: "Inventar",
-      identifiersHeading: "Mehr Details",
       trackedLabel: "Inventar wird verfolgt",
       trackedHint: "Shopify führt eine Anzahl und zieht sie bei jeder Bestellung ab. Aus gibt es gar keine Anzahl, und die Variante kann immer gekauft werden.",
       continueSellingLabel: "Weiterverkaufen, auch wenn nicht vorrätig",
@@ -580,7 +580,7 @@ export const de = {
       mixedValues: "Unterschiedliche Werte",
       stockNotBulk: "Der Bestand ist eine Anzahl pro Variante und Standort und wird deshalb einzeln bearbeitet.",
       pricesHeading: "Preise",
-      shippingHeading: "Versand und Zoll",
+      shippingHeading: "Versand",
       price: "Verkaufspreis",
       priceHint: "Was die Kundin bezahlt.",
       compareAtPrice: "Vergleichspreis",
@@ -588,12 +588,11 @@ export const de = {
       discardConfirm: "Ungespeicherte Änderungen verwerfen?",
       cost: "Einkaufspreis",
       costHint: "Was du bezahlst. Wird Kundinnen nie angezeigt.",
-      weight: "Gewicht",
+      weight: "Produktgewicht",
       weightUnit: "Einheit",
-      hsCode: "Zolltarifnummer",
-      countryOfOrigin: "Ursprungsland",
-      requiresShipping: "Muss versendet werden",
-      taxableLabel: "Steuerpflichtig: {v}",
+      hsCode: "Code des Harmonisierten Systems (HS-Code)",
+      countryOfOrigin: "Ländercode des Ursprungs",
+      requiresShipping: "Physisches Produkt",
       yes: "ja",
       no: "nein",
       loading: "Wird geladen",
@@ -650,6 +649,9 @@ export const de = {
       priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
       priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
     },
+    // Überschrift der Karte mit SEO-Titel, Meta-Beschreibung und URL-Handle.
+    // Shopifys eigener Abschnitt im Admin heißt genauso.
+    searchEngineListing: "Suchmaschinen-Eintrag",
     attributesCardTitle: "Details",
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",

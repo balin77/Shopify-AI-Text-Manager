@@ -332,7 +332,13 @@ export function CommerceDataProvider({
   const dirtyPrices = useMemo(() => {
     const byVariant = new Map<
       string,
-      { price?: string; compareAtPrice?: string; barcode?: string; inventoryPolicy?: string }
+      {
+        price?: string;
+        compareAtPrice?: string;
+        barcode?: string;
+        inventoryPolicy?: string;
+        taxable?: string;
+      }
     >();
     for (const [key, value] of Object.entries(priceEdits)) {
       const [variantId, field] = key.split("::");
@@ -351,6 +357,9 @@ export function CommerceDataProvider({
       } else if (field === "inventoryPolicy") {
         if (value === (variant.inventoryPolicy ?? "")) continue;
         byVariant.set(variantId, { ...byVariant.get(variantId), inventoryPolicy: value });
+      } else if (field === "taxable") {
+        if (value === String(variant.taxable ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), taxable: value });
       }
     }
     return [...byVariant.entries()];
@@ -399,6 +408,7 @@ export function CommerceDataProvider({
             ...(fields.compareAtPrice !== undefined ? { compareAtPrice: fields.compareAtPrice } : {}),
             ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
             ...(fields.inventoryPolicy !== undefined ? { inventoryPolicy: fields.inventoryPolicy } : {}),
+            ...(fields.taxable !== undefined ? { taxable: fields.taxable } : {}),
           },
           "priceFailed",
         );
