@@ -24,7 +24,7 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Card, Box, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
+import { Card, Box, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable, List } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -892,16 +892,23 @@ export default function SeoStructuredData() {
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{(s as any).introBody1 as string}</Text>
             <Text as="p" variant="bodyMd">{(s as any).introBody2 as string}</Text>
-            {/* The order of the three steps, and where their data comes from.
-                Both were missing: a merchant could not tell that the crawl is
-                what feeds steps 1 and 3, and went looking for a refresh button
-                that does not exist here. The link is the shortest way to fix
-                that — reusing the label the empty states already use. */}
-            <Text as="p" variant="bodyMd">{emphasize((s as any).introFlow as string)}</Text>
-            <BlockStack gap="100">
+            {/* One line per step, stacked: the three tiles below are a
+                SEQUENCE, and as a single paragraph they read like three
+                equal options — which is how a merchant ends up in step 3
+                before step 1 has measured anything. */}
+            <List type="bullet">
+              <List.Item>{emphasize((s as any).introStep1 as string)}</List.Item>
+              <List.Item>{emphasize((s as any).introStep2 as string)}</List.Item>
+              <List.Item>{emphasize((s as any).introStep3 as string)}</List.Item>
+            </List>
+            {/* Where those numbers come from — the one thing this page never
+                said, so "not measured" sent people hunting for a refresh
+                button that lives on another page. A real button, not a text
+                link: it is the action the sentence above asks for. */}
+            <BlockStack gap="200">
               <Text as="p" variant="bodyMd">{emphasize((s as any).introCrawlNote as string)}</Text>
               <InlineStack>
-                <Button variant="plain" onClick={() => handleNavigate("/app/seo/crawl")}>
+                <Button onClick={() => handleNavigate("/app/seo/crawl")}>
                   {live.goToCrawl}
                 </Button>
               </InlineStack>
