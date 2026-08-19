@@ -225,3 +225,31 @@ export function isValid3dModelUrl(input: string): boolean {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// WebP conversion eligibility
+// ---------------------------------------------------------------------------
+
+/**
+ * Is this product medium a candidate for WebP conversion?
+ *
+ * Two independent reasons to say no, and the second one is the load-bearing
+ * one: a Video / Model3d / ExternalVideo is reported by /api/product-variants
+ * under its POSTER url, which is an ordinary .jpg on the Shopify CDN. Judging
+ * by the URL alone therefore counts every video and every 3D model as a
+ * convertible image — and the worker would not merely waste a billable image
+ * operation on it, it converts the poster into a new MediaImage and then
+ * productDeleteMedia's the task's mediaId, i.e. deletes the video.
+ *
+ * An UNKNOWN kind counts as an image: the DB-cached productImages the loader
+ * hands the Image Manager are images by construction (imageMediaNodes in
+ * product-sync.service.ts) and carry no kind until /api/product-variants has
+ * answered. That is the same fallback the tile dispatch in SortableImageGrid
+ * makes. The server re-checks the kind against Shopify before charging quota,
+ * so the optimistic half of this rule cannot reach a destructive write.
+ */
+export function isWebpConvertible(url: string, kind?: MediaKind | null): boolean {
+  if (kind && kind !== "image") return false;
+  const lower = url.toLowerCase();
+  return !lower.includes(".webp") && !lower.includes("format=webp");
+}
