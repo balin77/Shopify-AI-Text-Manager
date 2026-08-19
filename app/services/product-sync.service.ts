@@ -1088,7 +1088,7 @@ export class ProductSyncService {
       // against, and without that "before" state a primary change made outside
       // the app is indistinguishable from one made years ago.
       const previousDigests = options.reconcileTranslations
-        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
             this.shop,
             productId,
             "Product",
@@ -1893,7 +1893,7 @@ export class ProductSyncService {
           where: { shop: this.shop, resourceId: productData.id, resourceType: "Product", marketId: { in: fetchedLayers } },
           select: { locale: true, key: true, digest: true, marketId: true },
         });
-        const tkey = (locale: string, key: string, marketId: string) => `${marketId} ${locale} ${key}`;
+        const tkey = (locale: string, key: string, marketId: string) => `${marketId}\u0000${locale}\u0000${key}`;
         const everyIncomingHasDigest = validTranslations.length > 0 && validTranslations.every(t => !!t.digest);
         const everyStoredHasDigest = existingTranslations.length > 0 && existingTranslations.every(e => !!e.digest);
         const existingDigestByKey = new Map(existingTranslations.map(e => [tkey(e.locale, e.key, e.marketId), e.digest]));

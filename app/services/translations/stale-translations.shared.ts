@@ -18,6 +18,12 @@
  *   trigger exactly what the feature promises: the primary text changed, now,
  *   outside this app.
  *
+ *   The baseline is per (LOCALE, KEY), never one digest per key: a digest
+ *   describes the source a PARTICULAR translation was written against, and two
+ *   locales legitimately hold different ones (translate DE, the merchant edits
+ *   the source, translate FR — DE is now stale and FR is not). Collapsing them
+ *   made which row got repaired depend on the order Postgres returned them in.
+ *
  *   No previous digest ⇒ no evidence ⇒ nothing stale. That covers a first
  *   sync (fresh install, newly cached resource) and rows written before
  *   digests were stored; the sync itself writes the digests, so a shop
@@ -71,6 +77,15 @@ export interface SyncedTranslation {
 
 export type StaleReason = "outdated" | "primary-empty";
 
+/**
+ * Key for the per-(locale, key) digest baseline. The separator is an ESCAPE,
+ * never a literal control byte — a NUL in the source makes git treat the file
+ * as binary and the module invisible in every diff.
+ */
+export function digestBaselineKey(locale: string, key: string): string {
+  return `${locale}\u0000${key}`;
+}
+
 export interface StaleTranslation {
   key: string;
   locale: string;
@@ -119,11 +134,11 @@ export const AUTO_RETRANSLATABLE_KEYS: ReadonlySet<string> = new Set([
  * @param primaryContent  key → { value, digest } from `translatableContent`.
  *   Keys with an empty primary value are ABSENT — that is Shopify's shape, not
  *   a caller convention.
- * @param previousDigests  key → the source digest the PREVIOUS sync stored on
- *   this resource's translation rows. A key whose digest is unchanged (or
- *   unknown) did not move and can never be stale — see THE GATE above. An
- *   empty/absent map therefore yields nothing, which is what makes a first
- *   sync harmless.
+ * @param previousDigests  `digestBaselineKey(locale, key)` → the source digest
+ *   stored on THAT translation row before this sync overwrote it. A row whose
+ *   digest is unchanged (or unknown) did not move and can never be stale — see
+ *   THE GATE above. An empty/absent map therefore yields nothing, which is what
+ *   makes a first sync harmless.
  */
 export function findStaleTranslations(
   translations: readonly SyncedTranslation[],
@@ -143,14 +158,20 @@ export function findStaleTranslations(
 
     // THE GATE: did the source text move since OUR last sync? A missing
     // previous digest is "we cannot tell", never "it changed".
-    const previousDigest = previousDigests[row.key];
+    const previousDigest = previousDigests[digestBaselineKey(row.locale, row.key)];
     if (!previousDigest) continue;
     if ((entry?.digest ?? null) === previousDigest) continue;
+
+    // An empty map is a failed/partial fetch, not "every field was cleared" —
+    // and with no primary content there is no digest to have moved either, so
+    // nothing here can be judged. Stated as its own rule rather than left to
+    // follow from the gate, because the header promises it.
+    if (!primaryKnown) continue;
 
     let reason: StaleReason | null = null;
     if (row.outdated === true) {
       reason = "outdated";
-    } else if (primaryKnown && primaryEmpty && MANAGED_TRANSLATION_KEYS.has(row.key)) {
+    } else if (primaryEmpty && MANAGED_TRANSLATION_KEYS.has(row.key)) {
       reason = "primary-empty";
     }
     if (!reason) continue;

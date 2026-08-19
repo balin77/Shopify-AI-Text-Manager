@@ -167,8 +167,17 @@ interface PersistDeps {
    * value delete its foreign translations at all? Resolved once per run and
    * checked by every §6.6 invalidation entry point; `false` makes them no-op
    * exactly like an empty `foreignLocales`. Fails OPEN — see
-   * services/translations/translation-change-policy.server.ts. */
+   * services/translations/translation-change-policy.server.ts.
+   *
+   * TWO answers, because the auto-translation only supersedes the deletion
+   * where it can actually refresh the row: `purgeStaleTranslations` covers a
+   * ROW's own translatable fields on the types the sync reconciles, and
+   * `purgeStaleSubResourceTranslations` covers everything it never sees —
+   * metafields, options, option values, image alt-texts and metaobject fields.
+   * Suppressing the second would leave a translation of text that no longer
+   * exists live forever. */
   purgeStaleTranslations: boolean;
+  purgeStaleSubResourceTranslations: boolean;
   /** PLAN §Phase 3.3 — the shop's "redirect when a handle changes" preference,
    *  read ONCE per run. The setting is shop-level, so it has to hold on this
    *  write path too; the single editor's per-save override has no equivalent
@@ -285,7 +294,15 @@ async function invalidateStaleForeignTranslations(
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
   const keys = [...new Set(translationKeys.filter(Boolean))];
-  if (!deps.purgeStaleTranslations || keys.length === 0 || foreignLocales.length === 0) return;
+  // A SUB-RESOURCE (metafield / option / option value), an image alt and a
+  // metaobject field are never re-translated by the sync, so the merchant's
+  // stored choice governs them; a row's own fields are.
+  const reconciledSurface =
+    !resourceTypeOverride && rowType !== "image" && rowType !== "metaobject";
+  const mayPurge = reconciledSurface
+    ? deps.purgeStaleTranslations
+    : deps.purgeStaleSubResourceTranslations;
+  if (!mayPurge || keys.length === 0 || foreignLocales.length === 0) return;
 
   const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
   const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
@@ -369,7 +386,7 @@ async function invalidateStaleForeignTranslations(
  */
 async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: string): Promise<void> {
   const { db, gateway, foreignLocales } = deps;
-  if (!deps.purgeStaleTranslations || foreignLocales.length === 0) return;
+  if (!deps.purgeStaleSubResourceTranslations || foreignLocales.length === 0) return;
   try {
     // Two stores, one rule: product media mirror into
     // ProductImageAltTranslation, every other image into
@@ -1501,7 +1518,7 @@ async function invalidateStaleFeaturedImageAltTranslations(
   parentId: string,
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
-  if (!deps.purgeStaleTranslations || foreignLocales.length === 0) return;
+  if (!deps.purgeStaleSubResourceTranslations || foreignLocales.length === 0) return;
   const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
   try {
     // Only touch Shopify when there is actually something to invalidate — the
@@ -2943,11 +2960,15 @@ export async function applyBulkDiff(
   // One lookup per run for the §6.6 invalidation switch (Settings →
   // Übersetzungen). Skipped entirely when there is nothing to invalidate
   // against, so a test context without locales makes no DB call.
-  const { isPurgeOnPrimaryChangeEnabled } = await import(
+  const { loadTranslationChangePolicy } = await import(
     "../translations/translation-change-policy.server"
   );
-  const purgeStaleTranslations =
-    foreignLocales.length > 0 ? await isPurgeOnPrimaryChangeEnabled(shop, db) : false;
+  const changePolicy =
+    foreignLocales.length > 0
+      ? await loadTranslationChangePolicy(shop, db)
+      : { purgeOnPrimaryChange: false, purgeUnreconciledSurfaces: false };
+  const purgeStaleTranslations = changePolicy.purgeOnPrimaryChange;
+  const purgeStaleSubResourceTranslations = changePolicy.purgeUnreconciledSurfaces;
 
   // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
   // only digests are bündelbar — the register itself is per resource).
@@ -3043,6 +3064,7 @@ export async function applyBulkDiff(
     foreignLocales,
     subResourceCaches,
     purgeStaleTranslations,
+    purgeStaleSubResourceTranslations,
     autoHandleRedirect,
   };
   const failures: BulkFailure[] = [];

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  digestBaselineKey,
   findStaleTranslations,
   partitionStaleTranslations,
   type PrimaryContentEntry,
@@ -23,8 +24,20 @@ function translation(over: Partial<SyncedTranslation> = {}): SyncedTranslation {
   return { key: "title", value: "Titel", locale: "fr", marketId: "", outdated: true, ...over };
 }
 
-/** The baseline a previous sync left behind: this key's source has since moved. */
-const moved = { title: OLD, body_html: OLD, meta_description: OLD, handle: OLD, some_theme_key: OLD };
+/**
+ * The baseline a previous sync left behind, per (locale, key): every row was
+ * written against OLD, and the source has since moved.
+ */
+function movedIn(...locales: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const locale of locales) {
+    for (const key of ["title", "body_html", "meta_description", "handle", "some_theme_key"]) {
+      out[digestBaselineKey(locale, key)] = OLD;
+    }
+  }
+  return out;
+}
+const moved = movedIn("fr", "de");
 
 describe("findStaleTranslations — the digest gate", () => {
   it("reports nothing when the source digest is unchanged since our last sync", () => {
@@ -32,7 +45,7 @@ describe("findStaleTranslations — the digest gate", () => {
     // app was installed), but THIS sync saw no change — the case that would
     // otherwise mass-delete a translating shop's history on any webhook.
     const stale = findStaleTranslations([translation({ outdated: true })], primary({ title: "Box" }, OLD), {
-      title: OLD,
+      [digestBaselineKey("fr", "title")]: OLD,
     });
     expect(stale).toEqual([]);
   });
@@ -44,7 +57,7 @@ describe("findStaleTranslations — the digest gate", () => {
 
   it("reports nothing when the stored digest is null (rows predating digest storage)", () => {
     const stale = findStaleTranslations([translation({ outdated: true })], primary({ title: "Box" }), {
-      title: null,
+      [digestBaselineKey("fr", "title")]: null,
     });
     expect(stale).toEqual([]);
   });
@@ -116,16 +129,30 @@ describe("findStaleTranslations — scope", () => {
     expect(stale).toHaveLength(1);
   });
 
-  it("skips the cleared-primary rule entirely when NO primary content was fetched", () => {
-    // An empty map is indistinguishable from a failed/partial fetch, and
-    // "every field is empty" must never be inferred from it. The outdated flag
-    // still stands on its own.
+  it("judges nothing at all when NO primary content was fetched", () => {
+    // An empty map is indistinguishable from a failed or partial fetch. Neither
+    // rule may fire on it — not the cleared-primary one, and not the outdated
+    // flag either: with no primary content there is no digest that could have
+    // moved, so acting would purge the whole resource off a failed query.
     const stale = findStaleTranslations(
-      [translation({ key: "body_html", outdated: false }), translation({ key: "title", outdated: false })],
+      [translation({ key: "body_html", outdated: true }), translation({ key: "title", outdated: true })],
       {},
       moved,
     );
     expect(stale).toEqual([]);
+  });
+
+  it("judges each locale against ITS OWN baseline", () => {
+    // DE was translated against the old source, FR was re-translated against
+    // the new one. Only DE is stale — and which one that is must not depend on
+    // the row order the database happens to return.
+    const stale = findStaleTranslations(
+      [translation({ locale: "de", outdated: true }), translation({ locale: "fr", outdated: false })],
+      primary({ title: "Box" }),
+      { [digestBaselineKey("de", "title")]: OLD, [digestBaselineKey("fr", "title")]: NEW },
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0].locale).toBe("de");
   });
 
   it("treats a missing outdated flag as 'not asked', never as 'outdated'", () => {

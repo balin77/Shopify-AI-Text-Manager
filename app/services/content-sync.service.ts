@@ -176,7 +176,7 @@ export class ContentSyncService {
       // The stale-translation baseline is read BEFORE the save — see
       // syncProduct: the save overwrites the digests it is compared against.
       const previousDigests = options.reconcileTranslations
-        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
             this.shop,
             collectionId,
             "Collection",
@@ -306,7 +306,7 @@ export class ContentSyncService {
       // 4. Save to database — failed markets excluded (see syncCollection).
       // Baseline read before the save, same reason as syncCollection.
       const previousDigests = options.reconcileTranslations
-        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
             this.shop,
             articleId,
             "Article",
@@ -1180,7 +1180,7 @@ export class ContentSyncService {
     // transaction below rewrites the digests (see syncCollection).
     const previousDigests = await (
       await import("./translations/stale-translation-sync.server")
-    ).loadPreviousPrimaryDigests(this.shop, gid, "Blog");
+    ).loadPreviousTranslationDigests(this.shop, gid, "Blog");
 
     // Delete scope stays conservative: only the layers this run actually
     // fetched. A market whose fetch errored keeps its existing rows rather

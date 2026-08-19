@@ -1217,7 +1217,14 @@ export class ShopifyContentService {
       const { isPurgeOnPrimaryChangeEnabled } = await import(
         "../../app/services/translations/translation-change-policy.server"
       );
-      if (changedFields && changedFields.length > 0 && (await isPurgeOnPrimaryChangeEnabled(shop, db))) {
+      // `reconciled: true` — these are the resource's OWN translatable fields on a
+      // type the sync reconciles, so the auto-translation may supersede the
+      // deletion here (translation-change-policy.server.ts).
+      if (
+        changedFields &&
+        changedFields.length > 0 &&
+        (await isPurgeOnPrimaryChangeEnabled(shop, db, { reconciled: true }))
+      ) {
         // Map UI field names to Shopify translation keys — the ONE canonical
         // map (FIELD_TO_TRANSLATION_KEY, top of this file).
         const keyMapping = fieldTranslationKeyMap(resourceType);

@@ -237,12 +237,12 @@ export function AIInstructionsTabs({
     // entire Translations sub-section (radio + custom instructions).
     formData.append("translationMode", localTranslationMode);
     formData.append("keywordAwareTranslation", String(localKeywordAware));
-    // Never submit a pair the UI does not show: with the re-translation on,
-    // the deletion is off, which is exactly what the server resolves too.
-    formData.append(
-      "translationPurgeOnPrimaryChange",
-      String(!autoTranslateActive && localPurgeOnChange),
-    );
+    // The merchant's OWN choice is stored, not the value the card currently
+    // displays: while auto-translate is on the server resolves the deletion to
+    // off anyway, and persisting that resolved `false` would silently discard
+    // their preference — switching auto-translate back off later would leave
+    // them with neither behaviour and no hint why.
+    formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
     // Never claim the Max feature from a plan that cannot have it: the server
     // rejects a change it is not entitled to, and sending the STORED value
     // keeps an unentitled save from tripping that gate.
@@ -513,13 +513,7 @@ export function AIInstructionsTabs({
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
                       checked={autoTranslateActive}
-                      onChange={(checked) => {
-                        setLocalAutoTranslateExternal(checked);
-                        // Switching it ON retires the deletion — the server
-                        // enforces the same precedence, this only makes the
-                        // stored value match what the merchant is looking at.
-                        if (checked) setLocalPurgeOnChange(false);
-                      }}
+                      onChange={setLocalAutoTranslateExternal}
                       disabled={readOnly || !canAutoTranslateExternal}
                     />
                     <BlockStack gap="100">

@@ -75,6 +75,8 @@ import {
   reconcileStaleTranslations,
   awaitDetachedRetranslations,
 } from "../../app/services/translations/stale-translation-sync.server";
+import { digestBaselineKey } from "../../app/services/translations/stale-translations.shared";
+import { markTranslationSaved } from "../../app/utils/translation-save-lock.server";
 
 const SHOP = "test.myshopify.com";
 const OLD = "digest-old";
@@ -104,7 +106,10 @@ function baseParams(over: Record<string, unknown> = {}) {
       title: { value: "Box", digest: NEW },
       body_html: { value: "<p>Box</p>", digest: NEW },
     },
-    previousDigests: { title: OLD, body_html: OLD },
+    previousDigests: {
+      [digestBaselineKey("de", "title")]: OLD,
+      [digestBaselineKey("fr", "body_html")]: OLD,
+    },
     ...over,
   };
 }
@@ -154,7 +159,12 @@ describe("purge path", () => {
 
   it("touches nothing when this sync saw no digest change", async () => {
     const result = await reconcileStaleTranslations(
-      baseParams({ previousDigests: { title: NEW, body_html: NEW } }),
+      baseParams({
+        previousDigests: {
+          [digestBaselineKey("de", "title")]: NEW,
+          [digestBaselineKey("fr", "body_html")]: NEW,
+        },
+      }),
     );
     expect(result).toEqual({ removed: 0, retranslating: 0 });
     expect(shopify.removeCalls).toEqual([]);
@@ -233,6 +243,7 @@ describe("auto-translation path (Max)", () => {
       baseParams({
         translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
         primaryContent: { body_html: { value: "<p>Box</p>", digest: NEW } },
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
       }),
     );
 
@@ -241,7 +252,65 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
   });
 
-  it("does not start a second run for a resource whose run is still going", async () => {
+  it("does not abort itself when the inline purge marks the resource", async () => {
+    // The purge runs first and marks the resource as just-written. A run that
+    // reads that mark as "the merchant saved" abandons every locale, registers
+    // nothing, purges nothing — and the entries are lost for good, because the
+    // sync has already advanced their digest baseline.
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+    }));
+    const product = freshProduct();
+
+    await reconcileStaleTranslations(
+      baseParams({
+        resourceId: product,
+        // A handle can never be auto-translated, so this run has BOTH an inline
+        // purge and a re-translation — the collision the bug needed.
+        translations: [
+          { key: "handle", value: "titre", locale: "de", marketId: "", outdated: true },
+          { key: "title", value: "Titre", locale: "fr", marketId: "", outdated: true },
+        ],
+        primaryContent: {
+          handle: { value: "box", digest: NEW },
+          title: { value: "Box", digest: NEW },
+        },
+        previousDigests: {
+          [digestBaselineKey("de", "handle")]: OLD,
+          [digestBaselineKey("fr", "title")]: OLD,
+        },
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.removeCalls).toEqual([{ keys: ["handle"], locale: "de" }]);
+    expect(shopify.registerCalls.map((c) => c.key)).toEqual(["title"]);
+  });
+
+  it("abandons the run when a REAL save lands while the AI is working", async () => {
+    const product = freshProduct();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    ai.translate = vi.fn(async () => {
+      await gate;
+      return {};
+    });
+
+    await reconcileStaleTranslations(baseParams({ resourceId: product }));
+    // The merchant saves a translation of this very resource mid-run.
+    markTranslationSaved(product);
+    release();
+    await awaitDetachedRetranslations();
+
+    // Neither overwritten nor deleted — their value is newer than anything
+    // this run decided.
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("waits for a running re-translation instead of dropping the second event's work", async () => {
     // The gate is created UP FRONT: the detached run reaches the AI call only
     // after several awaits, so a `release` assigned inside the mock would still
     // be undefined when the test wants to open it.
@@ -254,15 +323,19 @@ describe("auto-translation path (Max)", () => {
       return {};
     });
 
-    // Two webhooks for the SAME product, as Shopify emits for one admin save.
+    // Two admin edits a minute apart: the second event's entries were detected
+    // against a baseline this sync has already overwritten, so dropping them
+    // loses them permanently. They are queued behind the running one instead.
     const sameProduct = freshProduct();
     const first = await reconcileStaleTranslations(baseParams({ resourceId: sameProduct }));
     const second = await reconcileStaleTranslations(baseParams({ resourceId: sameProduct }));
 
     expect(first.retranslating).toBe(2);
-    expect(second.retranslating).toBe(0);
+    expect(second.retranslating).toBe(2);
 
     release();
     await awaitDetachedRetranslations();
+    // Both runs reached the AI — the second was queued, not discarded.
+    expect((ai.translate as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThan(2);
   });
 });

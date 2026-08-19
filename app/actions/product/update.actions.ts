@@ -825,8 +825,19 @@ async function updateTranslatedProduct(
     // Use transaction to ensure all upserts and deletes succeed or fail together
     // @ts-expect-error Prisma interactive transaction types are complex; tx has same model accessors as db
     await db.$transaction(async (tx: PrismaClient) => {
-      // Save all translations to DB — both Shopify-saved and DB-only (no digest)
+      // Save all translations to DB — both Shopify-saved and DB-only (no digest).
+      // The digest is MIRRORED, not dropped: it records which source text this
+      // translation was written against, and the sync's stale-translation
+      // reconciliation uses exactly that as its baseline
+      // (services/translations/stale-translation-sync.server.ts). Writing null
+      // here made every product the merchant translated IN THIS APP invisible
+      // to that detection — no baseline, no evidence, no repair — which is the
+      // one workflow it exists for. `dbOnlyTranslations` genuinely have none.
       for (const translation of [...translationsInput, ...dbOnlyTranslations]) {
+        const digest: string | null =
+          "translatableContentDigest" in translation
+            ? (translation as { translatableContentDigest: string }).translatableContentDigest
+            : null;
         await tx.contentTranslation.upsert({
           where: {
             // Unique constraint: @@unique([shop, resourceId, key, locale, marketId])
@@ -840,7 +851,7 @@ async function updateTranslatedProduct(
           },
           update: {
             value: translation.value,
-            digest: null,
+            digest,
             resourceType: "Product", // Update resourceType in case it changed
           },
           create: {
@@ -850,7 +861,7 @@ async function updateTranslatedProduct(
             key: translation.key,
             value: translation.value,
             locale: translation.locale,
-            digest: null,
+            digest,
             marketId,
           },
         });
@@ -1282,13 +1293,19 @@ async function updatePrimaryProduct(
   // field purge and the alt-text purge below; fails OPEN, so an error keeps
   // the historic behaviour. See
   // services/translations/translation-change-policy.server.ts.
-  const { isPurgeOnPrimaryChangeEnabled } = await import(
+  const { loadTranslationChangePolicy } = await import(
     "~/services/translations/translation-change-policy.server"
   );
-  const purgeStaleTranslations =
+  const changePolicy =
     changedFields.length > 0 || changedAltTextIndices.length > 0
-      ? await isPurgeOnPrimaryChangeEnabled(shop, db)
-      : false;
+      ? await loadTranslationChangePolicy(shop, db)
+      : null;
+  // The product's own fields are re-translated by the sync, so the
+  // auto-translation may supersede their deletion. ALT-TEXTS are not: they
+  // live on the MediaImage resource, which the reconciliation never looks at,
+  // so suppressing their deletion would leave the old alt text live for good.
+  const purgeStaleTranslations = changePolicy?.purgeOnPrimaryChange ?? false;
+  const purgeStaleAltTextTranslations = changePolicy?.purgeUnreconciledSurfaces ?? false;
 
   // Delete translations for changed fields in all foreign languages
   if (changedFields.length > 0 && purgeStaleTranslations) {
@@ -1411,7 +1428,7 @@ async function updatePrimaryProduct(
   }
 
   // Delete alt-text translations for changed image indices in all foreign languages
-  if (changedAltTextIndices.length > 0 && purgeStaleTranslations) {
+  if (changedAltTextIndices.length > 0 && purgeStaleAltTextTranslations) {
     try {
       // Get all shop locales from Shopify API (reuse if already fetched above)
       const localesResponse = await gateway.graphql(

@@ -879,6 +879,8 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       "~/services/translations/translation-change-policy.server"
     );
     const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k));
+    // No `reconciled` flag: ThemeTranslation is outside the sync's
+    // re-translation, so auto-translate must not switch this off.
     if (savedChangedFields.length > 0 && (await isPurgeOnPrimaryChangeEnabled(session.shop, db))) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
