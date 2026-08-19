@@ -281,14 +281,146 @@ async function loadProductPublications(
 
   const product = body.data.product;
   const parts = [product.resourcePublicationsV2, product.marketPublications, product.companyLocationPublications];
+  const productNodes = parts.flatMap((part) => part?.nodes ?? []);
+  let hasNextPage = parts.some((part) => part?.pageInfo?.hasNextPage === true);
+
+  /**
+   * The SHOP's publications are the universe; the product's are its state.
+   *
+   * MEASURED on a live shop (2026-08, Settings → Probes → Publications): the
+   * product answered with 3 publications, the shop has 7. "Google & YouTube"
+   * is one of the four the product never mentioned — so the picker could not
+   * offer it, and a merchant simply could not publish that product to that
+   * channel from this app. `resourcePublicationsV2` reports the publications
+   * this product HAS A RECORD in, which is not the same set as the ones it
+   * could be published to, and only the shop-level list knows the difference.
+   *
+   * The merge is one-directional: the shop list decides WHICH rows exist, the
+   * product list decides their state. A row only the product knows about is
+   * kept too — a publication removed from the shop between the two calls is
+   * still a row this product sits in.
+   */
+  const shop_ = await loadShopPublications(admin, shop);
+  // The merge only happens over a COMPLETE product answer. A merged row says
+  // "not published", and that is a claim about the PRODUCT — one this side
+  // cannot make when the catalog connections were refused or a window was cut
+  // off, because the publication may be one of the rows that never arrived.
+  // A product published to all three regions would otherwise be shown as
+  // published to none of them.
+  const productSideComplete = catalogsKnown && !hasNextPage;
+  if (shop_ && productSideComplete) {
+    const seen = new Set(
+      productNodes.flatMap((node) => {
+        const id = (node as { publication?: { id?: string } })?.publication?.id;
+        return id ? [id] : [];
+      }),
+    );
+    for (const node of shop_.nodes) {
+      if (!node.publication?.id || seen.has(node.publication.id)) continue;
+      seen.add(node.publication.id);
+      // Never published, so no date and no published flag — the same shape the
+      // product connection would have returned for it.
+      productNodes.push({ isPublished: false, publishDate: null, publication: node.publication });
+    }
+    // A narrowed shop universe is a short list, not a finished one.
+    if (!shop_.complete) hasNextPage = true;
+  } else if (productSideComplete) {
+    // The product side was complete but the shop side could not be asked, so
+    // the list may be short. Said as truncation rather than passed off as
+    // complete. (When the product side is already incomplete, `hasNextPage`
+    // or `catalogsKnown` is carrying that news.)
+    hasNextPage = true;
+  }
+
   return {
     connection: {
       // ANY window cut off means the merged list is not the whole answer.
-      pageInfo: { hasNextPage: parts.some((part) => part?.pageInfo?.hasNextPage === true) },
-      nodes: parts.flatMap((part) => part?.nodes ?? []),
+      pageInfo: { hasNextPage },
+      nodes: productNodes,
     },
     catalogsKnown,
   };
+}
+
+/**
+ * Every publication the SHOP has, across all three catalog types.
+ *
+ * `null` ⇒ could not ask. Never an empty list: "this shop has no channels" is
+ * a claim, and the caller reports a short list as truncated instead of making
+ * it. Same `catalogType` retry as the product read, for the same reason.
+ */
+async function loadShopPublications(
+  admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  shop: string,
+): Promise<{
+  nodes: Array<{ publication: { id: string; name: string | null; catalog: { __typename?: string; title?: string } | null } }>;
+  /** False ⇒ the list is app catalogs only, or a window was cut off. */
+  complete: boolean;
+} | null> {
+  const CONNECTION = `
+            pageInfo { hasNextPage }
+            nodes {
+              id
+              name
+              catalog { __typename title }
+            }`;
+  type Node = { id?: string | null; name?: string | null; catalog?: { __typename?: string; title?: string } | null };
+  type Connection = { pageInfo?: { hasNextPage?: boolean } | null; nodes?: Node[] | null } | null;
+  type Body = {
+    data?: {
+      publications?: Connection;
+      marketPublications?: Connection;
+      companyLocationPublications?: Connection;
+    };
+    errors?: Array<{ message?: string }>;
+  };
+
+  const send = (withCatalogs: boolean) =>
+    admin.graphql(
+      `#graphql
+        query shopPublications {
+          publications(first: ${PUBLICATION_PAGE_SIZE}) {${CONNECTION}
+          }
+          ${withCatalogs ? `marketPublications: publications(first: ${PUBLICATION_PAGE_SIZE}, catalogType: MARKET) {${CONNECTION}
+          }
+          companyLocationPublications: publications(first: ${PUBLICATION_PAGE_SIZE}, catalogType: COMPANY_LOCATION) {${CONNECTION}
+          }` : ""}
+        }`,
+    );
+
+  try {
+    let withCatalogs = true;
+    let body = (await (await send(true)).json()) as Body;
+    if (body.errors?.length) {
+      withCatalogs = false;
+      body = (await (await send(false)).json()) as Body;
+    }
+    if (body.errors?.length || !body.data?.publications) {
+      logger.warn("[Commerce] Shop publications could not be read", {
+        context: "Commerce", shop, error: body.errors?.[0]?.message,
+      });
+      return null;
+    }
+    const parts = [body.data.publications, body.data.marketPublications, body.data.companyLocationPublications];
+    return {
+      nodes: parts
+        .flatMap((part) => part?.nodes ?? [])
+        .flatMap((node) =>
+          node?.id
+            ? [{ publication: { id: node.id, name: node.name ?? null, catalog: node.catalog ?? null } }]
+            : [],
+        ),
+      // The catalog-less fallback narrows the universe to app catalogs, which
+      // is exactly as incomplete as a cut-off window — both must reach the UI
+      // as "not the whole shop" rather than as a finished list.
+      complete: withCatalogs && !parts.some((part) => part?.pageInfo?.hasNextPage === true),
+    };
+  } catch (error) {
+    logger.warn("[Commerce] Shop publications failed", {
+      context: "Commerce", shop, error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {

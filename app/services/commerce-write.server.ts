@@ -289,10 +289,10 @@ export async function applyPublicationChanges(
 ): Promise<CommerceWarning | undefined> {
   if (params.toPublish.length === 0 && params.toUnpublish.length === 0) return undefined;
 
-  const run = async (
+  const runBatch = async (
     mutation: "publishablePublish" | "publishableUnpublish",
     publicationIds: string[],
-  ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
+  ): Promise<{ ok: boolean; confirmed: Set<string>; refusedPerId?: boolean }> => {
     if (publicationIds.length === 0) return { ok: true, confirmed: new Set() };
     // `publishable` is the echo: which publications the product now sits on.
     // Checked rather than assumed — this is the field the whole feature is
@@ -370,7 +370,10 @@ export async function applyPublicationChanges(
       logger.warn("[Commerce] Channel userErrors", {
         context: "Commerce", shop, mutation, error: payload.userErrors[0].message,
       });
-      return { ok: false, confirmed: new Set() };
+      // The ONE failure that is worth isolating: Shopify looked at the input
+      // and declined part of it. A schema error or a throttle is about the
+      // call, not about any single publication.
+      return { ok: false, confirmed: new Set(), refusedPerId: true };
     }
 
     const nodes = [
@@ -401,6 +404,48 @@ export async function applyPublicationChanges(
       publicationIds.filter((id) => (mutation === "publishablePublish" ? published.has(id) : !published.has(id))),
     );
     return { ok: true, confirmed };
+  };
+
+  /**
+   * One refused publication must not take the others down with it.
+   *
+   * `publishablePublish` is atomic over its input: a single id Shopify
+   * declines fails the whole call, and the merchant is told none of their
+   * channel changes landed. That became reachable the moment the picker
+   * started offering every publication the SHOP has rather than only the ones
+   * the product already had a record in — a channel a product is not eligible
+   * for is exactly the id Shopify declines.
+   *
+   * So a failed batch is retried one id at a time. Safe to retry, because both
+   * verbs are no-ops on a resource already in the target state; the batch is
+   * kept as the fast path because it is one call for the normal case.
+   */
+  const run = async (
+    mutation: "publishablePublish" | "publishableUnpublish",
+    publicationIds: string[],
+  ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
+    const batch = await runBatch(mutation, publicationIds);
+    // Only a per-input refusal is isolated. A THROTTLED batch arrives as a
+    // top-level `errors` array, and retrying it once per id would turn one
+    // exhausted cost bucket into N more mutations — half of which may land as
+    // the bucket refills, leaving a half-applied change reported as the
+    // softer "not confirmed".
+    if (batch.ok || !batch.refusedPerId || publicationIds.length < 2) return batch;
+
+    logger.warn("[Commerce] Channel batch refused per input — isolating", {
+      context: "Commerce", shop, mutation, count: publicationIds.length,
+    });
+    const confirmed = new Set<string>();
+    let anyOk = false;
+    for (const publicationId of publicationIds) {
+      const single = await runBatch(mutation, [publicationId]);
+      if (single.ok) anyOk = true;
+      for (const id of single.confirmed) confirmed.add(id);
+    }
+    // `ok` means "the call worked", not "everything landed" — an id that is
+    // still missing from `confirmed` is reported as unconfirmed by the caller,
+    // which is the honest outcome for a publication Shopify declined.
+    return { ok: anyOk, confirmed };
   };
 
   try {
