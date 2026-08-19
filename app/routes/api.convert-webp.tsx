@@ -80,7 +80,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { status: 503 },
       );
     }
-    const convertible = images.filter(i => !i.mediaId || kinds[i.mediaId] === "MediaImage");
+    // Only a POSITIVELY identified non-image is dropped. An id Shopify cannot
+    // resolve at all (a MediaImage deleted in the admin while the ProductImage
+    // cache row survived) is passed through deliberately: it cannot be the
+    // video this guard exists for, and dropping it would make the image
+    // disappear from the batch with a 200 and no task — silently never
+    // converted. Passed through it becomes a task that FAILS visibly in the
+    // task list and refunds its image operation, which is the observable
+    // outcome and the one a product resync fixes.
+    const convertible = images.filter(i => {
+      if (!i.mediaId) return true;
+      const typename = kinds[i.mediaId];
+      return typename === undefined || typename === "MediaImage";
+    });
     if (convertible.length !== images.length) {
       console.warn(
         `[api.convert-webp] dropped ${images.length - convertible.length} non-image medium/media from the batch`,
