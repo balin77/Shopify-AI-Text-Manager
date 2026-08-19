@@ -168,7 +168,19 @@ interface DefinitionShape {
   access?: { admin?: string | null; storefront?: string | null } | null;
   capabilities?: Record<string, unknown> | null;
   createdByApp?: string | null;
-  fieldDefinitions: Array<{ key: string; name?: string; type: string; required?: boolean }>;
+  fieldDefinitions: Array<{
+    key: string;
+    name?: string;
+    type: string;
+    required?: boolean;
+    /**
+     * PLAN_METAOBJECT_TAXONOMY_CREATE T2. The sync has queried and stored these
+     * since Phase 0 of the content-creation plan and nothing has ever read
+     * them; a `product_taxonomy_value_reference` presumably names the ATTRIBUTE
+     * whose values it accepts right here. Printing them costs one selection.
+     */
+    validations?: Array<{ name: string; value: string | null }>;
+  }>;
 }
 
 interface SampleEntry {
@@ -218,6 +230,23 @@ export interface MetaobjectProbeReport {
     nodeSelection?: string;
     error?: string;
   };
+  /** PLAN_METAOBJECT_TAXONOMY_CREATE Phase 0 (T1-T3). */
+  taxonomy?: {
+    /** What the `Taxonomy` root offers, if the type exists at all. */
+    taxonomyFields?: string[];
+    /** Shape of the value type the metaobject fields reference. */
+    valueTypeFields?: string[];
+    /** GIDs read off real entries, resolved to a __typename and a name. */
+    resolvedValues?: Array<{ gid: string; typename?: string; label?: string; error?: string }>;
+    /** Where the permitted values were found, and how many there are. */
+    valueSource?: string;
+    valueCount?: number;
+    valueSample?: string[];
+    /** A full page — the true count is "this or more", never invented. */
+    valuesTruncated?: boolean;
+    steps: StepOutcome[];
+  };
+
   /** Results of the leftover cleanup step, when it was asked for. */
   cleanup?: StepOutcome[];
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
@@ -239,6 +268,9 @@ function flattenFieldDefinitions(nodes: any[]): DefinitionShape["fieldDefinition
     name: f?.name ?? undefined,
     type: f?.type?.name ?? "",
     required: typeof f?.required === "boolean" ? f.required : undefined,
+    validations: Array.isArray(f?.validations)
+      ? f.validations.map((v: any) => ({ name: v?.name ?? "", value: v?.value ?? null }))
+      : undefined,
   }));
 }
 
@@ -295,7 +327,7 @@ export async function action({ request }: ActionFunctionArgs) {
   // reduced query is recorded (`definitionsFullSelection: false`) so an absent
   // `access` block cannot be read as "this shop's definitions have none".
   let definitions: DefinitionShape[] = [];
-  if (wants("definitions") || wants("samples") || wants("write") || wants("link")) {
+  if (wants("definitions") || wants("samples") || wants("write") || wants("link") || wants("taxonomy")) {
     const full = await call(
       `#graphql
         query MetaobjectProbeDefinitionsFull($first: Int!) {
@@ -307,7 +339,7 @@ export async function action({ request }: ActionFunctionArgs) {
               access { admin storefront }
               capabilities { translatable { enabled } publishable { enabled } }
               createdByApp { handle }
-              fieldDefinitions { key name required type { name } }
+              fieldDefinitions { key name required type { name } validations { name value } }
             }
           }
         }`,
@@ -753,6 +785,319 @@ export async function action({ request }: ActionFunctionArgs) {
           : `M2/§6.6 INCONCLUSIVE for "${type}": no sampled entry reported a translatable key. Check whether the sampled entries have any primary values at all before concluding anything.`,
       );
     }
+  }
+
+  // ---- Taxonomy: can the permitted values be reached at all? (T1-T3) ------
+  // PLAN_METAOBJECT_TAXONOMY_CREATE Phase 0. `shopify--color-pattern` cannot be
+  // CREATED from this app because two of its required fields are
+  // `product_taxonomy_value_reference`, and there is no editor for that type.
+  // Whether one can be BUILT hangs on a question nobody has asked: is there an
+  // API that lists the permitted values? Everything here is read-only.
+  //
+  // The chain is data-driven, not guessed: the definition's own `validations`
+  // say which attribute a field accepts, a real entry's stored GIDs say what a
+  // value looks like, and introspection says what can be selected on it. A
+  // guessed field name would answer "no such API" about one that exists.
+  if (wants("taxonomy")) {
+    const steps: StepOutcome[] = [];
+    const tax: NonNullable<MetaobjectProbeReport["taxonomy"]> = { steps };
+    const definition = definitions.find((d) => d.type === (sampleType || STANDARD_COLOUR_TYPE));
+
+    // 1. What does the Taxonomy root offer? MISSING and ERROR stay apart: a
+    //    throttled introspection must not be read as "there is no taxonomy".
+    const root = await call(
+      `#graphql
+        query MetaobjectProbeTaxonomyRoot {
+          __type(name: "Taxonomy") { fields(includeDeprecated: true) { name args { name } } }
+        }`,
+    );
+    if (root.ok) {
+      const fields = root.data?.__type?.fields;
+      if (!fields) {
+        steps.push({ step: "__type(Taxonomy)", ok: false, detail: "the API answered and the type is not there" });
+      } else {
+        const named = fields.map((f: any) => `${f.name}(${(f.args ?? []).map((a: any) => a.name).join(",")})`);
+        tax.taxonomyFields = named;
+        steps.push({ step: "__type(Taxonomy)", ok: true, detail: named.join(" | ") });
+      }
+    } else {
+      steps.push({ step: "__type(Taxonomy)", ok: false, detail: describeFailure(root) });
+    }
+
+    // 2. The validations of the taxonomy-reference fields — T2, out of data
+    //    the sync has stored all along and nothing has ever read.
+    const taxonomyFieldDefs = (definition?.fieldDefinitions ?? []).filter((f) =>
+      f.type.includes("product_taxonomy_value_reference"),
+    );
+    steps.push({
+      step: "field validations (T2)",
+      ok: taxonomyFieldDefs.length > 0,
+      detail:
+        taxonomyFieldDefs.length > 0
+          ? taxonomyFieldDefs
+              .map((f) => `${f.key}: ${JSON.stringify(f.validations ?? "none reported")}`)
+              .join(" | ")
+          : `no taxonomy-reference field on "${sampleType || STANDARD_COLOUR_TYPE}"`,
+    });
+
+    // 3. Resolve GIDs a real entry actually holds. Two sources, in order: the
+    //    validations (what the field ACCEPTS) and a stored value (what an entry
+    //    HAS). Reading a stored value back is what proves a picker could ever
+    //    display the current value instead of a raw GID.
+    const gidsFromValidations = taxonomyFieldDefs
+      .flatMap((f) => f.validations ?? [])
+      .map((v) => v.value ?? "")
+      .flatMap((v) => {
+        try {
+          const parsed: unknown = JSON.parse(v);
+          return Array.isArray(parsed) ? parsed.map(String) : [v];
+        } catch {
+          return [v];
+        }
+      })
+      .filter((v) => v.startsWith("gid://shopify/"));
+
+    const entries = await call(
+      `#graphql
+        query MetaobjectProbeTaxonomySample($type: String!, $first: Int!) {
+          metaobjects(type: $type, first: $first) { nodes { fields { key value } } }
+        }`,
+      { type: sampleType || STANDARD_COLOUR_TYPE, first: 10 },
+    );
+    const gidsFromEntries = entries.ok
+      ? ((entries.data?.metaobjects?.nodes ?? []) as Array<{ fields?: Array<{ key: string; value: string | null }> }>)
+          .flatMap((n) => n.fields ?? [])
+          .filter((f) => taxonomyFieldDefs.some((t) => t.key === f.key))
+          .flatMap((f) => {
+            const raw = f.value ?? "";
+            try {
+              const parsed: unknown = JSON.parse(raw);
+              return Array.isArray(parsed) ? parsed.map(String) : [raw];
+            } catch {
+              return [raw];
+            }
+          })
+          .filter((v) => v.startsWith("gid://shopify/"))
+      : [];
+    if (!entries.ok) steps.push({ step: "read stored values", ok: false, detail: describeFailure(entries) });
+
+    const gids = [...new Set([...gidsFromValidations, ...gidsFromEntries])].slice(0, 10);
+    if (gids.length > 0) {
+      // `nodes(ids:)` with __typename only: the concrete type is the ANSWER,
+      // and asking for a name before knowing the type is how a probe reports
+      // "does not exist" about a field on a type it guessed wrong.
+      const typed = await call(
+        `#graphql
+          query MetaobjectProbeTaxonomyTypes($ids: [ID!]!) {
+            nodes(ids: $ids) { __typename id }
+          }`,
+        { ids: gids },
+      );
+      if (!typed.ok) {
+        tax.resolvedValues = gids.map((gid) => ({ gid, error: describeFailure(typed) }));
+        steps.push({ step: "nodes(ids:) __typename", ok: false, detail: describeFailure(typed) });
+      } else {
+        const nodes = (typed.data?.nodes ?? []) as Array<{ __typename?: string; id?: string } | null>;
+        tax.resolvedValues = gids.map((gid) => ({
+          gid,
+          typename: nodes.find((n) => n?.id === gid)?.__typename,
+        }));
+        steps.push({
+          step: "nodes(ids:) __typename",
+          ok: true,
+          detail: JSON.stringify(tax.resolvedValues),
+        });
+
+        // 4. What can be SELECTED on that type — the picker's label problem.
+        const valueType = tax.resolvedValues.find((r) => r.typename)?.typename;
+        if (valueType) {
+          const shape = await call(
+            `#graphql
+              query MetaobjectProbeTaxonomyValueShape($name: String!) {
+                __type(name: $name) {
+                  fields(includeDeprecated: true) { name type { ...TypeRef } args { name type { ...TypeRef } } }
+                }
+              }
+              ${TYPE_REF_FRAGMENT}`,
+            { name: valueType },
+          );
+          if (shape.ok && shape.data?.__type?.fields) {
+            const fields = shape.data.__type.fields as Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>;
+            tax.valueTypeFields = fields.map((f) => f.name);
+            steps.push({ step: `__type(${valueType})`, ok: true, detail: tax.valueTypeFields.join(", ") });
+
+            // Read the LABEL of one value. Same descent as the referencedBy
+            // step: a selection the server rejects is a shape answer, anything
+            // else is an outage and must not be reported as one.
+            const selection = liveNodeSelection(fields);
+            const labelCandidates = [selection.full, selection.scalars, "__typename id"].filter(
+              (c, i, all) => all.indexOf(c) === i,
+            );
+            let labelled = false;
+            for (const candidate of labelCandidates) {
+              const attempt = await call(
+                `#graphql
+                  query MetaobjectProbeTaxonomyLabels($ids: [ID!]!) {
+                    nodes(ids: $ids) { __typename ... on ${valueType} { ${candidate} } }
+                  }`,
+                { ids: gids },
+              );
+              if (attempt.ok) {
+                labelled = true;
+                steps.push({
+                  step: `resolve labels (${candidate === selection.full ? "full" : "reduced"})`,
+                  ok: true,
+                  detail: JSON.stringify(attempt.data?.nodes ?? null).slice(0, 600),
+                });
+                break;
+              }
+              // Only a rejected SELECTION justifies trying a narrower one. Any
+              // other failure is an outage, and walking past it would let a
+              // throttle be reported as "this type has no such fields".
+              if (!isSelectionError(attempt)) {
+                steps.push({ step: "resolve labels", ok: false, detail: describeFailure(attempt) });
+                labelled = true;
+                break;
+              }
+              steps.push({ step: `resolve labels (${candidate})`, ok: false, detail: describeFailure(attempt) });
+            }
+            if (!labelled) {
+              steps.push({
+                step: "resolve labels",
+                ok: false,
+                detail: "every selection was rejected — a picker could not show a name for a stored value",
+              });
+            }
+          } else {
+            steps.push({
+              step: `__type(${valueType})`,
+              ok: false,
+              detail: shape.ok ? "the API answered and the type is not there" : describeFailure(shape),
+            });
+          }
+        }
+      }
+    } else {
+      steps.push({
+        step: "collect taxonomy GIDs",
+        ok: false,
+        detail: "neither the validations nor any stored entry value carried one — nothing to resolve",
+      });
+    }
+
+    // 5. T3 — HOW MANY permitted values are there? The whole shape of the
+    //    editor hangs on this: a search box over twelve colours is as wrong as
+    //    a dropdown over ten thousand categories.
+    //
+    //    The ATTRIBUTE is asked first and by its own measured type name. The
+    //    number of taxonomy ATTRIBUTES is a different number from the number of
+    //    a field's permitted VALUES, and reporting the first as the second
+    //    would answer T3 with something that is not the answer — so it is
+    //    recorded under its own name and never sets `valueCount`.
+    //
+    //    A stored entry value IS a permitted value, so its type is the value
+    //    type; anything else among the resolved GIDs came from the validations
+    //    and is therefore the attribute. Both names are MEASURED rather than
+    //    guessed, because a wrong inline fragment matches nothing and would
+    //    yield a confident "0 permitted values".
+    const storedTypenames = new Set(
+      (tax.resolvedValues ?? [])
+        .filter((r) => gidsFromEntries.includes(r.gid) && r.typename)
+        .map((r) => r.typename!),
+    );
+    const attributeCandidates = (tax.resolvedValues ?? []).filter(
+      (r) => r.typename && !storedTypenames.has(r.typename),
+    );
+    const attributeTypename = attributeCandidates[0]?.typename;
+    const attributeGids = attributeCandidates
+      .filter((r) => r.typename === attributeTypename)
+      .map((r) => r.gid);
+
+    const VALUES_PAGE = 100;
+    if (attributeTypename && attributeGids.length > 0) {
+      const res = await call(
+        `#graphql
+          query MetaobjectProbeAttributeValues($ids: [ID!]!, $first: Int!) {
+            nodes(ids: $ids) {
+              __typename
+              ... on ${attributeTypename} { values(first: $first) { nodes { id name } } }
+            }
+          }`,
+        { ids: attributeGids, first: VALUES_PAGE },
+      );
+      if (!res.ok) {
+        steps.push({ step: `values of ${attributeTypename}`, ok: false, detail: describeFailure(res) });
+      } else {
+        const values = ((res.data?.nodes ?? []) as any[])
+          .flatMap((n) => n?.values?.nodes ?? [])
+          .filter(Boolean);
+        // An EMPTY list is not the answer. `values: []` and "this path does not
+        // carry them" look identical here, and reporting 0 would publish
+        // "T1 POSITIVE, 0 values, use a plain list" off a path that measured
+        // nothing. Rule 2 of this file's header.
+        if (values.length === 0) {
+          steps.push({
+            step: `values of ${attributeTypename}`,
+            ok: false,
+            detail: "the query answered with an EMPTY list — that is not a count, it is a path that carried nothing",
+          });
+        } else {
+          tax.valueSource = `${attributeTypename}.values`;
+          tax.valueCount = values.length;
+          // From the page size actually REQUESTED — a hardcoded threshold
+          // would call a complete page truncated and flip the T3 verdict.
+          tax.valuesTruncated = values.length >= VALUES_PAGE;
+          tax.valueSample = values.slice(0, 12).map((v: any) => v?.name ?? v?.id).filter(Boolean);
+          steps.push({
+            step: `values of ${attributeTypename}`,
+            ok: true,
+            detail: `${values.length}${tax.valuesTruncated ? "+" : ""} — ${tax.valueSample.join(", ")}`,
+          });
+        }
+      }
+    } else {
+      steps.push({
+        step: "permitted values",
+        ok: false,
+        detail: attributeTypename
+          ? "no attribute GID to ask with"
+          : "no resolved GID looked like an attribute — the validations carried none",
+      });
+    }
+
+    // Separately, and labelled as what it is: how many taxonomy ATTRIBUTES the
+    // root offers. Asked only when step 1 SAW that field, rather than guessed.
+    if ((tax.taxonomyFields ?? []).some((f) => f.startsWith("attributes("))) {
+      const res = await call(
+        `#graphql
+          query MetaobjectProbeTaxonomyAttributes($first: Int!) {
+            taxonomy { attributes(first: $first) { nodes { __typename } } }
+          }`,
+        { first: 50 },
+      );
+      const nodes = res.ok ? (res.data?.taxonomy?.attributes?.nodes ?? null) : null;
+      steps.push({
+        step: "taxonomy.attributes (context, NOT the value count)",
+        ok: res.ok && nodes !== null,
+        detail: res.ok
+          ? nodes === null
+            ? "the API answered and the path is not there"
+            : `${nodes.length}${nodes.length >= 50 ? "+" : ""} attributes exist shop-wide`
+          : describeFailure(res),
+      });
+    }
+
+    report.taxonomy = tax;
+    const reachable = tax.valueCount !== undefined;
+    report.verdicts.push(
+      reachable
+        ? `T1 POSITIVE: the permitted values are reachable via ${tax.valueSource} — ${tax.valueCount}${
+            tax.valuesTruncated ? " or more" : ""
+          } of them. T3 says the editor should be ${
+            tax.valuesTruncated || (tax.valueCount ?? 0) > 60 ? "a SEARCH picker" : "a plain list"
+          }.`
+        : `T1 NOT ANSWERED: no path to the permitted values worked. See the step details — a failed call is not proof that no such API exists, and PLAN_METAOBJECT_TAXONOMY_CREATE §5 (deep link into the Shopify admin) is the fallback only once this has been RE-RUN and still fails.`,
+    );
   }
 
   // ---- Cleanup: remove objects an earlier run could not ------------------
