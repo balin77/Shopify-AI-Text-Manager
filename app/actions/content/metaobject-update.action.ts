@@ -359,6 +359,9 @@ export async function handleMetaobjectUpdate(
       const { isPurgeOnPrimaryChangeEnabled } = await import(
         "~/services/translations/translation-change-policy.server"
       );
+      // No `reconciled` flag: MetaobjectTranslation is outside the sync's
+      // re-translation entirely, so auto-translate must not switch this off —
+      // nothing would ever refresh the row.
       if (!(await isPurgeOnPrimaryChangeEnabled(session.shop, db))) return;
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
         "~/services/bulk-editor/translations.server"

@@ -61,6 +61,38 @@ describe("loadTranslationChangePolicy", () => {
     expect(policy.autoTranslateExternalChanges).toBe(false);
   });
 
+  it("keeps the purge ON for surfaces the re-translation cannot reach", async () => {
+    // Metaobject fields, theme content, options/metafields and alt-texts are
+    // outside the sync's reconciliation. Suppressing their deletion there would
+    // leave a translation of text that no longer exists live forever, because
+    // nothing would ever refresh it.
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(false);
+    expect(policy.purgeUnreconciledSurfaces).toBe(true);
+    // The default answer is the safe one: a caller that does not claim to be
+    // reconciled keeps deleting.
+    expect(await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com")).toBe(true);
+    expect(
+      await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com", undefined, { reconciled: true }),
+    ).toBe(false);
+  });
+
+  it("respects a merchant who switched the purge off, on both surfaces", async () => {
+    row.value = {
+      translationPurgeOnPrimaryChange: false,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.purgeOnPrimaryChange).toBe(false);
+    expect(policy.purgeUnreconciledSurfaces).toBe(false);
+  });
+
   it("forces the purge OFF while auto-translation is in force", async () => {
     // The two are alternatives: deleting the rows a re-translation is about to
     // refresh means nothing. Enforced server-side, not only in the UI, because
@@ -73,7 +105,9 @@ describe("loadTranslationChangePolicy", () => {
     const policy = await loadTranslationChangePolicy("shop.myshopify.com");
     expect(policy.autoTranslateExternalChanges).toBe(true);
     expect(policy.purgeOnPrimaryChange).toBe(false);
-    expect(await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com")).toBe(false);
+    expect(
+      await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com", undefined, { reconciled: true }),
+    ).toBe(false);
   });
 
   it("leaves the purge alone when auto-translation is only stored, not granted", async () => {

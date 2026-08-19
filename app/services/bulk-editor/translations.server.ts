@@ -509,8 +509,19 @@ export interface TranslationUserError {
 /** A removal confirms KEYS and nothing else — there is no stored value left to
  *  echo, which is why it is its own type rather than a write with a hole. */
 export interface VerifiedRemoveResult {
-  /** Keys Shopify echoed back — ONLY these may be mirrored into the DB. */
+  /**
+   * Keys whose removal is CONFIRMED — only these may be mirrored into the DB.
+   *
+   * Two things confirm it, and the second is not a weakening of the echo rule
+   * but the stronger form of it: Shopify echoed the key back, OR a fresh read
+   * of the resource shows the key carries no translation in that locale any
+   * more. "It is gone" is what the rule is actually about; the echo is just
+   * the cheap way to learn it.
+   */
   confirmedKeys: Set<string>;
+  /** Of those, the ones confirmed only by the re-read. Reported so a caller
+   *  can log the difference rather than have it disappear. */
+  confirmedByRead?: Set<string>;
   userErrors: TranslationUserError[];
 }
 
@@ -645,27 +656,122 @@ export async function removeAndVerify(
     if (echoed?.some((t) => t.key === key && t.locale === locale)) confirmedKeys.add(key);
   }
 
+  // An unechoed key is not yet a failure. `translationsRemove` echoes what it
+  // DELETED, so a key that carried no translation on Shopify in the first
+  // place — a local mirror row written when the register found no digest, the
+  // documented case in CLAUDE.md — comes back empty, and the merchant was then
+  // told "the translation was kept" about a field they had just cleared, with
+  // no way to clear it.
+  //
+  // So ASK. A fresh read that shows the key carries nothing in this locale is
+  // the removal confirmed, not assumed: it is the state the rule exists to
+  // protect, reached by the strongest evidence available.
+  const confirmedByRead = new Set<string>();
+  const unconfirmed = translationKeys.filter((key) => !confirmedKeys.has(key));
+  if (unconfirmed.length > 0) {
+    try {
+      const present = await translatedKeysForLocale(gateway, resourceId, locale, marketId);
+      for (const key of unconfirmed) {
+        if (!present.has(key)) {
+          confirmedKeys.add(key);
+          confirmedByRead.add(key);
+        }
+      }
+    } catch (error) {
+      // A failed re-read is NOT a confirmation. The keys stay unconfirmed and
+      // their local rows stay, exactly as before this existed.
+      logger.warn("[BULK] removal re-read failed — unechoed keys stay unconfirmed", {
+        context: "Bulk",
+        resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (confirmedKeys.size < translationKeys.length) {
+    // Names WHAT was not confirmed, and in which scope. Without the locale,
+    // the market and the keys, "sent 1, confirmed 0" cannot be told apart from
+    // a locale-spelling or market-scope mismatch, and the warning is a dead
+    // end for whoever reads the log.
     logger.warn("[BULK] translationsRemove did not confirm every key — local rows kept", {
       context: "Bulk",
       resourceId,
+      locale,
+      marketId: marketId || "(global)",
+      keys: translationKeys.filter((key) => !confirmedKeys.has(key)),
       sent: translationKeys.length,
       confirmed: confirmedKeys.size,
+      confirmedByRead: confirmedByRead.size,
       userErrors: userErrors.length,
     });
   }
-  return { confirmedKeys, userErrors };
+  return { confirmedKeys, confirmedByRead, userErrors };
 }
 
-/** Separator for a confirmed `${locale} ${key}` pair (NUL can't occur in a
- * locale or a translation key). */
-export const LOCALE_KEY_SEP = " ";
+/**
+ * Which keys still CARRY a translation in this locale.
+ *
+ * The market rule mirrors `translationsRemove`: with no `marketId` the GLOBAL
+ * layer is the target, so a market OVERRIDE left behind does not count as the
+ * global one surviving — and with a `marketId` only that market's row does.
+ */
+async function translatedKeysForLocale(
+  gateway: ShopifyApiGateway,
+  resourceId: string,
+  locale: string,
+  marketId: string,
+): Promise<Set<string>> {
+  const response = await gateway.graphql(
+    `#graphql
+      query verifyTranslationRemoval($resourceId: ID!, $locale: String!) {
+        translatableResource(resourceId: $resourceId) {
+          translations(locale: $locale) {
+            key
+            value
+            market { id }
+          }
+        }
+      }`,
+    { variables: { resourceId, locale } },
+  );
+  const data = (await response.json()) as {
+    data?: {
+      translatableResource?: {
+        translations?: Array<{ key: string; value: string | null; market?: { id: string } | null }>;
+      } | null;
+    };
+    errors?: { message: string }[];
+  };
+  if (data.errors && data.errors.length > 0) throw new Error(data.errors[0].message);
+  // An ABSENT `translatableResource` is not an empty one. It means the query
+  // answered about nothing — a resource that does not exist, is not
+  // translatable, or a shape we did not get. Reading that as "the key is gone"
+  // would confirm every removal against a failed lookup, which is the
+  // `translatableContent` trap in CLAUDE.md wearing a different hat.
+  const resource = data.data?.translatableResource;
+  if (!resource) throw new Error("translatableResource did not answer");
+  const present = new Set<string>();
+  for (const row of resource.translations ?? []) {
+    const rowMarket = row.market?.id ?? "";
+    if (rowMarket !== marketId) continue;
+    if (row.value === null || row.value === "") continue;
+    present.add(row.key);
+  }
+  return present;
+}
+
+/** Separator for a confirmed `${locale}\u0000${key}` pair (NUL can't occur in a
+ * locale or a translation key). Written as an ESCAPE, never as a literal
+ * control byte: a raw NUL makes git classify this file as binary, and the
+ * module that owns every echo-verified translation write and removal would be
+ * unreviewable in a diff. */
+export const LOCALE_KEY_SEP = "\u0000";
 
 /**
  * translationsRemove for ONE resource across SEVERAL locales in a single call,
  * with per-(locale, key) echo verification — the multi-locale generalization
  * of removeAndVerify used by the primary-save stale-translation invalidation
- * (Plan §6.6 / Phase 4b). Returns the set of CONFIRMED `${locale} ${key}`
+ * (Plan §6.6 / Phase 4b). Returns the set of CONFIRMED `${locale}\u0000${key}`
  * pairs Shopify echoed back; ONLY those may be deleted locally (an unconfirmed
  * removal keeps the local row — CLAUDE.md). Throws on transport/GraphQL errors.
  */
@@ -703,5 +809,32 @@ export async function removeAndVerifyAcrossLocales(
   const echoed = data.data?.translationsRemove?.translations ?? [];
   const confirmedPairs = new Set<string>();
   for (const t of echoed ?? []) confirmedPairs.add(`${t.locale}${LOCALE_KEY_SEP}${t.key}`);
+
+  // The same rule as the single-locale removal above: an unechoed pair is not
+  // a failure, it is an unanswered question. `translationsRemove` echoes what
+  // it DELETED, so a key that carried nothing on Shopify comes back empty and
+  // the stale local row would survive a purge that had nothing left to do.
+  //
+  // Bounded on purpose: one re-read per locale that actually has an unechoed
+  // key, and none at all in the normal case where everything echoed.
+  const locales_with_gaps = locales.filter((locale) =>
+    translationKeys.some((key) => !confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`)),
+  );
+  for (const locale of locales_with_gaps) {
+    try {
+      const present = await translatedKeysForLocale(gateway, resourceId, locale, marketId);
+      for (const key of translationKeys) {
+        if (!present.has(key)) confirmedPairs.add(`${locale}${LOCALE_KEY_SEP}${key}`);
+      }
+    } catch (error) {
+      // A failed re-read confirms nothing; those pairs stay unconfirmed.
+      logger.warn("[BULK] removal re-read failed for a locale — pairs stay unconfirmed", {
+        context: "Bulk",
+        resourceId,
+        locale,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   return { confirmedPairs, userErrors };
 }

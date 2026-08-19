@@ -272,6 +272,63 @@ describe("removeAndVerify", () => {
     expect(calls[0].variables?.marketIds).toEqual(["gid://shopify/Market/3"]);
   });
 
+  it("confirms an unechoed key when a fresh read shows it is GONE", async () => {
+    // `translationsRemove` echoes what it DELETED, so a key that carried no
+    // translation on Shopify comes back empty — and the merchant was told
+    // "the translation was kept" about a field they had just cleared, with no
+    // way to clear it. The re-read is the stronger form of the echo rule: it
+    // asks for the state the rule exists to protect.
+    const { gateway, calls } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: { translations: [{ key: "body_html", value: "x", market: null }] } } },
+    );
+
+    const { confirmedKeys, confirmedByRead } = await removeAndVerify(
+      gateway,
+      PRODUCT_ID,
+      ["title", "body_html"],
+      LOCALE,
+      "",
+    );
+
+    expect(confirmedKeys.has("title")).toBe(true);
+    expect(confirmedByRead?.has("title")).toBe(true);
+    // Still there on Shopify ⇒ still not confirmed ⇒ the local row stays.
+    expect(confirmedKeys.has("body_html")).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("treats an ABSENT translatableResource as inconclusive, never as removed", async () => {
+    // A query that answered about nothing is not evidence that a key is gone
+    // — the `translatableContent` trap wearing a different hat.
+    const { gateway } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : { data: { translatableResource: null } },
+    );
+    const { confirmedKeys } = await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
+    expect(confirmedKeys.size).toBe(0);
+  });
+
+  it("does not let a MARKET override count as the global translation surviving", async () => {
+    const { gateway } = fakeGateway((query: string) =>
+      query.includes("translationsRemove")
+        ? { data: { translationsRemove: { translations: [], userErrors: [] } } }
+        : {
+            data: {
+              translatableResource: {
+                translations: [
+                  { key: "title", value: "market only", market: { id: "gid://shopify/Market/3" } },
+                ],
+              },
+            },
+          },
+    );
+    const { confirmedKeys } = await removeAndVerify(gateway, PRODUCT_ID, ["title"], LOCALE, "");
+    expect(confirmedKeys.has("title")).toBe(true);
+  });
+
   it("passes marketIds: null for a global removal", async () => {
     const { gateway, calls } = fakeGateway(() => ({
       data: { translationsRemove: { translations: [], userErrors: [] } },
@@ -309,10 +366,14 @@ describe("removeAndVerifyAcrossLocales (Phase 4b invalidation)", () => {
     // Not echoed → not confirmed → the caller keeps those local rows.
     expect(confirmedPairs.has(`fr${LOCALE_KEY_SEP}title`)).toBe(false);
     expect(confirmedPairs.has(`de${LOCALE_KEY_SEP}body_html`)).toBe(false);
-    // One call, all locales at once.
-    expect(calls).toHaveLength(1);
-    expect(calls[0].variables?.locales).toEqual(["de", "fr"]);
-    expect(calls[0].variables?.marketIds).toBeNull();
+    // The REMOVAL is still one call for all locales — that is the point of
+    // this function and it has not changed. The extra calls are the re-reads
+    // an unechoed pair now triggers, one per locale that has a gap, and here
+    // they answer with nothing usable so nothing extra is confirmed.
+    const removals = calls.filter((c) => c.variables?.translationKeys !== undefined);
+    expect(removals).toHaveLength(1);
+    expect(removals[0].variables?.locales).toEqual(["de", "fr"]);
+    expect(removals[0].variables?.marketIds).toBeNull();
   });
 
   it("no-ops without keys or locales (no Shopify call)", async () => {

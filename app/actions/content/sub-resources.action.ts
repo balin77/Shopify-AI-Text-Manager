@@ -978,6 +978,10 @@ export async function handleSavePrimarySubResources(
     );
     const purgeStaleTranslations =
       changedOptionIds.length > 0 || changedMetafieldIds.length > 0
+        // No `reconciled` flag: option / option-value / metafield
+        // translations ride on their own Shopify resources, which the sync's
+        // re-translation never looks at — so the merchant's stored choice
+        // governs here even with auto-translate on.
         ? await isPurgeOnPrimaryChangeEnabled(session.shop, db)
         : false;
 

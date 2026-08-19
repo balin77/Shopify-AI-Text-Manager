@@ -44,6 +44,9 @@ export function ColorFieldEditor({
         onChange={onChange}
         disabled={readOnly}
         invalidMessage={content.metaobjectEntryColorInvalid || "Enter a hex colour, e.g. #A1B2C3."}
+        showBaseColors={!readOnly}
+        baseColorsLabel={content.metaobjectColorBasePalette}
+        conventionHint={content.metaobjectColorBaseConvention}
       />
       {readOnly && (
         <Text as="span" variant="bodySm" tone="subdued">

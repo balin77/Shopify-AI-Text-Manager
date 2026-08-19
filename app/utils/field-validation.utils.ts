@@ -7,6 +7,12 @@ import {
   FIELD_TO_LABEL_KEY,
   isMetaobjectLabelField,
 } from "~/constants/shopifyFields";
+import {
+  metaobjectFieldKey,
+  metaobjectTranslatableFields,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "~/services/metaobject-fields.shared";
 import { TIMING } from "~/constants/timing";
 import { PULSE_SYNC_EPOCH } from "~/utils/contentEditor.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -217,6 +223,23 @@ export function isFieldTranslated(
  * For templates: checks if any translatableContent entry has empty value.
  * Pass overlays to account for savedPrimaryValues that haven't revalidated yet.
  */
+/**
+ * Does this metaobject TYPE translate at all?
+ *
+ * Three-valued, and only a KNOWN false answers no. A definition whose
+ * Translations capability is switched off has no per-locale form for any of
+ * its fields, so counting them as missing would keep the language buttons
+ * pulsing on a shop where nothing CAN be translated — and the write path would
+ * refuse the register for want of a digest, so the merchant could not clear it
+ * either. `null`/`undefined` is UNKNOWN and keeps counting: hiding a real
+ * missing translation behind a guess is the worse of the two errors.
+ */
+function metaobjectTypeTranslates(selectedItem: TranslatableItem | null): boolean {
+  const capability = (selectedItem as unknown as { translatableCapability?: boolean | null } | null)
+    ?.translatableCapability;
+  return capability !== false;
+}
+
 export function hasPrimaryContentMissing(
   selectedItem: TranslatableItem | null,
   contentType: ContentType,
@@ -257,11 +280,17 @@ export function hasPrimaryContentMissing(
     }
     return metaobjects.some((metaobj: any) => {
       const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-      if (!labelField) return true;
-      // Check overlay first
-      if (overlays?.savedPrimaryValues?.[labelField.key] !== undefined) {
-        return isFieldEmpty(overlays.savedPrimaryValues[labelField.key]);
-      }
+      // NO label field is not missing CONTENT. The label keys are a naming
+      // CONVENTION (`display_name` / `name` / `label`), and a definition that
+      // names its display field differently is not an empty entry — reporting
+      // it as one made the orange pulse permanent for the whole type.
+      if (!labelField) return false;
+      // The overlay is keyed by the COMPOUND key, like every other editor
+      // value; a bare `"label"` lookup never hit and silently fell through to
+      // server data, so an entry the merchant had just filled in still counted
+      // as empty until the page reloaded.
+      const overlayValue = overlays?.savedPrimaryValues?.[metaobjectFieldKey(metaobj.id, labelField.key)];
+      if (overlayValue !== undefined) return isFieldEmpty(overlayValue);
       return isFieldEmpty(labelField.value);
     });
   }
@@ -362,12 +391,18 @@ export function hasLocaleMissingTranslations(
       return false;
     }
 
-    return metaobjects.some((metaobj: any) => {
-      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-      if (!labelField) return false;
-      const primaryValue = overlays?.savedPrimaryValues?.[labelField.key] ?? labelField.value;
+    // Addressed by COMPOUND key. This asked for a translation stored under the
+    // bare GID, which nothing has written since the editor learned to edit more
+    // than one field per entry — so every entry read as untranslated in every
+    // locale and the language buttons pulsed forever on a fully translated shop.
+    if (!metaobjectTypeTranslates(selectedItem)) return false;
+    return metaobjectTranslatableFields(
+      metaobjects,
+      (selectedItem as any).fieldDefinitions,
+    ).some((field) => {
+      const primaryValue = overlays?.savedPrimaryValues?.[field.compoundKey] ?? field.primaryValue;
       if (isFieldEmpty(primaryValue)) return false;
-      return !hasTranslationForField(selectedItem, metaobj.id, locale, overlays);
+      return !hasTranslationForField(selectedItem, field.compoundKey, locale, overlays);
     });
   }
 
@@ -456,8 +491,12 @@ export function getMissingPrimaryFields(
     return metaobjects
       .filter((metaobj: any) => {
         const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-        if (!labelField) return true;
-        const value = overlays?.savedPrimaryValues?.[labelField.key] ?? labelField.value;
+        // Same two rules as the flag above: a definition with no label field
+        // is not an empty entry, and the overlay is keyed by the compound key.
+        if (!labelField) return false;
+        const value =
+          overlays?.savedPrimaryValues?.[metaobjectFieldKey(metaobj.id, labelField.key)] ??
+          labelField.value;
         return isFieldEmpty(value);
       })
       .map((metaobj: any) => metaobj.id);
@@ -529,15 +568,21 @@ export function getMissingLocaleTranslationFields(
     if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
       return [];
     }
-    return metaobjects
-      .filter((metaobj: any) => {
-        const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-        if (!labelField) return false;
-        const primaryValue = overlays?.savedPrimaryValues?.[labelField.key] ?? labelField.value;
+    // Same compound-key rule as above, and the tooltip is where the old bug was
+    // VISIBLE: it listed every entry of the type as "missing translations".
+    if (!metaobjectTypeTranslates(selectedItem)) return [];
+    return metaobjectTranslatableFields(metaobjects, (selectedItem as any).fieldDefinitions)
+      .filter((field) => {
+        const primaryValue = overlays?.savedPrimaryValues?.[field.compoundKey] ?? field.primaryValue;
         if (isFieldEmpty(primaryValue)) return false;
-        return !hasTranslationForField(selectedItem, metaobj.id, locale, overlays);
+        return !hasTranslationForField(selectedItem, field.compoundKey, locale, overlays);
       })
-      .map((metaobj: any) => metaobj.id);
+      // The COMPOUND key, not a display label: `getLocaleButtonTooltip` splits
+      // `<gid>#<fieldKey>` itself to render "Rot / colour". Handing it a label
+      // collapsed every missing field of one entry into a single line (so one
+      // and five missing fields read alike) and mangled any name containing a
+      // slash, which "Rot / Blau" is.
+      .map((field) => field.compoundKey);
   }
 
   const requiredFields = getRequiredFieldsForContentType(contentType, selectedItem);
@@ -797,19 +842,27 @@ export function hasFieldMissingTranslations(
     );
   }
 
-  // Metaobjects: the primary value lives in the matching metaobject entry's
-  // `fields` blob (fieldKey is the metaobject GID), and translations are keyed
-  // by that same GID. primaryHasFieldContent/getFieldValue cannot resolve this
-  // shape (there is no top-level item property), so handle it explicitly —
-  // mirrors the theme branch above. Without this the primary field never gets
-  // the blue "missing translation" highlight.
+  // Metaobjects: the primary value lives in the matching entry's `fields`
+  // blob, and both it and its translation are addressed by the COMPOUND key
+  // `<gid>#<fieldKey>`. `primaryHasFieldContent`/`getFieldValue` cannot resolve
+  // that shape (there is no top-level item property), so it is handled here —
+  // mirroring the theme branch above.
+  //
+  // This had the mirror image of the locale bug: it matched the compound key
+  // against an entry ID, so `entry` was always undefined and the per-field
+  // marker never appeared at all — even on a field that genuinely had no
+  // translation. One key shape, one lookup, both directions right.
   if (contentType === 'metaobjects') {
-    const metaobjects = (selectedItem as unknown as {
-      metaobjects?: Array<{ id: string; displayName?: string | null; fields?: Array<{ key: string; value: string | null }> }>;
-    }).metaobjects;
-    const entry = Array.isArray(metaobjects) ? metaobjects.find(m => m.id === translationKey) : undefined;
-    const labelValue = entry?.fields?.find(f => isMetaobjectLabelField(f.key))?.value;
-    const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? labelValue ?? entry?.displayName ?? undefined;
+    if (!metaobjectTypeTranslates(selectedItem)) return false;
+    const item = selectedItem as unknown as {
+      metaobjects?: MetaobjectEntryLike[];
+      fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+    };
+    const field = metaobjectTranslatableFields(item.metaobjects, item.fieldDefinitions).find(
+      (f) => f.compoundKey === translationKey,
+    );
+    if (!field) return false;
+    const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? field.primaryValue;
     if (!primaryValue || isFieldEmpty(primaryValue)) return false;
     return foreignLocales.some(locale =>
       !hasTranslationForField(selectedItem, translationKey, locale.locale, overlays)
@@ -825,78 +878,4 @@ export function hasFieldMissingTranslations(
   );
 }
 
-/**
- * Get button style for locale navigation
- * Shows pulsing border animation when translations are missing
- * @deprecated Use useLocaleButtonStyle hook instead for better performance
- */
-export function getLocaleButtonStyle(
-  locale: ShopLocale,
-  selectedItem: TranslatableItem | null,
-  primaryLocale: string,
-  contentType: ContentType
-): React.CSSProperties {
-  const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType);
-  const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType);
 
-  if (primaryContentMissing || foreignTranslationMissing) {
-    const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
-    const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
-    const isOrange = primaryContentMissing;
-    const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
-    const pulse = isOrange ? 'pulse' : 'pulseBlue';
-
-    return {
-      animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
-      animationDelay: `0s, -${syncOffset}ms`,
-      borderRadius: "8px",
-    };
-  }
-
-  return {};
-}
-
-/**
- * Hook: Get button style for locale navigation with memoization.
- * Shows pulsing border animation when translations are missing.
- * Pass overlays + overlaysVersion to stay in sync with the editor's overlay state.
- */
-export function useLocaleButtonStyle(
-  locale: ShopLocale,
-  selectedItem: TranslatableItem | null,
-  primaryLocale: string,
-  contentType: ContentType,
-  isLoadingData: boolean = false,
-  overlays?: ValidationOverlays,
-  overlaysVersion?: number
-): React.CSSProperties {
-  // Track translations length separately so the memo recalculates when
-  // item.translations changes length (e.g. after Accept & Translate before revalidation).
-  const translationsLength = selectedItem?.translations?.length ?? 0;
-
-  return useMemo(() => {
-    if (isLoadingData) return {};
-
-    const primaryContentMissing = locale.primary && hasPrimaryContentMissing(selectedItem, contentType, overlays);
-    const foreignTranslationMissing = !locale.primary && hasLocaleMissingTranslations(selectedItem, locale.locale, primaryLocale, contentType, overlays);
-
-    if (primaryContentMissing || foreignTranslationMissing) {
-      const pulseDuration = TIMING.HIGHLIGHT_DURATION_MS;
-      const syncOffset = (Date.now() - PULSE_SYNC_EPOCH) % pulseDuration;
-      const isOrange = primaryContentMissing;
-      const fadeIn = isOrange ? 'pulseFadeIn' : 'pulseBlueFadeIn';
-      const pulse = isOrange ? 'pulse' : 'pulseBlue';
-
-      return {
-        animation: `${fadeIn} 500ms ease-out forwards, ${pulse} ${pulseDuration}ms ease-in-out infinite`,
-        animationDelay: `0s, -${syncOffset}ms`,
-        borderRadius: "8px",
-      };
-    }
-
-    return {};
-    // overlaysVersion is intentionally included so the memo re-runs when overlays change,
-    // even though overlays object reference is stable (it's a ref snapshot).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale, selectedItem, primaryLocale, contentType, isLoadingData, translationsLength, overlays, overlaysVersion]);
-}

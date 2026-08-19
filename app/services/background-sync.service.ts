@@ -529,7 +529,7 @@ export class BackgroundSyncService {
     // Stale-translation baseline, read BEFORE the transaction below overwrites
     // the digests it is compared against (see ProductSyncService.syncProduct).
     const previousDigests = options.reconcileTranslations
-      ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+      ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
           this.shop,
           pageData.id,
           "Page",
@@ -885,7 +885,7 @@ export class BackgroundSyncService {
     // that can notice a primary text changed in the Shopify admin. Baseline
     // read before the transaction rewrites the digests (see syncSinglePage).
     const previousDigests = options.reconcileTranslations
-      ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+      ? await (await import("./translations/stale-translation-sync.server")).loadPreviousTranslationDigests(
           this.shop,
           policyData.id,
           "ShopPolicy",
@@ -1303,7 +1303,7 @@ export class BackgroundSyncService {
     });
 
     const rowKey = (r: { resourceId: string; key: string; locale: string; marketId: string }) =>
-      `${r.resourceId} ${r.key} ${r.locale} ${r.marketId}`;
+      `${r.resourceId}\u0000${r.key}\u0000${r.locale}\u0000${r.marketId}`;
     const existingByKey = new Map(existing.map((r) => [rowKey(r), r]));
     const desiredKeys = new Set(desired.map(rowKey));
 

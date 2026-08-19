@@ -25,6 +25,18 @@ export function markTranslationSaved(resourceId: string): void {
   if (recentSaves.size > MAX_ENTRIES) evictExpired();
 }
 
+/**
+ * WHEN the resource was last marked, or null. `isTranslationRecentlySaved`
+ * answers "did anyone write recently", which cannot distinguish someone else's
+ * save from a mark this very code path just made — a detached re-translation
+ * that reads the boolean aborts on its own sibling's purge. Comparing this
+ * timestamp against one captured at the start of the run answers the question
+ * that path actually has: "did a write land AFTER I started?"
+ */
+export function translationSavedAt(resourceId: string): number | null {
+  return recentSaves.get(resourceId) ?? null;
+}
+
 export function isTranslationRecentlySaved(
   resourceId: string,
   windowMs = 30_000,

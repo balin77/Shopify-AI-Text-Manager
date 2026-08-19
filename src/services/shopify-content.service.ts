@@ -1217,7 +1217,18 @@ export class ShopifyContentService {
       const { isPurgeOnPrimaryChangeEnabled } = await import(
         "../../app/services/translations/translation-change-policy.server"
       );
-      if (changedFields && changedFields.length > 0 && (await isPurgeOnPrimaryChangeEnabled(shop, db))) {
+      // `reconciled` only for COLLECTION here: it is the one type on this path
+      // Shopify sends an update webhook for, so the sync re-translates it by
+      // itself. A page / article / blog / policy is reconciled only when the
+      // merchant presses reload on that item, which is not a repair we may
+      // trade a certain deletion for (translation-change-policy.server.ts).
+      if (
+        changedFields &&
+        changedFields.length > 0 &&
+        (await isPurgeOnPrimaryChangeEnabled(shop, db, {
+          reconciled: resourceType === "Collection",
+        }))
+      ) {
         // Map UI field names to Shopify translation keys — the ONE canonical
         // map (FIELD_TO_TRANSLATION_KEY, top of this file).
         const keyMapping = fieldTranslationKeyMap(resourceType);

@@ -64,7 +64,15 @@ interface Props {
   /** Fields of the definition this app has no editor for: name + Shopify type. */
   unsupportedFields: Array<{ label: string; fieldType: string }>;
   /** The rendered controls for the fields it CAN edit, minus the colour. */
-  children: ReactNode[];
+  /**
+   * The entry's field controls, laid out HORIZONTALLY.
+   *
+   * `wide` takes a whole row. A one-line text box next to another one-line
+   * text box reads fine; a textarea, a rich-text preview or a chip list next
+   * to anything reads as two half-broken columns, and the chips wrap into a
+   * column so narrow that two of them no longer fit on a line.
+   */
+  children: Array<{ key: string; node: ReactNode; wide?: boolean }>;
   /**
    * The COLOUR control, lifted out of the field list into the header.
    *
@@ -272,7 +280,32 @@ export function MetaobjectEntryCard({
           </Text>
         )}
 
-        {children.length > 0 && <BlockStack gap="300">{children}</BlockStack>}
+        {children.length > 0 && (
+          // A GRID rather than a stack. Every field used to get a full row of
+          // its own, so a five-field entry was five screen-wide lines for
+          // controls that are mostly one line tall — on a type with 25 entries
+          // that is a page nobody can survey. `auto-fit` + `minmax` needs no
+          // breakpoints: the row takes as many columns as fit at the current
+          // width and stretches them, and below one column's minimum the
+          // fields stack exactly as they did before.
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(var(--app-entry-field-min-width), 1fr))",
+              gap: "var(--p-space-300)",
+              // Fields differ in height (a text box next to a chip list), and
+              // without this each row would stretch every control to the
+              // tallest one in it.
+              alignItems: "start",
+            }}
+          >
+            {children.map((child) => (
+              <div key={child.key} style={child.wide ? { gridColumn: "1 / -1" } : undefined}>
+                {child.node}
+              </div>
+            ))}
+          </div>
+        )}
         {/* The COLOUR counts as an editable field even though it renders in the
             header — saying "nothing here can be edited" above a working colour
             picker is the kind of wrong that makes a merchant stop looking. */}
