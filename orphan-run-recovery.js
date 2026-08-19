@@ -26,8 +26,9 @@
  * Two rules, and the difference between them is the whole design:
  *
  *  1. HEARTBEAT types (`HEARTBEAT_TASK_TYPES`) report progress at a BOUNDED
- *     interval — the crawl writes `Task.progress` at least every 10s through
- *     every phase, including the external-link pass. For those, silence longer
+ *     interval — the crawl writes `Task.progress` at least every 10s inside the
+ *     fetch loop, at every boundary of the post-crawl tail, and throughout the
+ *     external-link pass. For those, silence longer
  *     than `heartbeatStallMs` means the runner is gone, not that it is busy.
  *     A type that can legitimately go quiet for minutes (a bulk AI job between
  *     two provider calls) must NOT be listed here: it keeps the generous
@@ -59,13 +60,22 @@ export const HEARTBEAT_TASK_TYPES = ["seoCrawl"];
 
 /**
  * Longest silence a heartbeat-type run may have before it counts as orphaned.
- * The crawl's own ceiling is 10s (HEARTBEAT_MAX_INTERVAL_MS in crawl.service.ts),
- * so this is an order of magnitude of headroom for a slow persistence phase on a
- * 2000-page shop. Env-overridable so an operator can raise it without a redeploy.
+ *
+ * The crawl's own ceiling inside the fetch loop is 10s
+ * (HEARTBEAT_MAX_INTERVAL_MS in crawl.service.ts) and its post-crawl tail beats
+ * at every boundary (URL resolve, head drift, bulk insert), so the longest
+ * silence a HEALTHY run can produce is one DB round trip over `maxPages` rows.
+ * Five minutes is an order of magnitude above that: the cost of being wrong here
+ * is not a delayed cleanup but a LIVE crawl reaped mid-run — its snapshot closed
+ * under it and single-flight opened for a second crawl against the same
+ * storefront. The deploy case does not depend on this number at all (boot
+ * recovery drops the age check), so headroom is nearly free.
+ *
+ * Env-overridable so an operator can raise it without a redeploy.
  */
 export const HEARTBEAT_STALL_MS = Math.max(
-  30_000,
-  parseInt(process.env.HEARTBEAT_TASK_TIMEOUT_MS || String(3 * 60 * 1000), 10) || 3 * 60 * 1000,
+  60_000,
+  parseInt(process.env.HEARTBEAT_TASK_TIMEOUT_MS || String(5 * 60 * 1000), 10) || 5 * 60 * 1000,
 );
 
 const NON_TERMINAL = ["running", "pending", "queued"];
@@ -86,11 +96,20 @@ const NON_TERMINAL = ["running", "pending", "queued"];
  * Only `running` rows: `pending`/`queued` are the queue's business and are
  * reset by `resetPendingTasks`, not failed.
  */
+/**
+ * @param {any} prisma
+ * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null }} [options]
+ * @returns {Promise<{ count: number, shops: string[] }>}
+ */
 export async function failOrphanedRuns(prisma, options = {}) {
   const { olderThan = null, types = HEARTBEAT_TASK_TYPES, shops = null } = options;
+  // An EMPTY list means "no shops", never "every shop": a caller that computed
+  // its scope and came up empty must sweep nothing. Reading it as unscoped is
+  // how a multi-tenant guard fails open.
+  if (shops && shops.length === 0) return { count: 0, shops: [] };
   const where = { type: { in: types }, status: "running" };
   if (olderThan) where.updatedAt = { lt: olderThan };
-  if (shops && shops.length > 0) where.shop = { in: shops };
+  if (shops) where.shop = { in: shops };
 
   const rows = await prisma.task.findMany({ where, select: { id: true, shop: true, type: true } });
   if (rows.length === 0) return { count: 0, shops: [] };
@@ -123,9 +142,17 @@ export async function failOrphanedRuns(prisma, options = {}) {
  * hide a failure is how a merchant ends up with no explanation for why nothing
  * changed.
  */
+/**
+ * @param {any} prisma
+ * @param {string[] | null} [shops] `null` sweeps the whole table; `[]` sweeps nothing.
+ * @returns {Promise<number>}
+ */
 export async function reconcileOrphanCrawlSnapshots(prisma, shops = null) {
+  // Same rule as `failOrphanedRuns`: `[]` scopes to nothing, `null` is the
+  // deliberate table-wide sweep.
+  if (shops && shops.length === 0) return 0;
   const openWhere = { status: "running" };
-  if (shops && shops.length > 0) openWhere.shop = { in: shops };
+  if (shops) openWhere.shop = { in: shops };
 
   const open = await prisma.seoCrawlSnapshot.findMany({
     where: openWhere,
@@ -172,9 +199,13 @@ export async function reconcileOrphanCrawlSnapshots(prisma, shops = null) {
  * never touched snapshots at all — and those rows would otherwise stay open for
  * good.
  */
+/**
+ * @param {any} prisma
+ * @param {{ olderThan?: Date | null, types?: string[], shops?: string[] | null }} [options]
+ * @returns {Promise<{ tasks: number, snapshots: number, shops: string[] }>}
+ */
 export async function recoverOrphanedRuns(prisma, options = {}) {
   const { count, shops: failedShops } = await failOrphanedRuns(prisma, options);
-  const scope = options.shops && options.shops.length > 0 ? options.shops : null;
-  const snapshots = await reconcileOrphanCrawlSnapshots(prisma, scope);
+  const snapshots = await reconcileOrphanCrawlSnapshots(prisma, options.shops ?? null);
   return { tasks: count, snapshots, shops: failedShops };
 }

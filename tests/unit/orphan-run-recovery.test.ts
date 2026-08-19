@@ -78,6 +78,19 @@ describe("failOrphanedRuns", () => {
     expect(taskFindMany.mock.calls[0][0].where.shop).toEqual({ in: ["a.myshopify.com"] });
   });
 
+  it("treats an EMPTY shop list as no shops, never as every shop", async () => {
+    // A caller that computed its scope and came up empty must sweep nothing:
+    // reading `[]` as unscoped is how a multi-tenant guard fails open.
+    const res = await failOrphanedRuns(prisma, { olderThan: null, shops: [] });
+    expect(res).toEqual({ count: 0, shops: [] });
+    expect(taskFindMany).not.toHaveBeenCalled();
+    await expect(reconcileOrphanCrawlSnapshots(prisma, [])).resolves.toBe(0);
+    expect(snapshotFindMany).not.toHaveBeenCalled();
+    await recoverOrphanedRuns(prisma, { olderThan: null, shops: [] });
+    expect(taskFindMany).not.toHaveBeenCalled();
+    expect(snapshotFindMany).not.toHaveBeenCalled();
+  });
+
   it("writes nothing when there is no orphan", async () => {
     const res = await failOrphanedRuns(prisma, { olderThan: null });
     expect(res).toEqual({ count: 0, shops: [] });
