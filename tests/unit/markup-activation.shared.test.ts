@@ -266,8 +266,8 @@ describe("groupGatesByAction", () => {
       { label: "b", verdict: "appOnly" },
       { label: "c", verdict: "duplicateForeign" },
     ]);
-    expect(groups[0].action).toBe("themeFix");
-    expect(actionTone("themeFix")).toBe("critical");
+    expect(groups[0].action).toBe("foreignFix");
+    expect(actionTone("foreignFix")).toBe("critical");
     expect(actionTone("hold")).toBe("warning");
     expect(actionTone("enable")).toBe("success");
   });

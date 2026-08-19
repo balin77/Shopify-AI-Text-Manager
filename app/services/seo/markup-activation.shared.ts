@@ -295,7 +295,10 @@ export type ActivationAction =
   | "running" // ours, exactly once — the intended end state
   | "hold" // already served by someone: do not switch ours on
   | "switchOff" // duplicated, one copy ours — our switch fixes it
-  | "themeFix" // duplicated, none of it ours — fixable only in the theme
+  // Duplicated with no copy of ours: not fixable from this app. NOT "themeFix"
+  // — the second source is as often another app as it is the theme, and naming
+  // the theme sends a merchant to the one place the markup may not be.
+  | "foreignFix"
   | "noVerdict"; // not measured, or not judgeable (repeatable type)
 
 export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
@@ -305,7 +308,7 @@ export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
   mixed: "hold",
   originUnknown: "hold",
   duplicateApp: "switchOff",
-  duplicateForeign: "themeFix",
+  duplicateForeign: "foreignFix",
   unknown: "noVerdict",
   repeatableUnjudged: "noVerdict",
 };
@@ -313,7 +316,7 @@ export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
 /** Most urgent first — the order a summary line reads them in. */
 export const ACTION_ORDER: ActivationAction[] = [
   "switchOff",
-  "themeFix",
+  "foreignFix",
   "hold",
   "running",
   "enable",
@@ -342,7 +345,7 @@ export function groupGatesByAction<T>(
 export function actionTone(action: ActivationAction): "critical" | "warning" | "success" | "info" {
   switch (action) {
     case "switchOff":
-    case "themeFix":
+    case "foreignFix":
       return "critical";
     case "hold":
       return "warning";
