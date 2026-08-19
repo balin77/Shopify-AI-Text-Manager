@@ -43,11 +43,11 @@ describe("groupDetailsFields", () => {
     // further up the card.
     const blocks = groupDetailsFields([
       field("vendor", "organization"),
-      field("price", "commerce"),
+      field("templateSuffix", "theme"),
       field("tags", "organization"),
     ]);
 
-    expect(blocks.map((b) => b.id)).toEqual(["organization", "commerce", "organization"]);
+    expect(blocks.map((b) => b.id)).toEqual(["organization", "theme", "organization"]);
   });
 
   it("collects unsectioned fields into null blocks", () => {
@@ -85,9 +85,18 @@ describe("shouldRenderDetailsSections", () => {
 describe("content configs", () => {
   it("splits the product Details card into contiguous sections", () => {
     const blocks = groupDetailsFields(detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions));
-    expect(blocks.map((b) => b.id)).toEqual(["commerce", "organization", "theme"]);
+    // The sales-channel panel leads, UNSECTIONED — see the exception below.
+    expect(blocks.map((b) => b.id)).toEqual([null, "organization", "theme"]);
+    expect(blocks[0].fields.map((f) => f.key)).toEqual(["commerce"]);
     expect(blocks[1].fields.map((f) => f.key)).toEqual(["vendor", "category", "collections", "tags"]);
     expect(shouldRenderDetailsSections(blocks)).toBe(true);
+  });
+
+  it("keeps the default variant's price out of the Details card", () => {
+    // It describes a VARIANT and lives in the variants card, next to the
+    // options that say which variant is which. A second price control here
+    // would be a second answer to one question.
+    expect(PRODUCTS_CONFIG.fieldDefinitions.map((f) => f.key)).not.toContain("price");
   });
 
   it("splits collections into organization + theme", () => {
@@ -110,9 +119,17 @@ describe("content configs", () => {
     }
   });
 
-  it("gives every attribute field a section, so none renders outside a subcard", () => {
+  it("gives every attribute field a section — except the one that draws its own", () => {
+    // `commerce` is the single exception and is named here rather than left as
+    // a hole: the sales-channel panel renders its own heading, so a subcard
+    // around it would print the same word twice. Anything else without a
+    // section is an oversight.
     for (const config of [PRODUCTS_CONFIG, COLLECTIONS_CONFIG, PAGES_CONFIG, BLOGS_CONFIG]) {
       for (const f of detailsCardFields(config.fieldDefinitions)) {
+        if (f.key === "commerce") {
+          expect(f.detailsSection).toBeUndefined();
+          continue;
+        }
         expect(f.detailsSection, `${config.contentType}/${f.key}`).toBeTruthy();
       }
     }
@@ -127,6 +144,6 @@ describe("detailsSectionLabel", () => {
 
   it("falls back to English when the bundle has no entry", () => {
     expect(detailsSectionLabel({}, "organization")).toBe(DETAILS_SECTION_FALLBACK_LABELS.organization);
-    expect(detailsSectionLabel({ content: {} }, "commerce")).toBe(DETAILS_SECTION_FALLBACK_LABELS.commerce);
+    expect(detailsSectionLabel({ content: {} }, "theme")).toBe(DETAILS_SECTION_FALLBACK_LABELS.theme);
   });
 });

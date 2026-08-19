@@ -22,6 +22,10 @@ export const de = {
   // Products Page
   products: {
     variantsTitle: "Varianten",
+    // Dieselbe Karte, wenn das Produkt (noch) keine Option hat: sie zeigt
+    // dann Preis, Bestand und Versand der einen Standardvariante — und den
+    // Button, mit dem Varianten überhaupt erst entstehen.
+    variantsTitleNoVariants: "Preis und Bestand",
     addOption: "Variante hinzufügen",
     optionNamePlaceholder: "Grösse, Farbe, Material",
     deleteOption: "Löschen",
@@ -415,7 +419,7 @@ export const de = {
     fieldLabels: {
       collectionRules: "Automatische Regeln",
       images: "Bilder",
-      commerce: "Bestand und Vertriebskanäle",
+      commerce: "Vertriebskanäle",
       category: "Produktkategorie",
       collections: "Kategorien",
       productTitle: "Produkttitel",
@@ -438,7 +442,6 @@ export const de = {
       sortOrder: "Sortierung",
       templateSuffix: "Theme-Template",
       isPublished: "Im Onlineshop sichtbar",
-      price: "Preis (Standardvariante)",
     },
     // Resource names
     resourceNames: {
@@ -674,7 +677,6 @@ export const de = {
     // (config/details-sections.ts). Shopifys Admin teilt dieselben Angaben
     // genauso auf.
     detailsSections: {
-      commerce: "Preis und Bestand",
       organization: "Organisation",
       theme: "Theme-Vorlage",
     },
@@ -712,10 +714,8 @@ export const de = {
     // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
     attributeNotes: {
       status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Kanäle verwaltest du im Shopify-Admin.",
-      price: "Gilt für die erste Variante. Produkte mit mehreren Varianten bepreist du im Bulk-Editor.",
       category: "Shopify nutzt die Kategorie für Steuersätze und für Marktplatz-Listings. Ein konkreter Typ ist besser als ein breiter Ast.",
       collections: "Regelbasierte Kategorien werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
-      commerce: "Bestand und Kanäle werden eigenständig gespeichert — über die Buttons in diesem Bereich, nicht über das normale Speichern.",
     },
     templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
     statusToggle: {

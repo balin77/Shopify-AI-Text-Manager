@@ -24,6 +24,9 @@ export const es: Translation = {
   // Products Page
   products: {
     variantsTitle: "Variantes",
+    // La misma tarjeta en un producto sin opciones (todavía): muestra el
+    // precio, el inventario y el envío de la única variante predeterminada.
+    variantsTitleNoVariants: "Precio e inventario",
     addOption: "Añadir variante",
     optionNamePlaceholder: "Talla, Color, Material",
     deleteOption: "Eliminar",
@@ -417,7 +420,7 @@ export const es: Translation = {
     fieldLabels: {
       collectionRules: "Reglas automáticas",
       images: "Imágenes",
-      commerce: "Inventario y canales de venta",
+      commerce: "Canales de venta",
       category: "Categoría de producto",
       collections: "Colecciones",
       productTitle: "Título del producto",
@@ -440,7 +443,6 @@ export const es: Translation = {
       sortOrder: "Orden",
       templateSuffix: "Plantilla del tema",
       isPublished: "Visible en la tienda online",
-      price: "Precio (variante predeterminada)",
     },
     // Resource names
     resourceNames: {
@@ -670,7 +672,6 @@ export const es: Translation = {
     // Encabezados de las subtarjetas DENTRO de la tarjeta Detalles
     // (config/details-sections.ts).
     detailsSections: {
-      commerce: "Precio e inventario",
       organization: "Organización",
       theme: "Plantilla del tema",
     },
@@ -708,10 +709,8 @@ export const es: Translation = {
     // una existe porque los comerciantes asumen de forma fiable lo contrario.
     attributeNotes: {
       status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Gestiona los canales en el admin de Shopify.",
-      price: "Se aplica a la primera variante. Los productos con varias variantes se tarifican en el editor masivo.",
       category: "Shopify usa la categoría para los tipos impositivos y para los listados de marketplace. Un tipo concreto es mejor que una rama amplia.",
       collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
-      commerce: "El stock y los canales se guardan por separado — con los botones de esta sección, no con el guardado normal.",
     },
     templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
     statusToggle: {

@@ -25,6 +25,10 @@ export const en: Translation = {
   // Products Page
   products: {
     variantsTitle: "Variants",
+    // The same card on a product that has no option (yet): it shows the
+    // price, stock and shipping of the single default variant — and the
+    // button that creates variants in the first place.
+    variantsTitleNoVariants: "Price and inventory",
     addOption: "Add variant",
     optionNamePlaceholder: "Size, Colour, Material",
     deleteOption: "Delete",
@@ -418,7 +422,7 @@ export const en: Translation = {
     fieldLabels: {
       collectionRules: "Automated rules",
       images: "Images",
-      commerce: "Stock and sales channels",
+      commerce: "Sales channels",
       category: "Product category",
       collections: "Collections",
       productTitle: "Product Title",
@@ -441,7 +445,6 @@ export const en: Translation = {
       sortOrder: "Sort order",
       templateSuffix: "Theme template",
       isPublished: "Visible in the online store",
-      price: "Price (default variant)",
     },
     // Resource names
     resourceNames: {
@@ -674,7 +677,6 @@ export const en: Translation = {
     // Headings of the subcards INSIDE the Details card
     // (config/details-sections.ts).
     detailsSections: {
-      commerce: "Price and inventory",
       organization: "Organization",
       theme: "Theme template",
     },
@@ -712,10 +714,8 @@ export const en: Translation = {
     // each one exists because merchants reliably assume the opposite.
     attributeNotes: {
       status: "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
-      price: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
       category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
       collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
-      commerce: "Stock and channels are saved on their own — the buttons in this section, not the main save.",
     },
     templateSuffixHelp: "Empty = the theme's default template.",
     statusToggle: {

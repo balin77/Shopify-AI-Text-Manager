@@ -595,12 +595,27 @@ export function VariantOptionsEditor({
     setDraft(null);
   };
 
+  /**
+   * "Varianten" is a lie on a product that has none.
+   *
+   * Most products never get an option: they are one thing at one price, and the
+   * card still has to appear because it is where the price, the stock and the
+   * shipping settings of that single default variant live -- and where "add a
+   * variant" is. Titled "Variants" it named the one thing the card did NOT
+   * show, so it reads as its content instead until an option exists.
+   *
+   * `optionsToCreate` counts: an option typed but not yet saved is already
+   * about variants, and a heading that only catches up after a save would flip
+   * under the merchant's hands at an unrelated moment.
+   */
+  const hasVariants = visible.length > 0 || optionsToCreate.length > 0;
+
   return (
     <Card>
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center">
           <Text as="h3" variant="headingMd" fontWeight="bold">
-            {t.title || "Variants"}
+            {(hasVariants ? t.title : t.titleNoVariants || t.title) || "Variants"}
           </Text>
           <Button
             icon={PlusIcon}
