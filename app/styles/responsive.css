@@ -173,13 +173,24 @@
                                      rather than written as `1rem` at the two
                                      call sites, because the two flex bases
                                      below are computed from it and would
-                                     silently drift out of step. */
+                                     silently drift out of step.
+
+     --app-details-card-half-height  HALF a card. The grid counts in half rows:
+                                     an ordinary field spans two of them, and a
+                                     field that is one bare control — a vendor
+                                     name, a theme template — spans one, so two
+                                     of those stack in the space of one. It is a
+                                     MINIMUM (`minmax(…, auto)`), so a card with
+                                     more in it than fits still grows rather
+                                     than clipping. Measured against a card
+                                     holding a label and one Polaris input. */
   --app-field-border-color: #c9cccf;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
   --app-attribute-grid-min-width: 260px;
   --app-details-field-min-width: 180px;
   --app-details-grid-gap: 1rem;
+  --app-details-card-half-height: 5.5rem;
   /* The two regions of the Details card, expressed in COLUMNS of the grid
      above: the short fields want three of them side by side before the sales
      channels are worth putting next to them, and the channel panel is the
@@ -261,10 +272,10 @@
 }
 
 /* ── THE DETAILS CARD'S LAYOUT ──────────────────────────────────────────────
-   One grid, one grey panel, no subcards. The card used to split into titled
-   subcards per section, which on a product meant three frames for six fields
-   and a heading ("Theme-Vorlage") standing directly above a field already
-   called "Theme-Template". The fields ARE the section names.
+   One grey card PER FIELD, laid out in a grid that counts in half rows. It was
+   one panel around everything for a release, and before that a titled subcard
+   per section — which put a heading reading "Theme-Vorlage" directly above a
+   field already called "Theme-Template". The fields ARE the section names.
 
    Two regions, not one grid, and the reason is the sales-channel panel. It is
    the one field here that is a LIST rather than a box, so it wants roughly
@@ -291,12 +302,41 @@
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(var(--app-details-field-min-width), 1fr));
+  /* HALF rows. An ordinary field spans two and a bare control spans one, so the
+     short fields pair up instead of each taking a card's worth of grey. `auto`
+     as the maximum, never a fixed height: a collection picker that grew three
+     banners has to push its row taller, not clip them. */
+  grid-auto-rows: minmax(var(--app-details-card-half-height), auto);
   gap: var(--app-details-grid-gap);
-  /* `start`, so a field with a note under it does not stretch the box of the
-     field beside it. The input boxes themselves line up because every control
-     in this card opens with one label row and then the box — everything else
-     a field has to say comes after it. */
-  align-items: start;
+}
+
+/* Every cell is a card, and a card fills the cell it was given — otherwise a
+   row of grey boxes ends at three different heights and the grid stops reading
+   as one. The grid item stretches by itself; this is what passes that height
+   down to Polaris' Card, whose outer element is a `ShadowBevel` div that sizes
+   to its content. Expressed as "the child grows" rather than by naming the
+   Polaris class, so a renamed internal cannot silently flatten the row. */
+.app-details-layout__grid > *,
+.app-details-layout__aside {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app-details-layout__grid > * > *,
+.app-details-layout__aside > * {
+  flex: 1 1 auto;
+}
+
+/* One bare control — a label and a box — in half a card. */
+.app-details-layout__grid > .app-details-field--half {
+  grid-row: span 1;
+}
+
+/* Everything else. Stated rather than left to the default, because the default
+   is ONE row and one row is now half a card. */
+.app-details-layout__grid > *:not(.app-details-field--half) {
+  grid-row: span 2;
 }
 
 .app-details-layout__aside {

@@ -265,7 +265,12 @@ export type FieldType =
   // loads LIVE and saves through its own endpoint: stock is volatile, so a
   // number carried in the editor's flat value map would be stale by the time
   // the merchant pressed save.
-  | 'commerce';
+  | 'commerce'
+  // The theme template. A `select` whose options are the template FILES of the
+  // published theme, so it needs a lookup before it knows what it offers —
+  // which is what keeps it out of the plain `select` type. It saves like any
+  // other attribute.
+  | 'themeTemplate';
 
 /**
  * One dynamic field handed to a page's `renderFieldGroup`.

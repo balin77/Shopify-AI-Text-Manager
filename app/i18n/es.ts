@@ -590,6 +590,11 @@ export const es: Translation = {
       unknown: "Aún no se ha cargado: recarga este producto para ver sus colecciones.",
       none: "Esta tienda todavía no tiene colecciones.",
     },
+    themeTemplate: {
+      defaultTemplate: "Predeterminada",
+      missingTemplate: "{suffix} — no está en el tema publicado",
+      lookupFailed: "No se pudieron leer las plantillas del tema — escribe aquí el nombre de la plantilla.",
+    },
     // PLAN §Phase 3.1 — avisos de atributos. Un código, redactado aquí, porque
     // la app se distribuye en tres idiomas.
     attributeWarnings: {

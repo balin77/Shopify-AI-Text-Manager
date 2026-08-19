@@ -341,6 +341,40 @@ export const GET_THEME_FILES = `#graphql
   }
 `;
 
+// Only the filenames. `GET_THEME_FILES` above selects the body because its
+// callers read the file; the template picker only needs to know which files
+// exist, and a theme's templates are large.
+export const GET_THEME_FILE_NAMES = `#graphql
+  query getThemeFileNames($themeId: ID!, $filenames: [String!]!, $first: Int!) {
+    theme(id: $themeId) {
+      files(filenames: $filenames, first: $first) {
+        nodes {
+          filename
+        }
+      }
+    }
+  }
+`;
+
+// The unfiltered sweep, used when the pattern query answers nothing: an
+// unsupported glob and a theme without custom templates look the same from
+// here, and only one of the two is worth reporting as "none".
+export const GET_ALL_THEME_FILE_NAMES = `#graphql
+  query getAllThemeFileNames($themeId: ID!, $first: Int!, $after: String) {
+    theme(id: $themeId) {
+      files(first: $first, after: $after) {
+        nodes {
+          filename
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
 export const GET_METAOBJECT_DEFINITIONS = `#graphql
   query getMetaobjectDefinitions($first: Int!) {
     metaobjectDefinitions(first: $first) {

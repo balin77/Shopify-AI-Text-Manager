@@ -3,6 +3,7 @@ import {
   splitDetailsFields,
   isDetailsAsideField,
   isFullWidthDetailsField,
+  isHalfHeightDetailsField,
 } from "../../app/config/details-layout";
 import {
   PRODUCTS_CONFIG,
@@ -56,6 +57,35 @@ describe("the two shape predicates", () => {
     expect(isFullWidthDetailsField({ type: "collectionRules" })).toBe(true);
   });
 
+  it("gives half a card to a field that is one bare control", () => {
+    // An attribute rendered as a single Polaris box: a label and an input, and
+    // nothing under it. Two of those stack in the space one tag picker takes.
+    const attribute = { translationKey: "", supportsTranslation: false };
+    expect(isHalfHeightDetailsField({ ...attribute, type: "text" })).toBe(true);
+    expect(isHalfHeightDetailsField({ ...attribute, type: "themeTemplate" })).toBe(true);
+    expect(isHalfHeightDetailsField({ ...attribute, type: "select" })).toBe(true);
+    expect(isHalfHeightDetailsField({ ...attribute, type: "toggle" })).toBe(true);
+  });
+
+  it("keeps the full card for anything that carries more than its box", () => {
+    const attribute = { translationKey: "", supportsTranslation: false };
+    // Chips under the input, a rule editor, a live panel.
+    for (const type of ["tags", "collections", "taxonomy", "collectionRules", "commerce"]) {
+      expect(isHalfHeightDetailsField({ ...attribute, type }), type).toBe(false);
+    }
+  });
+
+  it("does not shrink the product type — a `text` that is not an attribute", () => {
+    // `productType` is translatable CONTENT rendered in this card, so it goes
+    // through AIEditableField and carries the improve / translate / copy row
+    // underneath. Keying the half card off the type alone would cut that row's
+    // card in half; `isAttributeField` is the line, and it is the same
+    // predicate that decides how the field SAVES.
+    expect(
+      isHalfHeightDetailsField({ type: "text", translationKey: "product_type", supportsTranslation: true }),
+    ).toBe(false);
+  });
+
   it("leaves every ordinary field in a column of its own", () => {
     for (const type of ["text", "tags", "collections", "select", "toggle", "money"]) {
       expect(isDetailsAsideField({ type }), type).toBe(false);
@@ -74,6 +104,14 @@ describe("the two shape predicates", () => {
 });
 
 describe("content configs", () => {
+  it("halves exactly the vendor and the theme template on a product", () => {
+    const layout = splitDetailsFields(detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions));
+    expect(layout.grid.filter(isHalfHeightDetailsField).map((f) => f.key)).toEqual([
+      "vendor",
+      "templateSuffix",
+    ]);
+  });
+
   it("reads the product card left to right, channels last", () => {
     // The order the merchant asked for: vendor, product type, collections,
     // tags, theme template — and then the channel panel, which renders as the

@@ -156,9 +156,10 @@ button of its own.**
 - **The numbers live in the `:root` block of [responsive.css](app/styles/responsive.css)**, next to
   `--app-page-padding` and the widths: `--app-field-border-color`,
   `--app-field-border-radius`, `--app-field-label-weight`, plus the Details
-  card's grid (`--app-details-field-min-width`, `--app-details-grid-gap` and the
-  two flex bases DERIVED from them) and `--app-attribute-grid-min-width`, which
-  is now only the sales-channel panel's own column.
+  card's grid (`--app-details-field-min-width`, `--app-details-grid-gap`,
+  `--app-details-card-half-height` and the two flex bases DERIVED from them) and
+  `--app-attribute-grid-min-width`, which is now only the sales-channel panel's
+  own column.
 - **The frame is drawn on Polaris' Backdrop element**, in the one rule in that
   same file — the input itself has `border: none`, and Polaris hardcodes a
   `border-top-color` one shade darker again, so both have to be named.
@@ -202,15 +203,30 @@ button of its own.**
   a key may be named before its text is written and never shows as an empty
   circle. `helpText` under the control is for a value hint that changes with the
   value (a character count), not for an explanation a merchant reads once.
-- **The Details card is ONE grey panel and one grid, and a field's SHAPE is the
-  only thing left to decide.** It used to split into a titled subcard per
-  section, which on a product drew three frames around six fields and put a
-  heading reading "Theme-Vorlage" directly above a field labelled
+- **The Details card is one grey card PER FIELD on one grid, and a field's
+  SHAPE is the only thing left to decide.** It used to split into a titled
+  subcard per section, which on a product drew three frames around six fields
+  and put a heading reading "Theme-Vorlage" directly above a field labelled
   "Theme-Template" — the fields ARE the section names, and a word above vendor /
   product type / collections / tags saying "Organisation" adds a line and no
   information. [details-layout.ts](app/config/details-layout.ts) is what is left of that module, and it
   answers by field TYPE, never by key: a `commerce` field is the ASIDE, a
   `collectionRules` field spans the grid, everything else is a box.
+  **The grid counts in HALF rows.** An ordinary field spans two of them; a field
+  that is one bare control — a vendor name, a theme template — spans one, so two
+  of those stack in the space one tag picker takes instead of each carrying a
+  card's worth of empty grey. `isHalfHeightDetailsField` cannot key off the type
+  alone: `productType` is a `text` too, but it is translatable CONTENT, so it
+  renders through `AIEditableField` with the improve / translate / copy row
+  underneath and needs the whole card. `isAttributeField` is the line, and it is
+  the same predicate that decides how the field SAVES — so a new field cannot
+  end up with a bare control and a tall card or the reverse. The row maximum is
+  `auto`, never a fixed height: a collection picker that grew three banners
+  pushes its row taller rather than clipping them. And the CARD fills its cell
+  (the grid item stretches, its child grows), or a row of grey boxes ends at
+  three different heights and the grid stops reading as one — expressed as
+  "the child grows" rather than by naming Polaris' `ShadowBevel`, so a renamed
+  internal cannot silently flatten the row.
   **The aside is a flex region, not a wide grid cell**, and that is the load-
   bearing part: the sales-channel panel is a list of switch rows that wants
   roughly double the width and grows taller than anything beside it, and as a
@@ -230,6 +246,31 @@ button of its own.**
   qualifying banners above the picker — banners that only appear on some shops,
   so the misalignment came and went. Chips and banners say what the field
   already holds; they read fine underneath the control that changes it.
+- **The theme template is a DROPDOWN of the files that exist, and the stored
+  value is always one of its options.** A `templateSuffix` has to match
+  `templates/<resource>.<suffix>.{liquid,json}` in the PUBLISHED theme; a typo
+  renders the resource with the default template and reports nothing, anywhere,
+  which is why free text was the wrong control (Shopify's own admin offers a
+  list). [theme-templates.shared.ts](app/services/theme-templates.shared.ts) owns the naming rule,
+  [api.theme-templates.tsx](app/routes/api.theme-templates.tsx) the lookup and `ThemeTemplateField`
+  the control — which DELEGATES to `AttributeField` and only decides the
+  options, because a second copy of the foreign-locale and `attributesSyncedAt`
+  locks is how two controls in one card come to disagree about when they are
+  editable. Five rules. The theme is **MAIN**, never the one the theme selector
+  holds: `templateSuffix` decides what the STOREFRONT renders. The route asks a
+  glob query first and falls back to PAGING the file list when it matches
+  nothing, because "this theme has no custom templates" and "the pattern was not
+  honoured" are the same empty answer and only one of them is true. A failed
+  lookup is `success: false` and puts the plain TEXT box back — an empty
+  dropdown is a control whose next save clears a working value, the
+  `getCachedShopLocales` rule again. The stored suffix is ALWAYS in the option
+  list, including while the request is in flight: a Polaris `Select` whose value
+  matches no option renders the FIRST one, so a product on `product.wide` would
+  read as "Default" and the next save would make that true — once the list has
+  arrived and still lacks it, the option says so rather than disappearing. And
+  the blog tab's two resources template separately (`templates/blog.*` is the
+  article LIST, `templates/article.*` one post), so `templateResourceFor` splits
+  them on `isBlogContainer`.
 - **A combobox dropdown opens on FOCUS and freezes the page while it is up.**
   Polaris' `Combobox` opens its popover on focus but renders nothing when there
   are no options, so `ChipCombobox` offering an empty list at rest read as a

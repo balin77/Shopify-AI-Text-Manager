@@ -71,10 +71,17 @@ function tagsField(suggestionsKey: "productTags" | "articleTags"): FieldDefiniti
   };
 }
 
-/** Every type has one; the value is a theme file suffix, not a display name. */
+/**
+ * Every type has one; the value is a theme file suffix, not a display name.
+ *
+ * A `themeTemplate` rather than a `text`: the value has to match a FILE in the
+ * published theme, and a suffix nobody created renders the resource with the
+ * default template while reporting nothing anywhere. The options are looked up
+ * live — see `ThemeTemplateField`.
+ */
 const TEMPLATE_SUFFIX_FIELD: FieldDefinition = {
   key: "templateSuffix",
-  type: "text",
+  type: "themeTemplate",
   label: ATTRIBUTE_LABELS.templateSuffix,
   translationKey: "",
   supportsAI: false,

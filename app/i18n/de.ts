@@ -469,7 +469,7 @@ export const de = {
       tags: "Tags",
       author: "Autor",
       sortOrder: "Sortierung",
-      templateSuffix: "Theme-Template",
+      templateSuffix: "Theme Vorlage",
       isPublished: "Im Onlineshop sichtbar",
     },
     // Resource names
@@ -597,6 +597,14 @@ export const de = {
       truncated: "Dieses Produkt ist in mehr Kollektionen, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kollektionen zu sehen.",
       none: "Dieser Shop hat noch keine Kollektionen.",
+    },
+    // Das Theme-Vorlagen-Feld. Eine Auswahlliste der Vorlagendateien des
+    // veroeffentlichten Themes — ein selbst getippter Suffix rendert die
+    // Standardvorlage und meldet nirgends etwas.
+    themeTemplate: {
+      defaultTemplate: "Standard",
+      missingTemplate: "{suffix} — nicht im veröffentlichten Theme",
+      lookupFailed: "Die Vorlagen des Themes konnten nicht gelesen werden — trage den Namen der Vorlage hier von Hand ein.",
     },
     // PLAN §Phase 3.1 — Attribut-Warnungen. Ein Code, hier formuliert, weil die
     // App in drei Sprachen ausgeliefert wird.

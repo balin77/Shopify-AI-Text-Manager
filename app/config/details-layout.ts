@@ -29,14 +29,30 @@
  * grows the same control would otherwise have to be remembered here.
  */
 
+import { isAttributeField } from "../services/content-attributes.shared";
+
 /** Types that render as their own region beside the grid, not inside it. */
 const ASIDE_FIELD_TYPES = new Set(["commerce"]);
 
 /** Types that need the whole grid width wherever the grid is. */
 const FULL_WIDTH_FIELD_TYPES = new Set(["collectionRules"]);
 
+/**
+ * Types that are ONE control and nothing else — no chips under the box, no row
+ * of AI buttons, no banner about what could not be loaded.
+ *
+ * They get a half-height card, which is the whole reason the grid counts in
+ * half rows: a vendor name and a theme template are a label and a box, and a
+ * card sized for a tag list around them is mostly empty grey. Two of them stack
+ * in the space one ordinary field takes.
+ */
+const HALF_HEIGHT_FIELD_TYPES = new Set(["text", "select", "toggle", "money", "themeTemplate"]);
+
 export interface DetailsLayoutField {
   type: string;
+  translationKey?: string;
+  supportsTranslation?: boolean;
+  groupId?: string;
 }
 
 /** Does this field render beside the grid rather than in it? */
@@ -47,6 +63,20 @@ export function isDetailsAsideField(field: DetailsLayoutField): boolean {
 /** Does this field span every column of the grid? */
 export function isFullWidthDetailsField(field: DetailsLayoutField): boolean {
   return FULL_WIDTH_FIELD_TYPES.has(field.type);
+}
+
+/**
+ * Is one control the whole of this field, so half a card is enough?
+ *
+ * The type alone cannot answer it: `productType` is a `text` too, and it is
+ * NOT an attribute — it is translatable content, so it renders through
+ * `AIEditableField` with its improve / translate / copy row underneath and
+ * needs the full card. `isAttributeField` is exactly the line between the two,
+ * and it is the same predicate that decides the field's SAVE semantics, so a
+ * new field cannot end up with a bare control and a tall card or the reverse.
+ */
+export function isHalfHeightDetailsField(field: DetailsLayoutField): boolean {
+  return isAttributeField(field) && HALF_HEIGHT_FIELD_TYPES.has(field.type);
 }
 
 export interface DetailsLayout<F> {

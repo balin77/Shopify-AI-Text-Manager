@@ -14,6 +14,8 @@ import { AttributeField } from "./unified/AttributeField";
 import { CollectionRulesField } from "./unified/CollectionRulesField";
 import { TaxonomyField } from "./unified/TaxonomyField";
 import { CollectionsField } from "./unified/CollectionsField";
+import { ThemeTemplateField } from "./unified/ThemeTemplateField";
+import { templateResourceFor } from "../services/theme-templates.shared";
 import { CommerceField } from "./unified/CommerceField";
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
@@ -477,40 +479,68 @@ export function UnifiedFieldRenderer(
           }
         : {}),
     };
-    return (
-      <AttributeField
-        field={localizedField}
-        value={value}
-        onChange={onChange}
-        label={translatedFieldLabel}
-        isPrimaryLocale={isPrimaryLocale}
-        readOnly={readOnly}
-        attributesKnown={attributesKnown}
-        onReloadAttributes={onReloadAttributes}
-        readOnlyHint={
-          t.content?.primaryReadOnlyHint ||
-          "This field can't be edited in the main language here — manage the original in your Shopify admin."
-        }
-        suggestions={suggestions}
-        // ONE enum vocabulary, shared with the create modal — two copies of
-        // "Draft"/"Entwurf" would drift, and the raw wire values are what the
-        // editor showed before this existed.
-        optionLabels={(t.content?.enumLabels ?? {}) as Record<string, string>}
-        // Translated per field key; the config's own English string is the
-        // fallback for a note nobody has translated yet.
-        attributeNote={((t.content?.attributeNotes ?? {}) as Record<string, string>)[field.key]}
-        helpKey={helpKey}
-        t={{
-          notTranslatable: t.content?.attributesForeignLocale,
-          addTag: t.content?.addTag,
-          add: t.common?.add,
-          yes: t.common?.yes,
-          no: t.common?.no,
-          notSyncedYet: t.content?.attributesNotSyncedYet,
-          reload: t.common?.reload,
-        }}
-      />
-    );
+    // Built once and handed to whichever of the two controls renders it. The
+    // theme template is an AttributeField in every respect — same lock rules,
+    // same label, same reload — and differs only in where its options come
+    // from, so duplicating this prop list is how the two would come to disagree
+    // about when the field is editable.
+    const attributeProps = {
+      field: localizedField,
+      value,
+      onChange,
+      label: translatedFieldLabel,
+      isPrimaryLocale,
+      readOnly,
+      attributesKnown,
+      onReloadAttributes,
+      readOnlyHint:
+        t.content?.primaryReadOnlyHint ||
+        "This field can't be edited in the main language here — manage the original in your Shopify admin.",
+      suggestions,
+      // ONE enum vocabulary, shared with the create modal — two copies of
+      // "Draft"/"Entwurf" would drift, and the raw wire values are what the
+      // editor showed before this existed.
+      optionLabels: (t.content?.enumLabels ?? {}) as Record<string, string>,
+      // Translated per field key; the config's own English string is the
+      // fallback for a note nobody has translated yet.
+      attributeNote: ((t.content?.attributeNotes ?? {}) as Record<string, string>)[field.key],
+      helpKey,
+      t: {
+        notTranslatable: t.content?.attributesForeignLocale,
+        addTag: t.content?.addTag,
+        add: t.common?.add,
+        yes: t.common?.yes,
+        no: t.common?.no,
+        notSyncedYet: t.content?.attributesNotSyncedYet,
+        reload: t.common?.reload,
+      },
+    };
+
+    // The theme template offers the published theme's template FILES. The
+    // resource decides which family: a blog container templates its article
+    // LIST (`templates/blog.*`), an article one post (`templates/article.*`),
+    // and handing either the other's list offers suffixes that render nothing.
+    // An unrecognised content type falls through to the plain control rather
+    // than to an empty dropdown.
+    const templateResource =
+      field.type === "themeTemplate"
+        ? templateResourceFor(contentType, { isBlogContainer: selectedItem?.isBlogContainer === true })
+        : null;
+    if (templateResource) {
+      return (
+        <ThemeTemplateField
+          {...attributeProps}
+          resource={templateResource}
+          themeTemplateTexts={{
+            defaultTemplate: t.content?.themeTemplate?.defaultTemplate,
+            missingTemplate: t.content?.themeTemplate?.missingTemplate,
+            lookupFailed: t.content?.themeTemplate?.lookupFailed,
+          }}
+        />
+      );
+    }
+
+    return <AttributeField {...attributeProps} />;
   }
 
   // Options Field

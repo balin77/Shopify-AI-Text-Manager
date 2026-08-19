@@ -7,7 +7,11 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { fieldCard } from "~/services/content-attributes.shared";
-import { isFullWidthDetailsField, splitDetailsFields } from "~/config/details-layout";
+import {
+  isFullWidthDetailsField,
+  isHalfHeightDetailsField,
+  splitDetailsFields,
+} from "~/config/details-layout";
 import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useCreateItem } from "../hooks/useCreateItem";
@@ -757,35 +761,54 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
 
   /**
-   * The Details card's layout: one grid of boxes, and — where the type has one
-   * — the sales-channel panel beside it.
+   * The Details card's layout: one grey card PER FIELD in a grid of boxes, and
+   * — where the type has one — the sales-channel panel beside it in a card of
+   * its own.
    *
    * As many columns as fit, because a vendor is one word and a template suffix
    * is one file name; giving each the full width of the editor turned six short
    * answers into six rows of mostly empty space. Which field takes which shape
-   * is `details-layout.ts`'s decision, and the widths are tokens in
+   * is `details-layout.ts`'s decision, and the sizes are tokens in
    * responsive.css — `auto-fit` never makes more columns than there are fields,
    * so the minimum only decides WHEN the row wraps.
+   *
+   * The grid counts in HALF rows: a field that is one bare control spans one,
+   * everything else spans two, so a vendor and a theme template stack in the
+   * space one tag picker takes instead of each carrying a card's worth of empty
+   * grey.
    */
+  const detailsCardClass = (field: FieldDefinition) =>
+    [
+      isFullWidthDetailsField(field) ? "app-details-field--full" : "",
+      isHalfHeightDetailsField(field) ? "app-details-field--half" : "",
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   const renderDetailsFields = (layout: { grid: FieldDefinition[]; aside: FieldDefinition[] }) => (
     <div className="app-details-layout">
       <div className="app-details-layout__grid">
         {layout.grid.map((field) => (
-          <div
-            key={field.key}
-            className={isFullWidthDetailsField(field) ? "app-details-field--full" : undefined}
-          >
-            {renderEditorField(field)}
+          <div key={field.key} className={detailsCardClass(field)}>
+            <Card background="bg-surface-secondary" padding="300">
+              {renderEditorField(field)}
+            </Card>
           </div>
         ))}
       </div>
       {layout.aside.length > 0 && (
         <div className="app-details-layout__aside">
-          <BlockStack gap="400">
-            {layout.aside.map((field) => (
-              <div key={field.key}>{renderEditorField(field)}</div>
-            ))}
-          </BlockStack>
+          {/* The channels, the regions and the B2B catalogs are ONE card: they
+              are three answers to "who can see this product", laid out as
+              columns of one panel, and splitting them would put the panel's own
+              heading row into three boxes. */}
+          <Card background="bg-surface-secondary" padding="300">
+            <BlockStack gap="400">
+              {layout.aside.map((field) => (
+                <div key={field.key}>{renderEditorField(field)}</div>
+              ))}
+            </BlockStack>
+          </Card>
         </div>
       )}
     </div>
@@ -2215,19 +2238,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Text as="h2" variant="headingMd">
                           {t.content?.attributesCardTitle || "Details"}
                         </Text>
-                        {/* ONE grey panel, one grid. It used to be a subcard
-                            per section, which put a heading reading
+                        {/* One grey card per field. It used to be a subcard
+                            per SECTION, which put a heading reading
                             "Theme-Vorlage" directly above a field labelled
                             "Theme-Template" and drew three frames around six
-                            fields. The fields say what they are; a word above
-                            them saying "Organisation" adds a line and no
+                            fields; the fields say what they are, and a word
+                            above them saying "Organisation" adds a line and no
                             information. The sales-channel panel still draws its
                             own heading, because that heading is the first
                             COLUMN title of its three lists and only lines up
                             with "Regionen" from inside them. */}
-                        <Card background="bg-surface-secondary" padding="300">
-                          {renderDetailsFields(detailsLayout)}
-                        </Card>
+                        {renderDetailsFields(detailsLayout)}
                       </BlockStack>
                     </Card>
                   </div>

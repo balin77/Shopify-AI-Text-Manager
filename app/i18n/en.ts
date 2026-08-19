@@ -599,6 +599,11 @@ export const en: Translation = {
       unknown: "Not loaded yet — reload this product to see its collections.",
       none: "This shop has no collections yet.",
     },
+    themeTemplate: {
+      defaultTemplate: "Default",
+      missingTemplate: "{suffix} — not in the published theme",
+      lookupFailed: "The theme's templates could not be read — type the template name here instead.",
+    },
     // PLAN §Phase 3.1 — attribute warnings. A code, phrased here, because the
     // app ships in three languages.
     attributeWarnings: {
