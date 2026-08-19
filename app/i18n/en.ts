@@ -671,6 +671,13 @@ export const en: Translation = {
     },
     searchEngineListing: "Search engine listing",
     attributesCardTitle: "Details",
+    // Headings of the subcards INSIDE the Details card
+    // (config/details-sections.ts).
+    detailsSections: {
+      commerce: "Price and inventory",
+      organization: "Organization",
+      theme: "Theme template",
+    },
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     // ONE enum vocabulary, at the top level because several surfaces render

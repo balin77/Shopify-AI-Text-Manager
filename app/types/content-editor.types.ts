@@ -7,6 +7,7 @@
 import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
+import type { DetailsSectionId } from "~/config/details-sections";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -333,6 +334,14 @@ export interface FieldDefinition {
 
   /** Which card this field renders in (default: "main") */
   card?: FieldCard;
+
+  /**
+   * Merchandising attributes only: which SUBCARD of the Details card this
+   * field sits in. Consecutive fields sharing a section fold into one subcard
+   * (see config/details-sections.ts); with fewer than two sections the card
+   * renders flat, as it did before.
+   */
+  detailsSection?: DetailsSectionId;
 
   /** Field type determines the UI component */
   type: FieldType;

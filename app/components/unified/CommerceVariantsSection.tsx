@@ -225,32 +225,52 @@ export function CommerceVariantsSection() {
    * wrong question.
    */
   /**
-   * The card's own column, so the disclosure can sit at the BOTTOM of it.
+   * The two cards share the section's ROWS, so their disclosure buttons sit on
+   * one line whatever is open.
    *
-   * The two cards stretch to the same height (`alignItems: stretch` below),
-   * but their content does not fill it equally — prices carries a row of three
-   * fields and a toggle, shipping two fields — so the two disclosure buttons
-   * landed at different heights and read as a misalignment rather than as
-   * different amounts of content. `marginTop: auto` on the footer puts them on
-   * one line. `BlockStack` cannot express this: it takes no height, and an
-   * auto margin needs a parent with room to give.
+   * Pinning each button to the bottom of its own card only lines them up while
+   * both are closed: open one and its panel pushes the card taller, the other
+   * stretches to match, and its bottom-pinned button follows. What has to be
+   * shared is the LINE the buttons start on, not the card height — so the
+   * section grid owns two rows, content and footer, and each card is a
+   * `subgrid` spanning both. The footer row then begins at the same y in both
+   * cards no matter which panel is open, and the row is as tall as the taller
+   * of the two.
+   *
+   * It also gets the narrow screen right by construction: at one column the
+   * cards land in different row PAIRS, so each is sized by itself and nothing
+   * correlates — which is what a stacked layout should do anyway.
+   *
+   * The card is a plain div rather than a Polaris `Box` because it has to be a
+   * grid container as well as a grid item, and `Box` takes no style. The three
+   * tokens below are exactly what `background="bg-surface-secondary"`,
+   * `padding="300"` and `borderRadius="200"` resolve to.
    */
-  const cardColumn: CSSProperties = {
+  const cardSubgrid: CSSProperties = {
+    display: "grid",
+    gridTemplateRows: "subgrid",
+    gridRow: "span 2",
+    background: "var(--p-color-bg-surface-secondary)",
+    padding: "var(--p-space-300)",
+    borderRadius: "var(--p-border-radius-200)",
+  };
+  /** Everything above the disclosure. Its own column so the fields keep the
+   *  spacing `BlockStack gap="300"` gave them. */
+  const cardContent: CSSProperties = {
     display: "flex",
     flexDirection: "column",
     gap: "var(--p-space-300)",
-    height: "100%",
   };
-  const cardFooter: CSSProperties = { marginTop: "auto" };
 
   const sectionGrid: CSSProperties = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+    // Two rows, content and footer, which the cards subscribe to as subgrids.
+    gridTemplateRows: "auto auto",
     gap: "12px",
     // STRETCH, not start: side by side the two cards are read as a pair, and
     // one ending 40px above the other looks like a mistake rather than like
-    // less content. Each card fills the row's height (`minHeight="100%"`
-    // below), so the taller one sets it.
+    // less content.
     alignItems: "stretch",
   };
 
@@ -380,8 +400,8 @@ export function CommerceVariantsSection() {
           editor is wide, and stack where it is not. Inventory gets its own
           full-width card: it holds a table. */}
       <div style={sectionGrid}>
-        <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
-          <div style={cardColumn}>
+        <div style={cardSubgrid}>
+          <div style={cardContent}>
                   {/* ── Prices ─────────────────────────────────────────
                       All three on ONE row, because the confusion they cause is
                       the difference BETWEEN them: the field that used to sit up
@@ -445,7 +465,8 @@ export function CommerceVariantsSection() {
                     </Text>
                   </InlineStack>
 
-                  <div style={cardFooter}>
+                  </div>
+                  <div>
                   {/* ── Grundpreis (unit price) ─────────────────────────────
                       Folded away, like customs and for the same reason: it is
                       four inputs that matter to shops selling by weight or
@@ -522,16 +543,15 @@ export function CommerceVariantsSection() {
                     </BlockStack>
                   </Collapsible>
                   </div>
-          </div>
-        </Box>
+        </div>
 
         {/* The InventoryItem's own settings. Shown for EVERY variant, tracked
             or not: a weight and a customs code are facts about the item, not
             about whether Shopify counts it. */}
-        <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
-          <div style={cardColumn}>
+        <div style={cardSubgrid}>
                   {first.inventoryItemId ? (
                     <>
+                    <div style={cardContent}>
                     <InlineStack align="space-between" blockAlign="center" wrap={false}>
                       <SectionHeading
                         text={(t.shippingHeading as string) || "Shipping and customs"}
@@ -593,7 +613,8 @@ export function CommerceVariantsSection() {
                       </Box>
                     </InlineStack>
 
-                    <div style={cardFooter}>
+                    </div>
+                    <div>
                     {/* Customs, folded away. Shopify folds them for the same
                         reason: an HS code and a country of origin matter to
                         the merchants who ship across a border and to nobody
@@ -631,8 +652,7 @@ export function CommerceVariantsSection() {
                     </div>
                     </>
                   ) : null}
-          </div>
-        </Box>
+        </div>
       </div>
 
       {/* Inventory keeps a card of its OWN and the full width: it holds a

@@ -649,6 +649,36 @@ describe("the Grundpreis in the panel", () => {
     expect(await screen.findByText(/500 g \/ 1 kg/)).toBeTruthy();
   });
 
+  it("puts both cards on the section's shared rows, so the buttons line up", async () => {
+    // The mechanism, not the pixels — jsdom computes no layout. Each card is a
+    // subgrid spanning the section's two rows with exactly two children,
+    // content and footer, so the footer row starts at the same y in both
+    // whatever is open. Pinning each button to the bottom of its own card
+    // looked identical while both were closed and came apart the moment one
+    // was opened.
+    withVariants([variant("Weiss", "20cm", WITH_UNIT)]);
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await screen.findByText(/Unit price/);
+
+    const cards = [...container.querySelectorAll("div")].filter(
+      (el) => (el as HTMLElement).style.gridTemplateRows === "subgrid",
+    ) as HTMLElement[];
+    expect(cards).toHaveLength(2);
+    for (const card of cards) {
+      expect(card.style.gridRow).toBe("span 2");
+      expect(card.children).toHaveLength(2);
+      // The disclosure lives in the SECOND row, which is the one that has to
+      // start at a shared line.
+      expect(card.children[1].querySelector("button")).toBeTruthy();
+    }
+  });
+
   it("gives the two unit pickers DISTINCT names, without a visible caption", async () => {
     // Two rules that pull against each other. A screen reader must be able to
     // tell pack quantity from reference quantity — and from the shipping
