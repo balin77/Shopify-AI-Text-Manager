@@ -244,11 +244,19 @@ describe("TaxonomyField — the page behind the popover", () => {
  * How wide the two boxes get — and that it is ONE width, not two.
  *
  * Both failure modes were shipped once: a panel with a width of its own hung
- * out past a narrower control, and a panel that simply took the control's width
- * (Polaris' `fullWidth`) spanned the whole page — this field is as wide as the
- * editor column. The ceiling therefore sits on the CONTROL, and the panel is
- * whatever the control measured, so the closed box and the open one cannot come
- * to disagree.
+ * out past a narrower control, and a panel with no ceiling at all spanned the
+ * whole page — this field is as wide as the editor column. The ceiling
+ * therefore sits on the CONTROL, and the panel takes the control's width from
+ * Polaris' `fullWidth`, so the closed box and the open one cannot come to
+ * disagree.
+ *
+ * The third failure mode is the one that shipped after those two and is what
+ * these tests now pin: a width measured by hand here CANNOT win, because
+ * `.Polaris-Popover__Content` carries its own `max-width: 25rem` and
+ * `.Polaris-Popover` its own 8px side margins. A 480px control opened a 400px
+ * panel, indented, no matter what width this component asked for. Only
+ * `fullWidth` lifts both — so the panel must ask for no width of its own, and
+ * the popover must carry that flag.
  */
 describe("TaxonomyField — how wide the boxes get", () => {
   /** The panel is the box that carries the width; the list sits inside it. */
@@ -277,32 +285,37 @@ describe("TaxonomyField — how wide the boxes get", () => {
     expect(controlStyle()).toContain("max-width: var(--app-dropdown-panel-max-width)");
   });
 
-  it("opens a panel exactly as wide as the control", async () => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 420 } as DOMRect);
-
+  it("hands the panel's width to Polaris instead of measuring one here", async () => {
+    // A number of its own here would be the second clamp — and the losing one:
+    // Polaris' `.Polaris-Popover__Content` cuts it at 25rem regardless. So the
+    // panel FILLS the box `fullWidth` sized for it, and asks for nothing else.
     render(ui());
     await openPicker();
 
-    expect(panelStyle()).toContain("width: 420px");
+    expect(panelStyle()).toContain("width: 100%");
+    expect(panelStyle()).not.toMatch(/width:\s*\d+px/);
   });
 
-  it("follows a narrower control just as well", async () => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 260 } as DOMRect);
-
+  it("opens the popover in fullWidth, which is what lifts Polaris' own 400px cap", async () => {
+    // The flag does all three things this field needs: the overlay gets the
+    // activator's measured width, `.Polaris-Popover__Content`'s `max-width:
+    // 25rem` is lifted, and the popover's 8px side margins become `auto` so the
+    // panel sits on the control's edges. Without it a 480px control opened a
+    // 400px panel, indented by 8px.
     render(ui());
     await openPicker();
 
-    expect(panelStyle()).toContain("width: 260px");
+    expect(document.querySelector(".Polaris-Popover--fullWidth")).toBeTruthy();
   });
 
-  it("falls back to the bare ceiling when there is nothing to measure", async () => {
-    // jsdom reports 0 for every box. `width: 0px` would be a panel with no
-    // content in it, which is the one thing the measurement may not produce.
+  it("still spends the ceiling on the control, so the panel inherits one number", async () => {
+    // The panel has no width of its own, so the control's max-width is the ONLY
+    // ceiling in play — open or closed.
     render(ui());
     await openPicker();
 
-    expect(panelStyle()).toContain("var(--app-dropdown-panel-max-width)");
-    expect(panelStyle()).not.toContain("width: 0px");
+    expect(controlStyle()).toContain("max-width: var(--app-dropdown-panel-max-width)");
+    expect(panelStyle()).not.toContain("--app-dropdown-panel-max-width");
   });
 });
 

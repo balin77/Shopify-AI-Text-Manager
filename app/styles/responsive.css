@@ -91,9 +91,12 @@
                               the CEILING for a picker that is a full-width
                               control plus a popover (the product category
                               field). It is spent ONCE, as the max-width of the
-                              CONTROL; the panel measures the control and takes
-                              exactly that, so the closed box and the open one
-                              are one width and cannot come to disagree. A max,
+                              CONTROL; the panel inherits it, because Polaris'
+                              own `fullWidth` hands the popover the control's
+                              measured width (and lifts its own 400px cap on
+                              the popover content), so the closed box and the
+                              open one are one width and cannot come to
+                              disagree. A max,
                               not a width: inside a narrow column both still
                               shrink with it. Without it the control is as wide
                               as the editor column, and a list of short labels
