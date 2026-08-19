@@ -239,7 +239,7 @@ export const de = {
     metaobjectColorBaseConvention: "Vorschlag dieser App, keine Standardfarbe",
     metaobjectEntryPickImage: "Bild wählen",
     metaobjectEntryImagesOnly: "In diesem Feld k\u00f6nnen nur Bilder verwendet werden.",
-    metaobjectEntryClearImage: "Bild entfernen",
+    metaobjectEntryChangeImage: "Bild ändern",
     metaobjectEntryReadOnlyDefinition: "Einträge dieser Definition können von dieser App nicht geändert werden.",
     metaobjectEntryReadOnlyUnknown: "Ob diese Definition beschreibbar ist, ist unbekannt — bitte neu laden.",
     metaobjectEntryOpenInAdmin: "Im Shopify-Adminbereich bearbeiten",

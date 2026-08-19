@@ -110,8 +110,27 @@
      card lays its fields out horizontally and wraps: `auto-fit` fills a row
      with as many tracks of at least this width as fit and stretches them, so
      one number decides how many columns a card shows at any window size. Below
-     it the fields simply stack, which is what a phone gets. */
-  --app-entry-field-min-width: 260px;
+     it the fields simply stack, which is what a phone gets.
+
+     It is 340px and not the 260 it started at because a field here is not just
+     a box: every text field carries its own action row (improve / translate /
+     copy to all), and at 260 those buttons wrapped into a column of three,
+     which is what made an entry three times taller than its content.
+
+     --app-entry-field-gap    the gap between two of those fields. Named
+                              because the wide maximum below is computed from
+                              it and would otherwise drift.
+     --app-entry-wide-field-max-width
+                              the ceiling for the fields that do NOT fit in a
+                              column — a textarea, a rich-text preview, a
+                              taxonomy chip list. They are laid out under the
+                              grid rather than in it, and a chip list stretched
+                              across a 1400px card puts its "Clear" button a
+                              screen away from its label. Two columns' worth is
+                              what a list of chips actually needs. */
+  --app-entry-field-min-width: 340px;
+  --app-entry-field-gap: 1rem;
+  --app-entry-wide-field-max-width: calc(2 * var(--app-entry-field-min-width) + var(--app-entry-field-gap));
   --app-value-chip-width: 230px;
   --app-dropdown-panel-max-width: 480px;
   /* Polaris' Icon box. Spent where a row has to line up with one that starts
@@ -225,6 +244,85 @@
    the weight. */
 .app-field-label {
   font-weight: var(--app-field-label-weight);
+}
+
+/* ── THE DETAILS CARD'S LAYOUT ──────────────────────────────────────────────
+   One grid, one grey panel, no subcards. The card used to split into titled
+   subcards per section, which on a product meant three frames for six fields
+   and a heading ("Theme-Vorlage") standing directly above a field already
+   called "Theme-Template". The fields ARE the section names.
+
+   Two regions, not one grid, and the reason is the sales-channel panel. It is
+   the one field here that is a LIST rather than a box, so it wants roughly
+   double width and grows taller than everything beside it. Placed as a
+   double-wide cell inside one auto-fit grid it can only ever land where
+   auto-placement puts it — which, with five short fields ahead of it, is the
+   middle of the last row with a hole beside it. As its own flex region it sits
+   flush RIGHT while there is room for it and drops to a full-width row of its
+   own when there is not, and neither case leaves a gap.
+
+   The bases are the columns each region is worth (see :root), so the two wrap
+   apart at the width where three short fields plus the panel stop fitting. */
+.app-details-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--app-details-grid-gap);
+}
+
+.app-details-layout__grid {
+  /* `min-width: 0` or a long tag chip inside a cell would push the whole
+     region past its share and force the aside onto its own line early. */
+  flex: 3 1 var(--app-details-grid-basis);
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--app-details-field-min-width), 1fr));
+  gap: var(--app-details-grid-gap);
+  /* `start`, so a field with a note under it does not stretch the box of the
+     field beside it. The input boxes themselves line up because every control
+     in this card opens with one label row and then the box — everything else
+     a field has to say comes after it. */
+  align-items: start;
+}
+
+.app-details-layout__aside {
+  flex: 2 1 var(--app-details-aside-basis);
+  min-width: 0;
+}
+
+/* A field that is a whole editor rather than a box — the collection rule
+   builder. It spans the grid whatever the column count is. */
+.app-details-layout__grid > .app-details-field--full {
+  grid-column: 1 / -1;
+}
+
+/* ── THE METAOBJECT ENTRY CARD'S FIELDS ─────────────────────────────────────
+   Same two regions as the Details card above, and for the same reason: the
+   fields of one entry are mostly BOXES, and a couple of them are LISTS.
+
+   They used to be one grid with the lists spanning `1 / -1`, and that is
+   precisely what made the card look unfinished. `auto-fit` only collapses a
+   track that is EMPTY -- a field spanning every column keeps every track
+   alive, so the boxes above it stayed frozen at their 260px minimum while the
+   rest of a 1400px card stayed white, and any box that landed on a row after a
+   spanning one sat alone in a five-column row. Splitting the two apart is what
+   lets the collapse do its job: the boxes fill their row, whatever their
+   number, and the lists get a width a list can actually use. */
+.metaobject-entry-fields {
+  display: grid;
+  /* `min(100%, …)` and not the bare minimum: a fixed track minimum wider than
+     the container does not stack, it OVERFLOWS — on a phone the card would
+     scroll sideways instead of putting one field under the next. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--app-entry-field-min-width)), 1fr));
+  gap: var(--app-entry-field-gap);
+  /* Fields differ in height (a text box with an action row next to a picture),
+     and without this every control in a row would be stretched to the tallest
+     one in it. */
+  align-items: start;
+}
+
+.metaobject-entry-fields__wide {
+  max-width: var(--app-entry-wide-field-max-width);
 }
 
 @media (max-width: 899px) {

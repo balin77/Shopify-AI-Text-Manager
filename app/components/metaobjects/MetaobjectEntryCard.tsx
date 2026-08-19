@@ -65,12 +65,16 @@ interface Props {
   unsupportedFields: Array<{ label: string; fieldType: string }>;
   /** The rendered controls for the fields it CAN edit, minus the colour. */
   /**
-   * The entry's field controls, laid out HORIZONTALLY.
+   * The entry's field controls, in two shapes.
    *
-   * `wide` takes a whole row. A one-line text box next to another one-line
-   * text box reads fine; a textarea, a rich-text preview or a chip list next
-   * to anything reads as two half-broken columns, and the chips wrap into a
-   * column so narrow that two of them no longer fit on a line.
+   * A plain field is a BOX and goes into the card's grid, which fills the row
+   * with as many of them as fit. `wide` marks the ones that are not boxes -- a
+   * textarea, a rich-text preview, a chip list -- and those are laid out UNDER
+   * the grid, each on its own line and capped at two columns' worth. They are
+   * kept out of the grid rather than spanning it because a spanning cell keeps
+   * every column alive, and `auto-fit` can then no longer collapse the empty
+   * ones: one chip list at the top of a card left every box below it frozen at
+   * its minimum width with half the card blank beside it.
    */
   children: Array<{ key: string; node: ReactNode; wide?: boolean }>;
   /**
@@ -144,6 +148,12 @@ export function MetaobjectEntryCard({
     if (!colorControl || value === "") return false;
     return !METAOBJECT_HEX_PATTERN.test(value.startsWith("#") ? value : `#${value}`);
   }, [colorControl, colorValue]);
+
+  // The card's two regions. Split here rather than in the caller: which shape
+  // a field has is a LAYOUT question, and the page that renders the cards
+  // already answers enough of them.
+  const boxFields = useMemo(() => children.filter((child) => !child.wide), [children]);
+  const wideFields = useMemo(() => children.filter((child) => child.wide), [children]);
 
   // MEASURED (PLAN_METAOBJECTS_EDITOR V5): Shopify itself refuses to delete an
   // entry a product still references, so nothing can be destroyed by trying.
@@ -284,27 +294,27 @@ export function MetaobjectEntryCard({
           // A GRID rather than a stack. Every field used to get a full row of
           // its own, so a five-field entry was five screen-wide lines for
           // controls that are mostly one line tall — on a type with 25 entries
-          // that is a page nobody can survey. `auto-fit` + `minmax` needs no
-          // breakpoints: the row takes as many columns as fit at the current
-          // width and stretches them, and below one column's minimum the
-          // fields stack exactly as they did before.
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(var(--app-entry-field-min-width), 1fr))",
-              gap: "var(--p-space-300)",
-              // Fields differ in height (a text box next to a chip list), and
-              // without this each row would stretch every control to the
-              // tallest one in it.
-              alignItems: "start",
-            }}
-          >
-            {children.map((child) => (
-              <div key={child.key} style={child.wide ? { gridColumn: "1 / -1" } : undefined}>
+          // that is a page nobody can survey.
+          //
+          // The two regions, and the widths they spend, live in responsive.css.
+          // Order inside each one is the definition's, untouched: the only
+          // thing this split reorders is "boxes before lists", which is what
+          // keeps the boxes packed into full rows instead of leaving one of
+          // them stranded on a line of its own behind a spanning cell.
+          <BlockStack gap="400">
+            {boxFields.length > 0 && (
+              <div className="metaobject-entry-fields">
+                {boxFields.map((child) => (
+                  <div key={child.key}>{child.node}</div>
+                ))}
+              </div>
+            )}
+            {wideFields.map((child) => (
+              <div key={child.key} className="metaobject-entry-fields__wide">
                 {child.node}
               </div>
             ))}
-          </div>
+          </BlockStack>
         )}
         {/* The COLOUR counts as an editable field even though it renders in the
             header — saying "nothing here can be edited" above a working colour

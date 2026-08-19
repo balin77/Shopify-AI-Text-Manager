@@ -12,15 +12,14 @@
  */
 
 import { BlockStack, Text } from "@shopify/polaris";
+import { FieldLabel } from "../unified/FieldChrome";
 import type { FieldRenderProps } from "~/types/content-editor.types";
 
 export function MetaobjectRichTextField({ field, value, t }: FieldRenderProps) {
   const content = (t as { content?: Record<string, string> } | undefined)?.content ?? {};
   return (
     <BlockStack gap="150">
-      <Text as="span" variant="bodyMd" fontWeight="medium">
-        {field.label}
-      </Text>
+      <FieldLabel label={field.label} />
       <div
         style={{
           padding: "0.5rem 0.75rem",

@@ -245,7 +245,7 @@ export const en: Translation = {
     metaobjectColorBaseConvention: "this app's suggestion, not a standard colour",
     metaobjectEntryPickImage: "Choose image",
     metaobjectEntryImagesOnly: "Only images can be used in this field.",
-    metaobjectEntryClearImage: "Remove image",
+    metaobjectEntryChangeImage: "Change image",
     metaobjectEntryReadOnlyDefinition: "This app cannot change entries of this definition.",
     metaobjectEntryReadOnlyUnknown: "Whether this definition is writable is unknown — reload to find out.",
     metaobjectEntryOpenInAdmin: "Edit in the Shopify admin",

@@ -240,7 +240,7 @@ export const es: Translation = {
     metaobjectColorBaseConvention: "sugerencia de esta app, no un color est\u00e1ndar",
     metaobjectEntryPickImage: "Elegir imagen",
     metaobjectEntryImagesOnly: "En este campo solo se pueden usar im\u00e1genes.",
-    metaobjectEntryClearImage: "Quitar imagen",
+    metaobjectEntryChangeImage: "Cambiar imagen",
     metaobjectEntryReadOnlyDefinition: "Esta aplicación no puede modificar entradas de esta definición.",
     metaobjectEntryReadOnlyUnknown: "Se desconoce si esta definición admite escritura — vuelve a cargar.",
     metaobjectEntryOpenInAdmin: "Editar en el panel de Shopify",

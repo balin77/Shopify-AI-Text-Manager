@@ -22,6 +22,7 @@
 
 import { useCallback, useState } from "react";
 import { Banner, BlockStack, Button, InlineStack, Text } from "@shopify/polaris";
+import { FieldClearOverlay, FieldLabel } from "../unified/FieldChrome";
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import type { FieldRenderProps } from "~/types/content-editor.types";
 
@@ -111,78 +112,98 @@ export function MetaobjectFileField({
 
   const shownPreview = localPreview ?? previewUrl ?? null;
 
+  const clear = () => {
+    onChange("");
+    setLocalPreview(null);
+  };
+
   return (
-    <BlockStack gap="150">
-      <Text as="span" variant="bodyMd" fontWeight="medium">
-        {field.label}
-      </Text>
-      {error && (
-        <Banner tone="critical" onDismiss={() => setError(null)}>
-          <p>{error}</p>
-        </Banner>
-      )}
-      <InlineStack gap="200" blockAlign="center" wrap={false}>
-        {shownPreview ? (
-          <img
-            src={shownPreview}
-            alt=""
-            style={{
-              width: "48px",
-              height: "48px",
-              objectFit: "cover",
-              borderRadius: "6px",
-              border: "1px solid var(--p-color-border)",
-              flexShrink: 0,
-            }}
-          />
-        ) : (
-          <div style={{ minWidth: 0 }}>
-            <Text as="span" variant="bodySm" tone="subdued">
-              {value ? value.split("/").pop() : "—"}
-            </Text>
-          </div>
+    // The label and the way to empty the field are the SHARED field chrome, so
+    // this control wears the same bold label and the same top-right "Clear" as
+    // the text field beside it in the card. It used to print a regular-weight
+    // label of its own and a second, differently-worded remove button inline —
+    // two of the four fields on a colour entry looked like two different apps.
+    <FieldClearOverlay
+      onClear={readOnly ? undefined : clear}
+      hasValue={!!value}
+      fieldLabel={field.label}
+    >
+      <BlockStack gap="150">
+        <FieldLabel label={field.label} />
+        {error && (
+          <Banner tone="critical" onDismiss={() => setError(null)}>
+            <p>{error}</p>
+          </Banner>
         )}
-        {!readOnly && (
-          <InlineStack gap="150">
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          {/* The tile is drawn whether or not there is a picture in it: an empty
+              frame says "an image belongs here", while the bare em-dash it
+              replaced floated in the row and left the field a different height
+              from every other one in the grid. */}
+          {shownPreview ? (
+            <img
+              src={shownPreview}
+              alt=""
+              style={{
+                width: "48px",
+                height: "48px",
+                objectFit: "cover",
+                borderRadius: "6px",
+                border: "1px solid var(--p-color-border)",
+                flexShrink: 0,
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "6px",
+                border: "1px dashed var(--p-color-border)",
+                background: "var(--p-color-bg-surface-secondary)",
+                flexShrink: 0,
+              }}
+            />
+          )}
+          {/* A value the media cache has no preview for is NAMED rather than
+              shown as an empty tile with nothing beside it — "we have no
+              thumbnail" and "no image is set" are different states. */}
+          {value && !shownPreview && (
+            <div style={{ minWidth: 0, overflow: "hidden" }}>
+              <Text as="span" variant="bodySm" tone="subdued" truncate>
+                {value.split("/").pop()}
+              </Text>
+            </div>
+          )}
+          {!readOnly && (
             <Button size="slim" loading={busy} onClick={() => setOpen(true)}>
-              {content.metaobjectEntryPickImage || "Choose image"}
+              {value
+                ? content.metaobjectEntryChangeImage || "Change image"
+                : content.metaobjectEntryPickImage || "Choose image"}
             </Button>
-            {value && (
-              <Button
-                size="slim"
-                tone="critical"
-                variant="tertiary"
-                onClick={() => {
-                  onChange("");
-                  setLocalPreview(null);
-                }}
-              >
-                {content.metaobjectEntryClearImage || "Remove image"}
-              </Button>
-            )}
-          </InlineStack>
+          )}
+        </InlineStack>
+        {readOnly && (
+          <Text as="span" variant="bodySm" tone="subdued">
+            {/* Same two causes as the colour field — see the note there. */}
+            {!isPrimaryLocale
+              ? content.attributesForeignLocale || "This value exists once per shop, not per language."
+              : content.metaobjectEntryReadOnlyDefinition ||
+                "This app cannot change entries of this definition."}
+          </Text>
         )}
-      </InlineStack>
-      {readOnly && (
-        <Text as="span" variant="bodySm" tone="subdued">
-          {/* Same two causes as the colour field — see the note there. */}
-          {!isPrimaryLocale
-            ? content.attributesForeignLocale || "This value exists once per shop, not per language."
-            : content.metaobjectEntryReadOnlyDefinition ||
-              "This app cannot change entries of this definition."}
-        </Text>
-      )}
-      {open && (
-        <FilePickerModal
-          open={open}
-          onClose={() => setOpen(false)}
-          onAdd={(items) => void handleAdd(items)}
-          uploadCommitMode="immediate"
-          initialKind="image"
-          disallowModel
-          title={field.label}
-        />
-      )}
-    </BlockStack>
+        {open && (
+          <FilePickerModal
+            open={open}
+            onClose={() => setOpen(false)}
+            onAdd={(items) => void handleAdd(items)}
+            uploadCommitMode="immediate"
+            initialKind="image"
+            disallowModel
+            title={field.label}
+          />
+        )}
+      </BlockStack>
+    </FieldClearOverlay>
   );
 }

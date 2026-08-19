@@ -42,6 +42,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Banner, BlockStack, InlineStack, Link, Select, Spinner, Tag, Text } from "@shopify/polaris";
 import { ChipCombobox, type ChipOption } from "../unified/ChipCombobox";
+import { FieldLabel } from "../unified/FieldChrome";
 import {
   parseMetaobjectTaxonomyValues,
   serializeMetaobjectTaxonomyValues,
@@ -275,7 +276,7 @@ export function TaxonomyValuePicker({
   if (loading) {
     return (
       <BlockStack gap="150">
-        <Text as="span" variant="bodyMd" fontWeight="medium">{label}</Text>
+        <FieldLabel label={label} />
         <InlineStack gap="200" blockAlign="center">
           <Spinner size="small" />
           <Text as="span" variant="bodySm" tone="subdued">
@@ -303,7 +304,7 @@ export function TaxonomyValuePicker({
             "This field does not name a taxonomy attribute, so its values cannot be listed here.";
     return (
       <BlockStack gap="150">
-        <Text as="span" variant="bodyMd" fontWeight="medium">{label}</Text>
+        <FieldLabel label={label} />
         {selected.length > 0 && (
           <InlineStack gap="100" wrap>
             {selected.map((id) => (
@@ -340,7 +341,7 @@ export function TaxonomyValuePicker({
     return (
       <BlockStack gap="150">
         <Select
-          label={label}
+          label={<FieldLabel label={label} />}
           options={options}
           value={current}
           disabled={readOnly}

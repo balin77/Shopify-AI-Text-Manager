@@ -16,6 +16,7 @@
  */
 
 import { BlockStack, Text } from "@shopify/polaris";
+import { FieldLabel } from "../unified/FieldChrome";
 import { HexColorInput } from "./HexColorInput";
 import type { FieldRenderProps } from "~/types/content-editor.types";
 
@@ -35,9 +36,7 @@ export function ColorFieldEditor({
 
   return (
     <BlockStack gap="150">
-      <Text as="span" variant="bodyMd" fontWeight="medium">
-        {field.label}
-      </Text>
+      <FieldLabel label={field.label} />
       <HexColorInput
         label={field.label}
         value={value}
