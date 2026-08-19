@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   activationGate,
+  embedBadgeVerdict,
+  scopeCovered,
   activationTone,
   statForSwitch,
   worstActivationVerdict,
@@ -334,5 +336,155 @@ describe("client-safety of the shared module", () => {
       'import { summarizeLiveSocial } from "../services/seo/social-audit.service"',
     );
     expect(route).not.toMatch(/APP_SOCIAL_TAGS[^\n]*social-audit\.service/);
+  });
+});
+
+describe("scopeCovered", () => {
+  it("treats a null scope as SHOP-WIDE, not as 'nothing covered'", () => {
+    // The bug this exists for: `(scopes ?? []).some(...)` is always false, so
+    // Organization reported "not measured" after every crawl, permanently.
+    expect(scopeCovered(null, {}, 12)).toBe(true);
+    expect(scopeCovered(null, { product: 5 }, 5)).toBe(true);
+  });
+
+  it("still refuses a shop-wide switch when NOTHING was judged", () => {
+    expect(scopeCovered(null, {}, 0)).toBe(false);
+  });
+
+  it("judges a scoped switch only where its page kind was actually seen", () => {
+    expect(scopeCovered(["product"], { product: 3 }, 3)).toBe(true);
+    expect(scopeCovered(["product"], { collection: 3 }, 3)).toBe(false);
+    expect(scopeCovered(["product"], undefined, 9)).toBe(false);
+  });
+
+  it("needs EVERY page kind of a multi-scope switch, not just one", () => {
+    // enable_breadcrumb emits on product, collection AND article. With only
+    // products crawled, `.some()` handed out the green "safe to switch on"
+    // and BreadcrumbList then shipped twice on every collection and article.
+    expect(scopeCovered(["product", "collection"], { collection: 1 }, 1)).toBe(false);
+    expect(
+      scopeCovered(["product", "collection"], { product: 2, collection: 1 }, 3),
+    ).toBe(true);
+  });
+
+  it("does not block a switch on a page kind the shop does not have", () => {
+    // A shop without a blog would otherwise never get a verdict for
+    // breadcrumbs again. "No article pages crawled" and "no articles exist"
+    // look the same in a page count and mean opposite things.
+    expect(
+      scopeCovered(["product", "article"], { product: 5 }, 5, { product: 5, article: 0 }),
+    ).toBe(true);
+    // …but an UNKNOWN catalogue stays cautious rather than assuming zero.
+    expect(scopeCovered(["product", "article"], { product: 5 }, 5, { product: 5 })).toBe(false);
+  });
+});
+
+describe("embedBadgeVerdict", () => {
+  it("repeats a verdict only when every type agrees", () => {
+    expect(embedBadgeVerdict(["free", "free"])).toBe("free");
+    expect(embedBadgeVerdict(["foreignOnly"])).toBe("foreignOnly");
+  });
+
+  it("says the types differ instead of advising against the whole embed", () => {
+    // The reported defect: one already-served type made the card read
+    // "do not switch on" while other types were free -- advice against an
+    // embed the merchant should switch on and then configure.
+    expect(embedBadgeVerdict(["foreignOnly", "free"])).toBe("varies");
+    expect(embedBadgeVerdict(["free", "appOnly"])).toBe("varies");
+  });
+
+  it("answers unknown for an empty list rather than a green light", () => {
+    expect(embedBadgeVerdict([])).toBe("unknown");
+  });
+});
+
+describe("repeatable types are judged where the count proves it", () => {
+  const rep = (over: Partial<Parameters<typeof activationGate>[0]> = {}) => ({
+    type: "VideoObject",
+    resourceType: "product",
+    pages: 1,
+    appPages: 1,
+    duplicatePages: 0,
+    appIsOneCopy: 0,
+    repeatable: true,
+    ...over,
+  });
+  const opts = { measured: true, originKnown: true };
+
+  it("says it runs when every copy on every page is ours", () => {
+    // The reported defect: video was switched on, exactly one product had
+    // videos, and the switch reported "not checkable" for good. An equal
+    // COUNT is the proof page-presence could never give.
+    expect(activationGate(rep({ appAllCopiesPages: 1 }), opts).verdict).toBe("appOnly");
+  });
+
+  it("stays unjudged when one page carries a copy that is not ours", () => {
+    expect(activationGate(rep({ pages: 3, appPages: 3, appAllCopiesPages: 2 }), opts).verdict).toBe(
+      "repeatableUnjudged",
+    );
+  });
+
+  it("stays unjudged when the producer cannot answer the question at all", () => {
+    // No field = an older producer. Cautious beats a claim it never had.
+    expect(activationGate(rep(), opts).verdict).toBe("repeatableUnjudged");
+  });
+
+  it("still reports a foreign-only repeatable type rather than calling it unjudged", () => {
+    expect(activationGate(rep({ appPages: 0, appAllCopiesPages: 0 }), opts).verdict).toBe(
+      "foreignOnly",
+    );
+  });
+});
+
+describe("statForSwitch carries every field into the gate", () => {
+  // The defect this exists for: the function REBUILDS MarkupTypeStat field by
+  // field, appAllCopiesPages was left out, and because the page feeds the gate
+  // exclusively through here, the branch it unlocks was dead in the app while
+  // the gate's own unit tests — which build the stat by hand — stayed green.
+  const bucket = (over: Record<string, unknown> = {}) => ({
+    type: "VideoObject",
+    resourceType: "product",
+    pages: 1,
+    appPages: 1,
+    duplicatePages: 0,
+    appIsOneCopy: 0,
+    repeatable: true,
+    appAllCopiesPages: 1,
+    ...over,
+  }) as any;
+
+  it("loses no key on the way through — the generic guard against this bug", () => {
+    // Names every field rather than one of them: the next field added to the
+    // interface fails HERE instead of silently arriving as undefined.
+    const input = bucket();
+    const merged = statForSwitch([input], "VideoObject", ["product"])!;
+    for (const k of Object.keys(input)) {
+      expect(merged, `statForSwitch dropped "${k}"`).toHaveProperty(k);
+    }
+  });
+
+  it("sums it across buckets and lets the gate reach appOnly", () => {
+    const merged = statForSwitch(
+      [bucket(), bucket({ resourceType: "collection" })],
+      "VideoObject",
+      ["product", "collection"],
+    )!;
+    expect(merged.appAllCopiesPages).toBe(2);
+    expect(
+      activationGate(merged, { measured: true, originKnown: true }).verdict,
+    ).toBe("appOnly");
+  });
+
+  it("keeps it undefined while no bucket could answer", () => {
+    // "cannot tell" must not turn into a measured zero on the way here.
+    const merged = statForSwitch(
+      [bucket({ appAllCopiesPages: undefined })],
+      "VideoObject",
+      ["product"],
+    )!;
+    expect(merged.appAllCopiesPages).toBeUndefined();
+    expect(
+      activationGate(merged, { measured: true, originKnown: true }).verdict,
+    ).toBe("repeatableUnjudged");
   });
 });

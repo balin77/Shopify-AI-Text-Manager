@@ -31,6 +31,9 @@ interface ItemSelectorContextValue {
     resourceName: { singular: string; plural: string };
     onAddItem?: (() => void) | null;
     addDisabledReason?: string | null;
+    /** Label for the add button. Without it the mobile mirror invented one
+     *  from the resource name, in English. */
+    addLabel?: string | null;
     t?: {
       searchPlaceholder?: string;
       noResults?: string;
@@ -46,6 +49,7 @@ interface ItemSelectorContextValue {
   onAddItem: (() => void) | null;
   /** Set when creating is refused — the button stays visible and explains. */
   addDisabledReason: string | null;
+  addLabel: string | null;
   /** Clear items when leaving content editor page */
   clearItems: () => void;
 }
@@ -67,6 +71,7 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
   }>({});
   const [onAddItem, setOnAddItem] = useState<(() => void) | null>(null);
   const [addDisabledReason, setAddDisabledReason] = useState<string | null>(null);
+  const [addLabel, setAddLabel] = useState<string | null>(null);
 
   const registerItems = useCallback((config: {
     items: UnifiedItem[];
@@ -75,6 +80,9 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     resourceName: { singular: string; plural: string };
     onAddItem?: (() => void) | null;
     addDisabledReason?: string | null;
+    /** Label for the add button. Without it the mobile mirror invented one
+     *  from the resource name, in English. */
+    addLabel?: string | null;
     t?: {
       searchPlaceholder?: string;
       noResults?: string;
@@ -88,6 +96,7 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     setT(config.t || {});
     setOnAddItem(() => config.onAddItem ?? null);
     setAddDisabledReason(config.addDisabledReason ?? null);
+    setAddLabel(config.addLabel ?? null);
   }, []);
 
   const clearItems = useCallback(() => {
@@ -98,6 +107,7 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     setT({});
     setOnAddItem(null);
     setAddDisabledReason(null);
+    setAddLabel(null);
   }, []);
 
   const value = useMemo(() => ({
@@ -108,9 +118,10 @@ export function ItemSelectorProvider({ children }: { children: ReactNode }) {
     t,
     onAddItem,
     addDisabledReason,
+    addLabel,
     registerItems,
     clearItems,
-  }), [items, selectedItemId, onItemSelect, resourceName, t, onAddItem, addDisabledReason, registerItems, clearItems]);
+  }), [items, selectedItemId, onItemSelect, resourceName, t, onAddItem, addDisabledReason, addLabel, registerItems, clearItems]);
 
   return (
     <ItemSelectorContext.Provider value={value}>

@@ -41,11 +41,12 @@ import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "rea
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLanguageBar";
+import { MarketPublicationNotice } from "./unified/MarketPublicationNotice";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -154,6 +155,17 @@ interface UnifiedContentEditorProps {
     totalCount: number;
     totalPages: number;
     search: string;
+    /**
+     * What is being paged, already translated and plural — "fields" when the
+     * caller says nothing.
+     *
+     * The theme pages really do page FIELDS. The metaobjects tab pages ENTRIES
+     * and each entry carries several fields, so the strip counted one thing and
+     * named another: "Showing 1-25 of 40 fields" over a list of forty entries,
+     * on the very page whose entries were already hard enough to tell from
+     * their details.
+     */
+    noun?: string;
   } | null;
 
   /** Optional: Handler for field page changes */
@@ -161,6 +173,9 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Handler for field search */
   onFieldSearch?: (search: string) => void;
+
+  /** Placeholder for the search box above the fields — same reason as `noun`. */
+  fieldSearchPlaceholder?: string;
 
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
@@ -181,6 +196,21 @@ interface UnifiedContentEditorProps {
    * has to be able to pick it out BY KEY rather than by position, and to paint
    * the live value beside it while the merchant is still typing.
    */
+  /**
+   * An action on the CONTAINER the listed items belong to — today the
+   * metaobject DEFINITION whose entries fill the page.
+   *
+   * A prop rather than a config flag because only the route knows the
+   * container's id, and `disabledReason` is a string rather than a boolean so
+   * a refusal always arrives with its cause: "why is this greyed out" is the
+   * question a bare disabled button never answers.
+   */
+  containerAction?: {
+    label: string;
+    onAction: () => void;
+    disabledReason?: string | null;
+  } | null;
+
   renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
 
   /**
@@ -310,10 +340,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     apiVersion,
     planLimit,
     fieldPagination,
+    fieldSearchPlaceholder,
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
-    renderFieldGroup,
+    containerAction,
+  renderFieldGroup,
     createPrefill,
     fieldsReadOnly = false,
     onItemCreated,
@@ -1046,6 +1078,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [unifiedItems, duplicateItem, createItem],
   );
 
+
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
     // One creatable resource opens its form directly; the blogs tab has two
@@ -1274,6 +1307,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // on the desktop list and creating is unreachable on a phone.
       onAddItem: createResources.length > 0 ? stableAddItem : null,
       addDisabledReason: createDisabledReason,
+      // The mobile mirror said `Add ${resourceName.singular}` in bare English,
+      // which on this tab named "Metaobject Type" -- the one object this app
+      // cannot create. It takes the same label the desktop bar shows.
+      addLabel: config.createSupport?.fromActionBar
+        ? t.content?.createEntryButtonLabel
+        : t.content?.createButtonLabel,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
@@ -1413,7 +1452,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
-          showAddButton={createResources.length > 0}
+          // Suppressed where the ACTION BAR carries create: the config comment
+          // argues that a "+" over a list of TYPES reads as "add a type", and
+          // leaving it standing next to the new button would have left exactly
+          // the click that lands in the wrong form.
+          showAddButton={createResources.length > 0 && !config.createSupport?.fromActionBar}
           onAddItem={handleAddItem}
           // Visible-but-disabled with the reason, the same as the mobile path.
           // Labelling it without disabling it let a merchant fill in a whole
@@ -1783,6 +1826,41 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {/* Right: Reload Button (Save/Discard handled by the native
                         Shopify save bar — see AppSaveBar above) */}
                     <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
+                      {/* Create, where the item list does not list what gets
+                          created — see `createSupport.fromActionBar`. It calls
+                          the SAME `handleAddItem` as the "+" above the list, so
+                          the resource chooser and the prefill still apply and
+                          there is no second create path. */}
+                      {config.createSupport?.fromActionBar && createResources.length > 0 && (
+                        <DisabledActionTooltip hint={createDisabledReason ?? undefined}>
+                          <Button
+                            size="slim"
+                            variant="primary"
+                            icon={PlusIcon}
+                            disabled={!!createDisabledReason}
+                            onClick={handleAddItem}
+                          >
+                            {t.content?.createEntryButtonLabel || "Add entry"}
+                          </Button>
+                        </DisabledActionTooltip>
+                      )}
+                      {/* Deleting the CONTAINER the entries live in — a
+                          metaobject definition. Supplied by the route, and
+                          DISABLED WITH ITS REASON rather than hidden wherever
+                          it cannot be done. */}
+                      {containerAction && (
+                        <DisabledActionTooltip hint={containerAction.disabledReason ?? undefined}>
+                          <Button
+                            size="slim"
+                            tone="critical"
+                            icon={DeleteIcon}
+                            disabled={!!containerAction.disabledReason}
+                            onClick={containerAction.onAction}
+                          >
+                            {containerAction.label}
+                          </Button>
+                        </DisabledActionTooltip>
+                      )}
                       <ReloadButton
                         resourceId={selectedItem.id}
                         resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -1798,6 +1876,28 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </Card>
                 </div>
               </div>
+
+              {/* The market selector raises a question neither toolbar can
+                  answer: a product missing from the selected market's catalog
+                  cannot be seen there, so every translation made for that
+                  market is invisible by construction. OUTSIDE both toolbars on
+                  purpose — the desktop one is `display: none` below 769px
+                  while MobileToolbar offers the same selector, so a warning
+                  inside either half would be missing from the other. Products
+                  only (publications are a product thing here), and the
+                  component itself stays silent whenever the answer is not
+                  certain. */}
+              {config.contentType === "products" && (
+                <MarketPublicationNotice
+                  productId={String(selectedItem?.id ?? "")}
+                  selectedMarketId={state.selectedMarketId}
+                  marketName={state.markets?.find((m) => m.id === state.selectedMarketId)?.name ?? ""}
+                  notPublishedText={
+                    t.content?.market?.notPublishedInMarket ||
+                    "This product is not in the catalog of the market “{market}”, so nobody there can see it — translations for this market stay invisible until it is published there."
+                  }
+                />
+              )}
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
@@ -1823,7 +1923,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           onChange={(value) => {
                             setFieldSearchInput(value);
                           }}
-                          placeholder={t.content?.searchFields || "Search fields..."}
+                          placeholder={fieldSearchPlaceholder || t.content?.searchFields || "Search fields..."}
                           autoComplete="off"
                           prefix={<Icon source={SearchIcon} />}
                           clearButton
@@ -1854,7 +1954,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             <Text as="p" variant="bodySm" tone="subdued">
                               {t.content?.showingFields || "Showing"} {((fieldPagination.page - 1) * fieldPagination.limit) + 1}-
                               {Math.min(fieldPagination.page * fieldPagination.limit, fieldPagination.totalCount)} {t.content?.of || "of"}{" "}
-                              {fieldPagination.totalCount} {t.content?.fields || "fields"}
+                              {fieldPagination.totalCount} {fieldPagination.noun || t.content?.fields || "fields"}
                               {fieldPagination.search && (
                                 <> ({t.content?.filtered || "filtered"})</>
                               )}
@@ -2374,20 +2474,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           <CreateResultBanner
             info={createItem.created}
             onDismiss={createItem.dismissCreated}
-            // §1.8 — undo is the SAME delete path and the same confirmation.
-            // Letting it skip the dialog was tempting (they just made the
-            // thing), but "clicked undo by mistake" destroys work where
-            // "clicked create by mistake" only makes some.
-            onUndo={() => {
-              const created = createItem.created!;
-              deleteItem.request({
-                id: created.id,
-                title: created.title || created.id,
-                resource: created.resource,
-                isUndo: true,
-              });
-            }}
-            undoLabel={t.content?.undoCreate}
+            // No undo. It was the §1.8 idea and it earned its removal: the
+            // thing that was just created is deletable from its own card, with
+            // the same confirmation, so a second path to the same delete only
+            // added a destructive button to a SUCCESS banner.
             translating={createItem.translating}
             onReload={
               createItem.created.synced
@@ -2450,6 +2540,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           dynamicOptions={createItem.dynamicOptions}
           extraFieldsByOption={createItem.extraFieldsByOption}
           extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}
+          // Opened from a type's own page, the type is fixed by the page. It
+          // still travels in `initialValues` and is still submitted.
+          lockedFieldKeys={
+            createItem.openResource === "metaobject" && createItem.initialValues?.type ? ["type"] : undefined
+          }
           blocked={
             createItem.openResource === "article" && createItem.needsBlogFirst
               ? {
@@ -2472,6 +2567,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           t={{
             ...(t.content?.createModal ?? {}),
             rules: t.collectionRules,
+            // The modal titles itself "New {resource}". It used to interpolate
+            // the config's own slug, which is an English word on every locale;
+            // the chooser already carries translated resource names, so the
+            // title reads from the SAME block rather than a second one.
+            // With the type LOCKED, the dialog no longer shows which definition
+            // the entry lands in — so the title says it instead of the generic
+            // "Metaobject entry". Otherwise the resource's own name, as the
+            // chooser already translates it.
+            resourceLabel:
+              createItem.openResource === "metaobject" && createItem.initialValues?.type && selectedItem
+                ? selectedItem.title
+                : (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
+                    createItem.openResource
+                  ],
+            // The metaobject field controls (the taxonomy picker) live under
+            // `content`, not under `createModal`: the ENTRY editor renders the
+            // same controls and the strings must not exist twice.
+            content: t.content as unknown as Record<string, string>,
             // Same "one block, two surfaces" rule as the rule builder above:
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.

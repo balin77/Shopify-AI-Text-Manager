@@ -40,8 +40,10 @@ import {
   VARIANT_COMMERCE_PAGE_SIZE,
   VARIANT_COMMERCE_SELECTION,
   PRODUCT_PUBLICATIONS_SELECTION,
+  PRODUCT_CATALOG_PUBLICATIONS_SELECTION,
   inventoryLevelRows,
   productPublicationRows,
+  type PublicationCatalogKind,
   variantCommerceColumns,
   SHOP_LOCATION_PAGE_SIZE,
 } from "~/services/commerce-sync.shared";
@@ -158,6 +160,11 @@ export interface CommerceVariantView {
 export interface CommerceChannelView {
   publicationId: string;
   name: string;
+  /**
+   * "app" | "market" | "companyLocation" | "" — see `publicationCatalogKind`.
+   * The client groups by it; "" keeps rendering with the sales channels.
+   */
+  catalogType: PublicationCatalogKind;
   isPublished: boolean;
   publishDate: string | null;
 }
@@ -206,6 +213,216 @@ function committedByLocation(node: Record<string, unknown>): Map<string, number 
   return out;
 }
 
+/**
+ * Every publication of one product, across all three catalog types.
+ *
+ * Its OWN query, not nested in the variant one, for the reason the locations
+ * query is also separate: a per-product list multiplied by a paged variant
+ * window is cost paid for the same rows over and over, and this one is now
+ * three connections wide.
+ *
+ * `catalogsKnown: false` is the discriminator this whole read exists for.
+ * `catalogType` is an ENUM — an unknown value fails at the SCHEMA level, which
+ * Shopify returns as a top-level `errors` array with `data: null` — so the
+ * market and B2B connections are asked for in a query that can be RETRIED
+ * without them. What comes back then is the sales channels alone, reported as
+ * "we could not ask" rather than as "this shop has no regions": the second is
+ * a claim, and it is the exact claim this app made for months.
+ */
+async function loadProductPublications(
+  admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  shop: string,
+  productId: string,
+): Promise<{ connection: { pageInfo: { hasNextPage: boolean }; nodes: unknown[] } | null; catalogsKnown: boolean }> {
+  type Connection = { pageInfo?: { hasNextPage?: boolean } | null; nodes?: unknown[] | null } | null | undefined;
+
+  const run = async (withCatalogs: boolean) => {
+    const response = await admin.graphql(
+      `#graphql
+        query productPublications($id: ID!) {
+          product(id: $id) {
+            ${PRODUCT_PUBLICATIONS_SELECTION}
+            ${withCatalogs ? PRODUCT_CATALOG_PUBLICATIONS_SELECTION : ""}
+          }
+        }`,
+      { variables: { id: productId } },
+    );
+    return (await response.json()) as {
+      data?: {
+        product?: {
+          resourcePublicationsV2?: Connection;
+          marketPublications?: Connection;
+          companyLocationPublications?: Connection;
+        } | null;
+      };
+      errors?: Array<{ message?: string }>;
+    };
+  };
+
+  let catalogsKnown = true;
+  let body = await run(true);
+  if (body.errors?.length) {
+    logger.warn("[Commerce] Catalog-typed publications refused — retrying without them", {
+      context: "Commerce", shop, error: body.errors[0]?.message,
+    });
+    catalogsKnown = false;
+    body = await run(false);
+  }
+  if (body.errors?.length || !body.data?.product) {
+    logger.warn("[Commerce] Publications could not be read", {
+      context: "Commerce", shop, error: body.errors?.[0]?.message,
+    });
+    // `null`, NOT an empty connection. An empty list would read as "published
+    // nowhere" — the alarming state this panel exists to reveal — and it would
+    // also reach `productPublicationRows` as a real answer, whose caller then
+    // deletes the whole mirror. Nothing is claimed at all.
+    return { connection: null, catalogsKnown: false };
+  }
+
+  const product = body.data.product;
+  const parts = [product.resourcePublicationsV2, product.marketPublications, product.companyLocationPublications];
+  const productNodes = parts.flatMap((part) => part?.nodes ?? []);
+  let hasNextPage = parts.some((part) => part?.pageInfo?.hasNextPage === true);
+
+  /**
+   * The SHOP's publications are the universe; the product's are its state.
+   *
+   * MEASURED on a live shop (2026-08, Settings → Probes → Publications): the
+   * product answered with 3 publications, the shop has 7. "Google & YouTube"
+   * is one of the four the product never mentioned — so the picker could not
+   * offer it, and a merchant simply could not publish that product to that
+   * channel from this app. `resourcePublicationsV2` reports the publications
+   * this product HAS A RECORD in, which is not the same set as the ones it
+   * could be published to, and only the shop-level list knows the difference.
+   *
+   * The merge is one-directional: the shop list decides WHICH rows exist, the
+   * product list decides their state. A row only the product knows about is
+   * kept too — a publication removed from the shop between the two calls is
+   * still a row this product sits in.
+   */
+  const shop_ = await loadShopPublications(admin, shop);
+  // The merge only happens over a COMPLETE product answer. A merged row says
+  // "not published", and that is a claim about the PRODUCT — one this side
+  // cannot make when the catalog connections were refused or a window was cut
+  // off, because the publication may be one of the rows that never arrived.
+  // A product published to all three regions would otherwise be shown as
+  // published to none of them.
+  const productSideComplete = catalogsKnown && !hasNextPage;
+  if (shop_ && productSideComplete) {
+    const seen = new Set(
+      productNodes.flatMap((node) => {
+        const id = (node as { publication?: { id?: string } })?.publication?.id;
+        return id ? [id] : [];
+      }),
+    );
+    for (const node of shop_.nodes) {
+      if (!node.publication?.id || seen.has(node.publication.id)) continue;
+      seen.add(node.publication.id);
+      // Never published, so no date and no published flag — the same shape the
+      // product connection would have returned for it.
+      productNodes.push({ isPublished: false, publishDate: null, publication: node.publication });
+    }
+    // A narrowed shop universe is a short list, not a finished one.
+    if (!shop_.complete) hasNextPage = true;
+  } else if (productSideComplete) {
+    // The product side was complete but the shop side could not be asked, so
+    // the list may be short. Said as truncation rather than passed off as
+    // complete. (When the product side is already incomplete, `hasNextPage`
+    // or `catalogsKnown` is carrying that news.)
+    hasNextPage = true;
+  }
+
+  return {
+    connection: {
+      // ANY window cut off means the merged list is not the whole answer.
+      pageInfo: { hasNextPage },
+      nodes: productNodes,
+    },
+    catalogsKnown,
+  };
+}
+
+/**
+ * Every publication the SHOP has, across all three catalog types.
+ *
+ * `null` ⇒ could not ask. Never an empty list: "this shop has no channels" is
+ * a claim, and the caller reports a short list as truncated instead of making
+ * it. Same `catalogType` retry as the product read, for the same reason.
+ */
+async function loadShopPublications(
+  admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  shop: string,
+): Promise<{
+  nodes: Array<{ publication: { id: string; name: string | null; catalog: { __typename?: string; title?: string } | null } }>;
+  /** False ⇒ the list is app catalogs only, or a window was cut off. */
+  complete: boolean;
+} | null> {
+  const CONNECTION = `
+            pageInfo { hasNextPage }
+            nodes {
+              id
+              name
+              catalog { __typename title }
+            }`;
+  type Node = { id?: string | null; name?: string | null; catalog?: { __typename?: string; title?: string } | null };
+  type Connection = { pageInfo?: { hasNextPage?: boolean } | null; nodes?: Node[] | null } | null;
+  type Body = {
+    data?: {
+      publications?: Connection;
+      marketPublications?: Connection;
+      companyLocationPublications?: Connection;
+    };
+    errors?: Array<{ message?: string }>;
+  };
+
+  const send = (withCatalogs: boolean) =>
+    admin.graphql(
+      `#graphql
+        query shopPublications {
+          publications(first: ${PUBLICATION_PAGE_SIZE}) {${CONNECTION}
+          }
+          ${withCatalogs ? `marketPublications: publications(first: ${PUBLICATION_PAGE_SIZE}, catalogType: MARKET) {${CONNECTION}
+          }
+          companyLocationPublications: publications(first: ${PUBLICATION_PAGE_SIZE}, catalogType: COMPANY_LOCATION) {${CONNECTION}
+          }` : ""}
+        }`,
+    );
+
+  try {
+    let withCatalogs = true;
+    let body = (await (await send(true)).json()) as Body;
+    if (body.errors?.length) {
+      withCatalogs = false;
+      body = (await (await send(false)).json()) as Body;
+    }
+    if (body.errors?.length || !body.data?.publications) {
+      logger.warn("[Commerce] Shop publications could not be read", {
+        context: "Commerce", shop, error: body.errors?.[0]?.message,
+      });
+      return null;
+    }
+    const parts = [body.data.publications, body.data.marketPublications, body.data.companyLocationPublications];
+    return {
+      nodes: parts
+        .flatMap((part) => part?.nodes ?? [])
+        .flatMap((node) =>
+          node?.id
+            ? [{ publication: { id: node.id, name: node.name ?? null, catalog: node.catalog ?? null } }]
+            : [],
+        ),
+      // The catalog-less fallback narrows the universe to app catalogs, which
+      // is exactly as incomplete as a cut-off window — both must reach the UI
+      // as "not the whole shop" rather than as a finished list.
+      complete: withCatalogs && !parts.some((part) => part?.pageInfo?.hasNextPage === true),
+    };
+  } catch (error) {
+    logger.warn("[Commerce] Shop publications failed", {
+      context: "Commerce", shop, error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -237,13 +454,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
     let product: Record<string, unknown> | null = null;
 
     for (let page = 0; page < 10; page++) {
+    // The product-level block is read from the FIRST page only (`product =
+    // product ?? pageProduct` below), so asking for it again on every further
+    // page is cost paid for an answer that is thrown away.
+    const productLevelSelection = page === 0
+      ? `featuredMedia { preview { image { url altText } } }`
+      : "";
     const response = await admin.graphql(
       `#graphql
         query productCommerce($id: ID!, $after: String) {
           product(id: $id) {
             id
-            ${PRODUCT_PUBLICATIONS_SELECTION}
-            featuredMedia { preview { image { url altText } } }
+            ${productLevelSelection}
             variants(first: ${VARIANT_COMMERCE_PAGE_SIZE}, after: $after) {
               pageInfo { hasNextPage endCursor }
               nodes {
@@ -487,12 +709,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
         .catch(() => undefined);
     }
 
-    const publications = productPublicationRows(
+    const { connection: publicationConnection, catalogsKnown } = await loadProductPublications(
+      admin,
       session.shop,
       productId,
-      product.resourcePublicationsV2 as never,
     );
-    if (publications) {
+    const publications = productPublicationRows(session.shop, productId, publicationConnection as never);
+    // Rebuilt only from a COMPLETE answer. `productPublicationRows` returns
+    // null for a response that carried nothing, and `catalogsKnown` is false
+    // when only the app catalogs were re-read — rebuilding from that would
+    // delete every market and B2B row the mirror already had, which is the
+    // "wipe on a partial response" rule one level up.
+    if (publications && catalogsKnown) {
       await db.productPublication.deleteMany({ where: { shop: session.shop, productId } }).catch(() => undefined);
       if (publications.rows.length > 0) {
         await db.productPublication.createMany({ data: publications.rows, skipDuplicates: true }).catch(() => undefined);
@@ -511,10 +739,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       channels: (publications?.rows ?? []).map((row) => ({
         publicationId: row.publicationId,
         name: row.publicationName,
+        catalogType: row.catalogType,
         isPublished: row.isPublished,
         publishDate: row.publishDate ? row.publishDate.toISOString() : null,
       })) satisfies CommerceChannelView[],
       channelsTruncated: publications?.hasMore === true,
+      // False ⇒ the market and B2B connections could not be asked for, so
+      // their absence below is not evidence that the shop has none.
+      catalogsKnown,
       limits: { levelsPerVariant: INVENTORY_LEVEL_PAGE_SIZE, channels: PUBLICATION_PAGE_SIZE },
     });
   } catch (error) {

@@ -36,6 +36,23 @@ describe("isAttributeField", () => {
     expect(isAttributeField({ translationKey: "body_html", supportsTranslation: true })).toBe(false);
   });
 
+  it("never claims a field that names a render GROUP", () => {
+    // A metaobject entry's colour carries both marks for a different reason:
+    // one value per SHOP, not one per locale. Read as a merchandising
+    // attribute it was pulled out of its entry's card and stacked in the
+    // page-wide "Details" card at the bottom — the colours of every entry in
+    // one flat list, far away from the entries they belong to.
+    expect(
+      isAttributeField({
+        translationKey: "",
+        supportsTranslation: false,
+        groupId: "gid://shopify/Metaobject/12345",
+      }),
+    ).toBe(false);
+    // The seven real ones name no group, so the veto cannot reach them.
+    expect(isAttributeField({ translationKey: "", supportsTranslation: false, groupId: undefined })).toBe(true);
+  });
+
   it("does not claim a field that simply omits both marks", () => {
     // `supportsTranslation` undefined means "yes, by default" everywhere else
     // in the editor — treating it as an attribute would lock ordinary fields.

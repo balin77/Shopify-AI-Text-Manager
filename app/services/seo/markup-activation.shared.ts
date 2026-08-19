@@ -62,6 +62,17 @@ export interface MarkupTypeStat {
    * clean" — the gate must never dress that up as a verified result.
    */
   repeatable: boolean;
+  /**
+   * Pages where EVERY copy of this type carries our marker — i.e. the count we
+   * emitted equals the count served. For a repeatable type this is the only
+   * thing that separates "we are on every such page" from "we are the only
+   * source on every such page"; `appPages` cannot, because our three videos and
+   * a theme's fourth look the same from a page-presence count.
+   *
+   * Optional so a producer that cannot answer it (or predates it) keeps the
+   * cautious old behaviour instead of claiming proof it never had.
+   */
+  appAllCopiesPages?: number;
 }
 
 export type ActivationVerdict =
@@ -193,7 +204,15 @@ export function activationGate(
   // the theme can both emit three VideoObjects on the same page and the
   // duplicate rule — correctly — stays quiet, so `appPages === pages` proves
   // only that we are on every such page, never that we are the only source.
-  if (s.repeatable) return { verdict: "repeatableUnjudged", ...base };
+  if (s.repeatable) {
+    // …unless every copy on every such page is provably ours. Counting beats
+    // presence here: `appPages === pages` says we are THERE, while an equal
+    // COUNT says nothing else is. Without that the switch a merchant has
+    // already turned on reported "not checkable" for good, which reads as a
+    // defect rather than as the caution it was meant to be.
+    if ((s.appAllCopiesPages ?? 0) >= s.pages) return { verdict: "appOnly", ...base };
+    return { verdict: "repeatableUnjudged", ...base };
+  }
 
   if (s.appPages >= s.pages) return { verdict: "appOnly", ...base };
   return { verdict: "mixed", ...base };
@@ -225,6 +244,63 @@ const VERDICT_SEVERITY: Record<ActivationVerdict, number> = {
   free: 0,
 };
 
+/**
+ * Badge for a whole EMBED, which is a different question from the badge for one
+ * type inside it.
+ *
+ * `worstActivationVerdict` answers "how bad is the worst type here" and is right
+ * for a tile that summarises severity. It is WRONG as advice about the embed:
+ * one already-served type made the card read "Nicht einschalten" while several
+ * other types were free, i.e. it told a merchant not to switch on an embed they
+ * should switch on and then configure. The embed is one switch; the types are
+ * checkboxes behind it.
+ *
+ * So a card only repeats a verdict when EVERY type agrees on it. Otherwise it
+ * says the verdicts differ and lets the rows below say which is which — the
+ * same reason the gate refuses to answer when it was not measured.
+ */
+/**
+ * Did the crawl look at any page this switch applies to?
+ *
+ * Lives here rather than at the call site because it shipped wrong there: a
+ * switch with `scopes: null` is SHOP-WIDE (Organization sits on every page),
+ * and `(scopes ?? []).some(...)` turns that into an empty list whose `.some`
+ * is always false — so Organization answered "not measured" after every crawl,
+ * permanently. An expression in a component is an expression nothing tests.
+ *
+ * The distinction it protects is still the original one: no bucket for a page
+ * KIND means the crawl never saw that kind, and reading that as "nothing serves
+ * it" would hand out the green light for a page kind nobody measured.
+ */
+export function scopeCovered(
+  scopes: string[] | null,
+  scopePages: Record<string, number> | undefined,
+  pagesChecked: number,
+  catalogTotals?: Record<string, number>,
+): boolean {
+  if (scopes === null) return pagesChecked > 0;
+  // EVERY scope, not some. A switch emits on ALL of its page kinds, so one
+  // unmeasured kind is enough to make "nothing serves this" a guess:
+  // `enable_breadcrumb` covers product, collection AND article, and with only
+  // products crawled `.some()` handed out the green "safe to switch on" —
+  // then BreadcrumbList shipped twice on every collection and article page.
+  return scopes.every((rt) => {
+    if ((scopePages?.[rt] ?? 0) > 0) return true;
+    // …with one exception, or a shop without a blog could never judge a
+    // switch again: a kind the shop does not HAVE is not an unmeasured kind.
+    // Unknown catalogue (no entry) stays cautious rather than assuming zero.
+    return catalogTotals?.[rt] === 0;
+  });
+}
+
+export type EmbedBadgeVerdict = ActivationVerdict | "varies";
+
+export function embedBadgeVerdict(verdicts: ActivationVerdict[]): EmbedBadgeVerdict {
+  if (verdicts.length === 0) return "unknown";
+  const distinct = new Set(verdicts);
+  return distinct.size === 1 ? verdicts[0] : "varies";
+}
+
 /** The worst of several verdicts. `free` for an empty list — nothing to warn about. */
 export function worstActivationVerdict(verdicts: ActivationVerdict[]): ActivationVerdict {
   let worst: ActivationVerdict = "free";
@@ -236,7 +312,7 @@ export function worstActivationVerdict(verdicts: ActivationVerdict[]): Activatio
 
 /** Polaris tone for a verdict badge. `unknown` stays neutral on purpose. */
 export function activationTone(
-  verdict: ActivationVerdict,
+  verdict: EmbedBadgeVerdict,
 ): "success" | "critical" | "warning" | "info" | undefined {
   switch (verdict) {
     case "free":
@@ -253,6 +329,7 @@ export function activationTone(
       return "warning";
     case "repeatableUnjudged":
       return "info";
+    case "varies":
     case "unknown":
     default:
       return undefined;
@@ -424,6 +501,13 @@ export function statForSwitch(
     (s) => s.type === type && (scopes === null || scopes.includes(s.resourceType)),
   );
   if (matching.length === 0) return undefined;
+  // Every field of MarkupTypeStat has to be carried here, and forgetting one
+  // is silent: this function REBUILDS the object rather than spreading it, so
+  // a field left out simply arrives as undefined at the gate. That already
+  // happened once — appAllCopiesPages was dropped, and because the page feeds
+  // the gate exclusively through this function, the branch it unlocks was
+  // dead in the app while its own unit tests (which build the stat by hand)
+  // stayed green. Add a field to the interface ⇒ add it here.
   return matching.reduce<MarkupTypeStat>(
     (acc, s) => ({
       type,
@@ -433,6 +517,12 @@ export function statForSwitch(
       duplicatePages: acc.duplicatePages + s.duplicatePages,
       appIsOneCopy: acc.appIsOneCopy + s.appIsOneCopy,
       repeatable: acc.repeatable || s.repeatable,
+      // Stays undefined while NO contributing bucket could answer, so
+      // "the producer cannot tell" does not turn into a measured zero.
+      appAllCopiesPages:
+        acc.appAllCopiesPages === undefined && s.appAllCopiesPages === undefined
+          ? undefined
+          : (acc.appAllCopiesPages ?? 0) + (s.appAllCopiesPages ?? 0),
     }),
     { type, resourceType: "", pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false },
   );

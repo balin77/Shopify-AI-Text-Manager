@@ -41,6 +41,7 @@ import { MAX_AUDIT_ITEMS_PER_TYPE, MAX_PROBLEM_BUCKET_ITEMS } from "./audit.serv
 import type { GalleryVideoAudit } from "./gallery-video-audit.server";
 import type { MarkupTypeStat } from "./markup-activation.shared";
 import { loadCrawlMarkupPages } from "./crawl-markup-rows.server";
+import { MAX_JSON_LD_TYPES_PER_PAGE } from "./crawl.shared";
 
 export type JsonLdAuditItemType = "product" | "collection" | "article";
 
@@ -472,8 +473,16 @@ const MAX_LIVE_EXAMPLES = 5;
 export async function summarizeLiveJsonLd(
   db: PrismaClient,
   shop: string,
+  /**
+   * Preloaded snapshot rows. Both live summaries describe the SAME crawl,
+   * so the caller may read it once and hand it to both — without this, a
+   * crawl finishing between the two reads makes the two cards describe
+   * different measurements while the page claims one basis for both.
+   * Optional: leaving it off keeps the standalone behaviour.
+   */
+  preloaded?: Awaited<ReturnType<typeof loadCrawlMarkupPages>>,
 ): Promise<LiveJsonLdSummary | null> {
-  const loaded = await loadCrawlMarkupPages(db, shop);
+  const loaded = preloaded ?? (await loadCrawlMarkupPages(db, shop));
   if (!loaded) return null;
   const { snapshot, judged } = loaded;
 
@@ -493,6 +502,8 @@ export async function summarizeLiveJsonLd(
   const coverage: LiveJsonLdCoverageRow[] = [];
   const pagesByType = new Map<string, number>();
   const duplicatePages = new Map<string, string[]>();
+  /** Pages where every copy of a type was ours — see MarkupTypeStat.appAllCopiesPages. */
+  const canonicalAppAllPages = new Map<string, number>();
   // The example lists are capped, so the page COUNT has to be tallied
   // separately or a shop with six duplicate pages would report five.
   //
@@ -530,11 +541,24 @@ export async function summarizeLiveJsonLd(
     const seen = new Set(types);
     for (const t of seen) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
 
-    const appTypes = new Set(
-      (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
-        canonicalJsonLdType,
-      ),
+    const appList = (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
+      canonicalJsonLdType,
     );
+    const appTypes = new Set(appList);
+    // The crawl caps the COLLECTED LIST per page, not the count per type
+    // (collectJsonLdTypes stops at MAX_JSON_LD_TYPES_PER_PAGE entries), so
+    // the truncation guard has to measure the list. Comparing a per-type
+    // count against that cap could practically never fire, and a page with
+    // more than 50 types whose foreign copies fell off the end would then
+    // count as proof that all of its markup is ours. Either list reaching
+    // the cap disqualifies the whole page as evidence.
+    const pageTruncated =
+      types.length >= MAX_JSON_LD_TYPES_PER_PAGE || appList.length >= MAX_JSON_LD_TYPES_PER_PAGE;
+    // Counted, not just seen: for a REPEATABLE type only an equal count can
+    // show that nothing else emits it too. The crawl preserves repeats in both
+    // columns for exactly this.
+    const appCanonical = new Map<string, number>();
+    for (const t of appList) appCanonical.set(t, (appCanonical.get(t) ?? 0) + 1);
     const canonical = new Map<string, number>();
     for (const t of types) {
       const c = canonicalJsonLdType(t);
@@ -544,6 +568,10 @@ export async function summarizeLiveJsonLd(
       const k = key(t, rt);
       canonicalPages.set(k, (canonicalPages.get(k) ?? 0) + 1);
       if (appTypes.has(t)) canonicalAppPages.set(k, (canonicalAppPages.get(k) ?? 0) + 1);
+      const appN = appCanonical.get(t) ?? 0;
+      if (appN >= n && !pageTruncated) {
+        canonicalAppAllPages.set(k, (canonicalAppAllPages.get(k) ?? 0) + 1);
+      }
       if (n <= 1 || REPEATABLE_JSON_LD_TYPES.has(t)) continue;
       const list = duplicatePages.get(t) ?? [];
       if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
@@ -564,6 +592,7 @@ export async function summarizeLiveJsonLd(
         duplicatePages: duplicateCounts.get(k) ?? 0,
         appIsOneCopy: duplicateAppCounts.get(k) ?? 0,
         repeatable: REPEATABLE_JSON_LD_TYPES.has(type),
+        appAllCopiesPages: canonicalAppAllPages.get(k) ?? 0,
       };
     })
     .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type));

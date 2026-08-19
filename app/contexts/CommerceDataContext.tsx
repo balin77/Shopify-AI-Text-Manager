@@ -52,6 +52,13 @@ export interface LoadedState {
   variantsTruncated: boolean;
   channels: CommerceChannelView[];
   channelsTruncated: boolean;
+  /**
+   * False ⇒ the market and B2B connections could not be asked for, so the
+   * absence of a region below is not evidence that the shop has none. The
+   * `catalogType` default is APP and it is silent — this flag is what keeps
+   * "we did not ask" distinguishable from "there are none".
+   */
+  catalogsKnown: boolean;
   /** Every location the SHOP has — see the "not stocked here" rows below. */
   shopLocations: Array<{ id: string; name: string; isActive: boolean }>;
 }
@@ -182,6 +189,8 @@ export function CommerceDataProvider({
           variantsTruncated: body.variantsTruncated === true,
           channels: body.channels ?? [],
           channelsTruncated: body.channelsTruncated === true,
+          // Absent ⇒ an older server build that could not answer at all.
+          catalogsKnown: body.catalogsKnown === true,
           shopLocations: body.shopLocations ?? [],
         });
         // A refused write reloads to SHOW the number that actually moved —

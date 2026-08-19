@@ -827,7 +827,7 @@
       "type": "checkbox",
       "id": "enable_video",
       "label": "Video (product pages)",
-      "info": "Emits VideoObject for videos in your product media AND for YouTube links that only live in a variant gallery, deduplicated per product. Google requires an upload date: for product media the sync fills it in automatically. A gallery link has no file behind it, so without the product metafield \"custom.video_upload_date\" (type date) that video gets no rich result - omitted, never guessed. The same metafield overrides the automatic date. Vimeo gallery links are skipped: no thumbnail can be derived.",
+      "info": "Emits VideoObject for videos in your product media AND for YouTube links that only live in a variant gallery, deduplicated per product. Google requires an upload date: for product media the sync fills it in automatically. A gallery link has no file behind it, so it is delivered WITHOUT a date - omitted rather than guessed - and Google may then not accept it as a rich result. Vimeo gallery links are skipped: no thumbnail can be derived.",
       "default": true
     },
     {

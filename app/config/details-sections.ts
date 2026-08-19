@@ -3,8 +3,8 @@
  *
  * The Details card collects the merchandising attributes — the facts about an
  * item rather than the words it says. Flat, they were one grid of eight
- * unrelated controls: a vendor name next to a category picker next to a theme
- * file suffix, with nothing saying which question each one answers. Shopify's own
+ * unrelated controls: a vendor name next to a stock panel next to a theme file
+ * suffix, with nothing saying which question each one answers. Shopify's own
  * admin splits exactly these into cards (Product organization, Theme template,
  * …), and the Variants card in this editor already carries the nested-Card
  * look, so this reuses both.
@@ -17,23 +17,16 @@
  *    same section fold together. A field can therefore never jump into a
  *    subcard further up the card just because it carries the same tag.
  *  - `attributeFields` is already filtered (the status control is hoisted into
- *    the action bar), so a section whose fields all dropped out simply never
- *    appears.
+ *    the action bar, the default price only exists for a single-variant
+ *    product), so a section whose fields all dropped out simply never appears.
  *  - With only ONE section left there is nothing to separate, so the card
  *    renders flat exactly as before — `shouldRenderDetailsSections`. A page or
  *    a blog whose only attribute is the theme template would otherwise get a
  *    titled box inside a titled box saying the same thing twice.
  */
 
-/**
- * The subcards the Details card can split into, in render order.
- *
- * There WAS a `commerce` one, holding the default variant's price next to the
- * stock-and-channels panel. Both of those describe a VARIANT and moved into the
- * variants card; what stayed behind is the sales-channel panel, which draws its
- * own heading and is therefore rendered bare rather than in a subcard of one.
- */
-export type DetailsSectionId = "organization" | "theme";
+/** The subcards the Details card can split into, in render order. */
+export type DetailsSectionId = "publishing" | "organization" | "theme";
 
 /** One rendered block: a subcard (`id` set) or a run of unsectioned fields. */
 export interface DetailsSection<F> {
@@ -47,6 +40,7 @@ export interface DetailsSection<F> {
  * entry — the same defensive pattern as every other label in the editor.
  */
 export const DETAILS_SECTION_FALLBACK_LABELS: Record<DetailsSectionId, string> = {
+  publishing: "Sales channels",
   organization: "Organization",
   theme: "Theme template",
 };

@@ -215,6 +215,8 @@ export const de = {
     metaobjects: "Metaobjekte",
     metaobjectsDescription: "Verwalten und übersetzen Sie benutzerdefinierte Metaobjekte",
     metaobjectsNoEntries: "Dieser Metaobjekt-Typ hat keine Einträge zum Anzeigen.",
+    metaobjectEntriesNoun: "Einträge",
+    metaobjectsSearchEntries: "Einträge durchsuchen...",
     // PLAN_METAOBJECTS_EDITOR — die Eintragskarte
     metaobjectDeleteInUse: "Etwas in Ihrem Shop verweist noch auf diesen Eintrag, deshalb l\u00f6scht Shopify ihn nicht. Entfernen Sie den Verweis zuerst dort.",
     metaobjectEntryEditColor: "Farbe \u00e4ndern",
@@ -238,6 +240,19 @@ export const de = {
     metaobjectEntryClearImage: "Bild entfernen",
     metaobjectEntryReadOnlyDefinition: "Einträge dieser Definition können von dieser App nicht geändert werden.",
     metaobjectEntryReadOnlyUnknown: "Ob diese Definition beschreibbar ist, ist unbekannt — bitte neu laden.",
+    metaobjectEntryOpenInAdmin: "Im Shopify-Adminbereich bearbeiten",
+    metaobjectTaxonomyLoading: "Zul\u00e4ssige Werte werden geladen\u2026",
+    metaobjectTaxonomyNone: "\u2014",
+    metaobjectTaxonomyEmpty: "Keine Werte ausgew\u00e4hlt.",
+    metaobjectTaxonomyMin: "mindestens {n}",
+    metaobjectTaxonomyMax: "h\u00f6chstens {n}",
+    metaobjectTaxonomyMaxReached: "H\u00f6chstens {n} Werte",
+    metaobjectTaxonomyBelowMin: "Bitte mindestens {n} Wert(e) ausw\u00e4hlen.",
+    metaobjectTaxonomyLookupFailed: "Die zul\u00e4ssigen Werte konnten gerade nicht von Shopify gelesen werden.",
+    metaobjectTaxonomyAttributeMissing: "Es wurde kein Taxonomie-Attribut namens \"{handle}\" f\u00fcr dieses Feld gefunden.",
+    metaobjectTaxonomyNoHandle: "Dieses Feld nennt kein Taxonomie-Attribut, seine Werte lassen sich hier deshalb nicht auflisten.",
+    metaobjectTaxonomySearch: "Wert suchen oder ausw\u00e4hlen\u2026",
+    metaobjectTaxonomyTruncated: "Es sind nur die ersten Werte aufgelistet \u2014 es kann weitere geben.",
     pages: "Seiten",
     pagesDescription: "Verwalten Sie Ihre Shop-Seiten (Impressum, AGB, etc.)",
     policies: "Richtlinien",
@@ -381,6 +396,13 @@ export const de = {
       primaryDisabledHint: "Marktauswahl nur in einer Übersetzungssprache verfügbar – wechsle zuerst zu einer Zielsprache.",
       tooltip: "Wähle einen Markt, um diese Sprache abweichend für ihn zu übersetzen. Ohne Auswahl gilt der globale Wert für alle Märkte.",
       disabledHint: "Cookie-Banner werden über Shopifys Customer-Privacy-API gespeichert, die keine markt-spezifischen Werte unterstützt. Diese Inhalte gelten immer global.",
+      // Die Warnung neben der Marktauswahl: ohne Katalog-Zugehörigkeit ist
+      // jede Übersetzung für diesen Markt unsichtbar. {market} = Marktname.
+      // Verweist bewusst auf den Shopify-Admin und NICHT auf die Details-Karte:
+      // die ist Pro-gated und nur in der Hauptsprache bedienbar, während dieser
+      // Hinweis genau dann erscheint, wenn eine Fremdsprache aktiv ist.
+      notPublishedInMarket:
+        "Dieses Produkt liegt nicht im Katalog des Markts „{market}“ — dort kann es niemand sehen. Übersetzungen für diesen Markt bleiben unsichtbar, bis du es im Shopify-Admin unter Veröffentlichung für diese Region freigibst.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",
@@ -487,6 +509,9 @@ export const de = {
 
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — Inhalte anlegen ──────────────────
     createButtonLabel: "Neu anlegen",
+    createEntryButtonLabel: "Eintrag hinzuf\u00fcgen",
+    deleteContainerButtonLabel: "Typ l\u00f6schen",
+    deleteContainerNotLoaded: "Dieser Typ wird noch geladen.",
     createChooserTitle: "Was möchtest du anlegen?",
     // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
     // denselben Text bekommen (§1.2).
@@ -512,8 +537,8 @@ export const de = {
       confirm: "Endgültig löschen",
       deleting: "Wird gelöscht \u2026",
       consequenceMetaobjectUsage: "Shopify verweigert das L\u00f6schen, solange ein Produkt den Eintrag als Optionswert benutzt \u2014 dort zuerst entfernen.",
+      consequenceMetaobjectDefinitionEntries: "Jeder Eintrag dieses Typs wird mitgel\u00f6scht \u2014 hier bekannt: {count}. Shopify fragt nicht nach ihnen.",
     },
-    undoCreate: "Anlegen rückgängig machen",
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplizieren",
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
@@ -627,11 +652,25 @@ export const de = {
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
       channelsHeading: "Vertriebskanäle",
+      manage: "Verwalten",
+      manageTitle: "Veröffentlichung verwalten",
+      done: "Fertig",
+      noneSelected: "Auf keinem Vertriebskanal veröffentlicht",
+      marketCount: "Regionen: {count}",
+      b2bCount: "B2B-Kataloge: {count}",
+      // Shopify beantwortet drei verschiedene Fragen mit einem Mechanismus —
+      // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
+      // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
+      marketsHeading: "Regionen",
+      marketsHint: "Regionen entscheiden, wer das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
+      b2bHeading: "B2B-Kataloge",
+      b2bHint: "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen.",
+      catalogsUnknown: "Regionen und B2B-Kataloge konnten nicht gelesen werden und fehlen deshalb hier — verwalte sie im Shopify-Admin.",
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
-      variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
+      variantPricesHint: "Preise bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen) oder im Shopify-Admin.",
       notStockedHere: "hier nicht bestandsgeführt",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
@@ -672,14 +711,6 @@ export const de = {
       channelsNotConfirmed: "Shopify hat nicht jede Kanaländerung bestätigt. Lade neu, um zu sehen, welche angekommen sind.",
       channelsFailed: "Die Vertriebskanäle konnten nicht geändert werden.",
     },
-    priceWarnings: {
-      priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
-      priceInvalid: "Der Preis konnte nicht als Betrag gelesen werden. Alles Übrige wurde gespeichert.",
-      priceEmpty: "Der Preis war leer und wurde nicht gespeichert — Shopify verlangt für jede Variante einen Preis. Alles Übrige wurde gespeichert.",
-      priceNoVariant: "Der Preis konnte nicht gespeichert werden, weil die Varianten dieses Produkts noch nicht im lokalen Cache sind — lade das Produkt neu. Alles Übrige wurde gespeichert.",
-      priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
-      priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
-    },
     // Überschrift der Karte mit SEO-Titel, Meta-Beschreibung und URL-Handle.
     // Shopifys eigener Abschnitt im Admin heißt genauso.
     searchEngineListing: "Suchmaschinen-Eintrag",
@@ -688,6 +719,7 @@ export const de = {
     // (config/details-sections.ts). Shopifys Admin teilt dieselben Angaben
     // genauso auf.
     detailsSections: {
+      publishing: "Vertriebskanäle",
       organization: "Organisation",
       theme: "Theme-Vorlage",
     },
@@ -724,7 +756,7 @@ export const de = {
     // Die Erklärzeile unter einem Attributfeld. Bewusst ausführlich: jede
     // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
     attributeNotes: {
-      status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Kanäle verwaltest du im Shopify-Admin.",
+      status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Die verwaltest du gleich hier unter Vertriebskanäle.",
       collections: "Regelbasierte Kollektionen werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
     },
     templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
@@ -766,6 +798,28 @@ export const de = {
     createdNotSyncedBody: "Der Eintrag wurde in Shopify angelegt. Nur die lokale Kopie fehlt noch — lade neu, um ihn zu sehen. Lege ihn NICHT ein zweites Mal an.",
     createdHandle: "Handle: {handle}",
     createModal: {
+      titleFor: "Neu: {resource}",
+      removeImage: "Entfernen",
+      onlyImagesHere: "Hier lassen sich nur Bilder anh\u00e4ngen. Video und 3D f\u00fcgst du nach dem Anlegen im Medienmanager des Elements hinzu.",
+      externalVideoNotAnImage: "Ein externer Videolink kann nicht als Bild verwendet werden.",
+      noneOption: "\u2014",
+      tagsHint: "Mit Komma getrennt",
+      createsUnpublishedNotice: "Das wird als Entwurf angelegt \u2014 nichts geht live, bis du es ver\u00f6ffentlichst.",
+      defaultRuleSetName: "Regelsatz 1",
+      collectionTypeLabel: "Wie kommen Produkte hinein?",
+      collectionManual: "Ich w\u00e4hle sie selbst aus",
+      collectionAutomated: "Automatisch, nach Regeln",
+      errors: {
+        tooLong: "Zu lang ({detail})",
+        unknownField: "Diese App kennt dieses Feld nicht.",
+        invalidOption: "\u201e{detail}\u201c ist keine der Auswahlm\u00f6glichkeiten.",
+        invalidHandle: "Nur Kleinbuchstaben, Zahlen und Bindestriche.",
+        invalidMoney: "Bitte einen Betrag angeben, z. B. 19.90",
+        invalidColor: "Bitte einen Hex-Farbwert angeben, z. B. #A1B2C3.",
+        invalidTaxonomyValue: "Bitte einen Wert aus der angebotenen Liste w\u00e4hlen.",
+        tooManyTaxonomyValues: "H\u00f6chstens {detail} Wert(e).",
+        tooFewTaxonomyValues: "Mindestens {detail} Wert(e).",
+      },
       // PLAN §2.5a-d — die KI-Extras.
       altText: "Alt-Text",
       changeImage: "Bild wechseln",
@@ -2115,9 +2169,15 @@ export const de = {
     },
     structuredDataPage: {
       introTitle: "Was sind strukturierte Daten und wozu brauchst du sie?",
-      introBody1: "Strukturierte Daten sind maschinenlesbare Metadaten im HTML deines Shops, die Suchmaschinen und KI-Systemen erklären, WAS auf einer Seite steht — nicht nur den reinen Text. Google, Bing, ChatGPT & Co. nutzen sie, um dein Produkt als \"Produkt\" (mit Preis, Verfügbarkeit, Bewertungen), deinen Blog-Artikel als \"Artikel\" (mit Autor, Datum) und deinen Shop als \"Organisation\" (mit Logo, Social-Profilen) zu erkennen.",
-      introBody2: "Konkret bringt dir das: Rich Snippets in Google (Sterne, Preise, Verfügbarkeit direkt im Suchergebnis), ein Google Knowledge Panel für deine Marke, bessere Erwähnungen in KI-Antworten (ChatGPT, Perplexity) und die Grundlage für Google Merchant Center und Shopping-Anzeigen. Wir liefern das im JSON-LD-Format nach dem schema.org-Standard — genau das, was Google offiziell empfiehlt.",
-      introBody3: "Zusätzlich brauchst du Open Graph / Twitter Cards, damit geteilte Links auf Facebook, X, LinkedIn, Slack, WhatsApp und in KI-Chat-Vorschauen mit Bild, Titel und Beschreibung erscheinen.",
+      introBody1: "Strukturierte Daten sagen Google und KI-Systemen, WAS auf einer Seite steht — dass 43,95 € ein Preis ist und keine beliebige Zahl. Das bringt dir Sterne, Preise und Verfügbarkeit direkt im Suchergebnis, ein Knowledge Panel für deine Marke und bessere Erwähnungen in KI-Antworten.",
+      introBody2: "Open Graph und Twitter Cards sorgen dafür, dass geteilte Links auf Facebook, LinkedIn, WhatsApp und in KI-Chats mit Bild und Titel erscheinen.",
+      introStep1: "Zeigt, was deine Seiten heute ausliefern.",
+      introStepBadge1: "Schritt 1",
+      introStep2: "Prüft, ob deine Produktdaten für ein Rich Result reichen.",
+      introStepBadge2: "Schritt 2",
+      introStep3: "Schaltet einzelne Elemente zu — aber nur die, die noch niemand liefert.",
+      introStepBadge3: "Schritt 3",
+      introCrawlNote: "**Die Daten dafür kommen aus dem Website-Crawl.** Nur er sieht, was wirklich auf deinen Seiten steht. Ohne aktuellen Crawl gibt es in Schritt 1 und 3 kein Urteil, sondern nur „nicht gemessen\".",
       activationTitle: "Aktivierung im Theme-Editor",
       activationBody: "Damit die Daten tatsächlich an Google & Co. ausgeliefert werden, aktivierst du zwei App-Blöcke in deinem Theme. Das ist einmalig und ohne Eingriffe in HTML/Liquid. Die Blöcke werden dann für jede Produkt-, Kollektions-, Blog- und Themeseite automatisch mit den passenden nativen Shopify-Daten befüllt — kein Sync pro Artikel nötig.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) für Google",
@@ -2146,7 +2206,12 @@ export const de = {
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "Video entsteht erst auf der Storefront — aus deinen Produkt-Medien **und** aus YouTube-Links, die nur in einer Varianten-Galerie liegen. Deshalb taucht es in der Vorschau unten nicht auf. Produktweit dedupliziert: ein Video an zwölf Varianten bleibt ein Eintrag.",
-      schemaVideoDateNote: "**Galerie-Videos brauchen ein Datum von dir.** Google verlangt für das Video-Rich-Result ein Upload-Datum. Bei Produkt-Medien holt die App es beim Sync automatisch; ein Galerie-Link hat keine Datei dahinter und damit keine Quelle dafür. Ohne das Produkt-Metafeld **custom.video_upload_date** (Typ „Datum\") lassen wir die Angabe weg statt sie zu erfinden — das Video wird dann nicht als Rich Result angezeigt. Vimeo-Galerie-Links überspringen wir ganz: dafür fehlt ein Vorschaubild.",
+      schemaVideoDateNote: "**Videos aus einer Galerie werden ohne Datum ausgeliefert.** Google zeigt ein Video nur mit Upload-Datum an. Bei Videos in deinen Produktmedien holt die App es automatisch; ein verlinktes Video (YouTube) hat keine Datei bei Shopify und damit keine Quelle dafür — es bleibt deshalb ohne Rich Result.",
+      severityLabels: {
+        error: "Fehler",
+        warning: "Warnung",
+        info: "Hinweis",
+      },
       schemaFaqNote: "FAQ (FAQPage) kommt dazu, sobald du den Schalter im Theme-Editor einschaltest und das Metafeld **custom.faq** gefüllt ist — beides ist bewusst standardmäßig aus.",
       setBrandLogo: "Logo in Shop-Markenassets festlegen",
       openSampleProduct: "Beispielprodukt öffnen",
@@ -2200,15 +2265,17 @@ export const de = {
       galleryVideos: {
         failed: "Die Prüfung der Galerie-Videos konnte diesmal nicht durchgeführt werden (Shopify hat die Abfrage abgelehnt). Der nächste Durchlauf versucht es erneut.",
         none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
-        found: "Produkte mit Galerie-Videos: {products} — davon ohne Datum: {missing}.",
-        fix: "Ohne Datum entsteht kein Video-Rich-Result. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum\"), dann zählt das Video.",
+        found: "Produkte mit Videos ohne Datum: {products} — davon aus einer Galerie ohne Datum: {missing}.",
+        externalNote: "Videos aus **externen Quellen** (YouTube-Link in einer Galerie) können nicht mit Datum ausgeliefert werden — sie haben keine Datei bei Shopify. Google akzeptiert das Video dann unter Umständen nicht als Rich Result.",
         vimeo: "Bei {count} davon liegt mindestens ein Vimeo-Video — dafür wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
         capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",
         rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
+        mediaMissing: "Bei {count} Produkten liegt das Video in den **Produktmedien** und hat trotzdem kein Datum. Das behebt ein **Produkt-Sync** von selbst — das Datum kommt dann aus Shopify.",
+        rowMedia: "{count} aus Produktmedien ohne Datum",
       },
       activation: {
-        openSwitches: "Schalter öffnen",
+        openSwitches: "Zum Widget",
         summary: {
           switchOff: "{count} ausschalten: {names}",
           switchOffShort: "{count} ausschalten",
@@ -2234,13 +2301,13 @@ export const de = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "Ein Schalter im Theme-Editor, neun Tags dahinter. Er ist nur so sicher wie sein schlechtestes Tag.",
         socialNotMeasured: "Der letzte Crawl ist älter als diese Auswertung und hat Open-Graph-Tags noch nicht erfasst. Ohne Messung gibt es hier keine Empfehlung — starte einen neuen Crawl.",
-        socialOriginUnknownHint: "Kein Merkmal dieser App gefunden — es kommt mit diesem Update. Was unten als fremd gilt, bleibt bis zum nächsten Crawl unbewiesen.",
+        socialOriginUnknownHint: "Kein Merkmal dieser App gefunden. Dafür gibt es zwei Gründe: Diese Einbettung ist aus — dann liefert dein Theme die Tags — oder dein letzter Crawl ist älter als das Merkmal. Was unten als fremd gilt, ist deshalb wahrscheinlich, aber nicht bewiesen.",
         title: "Schalter für Schalter: was darf an?",
-        intro: "Theme und App benutzen absichtlich dieselbe @id — laufen beide, verschmilzt Google sie zu EINEM Knoten und jedes Feld steht doppelt drin. Das ist nicht doppeltes, sondern **ungültiges** Markup. Deshalb hier für jeden Schalter, was Schritt 1 gemessen hat.",
+        intro: "Schalte hier nur ein, was dein Theme nicht schon selbst ausliefert. Ist ein Typ bereits da, entsteht beim Einschalten fehlerhaftes Markup — Google verwirft es dann eher, als dass es dir hilft. Unten steht für jeden Schalter, was Schritt 1 gemessen hat.",
         noCrawl: "**Noch kein Crawl.** Ohne Messung keine Empfehlung.",
         notMeasured: "**Nicht gemessen.** Der letzte Crawl ist älter als diese Auswertung. Ohne Messung keine Empfehlung.",
         basis: "Grundlage: Crawl vom {time}, {pages} ausgelieferte Seiten geprüft.",
-        originUnknownHint: "Kein Merkmal dieser App gefunden. Was unten als fremd gilt, ist deshalb sehr wahrscheinlich, aber nicht bewiesen — ein neuer Crawl beweist es.",
+        originUnknownHint: "Kein Merkmal dieser App gefunden. Dafür gibt es zwei Gründe: Diese Einbettung ist aus — dann liefert dein Theme das Markup — oder dein letzter Crawl ist älter als das Merkmal. Was unten als fremd gilt, ist deshalb wahrscheinlich, aber nicht bewiesen.",
         switchesTitle: "JSON-LD (schema.org)",
         defaultOn: "Standard: an",
         defaultOff: "Standard: aus",
@@ -2258,6 +2325,7 @@ export const de = {
         verdictLabels: {
           unknown: "Nicht gemessen",
           free: "Frei",
+          varies: "Unterschiedlich",
           appOnly: "Läuft",
           foreignOnly: "Nicht einschalten",
           mixed: "Uneinheitlich",

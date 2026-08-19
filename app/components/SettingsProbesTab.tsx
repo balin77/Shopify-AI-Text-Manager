@@ -5,6 +5,7 @@ import { SettingsPageSpeedProbeTab } from "./SettingsPageSpeedProbeTab";
 import { SettingsCollectionModelProbeTab } from "./SettingsCollectionModelProbeTab";
 import { SettingsMetaobjectProbeTab } from "./SettingsMetaobjectProbeTab";
 import { SettingsUnitPriceProbeTab } from "./SettingsUnitPriceProbeTab";
+import { SettingsPublicationProbeTab } from "./SettingsPublicationProbeTab";
 import { SettingsTaxonomyProbeTab } from "./SettingsTaxonomyProbeTab";
 
 export type ProbeSubTab =
@@ -13,6 +14,7 @@ export type ProbeSubTab =
   | "collectionprobe"
   | "metaobjectprobe"
   | "unitpriceprobe"
+  | "publicationprobe"
   | "taxonomyprobe";
 
 interface Props {
@@ -22,6 +24,7 @@ interface Props {
   showCollectionProbe: boolean;
   showMetaobjectProbe: boolean;
   showUnitPriceProbe: boolean;
+  showPublicationProbe: boolean;
   showTaxonomyProbe: boolean;
   initialSubTab?: ProbeSubTab;
 }
@@ -44,6 +47,7 @@ export function SettingsProbesTab({
   showCollectionProbe,
   showMetaobjectProbe,
   showUnitPriceProbe,
+  showPublicationProbe,
   showTaxonomyProbe,
   initialSubTab,
 }: Props) {
@@ -53,6 +57,7 @@ export function SettingsProbesTab({
     ...(showCollectionProbe ? [{ id: "collectionprobe" as ProbeSubTab, label: "Collection Model" }] : []),
     ...(showMetaobjectProbe ? [{ id: "metaobjectprobe" as ProbeSubTab, label: "Metaobjects" }] : []),
     ...(showUnitPriceProbe ? [{ id: "unitpriceprobe" as ProbeSubTab, label: "Unit price" }] : []),
+    ...(showPublicationProbe ? [{ id: "publicationprobe" as ProbeSubTab, label: "Publications" }] : []),
     ...(showTaxonomyProbe ? [{ id: "taxonomyprobe" as ProbeSubTab, label: "Taxonomy" }] : []),
   ];
 
@@ -118,6 +123,7 @@ export function SettingsProbesTab({
       {/* Unit-price probe — is the Grundpreis writable at all? */}
       {selected === "unitpriceprobe" && showUnitPriceProbe && <SettingsUnitPriceProbeTab />}
 
+      {selected === "publicationprobe" && showPublicationProbe && <SettingsPublicationProbeTab />}
       {/* Taxonomy probe — what the category picker can be built on. */}
       {selected === "taxonomyprobe" && showTaxonomyProbe && <SettingsTaxonomyProbeTab />}
     </BlockStack>

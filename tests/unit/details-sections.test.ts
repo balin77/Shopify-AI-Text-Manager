@@ -48,11 +48,11 @@ describe("groupDetailsFields", () => {
     // further up the card.
     const blocks = groupDetailsFields([
       field("vendor", "organization"),
-      field("templateSuffix", "theme"),
+      field("commerce", "publishing"),
       field("tags", "organization"),
     ]);
 
-    expect(blocks.map((b) => b.id)).toEqual(["organization", "theme", "organization"]);
+    expect(blocks.map((b) => b.id)).toEqual(["organization", "publishing", "organization"]);
   });
 
   it("collects unsectioned fields into null blocks", () => {
@@ -90,9 +90,10 @@ describe("shouldRenderDetailsSections", () => {
 describe("content configs", () => {
   it("splits the product Details card into contiguous sections", () => {
     const blocks = groupDetailsFields(detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions));
-    // The sales-channel panel leads, UNSECTIONED — see the exception below.
-    expect(blocks.map((b) => b.id)).toEqual([null, "organization", "theme"]);
+    expect(blocks.map((b) => b.id)).toEqual(["publishing", "organization", "theme"]);
     expect(blocks[0].fields.map((f) => f.key)).toEqual(["commerce"]);
+    // The category left this card for the main one; the product type took its
+    // place. See the swap test below.
     expect(blocks[1].fields.map((f) => f.key)).toEqual(["vendor", "productType", "collections", "tags"]);
     expect(shouldRenderDetailsSections(blocks)).toBe(true);
   });
@@ -141,17 +142,9 @@ describe("content configs", () => {
     }
   });
 
-  it("gives every Details-card field a section — except the one that draws its own", () => {
-    // `commerce` is the single exception and is named here rather than left as
-    // a hole: the sales-channel panel renders its own heading, so a subcard
-    // around it would print the same word twice. Anything else without a
-    // section is an oversight.
+  it("gives every Details-card field a section, so none renders outside a subcard", () => {
     for (const config of [PRODUCTS_CONFIG, COLLECTIONS_CONFIG, PAGES_CONFIG, BLOGS_CONFIG]) {
       for (const f of detailsCardFields(config.fieldDefinitions)) {
-        if (f.key === "commerce") {
-          expect(f.detailsSection).toBeUndefined();
-          continue;
-        }
         expect(f.detailsSection, `${config.contentType}/${f.key}`).toBeTruthy();
       }
     }
@@ -166,6 +159,6 @@ describe("detailsSectionLabel", () => {
 
   it("falls back to English when the bundle has no entry", () => {
     expect(detailsSectionLabel({}, "organization")).toBe(DETAILS_SECTION_FALLBACK_LABELS.organization);
-    expect(detailsSectionLabel({ content: {} }, "theme")).toBe(DETAILS_SECTION_FALLBACK_LABELS.theme);
+    expect(detailsSectionLabel({ content: {} }, "publishing")).toBe(DETAILS_SECTION_FALLBACK_LABELS.publishing);
   });
 });

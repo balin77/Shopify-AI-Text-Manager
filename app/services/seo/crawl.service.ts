@@ -40,6 +40,9 @@ import {
   type ExternalTarget,
 } from "./external-links.server";
 import { isAuditType, type AuditType, type DeepLinkType } from "./resource-types.shared";
+// Cap on recorded @type values per page. Shared with the live audit, which
+// refuses to read a truncated list as proof — see crawl.shared.ts.
+import { MAX_JSON_LD_TYPES_PER_PAGE } from "./crawl.shared";
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -583,9 +586,6 @@ export function classifyLinkStatus(statusCode: number): LinkStatusClass {
 
 // ── JSON-LD detection (§ live structured-data coverage) ────────────────────
 
-/** Cap on recorded @type values per page. A page with more schema blocks than
- *  this has bigger problems than the tail we drop. */
-const MAX_JSON_LD_TYPES_PER_PAGE = 50;
 /** Defensive bound on a single @type string before it reaches the DB. */
 const MAX_JSON_LD_TYPE_LENGTH = 64;
 

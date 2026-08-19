@@ -54,6 +54,19 @@ export interface ChipComboboxProps {
    */
   allowFreeText?: boolean;
   placeholder?: string;
+  /**
+   * Show the options with the input still EMPTY.
+   *
+   * Off by default, which is the whole point of this control for tags and
+   * collection memberships: those lists are open-ended and a dropdown of
+   * everything is the wall it replaced. It is ON where the option list is
+   * small, closed and MEASURED -- the metaobject taxonomy pickers, 19 colours
+   * and 51 patterns -- because there the merchant cannot know what to type. A
+   * required field rendered as an empty box whose values are only reachable by
+   * guessing an English substring is not a picker, and a German or Spanish
+   * merchant has no way into it at all.
+   */
+  suggestAtRest?: boolean;
   helpText?: string;
   /** Rendered when nothing is chosen and nothing can be. */
   emptyText?: string;
@@ -67,6 +80,7 @@ export function ChipCombobox({
   readOnly,
   allowFreeText,
   placeholder,
+  suggestAtRest,
   helpText,
   emptyText,
 }: ChipComboboxProps) {
@@ -92,10 +106,13 @@ export function ChipCombobox({
    */
   const suggestions = useMemo(() => {
     const query = input.trim().toLowerCase();
-    if (!query) return [];
+    if (!query && !suggestAtRest) return [];
     return options
-      .filter((o) => !chosen.has(o.value) && o.label.toLowerCase().includes(query))
-      .slice(0, 20)
+      .filter((o) => !chosen.has(o.value) && (!query || o.label.toLowerCase().includes(query)))
+      // A wider cap when the whole list is on show: `suggestAtRest` is only set
+      // for closed, MEASURED lists, and cutting one of those at 20 would hide
+      // permitted values behind a limit that exists for open-ended tag lists.
+      .slice(0, suggestAtRest ? 100 : 20)
       .map((o) => ({
         value: o.value,
         // A locked option stays LISTED and carries its reason. Filtering it out
@@ -105,7 +122,7 @@ export function ChipCombobox({
         // rides in the label.
         label: o.lockedReason ? `${o.label} — ${o.lockedReason}` : o.label,
       }));
-  }, [input, options, chosen]);
+  }, [input, options, chosen, suggestAtRest]);
 
   const add = (value: string) => {
     const clean = value.trim();

@@ -9,6 +9,7 @@ import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
 import { ColorFieldEditor } from "../components/metaobjects/ColorFieldEditor";
 import { MetaobjectFileField } from "../components/metaobjects/MetaobjectFileField";
+import { TaxonomyValueField } from "../components/metaobjects/TaxonomyValueField";
 import { MetaobjectRichTextField } from "../components/metaobjects/MetaobjectRichTextField";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "./create-fields.config";
@@ -222,26 +223,24 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
         "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
     },
     {
-      // Phase 4 — the sales channels. Price and stock USED to sit here too;
-      // they describe a VARIANT, so they moved into the variants card, next to
-      // the options that say which variant is which. What is left is a property
-      // of the product itself: which channels it is published to.
+      // Phase 4 — where the product is published. NOT part of the content
+      // save: it loads live and writes through its own endpoint, so a value
+      // another app may have moved never travels in the editor's flat value
+      // map where it would be stale by the time the merchant pressed save.
       //
-      // NOT part of the content save's value map: it loads live and writes
-      // through its own endpoint, so a volatile number never travels in the
-      // editor's flat value map where it would be stale by the time the
-      // merchant pressed save. It still rides the editor's ONE save bar.
-      //
-      // No `detailsSection`: with the price gone it was the only field in the
-      // commerce subcard, and the panel already draws its own "Sales channels"
-      // heading — a subcard around it would say the same word twice.
+      // Stock and prices used to live here too. They are per VARIANT, so they
+      // moved to the variants card where the options they belong to are — what
+      // is left is a property of the product itself.
       key: "commerce",
       type: "commerce",
       label: ATTRIBUTE_LABELS.commerce,
+      detailsSection: "publishing",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
       supportsTranslation: false,
+      attributeNote:
+        "Saved on its own — the button in this section, not the main save.",
     },
     {
       key: "vendor",
@@ -799,9 +798,15 @@ export const COOKIE_BANNER_CONFIG: ContentEditorConfig = {
 
 export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   contentType: "metaobjects",
-  // Entries only — read_metaobject_definitions does not allow new DEFINITIONS,
-  // and only definitions whose required fields are plain text are offered (§1.5).
-  createSupport: { resources: ["metaobject"] },
+  // Entries only — read_metaobject_definitions does not allow new DEFINITIONS.
+  // Which definitions are offered follows `metaobjectCreatability`: since
+  // PLAN_METAOBJECT_TAXONOMY_CREATE Phase 2 that includes the ones whose
+  // required fields are taxonomy references, not just plain text.
+  // `fromActionBar` because the item list here holds TYPES while create makes
+  // an ENTRY: a "+" above a list of types reads as "add a type", which this app
+  // cannot do. The action bar sits above the entry cards, where the new entry
+  // actually turns up.
+  createSupport: { resources: ["metaobject"], fromActionBar: true },
   resourceType: "Metaobject",
   displayName: "Metaobjects",
   displayNameSingular: "Metaobject Type",
@@ -844,10 +849,12 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
 
     const filePreviews =
       (item as { filePreviews?: Record<string, string> }).filePreviews ?? {};
+    // The DEFINITION type, which the taxonomy control needs to ask the server
+    // which attribute a field points at. It is on the item because the item IS
+    // the type row; deriving it from an entry GID is not possible.
+    const metaobjectType = String((item as { type?: string }).type ?? "");
 
     return (item.metaobjects as MetaobjectEntry[]).flatMap((metaobj) => {
-      const entryTitle =
-        metaobj.displayName || metaobj.handle || metaobj.id.split("/").pop() || metaobj.id;
       return metaobjectFieldSpecs(metaobj as MetaobjectEntryLike, definitionFields)
         // `unsupported` fields get NO control — the card names them with their
         // type instead, because a field that silently disappears looks like a
@@ -864,12 +871,15 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
           supportsFormatting: false,
           supportsTranslation: isTranslatableMetaobjectFieldType(spec.fieldType),
           multiline: spec.role === "textarea" ? 4 : undefined,
-          helpText:
-            spec.role === "list"
-              ? `${entryTitle} — separate values with |`
-              : spec.role === "richText"
-                ? `${entryTitle} — rich text, read-only here`
-                : entryTitle,
+          // The entry's NAME is not a help text any more: every field of an
+          // entry renders inside that entry's card, which carries the name in
+          // its heading. Repeating it under each control was what made the
+          // fields findable while they were a flat wall of inputs — under the
+          // heading it only says the same thing twice. What stays is the one
+          // hint that is about the FIELD: how a list is separated. The rich
+          // text control writes its own note, and the other three controls
+          // never rendered a help text at all.
+          helpText: spec.role === "list" ? "separate values with |" : undefined,
           // Three types need their own control rather than a text box. The
           // closure is built HERE because this is the only place that has both
           // the field's Shopify type and the item's cached file previews.
@@ -880,9 +890,22 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
                 ? (props) => (
                     <MetaobjectFileField {...props} previewUrl={filePreviews[props.value] } />
                   )
-                : spec.role === "richText"
-                  ? (props) => <MetaobjectRichTextField {...props} />
-                  : undefined,
+                : spec.role === "taxonomyValue"
+                  ? (props) => (
+                      <TaxonomyValueField
+                        {...props}
+                        metaobjectType={metaobjectType}
+                        taxonomyFieldKey={spec.fieldKey}
+                        fieldType={spec.fieldType}
+                        attributeHandle={spec.taxonomy?.handle ?? null}
+                        isList={spec.taxonomy?.isList ?? false}
+                        min={spec.taxonomy?.min ?? null}
+                        max={spec.taxonomy?.max ?? null}
+                      />
+                    )
+                  : spec.role === "richText"
+                    ? (props) => <MetaobjectRichTextField {...props} />
+                    : undefined,
         }));
     });
   },

@@ -1873,14 +1873,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         return [`${text} ${redirectMessage.text}`, merged];
       };
 
-      // A server warning (a price that could not be written, a DB mirror that
+      // A server warning (a collection rule the server kept, a DB mirror that
       // failed) is APPENDED rather than replaced by the alt-text message: a
-      // merchant who edits price and alt-text in one save would otherwise hear
-      // only about the images and never learn the price did not land, which on
-      // a money field is the worst possible outcome.
-      const priceWarnings = (t.content?.priceWarnings ?? {}) as Record<string, string>;
-      const priceWarningCode =
-        "priceWarning" in fetcher.data ? String(fetcher.data.priceWarning ?? "") : "";
+      // merchant who edits attributes and alt-text in one save would otherwise
+      // hear only about the images and never learn the rest did not land.
       const ruleWarnings = (t.content?.ruleWarnings ?? {}) as Record<string, string>;
       const ruleWarningCode =
         "ruleWarning" in fetcher.data ? String(fetcher.data.ruleWarning ?? "") : "";
@@ -1893,11 +1889,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         ? (rawAttributeWarnings as string[])
         : [];
       const serverWarning =
-        // A CODE from the price, rule or attribute path (localized here), or a
-        // plain string from the older warning paths. All end up in the same
-        // box, and codes are joined rather than one silently winning.
+        // A CODE from the rule or attribute path (localized here), or a plain
+        // string from the older warning paths. All end up in the same box, and
+        // codes are joined rather than one silently winning.
         [
-          priceWarningCode && (priceWarnings[priceWarningCode] || priceWarningCode),
           ruleWarningCode && (ruleWarnings[ruleWarningCode] || ruleWarningCode),
           ...attributeWarningCodes.map((code) => attributeWarnings[code] || code),
           "warning" in fetcher.data && fetcher.data.warning ? String(fetcher.data.warning) : "",

@@ -26,7 +26,7 @@ const variant = (
 function adminStub(
   nodes: any[],
   dates: Record<string, string | null> = {},
-  opts: { pages?: any[][]; media?: Record<string, any[]> } = {},
+  opts: { pages?: any[][]; media?: Record<string, any[]>; uploadDates?: Record<string, string> } = {},
 ) {
   const media = opts.media ?? {};
   const pages = opts.pages ?? [nodes];
@@ -40,6 +40,7 @@ function adminStub(
               nodes: (args?.variables?.ids ?? []).map((id: string) => ({
                 id,
                 uploadDate: dates[id] ? { value: dates[id] } : null,
+                uploadDates: opts.uploadDates?.[id] ? { value: opts.uploadDates[id] } : null,
                 media: { nodes: media[id] ?? [] },
               })),
             },
@@ -105,7 +106,10 @@ describe("runGalleryVideoAudit", () => {
       ]),
       "s.myshopify.com",
     );
-    expect(out!.totalProducts).toBe(0);
+    // No GALLERY video prints past the cap. The five media videos do print,
+    // and their missing dates are the other finding.
+    expect(out!.missingDate).toBe(0);
+    expect(out!.products[0]?.youtube ?? 0).toBe(0);
   });
 
   it("separates 'needs a date' from 'gets no markup at all'", async () => {
@@ -260,8 +264,11 @@ describe("runGalleryVideoAudit", () => {
       }),
       "s.myshopify.com",
     );
-    expect(out!.totalProducts).toBe(0);
+    // The GALLERY finding is what this test is about, and it stays zero.
+    // The product IS still listed, for the other reason: its media video
+    // carries no date either — a separate defect with a separate remedy.
     expect(out!.missingDate).toBe(0);
+    expect(out!.products[0]?.youtube ?? 0).toBe(0);
   });
 
   it("still reports the gallery videos the media do NOT carry", async () => {
@@ -290,7 +297,10 @@ describe("runGalleryVideoAudit", () => {
       }),
       "s.myshopify.com",
     );
-    expect(out!.totalProducts).toBe(0);
+    // No GALLERY video prints past the cap. The five media videos DO print,
+    // and their missing dates are the other finding of this sweep.
+    expect(out!.missingDate).toBe(0);
+    expect(out!.products[0]?.youtube ?? 0).toBe(0);
   });
 
   it("skips draft and archived products", async () => {
@@ -401,5 +411,74 @@ describe("runGalleryVideoAudit", () => {
     expect(out!.scannedVariants).toBe(2);
     expect(out!.totalProducts).toBe(2);
     expect(out!.capped).toBe(false);
+  });
+
+  describe("videos in the product's OWN media", () => {
+    // The half nothing reported before. A media video gets its date from the
+    // product sync (File.createdAt -> custom.video_upload_dates), so the
+    // remedy is a resync rather than a date typed by hand — which is why it
+    // is counted apart from the gallery case.
+    const vid = (n: number) => ({ mediaContentType: "VIDEO", id: `gid://shopify/Video/${n}` });
+
+    it("reports a media video whose id is missing from the date map", async () => {
+      const out = await runGalleryVideoAudit(
+        adminStub([variant(P1, "Kumiko", {})], {}, { media: { [P1]: [vid(111)] } }),
+        "s.myshopify.com",
+      );
+      expect(out!.mediaMissingDate).toBe(1);
+      expect(out!.products[0].mediaMissingDate).toBe(1);
+      // …and it is NOT a gallery finding: no gallery URL was involved at all.
+      expect(out!.missingDate).toBe(0);
+    });
+
+    it("stays quiet when the map carries the media id", async () => {
+      const out = await runGalleryVideoAudit(
+        adminStub([variant(P1, "Kumiko", {})], {}, {
+          media: { [P1]: [vid(111)] },
+          uploadDates: { [P1]: JSON.stringify({ "111": "2026-08-18T20:12:50.000Z" }) },
+        }),
+        "s.myshopify.com",
+      );
+      expect(out!.mediaMissingDate).toBe(0);
+      expect(out!.totalProducts).toBe(0);
+    });
+
+    it("treats the product-wide override as a date for every media video", async () => {
+      // custom.video_upload_date wins for the whole product in the block, so
+      // one date set by hand clears all of them — telling the merchant to set
+      // it again would be advice about something already done.
+      const out = await runGalleryVideoAudit(
+        adminStub([variant(P1, "Kumiko", {})], { [P1]: "2026-08-18" }, {
+          media: { [P1]: [vid(111), vid(222)] },
+        }),
+        "s.myshopify.com",
+      );
+      expect(out!.mediaMissingDate).toBe(0);
+    });
+
+    it("ignores an unreadable date map instead of throwing the sweep", async () => {
+      // A hand-edited metafield can hold anything. It contributes no dates,
+      // which reports a product that may be fine — the milder error.
+      const out = await runGalleryVideoAudit(
+        adminStub([variant(P1, "Kumiko", {})], {}, {
+          media: { [P1]: [vid(111)] },
+          uploadDates: { [P1]: "not json" },
+        }),
+        "s.myshopify.com",
+      );
+      expect(out!.mediaMissingDate).toBe(1);
+    });
+
+    it("counts only the videos the block would actually print", async () => {
+      // Past the 5-video cap nothing is emitted, so a sixth dateless video is
+      // not a defect on any live page.
+      const out = await runGalleryVideoAudit(
+        adminStub([variant(P1, "Kumiko", {})], {}, {
+          media: { [P1]: Array.from({ length: 7 }, (_, i) => vid(i + 1)) },
+        }),
+        "s.myshopify.com",
+      );
+      expect(out!.products[0].mediaMissingDate).toBe(5);
+    });
   });
 });

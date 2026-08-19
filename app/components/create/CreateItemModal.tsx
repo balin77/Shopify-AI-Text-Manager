@@ -38,6 +38,8 @@ import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModa
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
 import { CreateSeoScore } from "./CreateSeoScore";
+import { TaxonomyValuePicker } from "../metaobjects/TaxonomyValueField";
+import { HexColorInput } from "../metaobjects/HexColorInput";
 import { useCreateAiAssist } from "./useCreateAiAssist";
 import {
   createAiSpecFor,
@@ -59,8 +61,40 @@ import {
   type CreateValidationError,
 } from "~/config/create-fields.config";
 
+/** Said in two branches of the picker callback (upload and library) and worth
+ *  one constant: two copies of a sentence drift, and this one is a refusal the
+ *  merchant has to be able to act on. */
+const ONLY_IMAGES_FALLBACK =
+  "Only images can be attached here. Add video or 3D from the item's media manager after creating it.";
+
 export interface CreateItemModalTexts {
   title?: string;
+  /** `New {resource}` — the resource name comes from `resourceLabel`, because
+   *  interpolating the config's own slug produced an English word in every
+   *  language ("New metaobject"). */
+  titleFor?: string;
+  /** The created resource's name, already translated by the caller. */
+  resourceLabel?: string;
+  removeImage?: string;
+  /** The picker accepts video and 3D; this field does not. */
+  onlyImagesHere?: string;
+  externalVideoNotAnImage?: string;
+  /** The "nothing selected" row of a dynamic picker. */
+  noneOption?: string;
+  tagsHint?: string;
+  /** §2.3 — everything this app creates is created unpublished. */
+  createsUnpublishedNotice?: string;
+  defaultRuleSetName?: string;
+  /** Validation CODES from `validateCreatePayload`, phrased here. Without
+   *  them the bare code reached the screen next to the field. */
+  errors?: Record<string, string>;
+  /**
+   * The editor's `content` block, for controls this modal SHARES with the
+   * entry editor (today: the taxonomy picker). Their strings belong where the
+   * editor already reads them; copying them under `createModal` would give one
+   * control two vocabularies.
+   */
+  content?: Record<string, string>;
   create?: string;
   cancel?: string;
   moreFields?: string;
@@ -121,6 +155,15 @@ export interface CreateItemModalProps {
   extraFieldsByOption?: Record<string, CreateFieldDef[]>;
   /** Which field's value selects from `extraFieldsByOption`. */
   extraFieldsKey?: string;
+  /**
+   * Field keys the caller has FIXED, which are therefore not offered.
+   *
+   * Opened from a metaobject type's own page, the type is not a choice: the
+   * page IS the choice, and a Select that could change it invites creating an
+   * entry of a different type than the one on screen. The value still travels
+   * in `initialValues` and is still submitted -- hidden, not dropped.
+   */
+  lockedFieldKeys?: string[];
   /** §1.7 — shown instead of the form when an article has no blog to live in. */
   blocked?: { message: string; actionLabel?: string; onAction?: () => void } | null;
   /** §1.9 — values the form starts with when duplicating. */
@@ -187,6 +230,7 @@ export function CreateItemModal({
   extraFields = [],
   extraFieldsByOption = {},
   extraFieldsKey,
+  lockedFieldKeys,
   blocked = null,
   initialValues,
   rulesAvailable = false,
@@ -275,8 +319,10 @@ export function CreateItemModal({
     [allFields],
   );
 
-  const basicFields = allFields.filter((f) => !f.advanced);
-  const advancedFields = allFields.filter((f) => f.advanced);
+  const locked = useMemo(() => new Set(lockedFieldKeys ?? []), [lockedFieldKeys]);
+  const offeredFields = useMemo(() => allFields.filter((f) => !locked.has(f.key)), [allFields, locked]);
+  const basicFields = offeredFields.filter((f) => !f.advanced);
+  const advancedFields = offeredFields.filter((f) => f.advanced);
 
   // Seed once per opening. Not on every render: the merchant's edits would be
   // overwritten by the source's values on the next keystroke.
@@ -355,6 +401,29 @@ export function CreateItemModal({
 
   const canSubmit =
     !submitting && !blocked && !disabledOptionKey && localErrors.length === 0 && ruleErrors.length === 0;
+
+  /**
+   * Reasons that belong to a field the caller LOCKED, and therefore have no
+   * control to render them on.
+   *
+   * Locking the metaobject type removed the one surface that explained a
+   * refused definition: `disabledOptionKey` still switches Create off, and its
+   * reason lived only as that Select's error. The result was a dialog with a
+   * greyed button and no cause anywhere -- exactly the dead end the disabled
+   * option carries a reason to avoid. A field the merchant cannot see needs
+   * its reason said somewhere they can.
+   */
+  const lockedNotices = useMemo(() => {
+    const notices: string[] = [];
+    for (const key of locked) {
+      const option = (dynamicOptions[key] ?? []).find((o) => o.value === values[key]);
+      if (option?.disabled && option.helpText) notices.push(option.helpText);
+      for (const error of localErrors.filter((e) => e.field === key)) {
+        notices.push(t.errors?.[error.code] || `${error.code} ${error.detail ?? ""}`.trim());
+      }
+    }
+    return notices;
+  }, [locked, dynamicOptions, values, localErrors, t]);
 
   /**
    * Drop `field.*` values belonging to a metaobject definition that is no
@@ -508,7 +577,7 @@ export function CreateItemModal({
     if (!first) return;
     if (first.source === "upload") {
       if (first.kind !== "image") {
-        window.alert("Only images can be attached here. Add video or 3D from the item's media manager after creating it.");
+        window.alert(t.onlyImagesHere || ONLY_IMAGES_FALLBACK);
         return;
       }
       const attached = { url: first.resourceUrl, preview: first.previewUrl, alt: "" };
@@ -518,7 +587,7 @@ export function CreateItemModal({
     }
     if (first.source === "library") {
       if (first.kind !== "image") {
-        window.alert("Only images can be attached here. Add video or 3D from the item's media manager after creating it.");
+        window.alert(t.onlyImagesHere || ONLY_IMAGES_FALLBACK);
         return;
       }
       const attached = { url: first.assetUrl, preview: first.previewUrl, alt: first.alt ?? "" };
@@ -527,7 +596,7 @@ export function CreateItemModal({
       return;
     }
     // external_url is a video embed — not an image, and not attachable here.
-    window.alert("An external video link cannot be used as an item image.");
+    window.alert(t.externalVideoNotAnImage || "An external video link cannot be used as an item image.");
   }, [autoAltText]);
 
   if (!spec) return null;
@@ -538,10 +607,17 @@ export function CreateItemModal({
   const renderField = (field: CreateFieldDef) => {
     const value = values[field.key] ?? "";
     const fieldError = errorFor(field.key);
+    // A CODE is not a message. Before this, a rejected field showed
+    // "invalidTaxonomyValue (Solid)" — the validator's own vocabulary, in
+    // English, next to the input. The map is the phrasing; an unmapped code
+    // still falls back to itself rather than to nothing, because a silent
+    // field with a disabled Create button is the worse dead end.
     const errorText = fieldError
       ? fieldError.code === "required"
         ? t.required || "Required"
-        : `${fieldError.code}${fieldError.detail ? ` (${fieldError.detail})` : ""}`
+        : (t.errors?.[fieldError.code] || `${fieldError.code} {detail}`)
+            .replace("{detail}", fieldError.detail ?? "")
+            .trim()
       : undefined;
 
     switch (field.kind) {
@@ -554,7 +630,7 @@ export function CreateItemModal({
               <Button onClick={() => setPickerOpen(true)}>
                 {image ? t.changeImage || "Change image" : t.chooseImage || "Choose image"}
               </Button>
-              {image && <Button variant="plain" tone="critical" onClick={() => setImage(null)}>Remove</Button>}
+              {image && <Button variant="plain" tone="critical" onClick={() => setImage(null)}>{t.removeImage || "Remove"}</Button>}
             </InlineStack>
             {image && (
               <TextField
@@ -601,7 +677,7 @@ export function CreateItemModal({
           <Select
             key={field.key}
             label={label(field)}
-            options={[{ value: "", label: "—" }, ...options]}
+            options={[{ value: "", label: t.noneOption || "—" }, ...options]}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             // A disabled option that is nevertheless SELECTED (prefilled) shows
@@ -666,6 +742,52 @@ export function CreateItemModal({
           />
         );
 
+      // The taxonomy picker is the SAME component the entry editor renders, so
+      // the form and the editor cannot come to write different bytes into one
+      // field. It needs the definition TYPE, which is the value of whichever
+      // field selects the runtime fields — the modal already knows it, and it
+      // is what the route resolves the attribute handle from.
+      case "taxonomyValue": {
+        const metaobjectType = extraFieldsKey ? values[extraFieldsKey] ?? "" : "";
+        const taxonomy = field.taxonomy;
+        if (!metaobjectType || !taxonomy) return null;
+        return (
+          <TaxonomyValuePicker
+            key={field.key}
+            label={label(field)}
+            value={value}
+            onChange={(next) => setValue(field.key, next)}
+            metaobjectType={metaobjectType}
+            taxonomyFieldKey={taxonomy.fieldKey}
+            fieldType={taxonomy.fieldType}
+            // The create form never has the definition's validations on the
+            // client: the route reads the handle server-side out of the cached
+            // definition, so `null` here means "ask the route", not "there is
+            // no attribute". The route answers with its own reason either way.
+            attributeHandle={null}
+            isList={taxonomy.isList}
+            min={taxonomy.min}
+            max={taxonomy.max}
+            error={errorText}
+            content={t.content}
+          />
+        );
+      }
+
+      case "color":
+        return (
+          <BlockStack gap="150" key={field.key}>
+            <Text as="p" variant="bodyMd">{label(field)}</Text>
+            <HexColorInput
+              label={label(field)}
+              value={value}
+              onChange={(v) => setValue(field.key, v)}
+              error={errorText}
+              invalidMessage={t.errors?.invalidColor}
+            />
+          </BlockStack>
+        );
+
       case "tags":
         return (
           <TextField
@@ -675,7 +797,7 @@ export function CreateItemModal({
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
             error={errorText}
-            helpText="Comma-separated"
+            helpText={t.tagsHint || "Comma-separated"}
           />
         );
 
@@ -712,7 +834,8 @@ export function CreateItemModal({
       <Modal
         open={open}
         onClose={handleClose}
-        title={t.title || `New ${spec.titleKey}`}
+        title={t.title ||
+        (t.titleFor || "New {resource}").replace("{resource}", t.resourceLabel || spec.titleKey)}
         primaryAction={{
           content: t.create || "Create",
           onAction: handleSubmit,
@@ -748,11 +871,21 @@ export function CreateItemModal({
             {spec.createsUnpublished && (
               <Banner tone="info">
                 <p>
-                  This is created as a draft — nothing goes live until you publish it.
+                  {t.createsUnpublishedNotice ||
+                    "This is created as a draft — nothing goes live until you publish it."}
                 </p>
               </Banner>
             )}
 
+            {lockedNotices.length > 0 && (
+              <Banner tone="warning">
+                <BlockStack gap="100">
+                  {lockedNotices.map((notice) => (
+                    <Text as="p" variant="bodySm" key={notice}>{notice}</Text>
+                  ))}
+                </BlockStack>
+              </Banner>
+            )}
             {!blocked && basicFields.map(renderField)}
 
             {!blocked && resource === "collection" && (
@@ -770,7 +903,7 @@ export function CreateItemModal({
                     if (automated && ruleSources.length === 0) {
                       setRuleSources([
                         {
-                          title: "Rule set 1",
+                          title: t.defaultRuleSetName || "Rule set 1",
                           inclusion: {
                             matchType: "ALL",
                             conditions: [newCondition("inclusion", conditionKinds("inclusion")[0].key, "c0")],

@@ -799,6 +799,13 @@ model ProductPublication {
   publicationId   String
   /// Mirrored so a publication the shop later loses still renders as a name.
   publicationName String
+  /// Which KIND of catalog this publication belongs to: "app" (a sales
+  /// channel), "market" (a region), "companyLocation" (B2B) — or "" for
+  /// UNKNOWN, which is what a row written before this column existed and a
+  /// publication whose catalog Shopify did not deliver both carry. Unknown is
+  /// never read as "app": it renders where it always did, but it is not
+  /// evidence for the "on no channel — invisible" alarm.
+  catalogType     String    @default("")
   /// Published AND its publish date has passed. A future date is `false` with
   /// `publishDate` set — "scheduled" is not "live", and collapsing the two
   /// makes a scheduled launch look like a mistake.

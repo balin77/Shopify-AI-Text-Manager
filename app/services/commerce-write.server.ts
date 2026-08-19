@@ -289,16 +289,25 @@ export async function applyPublicationChanges(
 ): Promise<CommerceWarning | undefined> {
   if (params.toPublish.length === 0 && params.toUnpublish.length === 0) return undefined;
 
-  const run = async (
+  const runBatch = async (
     mutation: "publishablePublish" | "publishableUnpublish",
     publicationIds: string[],
-  ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
+  ): Promise<{ ok: boolean; confirmed: Set<string>; refusedPerId?: boolean }> => {
     if (publicationIds.length === 0) return { ok: true, confirmed: new Set() };
-    // `publishable` is the echo: which channels the product now sits on.
+    // `publishable` is the echo: which publications the product now sits on.
     // Checked rather than assumed — this is the field the whole feature is
     // about, and "no userErrors" has never meant "stored".
-    const response = await admin.graphql(
-      `#graphql
+    //
+    // THREE connections, because `resourcePublicationsV2` defaults to
+    // `catalogType: APP`: a region or B2B catalog the merchant just ticked
+    // would be missing from a one-connection echo, and the write would report
+    // "not confirmed" for a change that landed. `CatalogType` is an enum
+    // though, so an API version that does not know these names fails the whole
+    // MUTATION at the schema level — hence the retry below, which is safe
+    // because publishing an already-published resource is a no-op.
+    const send = (withCatalogs: boolean) =>
+      admin.graphql(
+        `#graphql
         mutation channelChange($id: ID!, $input: [PublicationInput!]!) {
           ${mutation}(id: $id, input: $input) {
             publishable {
@@ -307,31 +316,48 @@ export async function applyPublicationChanges(
                 resourcePublicationsV2(first: 50) {
                   nodes { isPublished publication { id } }
                 }
+                ${withCatalogs ? `marketEcho: resourcePublicationsV2(first: 50, catalogType: MARKET) {
+                  nodes { isPublished publication { id } }
+                }
+                companyLocationEcho: resourcePublicationsV2(first: 50, catalogType: COMPANY_LOCATION) {
+                  nodes { isPublished publication { id } }
+                }` : ""}
               }
             }
             userErrors { field message }
           }
         }`,
-      {
-        variables: {
-          id: params.productId,
-          input: publicationIds.map((publicationId) => ({ publicationId })),
+        {
+          variables: {
+            id: params.productId,
+            input: publicationIds.map((publicationId) => ({ publicationId })),
+          },
         },
-      },
-    );
+      );
 
-    const body = (await response.json()) as {
+    type EchoConnection = { nodes?: Array<{ isPublished?: boolean; publication?: { id?: string } }> | null } | null;
+    type EchoBody = {
       data?: Record<string, {
         publishable?: {
           id?: string;
-          resourcePublicationsV2?: {
-            nodes?: Array<{ isPublished?: boolean; publication?: { id?: string } }> | null;
-          } | null;
+          resourcePublicationsV2?: EchoConnection;
+          marketEcho?: EchoConnection;
+          companyLocationEcho?: EchoConnection;
         } | null;
         userErrors?: Array<{ message: string }>;
       }>;
       errors?: Array<{ message?: string }>;
     };
+
+    let body = (await (await send(true)).json()) as EchoBody;
+    let echoCoversCatalogs = true;
+    if (body.errors?.length) {
+      logger.warn("[Commerce] Catalog-typed echo refused — retrying without it", {
+        context: "Commerce", shop, mutation, error: body.errors[0]?.message,
+      });
+      echoCoversCatalogs = false;
+      body = (await (await send(false)).json()) as EchoBody;
+    }
 
     if (body.errors?.length) {
       logger.warn("[Commerce] Channel schema-level error", {
@@ -344,19 +370,82 @@ export async function applyPublicationChanges(
       logger.warn("[Commerce] Channel userErrors", {
         context: "Commerce", shop, mutation, error: payload.userErrors[0].message,
       });
-      return { ok: false, confirmed: new Set() };
+      // The ONE failure that is worth isolating: Shopify looked at the input
+      // and declined part of it. A schema error or a throttle is about the
+      // call, not about any single publication.
+      return { ok: false, confirmed: new Set(), refusedPerId: true };
     }
 
-    const nodes = payload?.publishable?.resourcePublicationsV2?.nodes ?? [];
+    const nodes = [
+      ...(payload?.publishable?.resourcePublicationsV2?.nodes ?? []),
+      ...(payload?.publishable?.marketEcho?.nodes ?? []),
+      ...(payload?.publishable?.companyLocationEcho?.nodes ?? []),
+    ];
     const published = new Set(
       nodes.filter((n) => n.isPublished === true && n.publication?.id).map((n) => n.publication!.id as string),
     );
     // The echo means different things per verb, so it is checked per verb:
     // published ⇒ the id must now be in the set, unpublished ⇒ it must not.
+    //
+    // And UNPUBLISH is confirmed by ABSENCE, which is only evidence while the
+    // echo can see everything. On the degraded retry it holds app catalogs
+    // alone, so a market or B2B publication is absent by construction and
+    // every unpublish would "confirm" whether or not anything was written —
+    // a false success, plus a mirror row deleted for a change that did not
+    // happen. Nothing is confirmed there; the caller reports "not confirmed",
+    // which is what it is.
+    if (mutation === "publishableUnpublish" && !echoCoversCatalogs) {
+      logger.warn("[Commerce] Unpublish left unconfirmed — the echo could not see every catalog type", {
+        context: "Commerce", shop, count: publicationIds.length,
+      });
+      return { ok: true, confirmed: new Set() };
+    }
     const confirmed = new Set(
       publicationIds.filter((id) => (mutation === "publishablePublish" ? published.has(id) : !published.has(id))),
     );
     return { ok: true, confirmed };
+  };
+
+  /**
+   * One refused publication must not take the others down with it.
+   *
+   * `publishablePublish` is atomic over its input: a single id Shopify
+   * declines fails the whole call, and the merchant is told none of their
+   * channel changes landed. That became reachable the moment the picker
+   * started offering every publication the SHOP has rather than only the ones
+   * the product already had a record in — a channel a product is not eligible
+   * for is exactly the id Shopify declines.
+   *
+   * So a failed batch is retried one id at a time. Safe to retry, because both
+   * verbs are no-ops on a resource already in the target state; the batch is
+   * kept as the fast path because it is one call for the normal case.
+   */
+  const run = async (
+    mutation: "publishablePublish" | "publishableUnpublish",
+    publicationIds: string[],
+  ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
+    const batch = await runBatch(mutation, publicationIds);
+    // Only a per-input refusal is isolated. A THROTTLED batch arrives as a
+    // top-level `errors` array, and retrying it once per id would turn one
+    // exhausted cost bucket into N more mutations — half of which may land as
+    // the bucket refills, leaving a half-applied change reported as the
+    // softer "not confirmed".
+    if (batch.ok || !batch.refusedPerId || publicationIds.length < 2) return batch;
+
+    logger.warn("[Commerce] Channel batch refused per input — isolating", {
+      context: "Commerce", shop, mutation, count: publicationIds.length,
+    });
+    const confirmed = new Set<string>();
+    let anyOk = false;
+    for (const publicationId of publicationIds) {
+      const single = await runBatch(mutation, [publicationId]);
+      if (single.ok) anyOk = true;
+      for (const id of single.confirmed) confirmed.add(id);
+    }
+    // `ok` means "the call worked", not "everything landed" — an id that is
+    // still missing from `confirmed` is reported as unconfirmed by the caller,
+    // which is the honest outcome for a publication Shopify declined.
+    return { ok: anyOk, confirmed };
   };
 
   try {

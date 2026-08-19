@@ -38,6 +38,8 @@ import {
   LIVE_REFERENCE_PAGE,
 } from "~/services/metaobject-usage.server";
 import { isGidOfResource } from "~/config/create-fields.config";
+import { METAOBJECTS_CONFIG } from "~/config/content-fields.config";
+import { isAttributeField } from "~/services/content-attributes.shared";
 import { resolveSwatch } from "~/services/product-option-swatch.shared";
 
 const ENTRY = "gid://shopify/Metaobject/12345";
@@ -198,6 +200,78 @@ describe("metaobjectFieldSpecs", () => {
     );
     expect(specs).toHaveLength(1);
     expect(specs[0].compoundKey).toBe(`${ENTRY}#label`);
+  });
+});
+
+// ─── Every field of an entry belongs to that ENTRY's card ─────────────────
+//
+// The editor splits its fields across three cards, and the merchandising half
+// is recognised by `translationKey: "" + supportsTranslation: false`. A
+// metaobject colour, file reference and taxonomy reference carry exactly that
+// pair for an unrelated reason (one value per SHOP, not per locale), so they
+// were read as merchandising attributes and rendered in the page-wide
+// "Details" card at the bottom: the entries in their cards, and far below them
+// a flat list of every entry's colour, with a help text as the only clue which
+// colour belonged to which entry. That also silently disabled the colour
+// swatch in the card header, which is picked out of the group's own fields and
+// therefore never found one.
+
+describe("a metaobject entry's fields are routed to its own card", () => {
+  const definition = [
+    { key: "label", name: "Label", type: { name: "single_line_text_field" }, required: true },
+    { key: "colour", name: "Colour", type: { name: "color" } },
+    { key: "image", name: "Image", type: { name: "file_reference" } },
+    {
+      key: "colour_taxonomy",
+      name: "Colour taxonomy",
+      type: { name: "list.product_taxonomy_value_reference" },
+      validations: [{ name: "product_taxonomy_attribute_handle", value: "color" }],
+    },
+  ];
+  const item = {
+    id: "metaobject_type_shopify--color-pattern",
+    type: "shopify--color-pattern",
+    metaobjects: [{ id: ENTRY, displayName: "Rot", handle: "rot", fields: [{ key: "label", value: "Rot" }] }],
+    fieldDefinitions: definition,
+  };
+
+  it("gives every field the entry's groupId and lets none of them be read as an attribute", () => {
+    const fields = METAOBJECTS_CONFIG.getFieldDefinitions?.(item as never) ?? [];
+    expect(fields.map((f) => f.key)).toEqual([
+      `${ENTRY}#label`,
+      `${ENTRY}#colour`,
+      `${ENTRY}#image`,
+      `${ENTRY}#colour_taxonomy`,
+    ]);
+    // The groupId is what puts a field in its entry's card...
+    expect(fields.every((f) => f.groupId === ENTRY)).toBe(true);
+    // ...and what keeps the attribute router's hands off it. Without the veto
+    // the last three land in the page-wide "Details" card instead.
+    expect(fields.filter((f) => isAttributeField(f)).map((f) => f.key)).toEqual([]);
+  });
+
+  it("keeps the empty translation key that the routing bug rode in on", () => {
+    // The pair is still there and still right — a colour has ONE value per
+    // shop, and a translation key would clear it on a foreign-locale save.
+    // Only its reading as "merchandising attribute" was wrong.
+    const fields = METAOBJECTS_CONFIG.getFieldDefinitions?.(item as never) ?? [];
+    const colour = fields.find((f) => f.key === `${ENTRY}#colour`);
+    expect(colour?.translationKey).toBe("");
+    expect(colour?.supportsTranslation).toBe(false);
+  });
+
+  it("says how a list is separated and does not repeat the entry name under every control", () => {
+    // The card heading carries the name now, so a help text saying it again
+    // says the same thing twice.
+    const listItem = {
+      ...item,
+      fieldDefinitions: [{ key: "aliases", name: "Aliases", type: { name: "list.single_line_text_field" } }],
+    };
+    const fields = METAOBJECTS_CONFIG.getFieldDefinitions?.(listItem as never) ?? [];
+    expect(fields[0].helpText).toBe("separate values with |");
+
+    const plain = METAOBJECTS_CONFIG.getFieldDefinitions?.(item as never) ?? [];
+    expect(plain.every((f) => f.helpText === undefined)).toBe(true);
   });
 });
 
