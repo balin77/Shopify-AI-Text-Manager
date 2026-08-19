@@ -214,6 +214,7 @@ export const es: Translation = {
     metaobjectsDescription: "Gestiona y traduce metaobjetos personalizados",
     metaobjectsNoEntries: "Este tipo de metaobjeto no tiene entradas para mostrar.",
     // PLAN_METAOBJECTS_EDITOR — la tarjeta de entrada
+    metaobjectDeleteInUse: "Algo en tu tienda todav\u00eda hace referencia a esta entrada, por eso Shopify no la elimina. Quita la referencia all\u00ed primero.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Ningún campo de esta entrada se puede editar aquí.",
     metaobjectEntryUnsupportedTitle: "No editable aquí",
