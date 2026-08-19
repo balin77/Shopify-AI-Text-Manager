@@ -1083,7 +1083,17 @@ export class ProductSyncService {
       );
       logger.debug(`[ProductSync] Fetched ${subResourceTranslations.length} sub-resource translations`);
 
-      // 5. Save to database
+      // 5. Save to database. The stale-translation baseline is read FIRST:
+      // saveToDatabase overwrites the digests the reconciliation compares
+      // against, and without that "before" state a primary change made outside
+      // the app is indistinguishable from one made years ago.
+      const previousDigests = options.reconcileTranslations
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+            this.shop,
+            productId,
+            "Product",
+          )
+        : {};
       if (forceSync) {
         logger.info(`[ProductSync] [RELOAD] title="${productData.title || '(empty)'}", descLen=${(productData.descriptionHtml || '').length}, translations=${allTranslations.length}`);
       }
@@ -1116,10 +1126,11 @@ export class ProductSyncService {
           shop: this.shop,
           resourceId: productId,
           resourceType: "Product",
-          contentType: "product",
+          contentKind: "product",
           resourceTitle: productData.title,
           translations: allTranslations,
           primaryContent: translationResult.primaryContent,
+          previousDigests,
         });
       }
 

@@ -2,13 +2,34 @@
  * Which of a resource's foreign translations no longer describe their primary
  * text — pure, client-safe, and the ONE place the rule is written down.
  *
- * Two independent signals, because neither alone is enough:
+ * THE GATE — "this sync SAW the primary text move". Nothing is stale unless
+ * the key's source digest DIFFERS from the digest the previous sync stored on
+ * that resource's translation rows. This is the load-bearing rule, and it is
+ * checked first:
  *
- *  1. **Shopify's own `outdated` flag.** `translations(locale:)` reports
- *     `outdated: true` once the source digest changed after the translation
- *     was registered — i.e. someone edited the primary text. That is
- *     authoritative for ANY key, including ones this app does not manage, so
- *     it is taken at face value.
+ *   Shopify's `outdated` flag says a translation is older than its source —
+ *   it does NOT say WHEN that happened. A shop that has been translating for
+ *   years (Langify, hand-written entries in the Shopify admin) carries plenty
+ *   of translations Shopify flags outdated and keeps serving anyway. Acting on
+ *   the flag alone would mean that editing ONE product's price — `products/
+ *   update` fires for that too — deletes every outdated translation that
+ *   product has ever accumulated. Unrecoverable, and nothing the merchant did
+ *   asked for it. Requiring a digest CHANGE since our own last sync makes the
+ *   trigger exactly what the feature promises: the primary text changed, now,
+ *   outside this app.
+ *
+ *   No previous digest ⇒ no evidence ⇒ nothing stale. That covers a first
+ *   sync (fresh install, newly cached resource) and rows written before
+ *   digests were stored; the sync itself writes the digests, so a shop
+ *   self-heals into the feature after one pass instead of paying for it.
+ *
+ * Once a key is through that gate, ONE of two signals has to confirm the
+ * translation is actually stale:
+ *
+ *  1. **Shopify's own `outdated` flag.** Authoritative for ANY key, including
+ *     ones this app does not manage. If someone re-registered the translation
+ *     against the new source in between, Shopify reports `false` and we leave
+ *     it alone — which is why this is checked in addition to the digest.
  *
  *  2. **The primary value is gone.** `translatableContent` only lists keys
  *     that HAVE a primary value (CLAUDE.md: the trap that produced the wrong
@@ -21,7 +42,7 @@
  *     manages, so an exotic key of some other app is never touched on a
  *     signal this weak.
  *
- * Both rules apply to the GLOBAL layer only (`marketId ""`). A market-specific
+ * All of it applies to the GLOBAL layer only (`marketId ""`). A market-specific
  * override is a deliberate, separate value and survives a primary change —
  * the same rule the single and the bulk editor already follow.
  *
@@ -98,10 +119,16 @@ export const AUTO_RETRANSLATABLE_KEYS: ReadonlySet<string> = new Set([
  * @param primaryContent  key → { value, digest } from `translatableContent`.
  *   Keys with an empty primary value are ABSENT — that is Shopify's shape, not
  *   a caller convention.
+ * @param previousDigests  key → the source digest the PREVIOUS sync stored on
+ *   this resource's translation rows. A key whose digest is unchanged (or
+ *   unknown) did not move and can never be stale — see THE GATE above. An
+ *   empty/absent map therefore yields nothing, which is what makes a first
+ *   sync harmless.
  */
 export function findStaleTranslations(
   translations: readonly SyncedTranslation[],
   primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
+  previousDigests: Readonly<Record<string, string | null | undefined>> = {},
 ): StaleTranslation[] {
   const primaryKnown = Object.keys(primaryContent).length > 0;
   const seen = new Set<string>();
@@ -113,6 +140,12 @@ export function findStaleTranslations(
     const entry = primaryContent[row.key];
     const primaryValue = entry?.value ?? "";
     const primaryEmpty = !primaryValue.trim();
+
+    // THE GATE: did the source text move since OUR last sync? A missing
+    // previous digest is "we cannot tell", never "it changed".
+    const previousDigest = previousDigests[row.key];
+    if (!previousDigest) continue;
+    if ((entry?.digest ?? null) === previousDigest) continue;
 
     let reason: StaleReason | null = null;
     if (row.outdated === true) {

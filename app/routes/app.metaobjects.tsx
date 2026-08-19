@@ -468,24 +468,43 @@ export default function MetaobjectsPage() {
   /**
    * Deleting the whole TYPE — the definition, and with it every entry.
    *
-   * The route supplies this because only the route has the definition's GID:
-   * the item list's own id is the pseudo row `metaobject_type_<type>`, which is
-   * not a Shopify object at all, and sending it is how this page once grew a
-   * Delete that 400ed after the merchant had typed the name into the
-   * confirmation.
+   * Everything it needs comes from the TYPE ROW of the page loader, never from
+   * the entry loader's `loaded`. Three reasons, and the first two were live
+   * defects:
+   *
+   * 1. `loaded.contentCount` is the SEARCH-FILTERED count. A merchant who had
+   *    typed "rot" into the entry search saw three cards, and the confirmation
+   *    would have offered them "3 entries" for a type holding sixty. The one
+   *    number in the app's most destructive dialog was wrong exactly where the
+   *    merchant had narrowed their view — and "known here" hedges cache
+   *    staleness, not a filter they set themselves. The type row's count is a
+   *    `groupBy` over the whole type.
+   * 2. `loaded` belongs to whichever type was fetched LAST, and its reset is a
+   *    passive effect — so for a frame after switching types this could hand
+   *    out the previous definition's GID under a page naming the new one. That
+   *    is the wrong-target class this whole path exists to refuse.
+   * 3. The GID is known at page load, so the button no longer greys out as
+   *    "still loading" while the entry list is fetching.
    *
    * `disabledReason` is a STRING and always says why, never a bare greyed
-   * button. Two reasons exist: the definition is not loaded yet (the page is
-   * still fetching, so there is no id to delete), and Shopify refusing our
-   * writes on this definition (§7.2) — which is not measured to cover
-   * definition DELETES, so it is treated as "we do not know that we may" and
-   * refuses rather than offering a destructive call on a guess.
+   * button. Shopify refusing our writes on this definition (§7.2) is not
+   * measured to cover definition DELETES, so it is read as "we do not know
+   * that we may" and refuses rather than offering a destructive call on a
+   * guess.
    */
   const containerAction = useMemo(() => {
-    if (!selectedType) return null;
-    const definitionId = loaded?.definitionId;
+    const typeRow = (
+      metaobjects as Array<{
+        id: string;
+        definitionId?: string;
+        definitionName?: string;
+        contentCount?: number;
+      }>
+    ).find((m) => m.id === selectedItemId);
+    if (!typeRow) return null;
+    const definitionId = typeRow.definitionId;
     const disabledReason = !definitionId
-      ? t.content?.deleteContainerNotLoaded || "Still loading this type."
+      ? t.content?.deleteContainerNotLoaded || "This type is still loading."
       : writeAccess === "readOnly"
         ? t.content?.metaobjectEntryReadOnlyDefinition ||
           "This app cannot change entries of this definition."
@@ -497,15 +516,15 @@ export default function MetaobjectsPage() {
         if (!definitionId) return;
         deleteItem.request({
           id: definitionId,
-          title: loaded?.definitionName || selectedType,
+          title: typeRow.definitionName || selectedType || definitionId,
           resource: "metaobjectDefinition" as const,
-          // From the cache, and the dialog says so: Shopify neither asks about
-          // the entries nor reports how many it removed.
-          cascadeCount: loaded?.contentCount ?? loaded?.metaobjects?.length ?? 0,
+          // From this app's cache, and the dialog says so: the mutation
+          // reports only the definition's id, never how many entries went.
+          cascadeCount: typeRow.contentCount ?? 0,
         });
       },
     };
-  }, [selectedType, loaded, writeAccess, t, deleteItem]);
+  }, [metaobjects, selectedItemId, selectedType, writeAccess, t, deleteItem]);
 
   const cardTexts = useMemo(
     () => ({

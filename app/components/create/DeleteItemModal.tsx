@@ -38,6 +38,7 @@ export interface DeleteItemModalTexts {
   consequenceMetaobjectUsage?: string;
   /** The TYPE takes its entries with it, and Shopify does not ask about them. */
   consequenceMetaobjectDefinitionEntries?: string;
+  consequenceMetaobjectDefinitionOptions?: string;
   confirmPrompt?: string;
   mismatch?: string;
   cancel?: string;
@@ -118,15 +119,27 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                   says "known" rather than presenting a cache read as the
                   shop's truth. */}
               {item.resource === "metaobjectDefinition" && (
-                <List.Item>
-                  <Text as="span" fontWeight="semibold">
-                    {(t.consequenceMetaobjectDefinitionEntries ||
-                      "Every entry of this type is deleted with it ({count} known here).").replace(
-                      "{count}",
-                      String(item.cascadeCount ?? 0),
-                    )}
-                  </Text>
-                </List.Item>
+                <>
+                  <List.Item>
+                    <Text as="span" fontWeight="semibold">
+                      {(t.consequenceMetaobjectDefinitionEntries ||
+                        "Every entry of this type is deleted with it ({count} known here).").replace(
+                        "{count}",
+                        String(item.cascadeCount ?? 0),
+                      )}
+                    </Text>
+                  </List.Item>
+                  {/* The entries can be product option VALUES with storefront
+                      swatches hanging off them. The per-entry delete refuses a
+                      known usage and says so; deleting the whole type is the
+                      same question asked about all of them at once, so it says
+                      the same thing rather than letting the merchant find out
+                      from the catalogue afterwards. */}
+                  <List.Item>
+                    {t.consequenceMetaobjectDefinitionOptions ||
+                      "Entries of this type can be product option values with storefront swatches. Anything still using one is refused — remove it there first."}
+                  </List.Item>
+                </>
               )}
               {item.resource === "metaobject" && (
                 <List.Item>

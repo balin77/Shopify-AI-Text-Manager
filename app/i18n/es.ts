@@ -533,6 +533,7 @@ export const es: Translation = {
       deleting: "Eliminando \u2026",
       consequenceMetaobjectUsage: "Shopify rechaza eliminar una entrada que un producto todav\u00eda usa como valor de opci\u00f3n \u2014 qu\u00edtala all\u00ed primero.",
       consequenceMetaobjectDefinitionEntries: "Cada entrada de este tipo se elimina con \u00e9l \u2014 {count} conocidas aqu\u00ed. Shopify no pregunta por ellas.",
+      consequenceMetaobjectDefinitionOptions: "Las entradas de este tipo pueden ser valores de opci\u00f3n con muestras en la tienda. Todo lo que a\u00fan use una se rechaza \u2014 qu\u00edtalo primero all\u00ed.",
     },
     // ── Duplicar (§1.9) ───────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicar",

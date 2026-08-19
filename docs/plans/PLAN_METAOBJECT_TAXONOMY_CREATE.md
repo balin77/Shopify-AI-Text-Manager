@@ -163,7 +163,7 @@ Dieser Ausgang wird **implementiert, nicht weggelassen**, falls die Messung ihn 
 
 ## 6. Nicht-Ziele
 
-1. **Metaobjekt-DEFINITIONEN anlegen.** Unverändert `write_metaobject_definitions` und damit Re-Consent — siehe PLAN_METAOBJECTS_EDITOR §9.
+1. **Metaobjekt-DEFINITIONEN anlegen.** Weiterhin Nicht-Ziel. Der Scope `write_metaobject_definitions` ist seit 2026-08-19 zwar vorhanden (für das LÖSCHEN eines Typs, siehe PLAN_METAOBJECTS_EDITOR §9), ein Anlege-Formular für Definitionen gibt es aber nicht und ist keins geplant.
 2. **Andere Referenzfeldtypen** (`metaobject_reference`, `product_reference`, `variant_reference`, …). Jeder braucht seinen eigenen Picker; dieser Plan löst den einen Typ, der das Anlegen blockiert.
 3. **Taxonomie-Werte im Bulk-Editor** (§3).
 4. **Die Kategorie eines Produkts ändern.** Das ist `TaxonomyField` und existiert.

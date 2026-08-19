@@ -173,6 +173,15 @@ export class ContentSyncService {
       // 4. Save to database. Markets whose fetch failed are excluded so their
       // rows are neither deleted nor partially recreated (avoids data loss AND
       // unique-key collisions with the un-deleted rows).
+      // The stale-translation baseline is read BEFORE the save — see
+      // syncProduct: the save overwrites the digests it is compared against.
+      const previousDigests = options.reconcileTranslations
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+            this.shop,
+            collectionId,
+            "Collection",
+          )
+        : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
       await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets);
 
@@ -184,10 +193,11 @@ export class ContentSyncService {
           shop: this.shop,
           resourceId: collectionId,
           resourceType: "Collection",
-          contentType: "collection",
+          contentKind: "collection",
           resourceTitle: collectionData.title,
           translations: ownTranslations,
           primaryContent,
+          previousDigests,
         });
       }
 
@@ -294,6 +304,14 @@ export class ContentSyncService {
       }
 
       // 4. Save to database — failed markets excluded (see syncCollection).
+      // Baseline read before the save, same reason as syncCollection.
+      const previousDigests = options.reconcileTranslations
+        ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+            this.shop,
+            articleId,
+            "Article",
+          )
+        : {};
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
       await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets);
 
@@ -305,10 +323,13 @@ export class ContentSyncService {
           shop: this.shop,
           resourceId: articleId,
           resourceType: "Article",
-          contentType: "article",
+          // "blog" — an article IS a blog post to both the AI prompt and the
+          // Tasks tab; "article" matches neither vocabulary.
+          contentKind: "blog",
           resourceTitle: articleData.title,
           translations: ownTranslations,
           primaryContent,
+          previousDigests,
         });
       }
 
@@ -1142,14 +1163,24 @@ export class ContentSyncService {
     const markets = await this.getMarkets();
     const failedMarketIds = new Set<string>();
 
+    const primaryContent: PrimaryContentMap = {};
     const allTranslations = await fetchAllTranslations(
       this.graphqlFn(),
       gid,
       locales.filter((l) => !l.primary),
       "Blog",
       markets,
-      failedMarketIds
+      failedMarketIds,
+      primaryContent
     );
+
+    // Blogs have NO Shopify webhook, so this explicit reload is the only event
+    // that can ever notice a primary text changed in the Shopify admin — the
+    // webhook and reconcile sweeps cannot cover them. Baseline read before the
+    // transaction below rewrites the digests (see syncCollection).
+    const previousDigests = await (
+      await import("./translations/stale-translation-sync.server")
+    ).loadPreviousPrimaryDigests(this.shop, gid, "Blog");
 
     // Delete scope stays conservative: only the layers this run actually
     // fetched. A market whose fetch errored keeps its existing rows rather
@@ -1185,6 +1216,20 @@ export class ContentSyncService {
           })),
         });
       }
+    });
+
+    // Stale-translation reconciliation — best-effort, never fails the reload.
+    const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+    await reconcileStaleTranslations({
+      client: this.admin,
+      shop: this.shop,
+      resourceId: gid,
+      resourceType: "Blog",
+      contentKind: "blog",
+      resourceTitle: blog.title,
+      translations: allTranslations,
+      primaryContent,
+      previousDigests,
     });
 
     const translations = await db.contentTranslation.findMany({
