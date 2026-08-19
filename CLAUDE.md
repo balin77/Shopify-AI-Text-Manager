@@ -141,6 +141,65 @@ Four mechanics that are easy to get wrong:
 - **A resizable width starts as `null`, not as the number.** [UnifiedContentEditor.tsx](app/components/UnifiedContentEditor.tsx) renders `sidebarWidth ?? "var(--app-editor-sidebar-width)"` and, on the first drag, measures what that rendered as (`getBoundingClientRect`) instead of restating it. Seeding the state with `useState(320)` would put the default in a second place, which is exactly what drifts.
 - **The drag bounds are read off the tokens per drag** (`getComputedStyle().getPropertyValue`), and a value that doesn't parse as px drops its half of the clamp rather than becoming `NaN` — `Math.max(NaN, …)` would make the panel unresizable.
 
+## Field chrome — a field looks the same everywhere, and the look lives in one place
+
+The same rule as the widths above, one level down: how an input BOX looks is
+app-wide state, not a per-component decision. The product page had two of
+everything — the fields inside `.ai-editable-field-wrapper` (title, description,
+product type, …) carried a hand-written light-grey border, a semibold label with
+a question mark and a "Leeren" button, while every plain Polaris control beside
+them (vendor, tags, collections, the category picker) kept Polaris' much darker
+default border, a regular-weight label, no help and no way to empty itself. In
+one card. **No component states a border colour, a label weight or a clear
+button of its own.**
+
+- **The numbers live in the `:root` block of [responsive.css](app/styles/responsive.css)**, next to
+  `--app-page-padding` and the widths: `--app-field-border-color`,
+  `--app-field-border-radius`, `--app-field-label-weight`, plus the Details
+  card's two grid minimums (`--app-attribute-grid-min-width`, `…-compact`).
+- **The frame is drawn on Polaris' Backdrop element**, in the one rule in that
+  same file — the input itself has `border: none`, and Polaris hardcodes a
+  `border-top-color` one shade darker again, so both have to be named.
+  Deliberately `.Polaris-TextField__Backdrop` and `.Polaris-Select__Backdrop`
+  only: Polaris spends the same `--p-color-input-border` on checkboxes, radio
+  buttons and the drop zone, so re-pointing that VARIABLE (the first cut) would
+  have lightened every tick box in the app, which is not what "the outline of
+  the input boxes" means. Hover and focus stay Polaris': a resting frame is a
+  style, a border that darkens under the pointer is an affordance.
+  responsive.css loads AFTER Polaris' stylesheet ([app.tsx](app/routes/app.tsx)), so equal
+  specificity resolves our way.
+- **The SHAPE lives in [FieldChrome.tsx](app/components/unified/FieldChrome.tsx)**: `FieldLabel` (bold, with the
+  question mark right after the words) and `FieldClearOverlay` (the Clear button
+  in the field's top-right corner, on the label's own line). Every editable
+  control goes through both — `AIEditableField`, `AttributeField`,
+  `ChipCombobox`, `CollectionsField`, `TaxonomyField`. A label is a `span`, never
+  a second `label` element: it is passed INTO the Polaris `label` prop, and a
+  nested label is invalid markup that also breaks click-to-focus.
+- **The clear button is drawn only where `""` is a value the field can HOLD.** A
+  select and a toggle are enums — Shopify stores one of their options, never
+  nothing — so a Clear there would either write a value the API rejects at the
+  schema level or silently do nothing. `ChipCombobox` clears itself rather than
+  handing back an empty list: a LOCKED chip (a rule-based collection membership)
+  survives, because a bulk removal of it is the same refused write as removing it
+  one chip at a time, and `productUpdate` is atomic — the refusal would take the
+  merchant's text edits with it.
+- **What a field is FOR belongs in its question mark, not under the box.**
+  `helpKeyMap` in [UnifiedFieldRenderer.tsx](app/components/UnifiedFieldRenderer.tsx) is the one map from field key to
+  `t.help` entry, and every editable field on a content page names one.
+  `HelpTooltip` renders nothing for a key the language bundle does not carry, so
+  a key may be named before its text is written and never shows as an empty
+  circle. `helpText` under the control is for a value hint that changes with the
+  value (a character count), not for an explanation a merchant reads once.
+- **A Details section may be HEADLESS.** `HEADLESS_DETAILS_SECTIONS` in
+  [details-sections.ts](app/config/details-sections.ts) is the set; "organization" is in it, because the word
+  says nothing its own fields (vendor, product type, collections, tags) do not
+  already say. A headless section drops the heading AND the subcard and renders
+  as one compact grid row — which is why `shouldRenderDetailsSections` must not
+  count it: it draws no frame, so counting it would leave a single titled box
+  with nothing to be separated from, the box-in-a-box that guard exists to
+  prevent. The two grid minimums are the other half: with the wide one only
+  three of the four organization fields fitted on a normal screen.
+
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 
 A shop with only its primary locale must never be offered translation UI it cannot use. These rules are not optional polish; apply them to **every new button, bar or section** that touches locales. Reference implementation: [LocaleAvailabilityContext.tsx](app/contexts/LocaleAvailabilityContext.tsx) + [DisabledActionTooltip.tsx](app/components/DisabledActionTooltip.tsx).

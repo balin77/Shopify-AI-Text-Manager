@@ -82,7 +82,8 @@ const TEMPLATE_SUFFIX_FIELD: FieldDefinition = {
   supportsAI: false,
   supportsFormatting: false,
   supportsTranslation: false,
-  helpText: "Empty = the theme's default template.",
+  // No `helpText`: what this field is FOR lives in its question mark
+  // (`help.templateSuffix`), where every other field's explanation now sits.
 };
 
 /** Pages and articles are published or not; products use the four-value status. */

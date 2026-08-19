@@ -11,17 +11,23 @@ import {
   groupDetailsFields,
   shouldRenderDetailsSections,
   detailsSectionLabel,
+  HEADLESS_DETAILS_SECTIONS,
 } from "~/config/details-sections";
 
 /**
  * Attribute field types that need the editor's full width.
  *
  * Everything else is a short answer — a vendor, a status, a template name — and
- * shares a row. These four are lists or panels: a tag combobox with chips, a
- * membership picker, the rule builder and the stock panel all grow downwards
- * and would be squeezed into a column half their useful width.
+ * shares a row. These two are PANELS: the rule builder and the stock panel both
+ * grow downwards and carry rows of their own.
+ *
+ * Tags and collection memberships were in here and are not any more. Both are
+ * `ChipCombobox`es — one line plus the chips that are set — and at full width
+ * each of them took a row of the card to show a single input, which is what
+ * pushed the four organization fields onto three lines. They read fine in a
+ * column.
  */
-const WIDE_ATTRIBUTE_FIELDS = new Set(["tags", "collections", "collectionRules", "commerce"]);
+const WIDE_ATTRIBUTE_FIELDS = new Set(["collectionRules", "commerce"]);
 import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useCreateItem } from "../hooks/useCreateItem";
@@ -772,17 +778,26 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
 
   /**
-   * The Details card's field grid: two columns where a field does not need a
-   * line of its own. A vendor is one word and a status is one dropdown; giving
-   * each the full width of the editor turned eight short answers into eight
-   * rows of mostly empty space. The wide ones keep the full width — a tag list,
-   * a membership picker and the stock panel all use it.
+   * The Details card's field grid: as many columns as fit, where a field does
+   * not need a line of its own. A vendor is one word and a status is one
+   * dropdown; giving each the full width of the editor turned eight short
+   * answers into eight rows of mostly empty space. The wide ones keep the full
+   * width — the rule builder and the stock panel.
+   *
+   * `compact` narrows the column minimum so a short RUN of fields stays on one
+   * line: the four organization fields (vendor, product type, collections,
+   * tags) are meant to be read across, and at the default minimum only three of
+   * them fitted on a normal screen. Both numbers live in responsive.css with
+   * every other width in this app — auto-fit never makes more columns than
+   * there are items, so the narrow minimum only decides WHEN the row wraps.
    */
-  const renderAttributeGrid = (fields: FieldDefinition[]) => (
+  const renderAttributeGrid = (fields: FieldDefinition[], compact = false) => (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(var(${
+          compact ? "--app-attribute-grid-min-width-compact" : "--app-attribute-grid-min-width"
+        }), 1fr))`,
         gap: "1rem",
         alignItems: "start",
       }}
@@ -2233,8 +2248,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           // blocks, and two siblings keyed "organization" would
                           // collide and reconcile into each other's subcard.
                           const key = `${section.id ?? "unsectioned"}-${section.fields[0].key}`;
-                          if (!renderDetailsSections || !section.id) {
-                            return <Fragment key={key}>{renderAttributeGrid(section.fields)}</Fragment>;
+                          // A HEADLESS section drops both the heading and the
+                          // box: "Organisation" says nothing its own fields do
+                          // not already say, and it reads as one compact row of
+                          // short fields instead. The set lives in
+                          // details-sections.ts, because the counting rule
+                          // above has to agree with it.
+                          const headless = !!section.id && HEADLESS_DETAILS_SECTIONS.has(section.id);
+                          if (!renderDetailsSections || !section.id || headless) {
+                            return (
+                              <Fragment key={key}>{renderAttributeGrid(section.fields, headless)}</Fragment>
+                            );
                           }
                           return (
                             <Card key={key} background="bg-surface-secondary" padding="300">

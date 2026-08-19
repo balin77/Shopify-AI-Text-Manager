@@ -575,7 +575,6 @@ export const de = {
       noMatches: "Keine Kategorie passt dazu.",
       lookupFailed: "Die Kategorieliste konnte nicht geladen werden. Versuch es gleich noch einmal.",
       none: "Nicht gesetzt",
-      clear: "Entfernen",
       broad: "(allgemein)",
       // Durch den Baum klicken. Die Zurueck-Zeile NENNT ihr Ziel: ein blosses
       // "Zurueck" laesst den Haendler drei Ebenen tief Klicks zaehlen.
@@ -757,11 +756,8 @@ export const de = {
       status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Die verwaltest du gleich hier unter Vertriebskanäle.",
       collections: "Regelbasierte Kollektionen werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
     },
-    templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
     // Das Paar, das Händler für ein Feld halten. Jede Zeile nennt das ANDERE
     // — nur so sind sie auf einen Blick auseinanderzuhalten.
-    categoryHelp: "Shopifys eigene Taxonomie. Sie bestimmt Steuersätze und ob dein Produkt auf Marktplätzen und in KI-Kanälen erscheint. Nicht übersetzbar — Shopify kennt den Baum selbst in jeder Sprache. Deine eigene Bezeichnung ist der Produkttyp weiter unten.",
-    productTypeHelp: "Deine eigene Bezeichnung, frei wählbar und übersetzbar. Regelbasierte Kollektionen, Theme-Filter und Shopifys Berichte lesen sie. Die maschinenlesbare Einordnung ist die Produktkategorie ganz oben.",
     statusToggle: {
       statusLabel: "Status",
       hidden: "Versteckt",
@@ -4405,7 +4401,7 @@ export const de = {
     },
     productType: {
       title: "Produkttyp",
-      summary: "Freie Bezeichnung zur Filterung und Organisation von Produkten im Shop — nicht zu verwechseln mit der Produktkategorie aus Shopifys Taxonomie.",
+      summary: "Deine eigene Bezeichnung, frei wählbar und übersetzbar. Regelbasierte Kollektionen, Theme-Filter und Shopifys Berichte lesen sie. Die maschinenlesbare Einordnung ist die Produktkategorie ganz oben.",
       details: "Der Produkttyp hilft Kunden, Produkte zu finden und ermöglicht die Erstellung automatischer Kollektionen. Er erscheint in Filtern und kann für die Navigation verwendet werden.",
       tips: [
         "Kurz und prägnant halten (z.B. T-Shirt, Schuhe)",
@@ -4417,6 +4413,63 @@ export const de = {
         "Sneaker",
         "Handtasche",
       ],
+    },
+    category: {
+      title: "Produktkategorie",
+      summary: "Shopifys eigene Taxonomie — die maschinenlesbare Einordnung deines Produkts. Sie bestimmt Steuersätze und ob dein Produkt auf Marktplätzen und in KI-Kanälen erscheint.",
+      details: "Nicht übersetzbar: Shopify kennt den Kategoriebaum selbst in jeder Sprache. Deine eigene Bezeichnung ist der Produkttyp weiter unten — die Kategorie ist für Maschinen, der Produkttyp für deinen Shop.",
+      tips: [
+        "So genau wie möglich wählen — je tiefer im Baum, desto besser",
+        "Genau eine Kategorie pro Produkt",
+        "Beeinflusst Steuern, Marktplätze und KI-Kanäle",
+      ],
+    },
+    vendor: {
+      title: "Hersteller",
+      summary: "Wer das Produkt herstellt oder vertreibt. Shopify gruppiert danach in Berichten und Filtern, und regelbasierte Kollektionen können darauf aufbauen.",
+      details: "Existiert einmal pro Produkt, nicht pro Sprache — deshalb nicht übersetzbar. Einheitliche Schreibweise ist entscheidend: „Acme“ und „ACME GmbH“ sind für Shopify zwei verschiedene Hersteller.",
+      tips: [
+        "Immer gleich schreiben, sonst entstehen doppelte Einträge",
+        "Auch für Eigenmarken sinnvoll",
+      ],
+      examples: [
+        "Acme",
+        "Patis Universe",
+      ],
+    },
+    collections: {
+      title: "Kollektionen",
+      summary: "In welchen Kollektionen dieses Produkt liegt. Hinzufügen heißt beitreten, ein Chip entfernen heißt verlassen — alles andere bleibt unangetastet.",
+      details: "Regelbasierte (automatische) Kollektionen entscheiden selbst über ihre Mitglieder. Sie werden hier angezeigt, lassen sich aber nicht ändern: Shopify lehnt den Beitritt ab, und ein Entfernen würde die Regel innerhalb von Sekunden rückgängig machen.",
+      tips: [
+        "Suchen statt scrollen — das Feld filtert die Kollektionen des Shops",
+        "Ein Eintrag ohne Entfernen-Kreuz wird von einer Regel bestimmt",
+      ],
+    },
+    tags: {
+      title: "Tags",
+      summary: "Freie Schlagwörter zum Filtern und Suchen, und die häufigste Grundlage für automatische Kollektionen. Nicht übersetzbar.",
+      details: "Ob deine Kundschaft Tags überhaupt sieht, entscheidet dein Theme — für Shopify sind sie in erster Linie ein Ordnungswerkzeug. „Sale“ und „sale“ sind für Shopify dasselbe Tag.",
+      tips: [
+        "Mit Enter hinzufügen",
+        "Einheitliche Schreibweise über alle Produkte",
+        "Kein Ersatz für Kollektionen — Tags sind Filter, keine Seiten",
+      ],
+      examples: [
+        "Sale",
+        "Handarbeit",
+        "Geschenk",
+      ],
+    },
+    templateSuffix: {
+      title: "Theme-Vorlage",
+      summary: "Welche Vorlage deines Themes diese Seite rendert. Leer = die Standardvorlage.",
+      details: "Alternative Vorlagen legst du im Theme-Editor an (zum Beispiel „product.gerahmt“). Hier trägst du nur den Teil nach dem Punkt ein — also „gerahmt“.",
+    },
+    sortOrder: {
+      title: "Sortierung",
+      summary: "In welcher Reihenfolge die Produkte dieser Kollektion im Shop erscheinen.",
+      details: "„Manuell“ heißt: die Reihenfolge, die du im Shopify-Admin per Drag-and-drop festlegst. Alle anderen Werte sortieren automatisch und ignorieren eine manuelle Anordnung.",
     },
 
     // AI Actions

@@ -20,8 +20,9 @@
  * reporting a change that is not one.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ChipCombobox } from "./ChipCombobox";
+import { FieldClearOverlay, FieldLabel } from "./FieldChrome";
 import {
   BlockStack,
   Button,
@@ -73,9 +74,9 @@ export interface AttributeFieldProps {
   optionLabels?: Record<string, string>;
   /** The explanatory line under the control, already translated. */
   attributeNote?: string;
-  /** Translated help for the plain-text controls, where the config's own
-   *  string is an English sentence the server-side config cannot localise. */
-  helpText?: string;
+  /** Key into `t.help` — the question mark beside the label. Unknown keys draw
+   *  nothing, so a field may always name one. */
+  helpKey?: string;
   t: {
     notTranslatable?: string;
     addTag?: string;
@@ -135,7 +136,7 @@ export function AttributeField({
   suggestions = [],
   optionLabels,
   attributeNote,
-  helpText,
+  helpKey,
   t,
 }: AttributeFieldProps) {
   // §2.4 / §3.5 — the field exists once per item, so a foreign locale can only
@@ -153,12 +154,29 @@ export function AttributeField({
     : readOnlyHint;
 
   const tags = useMemo(() => parseTags(value), [value]);
+
+  // One label for every branch below: bold, with its question mark. Passed as
+  // a NODE into the Polaris controls, which is what lets the help bubble sit
+  // beside the words instead of under the box.
+  const labelNode = <FieldLabel label={label} helpKey={helpKey} />;
+
+  /**
+   * Emptying the field.
+   *
+   * Only where "" is a value the field can HOLD. A select and a toggle are
+   * enums — Shopify stores one of their options, never nothing, and a Clear
+   * button on a status would either write a value the API refuses or silently
+   * do nothing. The tags control clears itself (`ChipCombobox`), because it
+   * has to keep the locked entries.
+   */
+  const clearable = !locked && (field.type === "text" || field.type === "money");
+
   const control = (() => {
     switch (field.type) {
       case "select":
         return (
           <Select
-            label={label}
+            label={labelNode}
             options={(field.options ?? []).map((o) => ({
               // `field.label` is the raw enum value — the config has no
               // language. A missing entry falls back to it rather than to "",
@@ -175,7 +193,7 @@ export function AttributeField({
       case "toggle":
         return (
           <Select
-            label={label}
+            label={labelNode}
             options={[
               { label: field.toggleLabels?.on || t.yes || "Yes", value: "true" },
               { label: field.toggleLabels?.off || t.no || "No", value: "false" },
@@ -196,7 +214,7 @@ export function AttributeField({
         // reading and be wrong for the other half of the shops.
         return (
           <TextField
-            label={label}
+            label={labelNode}
             value={value}
             onChange={onChange}
             disabled={locked}
@@ -215,12 +233,12 @@ export function AttributeField({
       case "text":
         return (
           <TextField
-            label={label}
+            label={labelNode}
             value={value}
             onChange={onChange}
             disabled={locked}
             autoComplete="off"
-            helpText={helpText ?? (typeof field.helpText === "string" ? field.helpText : undefined)}
+            helpText={typeof field.helpText === "string" ? field.helpText : undefined}
           />
         );
 
@@ -232,6 +250,7 @@ export function AttributeField({
         return (
           <ChipCombobox
             label={label}
+            helpKey={helpKey}
             selected={tags}
             options={suggestions.map((tag) => ({ value: tag, label: tag }))}
             onChange={(next) => onChange(serializeTags(next))}
@@ -252,7 +271,13 @@ export function AttributeField({
 
   return (
     <BlockStack gap="150">
-      {control}
+      {/* Same clear affordance, same corner, as every other field in the card. */}
+      <FieldClearOverlay
+        onClear={clearable ? () => onChange("") : undefined}
+        hasValue={!!value}
+      >
+        {control}
+      </FieldClearOverlay>
       {(attributeNote ?? field.attributeNote) && (
         <InlineStack gap="100" blockAlign="center" wrap={false}>
           <Icon source={InfoIcon} tone="subdued" />

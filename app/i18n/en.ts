@@ -576,7 +576,6 @@ export const en: Translation = {
       noMatches: "No category matches that.",
       lookupFailed: "The category list could not be loaded. Try again in a moment.",
       none: "Not set",
-      clear: "Clear",
       broad: "(broad)",
       // Browsing the tree. The back row NAMES where it goes: "back" alone
       // makes a merchant three levels deep count clicks.
@@ -752,11 +751,8 @@ export const en: Translation = {
       status: "Active does not by itself mean visible — a product also needs a sales channel. You manage those right here under Sales channels.",
       collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
     },
-    templateSuffixHelp: "Empty = the theme's default template.",
     // The pair merchants take for one field. Each line names the OTHER —
     // the only thing that tells them apart at a glance.
-    categoryHelp: "Shopify's own taxonomy. It decides tax rates and whether your product appears on marketplaces and in AI channels. Not translatable — Shopify knows the tree in every language itself. Your own wording is the product type further down.",
-    productTypeHelp: "Your own wording, free to choose and translatable. Rule-based collections, theme filters and Shopify's reports read it. The machine-readable classification is the product category at the top.",
     statusToggle: {
       statusLabel: "Status",
       hidden: "Hidden",
@@ -4395,7 +4391,7 @@ export const en: Translation = {
     },
     productType: {
       title: "Product Type",
-      summary: "Category for filtering and organizing products in your shop.",
+      summary: "Your own wording, free to choose and translatable. Rule-based collections, theme filters and Shopify's reports read it. The machine-readable classification is the product category at the top.",
       details: "The product type helps customers find products and enables automatic collection creation. It appears in filters and can be used for navigation.",
       tips: [
         "Keep it short and concise (e.g. T-Shirt, Shoes)",
@@ -4407,6 +4403,63 @@ export const en: Translation = {
         "Sneaker",
         "Handbag",
       ],
+    },
+    category: {
+      title: "Product category",
+      summary: "Shopify's own taxonomy — the machine-readable classification of your product. It decides tax rates and whether your product appears on marketplaces and in AI channels.",
+      details: "Not translatable: Shopify knows the category tree in every language itself. Your own wording is the product type further down — the category is for machines, the product type is for your shop.",
+      tips: [
+        "Pick as precisely as you can — the deeper in the tree, the better",
+        "Exactly one category per product",
+        "Affects taxes, marketplaces and AI channels",
+      ],
+    },
+    vendor: {
+      title: "Vendor",
+      summary: "Who makes or supplies the product. Shopify groups by it in reports and filters, and rule-based collections can build on it.",
+      details: "Exists once per product, not per language — which is why it is not translatable. Consistent spelling matters: Acme and ACME Ltd are two different vendors to Shopify.",
+      tips: [
+        "Always spell it the same way, or you end up with duplicates",
+        "Worth filling in for your own brand too",
+      ],
+      examples: [
+        "Acme",
+        "Patis Universe",
+      ],
+    },
+    collections: {
+      title: "Collections",
+      summary: "Which collections this product belongs to. Adding means joining, removing a chip means leaving — everything else stays untouched.",
+      details: "Rule-based (automatic) collections decide their own members. They are shown here but cannot be changed: Shopify refuses the join, and a removal would be undone by the rule within seconds.",
+      tips: [
+        "Search instead of scrolling — the field filters the shop's collections",
+        "An entry with no remove cross is governed by a rule",
+      ],
+    },
+    tags: {
+      title: "Tags",
+      summary: "Free keywords for filtering and search, and the most common basis for automatic collections. Not translatable.",
+      details: "Whether your customers see tags at all is up to your theme — to Shopify they are first of all an organizing tool. Shopify treats Sale and sale as the same tag.",
+      tips: [
+        "Press Enter to add one",
+        "Keep the spelling consistent across products",
+        "Not a replacement for collections — tags are filters, not pages",
+      ],
+      examples: [
+        "Sale",
+        "Handmade",
+        "Gift",
+      ],
+    },
+    templateSuffix: {
+      title: "Theme template",
+      summary: "Which template of your theme renders this page. Empty = the default template.",
+      details: "Alternative templates are created in the theme editor (for example product.framed). Here you enter only the part after the dot — so framed.",
+    },
+    sortOrder: {
+      title: "Sort order",
+      summary: "The order in which this collection's products appear in your shop.",
+      details: "Manual means the order you set by drag and drop in the Shopify admin. Every other value sorts automatically and ignores a manual arrangement.",
     },
 
     // AI Actions

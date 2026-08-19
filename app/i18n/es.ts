@@ -567,7 +567,6 @@ export const es: Translation = {
       noMatches: "Ninguna categoría coincide.",
       lookupFailed: "No se pudo cargar la lista de categorías. Inténtalo de nuevo en un momento.",
       none: "Sin definir",
-      clear: "Quitar",
       broad: "(general)",
       // Navegar por el árbol. La fila de vuelta NOMBRA su destino: un simple
       // "atrás" obliga a contar clics tres niveles más abajo.
@@ -743,11 +742,8 @@ export const es: Translation = {
       status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Los gestionas aquí mismo, en Canales de venta.",
       collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
     },
-    templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
     // El par que los comerciantes toman por un solo campo. Cada línea nombra
     // el OTRO — lo único que los distingue de un vistazo.
-    categoryHelp: "La taxonomía propia de Shopify. Decide los tipos impositivos y si tu producto aparece en marketplaces y en canales de IA. No es traducible — Shopify conoce el árbol en cada idioma. Tu propia denominación es el tipo de producto más abajo.",
-    productTypeHelp: "Tu propia denominación, libre y traducible. Las colecciones basadas en reglas, los filtros del tema y los informes de Shopify la leen. La clasificación legible por máquinas es la categoría de producto de arriba.",
     statusToggle: {
       statusLabel: "Estado",
       hidden: "Oculto",
@@ -4383,7 +4379,7 @@ export const es: Translation = {
     },
     productType: {
       title: "Tipo de producto",
-      summary: "Categoría para filtrar y organizar productos en tu tienda.",
+      summary: "Tu propia denominación, libre y traducible. Las colecciones basadas en reglas, los filtros del tema y los informes de Shopify la leen. La clasificación legible por máquinas es la categoría de producto de arriba.",
       details: "El tipo de producto ayuda a los clientes a encontrar productos y permite la creación de colecciones automáticas. Aparece en filtros y puede usarse para navegación.",
       tips: [
         "Mantenerlo corto y conciso (ej. Camiseta, Zapatos)",
@@ -4395,6 +4391,63 @@ export const es: Translation = {
         "Zapatilla",
         "Bolso",
       ],
+    },
+    category: {
+      title: "Categoría de producto",
+      summary: "La taxonomía propia de Shopify — la clasificación legible por máquinas de tu producto. Decide los tipos impositivos y si tu producto aparece en marketplaces y en canales de IA.",
+      details: "No es traducible: Shopify conoce el árbol de categorías en cada idioma. Tu propia denominación es el tipo de producto más abajo — la categoría es para máquinas, el tipo de producto para tu tienda.",
+      tips: [
+        "Elige con la mayor precisión posible — cuanto más profundo en el árbol, mejor",
+        "Exactamente una categoría por producto",
+        "Afecta a impuestos, marketplaces y canales de IA",
+      ],
+    },
+    vendor: {
+      title: "Fabricante",
+      summary: "Quién fabrica o suministra el producto. Shopify agrupa por él en informes y filtros, y las colecciones basadas en reglas pueden apoyarse en él.",
+      details: "Existe una vez por producto, no por idioma — por eso no es traducible. La ortografía uniforme es decisiva: «Acme» y «ACME S.L.» son dos fabricantes distintos para Shopify.",
+      tips: [
+        "Escríbelo siempre igual o acabarás con duplicados",
+        "También merece la pena para tu propia marca",
+      ],
+      examples: [
+        "Acme",
+        "Patis Universe",
+      ],
+    },
+    collections: {
+      title: "Colecciones",
+      summary: "A qué colecciones pertenece este producto. Añadir significa entrar, quitar un chip significa salir — todo lo demás queda intacto.",
+      details: "Las colecciones basadas en reglas (automáticas) deciden ellas mismas sus miembros. Se muestran aquí pero no se pueden cambiar: Shopify rechaza la entrada, y una salida sería deshecha por la regla en segundos.",
+      tips: [
+        "Busca en lugar de desplazarte — el campo filtra las colecciones de la tienda",
+        "Una entrada sin aspa de eliminar la gobierna una regla",
+      ],
+    },
+    tags: {
+      title: "Etiquetas",
+      summary: "Palabras clave libres para filtrar y buscar, y la base más habitual de las colecciones automáticas. No son traducibles.",
+      details: "Que tu clientela vea las etiquetas depende de tu tema — para Shopify son ante todo una herramienta de orden. Shopify trata «Sale» y «sale» como la misma etiqueta.",
+      tips: [
+        "Pulsa Intro para añadir una",
+        "Mantén la ortografía uniforme en todos los productos",
+        "No sustituyen a las colecciones — las etiquetas son filtros, no páginas",
+      ],
+      examples: [
+        "Sale",
+        "Hecho a mano",
+        "Regalo",
+      ],
+    },
+    templateSuffix: {
+      title: "Plantilla del tema",
+      summary: "Qué plantilla de tu tema renderiza esta página. Vacío = la plantilla predeterminada.",
+      details: "Las plantillas alternativas se crean en el editor de temas (por ejemplo «product.enmarcado»). Aquí solo introduces la parte posterior al punto — es decir, «enmarcado».",
+    },
+    sortOrder: {
+      title: "Orden",
+      summary: "El orden en que aparecen los productos de esta colección en tu tienda.",
+      details: "«Manual» significa el orden que fijas arrastrando en el admin de Shopify. Cualquier otro valor ordena automáticamente e ignora una disposición manual.",
     },
 
     // AI Actions

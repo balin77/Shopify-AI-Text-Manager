@@ -25,6 +25,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ChipCombobox } from "./ChipCombobox";
+import { FieldLabel } from "./FieldChrome";
 import { BlockStack, Banner, Box, Button, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
 import type { CollectionOption } from "../../routes/api.product-taxonomy";
 
@@ -49,6 +50,8 @@ export interface CollectionsFieldProps {
   /** The way OUT of that state — the same affordance `AttributeField` offers. */
   onReload?: () => void;
   label: string;
+  /** Key into `t.help` — handed to the combobox that draws the label. */
+  helpKey?: string;
   disabled?: boolean;
   t: {
     filter?: string;
@@ -73,6 +76,7 @@ export function CollectionsField({
   known,
   onReload,
   label,
+  helpKey,
   disabled,
   t,
 }: CollectionsFieldProps) {
@@ -137,7 +141,7 @@ export function CollectionsField({
   if (!known) {
     return (
       <BlockStack gap="200">
-        <Text as="p" variant="bodyMd">{label}</Text>
+        <FieldLabel label={label} helpKey={helpKey} />
         <Text as="p" variant="bodySm" tone="subdued">
           {t.unknown || "Not loaded yet — reload this product to see its collections."}
         </Text>
@@ -185,6 +189,7 @@ export function CollectionsField({
           them, the product's own text started below the fold. */}
       <ChipCombobox
         label={label}
+        helpKey={helpKey}
         selected={[...selected]}
         options={rows.map((row) => ({
           value: row.id,
