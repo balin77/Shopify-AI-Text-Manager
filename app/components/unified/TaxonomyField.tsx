@@ -75,10 +75,21 @@
  * while it is open leaves it hanging over nothing. See the hook for why the
  * lock cancels the event instead of hiding the overflow.
  *
- * ── The label ───────────────────────────────────────────────────────────────
- * The stored `categoryName` is Shopify's `fullName` — the whole path. Showing
- * only the leaf would make two different categories called "Shirts" look
- * identical, which is exactly the mistake a taxonomy exists to prevent.
+ * ── The label on the closed control ────────────────────────────────────────
+ * The CATEGORY, not the path to it: "Vasen", not "Heim & Garten > Dekoration >
+ * Vasen". The path is what tells two categories called "Shirts" apart, so it
+ * does not disappear — it is the control's `title`, one hover away, and the
+ * list inside the popover shows paths throughout. What the merchant reads
+ * without opening anything is the thing they chose.
+ *
+ * And it is read in the shop's language, which takes a lookup: the label comes
+ * from the CACHE, and the sync filled it from the Admin API, the one source
+ * that only speaks English (`kind=taxonomy-name`). Without that the field was
+ * the single English spot in an otherwise translated picker. Three sources, in
+ * this order — the category picked in this session (already localized, it came
+ * out of the localized list), the localized lookup for the stored id, and the
+ * cached label as it is. Each one is only used while it belongs to the value
+ * currently held; a label under a different category would be a confident lie.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -96,6 +107,7 @@ import {
 } from "@shopify/polaris";
 import { ArrowLeftIcon, ChevronRightIcon, SearchIcon } from "@shopify/polaris-icons";
 import { useScrollLock } from "../../hooks/useScrollLock";
+import { leafNameOf } from "../../services/taxonomy-localization.shared";
 import type { TaxonomyOption } from "../../routes/api.product-taxonomy";
 
 export interface TaxonomyFieldProps {
@@ -198,7 +210,19 @@ export function TaxonomyField({
    * set" (or, worse, kept showing the PREVIOUS one). A change the UI reports
    * as no change is indistinguishable from a mis-click.
    */
-  const [pendingLabel, setPendingLabel] = useState<{ id: string; fullName: string } | null>(null);
+  const [pendingLabel, setPendingLabel] = useState<{ id: string; fullName: string; name: string } | null>(
+    null,
+  );
+
+  /**
+   * The stored category's name in the shop's language, or null while there is
+   * none to be had (English shop, no import yet, a category newer than the
+   * pinned release). Null is never rendered as a blank — the cached label
+   * stands in.
+   */
+  const [localizedCurrent, setLocalizedCurrent] = useState<
+    { id: string; fullName: string; name: string } | null
+  >(null);
   const [results, setResults] = useState<TaxonomyOption[] | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "tooShort" | "failed">("idle");
 
@@ -362,11 +386,43 @@ export function TaxonomyField({
     loadLevel(next[next.length - 1]?.id ?? "");
   }, [path, loadLevel]);
 
+  /**
+   * Ask for the stored category's localized name.
+   *
+   * Keyed on `value` alone: one request per category a merchant actually looks
+   * at, and none at all for a product without one. The response is dropped
+   * unless the value is still the one it was asked for — switching products in
+   * the item list is exactly the race that would otherwise label a product with
+   * its predecessor's category.
+   */
+  useEffect(() => {
+    if (!value) {
+      setLocalizedCurrent(null);
+      return;
+    }
+    let current = true;
+    fetch(`/api/product-taxonomy?kind=taxonomy-name&id=${encodeURIComponent(value)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!current) return;
+        // A failed lookup and "no localized name" land in the same place on
+        // purpose: both mean the cached label is the best one available, and
+        // neither is worth a message about a word that is already on screen.
+        setLocalizedCurrent(data?.success && data.category ? data.category : null);
+      })
+      .catch(() => {
+        if (current) setLocalizedCurrent(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [value]);
+
   const choose = useCallback(
     (option: TaxonomyOption) => {
       onChange(option.id);
       onPick?.(option);
-      setPendingLabel({ id: option.id, fullName: option.fullName });
+      setPendingLabel({ id: option.id, fullName: option.fullName, name: option.name });
       // Closed and reset, so the next open starts at the top rather than
       // wherever the last choice happened to leave the stack.
       setOpen(false);
@@ -381,11 +437,16 @@ export function TaxonomyField({
     [onChange, onPick],
   );
 
-  // The chosen label survives only as long as the value it belongs to. A
-  // switch to another item, an undo, or a save-and-reload all move `value`
-  // away from it, and a stale path under a different category would be a
-  // confident lie.
-  const shownLabel = pendingLabel && pendingLabel.id === value ? pendingLabel.fullName : currentLabel;
+  // Every label survives only as long as the value it belongs to. A switch to
+  // another item, an undo, or a save-and-reload all move `value` away from it,
+  // and a name under a different category would be a confident lie.
+  const shownEntry =
+    (pendingLabel?.id === value ? pendingLabel : null) ??
+    (localizedCurrent?.id === value ? localizedCurrent : null);
+  // The cached label is the fallback, and it carries no leaf of its own — it is
+  // a path, so the leaf is split out of it with the same rule the import uses.
+  const shownPath = shownEntry?.fullName || currentLabel;
+  const shownName = shownEntry?.name || leafNameOf(currentLabel);
   const here = path[path.length - 1];
 
   if (foreignLocaleHint) {
@@ -491,6 +552,10 @@ export function TaxonomyField({
             from doing the widening the wrapping otherwise prevents. */}
         <div
           ref={activatorRef}
+          // The whole path, for the one question the leaf cannot answer: WHICH
+          // "Shirts" is this. It sits on the box rather than on the button
+          // because Polaris' Button takes a string and nothing else.
+          title={shownPath || undefined}
           style={{
             flex: "1 1 auto",
             minWidth: 0,
@@ -513,11 +578,14 @@ export function TaxonomyField({
                 textAlign="left"
                 fullWidth
               >
-                {/* A stored id with no cached label is possible on a row that has
-                    not been attribute-synced since the category was set. The id
-                    is not a name, so the field says "not set" rather than
-                    printing a GID at the merchant. */}
-                {(value && shownLabel) || t.none || "Not set"}
+                {/* The category, with the whole path one hover away on the box
+                    around this button (Polaris types `children` as a string, so
+                    the tooltip cannot ride in here) — see the header. A stored
+                    id with no label at all is possible on a row that has not
+                    been attribute-synced since the category was set; the id is
+                    not a name, so the field says "not set" rather than printing
+                    a GID at the merchant. */}
+                {(value && shownName) || t.none || "Not set"}
               </Button>
             }
           >

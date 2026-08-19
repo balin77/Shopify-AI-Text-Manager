@@ -176,11 +176,13 @@ describe("TaxonomyField — browsing", () => {
     expect(screen.queryByText(/no subcategories/i)).toBeNull();
   });
 
-  it("shows the whole path once a category is set, never the GID", () => {
-    render(
-      ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }),
-    );
-    expect(screen.getByRole("button", { name: /Apparel & Accessories > Jewelry/ })).toBeTruthy();
+  it("shows the chosen category once one is set, with the path one hover away", () => {
+    render(ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }));
+
+    // The CATEGORY on the control — the path is what tells two "Shirts" apart,
+    // so it stays reachable rather than being printed at the merchant.
+    expect(screen.getByRole("button", { name: "Jewelry" })).toBeTruthy();
+    expect(document.querySelector('[title="Apparel & Accessories > Jewelry"]')).toBeTruthy();
     expect(screen.queryByText(/gid:\/\//)).toBeNull();
   });
 });
@@ -301,5 +303,103 @@ describe("TaxonomyField — how wide the boxes get", () => {
 
     expect(panelStyle()).toContain("var(--app-dropdown-panel-max-width)");
     expect(panelStyle()).not.toContain("width: 0px");
+  });
+});
+
+/**
+ * The label on the closed control.
+ *
+ * It comes from the product CACHE, which the sync filled from the Admin API —
+ * the one source that answers in English only. So the field was the single
+ * untranslated spot in an otherwise localized picker, and it printed the whole
+ * path where the merchant only wanted to know which category is set.
+ */
+describe("TaxonomyField — the label on the control", () => {
+  const NAME_RESPONSE = {
+    success: true,
+    category: {
+      id: gid(12),
+      fullName: "Bekleidung & Accessoires > Schmuck",
+      name: "Schmuck",
+    },
+  };
+
+  /** The level/search mock, plus an answer for the single-name lookup. */
+  function mockFetchWithName(category: unknown) {
+    const levels = mockFetch();
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+      if (url.searchParams.get("kind") === "taxonomy-name") {
+        return { json: async () => ({ success: true, category }) } as Response;
+      }
+      return levels(input);
+    });
+  }
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("replaces the cached English label with the shop's language", async () => {
+    vi.stubGlobal("fetch", mockFetchWithName(NAME_RESPONSE.category));
+
+    render(ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Schmuck" })).toBeTruthy());
+    // And the hover carries the localized PATH, not the English one it replaced.
+    expect(
+      document.querySelector('[title="Bekleidung & Accessoires > Schmuck"]'),
+    ).toBeTruthy();
+  });
+
+  it("asks for the stored category only, and only once there is one", async () => {
+    vi.stubGlobal("fetch", mockFetchWithName(NAME_RESPONSE.category));
+
+    const { rerender } = render(ui({ value: "", currentLabel: "" }));
+    const nameCalls = () =>
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .map((c) => String(c[0]))
+        .filter((u) => u.includes("kind=taxonomy-name"));
+
+    // A product without a category costs no request at all.
+    expect(nameCalls()).toHaveLength(0);
+
+    rerender(ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }));
+    await waitFor(() => expect(nameCalls()).toHaveLength(1));
+    expect(nameCalls()[0]).toContain(encodeURIComponent(gid(12)));
+  });
+
+  it("keeps the cached label when there is no localized name", async () => {
+    // `category: null` is not an error and not "unknown" — an English shop, or
+    // a category newer than the pinned release. A blank field would be the one
+    // wrong answer.
+    vi.stubGlobal("fetch", mockFetchWithName(null));
+
+    render(ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Jewelry" })).toBeTruthy());
+  });
+
+  it("keeps the cached label when the lookup fails outright", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("offline"))));
+
+    render(ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Jewelry" })).toBeTruthy());
+  });
+
+  it("drops a response that arrives after the merchant switched products", async () => {
+    vi.stubGlobal("fetch", mockFetchWithName(NAME_RESPONSE.category));
+
+    const { rerender } = render(
+      ui({ value: gid(12), currentLabel: "Apparel & Accessories > Jewelry" }),
+    );
+    // The next product carries a different category; the first answer must not
+    // land on it.
+    rerender(ui({ value: gid(1), currentLabel: "Furniture" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Furniture" })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "Schmuck" })).toBeNull();
   });
 });

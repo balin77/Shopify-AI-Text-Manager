@@ -22,6 +22,10 @@
  * `TaxonomyCategoryName`, which is Shopify's own published file after import;
  * see [taxonomy-localization.server.ts](../services/taxonomy-localization.server.ts).
  *
+ * `kind=taxonomy-name` answers the same question for the ONE category a
+ * product already carries: its label sits in the cache in English, because the
+ * sync got it from this API.
+ *
  * A GID with no row is the signal that the table is behind, and it triggers a
  * detached import. The response meanwhile carries the API's English name for
  * that one entry — a real label rather than a blank, and per entry rather than
@@ -152,6 +156,37 @@ export async function loader({ request }: LoaderFunctionArgs) {
   };
 
   try {
+    // ── The name of ONE category, in the merchant's language ─────────────────
+    // The closed control shows the category a product already has, and that
+    // label comes from the CACHE, which the sync filled from the Admin API —
+    // i.e. in English, the one language that API speaks. So the picker was
+    // localized everywhere except in the field the merchant looks at without
+    // opening anything.
+    //
+    // `category: null` is not an error and not "unknown": it means no
+    // localized row exists (an English shop, a category newer than the pinned
+    // release, an import that has not run yet), and the caller keeps the label
+    // it already has. A blank field would be the one wrong answer.
+    if (kind === "taxonomy-name") {
+      const id = (url.searchParams.get("id") || "").trim();
+      if (!id.startsWith("gid://shopify/TaxonomyCategory/")) {
+        return json({ success: false, error: "A TaxonomyCategory GID is required." }, { status: 400 });
+      }
+      if (!primaryLocale) return json({ success: true, category: null });
+
+      const { byGid, missing, localized } = await lookupLocalizedNames(db, primaryLocale, [id]);
+      // The same trigger as everywhere else: a GID with no row says the table
+      // is behind, and this is often the FIRST lookup a shop makes — the
+      // control renders before anybody opens the picker.
+      if (localized && missing.length > 0) scheduleTaxonomyImport(db, primaryLocale);
+
+      const hit = byGid.get(id);
+      return json({
+        success: true,
+        category: hit ? { id, fullName: hit.fullName, name: hit.name } : null,
+      });
+    }
+
     if (kind === "taxonomy") {
       const search = (url.searchParams.get("q") || "").trim();
       // Not an error and not an empty result set — the caller is told to keep
