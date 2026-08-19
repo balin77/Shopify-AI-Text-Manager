@@ -43,9 +43,10 @@
  * permission check — this route takes a direct POST.
  */
 
-import { data as json, type ActionFunctionArgs } from "react-router";
+import { data as json, type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import { db } from "../db.server";
 import { logger } from "~/utils/logger.server";
 
 /** One answered question. `missing` and `error` are NOT the same answer. */
@@ -65,6 +66,62 @@ const absent = (detail?: unknown): Finding => ({ ok: false, missing: true, detai
  *  discovered, so a name that is not there is a stated miss rather than an
  *  absence nobody cross-checked. */
 const CANDIDATE_FIELDS = ["unitPriceMeasurement", "unitPrice", "measurement"];
+
+/**
+ * The products this shop has cached, with their variants.
+ *
+ * So the probe can be driven from two dropdowns instead of two pasted GIDs.
+ * Nobody knows a variant's GID by heart, and a diagnostic that is hard to
+ * START is a diagnostic that does not get run — which is the whole reason it
+ * exists.
+ *
+ * Read from the CACHE, not from Shopify: the list only has to be good enough
+ * to pick a product to write a test measurement to. `shopifyGid` is stored on
+ * the variant row, so nothing is assembled from an id here.
+ */
+export const loader = async (args: LoaderFunctionArgs) => {
+  const { session } = await authenticate.admin(args.request);
+
+  if (process.env.APP_ENV !== "development") {
+    return json({ success: false, products: [] }, { status: 403 });
+  }
+
+  const products = await db.product.findMany({
+    where: { shop: session.shop },
+    select: {
+      id: true,
+      title: true,
+      variants: {
+        select: { id: true, shopifyGid: true, title: true, sku: true },
+        orderBy: { position: "asc" },
+        // A product with hundreds of variants needs none of them here: the
+        // probe writes to ONE, and a picker nobody can scroll is not a picker.
+        take: 100,
+      },
+    },
+    orderBy: { title: "asc" },
+    // Bounded for the same reason. A dev diagnostic does not need the whole
+    // catalogue in one response.
+    take: 200,
+  });
+
+  return json({
+    success: true,
+    products: products
+      // A product whose variants were never synced cannot be probed, and
+      // offering it would produce a picker that leads nowhere.
+      .filter((product) => product.variants.length > 0)
+      .map((product) => ({
+        gid: product.id,
+        title: product.title,
+        variants: product.variants.map((variant) => ({
+          gid: variant.shopifyGid,
+          title: variant.title,
+          sku: variant.sku,
+        })),
+      })),
+  });
+};
 
 export const action = async (args: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(args.request);
