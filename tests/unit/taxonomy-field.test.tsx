@@ -22,7 +22,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
+import { I18nProvider } from "~/contexts/I18nContext";
 import { TaxonomyField } from "~/components/unified/TaxonomyField";
+import type { Locale } from "~/i18n";
 
 const gid = (n: number) => `gid://shopify/TaxonomyCategory/${n}`;
 
@@ -54,19 +56,35 @@ function mockFetch() {
   });
 }
 
-function ui(props: Partial<React.ComponentProps<typeof TaxonomyField>> = {}) {
+function ui(
+  props: Partial<React.ComponentProps<typeof TaxonomyField>> = {},
+  appLocale: Locale = "en",
+) {
   return (
     <AppProvider i18n={en}>
-      <TaxonomyField
-        value=""
-        onChange={() => {}}
-        currentLabel=""
-        label="Product category"
-        t={{}}
-        {...props}
-      />
+      <I18nProvider locale={appLocale}>
+        <TaxonomyField
+          value=""
+          onChange={() => {}}
+          currentLabel=""
+          label="Product category"
+          t={{}}
+          {...props}
+        />
+      </I18nProvider>
     </AppProvider>
   );
+}
+
+/** The popover's scrolling list — the one box the scroll lock lets through.
+ *  Found by the property that makes it that box. */
+const listBox = () => document.querySelector("[style*='overscroll-behavior']") as HTMLElement;
+
+/** A wheel the page would scroll on, if anything let it. */
+function wheelOn(target: EventTarget): boolean {
+  const event = new WheelEvent("wheel", { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
 }
 
 /** The activator carries the current value, or "Not set". */
@@ -171,5 +189,101 @@ describe("TaxonomyField — browsing", () => {
     );
     expect(screen.getByRole("button", { name: /Apparel & Accessories > Jewelry/ })).toBeTruthy();
     expect(screen.queryByText(/gid:\/\//)).toBeNull();
+  });
+});
+
+/**
+ * The two rules that are about the BOX rather than about the taxonomy.
+ *
+ * A Polaris popover is positioned once against its activator and re-measures
+ * only on scrolls it can see — and the pages here scroll inside a plain
+ * container, not a Polaris `Scrollable`. So an open picker over a scrolling
+ * page hangs over nothing, which is why the page is frozen while it is open —
+ * everywhere except the popover's own list, which still has to scroll.
+ */
+describe("TaxonomyField — the page behind the popover", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("lets the page scroll while the picker is closed", () => {
+    render(ui());
+    expect(wheelOn(document.body)).toBe(false);
+  });
+
+  it("freezes the page while the picker is open and thaws it again on close", async () => {
+    render(ui());
+    await openPicker();
+
+    expect(wheelOn(document.body)).toBe(true);
+
+    // Choosing closes the popover — and the lock has to go with it, or the
+    // page stays frozen for good. A LEAF is what chooses; a branch descends.
+    fireEvent.click(screen.getByText("Apparel & Accessories"));
+    await waitFor(() => expect(screen.getByText("Jewelry")).toBeTruthy());
+    fireEvent.click(screen.getByText("Jewelry"));
+    await waitFor(() => expect(screen.queryByText("Jewelry")).toBeNull());
+    expect(wheelOn(document.body)).toBe(false);
+  });
+
+  it("still lets the popover's own list scroll", async () => {
+    render(ui());
+    await openPicker();
+
+    const list = listBox();
+    expect(list).toBeTruthy();
+    expect(wheelOn(list)).toBe(false);
+  });
+
+  it("does not freeze anything for a disabled field that cannot open", () => {
+    render(ui({ disabled: true }));
+    expect(wheelOn(document.body)).toBe(false);
+  });
+});
+
+/**
+ * Shopify translates its taxonomy itself. Which language it answers in is
+ * decided by the request, so the lookup has to carry the language the APP is
+ * rendered in — not the admin session's, which is a different setting and
+ * routinely a different language.
+ */
+describe("TaxonomyField — the language the names come back in", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  const urls = () =>
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
+
+  it("asks for the level in the app's language", async () => {
+    render(ui({}, "de"));
+    await openPicker();
+
+    expect(urls().some((u) => u.includes("kind=taxonomy-children") && u.includes("lang=de"))).toBe(true);
+  });
+
+  it("carries the same language into the search half", async () => {
+    vi.useFakeTimers();
+    try {
+      render(ui({}, "es"));
+      fireEvent.click(screen.getByRole("button", { name: /not set/i }));
+      fireEvent.change(document.querySelector("input") as HTMLInputElement, {
+        target: { value: "shirt" },
+      });
+      // The search is debounced; without running the timer nothing is asked at all.
+      await vi.advanceTimersByTimeAsync(400);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(urls().some((u) => u.includes("kind=taxonomy&") && u.includes("lang=es"))).toBe(true);
   });
 });
