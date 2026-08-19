@@ -49,7 +49,7 @@ const PROBE_VALUE = {
   referenceUnit: "KG",
 };
 
-type Strategy = "null" | "showUnitPrice" | "both";
+type Strategy = "null" | "showUnitPrice" | "both" | "spelled-out" | "empty-object";
 
 interface FakeShop {
   /** What the variant holds; the zeroed struct means "nothing". */
@@ -118,19 +118,27 @@ function fakeShop(overrides: Partial<FakeShop> = {}) {
       if (shop.mutationAnswers.length) return answer(shop.mutationAnswers.shift());
 
       const input = (options?.variables?.variants as Array<Record<string, unknown>>)[0];
-      const setsMeasurement = "unitPriceMeasurement" in input;
       const setsShow = "showUnitPrice" in input;
-      const strategy: Strategy | null =
-        setsMeasurement && input.unitPriceMeasurement === null && setsShow
-          ? "both"
-          : setsMeasurement && input.unitPriceMeasurement === null
-            ? "null"
-            : setsShow
-              ? "showUnitPrice"
-              : null;
+      const measurement = input.unitPriceMeasurement as Record<string, unknown> | null | undefined;
+      const setsMeasurement = "unitPriceMeasurement" in input;
+      const emptyShaped =
+        !!measurement && (Object.keys(measurement).length === 0 || measurement.quantityUnit == null);
+      const strategy: Strategy | null = !setsMeasurement
+        ? setsShow
+          ? "showUnitPrice"
+          : null
+        : measurement === null
+          ? setsShow
+            ? "both"
+            : "null"
+          : emptyShaped
+            ? Object.keys(measurement).length === 0
+              ? "empty-object"
+              : "spelled-out"
+            : null;
 
-      if (setsMeasurement && input.unitPriceMeasurement !== null) {
-        shop.measurement = { measuredType: "WEIGHT", ...(input.unitPriceMeasurement as object) };
+      if (setsMeasurement && measurement && !emptyShaped) {
+        shop.measurement = { measuredType: "WEIGHT", ...measurement };
       } else if (strategy && shop.clearedBy.includes(strategy)) {
         shop.measurement = { ...EMPTY };
       }
@@ -320,6 +328,8 @@ describe("the unit-price probe", () => {
 
     expect(results.clear.ok).toBe(true);
     expect(results.clear.detail?.worked).toBe("both at once");
+    // Stopped at the one that worked; the two empty-shaped rungs below it were
+    // never needed.
     expect(results.clear.detail?.attempts).toHaveLength(3);
   });
 
@@ -328,12 +338,37 @@ describe("the unit-price probe", () => {
     // shippable feature — with a different off-switch. Folding the two into
     // one verdict would either overstate what the API does or throw away a
     // usable answer.
-    fakeShop({ clearedBy: [] });
+    fakeShop({ clearedBy: [], showUnitPrice: true });
     const results = await run();
 
     expect(results.clear.ok).toBe(false);
     expect(results.clear.missing).toBe(true);
     expect(results.hide.ok).toBe(true);
+  });
+
+  it("does not credit itself with a showUnitPrice that was ALREADY false", async () => {
+    // The first live run reported "hide: yes" off a variant whose
+    // `showUnitPrice` was false before anything was written — every attempt
+    // dutifully echoed false, and the untouched state was read as an effect of
+    // our own call. Nothing changed, so nothing was measured.
+    fakeShop({ clearedBy: [], showUnitPrice: false });
+    const results = await run();
+
+    expect(results.hide.ok).toBe(false);
+    // …and it is NOT a negative either: the question is simply unanswered.
+    expect(results.hide.missing).toBeUndefined();
+    expect(results.hide.error).toMatch(/already false/i);
+  });
+
+  it("tries the empty-shaped inputs once null has been refused", async () => {
+    // A variant with no Grundpreis reads back as a zeroed struct, so writing
+    // that shape is a different request from writing `null` — and `null` is
+    // measured not to work.
+    fakeShop({ clearedBy: ["spelled-out"] });
+    const results = await run();
+
+    expect(results.clear.ok).toBe(true);
+    expect(results.clear.detail?.worked).toBe("the empty measurement, spelled out");
   });
 
   it("admits it left the measurement behind when nothing could remove it", async () => {
