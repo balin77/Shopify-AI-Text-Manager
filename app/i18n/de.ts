@@ -561,6 +561,13 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      unitPriceHeading: "Grundpreis",
+      unitPriceHint: "Für Ware, die nach Gewicht oder Volumen verkauft wird: die Gesamtmenge der Packung und die Einheit, auf die sich der Preis bezieht. Die Storefront zeigt dann „CHF 45.80 / kg“.",
+      unitPriceUnitLabel: "Einheit",
+      unitPriceContent: "Gesamtmenge",
+      unitPriceReference: "Bezugsmenge",
+      unitPriceShow: "In der Storefront anzeigen",
+      unitPriceClearHint: "Alle vier Felder leeren entfernt den Grundpreis.",
       customsDetails: "Weitere Details",
       taxableSwitch: "Steuer auf diese Variante erheben",
       inventoryHeading: "Inventar",
@@ -626,6 +633,10 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      unitPriceIncomplete: "Ein Grundpreis braucht alle vier Angaben — Menge und Einheit auf beiden Seiten. Es wurde nichts gespeichert.",
+      unitPriceInvalid: "Der Grundpreis war keine gültige Menge. Es wurde nichts gespeichert.",
+      unitPriceNotConfirmed: "Shopify hat den Grundpreis nicht bestätigt. Lade neu, um zu sehen, was dort steht.",
+      unitPriceNotShown: "Der Grundpreis wurde gespeichert, aber Shopify hat den Anzeige-Schalter nicht übernommen.",
       priceAmbiguous: "Der Preis ist mehrdeutig — schreib 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Es wurde nichts gespeichert.",
       priceInvalid: "Ein Preis war keine Zahl und wurde deshalb nicht gespeichert.",
       priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, er wurde deshalb auch lokal nicht gespeichert. Lade neu, um den aktuellen Stand zu sehen.",
@@ -645,6 +656,10 @@ export const de = {
       channelsFailed: "Die Vertriebskanäle konnten nicht geändert werden.",
     },
     priceWarnings: {
+      unitPriceIncomplete: "Ein Grundpreis braucht alle vier Angaben — Menge und Einheit auf beiden Seiten. Alles Übrige wurde gespeichert.",
+      unitPriceInvalid: "Der Grundpreis war keine gültige Menge. Alles Übrige wurde gespeichert.",
+      unitPriceNotConfirmed: "Shopify hat den Grundpreis nicht bestätigt. Alles Übrige wurde gespeichert.",
+      unitPriceNotShown: "Der Grundpreis wurde gespeichert, aber der Anzeige-Schalter nicht.",
       priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
       priceInvalid: "Der Preis konnte nicht als Betrag gelesen werden. Alles Übrige wurde gespeichert.",
       priceEmpty: "Der Preis war leer und wurde nicht gespeichert — Shopify verlangt für jede Variante einen Preis. Alles Übrige wurde gespeichert.",
@@ -668,6 +683,13 @@ export const de = {
     // Status-Spalte im Bulk-Grid haben eigene. Das zusammenzuführen lohnt sich
     // — bis dahin sagt dieser Kommentar es, statt es zu behaupten.
     enumLabels: {
+      "unitPriceUnit.ITEM": "Stück",
+      "unitPriceUnit.UNKNOWN": "unbekannt",
+      "unitPriceGroup.volume": "Volumen",
+      "unitPriceGroup.weight": "Gewicht",
+      "unitPriceGroup.length": "Länge",
+      "unitPriceGroup.area": "Fläche",
+      "unitPriceGroup.count": "Stückzahl",
       "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
       "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
       "sortOrder.MANUAL": "Manuell", "sortOrder.BEST_SELLING": "Bestseller",

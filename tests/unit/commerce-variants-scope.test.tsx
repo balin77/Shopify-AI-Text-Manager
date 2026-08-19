@@ -56,6 +56,11 @@ function variant(
       { name: "Farbe", value: colour },
       { name: "Grösse", value: size },
     ],
+    unitQuantityValue: null,
+    unitQuantityUnit: null,
+    unitReferenceValue: null,
+    unitReferenceUnit: null,
+    showUnitPrice: false,
     levels: [],
     levelsTruncated: false,
     ...extra,
@@ -581,5 +586,136 @@ describe("the shipping card", () => {
     expect(hs.disabled).toBe(true);
     // …and the switch itself stays usable, or there would be no way back.
     expect((screen.getByRole("switch", { name: /Physical product/i }) as HTMLInputElement).disabled).toBe(false);
+  });
+});
+
+describe("the Grundpreis in the panel", () => {
+  function posted() {
+    const calls = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    return calls
+      .filter((c) => c[1]?.method === "POST")
+      .map((c) => Object.fromEntries((c[1].body as FormData).entries()) as Record<string, string>);
+  }
+
+  function withVariants(list: unknown[]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string }) => ({
+        ok: true,
+        status: 200,
+        json: async () =>
+          init?.method === "POST"
+            ? { success: true, warnings: [] }
+            : {
+                success: true,
+                variants: list,
+                variantsTruncated: false,
+                channels: [],
+                channelsTruncated: false,
+                shopLocations: [],
+              },
+      })),
+    );
+  }
+
+  async function openUnitPrice() {
+    fireEvent.click(await screen.findByText(/Unit price/));
+  }
+
+  const WITH_UNIT = {
+    unitQuantityValue: "500",
+    unitQuantityUnit: "G",
+    unitReferenceValue: "1",
+    unitReferenceUnit: "KG",
+  };
+
+  it("shows the value in the FOLDED label, so nobody has to unfold to check", async () => {
+    withVariants([variant("Weiss", "20cm", WITH_UNIT)]);
+    render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+
+    expect(await screen.findByText(/500 g \/ 1 kg/)).toBeTruthy();
+  });
+
+  it("sends ALL FOUR fields when only ONE of them changed", async () => {
+    // Shopify REPLACES the measurement object rather than merging into it, so
+    // a save carrying only the field that moved would write a measurement
+    // three quarters empty.
+    withVariants([variant("Weiss", "20cm", WITH_UNIT)]);
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+          <SaveButton />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await openUnitPrice();
+
+    const quantity = (await screen.findByLabelText(/Total quantity/)) as HTMLInputElement;
+    fireEvent.change(quantity, { target: { value: "250" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() => expect(posted().length).toBe(1));
+    expect(posted()[0]).toMatchObject({
+      unitQuantityValue: "250",
+      unitQuantityUnit: "G",
+      unitReferenceValue: "1",
+      unitReferenceUnit: "KG",
+    });
+  });
+
+  it("sends nothing at all when the measurement was not touched", async () => {
+    // The four fields are read off every variant on every save; a diff that
+    // compared them wrongly would repost an unchanged Grundpreis for the whole
+    // catalogue.
+    withVariants([variant("Weiss", "20cm", WITH_UNIT), variant("Rot", "20cm", WITH_UNIT)]);
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+          <SaveButton />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await openUnitPrice();
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() => expect(posted().length).toBe(0));
+  });
+
+  it("clears all four when the merchant empties the boxes", async () => {
+    withVariants([variant("Weiss", "20cm", WITH_UNIT)]);
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+          <SaveButton />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await openUnitPrice();
+
+    fireEvent.change(await screen.findByLabelText(/Total quantity/), { target: { value: "" } });
+    fireEvent.change(await screen.findByLabelText(/Reference quantity/), { target: { value: "" } });
+    // Scoped to the disclosure: "Unit" is also the weight field's label one
+    // card over, and picking by label alone reaches the wrong Select.
+    const units = container.querySelectorAll("#commerce-unit-price select");
+    expect(units).toHaveLength(2);
+    for (const select of units) fireEvent.change(select, { target: { value: "" } });
+
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+    await waitFor(() => expect(posted().length).toBe(1));
+    expect(posted()[0]).toMatchObject({
+      unitQuantityValue: "",
+      unitQuantityUnit: "",
+      unitReferenceValue: "",
+      unitReferenceUnit: "",
+    });
   });
 });

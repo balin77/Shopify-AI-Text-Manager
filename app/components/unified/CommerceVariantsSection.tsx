@@ -54,9 +54,24 @@ import { HelpTooltip } from "../HelpTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData, WEIGHT_UNITS } from "../../contexts/CommerceDataContext";
 import { buildVariantScopes, commonValue, type VariantScope } from "../../services/variant-scope.shared";
+import {
+  UNIT_PRICE_SYMBOLS,
+  UNIT_PRICE_UNIT_GROUPS,
+  formatUnitPrice,
+} from "../../services/unit-price.shared";
 
 /** The fields that live on the VARIANT rather than on its InventoryItem. */
-type VariantField = "price" | "compareAtPrice" | "barcode" | "inventoryPolicy" | "taxable";
+type VariantField =
+  | "price"
+  | "compareAtPrice"
+  | "barcode"
+  | "inventoryPolicy"
+  | "taxable"
+  | "unitQuantityValue"
+  | "unitQuantityUnit"
+  | "unitReferenceValue"
+  | "unitReferenceUnit"
+  | "showUnitPrice";
 
 export function CommerceVariantsSection() {
   const commerce = useCommerceData();
@@ -65,6 +80,7 @@ export function CommerceVariantsSection() {
   /** Whether the customs details are folded open. Closed by default, the way
    *  Shopify folds them: most merchants never touch an HS code. */
   const [customsOpen, setCustomsOpen] = useState(false);
+  const [unitPriceOpen, setUnitPriceOpen] = useState(false);
 
   const variants = commerce?.data?.variants ?? [];
   const t = commerce?.t ?? {};
@@ -236,6 +252,35 @@ export function CommerceVariantsSection() {
   const mixedHint = (mixed: boolean) =>
     mixed ? ((t.mixedValues as string) || "Different values") : undefined;
 
+  /** A unit's own symbol, overridable per language for the two that are words
+   *  rather than symbols (ITEM, UNKNOWN). */
+  const unitLabel = (unit: string): string =>
+    (t.enumLabels as Record<string, string> | undefined)?.[`unitPriceUnit.${unit}`] ??
+    UNIT_PRICE_SYMBOLS[unit] ??
+    unit;
+  /** The picker's group headings. Untranslated they would read "volume",
+   *  "weight" in every language — the enum's key, not a word. */
+  const unitGroupLabel = (key: string): string =>
+    (t.enumLabels as Record<string, string> | undefined)?.[`unitPriceGroup.${key}`] ?? key;
+
+  /**
+   * "500 g / 1 kg" for the folded button, or nothing.
+   *
+   * Deliberately built from the SAME parser the write path uses: a summary
+   * derived by its own string-joining would keep reading a half-filled
+   * measurement as a value, and the button would advertise something the save
+   * refuses.
+   */
+  const unitPriceSummary = formatUnitPrice(
+    {
+      quantityValue: priceValue("unitQuantityValue"),
+      quantityUnit: priceValue("unitQuantityUnit"),
+      referenceValue: priceValue("unitReferenceValue"),
+      referenceUnit: priceValue("unitReferenceUnit"),
+    },
+    unitLabel,
+  );
+
   /** The picker's entries, grouped the way they are meant to be read. */
   const singleOptions = scopes.filter((s) => s.kind === "variant").map((s) => ({ value: s.id, label: s.label }));
   const groupsByOption = new Map<string, Array<{ value: string; label: string }>>();
@@ -380,6 +425,82 @@ export function CommerceVariantsSection() {
                         : (t.taxableSwitch as string) || "Charge tax on this variant"}
                     </Text>
                   </InlineStack>
+
+                  {/* ── Grundpreis (unit price) ─────────────────────────────
+                      Folded away, like customs and for the same reason: it is
+                      four inputs that matter to shops selling by weight or
+                      volume and to nobody else. What is NOT folded away is the
+                      VALUE — the button says "500 g / 1 kg" when there is one,
+                      because a price a merchant cannot see without unfolding
+                      is a price nobody checks. */}
+                  <Button
+                    variant="plain"
+                    disclosure={unitPriceOpen ? "up" : "down"}
+                    onClick={() => setUnitPriceOpen((open) => !open)}
+                  >
+                    {unitPriceSummary
+                      ? `${(t.unitPriceHeading as string) || "Unit price"} · ${unitPriceSummary}`
+                      : (t.unitPriceHeading as string) || "Unit price"}
+                  </Button>
+                  <Collapsible open={unitPriceOpen} id="commerce-unit-price">
+                    <BlockStack gap="300">
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {(t.unitPriceHint as string) ||
+                          "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then prints \u201cCHF 45.80 / kg\u201d."}
+                      </Text>
+                      {/* Two rows of number-plus-unit, in Shopify's order:
+                          what is in the pack, then what the price refers to. */}
+                      <UnitPriceRow
+                        label={(t.unitPriceContent as string) || "Total quantity"}
+                        valueField="unitQuantityValue"
+                        unitField="unitQuantityUnit"
+                        priceValue={priceValue}
+                        priceMixed={priceMixed}
+                        setPrice={setPrice}
+                        mixedHint={mixedHint}
+                        unitFieldLabel={(t.unitPriceUnitLabel as string) || "Unit"}
+                        unitLabel={unitLabel}
+                        unitGroupLabel={unitGroupLabel}
+                        disabled={saving}
+                      />
+                      <UnitPriceRow
+                        label={(t.unitPriceReference as string) || "Reference quantity"}
+                        valueField="unitReferenceValue"
+                        unitField="unitReferenceUnit"
+                        priceValue={priceValue}
+                        priceMixed={priceMixed}
+                        setPrice={setPrice}
+                        mixedHint={mixedHint}
+                        unitFieldLabel={(t.unitPriceUnitLabel as string) || "Unit"}
+                        unitLabel={unitLabel}
+                        unitGroupLabel={unitGroupLabel}
+                        disabled={saving}
+                      />
+                      {/* Its own switch on Shopify's side, and independent of
+                          the measurement: writing one does NOT turn this on
+                          (measured). So it is shown rather than inferred —
+                          setting a Grundpreis nobody sees is the failure this
+                          avoids. */}
+                      <InlineStack gap="300" blockAlign="center" wrap={false}>
+                        <ToggleSwitch
+                          checked={priceValue("showUnitPrice") === "true"}
+                          indeterminate={priceMixed("showUnitPrice")}
+                          ariaLabel={(t.unitPriceShow as string) || "Show on the storefront"}
+                          onChange={(checked) => setPrice("showUnitPrice", String(checked))}
+                          disabled={saving}
+                        />
+                        <Text as="p" variant="bodyMd">
+                          {priceMixed("showUnitPrice")
+                            ? (t.mixedValues as string) || "Different values"
+                            : (t.unitPriceShow as string) || "Show on the storefront"}
+                        </Text>
+                      </InlineStack>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {(t.unitPriceClearHint as string) ||
+                          "Clear all four fields to remove the unit price."}
+                      </Text>
+                    </BlockStack>
+                  </Collapsible>
           </BlockStack>
         </Box>
 
@@ -942,5 +1063,83 @@ function MoneyField({
         </div>
       </Tooltip>
     </Box>
+  );
+}
+
+/**
+ * One "number + unit" line of the Grundpreis.
+ *
+ * Its own component because the two lines are identical in everything but
+ * which field they address, and a copy of a Select carrying 23 grouped options
+ * is exactly the kind of duplication that ends with the two halves offering
+ * different units.
+ */
+function UnitPriceRow({
+  label,
+  valueField,
+  unitField,
+  priceValue,
+  priceMixed,
+  setPrice,
+  mixedHint,
+  unitFieldLabel,
+  unitLabel,
+  unitGroupLabel,
+  disabled,
+}: {
+  label: string;
+  unitFieldLabel: string;
+  valueField: VariantField;
+  unitField: VariantField;
+  priceValue: (field: VariantField) => string;
+  priceMixed: (field: VariantField) => boolean;
+  setPrice: (field: string, value: string) => void;
+  mixedHint: (mixed: boolean) => string | undefined;
+  unitLabel: (unit: string) => string;
+  unitGroupLabel: (key: string) => string;
+  disabled?: boolean;
+}) {
+  const unitIsMixed = priceMixed(unitField);
+  return (
+    <InlineStack gap="200" blockAlign="start" wrap={false}>
+      <Box minWidth="96px" maxWidth="110px">
+        <TextField
+          label={label}
+          value={priceValue(valueField)}
+          placeholder={mixedHint(priceMixed(valueField))}
+          onChange={(value) => setPrice(valueField, value)}
+          autoComplete="off"
+          inputMode="decimal"
+          align="right"
+          disabled={disabled}
+        />
+      </Box>
+      <Box minWidth="104px" maxWidth="124px">
+        <Select
+          // Its OWN label, not the value field's repeated: two controls in one
+          // row carrying the identical accessible name is a screen reader
+          // reading the same words twice with no way to tell them apart. The
+          // weight row next door is laid out exactly this way.
+          label={unitFieldLabel}
+          options={[
+            // An EMPTY first entry, unlike the weight unit next door. There a
+            // variant always has a unit; here "no unit" is a real state - it
+            // is half of how a Grundpreis is removed - and a Select that
+            // cannot express it would make the four fields unclearable.
+            {
+              value: "",
+              label: unitIsMixed ? (mixedHint(true) ?? "") : "\u2014",
+            },
+            ...UNIT_PRICE_UNIT_GROUPS.map((group) => ({
+              title: unitGroupLabel(group.key),
+              options: group.units.map((unit) => ({ value: unit, label: unitLabel(unit) })),
+            })),
+          ]}
+          value={unitIsMixed ? "" : priceValue(unitField)}
+          onChange={(value) => setPrice(unitField, value)}
+          disabled={disabled}
+        />
+      </Box>
+    </InlineStack>
   );
 }

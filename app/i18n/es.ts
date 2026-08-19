@@ -560,6 +560,13 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      unitPriceHeading: "Precio por unidad",
+      unitPriceHint: "Para productos vendidos por peso o volumen: la cantidad total del paquete y la unidad a la que se refiere el precio. La tienda muestra entonces “CHF 45.80 / kg”.",
+      unitPriceUnitLabel: "Unidad",
+      unitPriceContent: "Cantidad total",
+      unitPriceReference: "Cantidad de referencia",
+      unitPriceShow: "Mostrar en la tienda",
+      unitPriceClearHint: "Vaciar los cuatro campos elimina el precio por unidad.",
       customsDetails: "Más detalles",
       taxableSwitch: "Cobrar impuestos por esta variante",
       inventoryHeading: "Inventario",
@@ -625,6 +632,10 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      unitPriceIncomplete: "Un precio por unidad necesita las cuatro entradas: cantidad y unidad en ambos lados. No se guardó nada.",
+      unitPriceInvalid: "El precio por unidad no era una cantidad válida. No se guardó nada.",
+      unitPriceNotConfirmed: "Shopify no confirmó el precio por unidad. Recarga para ver lo que hay.",
+      unitPriceNotShown: "El precio por unidad se guardó, pero Shopify no aceptó el interruptor de visualización.",
       priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. No se guardó nada.",
       priceInvalid: "Un precio no era un número, así que no se guardó.",
       priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Recarga para ver el valor actual.",
@@ -644,6 +655,10 @@ export const es: Translation = {
       channelsFailed: "No se pudieron cambiar los canales de venta.",
     },
     priceWarnings: {
+      unitPriceIncomplete: "Un precio por unidad necesita las cuatro entradas: cantidad y unidad en ambos lados. Todo lo demás se guardó.",
+      unitPriceInvalid: "El precio por unidad no era una cantidad válida. Todo lo demás se guardó.",
+      unitPriceNotConfirmed: "Shopify no confirmó el precio por unidad. Todo lo demás se guardó.",
+      unitPriceNotShown: "El precio por unidad se guardó, pero el interruptor de visualización no.",
       priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. Todo lo demás se guardó.",
       priceInvalid: "El precio no se pudo interpretar como un importe. Todo lo demás se guardó.",
       priceEmpty: "El precio se dejó vacío y no se guardó — Shopify exige un precio en cada variante. Todo lo demás se guardó.",
@@ -665,6 +680,13 @@ export const es: Translation = {
     // columna de estado de la cuadrícula masiva llevan el suyo. Unificarlos
     // vale la pena; hasta entonces este comentario lo dice.
     enumLabels: {
+      "unitPriceUnit.ITEM": "unidad",
+      "unitPriceUnit.UNKNOWN": "desconocida",
+      "unitPriceGroup.volume": "Volumen",
+      "unitPriceGroup.weight": "Peso",
+      "unitPriceGroup.length": "Longitud",
+      "unitPriceGroup.area": "Superficie",
+      "unitPriceGroup.count": "Unidades",
       "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
       "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
       "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Más vendidos",
