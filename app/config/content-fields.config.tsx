@@ -9,6 +9,7 @@ import type { MetaobjectEntry } from "../utils/contentEditor.utils";
 import { createTemplateFieldDefinitions, getTemplateFieldValue } from "../utils/templates-field-factory";
 import { ColorFieldEditor } from "../components/metaobjects/ColorFieldEditor";
 import { MetaobjectFileField } from "../components/metaobjects/MetaobjectFileField";
+import { TaxonomyValueField } from "../components/metaobjects/TaxonomyValueField";
 import { MetaobjectRichTextField } from "../components/metaobjects/MetaobjectRichTextField";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
 import { CREATE_PRODUCT_STATUSES, COLLECTION_SORT_ORDERS } from "./create-fields.config";
@@ -835,6 +836,10 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
 
     const filePreviews =
       (item as { filePreviews?: Record<string, string> }).filePreviews ?? {};
+    // The DEFINITION type, which the taxonomy control needs to ask the server
+    // which attribute a field points at. It is on the item because the item IS
+    // the type row; deriving it from an entry GID is not possible.
+    const metaobjectType = String((item as { type?: string }).type ?? "");
 
     return (item.metaobjects as MetaobjectEntry[]).flatMap((metaobj) => {
       const entryTitle =
@@ -871,9 +876,22 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
                 ? (props) => (
                     <MetaobjectFileField {...props} previewUrl={filePreviews[props.value] } />
                   )
-                : spec.role === "richText"
-                  ? (props) => <MetaobjectRichTextField {...props} />
-                  : undefined,
+                : spec.role === "taxonomyValue"
+                  ? (props) => (
+                      <TaxonomyValueField
+                        {...props}
+                        metaobjectType={metaobjectType}
+                        taxonomyFieldKey={spec.fieldKey}
+                        fieldType={spec.fieldType}
+                        attributeHandle={spec.taxonomy?.handle ?? null}
+                        isList={spec.taxonomy?.isList ?? false}
+                        min={spec.taxonomy?.min ?? null}
+                        max={spec.taxonomy?.max ?? null}
+                      />
+                    )
+                  : spec.role === "richText"
+                    ? (props) => <MetaobjectRichTextField {...props} />
+                    : undefined,
         }));
     });
   },

@@ -47,6 +47,22 @@ import {
 export const METAOBJECT_TYPE_COLOR = "color";
 /** Shopify field type for a single file/image reference (a File GID). */
 export const METAOBJECT_TYPE_FILE_REFERENCE = "file_reference";
+/** One reference into Shopify's product taxonomy (a `TaxonomyValue` GID). */
+export const METAOBJECT_TYPE_TAXONOMY_VALUE = "product_taxonomy_value_reference";
+/** Several of them, stored as a JSON array of GIDs. */
+export const METAOBJECT_TYPE_TAXONOMY_VALUE_LIST = "list.product_taxonomy_value_reference";
+
+/**
+ * The ONE shape a taxonomy reference may hold.
+ *
+ * Checked on both sides, and on the server for real: `createContent` and the
+ * metaobject update action are directly POST-reachable, and a value that is
+ * not a TaxonomyValue GID fails at the GraphQL SCHEMA level — a top-level
+ * `errors` array with `data: null` that never reaches `userErrors`, so a
+ * forwarded bad value makes the whole save read as a success while nothing was
+ * written. That is the same trap the merchandising enums documented.
+ */
+export const TAXONOMY_VALUE_GID_PATTERN = /^gid:\/\/shopify\/TaxonomyValue\/\d+$/;
 
 /**
  * Separates the metaobject GID from the field key in a form field name.
@@ -87,7 +103,15 @@ export function parseMetaobjectFieldKey(
  * - `color` / `file` — own control, primary-locale only (Phase 4)
  * - `unsupported` — named with its type, so the merchant sees WHY it is absent
  */
-export type MetaobjectFieldRole = "text" | "textarea" | "list" | "richText" | "color" | "file" | "unsupported";
+export type MetaobjectFieldRole =
+  | "text"
+  | "textarea"
+  | "list"
+  | "richText"
+  | "color"
+  | "file"
+  | "taxonomyValue"
+  | "unsupported";
 
 export function metaobjectFieldRole(fieldType: string): MetaobjectFieldRole {
   if (fieldType === METAFIELD_TYPE_SINGLE_LINE) return "text";
@@ -96,6 +120,8 @@ export function metaobjectFieldRole(fieldType: string): MetaobjectFieldRole {
   if (fieldType === METAFIELD_TYPE_RICH_TEXT) return "richText";
   if (fieldType === METAOBJECT_TYPE_COLOR) return "color";
   if (fieldType === METAOBJECT_TYPE_FILE_REFERENCE) return "file";
+  if (fieldType === METAOBJECT_TYPE_TAXONOMY_VALUE) return "taxonomyValue";
+  if (fieldType === METAOBJECT_TYPE_TAXONOMY_VALUE_LIST) return "taxonomyValue";
   return "unsupported";
 }
 
@@ -107,7 +133,94 @@ export function isRenderableMetaobjectFieldType(fieldType: string): boolean {
 /** Fields the editor may WRITE a primary value for. */
 export function isWritableMetaobjectFieldType(fieldType: string): boolean {
   const role = metaobjectFieldRole(fieldType);
-  return role === "text" || role === "textarea" || role === "list" || role === "color" || role === "file";
+  return (
+    role === "text" ||
+    role === "textarea" ||
+    role === "list" ||
+    role === "color" ||
+    role === "file" ||
+    role === "taxonomyValue"
+  );
+}
+
+/** True for the LIST flavour, which is stored as a JSON array of GIDs. */
+export function isMetaobjectTaxonomyListType(fieldType: string): boolean {
+  return fieldType === METAOBJECT_TYPE_TAXONOMY_VALUE_LIST;
+}
+
+/**
+ * A stored taxonomy reference as a list of GIDs, whichever flavour it is.
+ *
+ * The two differ only in serialisation — a JSON array vs. a bare string — so
+ * every caller works in GIDs and this pair is the only place that knows the
+ * difference. Unparseable JSON yields an EMPTY list rather than throwing: the
+ * control then shows nothing selected, and the merchant can fix it, which
+ * beats an editor that will not open.
+ */
+export function parseMetaobjectTaxonomyValues(fieldType: string, raw: string): string[] {
+  const trimmed = (raw ?? "").trim();
+  if (trimmed === "") return [];
+  if (!isMetaobjectTaxonomyListType(fieldType)) return [trimmed];
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((v) => String(v)).filter((v) => v !== "");
+  } catch {
+    return [];
+  }
+}
+
+/** GIDs back into what Shopify stores. An empty selection is `""` — i.e.
+ *  CLEAR, with Shopify's required-field validation doing the refusing, the
+ *  same rule every other field in this module follows. */
+export function serializeMetaobjectTaxonomyValues(fieldType: string, ids: string[]): string {
+  const cleaned = ids.map((id) => id.trim()).filter(Boolean);
+  if (cleaned.length === 0) return "";
+  if (!isMetaobjectTaxonomyListType(fieldType)) return cleaned[0];
+  return JSON.stringify(cleaned);
+}
+
+/** A field definition's validations, as Shopify reports and the sync stores them. */
+export interface MetaobjectFieldValidation {
+  name: string;
+  value?: string | null;
+}
+
+/**
+ * The taxonomy ATTRIBUTE a field points at, named by a stable handle.
+ *
+ * MEASURED (PLAN_METAOBJECT_TAXONOMY_CREATE §1.1): the validation is
+ * `product_taxonomy_attribute_handle`, a handle and not a GID — so it survives
+ * a shop change and can be looked up rather than cached. Absent ⇒ `null`, and
+ * a caller that cannot name the attribute must say so instead of offering an
+ * empty picker that looks like "there are no values".
+ */
+export function taxonomyAttributeHandle(
+  validations: MetaobjectFieldValidation[] | undefined,
+): string | null {
+  const found = (validations ?? []).find((v) => v.name === "product_taxonomy_attribute_handle");
+  const value = (found?.value ?? "").trim();
+  return value === "" ? null : value;
+}
+
+/**
+ * How many values the field accepts, from `list.min` / `list.max`.
+ *
+ * Read from the validations, never hardcoded: `color_taxonomy_reference` is
+ * 1..4 on a live shop and the next definition will be something else. A
+ * non-list field is always exactly one.
+ */
+export function taxonomyValueBounds(
+  fieldType: string,
+  validations: MetaobjectFieldValidation[] | undefined,
+): { min: number | null; max: number | null } {
+  if (!isMetaobjectTaxonomyListType(fieldType)) return { min: null, max: 1 };
+  const num = (name: string): number | null => {
+    const raw = (validations ?? []).find((v) => v.name === name)?.value;
+    const parsed = Number.parseInt(String(raw ?? ""), 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return { min: num("list.min"), max: num("list.max") };
 }
 
 /**
@@ -126,6 +239,11 @@ export function formatMetaobjectFieldValue(fieldType: string, raw: string): stri
   const role = metaobjectFieldRole(fieldType);
   if (role === "list") return formatListMetafieldValue(raw);
   if (role === "richText") return richTextPreview(raw);
+  // A taxonomy reference is deliberately NOT reformatted for display: its
+  // control speaks GIDs and renders the NAMES beside them, so the editor's
+  // value stays byte-identical to what Shopify stores. A display form would
+  // have to be parsed back, and every lossy round trip in this module has been
+  // a bug (the "|" separator in a list entry is the standing example).
   return raw;
 }
 
@@ -141,7 +259,7 @@ export function metaobjectListValueIsAmbiguous(fieldType: string, raw: string): 
 
 export type MetaobjectFieldParse =
   | { ok: true; value: string }
-  | { ok: false; error: "emptyListEntry" | "invalidColor" | "notWritable" };
+  | { ok: false; error: "emptyListEntry" | "invalidColor" | "invalidTaxonomyValue" | "notWritable" };
 
 /** `#rgb`, `#rrggbb`, `#rrggbbaa` — the SAME shape `resolveSwatch` accepts, so
  *  a value this app writes is a value its own swatch preview can paint. */
@@ -177,6 +295,16 @@ export function parseMetaobjectFieldInput(fieldType: string, display: string): M
     }
     case "file":
       return { ok: true, value: display.trim() };
+    case "taxonomyValue": {
+      const ids = parseMetaobjectTaxonomyValues(fieldType, display);
+      // An input that PARSED to nothing while the display was not empty is a
+      // malformed value, not a clear — the empty case returned above already.
+      if (ids.length === 0) return { ok: false, error: "invalidTaxonomyValue" };
+      if (ids.some((id) => !TAXONOMY_VALUE_GID_PATTERN.test(id))) {
+        return { ok: false, error: "invalidTaxonomyValue" };
+      }
+      return { ok: true, value: serializeMetaobjectTaxonomyValues(fieldType, ids) };
+    }
     default:
       return { ok: false, error: "notWritable" };
   }
@@ -205,6 +333,9 @@ export interface MetaobjectDefinitionFieldLike {
   name?: string;
   type?: { name?: string } | string;
   required?: boolean;
+  /** Synced since PLAN_CONTENT_CREATION Phase 0. Carries the taxonomy
+   *  attribute handle and the list bounds — the only place either is stated. */
+  validations?: MetaobjectFieldValidation[];
 }
 
 export function definitionFieldType(def: MetaobjectDefinitionFieldLike): string {
@@ -228,6 +359,18 @@ export interface MetaobjectFieldSpec {
   rawValue: string;
   /** As the editor shows it (a list becomes `A | B | C`). */
   displayValue: string;
+  /**
+   * Only for `taxonomyValue` fields: the attribute they point at and how many
+   * values they take. Carried on the spec because the field config builds the
+   * control from it and has nowhere else to read the definition's validations.
+   */
+  taxonomy?: {
+    /** `null` = the definition names no attribute; the picker must say so. */
+    handle: string | null;
+    isList: boolean;
+    min: number | null;
+    max: number | null;
+  };
 }
 
 /**
@@ -250,28 +393,46 @@ export function metaobjectFieldSpecs(
   const seen = new Set<string>();
   const specs: MetaobjectFieldSpec[] = [];
 
-  const push = (fieldKey: string, label: string, fieldType: string, required: boolean | undefined) => {
+  const push = (
+    fieldKey: string,
+    label: string,
+    fieldType: string,
+    required: boolean | undefined,
+    validations: MetaobjectFieldValidation[] | undefined,
+  ) => {
     if (!fieldKey || seen.has(fieldKey)) return;
     seen.add(fieldKey);
     const rawValue = entryFields.find((f) => f.key === fieldKey)?.value ?? "";
+    const role = metaobjectFieldRole(fieldType);
     specs.push({
       metaobjectId: entry.id,
       fieldKey,
       compoundKey: metaobjectFieldKey(entry.id, fieldKey),
       label: label || fieldKey,
       fieldType,
-      role: metaobjectFieldRole(fieldType),
+      role,
       required,
       rawValue,
       displayValue: formatMetaobjectFieldValue(fieldType, rawValue),
+      taxonomy:
+        role === "taxonomyValue"
+          ? {
+              handle: taxonomyAttributeHandle(validations),
+              isList: isMetaobjectTaxonomyListType(fieldType),
+              ...taxonomyValueBounds(fieldType, validations),
+            }
+          : undefined,
     });
   };
 
   for (const def of definitionFields ?? []) {
-    push(def.key, def.name || def.key, definitionFieldType(def), def.required);
+    push(def.key, def.name || def.key, definitionFieldType(def), def.required, def.validations);
   }
+  // A field present on the ENTRY but not in the definition carries no
+  // validations at all — which for a taxonomy field means `handle: null`, i.e.
+  // "we cannot name the attribute", not "there are no values".
   for (const field of entryFields) {
-    push(field.key, field.key, field.type ?? "", undefined);
+    push(field.key, field.key, field.type ?? "", undefined, undefined);
   }
   return specs;
 }
