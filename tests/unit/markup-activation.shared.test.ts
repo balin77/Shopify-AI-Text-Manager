@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   activationGate,
+  embedBadgeVerdict,
+  scopeCovered,
   activationTone,
   statForSwitch,
   worstActivationVerdict,
@@ -334,5 +336,44 @@ describe("client-safety of the shared module", () => {
       'import { summarizeLiveSocial } from "../services/seo/social-audit.service"',
     );
     expect(route).not.toMatch(/APP_SOCIAL_TAGS[^\n]*social-audit\.service/);
+  });
+});
+
+describe("scopeCovered", () => {
+  it("treats a null scope as SHOP-WIDE, not as 'nothing covered'", () => {
+    // The bug this exists for: `(scopes ?? []).some(...)` is always false, so
+    // Organization reported "not measured" after every crawl, permanently.
+    expect(scopeCovered(null, {}, 12)).toBe(true);
+    expect(scopeCovered(null, { product: 5 }, 5)).toBe(true);
+  });
+
+  it("still refuses a shop-wide switch when NOTHING was judged", () => {
+    expect(scopeCovered(null, {}, 0)).toBe(false);
+  });
+
+  it("judges a scoped switch only where its page kind was actually seen", () => {
+    expect(scopeCovered(["product"], { product: 3 }, 3)).toBe(true);
+    expect(scopeCovered(["product"], { collection: 3 }, 3)).toBe(false);
+    expect(scopeCovered(["product", "collection"], { collection: 1 }, 1)).toBe(true);
+    expect(scopeCovered(["product"], undefined, 9)).toBe(false);
+  });
+});
+
+describe("embedBadgeVerdict", () => {
+  it("repeats a verdict only when every type agrees", () => {
+    expect(embedBadgeVerdict(["free", "free"])).toBe("free");
+    expect(embedBadgeVerdict(["foreignOnly"])).toBe("foreignOnly");
+  });
+
+  it("says the types differ instead of advising against the whole embed", () => {
+    // The reported defect: one already-served type made the card read
+    // "do not switch on" while other types were free -- advice against an
+    // embed the merchant should switch on and then configure.
+    expect(embedBadgeVerdict(["foreignOnly", "free"])).toBe("varies");
+    expect(embedBadgeVerdict(["free", "appOnly"])).toBe("varies");
+  });
+
+  it("answers unknown for an empty list rather than a green light", () => {
+    expect(embedBadgeVerdict([])).toBe("unknown");
   });
 });

@@ -2220,7 +2220,7 @@ export const de = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "Ein Schalter im Theme-Editor, neun Tags dahinter. Er ist nur so sicher wie sein schlechtestes Tag.",
         socialNotMeasured: "Der letzte Crawl ist älter als diese Auswertung und hat Open-Graph-Tags noch nicht erfasst. Ohne Messung gibt es hier keine Empfehlung — starte einen neuen Crawl.",
-        socialOriginUnknownHint: "Kein Merkmal dieser App gefunden — es kommt mit diesem Update. Was unten als fremd gilt, bleibt bis zum nächsten Crawl unbewiesen.",
+        socialOriginUnknownHint: "Kein Merkmal dieser App gefunden. Was unten als fremd gilt, ist deshalb sehr wahrscheinlich, aber nicht bewiesen — ein neuer Crawl beweist es.",
         title: "Schalter für Schalter: was darf an?",
         intro: "Theme und App benutzen absichtlich dieselbe @id — laufen beide, verschmilzt Google sie zu EINEM Knoten und jedes Feld steht doppelt drin. Das ist nicht doppeltes, sondern **ungültiges** Markup. Deshalb hier für jeden Schalter, was Schritt 1 gemessen hat.",
         noCrawl: "**Noch kein Crawl.** Ohne Messung keine Empfehlung.",
@@ -2244,6 +2244,7 @@ export const de = {
         verdictLabels: {
           unknown: "Nicht gemessen",
           free: "Frei",
+          varies: "Unterschiedlich",
           appOnly: "Läuft",
           foreignOnly: "Nicht einschalten",
           mixed: "Uneinheitlich",

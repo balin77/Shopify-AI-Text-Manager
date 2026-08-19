@@ -2218,7 +2218,7 @@ export const en: Translation = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "One switch in the theme editor, nine tags behind it. It is only as safe as its worst tag.",
         socialNotMeasured: "The last crawl predates this analysis and captured no Open Graph tags. Without a measurement there is no recommendation here — start a new crawl.",
-        socialOriginUnknownHint: "No marker from this app was found — it ships with this update. What is called foreign below stays unproven until the next crawl.",
+        socialOriginUnknownHint: "No marker of this app was found. What is listed below as foreign is therefore very likely, but not proven — a fresh crawl settles it.",
         title: "Switch by switch: what may go on?",
         intro: "Theme and app use the same @id on purpose — run both and Google merges them into ONE node with every field twice. That is not duplicate markup, it is **invalid** markup. So here is what step 1 measured, per switch.",
         noCrawl: "**No crawl yet.** No measurement, no recommendation.",
@@ -2242,6 +2242,7 @@ export const en: Translation = {
         verdictLabels: {
           unknown: "Not measured",
           free: "Free",
+          varies: "Varies",
           appOnly: "Running",
           foreignOnly: "Do not switch on",
           mixed: "Inconsistent",

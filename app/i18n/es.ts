@@ -2212,7 +2212,7 @@ export const es: Translation = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "Un interruptor en el editor de temas, nueve etiquetas detrás. Solo es tan seguro como su peor etiqueta.",
         socialNotMeasured: "El último rastreo es anterior a este análisis y no capturó etiquetas de Open Graph. Sin medición no hay recomendación aquí — inicia un rastreo nuevo.",
-        socialOriginUnknownHint: "No se encontró ningún marcador de esta app — llega con esta actualización. Lo que abajo se considera ajeno queda sin probar hasta el próximo rastreo.",
+        socialOriginUnknownHint: "No se encontró ninguna marca de esta app. Lo que aparece abajo como ajeno es muy probable, pero no está demostrado — un nuevo rastreo lo confirma.",
         title: "Interruptor a interruptor: ¿qué puede activarse?",
         intro: "El tema y la app usan el mismo @id a propósito — si funcionan los dos, Google los fusiona en UN nodo con cada campo por duplicado. Eso no es marcado duplicado, es marcado **inválido**. Por eso aquí tienes, interruptor por interruptor, lo que midió el paso 1.",
         noCrawl: "**Todavía sin rastreo.** Sin medición no hay recomendación.",
@@ -2236,6 +2236,7 @@ export const es: Translation = {
         verdictLabels: {
           unknown: "Sin medir",
           free: "Libre",
+          varies: "Variable",
           appOnly: "Funciona",
           foreignOnly: "No activar",
           mixed: "Desigual",

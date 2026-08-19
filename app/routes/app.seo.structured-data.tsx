@@ -51,6 +51,8 @@ import {
   APP_SOCIAL_TAGS,
   actionTone,
   activationGate,
+  embedBadgeVerdict,
+  scopeCovered,
   activationTone,
   groupGatesByAction,
   statForSwitch,
@@ -424,6 +426,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ]);
 
   return json({
+    shop,
+    apiKey,
     previews,
     brandingUrl,
     sampleProductAdminUrl,
@@ -468,6 +472,8 @@ const FIX_LINK_BY_CODE: Record<string, FixLinkKind> = {
 
 export default function SeoStructuredData() {
   const {
+    shop,
+    apiKey,
     previews,
     brandingUrl,
     sampleProductAdminUrl,
@@ -486,8 +492,15 @@ export default function SeoStructuredData() {
   const soc = (s as any).social as Record<string, any>;
 
   /** Every app embed is activated in Settings → Setup, not from here. */
-  const openEmbedSettings = () =>
-    handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "setup" }) });
+  // Straight to the switch, not to Settings. The activation card is where the
+  // decision is made, and a merchant who just read "do not switch this on"
+  // should not have to find the embed on another page first. The deep link
+  // must use the app's api_key (Shopify client_id), NOT the extension UID:
+  // the uuid form is deprecated and answers "app embed doesn't exist".
+  const buildEmbedUrl = (blockHandle: string) =>
+    `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/${blockHandle}`;
+  const jsonLdEmbedUrl = buildEmbedUrl("structured-data");
+  const socialEmbedUrl = buildEmbedUrl("social-meta");
 
   // Delivery before data quality before activation. The section used to open
   // with the activation buttons and put the measurement below them — i.e. in
@@ -600,9 +613,12 @@ export default function SeoStructuredData() {
       // "No bucket" is ambiguous — it is what an untouched page kind and an
       // UNCRAWLED one look like alike. A switch is only judged where the crawl
       // actually saw at least one page of its scope.
-      scopeCovered: (sw.scopes ?? []).some(
-        (rt) => (liveJsonLd?.scopePages?.[rt] ?? 0) > 0,
-      ),
+      //
+      // `scopes: null` means SHOP-WIDE (Organization sits on every page), and
+      // `null ?? []` turned that into an empty list whose `.some()` is always
+      // false — so Organization reported "not measured" after every crawl, for
+      // good. A shop-wide switch is covered as soon as ANY page was judged.
+      scopeCovered: scopeCovered(sw.scopes, liveJsonLd?.scopePages, liveJsonLd?.pagesChecked ?? 0),
     }),
   }));
 
@@ -627,7 +643,11 @@ export default function SeoStructuredData() {
   // an unmeasured shop gets no green light, and that a measured conflict in
   // one family is not softened by the other family being fine.
   const jsonLdWorst = worstActivationVerdict(switchGates.map((g) => g.gate.verdict));
+  // Card badges answer "can I switch this EMBED on", not "how bad is the worst
+  // type" — see embedBadgeVerdict. The tile badge below keeps the severity roll-up.
+  const jsonLdBadge = embedBadgeVerdict(switchGates.map((g) => g.gate.verdict));
   const socialWorst = worstActivationVerdict(socialGates.map((g) => g.gate.verdict));
+  const socialBadge = embedBadgeVerdict(socialGates.map((g) => g.gate.verdict));
   const activationWorst = worstActivationVerdict([jsonLdWorst, socialWorst]);
   const activationBadge =
     activationWorst === "unknown" ? (
@@ -1413,12 +1433,12 @@ export default function SeoStructuredData() {
                                   {hint}
                                 </Text>
                               ) : null}
-                              {/* The embed fix-up is an in-app navigation to
-                                  Settings → Setup; the others are external
-                                  admin links. */}
+                              {/* Every fix-up here is an external admin link:
+                                  the embed one goes straight to its switch in
+                                  the theme editor. */}
                               {linkKind === "themeEditorJsonLd" ? (
                                 <InlineStack>
-                                  <Button onClick={openEmbedSettings} variant="plain">
+                                  <Button url={jsonLdEmbedUrl} target="_blank" variant="plain">
                                     {fixLabel}
                                   </Button>
                                 </InlineStack>
@@ -1569,12 +1589,12 @@ export default function SeoStructuredData() {
                   <InlineStack gap="200" blockAlign="center" wrap>
                     <Text as="h2" variant="headingMd">{act.switchesTitle as string}</Text>
                     {jsonLdMeasured && (
-                      <Badge tone={activationTone(jsonLdWorst)}>
-                        {(act.verdictLabels as Record<string, string>)[jsonLdWorst]}
+                      <Badge tone={activationTone(jsonLdBadge)}>
+                        {(act.verdictLabels as Record<string, string>)[jsonLdBadge]}
                       </Badge>
                     )}
                   </InlineStack>
-                  <Button onClick={openEmbedSettings} variant="primary">
+                  <Button url={jsonLdEmbedUrl} target="_blank" variant="primary">
                     {act.openSwitches as string}
                   </Button>
                 </InlineStack>
@@ -1649,12 +1669,12 @@ export default function SeoStructuredData() {
                   <InlineStack gap="200" blockAlign="center" wrap>
                     <Text as="h2" variant="headingMd">{act.socialSwitchesTitle as string}</Text>
                     {socialMeasured && (
-                      <Badge tone={activationTone(socialWorst)}>
-                        {(act.verdictLabels as Record<string, string>)[socialWorst]}
+                      <Badge tone={activationTone(socialBadge)}>
+                        {(act.verdictLabels as Record<string, string>)[socialBadge]}
                       </Badge>
                     )}
                   </InlineStack>
-                  <Button onClick={openEmbedSettings} variant="primary">
+                  <Button url={socialEmbedUrl} target="_blank" variant="primary">
                     {act.openSwitches as string}
                   </Button>
                 </InlineStack>

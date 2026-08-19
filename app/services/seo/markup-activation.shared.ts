@@ -225,6 +225,51 @@ const VERDICT_SEVERITY: Record<ActivationVerdict, number> = {
   free: 0,
 };
 
+/**
+ * Badge for a whole EMBED, which is a different question from the badge for one
+ * type inside it.
+ *
+ * `worstActivationVerdict` answers "how bad is the worst type here" and is right
+ * for a tile that summarises severity. It is WRONG as advice about the embed:
+ * one already-served type made the card read "Nicht einschalten" while several
+ * other types were free, i.e. it told a merchant not to switch on an embed they
+ * should switch on and then configure. The embed is one switch; the types are
+ * checkboxes behind it.
+ *
+ * So a card only repeats a verdict when EVERY type agrees on it. Otherwise it
+ * says the verdicts differ and lets the rows below say which is which — the
+ * same reason the gate refuses to answer when it was not measured.
+ */
+/**
+ * Did the crawl look at any page this switch applies to?
+ *
+ * Lives here rather than at the call site because it shipped wrong there: a
+ * switch with `scopes: null` is SHOP-WIDE (Organization sits on every page),
+ * and `(scopes ?? []).some(...)` turns that into an empty list whose `.some`
+ * is always false — so Organization answered "not measured" after every crawl,
+ * permanently. An expression in a component is an expression nothing tests.
+ *
+ * The distinction it protects is still the original one: no bucket for a page
+ * KIND means the crawl never saw that kind, and reading that as "nothing serves
+ * it" would hand out the green light for a page kind nobody measured.
+ */
+export function scopeCovered(
+  scopes: string[] | null,
+  scopePages: Record<string, number> | undefined,
+  pagesChecked: number,
+): boolean {
+  if (scopes === null) return pagesChecked > 0;
+  return scopes.some((rt) => (scopePages?.[rt] ?? 0) > 0);
+}
+
+export type EmbedBadgeVerdict = ActivationVerdict | "varies";
+
+export function embedBadgeVerdict(verdicts: ActivationVerdict[]): EmbedBadgeVerdict {
+  if (verdicts.length === 0) return "unknown";
+  const distinct = new Set(verdicts);
+  return distinct.size === 1 ? verdicts[0] : "varies";
+}
+
 /** The worst of several verdicts. `free` for an empty list — nothing to warn about. */
 export function worstActivationVerdict(verdicts: ActivationVerdict[]): ActivationVerdict {
   let worst: ActivationVerdict = "free";
@@ -236,7 +281,7 @@ export function worstActivationVerdict(verdicts: ActivationVerdict[]): Activatio
 
 /** Polaris tone for a verdict badge. `unknown` stays neutral on purpose. */
 export function activationTone(
-  verdict: ActivationVerdict,
+  verdict: EmbedBadgeVerdict,
 ): "success" | "critical" | "warning" | "info" | undefined {
   switch (verdict) {
     case "free":
@@ -253,6 +298,7 @@ export function activationTone(
       return "warning";
     case "repeatableUnjudged":
       return "info";
+    case "varies":
     case "unknown":
     default:
       return undefined;
