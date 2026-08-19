@@ -20,6 +20,7 @@ import {
   VIDEO_SCHEMA_KEY,
   VIDEO_SCHEMA_NAMESPACE,
   VIDEO_SCHEMA_TYPE,
+  failedBatchIndices,
 } from "~/services/seo/video-schema.shared";
 
 describe("numericMediaId", () => {
@@ -177,11 +178,18 @@ describe("write-path safety rails", () => {
   const server = readFileSync(join(__dirname, "../../app/services/seo/video-schema.server.ts"), "utf8");
   const mutations = readFileSync(join(__dirname, "../../app/graphql/content.mutations.ts"), "utf8");
 
-  it("never writes the metafield from the webhook-driven resync", () => {
-    // Writing it changes the product, which fires products/update, which lands
-    // right back here — the loop starts with this call.
-    expect(webhook).toContain("writeVideoSchema: false");
-    expect(sync).toContain("options.writeVideoSchema !== false");
+  it("writes the metafield on the webhook path too, because the diff ends the echo", () => {
+    // Suppressing it here (what this did first) bought nothing — the pass is
+    // diff-driven and the product upsert never touches the mirror column, so
+    // the echo run finds nothing to write — and it cost the case the feature
+    // exists for: a video added in the Shopify admin fires ONLY this webhook.
+    expect(webhook).not.toContain("writeVideoSchema");
+    expect(sync).not.toContain("writeVideoSchema");
+    // The mirror is written by video-schema.server alone. If a sync path ever
+    // ASSIGNED the column (any `videoSchemaJson:` in a Prisma payload), the
+    // echo run would see a difference and the loop this once guarded against
+    // would become real.
+    expect(sync).not.toContain("videoSchemaJson:");
   });
 
   it("stops the bulk pass when the sync was aborted", () => {
@@ -207,6 +215,39 @@ describe("write-path safety rails", () => {
     // `data: null` (throttled / top-level error) also has an empty userErrors
     // list, so emptiness alone must never count as success.
     expect(server).toContain("if (!payload) return confirmed;");
-    expect(server).toContain("if (!payload || errors.length > 0) return confirmed;");
+    // Both directions guard on the payload, and NEITHER lets a userError
+    // anywhere in the batch discard the entries Shopify did confirm.
+    expect(server).not.toContain("if (!payload || errors.length > 0) return confirmed;");
+  });
+});
+
+/**
+ * Failure in a bulk metafield mutation is per ENTRY. One stale product id in a
+ * batch of 25 must not strand the other 24 — they would be retried on every
+ * sync forever, and the warning would name a batch instead of the row to fix.
+ */
+describe("failedBatchIndices", () => {
+  it("reads the entry index out of Shopify's field path", () => {
+    const failed = failedBatchIndices([
+      { field: ["metafields", "3", "ownerId"] },
+      { field: ["metafields", "7", "value"] },
+    ]);
+    expect(failed).toEqual(new Set([3, 7]));
+  });
+
+  it("returns an empty set for no errors, so every entry stays confirmable", () => {
+    expect(failedBatchIndices([])).toEqual(new Set());
+  });
+
+  it("gives up on an error it cannot attribute, rather than blaming entry 0", () => {
+    // An unattributable error could belong to ANY entry; confirming the rest
+    // would advance a mirror past a write that never happened.
+    expect(failedBatchIndices([{ field: ["metafields"] }])).toBeNull();
+    expect(failedBatchIndices([{}])).toBeNull();
+    expect(failedBatchIndices([{ field: null }])).toBeNull();
+  });
+
+  it("is unfazed by a null entry in the list", () => {
+    expect(failedBatchIndices([null])).toBeNull();
   });
 });

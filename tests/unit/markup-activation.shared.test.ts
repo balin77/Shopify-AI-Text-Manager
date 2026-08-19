@@ -52,6 +52,20 @@ describe("activationGate", () => {
     expect(activationGate(undefined, measured).verdict).toBe("free");
   });
 
+  it("refuses to judge a scope the crawl never covered", () => {
+    // "No bucket" is what an untouched page kind and an UNCRAWLED one look
+    // like alike. Reading the second as "nothing serves it" hands out a green
+    // "safe to switch on" for a page kind we have no measurement of — the
+    // duplicate damage the gate exists to prevent.
+    const uncovered = { measured: true, originKnown: true, scopeCovered: false };
+    expect(activationGate(undefined, uncovered).verdict).toBe("unknown");
+    expect(activationGate(stat({ pages: 0 }), uncovered).verdict).toBe("unknown");
+  });
+
+  it("keeps judging when the flag is absent, so a caller that cannot answer is unchanged", () => {
+    expect(activationGate(undefined, { measured: true, originKnown: true }).verdict).toBe("free");
+  });
+
   it("warns when only the theme serves the type", () => {
     const g = activationGate(stat({ pages: 12, appPages: 0 }), measured);
     expect(g.verdict).toBe("foreignOnly");
