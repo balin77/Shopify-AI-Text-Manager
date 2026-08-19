@@ -32,6 +32,7 @@ import type { ContentItem } from "../types/content-editor.types";
 import { logger } from "~/utils/logger.server";
 import { wasRecentlySaved } from "~/utils/translation-timing";
 import { isDefaultTitleOption } from "~/utils/shopify-product.utils";
+import { countsAsSalesChannel } from "~/services/commerce-sync.shared";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import type { FetcherData } from "~/types/content-editor.types";
@@ -127,6 +128,17 @@ export const loader = createContentLoader({
         // a save the rule silently undoes.
         collections: { select: { collectionId: true, collectionTitle: true, automated: true } },
         variants: { select: { price: true }, orderBy: { position: "asc" }, take: 1 },
+        // §2.3 — the sales-channel row of the attribute checklist.
+        //
+        // The Phase-4 mirror `/api/product-commerce` writes, read here for the
+        // reason that mirror was kept: a completeness check. Narrow on purpose
+        // (two scalars), and it only exists for products whose commerce panel
+        // has run at least once — an EMPTY list is therefore "never mirrored",
+        // which is the discriminator this block has no dedicated column for.
+        // `resourcePublicationsV2(onlyPublished: false)` mirrors every
+        // publication, published or not, so a product genuinely on no channel
+        // still has rows and cannot be confused with one nobody asked about.
+        publications: { select: { catalogType: true, isPublished: true } },
         // The COUNT, not the rows: the default-price field means "the first
         // variant" and says so, which is only honest while there is just one.
         // With several, the field is hidden and the per-variant panel takes
@@ -311,6 +323,16 @@ export const loader = createContentLoader({
       // it is therefore NOT gated on attributesSyncedAt. Decimal has no place
       // in a loader payload, so it goes over as a string.
       defaultVariantPrice: p.variants?.[0]?.price != null ? String(p.variants[0].price) : null,
+      // §2.3 — SALES CHANNELS only. A product in a market catalog but on no
+      // channel is invisible exactly as if it sat nowhere, so counting the
+      // market row would hide the very state this row exists to reveal;
+      // `countsAsSalesChannel` is the one list both this and the commerce
+      // panel's badge read. `null` = never mirrored (see the include above),
+      // never 0 — the checklist paints 0 as the "invisible" warning.
+      publishedChannelCount: (p.publications?.length ?? 0) === 0
+        ? null
+        : p.publications.filter((pub: any) => pub.isPublished && countsAsSalesChannel(pub.catalogType))
+            .length,
       // `undefined` on a row this loader did not count is NOT "one variant":
       // the price field would then show for a product whose price it cannot
       // represent. Readers treat anything but a number as unknown.

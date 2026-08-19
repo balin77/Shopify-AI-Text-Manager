@@ -34,7 +34,7 @@ import { DeleteItemModal } from "./create/DeleteItemModal";
 import { useDuplicateItem } from "../hooks/useDuplicateItem";
 import { useRouteLoaderData } from "react-router";
 import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-rules.shared";
-import { buildAttributeChecklist, needsAttributeSync } from "../services/attribute-checklist.shared";
+import type { AttributeInput } from "../services/attribute-checklist.shared";
 import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -1232,7 +1232,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     const attributes = attributeResource
       ? (() => {
           const row = item as unknown as Record<string, unknown>;
-          const checklistRows = buildAttributeChecklist({
+          const checklistInput: AttributeInput = {
             resource: attributeResource,
             // THE gate. Absent on an item the route does not carry it on,
             // which is the honest "we have not fetched this" rather than a
@@ -1251,11 +1251,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             isPublished: (row.isPublished as boolean | null | undefined) ?? null,
             featuredImageUrl: (row.featuredImageUrl as string | null | undefined) ?? primaryImageUrl ?? null,
             templateSuffix: (row.templateSuffix as string | null | undefined) ?? null,
-            hasKeyword: null,
-          });
+            // §2.3 — the sales-channel mirror `/api/product-commerce` writes.
+            // Named in Phase 4 as what a "completeness check" would read, and
+            // this is that check. Absent (`null`) until the panel has run once
+            // for this product, which is the honest unknown; the LIVE count
+            // supersedes it inside the sidebar the moment the panel loads.
+            publicationCount: (row.publishedChannelCount as number | null | undefined) ?? null,
+            // The three rows the item alone cannot answer — the sales-channel
+            // count, the price and the keyword — are filled in by the sidebar,
+            // which sits inside the commerce context and already loads the
+            // item's keywords for its own tab. Handing it the INPUT rather
+            // than finished rows keeps one place that turns data into status.
+          };
           return {
-            rows: checklistRows,
-            needsSync: needsAttributeSync(checklistRows),
+            input: checklistInput,
             onReload: () => { void handleSyncAll(); },
             // §2.4 — tags, vendor and category are not translatable, so acting
             // on a finding here while a translation is selected would edit the
