@@ -220,7 +220,6 @@ export const es: Translation = {
     metaobjectEntryUnsupportedHint: "Esta aplicación no tiene editor para estos tipos de campo. Edítalos en el admin de Shopify.",
     metaobjectEntryRichTextHint: "El texto enriquecido solo se muestra — edítalo en el admin de Shopify.",
     metaobjectEntryDelete: "Eliminar entrada",
-    metaobjectEntryDeleteUsageUnknown: "No sabemos si esta entrada se usa — sincroniza primero los productos.",
     metaobjectEntryDeleteInUse: "{products} producto(s) usan esta entrada como valor de opción. Quítala allí primero.",
     metaobjectEntryUsageChecking: "Comprobando el uso…",
     metaobjectEntryUsageNone: "Ningún producto usa esta entrada como valor de opción.",
@@ -504,7 +503,7 @@ export const es: Translation = {
       next: "Continuar",
       confirm: "Eliminar definitivamente",
       deleting: "Eliminando \u2026",
-      consequenceMetaobjectUsage: "Los valores de opci\u00f3n de productos que apuntan a esta entrada pueden perderse con ella.",
+      consequenceMetaobjectUsage: "Shopify rechaza eliminar una entrada que un producto todav\u00eda usa como valor de opci\u00f3n \u2014 qu\u00edtala all\u00ed primero.",
     },
     undoCreate: "Deshacer la creación",
     // ── Duplicar (§1.9) ───────────────────────────────────────────────────

@@ -13,8 +13,11 @@
  *   silently disappears looks like a bug; one with a reason is an explanation.
  *   Same rule as the definitions the create form refuses to offer.
  * - **Whether the entry is in use, three-valued.** "0 products" and "we do not
- *   know" are different answers, and only the first of them makes deleting
- *   safe. An empty product cache is not evidence -- it offers a sync instead.
+ *   know" are different answers and are reported as different answers. Only
+ *   the KNOWN non-zero one disables the button: Shopify itself refuses to
+ *   delete a referenced entry (measured, PLAN_METAOBJECTS_EDITOR V5), so
+ *   "unknown" costs a refused attempt rather than a lost variant -- while
+ *   blocking on it would strand every shop with no cached products.
  * - **Why delete is disabled**, on the button itself, rather than after the
  *   merchant has typed the entry's name into a confirmation dialog.
  */
@@ -38,7 +41,6 @@ export interface MetaobjectEntryCardTexts {
   unsupportedTitle?: string;
   unsupportedHint?: string;
   deleteLabel?: string;
-  deleteUsageUnknown?: string;
   deleteInUse?: string;
   usageChecking?: string;
   usageNone?: string;
@@ -84,20 +86,25 @@ export function MetaobjectEntryCard({
   readOnlyReason,
   t = {},
 }: Props) {
-  // Deleting is only offered once we KNOW the entry is unused. "Unknown" is
-  // treated exactly like "in use": a delete whose consequences nobody can name
-  // is the one this whole card exists to prevent.
+  // MEASURED (PLAN_METAOBJECTS_EDITOR V5): Shopify itself refuses to delete an
+  // entry a product still references, so nothing can be destroyed by trying.
+  // The button therefore only stops for a usage this app KNOWS about -- where
+  // it can name the number, which is more useful than Shopify's sentence.
+  //
+  // "Unknown" no longer blocks. It did while V5 was open, and that was right
+  // then; keeping it would now mean a shop whose products are not cached can
+  // never delete an entry, with no action that changes the answer. The usage
+  // line below still says the count is unknown -- reporting it and refusing on
+  // it are different things.
   const deleteBlockedReason =
     !usage || usage.state === "loading"
       ? t.usageChecking || "Checking usage…"
-      : usage.state === "unknown"
-        ? t.deleteUsageUnknown || "We do not know whether this entry is in use — sync your products first."
-        : usage.products > 0
-          ? (t.deleteInUse || "{products} product(s) use this entry as an option value. Remove it there first.").replace(
-              "{products}",
-              String(usage.products),
-            )
-          : null;
+      : usage.state === "known" && usage.products > 0
+        ? (t.deleteInUse || "{products} product(s) use this entry as an option value. Remove it there first.").replace(
+            "{products}",
+            String(usage.products),
+          )
+        : null;
 
   const usageLine =
     !usage || usage.state === "loading"

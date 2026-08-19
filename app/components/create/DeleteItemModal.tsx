@@ -103,16 +103,17 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                   {t.consequenceBlogArticles || "Every article in this blog is deleted with it."}
                 </List.Item>
               )}
-              {/* A metaobject entry can be a product's option VALUE, and what
-                  Shopify does to those products when it disappears is measured
-                  by the Phase-0 probe rather than assumed. Until then the
-                  dialog names the worst case; the delete itself is refused
-                  server-side while any product still uses the entry, so this
-                  line is a warning, not the only guard. */}
+              {/* A metaobject entry can be a product's option VALUE. MEASURED
+                  (PLAN_METAOBJECTS_EDITOR V5, 2026-08-19): Shopify REFUSES the
+                  delete while anything still references it, so no option value
+                  and no variant can be destroyed here. The line therefore says
+                  what actually happens instead of naming a worst case that
+                  cannot occur — an invented consequence is not a safer warning,
+                  it is a false one. */}
               {item.resource === "metaobject" && (
                 <List.Item>
                   {t.consequenceMetaobjectUsage ||
-                    "Option values in products pointing at this entry can be lost with it."}
+                    "Shopify refuses to delete an entry that a product still uses as an option value — remove it there first."}
                 </List.Item>
               )}
               <List.Item>{t.consequenceTranslations || "All translations of this item are deleted."}</List.Item>
