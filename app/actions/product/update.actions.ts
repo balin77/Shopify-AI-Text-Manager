@@ -1277,9 +1277,21 @@ async function updatePrimaryProduct(
     // Don't fail the entire request if DB update fails - Shopify is source of truth
   }
 
+  // Whether a changed/cleared primary value purges its foreign translations at
+  // all — merchant switch (Settings → Übersetzungen). Read ONCE for both the
+  // field purge and the alt-text purge below; fails OPEN, so an error keeps
+  // the historic behaviour. See
+  // services/translations/translation-change-policy.server.ts.
+  const { isPurgeOnPrimaryChangeEnabled } = await import(
+    "~/services/translations/translation-change-policy.server"
+  );
+  const purgeStaleTranslations =
+    changedFields.length > 0 || changedAltTextIndices.length > 0
+      ? await isPurgeOnPrimaryChangeEnabled(shop, db)
+      : false;
 
   // Delete translations for changed fields in all foreign languages
-  if (changedFields.length > 0) {
+  if (changedFields.length > 0 && purgeStaleTranslations) {
     try {
       // Map field names to Shopify translation keys
       const fieldToKeyMap: Record<string, string> = {
@@ -1399,7 +1411,7 @@ async function updatePrimaryProduct(
   }
 
   // Delete alt-text translations for changed image indices in all foreign languages
-  if (changedAltTextIndices.length > 0) {
+  if (changedAltTextIndices.length > 0 && purgeStaleTranslations) {
     try {
       // Get all shop locales from Shopify API (reuse if already fetched above)
       const localesResponse = await gateway.graphql(

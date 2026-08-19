@@ -54,6 +54,23 @@ export interface ResolvedTranslation {
   resourceType?: string;
   /** Market GID for a market-specific translation; "" (default) = global layer. */
   marketId?: string;
+  /**
+   * Shopify's own staleness verdict: true once the SOURCE text changed after
+   * this translation was registered — i.e. someone edited the primary value
+   * (in the Shopify admin, another app, an import). `undefined` means the
+   * query did not ask for it, which is NOT the same as "not outdated" — see
+   * services/translations/stale-translations.shared.ts.
+   */
+  outdated?: boolean;
+}
+
+/**
+ * One `translatableContent` entry of a resource: the CURRENT primary value and
+ * its digest. Shopify only lists keys that HAVE a primary value, so an absent
+ * key means the merchant cleared that field.
+ */
+export interface PrimaryContentMap {
+  [key: string]: { value: string; digest?: string | null };
 }
 
 /** Progress callback for sync operations */

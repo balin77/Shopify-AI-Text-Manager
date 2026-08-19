@@ -13,6 +13,9 @@ import {
 } from "../constants/aiInstructionsDefaults";
 import type { FetcherWithComponents } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
+import { meetsPlan, type Plan } from "../utils/planUtils";
+import { PLAN_DISPLAY_NAMES } from "../config/plans";
+import { AUTO_TRANSLATE_MIN_PLAN } from "../services/translations/translation-change-policy.shared";
 
 interface Instructions {
   // General (Writing Style Instructions)
@@ -98,6 +101,19 @@ interface AIInstructionsTabsProps {
    * literal rendering of the primary text.
    */
   keywordAwareTranslation: boolean;
+  /**
+   * AISettings.translationPurgeOnPrimaryChange — whether a changed or CLEARED
+   * primary value deletes its foreign translations (everywhere: both editors,
+   * and the sync that notices a change made outside this app).
+   */
+  translationPurgeOnPrimaryChange: boolean;
+  /**
+   * AISettings.autoTranslateExternalChanges (Max) — re-translate instead of
+   * only deleting when the primary text changed OUTSIDE this app.
+   */
+  autoTranslateExternalChanges: boolean;
+  /** Drives the Max gate on the auto-translate switch. */
+  subscriptionPlan: Plan;
 }
 
 export function AIInstructionsTabs({
@@ -111,6 +127,9 @@ export function AIInstructionsTabs({
   onGlossaryHasChangesChange,
   translationMode,
   keywordAwareTranslation,
+  translationPurgeOnPrimaryChange,
+  autoTranslateExternalChanges,
+  subscriptionPlan,
 }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [subSection, setSubSection] = useState<"content" | "translations">("content");
@@ -118,6 +137,14 @@ export function AIInstructionsTabs({
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
   const [localTranslationMode, setLocalTranslationMode] = useState<"exact" | "seo_optimized">(translationMode);
   const [localKeywordAware, setLocalKeywordAware] = useState(keywordAwareTranslation);
+  const [localPurgeOnChange, setLocalPurgeOnChange] = useState(translationPurgeOnPrimaryChange);
+  const [localAutoTranslateExternal, setLocalAutoTranslateExternal] = useState(
+    autoTranslateExternalChanges,
+  );
+  // The auto-translate switch stays VISIBLE on every plan (hiding it would
+  // read as "this app cannot do that") and is greyed out below Max, with the
+  // required tier named underneath.
+  const canAutoTranslateExternal = meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -204,6 +231,14 @@ export function AIInstructionsTabs({
     // entire Translations sub-section (radio + custom instructions).
     formData.append("translationMode", localTranslationMode);
     formData.append("keywordAwareTranslation", String(localKeywordAware));
+    formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
+    // Never claim the Max feature from a plan that cannot have it: the server
+    // rejects a change it is not entitled to, and sending the STORED value
+    // keeps an unentitled save from tripping that gate.
+    formData.append(
+      "autoTranslateExternalChanges",
+      String(canAutoTranslateExternal ? localAutoTranslateExternal : autoTranslateExternalChanges),
+    );
 
     fetcher.submit(formData, { method: "POST" });
   };
@@ -219,7 +254,9 @@ export function AIInstructionsTabs({
   const hasChanges =
     JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
     localTranslationMode !== translationMode ||
-    localKeywordAware !== keywordAwareTranslation;
+    localKeywordAware !== keywordAwareTranslation ||
+    localPurgeOnChange !== translationPurgeOnPrimaryChange ||
+    (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges);
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -232,6 +269,8 @@ export function AIInstructionsTabs({
     setLocalInstructions(instructions);
     setLocalTranslationMode(translationMode);
     setLocalKeywordAware(keywordAwareTranslation);
+    setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
+    setLocalAutoTranslateExternal(autoTranslateExternalChanges);
   };
 
   return (
@@ -415,6 +454,65 @@ export function AIInstructionsTabs({
                     <Text as="p" variant="bodySm" tone="subdued">
                       {t.settings.keywordAwareTranslationHelp}
                     </Text>
+                  </InlineStack>
+                </BlockStack>
+              </div>
+              {/* What happens to a translation when its SOURCE text changes.
+                  Two switches, one card: the first decides whether the stale
+                  translation is dropped at all, the second (Max) whether a
+                  change made OUTSIDE this app is translated again right away.
+                  They sit together because a merchant reasons about them
+                  together — "what does the app do when the German text
+                  changes?" */}
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="400">
+                  <Text as="h3" variant="headingMd">
+                    {t.settings.translationChangeHeading || 'Bei Änderung der Hauptsprache'}
+                  </Text>
+
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                    <ToggleSwitch
+                      checked={localPurgeOnChange}
+                      onChange={setLocalPurgeOnChange}
+                      disabled={readOnly}
+                    />
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodyMd">
+                        {t.settings.translationPurgeOnPrimaryChange ||
+                          'Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird'}
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.settings.translationPurgeOnPrimaryChangeHelp ||
+                          'Eine Übersetzung eines Textes, den es so nicht mehr gibt, wird sonst weiter im Shop ausgeliefert. Aus: Die alten Übersetzungen bleiben stehen und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.'}
+                      </Text>
+                    </BlockStack>
+                  </InlineStack>
+
+                  <InlineStack gap="300" blockAlign="center" wrap={false}>
+                    <ToggleSwitch
+                      checked={canAutoTranslateExternal && localAutoTranslateExternal}
+                      onChange={setLocalAutoTranslateExternal}
+                      disabled={readOnly || !canAutoTranslateExternal}
+                    />
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodyMd">
+                        {t.settings.autoTranslateExternalChanges ||
+                          'Texte automatisch neu übersetzen, wenn sie ausserhalb der App geändert werden'}
+                      </Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.settings.autoTranslateExternalChangesHelp ||
+                          'Wird ein Text im Shopify-Admin, in einer anderen App oder per Import geändert, übersetzt die KI ihn beim nächsten Sync sofort neu — statt die veraltete Übersetzung nur zu löschen. URL-Handles bleiben ausgenommen.'}
+                      </Text>
+                      {!canAutoTranslateExternal && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {(t.settings.autoTranslateExternalChangesPlanHint ||
+                            'Ab dem {plan}-Plan verfügbar.').replace(
+                            '{plan}',
+                            PLAN_DISPLAY_NAMES[AUTO_TRANSLATE_MIN_PLAN],
+                          )}
+                        </Text>
+                      )}
+                    </BlockStack>
                   </InlineStack>
                 </BlockStack>
               </div>

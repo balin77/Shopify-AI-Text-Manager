@@ -10,7 +10,7 @@ import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import { markProductDeleted, isProductRecentlyDeleted } from '~/utils/product-delete-lock.server';
 import { withDbRaceRetry } from '~/utils/db-retry.server';
-import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
+import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ShopifyTranslation, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
@@ -949,9 +949,6 @@ export class ProductSyncService {
   }
 
   /**
-   * Sync a single product with all its translations
-   */
-  /**
    * Sync ONE product.
    *
    * This WRITES the video-date metafield, webhook-driven runs included. That
@@ -963,8 +960,20 @@ export class ProductSyncService {
    * this did first) bought nothing and cost the case the feature exists for:
    * a merchant who adds a video in the Shopify admin fires ONLY that webhook,
    * and would have had no `uploadDate` until the next full catalog sync.
+   *
+   * @param options.reconcileTranslations  Opt-in: after the cache is written,
+   *   check whether the PRIMARY text changed outside this app and repair the
+   *   now-stale foreign translations (delete, or re-translate on Max — see
+   *   services/translations/stale-translation-sync.server.ts). Only change
+   *   events pass `true` (webhook, webhook retry/reconcile, an explicit
+   *   single-product reload); a full catalogue sync must never mass-purge
+   *   translations Shopify happens to flag outdated.
    */
-  async syncProduct(productId: string, forceSync = false): Promise<void> {
+  async syncProduct(
+    productId: string,
+    forceSync = false,
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ProductSync] Starting sync for product: ${productId}`);
 
     try {
@@ -1095,6 +1104,23 @@ export class ProductSyncService {
             uploadDates: videoUploadDatesFromMedia(productData.media?.edges),
           },
         ]);
+      }
+
+      // Stale-translation reconciliation (change events only). Runs AFTER the
+      // cache write so a removal deletes the row that was just mirrored, and is
+      // best-effort by contract — it never fails the sync.
+      if (options.reconcileTranslations) {
+        const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+        await reconcileStaleTranslations({
+          client: this.admin,
+          shop: this.shop,
+          resourceId: productId,
+          resourceType: "Product",
+          contentType: "product",
+          resourceTitle: productData.title,
+          translations: allTranslations,
+          primaryContent: translationResult.primaryContent,
+        });
       }
 
       logger.debug(`[ProductSync] Successfully synced product: ${productId}`);
@@ -1516,9 +1542,12 @@ export class ProductSyncService {
     errorCount: number;
     /** Markets whose fetch failed for at least one locale — their DB rows must not be wiped. */
     failedMarketIds: Set<string>;
+    /** CURRENT primary values + digests, keyed by translatable-content key. */
+    primaryContent: PrimaryContentMap;
   }> {
     const allTranslations: ResolvedTranslation[] = [];
     const digestMap = new Map<string, string>();
+    const primaryContent: PrimaryContentMap = {};
     // errors[] drives the abort/data-loss heuristic in syncProduct and counts
     // GLOBAL-layer failures only (as before markets existed); market-layer
     // failures are tracked per market so saveToDatabase can exclude that
@@ -1554,6 +1583,7 @@ export class ProductSyncService {
                     key
                     value
                     locale
+                    outdated
                   }
                 }
               }`,
@@ -1589,6 +1619,11 @@ export class ProductSyncService {
             for (const content of resource.translatableContent) {
               // Store digest for future updates - but DO NOT store as translation
               digestMap.set(content.key, content.digest);
+              // The PRIMARY value + digest, for the stale-translation
+              // reconciliation in syncProduct. Shopify only lists keys that
+              // have a value, so this map's key SET is itself the signal for
+              // "which primary fields are filled".
+              primaryContent[content.key] = { value: content.value ?? "", digest: content.digest };
             }
           }
 
@@ -1605,6 +1640,7 @@ export class ProductSyncService {
                 locale: translation.locale,
                 digest: digestMap.get(translation.key),
                 marketId,
+                outdated: translation.outdated,
               });
             }
 
@@ -1650,6 +1686,7 @@ export class ProductSyncService {
       hadErrors: errors.length > 0,
       errorCount: errors.length,
       failedMarketIds,
+      primaryContent,
     };
   }
 
@@ -2144,7 +2181,7 @@ export class ProductSyncService {
 
     try {
       // Sync the product (forceSync=true bypasses save lock for manual reload)
-      await this.syncProduct(gid, /* forceSync */ true);
+      await this.syncProduct(gid, /* forceSync */ true, { reconcileTranslations: true });
 
       // Fetch and update the product from database to return fresh data
       const { db } = await import("../db.server");

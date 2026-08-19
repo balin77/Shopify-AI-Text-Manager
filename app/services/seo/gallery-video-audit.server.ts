@@ -77,7 +77,15 @@ const PRODUCT_LOOKUP_CHUNK = 15;
  * one task. Reaching it reports `capped`, which the UI already renders as
  * "not the whole catalogue" — never as a clean result.
  */
-const MAX_LOOKUP_CHUNKS = 60;
+const MAX_LOOKUP_CHUNKS = 140;
+/**
+ * Wall-clock budget for the lookup phase. It runs AFTER the last progress
+ * write, and with up to 140 chunks each able to sleep through four throttle
+ * retries it could outlast the long-task timeout — at which point the run is
+ * reaped as failed and then overwritten as completed. Giving up early and
+ * saying `capped` is the honest end of that.
+ */
+const LOOKUP_BUDGET_MS = 8 * 60 * 1000;
 /** Media window of the follow-up lookup — the block's own cap is 5 emitted
  *  videos, so a window this wide cannot miss a colliding one in practice. */
 const PRODUCT_MEDIA_WINDOW = 50;

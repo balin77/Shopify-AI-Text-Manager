@@ -551,6 +551,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // Keyword-aware translation (Übersetzungen card).
         keywordAwareTranslation: settings.keywordAwareTranslation ?? true,
 
+        // "Bei Änderung der Hauptsprache" (Übersetzungen card): whether a
+        // changed/cleared primary value deletes its foreign translations, and
+        // (Max) whether a change made OUTSIDE the app is re-translated instead
+        // of only deleted. The Max gate is applied in the tab and again in the
+        // action — the stored value is shown as-is so a downgraded shop sees
+        // what would happen if it upgraded again.
+        translationPurgeOnPrimaryChange: settings.translationPurgeOnPrimaryChange ?? true,
+        autoTranslateExternalChanges: settings.autoTranslateExternalChanges ?? false,
+
         // Nightly SEO audit (Max) — merchant switch, see
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
         // editable where the plan grants scheduledAudit.
@@ -674,6 +683,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const data = validationResult.data;
 
+      // PLAN GATE FIRST — before anything is written. The Translations
+      // sub-section saves its switches together with the instruction texts, so
+      // a 403 decided after the AIInstructions upsert would leave a
+      // half-applied save that keeps failing on every retry.
+      // Same "would it change anything" rule as the SEO limits: a payload that
+      // matches the stored value is a no-op and must not 403 (a downgraded
+      // shop re-submits its stored `true` on every save of this tab).
+      const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
+      let autoTranslateUpdate: { autoTranslateExternalChanges: boolean } | Record<string, never> = {};
+      if (rawAutoTranslate !== null) {
+        const requested = rawAutoTranslate === "true";
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, autoTranslateExternalChanges: true },
+        });
+        if ((row?.autoTranslateExternalChanges ?? false) !== requested) {
+          const { meetsPlan } = await import("../utils/planUtils");
+          const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+            "../services/translations/translation-change-policy.shared"
+          );
+          const plan = (row?.subscriptionPlan || "free") as Plan;
+          if (!meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN)) {
+            return json(
+              {
+                success: false,
+                error: "Automatic re-translation of external changes is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoTranslateUpdate = { autoTranslateExternalChanges: requested };
+        }
+      }
+
       // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
         // General (Writing Style Instructions)
@@ -760,14 +804,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         rawKeywordAware === null ? {} : { keywordAwareTranslation: rawKeywordAware === "true" };
       const modeUpdate =
         rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
-      if (Object.keys(modeUpdate).length > 0 || Object.keys(keywordAwareUpdate).length > 0) {
+
+      // "Bei Änderung der Hauptsprache" — same absent-means-unchanged rule.
+      const rawPurge = formData.get("translationPurgeOnPrimaryChange");
+      const purgeUpdate =
+        rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
+
+      // (The Max gate for autoTranslateExternalChanges already ran above, so
+      // `autoTranslateUpdate` is either the entitled change or empty.)
+      const translationSettingsUpdate = {
+        ...modeUpdate,
+        ...keywordAwareUpdate,
+        ...purgeUpdate,
+        ...autoTranslateUpdate,
+      };
+      if (Object.keys(translationSettingsUpdate).length > 0) {
         await db.aISettings.upsert({
           where: { shop: session.shop },
-          update: { ...modeUpdate, ...keywordAwareUpdate },
+          update: translationSettingsUpdate,
           create: {
             shop: session.shop,
-            ...modeUpdate,
-            ...keywordAwareUpdate,
+            ...translationSettingsUpdate,
             preferredProvider: "claude",
           },
         });
@@ -1599,6 +1656,9 @@ export default function SettingsPage() {
                     onGlossaryHasChangesChange={setHasGlossaryChanges}
                     translationMode={settings.translationMode}
                     keywordAwareTranslation={settings.keywordAwareTranslation}
+                    translationPurgeOnPrimaryChange={settings.translationPurgeOnPrimaryChange}
+                    autoTranslateExternalChanges={settings.autoTranslateExternalChanges}
+                    subscriptionPlan={subscriptionPlan as Plan}
                   />
                 </>
               )}
