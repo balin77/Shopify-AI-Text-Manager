@@ -36,8 +36,13 @@ export interface CreateOption {
   value: string;
   label: string;
   disabled?: boolean;
-  /** Why it is disabled — shown, never swallowed. */
+  /** Why it is disabled — shown, never swallowed. Prefer the CODE below;
+   *  this stays for options whose reason is not a fixed sentence. */
   helpText?: string;
+  /** An i18n key under `t.content`, phrased by the client. */
+  helpTextCode?: string;
+  /** Interpolated into `{detail}` of that sentence. */
+  helpTextDetail?: string;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -77,17 +82,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
           extraFieldsByOption[def.type] = metaobjectFieldDefs(fieldDefinitions);
           continue;
         }
+        // A CODE, not a sentence. The server has no idea which language the
+        // merchant reads, and this text is what explains a greyed-out type --
+        // it used to arrive in English on a German shop, at exactly the moment
+        // something needed explaining. `requiredUnknown` = cached before the
+        // Phase-0 sync, so we do not KNOW which fields are mandatory and
+        // guessing "none" would produce a form Shopify rejects for a field
+        // nobody was asked for.
         options.push({
           value: def.type,
           label: def.name || def.type,
           disabled: true,
-          helpText:
+          helpTextCode:
             creatable.reason === "requiredUnknown"
-              ? // Cached before the Phase-0 sync: we do not KNOW which fields
-                // are mandatory, and guessing "none" would produce a form
-                // Shopify rejects for a field nobody was asked for.
-                "This definition was cached before required-field information existed. Reload the metaobjects tab, then try again."
-              : `Cannot be created here — required fields this app has no editor for: ${creatable.detail}`,
+              ? "createTypeUnknownRequired"
+              : "createTypeUnsupportedFields",
+          helpTextDetail: creatable.detail,
         });
       }
 

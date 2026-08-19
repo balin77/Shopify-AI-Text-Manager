@@ -937,6 +937,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // The chained translation lands in the DB after the create's own
     // revalidation has already run, so the list needs a second look.
     onTranslated: () => revalidator?.revalidate(),
+    texts: {
+      optionsFailed: t.content?.createOptionsFailed,
+      alreadyCreating: t.content?.createAlreadyRunning,
+      createFailed: t.content?.createModal?.createFailed,
+    },
     onCreated: (info) => {
       // A page with its own sub-list hears about EVERY create, synced or not:
       // it is the "not synced" case that decides whether it may jump to the
@@ -2585,6 +2590,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // `content`, not under `createModal`: the ENTRY editor renders the
             // same controls and the strings must not exist twice.
             content: t.content as unknown as Record<string, string>,
+            // The server sends a CODE for a disabled option; the sentences
+            // live here, where the merchant's language is known.
+            optionReasons: {
+              createTypeUnknownRequired: t.content?.createTypeUnknownRequired,
+              createTypeUnsupportedFields: t.content?.createTypeUnsupportedFields,
+            } as Record<string, string>,
             // Same "one block, two surfaces" rule as the rule builder above:
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.

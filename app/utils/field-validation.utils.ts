@@ -7,6 +7,12 @@ import {
   FIELD_TO_LABEL_KEY,
   isMetaobjectLabelField,
 } from "~/constants/shopifyFields";
+import {
+  metaobjectFieldKey,
+  metaobjectTranslatableFields,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "~/services/metaobject-fields.shared";
 import { TIMING } from "~/constants/timing";
 import { PULSE_SYNC_EPOCH } from "~/utils/contentEditor.utils";
 import { extractReadableName } from "~/utils/templates-field-factory";
@@ -257,11 +263,17 @@ export function hasPrimaryContentMissing(
     }
     return metaobjects.some((metaobj: any) => {
       const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-      if (!labelField) return true;
-      // Check overlay first
-      if (overlays?.savedPrimaryValues?.[labelField.key] !== undefined) {
-        return isFieldEmpty(overlays.savedPrimaryValues[labelField.key]);
-      }
+      // NO label field is not missing CONTENT. The label keys are a naming
+      // CONVENTION (`display_name` / `name` / `label`), and a definition that
+      // names its display field differently is not an empty entry — reporting
+      // it as one made the orange pulse permanent for the whole type.
+      if (!labelField) return false;
+      // The overlay is keyed by the COMPOUND key, like every other editor
+      // value; a bare `"label"` lookup never hit and silently fell through to
+      // server data, so an entry the merchant had just filled in still counted
+      // as empty until the page reloaded.
+      const overlayValue = overlays?.savedPrimaryValues?.[metaobjectFieldKey(metaobj.id, labelField.key)];
+      if (overlayValue !== undefined) return isFieldEmpty(overlayValue);
       return isFieldEmpty(labelField.value);
     });
   }
@@ -362,12 +374,17 @@ export function hasLocaleMissingTranslations(
       return false;
     }
 
-    return metaobjects.some((metaobj: any) => {
-      const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-      if (!labelField) return false;
-      const primaryValue = overlays?.savedPrimaryValues?.[labelField.key] ?? labelField.value;
+    // Addressed by COMPOUND key. This asked for a translation stored under the
+    // bare GID, which nothing has written since the editor learned to edit more
+    // than one field per entry — so every entry read as untranslated in every
+    // locale and the language buttons pulsed forever on a fully translated shop.
+    return metaobjectTranslatableFields(
+      metaobjects,
+      (selectedItem as any).fieldDefinitions,
+    ).some((field) => {
+      const primaryValue = overlays?.savedPrimaryValues?.[field.compoundKey] ?? field.primaryValue;
       if (isFieldEmpty(primaryValue)) return false;
-      return !hasTranslationForField(selectedItem, metaobj.id, locale, overlays);
+      return !hasTranslationForField(selectedItem, field.compoundKey, locale, overlays);
     });
   }
 
@@ -456,8 +473,12 @@ export function getMissingPrimaryFields(
     return metaobjects
       .filter((metaobj: any) => {
         const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-        if (!labelField) return true;
-        const value = overlays?.savedPrimaryValues?.[labelField.key] ?? labelField.value;
+        // Same two rules as the flag above: a definition with no label field
+        // is not an empty entry, and the overlay is keyed by the compound key.
+        if (!labelField) return false;
+        const value =
+          overlays?.savedPrimaryValues?.[metaobjectFieldKey(metaobj.id, labelField.key)] ??
+          labelField.value;
         return isFieldEmpty(value);
       })
       .map((metaobj: any) => metaobj.id);
@@ -529,15 +550,15 @@ export function getMissingLocaleTranslationFields(
     if (!metaobjects || !Array.isArray(metaobjects) || metaobjects.length === 0) {
       return [];
     }
-    return metaobjects
-      .filter((metaobj: any) => {
-        const labelField = metaobj.fields?.find((f: any) => isMetaobjectLabelField(f.key));
-        if (!labelField) return false;
-        const primaryValue = overlays?.savedPrimaryValues?.[labelField.key] ?? labelField.value;
+    // Same compound-key rule as above, and the tooltip is where the old bug was
+    // VISIBLE: it listed every entry of the type as "missing translations".
+    return metaobjectTranslatableFields(metaobjects, (selectedItem as any).fieldDefinitions)
+      .filter((field) => {
+        const primaryValue = overlays?.savedPrimaryValues?.[field.compoundKey] ?? field.primaryValue;
         if (isFieldEmpty(primaryValue)) return false;
-        return !hasTranslationForField(selectedItem, metaobj.id, locale, overlays);
+        return !hasTranslationForField(selectedItem, field.compoundKey, locale, overlays);
       })
-      .map((metaobj: any) => metaobj.id);
+      .map((field) => field.label);
   }
 
   const requiredFields = getRequiredFieldsForContentType(contentType, selectedItem);
@@ -797,19 +818,26 @@ export function hasFieldMissingTranslations(
     );
   }
 
-  // Metaobjects: the primary value lives in the matching metaobject entry's
-  // `fields` blob (fieldKey is the metaobject GID), and translations are keyed
-  // by that same GID. primaryHasFieldContent/getFieldValue cannot resolve this
-  // shape (there is no top-level item property), so handle it explicitly —
-  // mirrors the theme branch above. Without this the primary field never gets
-  // the blue "missing translation" highlight.
+  // Metaobjects: the primary value lives in the matching entry's `fields`
+  // blob, and both it and its translation are addressed by the COMPOUND key
+  // `<gid>#<fieldKey>`. `primaryHasFieldContent`/`getFieldValue` cannot resolve
+  // that shape (there is no top-level item property), so it is handled here —
+  // mirroring the theme branch above.
+  //
+  // This had the mirror image of the locale bug: it matched the compound key
+  // against an entry ID, so `entry` was always undefined and the per-field
+  // marker never appeared at all — even on a field that genuinely had no
+  // translation. One key shape, one lookup, both directions right.
   if (contentType === 'metaobjects') {
-    const metaobjects = (selectedItem as unknown as {
-      metaobjects?: Array<{ id: string; displayName?: string | null; fields?: Array<{ key: string; value: string | null }> }>;
-    }).metaobjects;
-    const entry = Array.isArray(metaobjects) ? metaobjects.find(m => m.id === translationKey) : undefined;
-    const labelValue = entry?.fields?.find(f => isMetaobjectLabelField(f.key))?.value;
-    const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? labelValue ?? entry?.displayName ?? undefined;
+    const item = selectedItem as unknown as {
+      metaobjects?: MetaobjectEntryLike[];
+      fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+    };
+    const field = metaobjectTranslatableFields(item.metaobjects, item.fieldDefinitions).find(
+      (f) => f.compoundKey === translationKey,
+    );
+    if (!field) return false;
+    const primaryValue = overlays?.savedPrimaryValues?.[translationKey] ?? field.primaryValue;
     if (!primaryValue || isFieldEmpty(primaryValue)) return false;
     return foreignLocales.some(locale =>
       !hasTranslationForField(selectedItem, translationKey, locale.locale, overlays)

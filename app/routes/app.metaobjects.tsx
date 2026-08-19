@@ -584,7 +584,25 @@ export default function MetaobjectsPage() {
         colourSpec && colourEditable
           ? rendered.find((r) => r.field.key === colourSpec.compoundKey)
           : undefined;
-      const bodyFields = rendered.filter((r) => r !== colourEntry);
+      // The card lays these out horizontally. A field only takes a whole row
+      // where a half one would break it: a textarea and a rich-text preview
+      // are tall by nature, and a taxonomy LIST wraps its chips — in a narrow
+      // column two of them no longer fit on a line, which is the layout the
+      // grid exists to avoid.
+      const specByKey = new Map(specs.map((spec) => [spec.compoundKey, spec]));
+      const bodyFields = rendered
+        .filter((r) => r !== colourEntry)
+        .map((r) => {
+          const spec = specByKey.get(r.field.key);
+          return {
+            key: r.field.key,
+            node: r.node,
+            wide:
+              spec?.role === "textarea" ||
+              spec?.role === "richText" ||
+              (spec?.role === "taxonomyValue" && spec.taxonomy?.isList === true),
+          };
+        });
 
       const raw = usage[groupId];
       const entryUsage: MetaobjectEntryUsage = !raw
@@ -619,7 +637,7 @@ export default function MetaobjectsPage() {
           colorNote={t.content?.metaobjectEntryColorStorefrontNote}
           t={cardTexts}
         >
-          {bodyFields.map((r) => r.node)}
+          {bodyFields}
         </MetaobjectEntryCard>
       );
     },

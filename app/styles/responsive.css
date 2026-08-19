@@ -92,6 +92,12 @@
   --app-editor-sidebar-min-width: 200px;
   --app-editor-sidebar-max-width: 600px;
   --app-short-field-width: 380px;
+  /* Narrowest a field may get inside the metaobject entry card's grid. The
+     card lays its fields out horizontally and wraps: `auto-fit` fills a row
+     with as many tracks of at least this width as fit and stretches them, so
+     one number decides how many columns a card shows at any window size. Below
+     it the fields simply stack, which is what a phone gets. */
+  --app-entry-field-min-width: 260px;
   --app-value-chip-width: 230px;
   /* Polaris' Icon box. Spent where a row has to line up with one that starts
      with a drag handle but has no handle of its own. */

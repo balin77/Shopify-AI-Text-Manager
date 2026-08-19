@@ -235,6 +235,8 @@ export const de = {
     metaobjectEntrySyncProducts: "Produkte synchronisieren",
     metaobjectEntryCreated: "Neu angelegt",
     metaobjectEntryColorInvalid: "Bitte einen Hex-Farbwert angeben, z. B. #A1B2C3.",
+    metaobjectColorBasePalette: "Schnellauswahl",
+    metaobjectColorBaseConvention: "Vorschlag dieser App, keine Standardfarbe",
     metaobjectEntryPickImage: "Bild wählen",
     metaobjectEntryImagesOnly: "In diesem Feld k\u00f6nnen nur Bilder verwendet werden.",
     metaobjectEntryClearImage: "Bild entfernen",
@@ -513,6 +515,10 @@ export const de = {
     deleteContainerButtonLabel: "Typ l\u00f6schen",
     deleteContainerNotLoaded: "Dieser Typ wird noch geladen.",
     createChooserTitle: "Was möchtest du anlegen?",
+    createOptionsFailed: "Die Auswahlm\u00f6glichkeiten f\u00fcr dieses Formular konnten nicht geladen werden.",
+    createAlreadyRunning: "Das wird gerade schon angelegt \u2014 bitte einen Moment warten statt noch einmal abzuschicken.",
+    createTypeUnknownRequired: "Dieser Typ wurde gespeichert, bevor diese App wusste, welche seiner Felder Pflicht sind. Lade den Metaobjekt-Tab neu und versuche es erneut.",
+    createTypeUnsupportedFields: "Hier nicht anlegbar \u2014 er verlangt Feldtypen, f\u00fcr die diese App keinen Editor hat: {detail}",
     // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
     // denselben Text bekommen (§1.2).
     createPlanContentType: "Dein Tarif enthält diesen Inhaltstyp nicht.",

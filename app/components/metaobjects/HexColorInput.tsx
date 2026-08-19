@@ -15,8 +15,9 @@
  * is the same rule the taxonomy picker follows.
  */
 
-import { InlineStack, TextField } from "@shopify/polaris";
+import { BlockStack, InlineStack, Text, TextField, Tooltip } from "@shopify/polaris";
 import { METAOBJECT_HEX_PATTERN } from "~/services/metaobject-fields.shared";
+import { BASE_COLOR_SUGGESTIONS } from "~/services/base-colors.shared";
 
 /** The value the native `<input type="color">` can show: it accepts #rrggbb
  *  only, so #rgb is expanded and #rrggbbaa has its alpha dropped for the
@@ -50,6 +51,20 @@ export interface HexColorInputProps {
   /** Overrides the built-in "that is not a hex colour" message. */
   invalidMessage?: string;
   helpText?: string;
+  /**
+   * Offer the base-colour swatches as one-click starting points.
+   *
+   * Shopify publishes no colour for a taxonomy value (measured: a
+   * `TaxonomyValue` carries `id` and `name`, nothing else), so setting the hex
+   * meant eyeballing a shade in the picker. These are SUGGESTIONS — fifteen
+   * CSS keywords and two stated conventions — and a click only fills the field
+   * the merchant can then edit.
+   */
+  showBaseColors?: boolean;
+  /** Heading above the swatch row. */
+  baseColorsLabel?: string;
+  /** Marks the two swatches that are this app's convention, not a standard. */
+  conventionHint?: string;
 }
 
 export function HexColorInput({
@@ -60,9 +75,13 @@ export function HexColorInput({
   error,
   invalidMessage,
   helpText,
+  showBaseColors,
+  baseColorsLabel,
+  conventionHint,
 }: HexColorInputProps) {
   const invalid = hexIsInvalid(value);
-  return (
+  const current = (value ?? "").trim().toLowerCase();
+  const control = (
     <InlineStack gap="200" blockAlign="center" wrap={false}>
       <input
         type="color"
@@ -95,5 +114,60 @@ export function HexColorInput({
         />
       </div>
     </InlineStack>
+  );
+
+  if (!showBaseColors) return control;
+
+  return (
+    <BlockStack gap="200">
+      {control}
+      <BlockStack gap="100">
+        {baseColorsLabel && (
+          <Text as="span" variant="bodySm" tone="subdued">{baseColorsLabel}</Text>
+        )}
+        <InlineStack gap="100" wrap>
+          {BASE_COLOR_SUGGESTIONS.map((colour) => {
+            const selected = current === colour.hex || current === colour.hex.replace("#", "");
+            const swatch = (
+              <button
+                type="button"
+                key={colour.name}
+                disabled={disabled}
+                onClick={() => onChange(colour.hex)}
+                aria-label={colour.name}
+                aria-pressed={selected}
+                style={{
+                  width: "22px",
+                  height: "22px",
+                  padding: 0,
+                  borderRadius: "50%",
+                  background: colour.hex,
+                  cursor: disabled ? "not-allowed" : "pointer",
+                  // The ring is the only thing that can mark the chosen one:
+                  // a border colour would vanish against the swatch it sits on.
+                  border: "1px solid var(--p-color-border)",
+                  outline: selected ? "2px solid var(--p-color-border-emphasis)" : undefined,
+                  outlineOffset: "1px",
+                }}
+              />
+            );
+            // The tooltip is where the NAME lives, and where a convention says
+            // it is one. A swatch row with no names is a guessing game.
+            return (
+              <Tooltip
+                key={colour.name}
+                content={
+                  colour.convention && conventionHint
+                    ? `${colour.name} — ${conventionHint}`
+                    : colour.name
+                }
+              >
+                <span style={{ display: "inline-flex", lineHeight: 0 }}>{swatch}</span>
+              </Tooltip>
+            );
+          })}
+        </InlineStack>
+      </BlockStack>
+    </BlockStack>
   );
 }

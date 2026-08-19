@@ -61,6 +61,18 @@ export interface UseCreateItemOptions {
   /** Called once a create succeeded, so the caller can select + revalidate. */
   onCreated?: (info: CreatedItemInfo) => void;
   /**
+   * The three sentences this hook produces itself.
+   *
+   * They were hardcoded English and reached the modal's error banner verbatim,
+   * so a German shop read them in English at exactly the moment something had
+   * gone wrong. The hook has no i18n of its own; the caller passes them.
+   */
+  texts?: {
+    optionsFailed?: string;
+    alreadyCreating?: string;
+    createFailed?: string;
+  };
+  /**
    * §2.5a — the shop's published locales MINUS the primary one.
    *
    * Passed in rather than derived: an empty list here means "nothing to
@@ -84,6 +96,7 @@ export function useCreateItem({
   onCreated,
   targetLocales = [],
   onTranslated,
+  texts,
 }: UseCreateItemOptions) {
   // useFetcher rather than a bare fetch: posting to a route action goes through
   // React Router's own protocol, and hand-rolling that would break the moment
@@ -172,7 +185,7 @@ export function useCreateItem({
           // and, worse, the "create a blog first" hint would fire on a shop
           // that has plenty. Same rule as everywhere else here: an empty
           // result is not evidence.
-          setError(typeof data.error === "string" ? data.error : "Could not load the options for this form.");
+          setError(typeof data.error === "string" ? data.error : (texts?.optionsFailed || "Could not load the options for this form."));
           setDynamicOptions({});
           setExtraFieldsByOption({});
           setNeedsBlogFirst(false);
@@ -291,12 +304,12 @@ export function useCreateItem({
       setPendingNotice(
         typeof result.message === "string"
           ? result.message
-          : "This is already being created — please wait a moment rather than submitting again.",
+          : (texts?.alreadyCreating || "This is already being created — please wait a moment rather than submitting again."),
       );
       return;
     }
     if (!result.success) {
-      setError(typeof result.error === "string" ? result.error : "Could not create the item.");
+      setError(typeof result.error === "string" ? result.error : (texts?.createFailed || "Could not create the item."));
       if (Array.isArray(result.fieldErrors)) setFieldErrors(result.fieldErrors as CreateValidationError[]);
       return;
     }
@@ -378,7 +391,7 @@ export function useCreateItem({
     if (fetcher.state === "idle" && submitting && fetcher.data && fetcher.data.actionType !== "createContent") {
       setSubmitting(false);
       if (fetcher.data.success === false) {
-        setError(typeof fetcher.data.error === "string" ? fetcher.data.error : "Could not create the item.");
+        setError(typeof fetcher.data.error === "string" ? fetcher.data.error : (texts?.createFailed || "Could not create the item."));
         if (Array.isArray(fetcher.data.fieldErrors)) setFieldErrors(fetcher.data.fieldErrors as CreateValidationError[]);
       }
     }
