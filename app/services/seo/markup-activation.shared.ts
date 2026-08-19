@@ -248,6 +248,34 @@ export interface MarkupSwitch {
   defaultOn: boolean;
 }
 
+/**
+ * The tags `social-meta.liquid` emits, in the order it emits them — the social
+ * counterpart of JSON_LD_SWITCHES. Each is gated separately in step 3: a theme
+ * that sets `og:title` but no `twitter:*` is the common case, and one verdict
+ * for the whole embed would hide it.
+ *
+ * Lower-case throughout — `extractSocialTags` normalizes, because themes mix
+ * `og:image` and `OG:image` and a case-sensitive comparison would report a
+ * served tag as missing.
+ *
+ * It lives HERE and not next to the audit that produces the stats, because the
+ * activation section renders it in COMPONENT scope: importing it from
+ * social-audit.service.ts drags that module — and through it
+ * crawl-markup-rows.server.ts — into the client bundle, which the build
+ * rightly refuses. Same reason SLOW_PAGE_WARN_MS sits in crawl.shared.ts.
+ */
+export const APP_SOCIAL_TAGS = [
+  "og:title",
+  "og:description",
+  "og:url",
+  "og:type",
+  "og:image",
+  "twitter:card",
+  "twitter:title",
+  "twitter:description",
+  "twitter:image",
+] as const;
+
 export const JSON_LD_SWITCHES: MarkupSwitch[] = [
   // Organization carries no page-type guard in the block — it is emitted on
   // every page, so it is judged against every page.
