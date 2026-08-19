@@ -76,18 +76,17 @@ export type ActivationVerdict =
   /** Served on some pages by us and on others by someone else. */
   | "mixed"
   /**
-   * Served, but nothing can say by whom. TWO causes produce this and the data
-   * cannot tell them apart: the crawl predates the `data-contentpilot` marker,
-   * OR our embed is switched off — with the embed off no page can carry the
-   * marker, so `appEmbedDetected` is `null` forever and no amount of
-   * re-crawling resolves it.
+   * Served, and nothing can PROVE by whom.
    *
-   * The second cause is the NORMAL state of the merchant this whole section
-   * was built for: embed off, theme serving the type, about to tick the box.
-   * So the copy must name both causes and give the conclusion that holds under
-   * either — do not switch it ON, and if it is already on, change nothing until
-   * a crawl can tell. Claiming one cause as fact (which the first cut did) is
-   * the inverse of the rule the rest of this module enforces.
+   * Two causes produce it and the data cannot separate them: the crawl predates
+   * the `data-contentpilot` marker, or our embed is switched off — with the
+   * embed off no page can carry the marker, so `appEmbedDetected` is `null`
+   * forever and re-crawling resolves nothing.
+   *
+   * Not reachable while `UNMARKED_COUNTS_AS_FOREIGN` is true (see there): the
+   * unproven case is attributed to the theme instead, which is the product
+   * decision, not a change in what the data supports. It stays in the type, in
+   * the gate and in the tests so restoring the hedge is one constant.
    */
   | "originUnknown"
   /** Repeatable type we co-deliver: same-page duplication is unjudgeable. */
@@ -107,6 +106,35 @@ export interface ActivationGate {
   /** Carried through so the UI can print the "several per page are normal" caveat. */
   repeatable: boolean;
 }
+
+/**
+ * PRODUCT DECISION (2026-08-19, by the app's owner): markup we cannot PROVE is
+ * ours is attributed to the theme, instead of reported as "origin unknown".
+ *
+ * The evidence has not changed — `data-contentpilot` is still the only way to
+ * tell two identical blocks apart, and its absence still has two causes: our
+ * embed is off, or the crawl predates the marker (JSON-LD 2026-08-17, social
+ * 2026-08-18). What changed is the judgement about which one is likely: the SEO
+ * section went live days ago with very few installs, so a shop holding a crawl
+ * older than the marker AND running the embed is close to hypothetical, while
+ * "origin unknown" was the state almost every merchant would actually see.
+ * Hedging on a rare case at the cost of the common one is the worse trade.
+ *
+ * Know exactly what this buys and costs before touching it:
+ *  - It cannot cause double markup. Under BOTH causes the type is already on
+ *    the page, so "already served, do not switch on" is right either way; only
+ *    the attribution ("by your theme") can be wrong.
+ *  - The failure mode is a merchant hunting through a theme for markup that is
+ *    actually their own app's. The section says so in one line whenever no
+ *    marker was seen, and offers the crawl that settles it.
+ *
+ * Flip this back to `false` when the install base grows enough that the rare
+ * case stops being rare, or replace it outright the day the marker's release
+ * date is a known fact: a crawl newer than that date which found no marker
+ * anywhere PROVES the embed is off, and then the attribution is measured
+ * rather than assumed. That is the version this constant is a placeholder for.
+ */
+export const UNMARKED_COUNTS_AS_FOREIGN = true;
 
 /**
  * `measured` is the discriminator, and it is the caller's job to be strict
@@ -139,14 +167,17 @@ export function activationGate(
   // whole plan is about, and it is actionable in exactly one of two ways.
   if (s.duplicatePages > 0) {
     if (s.appIsOneCopy > 0) return { verdict: "duplicateApp", ...base };
-    // Without the marker we cannot claim the duplication is none of ours; with
-    // it, "turn our switch off" would be the wrong advice, so say whose it is.
-    return { verdict: opts.originKnown ? "duplicateForeign" : "originUnknown", ...base };
+    // None of the copies carries our marker. With the marker seen elsewhere
+    // that is proof; without it, it is the assumption UNMARKED_COUNTS_AS_FOREIGN
+    // records. Either way "turn our switch off" would be the wrong advice here.
+    const foreign = opts.originKnown || UNMARKED_COUNTS_AS_FOREIGN;
+    return { verdict: foreign ? "duplicateForeign" : "originUnknown", ...base };
 
   }
 
   if (s.appPages === 0) {
-    return { verdict: opts.originKnown ? "foreignOnly" : "originUnknown", ...base };
+    const foreign = opts.originKnown || UNMARKED_COUNTS_AS_FOREIGN;
+    return { verdict: foreign ? "foreignOnly" : "originUnknown", ...base };
   }
 
   // From here on at least one copy is provably ours.
@@ -264,7 +295,10 @@ export type ActivationAction =
   | "running" // ours, exactly once — the intended end state
   | "hold" // already served by someone: do not switch ours on
   | "switchOff" // duplicated, one copy ours — our switch fixes it
-  | "themeFix" // duplicated, none of it ours — fixable only in the theme
+  // Duplicated with no copy of ours: not fixable from this app. NOT "themeFix"
+  // — the second source is as often another app as it is the theme, and naming
+  // the theme sends a merchant to the one place the markup may not be.
+  | "foreignFix"
   | "noVerdict"; // not measured, or not judgeable (repeatable type)
 
 export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
@@ -274,7 +308,7 @@ export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
   mixed: "hold",
   originUnknown: "hold",
   duplicateApp: "switchOff",
-  duplicateForeign: "themeFix",
+  duplicateForeign: "foreignFix",
   unknown: "noVerdict",
   repeatableUnjudged: "noVerdict",
 };
@@ -282,7 +316,7 @@ export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
 /** Most urgent first — the order a summary line reads them in. */
 export const ACTION_ORDER: ActivationAction[] = [
   "switchOff",
-  "themeFix",
+  "foreignFix",
   "hold",
   "running",
   "enable",
@@ -311,7 +345,7 @@ export function groupGatesByAction<T>(
 export function actionTone(action: ActivationAction): "critical" | "warning" | "success" | "info" {
   switch (action) {
     case "switchOff":
-    case "themeFix":
+    case "foreignFix":
       return "critical";
     case "hold":
       return "warning";
