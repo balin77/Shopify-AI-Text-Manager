@@ -6,7 +6,7 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { isAttributeField } from "~/services/content-attributes.shared";
+import { fieldCard } from "~/services/content-attributes.shared";
 import {
   groupDetailsFields,
   shouldRenderDetailsSections,
@@ -607,24 +607,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Three splits, not two. The item's TEXT stays in the main card; the three
   // fields Shopify's own admin groups under "Search engine listing" (SEO
   // title, meta description, URL handle) get a card right below it; the
-  // merchandising attributes keep theirs at the bottom. The search-engine
-  // split is config-driven (`card: "searchEngine"`) rather than a key list,
-  // so a dynamic field that happens to be called `handle` cannot fall into
-  // it.
+  // merchandising attributes keep theirs at the bottom. `fieldCard` is the ONE
+  // rule that decides which — config-driven rather than a key list, so a
+  // dynamic field that happens to be called `handle` cannot fall into the
+  // search-engine card, and a field that swaps cards (the category up, the
+  // product type down) says so in one place instead of in three filters.
   const contentFields = useMemo(
-    () => visibleFields.filter((f) => !isAttributeField(f) && f.card !== "searchEngine"),
+    () => visibleFields.filter((f) => fieldCard(f) === "main"),
     [visibleFields]
   );
   const searchEngineFields = useMemo(
-    () => visibleFields.filter((f) => f.card === "searchEngine"),
+    () => visibleFields.filter((f) => fieldCard(f) === "searchEngine"),
     [visibleFields]
   );
-  const attributeFields = useMemo(() => visibleFields.filter((f) => isAttributeField(f)), [visibleFields]);
+  const attributeFields = useMemo(() => visibleFields.filter((f) => fieldCard(f) === "details"), [visibleFields]);
 
   // The Details card's own split into subcards. Derived from the ALREADY
   // filtered list, so a section whose fields all dropped out (the status
-  // control is hoisted into the action bar, the default price only exists for
-  // a single-variant product) simply never appears.
+  // control is hoisted into the action bar) simply never appears.
   const detailsSections = useMemo(() => groupDetailsFields(attributeFields), [attributeFields]);
   const renderDetailsSections = shouldRenderDetailsSections(detailsSections);
 
@@ -643,12 +643,90 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // §7.2 — the page knows this definition refuses our writes.
     fieldsReadOnly;
 
+  // ── The product type derived from the category ──────────────────────────
+  //
+  // A merchant who files a product under "Home & Garden > Decor > Vases" has
+  // already said what it is; making them type "Vases" into a second field is
+  // asking the same question twice. So picking a category fills the product
+  // type — but ONLY when it is empty. It is the merchant's own wording, read
+  // by their rule-based collections and their theme filters, and overwriting
+  // it from a taxonomy leaf would quietly re-file products they had grouped
+  // on purpose.
+  //
+  // The LEAF, not the path: "Home & Garden > Decor > Vases" is unusable as a
+  // filter value, and in the Merchant Center every distinct path would be its
+  // own group.
+  const derivedProductTypeRef = useRef<{ itemId: string; value: string } | null>(null);
+  /** Falling-edge detector for the save — see the effect below. */
+  const wasSavingRef = useRef(false);
+
+  const handleCategoryPicked = (option: { name: string }) => {
+    if (config.contentType !== "products" || !selectedItem) return;
+    if ((helpers.getEditableValue("productType") || "").trim()) return;
+    const derived = option.name.trim();
+    if (!derived) return;
+    handlers.handleValueChange("productType", derived);
+    derivedProductTypeRef.current = { itemId: selectedItem.id, value: derived };
+  };
+
+  /**
+   * …and translates it, but only AFTER the save has landed.
+   *
+   * Not on the pick, and the reason is the §6.6 invalidation rule rather than
+   * a preference: a primary save DELETES the foreign translations of every
+   * field it changed. Translating first would write the translations and the
+   * save would then wipe exactly them — the feature would look like it worked
+   * once and then silently undo itself. So the derived value waits for its own
+   * primary write and is translated on top of it.
+   *
+   * Four guards, and each closes a way this could translate the wrong thing:
+   * the item must still be the one that was saved; the save must actually have
+   * gone through (a failed one leaves `hasChanges` standing, and the pick is
+   * still pending, so it waits for the next attempt); the field must still
+   * hold exactly what was derived, because a merchant who typed over it has
+   * said what they want and can press the translate button themselves; and the
+   * shop must have a target language at all — the handler would otherwise pop
+   * a warning box at somebody who never asked for a translation.
+   */
+  useEffect(() => {
+    const saving = state.isSavingCurrentItem;
+    const wasSaving = wasSavingRef.current;
+    wasSavingRef.current = saving;
+    if (!wasSaving || saving) return;
+
+    const pending = derivedProductTypeRef.current;
+    if (!pending) return;
+    if (!selectedItem || pending.itemId !== selectedItem.id) {
+      derivedProductTypeRef.current = null;
+      return;
+    }
+    // Still unsaved ⇒ the write did not land. Kept, not dropped: the next save
+    // is the one this was waiting for.
+    if (state.hasChanges) return;
+
+    derivedProductTypeRef.current = null;
+    if ((helpers.getEditableValue("productType") || "").trim() !== pending.value) return;
+    if (state.currentLanguage !== primaryLocale) return;
+    // The SAME list the handler filters on, so this cannot decide to fire on a
+    // selection the handler then refuses.
+    if (state.enabledLanguages.filter((l: string) => l !== primaryLocale).length === 0) return;
+
+    // `auto` — the merchant did not press anything. A provider that is not
+    // configured must not turn a save they just watched succeed into a red
+    // error box; the handler reports it as a warning naming the field instead.
+    handlers.handleTranslateFieldToAllLocales("productType", { auto: true });
+    // Driven by the save flag alone: adding the values it READS would re-run it
+    // on every keystroke, and the falling edge is the whole trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isSavingCurrentItem]);
+
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
           key={field.key}
           field={field}
           value={helpers.getEditableValue(field.key)}
           onChange={(value) => handlers.handleValueChange(field.key, value)}
+          onCategoryPicked={handleCategoryPicked}
           suggestion={state.aiSuggestions[field.key]}
           isPrimaryLocale={state.currentLanguage === primaryLocale}
           isTranslated={helpers.isFieldTranslated(field.key)}
@@ -2048,6 +2126,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       missingTranslationIds={optionMissingTranslationIds}
                       t={{
                         title: t.products?.variantsTitle || t.products?.productOptions,
+                        titleNoVariants: t.products?.variantsTitleNoVariants,
                         notEditableInPrimary: t.products?.optionsNotEditableInPrimary,
                         editInstructionPrimary: t.products?.optionsEditInstructionPrimary,
                         translateButton: t.products?.translateEntireOption,

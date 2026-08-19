@@ -145,15 +145,26 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsTranslation: true,
       aiInstructionsKey: "productDescription",
     },
-    // Product Type
+    // ── The product CATEGORY, where Shopify's own admin puts it ────────────
+    // High up, right under the description — and where the free-text product
+    // type used to sit. The two are constantly taken for one field; this is
+    // the half that is Shopify's taxonomy, decides tax rates and marketplace
+    // listings, and holds a GID rather than words. The product type moved down
+    // into the Details card, next to nothing it can be confused with.
+    //
+    // `card: "main"` because it is an ATTRIBUTE that renders in the content
+    // card — the one place where position and save semantics come apart on
+    // purpose. It still saves like every other attribute (`changedFields`
+    // gate, `attributesSyncedAt` lock, no translation).
     {
-      key: "productType",
-      type: "text",
-      label: "Product Type",
-      translationKey: "product_type",
+      key: "category",
+      card: "main",
+      type: "taxonomy",
+      label: ATTRIBUTE_LABELS.category,
+      translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
-      supportsTranslation: true,
+      supportsTranslation: false,
     },
     // SEO Title
     {
@@ -241,20 +252,26 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: false,
       supportsTranslation: false,
     },
+    // ── The product TYPE, where the category used to sit ───────────────────
+    // Free text, the merchant's own word for the thing — read by rule-based
+    // collections, by theme filters and by Shopify's reports. It is the ONLY
+    // one of the pair that is translatable, which is why it keeps its normal
+    // content controls (`card: "details"` moves it, `isAttributeField` stays
+    // false so nothing locks it in a foreign locale).
+    //
+    // It sits here rather than up in the text card so the two can finally be
+    // compared: two cards apart, "Produkttyp" and "Produktkategorie" read as
+    // one field spelled twice.
     {
-      // §Phase 3.1 — Shopify's product taxonomy. Not a free-text field: the
-      // value is a TaxonomyCategory GID, and a wrong one fails at the schema
-      // level, which never reaches `userErrors`.
-      key: "category",
-      type: "taxonomy",
-      label: ATTRIBUTE_LABELS.category,
+      key: "productType",
+      card: "details",
       detailsSection: "organization",
-      translationKey: "",
+      type: "text",
+      label: "Product Type",
+      translationKey: "product_type",
       supportsAI: false,
       supportsFormatting: false,
-      supportsTranslation: false,
-      attributeNote:
-        "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
+      supportsTranslation: true,
     },
     {
       // §Phase 3.1 — membership. Written as a JOIN/LEAVE diff against the

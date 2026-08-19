@@ -130,6 +130,8 @@ interface OptionsFieldProps {
   /** Translation strings */
   t?: {
     title?: string;
+    /** Heading for a product that has no options yet — see VariantOptionsEditor. */
+    titleNoVariants?: string;
     notEditableInPrimary?: string;
     editInstructionPrimary?: string;
     translateInstruction?: string;
