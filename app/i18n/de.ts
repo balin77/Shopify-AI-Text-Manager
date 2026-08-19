@@ -989,7 +989,7 @@ export const de = {
     autoTranslateExternalChanges: "Texte automatisch neu übersetzen, wenn sich der Originaltext ändert",
     autoTranslateExternalChangesHelp: "Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn beim nächsten Sync automatisch neu, statt die veraltete Übersetzung nur zu löschen. Verbraucht KI-Guthaben ohne dein Zutun. URL-Handles bleiben ausgenommen und werden weiterhin nur gelöscht.",
     autoTranslateExternalChangesPlanHint: "Ab dem {plan}-Plan verfügbar.",
-    autoTranslateChangesInteractionNote: "Solange die Option darüber aktiv ist, wird eine Übersetzung bei einer Änderung in dieser App sofort gelöscht — automatisch neu übersetzt werden dann nur Änderungen von ausserhalb. Schalte sie aus, damit auch deine eigenen Änderungen neu übersetzt statt gelöscht werden.",
+    translationPurgeSupersededNote: "Nicht nötig, solange automatisch neu übersetzt wird: Der veraltete Text wird ersetzt statt gelöscht. Schalte die automatische Neuübersetzung aus, um wieder selbst zu entscheiden.",
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",

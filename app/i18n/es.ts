@@ -976,7 +976,7 @@ export const es: Translation = {
     autoTranslateExternalChanges: "Volver a traducir automáticamente los textos cuando cambia el texto original",
     autoTranslateExternalChangesHelp: "Cuando un texto del idioma principal cambia — en el admin de Shopify, en otra app, mediante una importación o aquí en ContentPilot —, la IA lo vuelve a traducir en la siguiente sincronización en lugar de solo eliminar la traducción desactualizada. Consume crédito de IA sin que estés presente. Los handles de URL quedan excluidos y solo se eliminan.",
     autoTranslateExternalChangesPlanHint: "Disponible a partir del plan {plan}.",
-    autoTranslateChangesInteractionNote: "Mientras la opción de arriba esté activa, un cambio hecho en esta app elimina sus traducciones de inmediato: solo se vuelven a traducir automáticamente los cambios hechos fuera. Desactívala para que tus propios cambios se vuelvan a traducir en lugar de eliminarse.",
+    translationPurgeSupersededNote: "No hace falta mientras los textos se vuelvan a traducir automáticamente: el texto desactualizado se reemplaza en lugar de eliminarse. Desactiva la retraducción automática para volver a decidirlo tú.",
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",
     translationsProductType: "Tipo de producto",
     translationsSearchLabel: "Buscar",

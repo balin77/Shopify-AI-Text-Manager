@@ -991,7 +991,7 @@ export const en: Translation = {
     autoTranslateExternalChanges: "Automatically re-translate texts when the source text changes",
     autoTranslateExternalChangesHelp: "When a primary-language text changes — in the Shopify admin, in another app, through an import, or here in ContentPilot — the AI re-translates it on the next sync instead of only deleting the outdated translation. This spends AI credit without you being present. URL handles are excluded and are still only deleted.",
     autoTranslateExternalChangesPlanHint: "Available from the {plan} plan.",
-    autoTranslateChangesInteractionNote: "While the option above is on, a change made in this app deletes its translations immediately — only changes from elsewhere are re-translated automatically. Turn it off to have your own changes re-translated instead of deleted.",
+    translationPurgeSupersededNote: "Not needed while texts are re-translated automatically: the outdated text is replaced rather than deleted. Turn the automatic re-translation off to decide this yourself again.",
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",
     translationsProductType: "Product Type",
     translationsSearchLabel: "Search",

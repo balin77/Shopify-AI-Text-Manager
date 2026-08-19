@@ -216,11 +216,10 @@ model AISettings {
   // Max plan: when a sync sees that a primary text moved, do not just delete
   // the now-stale translation — re-translate the NEW value into that locale.
   // The name says "External" for historic reasons and the column is NOT
-  // renamed for a label: which changes it reaches depends on
-  // translationPurgeOnPrimaryChange. With that ON, an in-app save has already
-  // deleted the translations before any sync runs, so this covers changes made
-  // in the Shopify admin, another app or an import; with it OFF it covers an
-  // in-app change as well. Off by default: it spends the merchant's AI budget
+  // renamed for a label: it SUPERSEDES translationPurgeOnPrimaryChange (the two
+  // are alternatives, resolved in translation-change-policy.server.ts), so it
+  // covers a change made in the Shopify admin, another app, an import AND one
+  // made in this app. Off by default: it spends the merchant's AI budget
   // without them being present. Plan-gated to "max" at every read (the column
   // may hold `true` from a period on a higher plan).
   autoTranslateExternalChanges Boolean @default(false)

@@ -15,6 +15,10 @@
  *    (purge on, auto-translate off). A DB hiccup must never silently start
  *    keeping stale translations alive on the storefront — that is invisible to
  *    the merchant, while a purge is not.
+ *  - **The two switches are mutually exclusive, and that is decided here.**
+ *    Auto-translate supersedes the purge: one says "throw the translation
+ *    away when the text moves", the other "give it the new text", and doing
+ *    both means deleting the rows a re-translation is about to refresh.
  *  - **The plan gate lives here.** `autoTranslateExternalChanges` is a Max
  *    feature; the column can legitimately hold `true` on a shop that has since
  *    downgraded, so the flag is ANDed with the plan on every read instead of
@@ -31,7 +35,12 @@ export { AUTO_TRANSLATE_MIN_PLAN };
 export interface TranslationChangePolicy {
   /**
    * Delete a foreign translation when its primary value changed or was
-   * cleared (in this app AND on a sync that notices an external change).
+   * cleared (in this app AND on a sync that notices a change made elsewhere).
+   *
+   * Always FALSE while `autoTranslateExternalChanges` is in force — see the
+   * resolution below. A caller that wants "remove what could not be
+   * re-translated" must not read this flag for it; that correction belongs to
+   * the auto-translation itself (stale-translation-sync.server.ts).
    */
   purgeOnPrimaryChange: boolean;
   /**
@@ -70,12 +79,19 @@ export async function loadTranslationChangePolicy(
       },
     });
     const plan = (row?.subscriptionPlan || "free") as Plan;
+    const autoTranslate =
+      (row?.autoTranslateExternalChanges ?? false) && meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN);
     return {
-      // `?? true` covers both "no settings row yet" and a pre-migration
-      // container reading a column that is not there.
-      purgeOnPrimaryChange: row?.translationPurgeOnPrimaryChange ?? true,
-      autoTranslateExternalChanges:
-        (row?.autoTranslateExternalChanges ?? false) && meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN),
+      // The two switches are MUTUALLY EXCLUSIVE and auto-translate wins:
+      // "delete the translation when the text changes" and "translate the new
+      // text" are two answers to one question, and a shop that picked the
+      // second one does not want the first one deleting the very rows the
+      // re-translation is about to refresh. Enforced HERE, not only in the UI,
+      // because both columns are independently writable (a stale client, a
+      // direct POST) and the stored pair must never decide behaviour the
+      // merchant was not shown. `?? true` covers "no settings row yet".
+      purgeOnPrimaryChange: !autoTranslate && (row?.translationPurgeOnPrimaryChange ?? true),
+      autoTranslateExternalChanges: autoTranslate,
       plan,
     };
   } catch (error: unknown) {

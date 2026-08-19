@@ -61,6 +61,33 @@ describe("loadTranslationChangePolicy", () => {
     expect(policy.autoTranslateExternalChanges).toBe(false);
   });
 
+  it("forces the purge OFF while auto-translation is in force", async () => {
+    // The two are alternatives: deleting the rows a re-translation is about to
+    // refresh means nothing. Enforced server-side, not only in the UI, because
+    // both columns are independently writable.
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateExternalChanges).toBe(true);
+    expect(policy.purgeOnPrimaryChange).toBe(false);
+    expect(await isPurgeOnPrimaryChangeEnabled("shop.myshopify.com")).toBe(false);
+  });
+
+  it("leaves the purge alone when auto-translation is only stored, not granted", async () => {
+    // Below Max the flag is inert, so it cannot switch the deletion off either.
+    row.value = {
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "pro",
+    };
+    const policy = await loadTranslationChangePolicy("shop.myshopify.com");
+    expect(policy.autoTranslateExternalChanges).toBe(false);
+    expect(policy.purgeOnPrimaryChange).toBe(true);
+  });
+
   it("grants auto-translation on Max", async () => {
     row.value = {
       translationPurgeOnPrimaryChange: true,

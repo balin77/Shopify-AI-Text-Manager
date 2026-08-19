@@ -35,15 +35,13 @@
  * request, and one AI request per locale does not fit in one. The purge stays
  * inline (one GraphQL call), so the storefront is corrected immediately.
  *
- * WHICH changes it reaches follows from the purge switch, and the column's
- * name (`autoTranslateExternalChanges`) is historic rather than exact. With the
- * purge ON, an in-app primary save has already deleted the translations before
- * any sync sees them — no rows, no baseline digest, nothing stale — so the
- * re-translation is left with the changes this app did not make. With the purge
- * OFF the rows survive with their old digest, and the very same detection fires
- * for an in-app edit too: the merchant's own change is re-translated instead of
- * dropped. That was not designed, it is a consequence of keying on the digest,
- * and it is kept deliberately — it is the more useful behaviour.
+ * The column's name (`autoTranslateExternalChanges`) is historic rather than
+ * exact: switching it on switches the PURGE off (the policy module resolves the
+ * pair), so the translations survive an in-app save with their old digest and
+ * the very same detection re-translates that change too — an edit made here is
+ * treated exactly like one made in the Shopify admin. Deleting the rows a
+ * re-translation is about to refresh is the combination that means nothing,
+ * which is why it cannot be configured.
  */
 
 import { logger } from "../../utils/logger.server";
@@ -214,6 +212,16 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
       policy.autoTranslateExternalChanges,
     );
 
+    // May a stale translation be REMOVED here? Not the same question as the
+    // merchant's purge switch, which auto-translate forces off (the two are
+    // alternatives — translation-change-policy.server.ts). A shop that asked
+    // for "always give it the new text" is asking for the opposite of stale,
+    // so whatever the AI cannot deliver — a CLEARED source with nothing to
+    // translate, a `handle`, a provider error — is removed rather than left
+    // describing text that no longer exists. Only with BOTH switches off does
+    // nothing get touched, and that case never reaches this line.
+    const mayPurge = policy.purgeOnPrimaryChange || policy.autoTranslateExternalChanges;
+
     // The AI re-translation is DETACHED. Two of the callers (the single-item
     // reload routes) await this sync inside an HTTP request, and one AI
     // request per locale does not fit in a request the browser abandons after
@@ -233,11 +241,7 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
           // hand-written value is newer than everything decided here, and
           // deleting it would be the one unrecoverable outcome. The next change
           // event repairs whatever is genuinely still stale.
-          if (
-            policy.purgeOnPrimaryChange &&
-            outcome.failed.length > 0 &&
-            !isTranslationRecentlySaved(resourceId)
-          ) {
+          if (mayPurge && outcome.failed.length > 0 && !isTranslationRecentlySaved(resourceId)) {
             await purgeStaleEntries(gateway, shop, resourceId, resourceType, outcome.failed);
           }
           if (outcome.registered.length > 0) markTranslationSaved(resourceId);
@@ -257,7 +261,7 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
     }
 
     let removed = 0;
-    if (policy.purgeOnPrimaryChange && purge.length > 0) {
+    if (mayPurge && purge.length > 0) {
       removed = await purgeStaleEntries(gateway, shop, resourceId, resourceType, purge);
     }
 

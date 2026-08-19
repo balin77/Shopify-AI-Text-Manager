@@ -148,6 +148,9 @@ export function AIInstructionsTabs({
   // read as "this app cannot do that") and is greyed out below Max, with the
   // required tier named underneath.
   const canAutoTranslateExternal = meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
+  /** Auto-translation is on AND allowed — the state in which it supersedes the
+   *  deletion switch (loadTranslationChangePolicy enforces the same). */
+  const autoTranslateActive = canAutoTranslateExternal && localAutoTranslateExternal;
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -234,7 +237,12 @@ export function AIInstructionsTabs({
     // entire Translations sub-section (radio + custom instructions).
     formData.append("translationMode", localTranslationMode);
     formData.append("keywordAwareTranslation", String(localKeywordAware));
-    formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
+    // Never submit a pair the UI does not show: with the re-translation on,
+    // the deletion is off, which is exactly what the server resolves too.
+    formData.append(
+      "translationPurgeOnPrimaryChange",
+      String(!autoTranslateActive && localPurgeOnChange),
+    );
     // Never claim the Max feature from a plan that cannot have it: the server
     // rejects a change it is not entitled to, and sending the STORED value
     // keeps an unentitled save from tripping that gate.
@@ -463,10 +471,13 @@ export function AIInstructionsTabs({
               {/* What happens to a translation when its SOURCE text changes.
                   Two switches, one card: the first decides whether the stale
                   translation is dropped at all, the second (Max) whether a
-                  change made OUTSIDE this app is translated again right away.
-                  They sit together because a merchant reasons about them
-                  together — "what does the app do when the German text
-                  changes?" */}
+                  change is translated again right away. They sit together
+                  because a merchant reasons about them together — "what does
+                  the app do when the German text changes?" — and because they
+                  are ALTERNATIVES: switching the re-translation on switches
+                  the deletion off, here and in the policy module, since
+                  deleting the rows a re-translation is about to refresh is not
+                  a combination that means anything. */}
               <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
                 <BlockStack gap="400">
                   <Text as="h3" variant="headingMd">
@@ -475,9 +486,9 @@ export function AIInstructionsTabs({
 
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
-                      checked={localPurgeOnChange}
+                      checked={!autoTranslateActive && localPurgeOnChange}
                       onChange={setLocalPurgeOnChange}
-                      disabled={readOnly}
+                      disabled={readOnly || autoTranslateActive}
                     />
                     <BlockStack gap="100">
                       <Text as="p" variant="bodyMd">
@@ -488,13 +499,27 @@ export function AIInstructionsTabs({
                         {t.settings.translationPurgeOnPrimaryChangeHelp ||
                           'Eine Übersetzung eines Textes, den es so nicht mehr gibt, wird sonst weiter im Shop ausgeliefert. Aus: Die alten Übersetzungen bleiben stehen und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.'}
                       </Text>
+                      {/* Greyed out rather than hidden, with the reason in
+                          place: a switch that disappears reads as a bug. */}
+                      {autoTranslateActive && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.settings.translationPurgeSupersededNote ||
+                            'Nicht nötig, solange automatisch neu übersetzt wird: Der veraltete Text wird ersetzt statt gelöscht.'}
+                        </Text>
+                      )}
                     </BlockStack>
                   </InlineStack>
 
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
-                      checked={canAutoTranslateExternal && localAutoTranslateExternal}
-                      onChange={setLocalAutoTranslateExternal}
+                      checked={autoTranslateActive}
+                      onChange={(checked) => {
+                        setLocalAutoTranslateExternal(checked);
+                        // Switching it ON retires the deletion — the server
+                        // enforces the same precedence, this only makes the
+                        // stored value match what the merchant is looking at.
+                        if (checked) setLocalPurgeOnChange(false);
+                      }}
                       disabled={readOnly || !canAutoTranslateExternal}
                     />
                     <BlockStack gap="100">
@@ -506,18 +531,6 @@ export function AIInstructionsTabs({
                         {t.settings.autoTranslateExternalChangesHelp ||
                           'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn beim nächsten Sync automatisch neu, statt die veraltete Übersetzung nur zu löschen. URL-Handles bleiben ausgenommen.'}
                       </Text>
-                      {/* The two switches interact, and only in ONE direction:
-                          with the purge on, an in-app save has already deleted
-                          the translations before any sync sees them, so the
-                          re-translation is left with the changes this app did
-                          not make. Shown only while that is actually the case —
-                          a caveat that does not apply is noise. */}
-                      {canAutoTranslateExternal && localAutoTranslateExternal && localPurgeOnChange && (
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.settings.autoTranslateChangesInteractionNote ||
-                            'Solange die Option darüber aktiv ist, wird eine Übersetzung bei einer Änderung in dieser App sofort gelöscht — automatisch neu übersetzt werden dann nur Änderungen von ausserhalb.'}
-                        </Text>
-                      )}
                       {!canAutoTranslateExternal && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {(t.settings.autoTranslateExternalChangesPlanHint ||

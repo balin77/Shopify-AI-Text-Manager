@@ -163,7 +163,10 @@ describe("purge path", () => {
 
 describe("auto-translation path (Max)", () => {
   beforeEach(() => {
+    // The real policy forces the purge switch off whenever auto-translation is
+    // in force, so that is the pair these tests run under.
     policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
   });
 
   it("registers the re-translation instead of purging", async () => {
@@ -219,6 +222,23 @@ describe("auto-translation path (Max)", () => {
     // problem, not a reason to delete storefront content.
     expect(shopify.registerCalls).toHaveLength(2);
     expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("still removes what it cannot re-translate, even with the purge switch off", async () => {
+    // A CLEARED source has nothing to translate. Leaving its translation up
+    // would be the opposite of what "always give it the new text" asked for —
+    // and the purge switch is off by construction here, so this correction
+    // cannot depend on it.
+    const result = await reconcileStaleTranslations(
+      baseParams({
+        translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
+        primaryContent: { body_html: { value: "<p>Box</p>", digest: NEW } },
+      }),
+    );
+
+    expect(result.retranslating).toBe(0);
+    expect(result.removed).toBe(1);
+    expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
   });
 
   it("does not start a second run for a resource whose run is still going", async () => {
