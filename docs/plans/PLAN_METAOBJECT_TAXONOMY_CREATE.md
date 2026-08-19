@@ -1,6 +1,6 @@
 # Taxonomie-Referenzfelder — Plan (damit Farb-Einträge anlegbar werden)
 
-**Status:** Entwurf. **Phase 0 läuft** — T2 ist beantwortet (§1.1), T1 und T3 noch nicht; Lauf 2 misst die Kategorie-Tür.
+**Status:** **Phase 0 ist durch** (§1.1, §1.2): T1, T2 und T3 sind beantwortet, der Plan ist baubar, und §5 (Rückfallebene) wird nicht gebraucht. Offen ist nur noch eine Bestätigung, nicht mehr eine Frage: dass die angebotene Werteliste die Werte enthält, die echte Einträge bereits halten. Phase 1 kann danach beginnen.
 **Ziel:** Das eine Loch schließen, das [PLAN_METAOBJECTS_EDITOR](PLAN_METAOBJECTS_EDITOR.md) offen gelassen hat: **einen Eintrag einer Shopify-Standard-Definition anlegen** — allen voran eine Farbe.
 **Auslöser:** Gemessen in PLAN_METAOBJECTS_EDITOR §2.1: `shopify--color-pattern` hat **drei** Pflichtfelder, und zwei davon sind Taxonomie-Referenzen (`color_taxonomy_reference: list.product_taxonomy_value_reference*`, `pattern_taxonomy_reference: product_taxonomy_value_reference*`). Diese App hat dafür keinen Editor, also antwortet `metaobjectCreatability` mit `unsupportedRequiredType` und bietet den Typ ausgegraut an. Bearbeiten, Übersetzen und Löschen funktionieren; **Anlegen** nicht — ausgerechnet für den Typ, der den Editor-Plan ausgelöst hat.
 
@@ -53,10 +53,33 @@ Zwei Konsequenzen. Ein Handle überlebt einen Shop-Wechsel, eine GID müsste das
 
 **Ein Messfehler, behoben:** der Schritt suchte in den Validierungen nach einer **GID** und meldete deshalb „die Validierungen trugen keine" über eine Validierung, die genau das Richtige trug, nur in besserer Form. Er liest jetzt `product_taxonomy_attribute_handle`, und Lauf 2 introspiziert `TaxonomyCategory` — introspektion zuerst, Versuche daraus gebaut, statt `taxonomy.attributes` und `TaxonomyAttribute` zu raten wie beim ersten Mal.
 
+### 1.2 Messung — Lauf 2 (2026-08-19, derselbe Shop). **T1 und T3 beantwortet, Phase 0 ist durch.**
+
+**T1 ✅ POSITIV.** Der Weg zu den zulässigen Werten ist gemessen und geht über die Kategorie:
+
+```
+TaxonomyCategory.attributes            -> TaxonomyCategoryAttributeConnection (nodes)
+  -> TaxonomyCategoryAttribute          UNION aus
+       TaxonomyAttribute            { id }
+       TaxonomyChoiceListAttribute  { id, name, values }   <- hier liegen sie
+       TaxonomyMeasurementAttribute { id, name, options }
+```
+
+Zehn Top-Level-Kategorien führten 14 Attribute, darunter „Color" und „Pattern" mehrfach — das Attribut hängt also an vielen Kategorien und ist mit einer billigen Stichprobe erreichbar.
+
+**T3 ✅ — es wird eine LISTE, kein Such-Picker.** Das Farbattribut hat **19** Werte: Beige, Black, Blue, Bronze, Brown, Clear, Gold, Gray, Green, Multicolor, Navy, Orange, … Damit ist Phase 1 deutlich kleiner als befürchtet: zwei Auswahllisten statt einer Suchmaschine.
+
+**Was daraus für Phase 1 folgt, konkret:**
+- `color_taxonomy_reference` ist eine **Mehrfachauswahl mit 1–4 Werten** (`list.min`/`list.max`), `pattern_taxonomy_reference` eine Einfachauswahl. Beide Grenzen gehören in die Formularvalidierung, nicht nur in einen Hinweis.
+- Der gespeicherte Wert ist als **Name** anzeigbar (`TaxonomyValue { id name }`), ein Picker zeigt also nie eine rohe GID.
+- Die Werteliste kommt live; **kein eigener Cache** (§6 Nicht-Ziel 5 bleibt).
+
+**Die eine verbleibende Schlussfolgerung — und wie sie geschlossen wird.** Das Attribut wird über seinen **Namen** gefunden, weil das Union-Mitglied kein `handle`-Feld hat; der Abgleich ist also `"Color" → "color"`. Das ist die einzige Stelle in der Kette, die nicht gemessen ist. Der nächste Lauf prüft deshalb **Enthaltensein**: jeder Taxonomie-Wert, den ein ECHTER Eintrag dieser Definition hält, muss in der angebotenen Liste vorkommen. Fehlt einer, ist entweder das falsche Attribut getroffen oder die Liste unvollständig — und ein Picker würde einen Wert verweigern, den der Shop bereits benutzt. Der Schritt prüft ab sofort außerdem **beide** Handles (`color` UND `pattern`), nicht nur den ersten Treffer.
+
 **Vermutung, ausdrücklich als solche markiert (Phase 0 misst sie):**
-- **T1:** Es gibt eine Admin-API, über die sich die zulässigen `TaxonomyValue`s **auflisten oder suchen** lassen. Ohne sie ist dieser Plan nicht baubar, und der ehrliche Ausgang ist §5.
+- **T1 — ✅ beantwortet, siehe §1.2.** Über `TaxonomyCategory.attributes`.
 - **T2 — ✅ beantwortet, siehe §1.1.** Die Validierung nennt das Attribut per Handle.
-- **T3:** Die Menge ist **klein** (Größenordnung Dutzende Basisfarben, ein Dutzend Muster), nicht zehntausend wie der Kategoriebaum. Die fünf Stichproben stützen das, fünf Stichproben sind aber kein Beweis. **Von T3 hängt die Bauform ab**: klein ⇒ zwei Auswahllisten; groß ⇒ ein Such-Picker nach dem Vorbild von `TaxonomyField`.
+- **T3 — ✅ beantwortet, siehe §1.2.** 19 Farbwerte ⇒ Auswahlliste.
 - **T4:** Ob ein Wert für die Farbe frei wählbar ist oder Shopify Konsistenz zum `color`-Hexwert erzwingt (also ob man „Pink" mit `#000000` kombinieren darf). Betrifft nur, ob die Oberfläche warnen muss.
 
 **Was den Plan kippen würde:** Fällt **T1** negativ aus — keine Möglichkeit, die Werte zu erfahren — dann ist ein Picker nicht baubar, und §5 ist die Antwort.

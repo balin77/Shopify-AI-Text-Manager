@@ -72,6 +72,14 @@ interface ProbeReport {
     valueCount?: number;
     valueSample?: string[];
     valuesTruncated?: boolean;
+    perHandle?: Array<{
+      handle: string;
+      attributeName: string;
+      valueCount: number;
+      truncated: boolean;
+      sample: string[];
+      covered: { checked: number; covered: number; missing: string[] };
+    }>;
     steps: StepOutcome[];
   };
   reverseRelation?: {
@@ -176,6 +184,22 @@ function formatMarkdown(r: ProbeReport): string {
         `- **Permitted values: ${t.valueCount}${t.valuesTruncated ? " or more" : ""}** via \`${t.valueSource}\`` +
           (t.valueSample?.length ? ` — ${t.valueSample.join(", ")}` : ""),
       );
+    }
+    if (t.perHandle?.length) {
+      lines.push("");
+      lines.push("| Attribute handle | Matched attribute | Values | Stored values covered | Missing |");
+      lines.push("|---|---|---|---|---|");
+      for (const h of t.perHandle) {
+        lines.push(
+          `| ${escapeCell(h.handle)} | ${escapeCell(h.attributeName)} | ${h.valueCount}${
+            h.truncated ? "+" : ""
+          } | ${h.covered.covered}/${h.covered.checked} | ${escapeCell(h.covered.missing.join(", ") || "-")} |`,
+        );
+      }
+      lines.push("");
+      for (const h of t.perHandle) {
+        if (h.sample.length) lines.push(`- \`${escapeCell(h.handle)}\` sample: ${h.sample.join(", ")}`);
+      }
     }
     lines.push("");
     lines.push("| Step | OK | Detail |");
