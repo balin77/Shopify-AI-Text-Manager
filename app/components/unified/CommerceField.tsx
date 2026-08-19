@@ -28,24 +28,23 @@
  * `catalogType` (`groupPublications`) — and an UNKNOWN one stays with the
  * sales channels, which is where it has always rendered.
  *
- * -- The card STATES, the dialog CHANGES -------------------------------------
- * On a shop with markets and B2B catalogs the three lists are a page's worth
- * of checkboxes inside a card meant to be read at a glance. So the card is a
- * sentence — where the product is published, and the alarm when that is
- * nowhere — and `PublishingModal` behind "Manage" is where it is edited. The
- * dialog holds no state of its own: it writes the same `channelState`, and
- * the editor's one save bar writes that.
+ * -- Everything in the card, on pill toggles ---------------------------------
+ * The three lists lived behind a "Manage" dialog for one release. It bought
+ * nothing: the same controls, one click further away, and a dialog that has to
+ * survive reloads and re-explain its own headings. They are back in the card,
+ * on the `ToggleSwitch` rows this app uses for a setting of this kind
+ * everywhere else — a publication is on or off, which is what a switch says
+ * and what a checkbox in a wrapping row did not.
  */
 
-import { useState } from "react";
 import { Badge, Banner, BlockStack, Box, Button, InlineStack, Spinner, Text } from "@shopify/polaris";
 import { HelpTooltip } from "../HelpTooltip";
+import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData } from "../../contexts/CommerceDataContext";
-import { countsAsSalesChannel, groupPublications } from "../../services/commerce-sync.shared";
-import { PublishingModal } from "./PublishingModal";
+import { groupPublications, type PublicationGroupId } from "../../services/commerce-sync.shared";
+import type { CommerceChannelView } from "../../routes/api.product-commerce";
 
 export function CommerceField({ label }: { label: string }) {
-  const [manageOpen, setManageOpen] = useState(false);
   const commerce = useCommerceData();
   // No provider ⇒ not a product. Nothing to say.
   if (!commerce) return null;
@@ -80,15 +79,6 @@ export function CommerceField({ label }: { label: string }) {
   }
 
   /**
-   * The alarm counts SALES CHANNELS only. A product that sits in a market
-   * catalog but on no channel is invisible exactly as if it sat nowhere, and
-   * counting the market row would have hidden that. An unknown catalog still
-   * counts — see `countsAsSalesChannel`.
-   */
-  const publishedCount = data
-    ? data.channels.filter((c) => countsAsSalesChannel(c.catalogType) && channelState[c.publicationId]).length
-    : 0;
-  /**
    * The alarm and the "no channels installed" line are CLAIMS about the whole
    * shop, and a cut-off window cannot support either: the channel this product
    * is on may be one of the rows that did not arrive. With the window
@@ -97,41 +87,81 @@ export function CommerceField({ label }: { label: string }) {
    */
   const channelsAreComplete = !!data && !data.channelsTruncated;
 
-  /** The three lists, always in the admin's order — shared with the dialog. */
+  /** The three lists, always in the admin's order. */
   const groups = data ? groupPublications(data.channels) : [];
 
   /**
-   * The card's sentence: which SALES CHANNELS the product is on right now.
-   *
-   * Read off `channelState`, not off the loaded rows, so an untick shows in
-   * the summary before it is saved — the merchant is looking at what the save
-   * bar is about to write, not at what Shopify last said.
+   * The alarm counts SALES CHANNELS only — a product that sits in a market
+   * catalog but on no channel is invisible exactly as if it sat nowhere, and
+   * counting the market row would have hidden that. Taken from the grouped
+   * list so there is one rule for which row is a channel, and read off
+   * `channelState` rather than off the loaded rows: an untick has to raise the
+   * alarm before the save, because the merchant is looking at what the save
+   * bar is about to write.
    */
-  const liveNames = (id: (typeof groups)[number]["id"]) =>
-    (groups.find((group) => group.id === id)?.rows ?? [])
-      .filter((channel) => channelState[channel.publicationId] === true)
-      .map((channel) => channel.name || channel.publicationId);
-
-  const publishedChannelNames = liveNames("channels");
-  const publishedMarketCount = liveNames("market").length;
-  const publishedB2bCount = liveNames("companyLocation").length;
+  const publishedChannelCount = (groups.find((group) => group.id === "channels")?.rows ?? []).filter(
+    (channel) => channelState[channel.publicationId] === true,
+  ).length;
 
   /**
-   * Counts stay silent at zero: "0 Regionen" reads as a fault, not a state.
-   *
-   * These count CATALOGS, not markets — one region catalog can cover several
-   * markets. That is also what Shopify's own dialog counts in its sidebar, so
-   * the two agree. The strings are written "Regionen: 3" rather than
-   * "3 Regionen" so that one of them does not need a second, singular form.
+   * `heading` is OPTIONAL, and the sales-channel group deliberately has none:
+   * the field's own label already says "Sales channels", and a heading under
+   * it said the same thing twice. The other two groups need theirs — nothing
+   * else on the card names them.
    */
-  const scopeSummary = [
-    publishedMarketCount > 0 &&
-      ((t.marketCount as string) || "Regions: {count}").replace("{count}", String(publishedMarketCount)),
-    publishedB2bCount > 0 &&
-      ((t.b2bCount as string) || "B2B catalogs: {count}").replace("{count}", String(publishedB2bCount)),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const GROUP_TEXT: Record<PublicationGroupId, { heading?: string; hint?: string }> = {
+    channels: {},
+    // Regions and B2B catalogs answer "who may see it", not "where is it
+    // sold" — merchants reliably read them as channels, which is the whole
+    // reason they sit apart and carry a line each.
+    market: {
+      heading: (t.marketsHeading as string) || "Regions",
+      hint:
+        (t.marketsHint as string) ||
+        "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
+    },
+    companyLocation: {
+      heading: (t.b2bHeading as string) || "B2B catalogs",
+      hint: (t.b2bHint as string) || "B2B catalogs decide which business customers can see the product.",
+    },
+  };
+
+  /**
+   * One publication, as the pill-toggle row this app uses for a setting of
+   * this kind everywhere else. A publication is on or off, which is what a
+   * switch states — and it reads as a state rather than as a form field, which
+   * a checkbox in a wrapping row did not.
+   */
+  const renderChannel = (channel: CommerceChannelView) => {
+    const name = channel.name || channel.publicationId;
+    // A future publish date is NOT "live". Saying "scheduled" rather than
+    // showing it as published is what keeps a planned launch from looking
+    // like a mistake.
+    const scheduled =
+      channel.publishDate && !channel.isPublished
+        ? ((t.scheduled as string) || "Scheduled for {date}").replace(
+            "{date}",
+            new Date(channel.publishDate).toLocaleDateString(),
+          )
+        : null;
+
+    return (
+      <InlineStack key={channel.publicationId} gap="300" blockAlign="center" wrap={false}>
+        <ToggleSwitch
+          checked={channelState[channel.publicationId] === true}
+          disabled={saving}
+          ariaLabel={name}
+          onChange={(checked) =>
+            setChannelState((prev) => ({ ...prev, [channel.publicationId]: checked }))
+          }
+        />
+        <BlockStack gap="050">
+          <Text as="p" variant="bodyMd">{name}</Text>
+          {scheduled && <Text as="p" variant="bodySm" tone="subdued">{scheduled}</Text>}
+        </BlockStack>
+      </InlineStack>
+    );
+  };
 
   return (
     <BlockStack gap="300">
@@ -145,7 +175,7 @@ export function CommerceField({ label }: { label: string }) {
             product on no channel is invisible everywhere. Silent when the
             window was cut off: that is a claim about the whole shop, and a
             partial answer cannot carry it. */}
-        {channelsAreComplete && publishedCount === 0 && (
+        {channelsAreComplete && publishedChannelCount === 0 && (
           <Badge tone="critical">{(t.noChannel as string) || "On no channel — invisible"}</Badge>
         )}
       </InlineStack>
@@ -182,72 +212,36 @@ export function CommerceField({ label }: { label: string }) {
             </Text>
           )}
 
-          {/* The state as a sentence. Naming the channels beats a count: "on 2
-              channels" leaves the merchant to open the dialog to learn WHICH,
-              which is the one question the card exists to answer. */}
-          <Text as="p" variant="bodyMd">
-            {publishedChannelNames.length > 0
-              ? publishedChannelNames.join(", ")
-              : channelsAreComplete
-                ? ((t.noneSelected as string) || "Not published on any sales channel")
-                : "—"}
-          </Text>
-
-          {scopeSummary && (
-            <Text as="p" variant="bodySm" tone="subdued">{scopeSummary}</Text>
+          {data.catalogsKnown === false && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              {(t.catalogsUnknown as string) ||
+                "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin."}
+            </Text>
           )}
 
-          <Box>
-            <Button onClick={() => setManageOpen(true)} disabled={saving}>
-              {(t.manage as string) || "Manage"}
-            </Button>
-          </Box>
+          {groups.map((group) => (
+            <BlockStack gap="300" key={group.id}>
+              {GROUP_TEXT[group.id].heading && (
+                <Text as="h3" variant="headingSm">{GROUP_TEXT[group.id].heading}</Text>
+              )}
 
+              {GROUP_TEXT[group.id].hint && (
+                <Text as="p" variant="bodySm" tone="subdued">{GROUP_TEXT[group.id].hint}</Text>
+              )}
+
+              {/* Only the SALES CHANNEL group survives empty (groupPublications
+                  drops the other two), so this line is always about channels. */}
+              {group.rows.length === 0
+                ? channelsAreComplete && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {(t.noChannels as string) || "This shop has no sales channels installed."}
+                    </Text>
+                  )
+                : group.rows.map(renderChannel)}
+            </BlockStack>
+          ))}
         </>
       )}
-
-      {/* OUTSIDE the `data &&` branch: `load()` starts by clearing `data`, so
-          a save or a reload with the dialog open would unmount it — it would
-          blink shut under the merchant's hands and drop focus. It renders the
-          rows it has and comes back with the rest. */}
-      <PublishingModal
-        open={manageOpen}
-        onClose={() => setManageOpen(false)}
-        channels={data?.channels ?? []}
-        truncated={data?.channelsTruncated === true}
-        catalogsKnown={data?.catalogsKnown !== false}
-        channelsComplete={channelsAreComplete}
-        channelState={channelState}
-        setChannelState={setChannelState}
-        saving={saving}
-        t={{
-          title: (t.manageTitle as string) || "Manage publishing",
-          done: (t.done as string) || "Done",
-          headings: {
-            channels: (t.channelsHeading as string) || "Sales channels",
-            market: (t.marketsHeading as string) || "Regions",
-            companyLocation: (t.b2bHeading as string) || "B2B catalogs",
-          },
-          // Regions and B2B catalogs answer "who may see it", not "where is it
-          // sold" — merchants reliably read them as channels, which is the
-          // whole reason they sit apart and carry a line each.
-          hints: {
-            market:
-              (t.marketsHint as string) ||
-              "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
-            companyLocation:
-              (t.b2bHint as string) || "B2B catalogs decide which business customers can see the product.",
-          },
-          scheduled: (t.scheduled as string) || "Scheduled for {date}",
-          noChannels: (t.noChannels as string) || "This shop has no sales channels installed.",
-          truncated:
-            (t.channelsTruncated as string) ||
-            "More channels exist than were loaded. Manage the rest in the Shopify admin.",
-          catalogsUnknown:
-            (t.catalogsUnknown as string) ||
-            "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin.",
-        }}
-      />
     </BlockStack>
   );
 }

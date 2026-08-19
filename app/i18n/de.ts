@@ -652,13 +652,6 @@ export const de = {
       retry: "Nochmal versuchen",
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
-      channelsHeading: "Vertriebskanäle",
-      manage: "Verwalten",
-      manageTitle: "Veröffentlichung verwalten",
-      done: "Fertig",
-      noneSelected: "Auf keinem Vertriebskanal veröffentlicht",
-      marketCount: "Regionen: {count}",
-      b2bCount: "B2B-Kataloge: {count}",
       // Shopify beantwortet drei verschiedene Fragen mit einem Mechanismus —
       // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
       // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
