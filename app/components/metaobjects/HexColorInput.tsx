@@ -146,8 +146,11 @@ export function HexColorInput({
                   // The ring is the only thing that can mark the chosen one:
                   // a border colour would vanish against the swatch it sits on.
                   border: "1px solid var(--p-color-border)",
-                  outline: selected ? "2px solid var(--p-color-border-emphasis)" : undefined,
-                  outlineOffset: "1px",
+                  // Selection is a SHADOW, not an outline: an inline outline
+                  // beats the browser's own `:focus-visible` ring, so tabbing
+                  // onto the already-selected swatch changed nothing on screen
+                  // and a keyboard user lost their place.
+                  boxShadow: selected ? "0 0 0 2px var(--p-color-border-emphasis)" : undefined,
                 }}
               />
             );

@@ -611,3 +611,39 @@ describe("the pulsing language buttons — compound keys, not bare GIDs", () => 
     expect(hasPrimaryContentMissing(item, "metaobjects")).toBe(false);
   });
 });
+
+describe("a type whose Translations capability is off", () => {
+  const item = (capability: boolean | null) =>
+    ({
+      id: "metaobject_type_x",
+      translatableCapability: capability,
+      metaobjects: [
+        { id: "gid://shopify/Metaobject/9", fields: [{ key: "label", value: "Gold", type: "single_line_text_field" }] },
+      ],
+      fieldDefinitions: [LABEL_FIELD],
+      translations: [],
+    }) as never;
+
+  it("stops counting once Shopify says the type does not translate", async () => {
+    // Otherwise the pulse is permanent for a different reason: the write path
+    // refuses the register for want of a digest, so the merchant cannot clear
+    // it either.
+    const { hasLocaleMissingTranslations } = await import("~/utils/field-validation.utils");
+    expect(hasLocaleMissingTranslations(item(false), "fr", "de", "metaobjects")).toBe(false);
+  });
+
+  it("keeps counting while the capability is UNKNOWN", async () => {
+    // Hiding a real missing translation behind a guess is the worse error, and
+    // a row cached before the column exists knows nothing.
+    const { hasLocaleMissingTranslations } = await import("~/utils/field-validation.utils");
+    expect(hasLocaleMissingTranslations(item(null), "fr", "de", "metaobjects")).toBe(true);
+    expect(hasLocaleMissingTranslations(item(true), "fr", "de", "metaobjects")).toBe(true);
+  });
+
+  it("names the missing fields by COMPOUND key, so the tooltip can split them", async () => {
+    const { getMissingLocaleTranslationFields } = await import("~/utils/field-validation.utils");
+    expect(getMissingLocaleTranslationFields(item(null), "fr", "de", "metaobjects")).toEqual([
+      "gid://shopify/Metaobject/9#label",
+    ]);
+  });
+});

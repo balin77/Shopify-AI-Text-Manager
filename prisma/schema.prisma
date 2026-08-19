@@ -1209,6 +1209,16 @@ model MetaobjectDefinition {
   /// `attributesSyncedAt`.
   adminAccess String?
 
+  /// Shopify's `capabilities.translatable.enabled` for this definition.
+  ///
+  /// NULL means UNKNOWN — the row predates the column, or a narrower query did
+  /// not carry it — and is NEVER read as "does not translate". Only a KNOWN
+  /// false takes a type out of the "this locale still needs work" count, which
+  /// is what keeps the language buttons from pulsing forever on a type whose
+  /// Translations capability is simply switched off. Same rule as
+  /// `adminAccess` above.
+  translatableCapability Boolean?
+
   lastSyncedAt DateTime @default(now())
 
   @@unique([shop, id])

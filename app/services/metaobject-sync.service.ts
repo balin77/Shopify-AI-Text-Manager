@@ -34,6 +34,8 @@ interface MetaobjectDefinition {
    * false. A reader that needs the flag must treat `undefined` as unknown and
    * re-sync, never as "optional".
    */
+  /** Shopify's capability block. ABSENT means the query did not ask. */
+  capabilities?: { translatable?: { enabled?: boolean | null } | null } | null;
   fieldDefinitions: Array<{
     key: string;
     name: string;
@@ -73,6 +75,19 @@ const TRANSLATION_BATCH_SIZE = 250;
 function accessColumn(def: MetaobjectDefinition): { adminAccess?: string | null } {
   if (def.access === undefined) return {};
   return { adminAccess: def.access?.admin ?? null };
+}
+
+/**
+ * The `translatableCapability` column, under the same rule as `accessColumn`.
+ *
+ * A response without `capabilities` leaves the column alone; one that carries
+ * it writes the flag. NEVER defaulted to false: a type whose capability is
+ * unknown must keep counting towards "this locale still needs work", because
+ * the alternative is silently hiding real missing translations.
+ */
+function translatableColumn(def: MetaobjectDefinition): { translatableCapability?: boolean | null } {
+  if (def.capabilities === undefined) return {};
+  return { translatableCapability: def.capabilities?.translatable?.enabled ?? null };
 }
 
 export class MetaobjectSyncService {
@@ -189,6 +204,11 @@ export class MetaobjectSyncService {
               access {
                 admin
               }
+              capabilities {
+                translatable {
+                  enabled
+                }
+              }
               fieldDefinitions {
                 key
                 name
@@ -238,6 +258,7 @@ export class MetaobjectSyncService {
           description: def.description,
           fieldDefinitions: def.fieldDefinitions,
           ...accessColumn(def),
+          ...translatableColumn(def),
           lastSyncedAt: new Date()
         },
         update: {
@@ -245,6 +266,7 @@ export class MetaobjectSyncService {
           description: def.description,
           fieldDefinitions: def.fieldDefinitions,
           ...accessColumn(def),
+          ...translatableColumn(def),
           lastSyncedAt: new Date()
         }
       });

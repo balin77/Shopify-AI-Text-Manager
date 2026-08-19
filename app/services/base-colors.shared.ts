@@ -1,5 +1,5 @@
 /**
- * Hex values for Shopify's 19 base colour names — as SUGGESTIONS.
+ * Hex values for 17 of Shopify's 19 base colour names — as SUGGESTIONS.
  *
  * ── Why this file exists at all ─────────────────────────────────────────────
  * Shopify's taxonomy exposes NO colour for a taxonomy value. Measured on a
@@ -11,10 +11,11 @@
  *
  * ── What these values ARE, and what they are not ────────────────────────────
  * They are NOT Shopify's. Shopify publishes none, and this module must never
- * be read as if it had recovered them. Fifteen of the nineteen names are CSS
- * Color Level 4 KEYWORDS, so their hex is a published standard rather than
- * anybody's taste; the remaining four have no keyword and carry a stated
- * convention instead, marked `convention: true` so the UI can say so.
+ * be read as if it had recovered them. FIFTEEN of the names are CSS Color
+ * Level 4 KEYWORDS, so their hex is a published standard rather than anybody's
+ * taste. TWO more — Bronze and Rose gold — have no keyword and carry a stated
+ * convention instead, marked `convention: true` so the UI can say so. The
+ * remaining TWO are absent entirely, for the reason below.
  *
  * The merchant always overrides: this is a one-click starting point next to a
  * free hex field, never a value written on their behalf. Nothing here is ever
