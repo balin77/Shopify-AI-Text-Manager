@@ -9,11 +9,17 @@
  * report into Task.result so app.seo.structured-data.tsx's "Batch-Prüfung"
  * sub-section can read a cached result instead of re-scanning on every visit.
  *
- * Non-AI task: the scan only reads the DB content cache plus ONE small live
- * Admin GraphQL call for shop name/domain/currency (not a catalog sweep —
- * see fetchShopContext below). It must never go through AIQueueService, and
- * (see api.ai.tsx's NON_AI_ACTIONS) is exempt from the route's "shop must
- * have an AI key" gate, matching seoAudit.
+ * Non-AI task: no provider call at all. It must never go through
+ * AIQueueService, and (see api.ai.tsx's NON_AI_ACTIONS) is exempt from the
+ * route's "shop must have an AI key" gate, matching seoAudit.
+ *
+ * It makes exactly TWO kinds of Admin call. One small one for shop
+ * name/domain/currency (fetchShopContext below), and — since the gallery-video
+ * check joined this button — a BOUNDED sweep over the shop's variants
+ * (runGalleryVideoAudit). The sweep is here and not inside
+ * json-ld-audit.service.ts on purpose: that service is documented DB-cache-only
+ * and stays that way, testable without mocking admin.graphql. The two results
+ * are merged into one Task.result because they answer one merchant question.
  */
 
 import { data as json } from "react-router";
@@ -23,6 +29,7 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { getShopCurrencyCode } from "~/services/bulk-editor/load.server";
 import { runJsonLdAudit, type JsonLdAuditAggregate } from "~/services/seo/json-ld-audit.service";
+import { runGalleryVideoAudit } from "~/services/seo/gallery-video-audit.server";
 import type { ShopInfo } from "~/services/structured-data.service";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
@@ -139,6 +146,14 @@ async function runSeoJsonLdAuditTask(taskId: string, args: RunArgs): Promise<voi
       },
     });
 
+    // The gallery-video sweep rides along on the same button rather than
+    // growing a second task type: it answers the same question ("does the
+    // catalog carry what a rich result needs"), and a merchant should not have
+    // to know that one half reads the cache while the other asks Shopify.
+    // It never throws — a throttled sweep returns null, which the UI reads as
+    // "not checked" and which must never sink the JSON-LD report next to it.
+    const galleryVideos = await runGalleryVideoAudit(admin, shop);
+
     await db.task.update({
       where: { id: taskId },
       data: {
@@ -147,7 +162,7 @@ async function runSeoJsonLdAuditTask(taskId: string, args: RunArgs): Promise<voi
         processed: aggregate.totalScanned,
         total: aggregate.totalScanned || 1,
         completedAt: new Date(),
-        result: JSON.stringify(aggregate),
+        result: JSON.stringify({ ...aggregate, galleryVideos } satisfies JsonLdAuditAggregate),
       },
     });
   } catch (err: unknown) {

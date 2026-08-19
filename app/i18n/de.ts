@@ -2152,6 +2152,18 @@ export const de = {
       // PLAN_MARKUP_ACTIVATION §1.2 — Schritt 3. Die Aktivierung stand bis
       // 2026-08 GANZ OBEN auf dieser Seite, also in der Reihenfolge, in der man
       // den Fehler macht, bevor man ihn sehen kann.
+      // PLAN_MARKUP_ACTIVATION §3.2 — der Befund zu den Galerie-Videos. Erscheint
+      // erst, wenn die Batch-Prüfung gelaufen ist; ohne sie steht nur der
+      // allgemeine Hinweis darüber.
+      galleryVideos: {
+        none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
+        found: "{products} Produkte haben Videos aus einer Galerie — {missing} davon ohne Datum.",
+        fix: "Ohne Datum entsteht kein Video-Rich-Result. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum\"), dann zählt das Video.",
+        vimeoOnly: "{count} davon haben nur Vimeo-Videos — für die wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
+        capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
+      },
       activation: {
         openSwitches: "Schalter öffnen",
         summary: {

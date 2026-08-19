@@ -572,6 +572,9 @@ export default function SeoStructuredData() {
   );
   const hintCopy = (s as any).hints as Record<string, string>;
   const act = (s as any).activation as Record<string, any>;
+  const gv = (s as any).galleryVideos as Record<string, string>;
+  /** The sweep that rode along on the batch check — see JsonLdAuditAggregate. */
+  const galleryVideos = jsonLdAudit?.galleryVideos ?? null;
 
   // §1.2 — the gate. `measured` is deliberately strict: no crawl at all AND a
   // snapshot whose jsonLdTypes column is empty everywhere both count as "not
@@ -1249,12 +1252,83 @@ export default function SeoStructuredData() {
                     VideoObject Google reports as invalid and never turns into a
                     rich result — and the app cannot fill the date for it, since
                     a URL entry has no File record. The one-metafield fix is the
-                    whole point of saying it here. */}
-                <Banner tone="info">
-                  <Text as="p" variant="bodySm">
-                    {emphasize((s as any).schemaVideoDateNote as string)}
+                    whole point of saying it here.
+
+                    Three states, and the first two must not be confused: the
+                    check has never run (or its sweep failed) ⇒ the general note
+                    only; it ran and found none ⇒ say so and stop; it found some
+                    ⇒ name the products. `galleryVideos === undefined` is an old
+                    task result from before this existed, `null` a sweep that was
+                    throttled or refused — neither is "no gallery videos". */}
+                {!galleryVideos ? (
+                  <Banner tone="info">
+                    <Text as="p" variant="bodySm">
+                      {emphasize((s as any).schemaVideoDateNote as string)}
+                    </Text>
+                  </Banner>
+                ) : galleryVideos.totalProducts === 0 ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(gv.none as string).replace(
+                      "{variants}",
+                      String(galleryVideos.scannedVariants),
+                    )}
+                    {/* A sweep that broke off part-way found nothing SO FAR —
+                        which is not the same as nothing being there. */}
+                    {galleryVideos.capped ? ` ${gv.capped as string}` : ""}
                   </Text>
-                </Banner>
+                ) : (
+                  <Banner tone={galleryVideos.missingDate > 0 ? "warning" : "info"}>
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">
+                        {(gv.found as string)
+                          .replace("{products}", String(galleryVideos.totalProducts))
+                          .replace("{missing}", String(galleryVideos.missingDate))}
+                      </Text>
+                      {galleryVideos.missingDate > 0 && (
+                        <Text as="p" variant="bodySm">{emphasize(gv.fix as string)}</Text>
+                      )}
+                      {/* A Vimeo gallery video produces no markup at all, so a
+                          date would not help it — counted apart, or a merchant
+                          sets a date that changes nothing. */}
+                      {galleryVideos.vimeoOnly > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {(gv.vimeoOnly as string).replace(
+                            "{count}",
+                            String(galleryVideos.vimeoOnly),
+                          )}
+                        </Text>
+                      )}
+                      {galleryVideos.capped && (
+                        <Text as="p" variant="bodySm" tone="subdued">{gv.capped as string}</Text>
+                      )}
+                      <BlockStack gap="050">
+                        {galleryVideos.products.map((prod) => (
+                          <InlineStack key={prod.id} gap="200" blockAlign="center" wrap>
+                            <Button
+                              variant="plain"
+                              onClick={() => openBatchItemInEditor("product", prod.id)}
+                            >
+                              {prod.title}
+                            </Button>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {(prod.hasUploadDate ? (gv.rowOk as string) : (gv.rowMissing as string))
+                                .replace("{youtube}", String(prod.youtube))
+                                .replace("{vimeo}", String(prod.vimeo))}
+                            </Text>
+                          </InlineStack>
+                        ))}
+                        {galleryVideos.totalProducts > galleryVideos.products.length && (
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {b.moreItems.replace(
+                              "{count}",
+                              String(galleryVideos.totalProducts - galleryVideos.products.length),
+                            )}
+                          </Text>
+                        )}
+                      </BlockStack>
+                    </BlockStack>
+                  </Banner>
+                )}
                 <Text as="p" variant="bodySm" tone="subdued">
                   {emphasize((s as any).schemaFaqNote as string)}
                 </Text>
