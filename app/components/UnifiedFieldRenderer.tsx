@@ -29,6 +29,13 @@ export interface FieldRendererProps {
   field: FieldDefinition;
   value: string;
   onChange: (value: string) => void;
+  /**
+   * Only the taxonomy field fires this: the category that was just picked,
+   * with its NAME. The value map takes the GID alone, but deriving a product
+   * type needs the label, and at that moment it exists nowhere else — the
+   * cache still holds the previous category.
+   */
+  onCategoryPicked?: (option: { name: string; fullName: string; id: string }) => void;
   suggestion?: string;
   isPrimaryLocale: boolean;
   isTranslated: boolean;
@@ -94,6 +101,7 @@ export function UnifiedFieldRenderer(
     field,
     value,
     onChange,
+    onCategoryPicked,
     suggestion,
     isPrimaryLocale,
     isTranslated,
@@ -343,6 +351,7 @@ export function UnifiedFieldRenderer(
       <TaxonomyField
         value={value}
         onChange={onChange}
+        onPick={onCategoryPicked}
         currentLabel={(selectedItem?.categoryName as string) || ""}
         label={translatedFieldLabel}
         // Same rule as every other attribute: one value per product, so a

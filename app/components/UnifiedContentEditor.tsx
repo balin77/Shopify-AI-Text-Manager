@@ -611,12 +611,87 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // §7.2 — the page knows this definition refuses our writes.
     fieldsReadOnly;
 
+  // ── The product type derived from the category ──────────────────────────
+  //
+  // A merchant who files a product under "Home & Garden > Decor > Vases" has
+  // already said what it is; making them type "Vases" into a second field is
+  // asking the same question twice. So picking a category fills the product
+  // type — but ONLY when it is empty. It is the merchant's own wording, read
+  // by their rule-based collections and their theme filters, and overwriting
+  // it from a taxonomy leaf would quietly re-file products they had grouped
+  // on purpose.
+  //
+  // The LEAF, not the path: "Home & Garden > Decor > Vases" is unusable as a
+  // filter value, and in the Merchant Center every distinct path would be its
+  // own group.
+  const derivedProductTypeRef = useRef<{ itemId: string; value: string } | null>(null);
+  /** Falling-edge detector for the save — see the effect below. */
+  const wasSavingRef = useRef(false);
+
+  const handleCategoryPicked = (option: { name: string }) => {
+    if (config.contentType !== "products" || !selectedItem) return;
+    if ((helpers.getEditableValue("productType") || "").trim()) return;
+    const derived = option.name.trim();
+    if (!derived) return;
+    handlers.handleValueChange("productType", derived);
+    derivedProductTypeRef.current = { itemId: selectedItem.id, value: derived };
+  };
+
+  /**
+   * …and translates it, but only AFTER the save has landed.
+   *
+   * Not on the pick, and the reason is the §6.6 invalidation rule rather than
+   * a preference: a primary save DELETES the foreign translations of every
+   * field it changed. Translating first would write the translations and the
+   * save would then wipe exactly them — the feature would look like it worked
+   * once and then silently undo itself. So the derived value waits for its own
+   * primary write and is translated on top of it.
+   *
+   * Four guards, and each closes a way this could translate the wrong thing:
+   * the item must still be the one that was saved; the save must actually have
+   * gone through (a failed one leaves `hasChanges` standing, and the pick is
+   * still pending, so it waits for the next attempt); the field must still
+   * hold exactly what was derived, because a merchant who typed over it has
+   * said what they want and can press the translate button themselves; and the
+   * shop must have a target language at all — the handler would otherwise pop
+   * a warning box at somebody who never asked for a translation.
+   */
+  useEffect(() => {
+    const saving = state.isSavingCurrentItem;
+    const wasSaving = wasSavingRef.current;
+    wasSavingRef.current = saving;
+    if (!wasSaving || saving) return;
+
+    const pending = derivedProductTypeRef.current;
+    if (!pending) return;
+    if (!selectedItem || pending.itemId !== selectedItem.id) {
+      derivedProductTypeRef.current = null;
+      return;
+    }
+    // Still unsaved ⇒ the write did not land. Kept, not dropped: the next save
+    // is the one this was waiting for.
+    if (state.hasChanges) return;
+
+    derivedProductTypeRef.current = null;
+    if ((helpers.getEditableValue("productType") || "").trim() !== pending.value) return;
+    if (state.currentLanguage !== primaryLocale) return;
+    // The SAME list the handler filters on, so this cannot decide to fire on a
+    // selection the handler then refuses.
+    if (state.enabledLanguages.filter((l: string) => l !== primaryLocale).length === 0) return;
+
+    handlers.handleTranslateFieldToAllLocales("productType");
+    // Driven by the save flag alone: adding the values it READS would re-run it
+    // on every keystroke, and the falling edge is the whole trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.isSavingCurrentItem]);
+
   const renderEditorField = (field: FieldDefinition) => (
         <UnifiedFieldRenderer
           key={field.key}
           field={field}
           value={helpers.getEditableValue(field.key)}
           onChange={(value) => handlers.handleValueChange(field.key, value)}
+          onCategoryPicked={handleCategoryPicked}
           suggestion={state.aiSuggestions[field.key]}
           isPrimaryLocale={state.currentLanguage === primaryLocale}
           isTranslated={helpers.isFieldTranslated(field.key)}
