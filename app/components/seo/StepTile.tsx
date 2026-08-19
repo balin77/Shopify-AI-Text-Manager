@@ -23,6 +23,7 @@ export function StepTile({
   title,
   body,
   badge,
+  accent,
 }: {
   selected: boolean;
   onSelect: () => void;
@@ -32,7 +33,23 @@ export function StepTile({
   body: string;
   /** Status badge for this step — its own verdict, at a glance. */
   badge: ReactNode;
+  /**
+   * Subtle tint that pairs the tile with the step's badge in the section
+   * intro. OPTIONAL: the AEO and crawl sections share this component and keep
+   * the plain surface, so leaving it off must change nothing.
+   *
+   * It deliberately does NOT carry the selected state — the border does that.
+   * Written as a MAP rather than a template string because Box's background
+   * is a typed union: a computed `bg-surface-${x}` compiles to `string` and
+   * would take a typo straight past the compiler into a silent no-op.
+   */
+  accent?: "info" | "caution" | "magic";
 }) {
+  const ACCENT_BG = {
+    info: "bg-surface-info",
+    caution: "bg-surface-caution",
+    magic: "bg-surface-magic",
+  } as const;
   return (
     <button
       type="button"
@@ -55,7 +72,9 @@ export function StepTile({
         borderWidth={selected ? "050" : "025"}
         borderColor={selected ? "border-emphasis" : "border"}
         borderRadius="200"
-        background={selected ? "bg-surface-secondary" : "bg-surface"}
+        background={
+          accent ? `bg-surface-${accent}` : selected ? "bg-surface-secondary" : "bg-surface"
+        }
         minHeight="100%"
       >
         <BlockStack gap="200">

@@ -24,7 +24,7 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Card, Box, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable, List } from "@shopify/polaris";
+import { Card, Box, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
@@ -892,15 +892,27 @@ export default function SeoStructuredData() {
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{(s as any).introBody1 as string}</Text>
             <Text as="p" variant="bodyMd">{(s as any).introBody2 as string}</Text>
-            {/* One line per step, stacked: the three tiles below are a
-                SEQUENCE, and as a single paragraph they read like three
-                equal options — which is how a merchant ends up in step 3
-                before step 1 has measured anything. */}
-            <List type="bullet">
-              <List.Item>{emphasize((s as any).introStep1 as string)}</List.Item>
-              <List.Item>{emphasize((s as any).introStep2 as string)}</List.Item>
-              <List.Item>{emphasize((s as any).introStep3 as string)}</List.Item>
-            </List>
+            {/* One row per step, stacked: the three tiles below are a
+                SEQUENCE, and as a single paragraph they read like three equal
+                options — which is how a merchant ends up in step 3 before
+                step 1 has measured anything. Each row wears the colour its
+                tile wears, so "Schritt 3" here and the third card are
+                recognisably the same thing; the badge REPLACES the bold
+                prefix rather than joining it, saying it twice is noise. */}
+            <BlockStack gap="200">
+              {([
+                ["introStepBadge1", "introStep1", "info"],
+                ["introStepBadge2", "introStep2", "attention"],
+                ["introStepBadge3", "introStep3", "magic"],
+              ] as const).map(([badgeKey, textKey, tone]) => (
+                <InlineStack key={badgeKey} gap="200" blockAlign="start" wrap={false}>
+                  <div style={{ flexShrink: 0 }}>
+                    <Badge tone={tone}>{(s as any)[badgeKey] as string}</Badge>
+                  </div>
+                  <Text as="p" variant="bodyMd">{(s as any)[textKey] as string}</Text>
+                </InlineStack>
+              ))}
+            </BlockStack>
             {/* Where those numbers come from — the one thing this page never
                 said, so "not measured" sent people hunting for a refresh
                 button that lives on another page. A real button, not a text
@@ -931,6 +943,7 @@ export default function SeoStructuredData() {
             title={live.stepTitle}
             body={live.stepBody}
             badge={deliveryBadge}
+            accent="info"
           />
           <StepTile
             selected={step === "data"}
@@ -939,6 +952,7 @@ export default function SeoStructuredData() {
             title={b.stepTitle}
             body={b.stepBody}
             badge={dataBadge}
+            accent="caution"
           />
           <StepTile
             selected={step === "activate"}
@@ -947,6 +961,7 @@ export default function SeoStructuredData() {
             title={act.stepTitle as string}
             body={act.stepBody as string}
             badge={activationBadge}
+            accent="magic"
           />
         </InlineGrid>
 
