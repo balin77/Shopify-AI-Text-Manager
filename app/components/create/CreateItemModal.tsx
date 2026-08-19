@@ -60,8 +60,40 @@ import {
   type CreateValidationError,
 } from "~/config/create-fields.config";
 
+/** Said in two branches of the picker callback (upload and library) and worth
+ *  one constant: two copies of a sentence drift, and this one is a refusal the
+ *  merchant has to be able to act on. */
+const ONLY_IMAGES_FALLBACK =
+  "Only images can be attached here. Add video or 3D from the item's media manager after creating it.";
+
 export interface CreateItemModalTexts {
   title?: string;
+  /** `New {resource}` — the resource name comes from `resourceLabel`, because
+   *  interpolating the config's own slug produced an English word in every
+   *  language ("New metaobject"). */
+  titleFor?: string;
+  /** The created resource's name, already translated by the caller. */
+  resourceLabel?: string;
+  removeImage?: string;
+  /** The picker accepts video and 3D; this field does not. */
+  onlyImagesHere?: string;
+  externalVideoNotAnImage?: string;
+  /** The "nothing selected" row of a dynamic picker. */
+  noneOption?: string;
+  tagsHint?: string;
+  /** §2.3 — everything this app creates is created unpublished. */
+  createsUnpublishedNotice?: string;
+  defaultRuleSetName?: string;
+  /** Validation CODES from `validateCreatePayload`, phrased here. Without
+   *  them the bare code reached the screen next to the field. */
+  errors?: Record<string, string>;
+  /**
+   * The editor's `content` block, for controls this modal SHARES with the
+   * entry editor (today: the taxonomy picker). Their strings belong where the
+   * editor already reads them; copying them under `createModal` would give one
+   * control two vocabularies.
+   */
+  content?: Record<string, string>;
   create?: string;
   cancel?: string;
   moreFields?: string;
@@ -509,7 +541,7 @@ export function CreateItemModal({
     if (!first) return;
     if (first.source === "upload") {
       if (first.kind !== "image") {
-        window.alert("Only images can be attached here. Add video or 3D from the item's media manager after creating it.");
+        window.alert(t.onlyImagesHere || ONLY_IMAGES_FALLBACK);
         return;
       }
       const attached = { url: first.resourceUrl, preview: first.previewUrl, alt: "" };
@@ -519,7 +551,7 @@ export function CreateItemModal({
     }
     if (first.source === "library") {
       if (first.kind !== "image") {
-        window.alert("Only images can be attached here. Add video or 3D from the item's media manager after creating it.");
+        window.alert(t.onlyImagesHere || ONLY_IMAGES_FALLBACK);
         return;
       }
       const attached = { url: first.assetUrl, preview: first.previewUrl, alt: first.alt ?? "" };
@@ -528,7 +560,7 @@ export function CreateItemModal({
       return;
     }
     // external_url is a video embed — not an image, and not attachable here.
-    window.alert("An external video link cannot be used as an item image.");
+    window.alert(t.externalVideoNotAnImage || "An external video link cannot be used as an item image.");
   }, [autoAltText]);
 
   if (!spec) return null;
@@ -539,10 +571,17 @@ export function CreateItemModal({
   const renderField = (field: CreateFieldDef) => {
     const value = values[field.key] ?? "";
     const fieldError = errorFor(field.key);
+    // A CODE is not a message. Before this, a rejected field showed
+    // "invalidTaxonomyValue (Solid)" — the validator's own vocabulary, in
+    // English, next to the input. The map is the phrasing; an unmapped code
+    // still falls back to itself rather than to nothing, because a silent
+    // field with a disabled Create button is the worse dead end.
     const errorText = fieldError
       ? fieldError.code === "required"
-        ? t.required || "Required"
-        : `${fieldError.code}${fieldError.detail ? ` (${fieldError.detail})` : ""}`
+        ? t.errors?.required || t.required || "Required"
+        : (t.errors?.[fieldError.code] || `${fieldError.code} {detail}`)
+            .replace("{detail}", fieldError.detail ?? "")
+            .trim()
       : undefined;
 
     switch (field.kind) {
@@ -555,7 +594,7 @@ export function CreateItemModal({
               <Button onClick={() => setPickerOpen(true)}>
                 {image ? t.changeImage || "Change image" : t.chooseImage || "Choose image"}
               </Button>
-              {image && <Button variant="plain" tone="critical" onClick={() => setImage(null)}>Remove</Button>}
+              {image && <Button variant="plain" tone="critical" onClick={() => setImage(null)}>{t.removeImage || "Remove"}</Button>}
             </InlineStack>
             {image && (
               <TextField
@@ -602,7 +641,7 @@ export function CreateItemModal({
           <Select
             key={field.key}
             label={label(field)}
-            options={[{ value: "", label: "—" }, ...options]}
+            options={[{ value: "", label: t.noneOption || "—" }, ...options]}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             // A disabled option that is nevertheless SELECTED (prefilled) shows
@@ -694,6 +733,7 @@ export function CreateItemModal({
             min={taxonomy.min}
             max={taxonomy.max}
             error={errorText}
+            content={t.content}
           />
         );
       }
@@ -707,7 +747,7 @@ export function CreateItemModal({
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
             error={errorText}
-            helpText="Comma-separated"
+            helpText={t.tagsHint || "Comma-separated"}
           />
         );
 
@@ -744,7 +784,8 @@ export function CreateItemModal({
       <Modal
         open={open}
         onClose={handleClose}
-        title={t.title || `New ${spec.titleKey}`}
+        title={t.title ||
+        (t.titleFor || "New {resource}").replace("{resource}", t.resourceLabel || spec.titleKey)}
         primaryAction={{
           content: t.create || "Create",
           onAction: handleSubmit,
@@ -780,7 +821,8 @@ export function CreateItemModal({
             {spec.createsUnpublished && (
               <Banner tone="info">
                 <p>
-                  This is created as a draft — nothing goes live until you publish it.
+                  {t.createsUnpublishedNotice ||
+                    "This is created as a draft — nothing goes live until you publish it."}
                 </p>
               </Banner>
             )}
@@ -802,7 +844,7 @@ export function CreateItemModal({
                     if (automated && ruleSources.length === 0) {
                       setRuleSources([
                         {
-                          title: "Rule set 1",
+                          title: t.defaultRuleSetName || "Rule set 1",
                           inclusion: {
                             matchType: "ALL",
                             conditions: [newCondition("inclusion", conditionKinds("inclusion")[0].key, "c0")],

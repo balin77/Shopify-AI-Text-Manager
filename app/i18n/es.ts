@@ -497,6 +497,7 @@ export const es: Translation = {
 
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — crear contenido ──────────────────
     createButtonLabel: "Crear",
+    createEntryButtonLabel: "A\u00f1adir entrada",
     createChooserTitle: "¿Qué quieres crear?",
     // Dos rechazos DISTINTOS con soluciones distintas — nunca deben compartir
     // el mismo texto (§1.2).
@@ -767,6 +768,26 @@ export const es: Translation = {
     createdNotSyncedBody: "El elemento se creó en Shopify. Solo falta la copia local — recarga para verlo. NO lo crees por segunda vez.",
     createdHandle: "Handle: {handle}",
     createModal: {
+      titleFor: "Nuevo: {resource}",
+      removeImage: "Quitar",
+      onlyImagesHere: "Aqu\u00ed solo se pueden adjuntar im\u00e1genes. A\u00f1ade v\u00eddeo o 3D en el gestor de medios del elemento despu\u00e9s de crearlo.",
+      externalVideoNotAnImage: "Un enlace de v\u00eddeo externo no se puede usar como imagen.",
+      noneOption: "\u2014",
+      tagsHint: "Separado por comas",
+      createsUnpublishedNotice: "Esto se crea como borrador \u2014 nada se publica hasta que t\u00fa lo publiques.",
+      defaultRuleSetName: "Conjunto de reglas 1",
+      collectionTypeLabel: "\u00bfC\u00f3mo se a\u00f1aden los productos?",
+      collectionManual: "Los elijo yo",
+      collectionAutomated: "Autom\u00e1ticamente, por reglas",
+      errors: {
+        required: "Obligatorio",
+        tooLong: "Demasiado largo ({detail})",
+        unknownField: "Esta app no conoce este campo.",
+        invalidOption: "\u201c{detail}\u201d no es una de las opciones.",
+        invalidHandle: "Solo min\u00fasculas, n\u00fameros y guiones.",
+        invalidMoney: "Introduce un importe, p. ej. 19.90",
+        invalidTaxonomyValue: "Elige un valor de la lista ({detail}).",
+      },
       // PLAN §2.5a-d — los extras de IA.
       altText: "Texto alternativo",
       changeImage: "Cambiar imagen",

@@ -498,6 +498,7 @@ export const en: Translation = {
 
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — creating content ─────────────────
     createButtonLabel: "Create",
+    createEntryButtonLabel: "Add entry",
     createChooserTitle: "What would you like to create?",
     // Two DIFFERENT refusals with different remedies — they must never share
     // the same text (§1.2).
@@ -771,6 +772,30 @@ export const en: Translation = {
     createdNotSyncedBody: "The item was created in Shopify. Only the local copy is missing — reload to see it. Do NOT create it a second time.",
     createdHandle: "Handle: {handle}",
     createModal: {
+      // The modal TITLE. `New {resource}` used to interpolate a raw config
+      // slug, which is why it read "New metaobject" in every language.
+      titleFor: "New {resource}",
+      removeImage: "Remove",
+      onlyImagesHere: "Only images can be attached here. Add video or 3D from the item's media manager after creating it.",
+      externalVideoNotAnImage: "An external video link cannot be used as an item image.",
+      noneOption: "\u2014",
+      tagsHint: "Comma-separated",
+      createsUnpublishedNotice: "This is created as a draft \u2014 nothing goes live until you publish it.",
+      defaultRuleSetName: "Rule set 1",
+      collectionTypeLabel: "How are products added?",
+      collectionManual: "I pick them myself",
+      collectionAutomated: "Automatically, by rules",
+      // Validation codes, which used to render as the bare code next to the
+      // field ("invalidTaxonomyValue (Solid)").
+      errors: {
+        required: "Required",
+        tooLong: "Too long ({detail})",
+        unknownField: "This app does not know this field.",
+        invalidOption: "\u201c{detail}\u201d is not one of the options.",
+        invalidHandle: "Only lowercase letters, numbers and dashes.",
+        invalidMoney: "Enter an amount, e.g. 19.90",
+        invalidTaxonomyValue: "Pick a value from the list ({detail}).",
+      },
       // PLAN §2.5a-d — the AI extras.
       altText: "Alt text",
       changeImage: "Change image",
