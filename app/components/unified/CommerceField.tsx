@@ -83,7 +83,7 @@ export function CommerceField({ label }: { label: string }) {
    * the panel shows the rows it has and says nothing beyond them — the
    * truncation line already tells the merchant why.
    */
-  const complete = !!data && !data.channelsTruncated;
+  const complete = !!data && data.channelsKnown && !data.channelsTruncated;
 
   /** The three lists, always in the admin's order. */
   const groups = data ? groupPublications(data.channels) : [];
@@ -207,24 +207,32 @@ export function CommerceField({ label }: { label: string }) {
     );
   };
 
-  return (
-    <BlockStack gap="300">
-      {/* Before the grid, because it belongs to the whole panel and not to one
-          column: a load that failed produced no lists at all. */}
-      {!data && (
-        <BlockStack gap="300">
-          {channelsHeading}
-          {loadError ? (
-            <Banner tone="warning">
-              <BlockStack gap="200">
-                <Text as="p">{loadError}</Text>
-                <Box><Button onClick={() => load()}>{(t.retry as string) || "Try again"}</Button></Box>
-              </BlockStack>
-            </Banner>
-          ) : (
-            <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />
-          )}
-        </BlockStack>
+  /**
+   * Everything that qualifies the channel list rather than being part of it:
+   * the load's own failure, the notices a save produced, and the two lines
+   * that say what is MISSING from the lists below.
+   *
+   * They render INSIDE the sales-channel column, under its heading — not above
+   * the grid. Above it, they were the first thing in the subcard, and the
+   * subcard draws no title of its own (`ownsItsSectionTitle`): a save warning
+   * about stock became the opening line of an untitled grey box, with
+   * "Vertriebskanaele" appearing as a heading below it. The title has to lead,
+   * and the title lives in the grid because that is what lines it up with
+   * "Regionen".
+   */
+  const channelsColumnNotes = (
+    <>
+      {loadError && (
+        <Banner tone="warning">
+          <BlockStack gap="200">
+            <Text as="p">{loadError}</Text>
+            <Box><Button onClick={() => load()}>{(t.retry as string) || "Try again"}</Button></Box>
+          </BlockStack>
+        </Banner>
+      )}
+
+      {!data && !loadError && (
+        <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />
       )}
 
       {/* The notices belong to whichever half produced them, and a save writes
@@ -240,55 +248,77 @@ export function CommerceField({ label }: { label: string }) {
         </Banner>
       )}
 
-      {data && (
-        <>
-          {data.channelsTruncated && (
-            <Text as="p" variant="bodySm" tone="subdued">
-              {(t.channelsTruncated as string) || "More channels exist than were loaded. Manage the rest in the Shopify admin."}
-            </Text>
-          )}
-
-          {data.catalogsKnown === false && (
-            <Text as="p" variant="bodySm" tone="subdued">
-              {(t.catalogsUnknown as string) ||
-                "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin."}
-            </Text>
-          )}
-
-          {/* The lists sit SIDE BY SIDE wherever the card is wide enough — the
-              same `auto-fit` grid the Details card uses for its short fields.
-              Every column opens with its heading, so the titles line up across
-              the row; that is why the section's own title is in here as the
-              first column's heading rather than on a line above the grid.
-              With one list (the ordinary shop) `auto-fit` collapses to a single
-              full-width column, so nothing changes there. `start` alignment
-              keeps a short list from stretching to the tallest one. */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-              gap: "1rem",
-              alignItems: "start",
-            }}
-          >
-            {groups.map((group) => (
-              <BlockStack gap="300" key={group.id}>
-                {GROUP_HEADING[group.id]}
-
-                {/* Only the SALES CHANNEL group survives empty (groupPublications
-                    drops the other two), so this line is always about channels. */}
-                {group.rows.length === 0
-                  ? complete && (
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {(t.noChannels as string) || "This shop has no sales channels installed."}
-                      </Text>
-                    )
-                  : group.rows.map(renderChannel)}
-              </BlockStack>
-            ))}
-          </div>
-        </>
+      {/* The read itself failed. Said in place, because the alternative is an
+          empty column that looks exactly like a shop with no channels — the
+          claim this panel exists to make only when it is true. */}
+      {data && !data.channelsKnown && (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {(t.channelsUnknown as string) ||
+            "The sales channels could not be read just now, so none are listed here. Try again in a moment."}
+        </Text>
       )}
+
+      {data?.channelsTruncated && (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {(t.channelsTruncated as string) || "More channels exist than were loaded. Manage the rest in the Shopify admin."}
+        </Text>
+      )}
+
+      {data?.catalogsKnown === false && (
+        <Text as="p" variant="bodySm" tone="subdued">
+          {(t.catalogsUnknown as string) ||
+            "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin."}
+        </Text>
+      )}
+    </>
+  );
+
+  /**
+   * Without data there are no groups, and the sales-channel column still has
+   * to exist: it carries the title and the reason there is nothing under it.
+   * `groupPublications` keeps the channels group even when it is empty, so
+   * this stands in for exactly the pre-load case.
+   */
+  const columns = groups.length > 0 ? groups : [{ id: "channels" as PublicationGroupId, rows: [] }];
+
+  return (
+    <BlockStack gap="300">
+      {/* The lists sit SIDE BY SIDE wherever the card is wide enough — the same
+          `auto-fit` grid the Details card uses for its short fields, off the
+          same token, so tuning one moves both. Every column opens with its
+          heading, so the titles line up across the row; that is why the
+          section's own title is in here as the first column's heading rather
+          than on a line above the grid. With one list (the ordinary shop)
+          `auto-fit` collapses to a single full-width column, so nothing changes
+          there. `start` alignment keeps a short list from stretching to the
+          tallest one. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(var(--app-attribute-grid-min-width), 1fr))",
+          gap: "1rem",
+          alignItems: "start",
+        }}
+      >
+        {columns.map((group) => (
+          <BlockStack gap="300" key={group.id}>
+            {GROUP_HEADING[group.id]}
+
+            {group.id === "channels" && channelsColumnNotes}
+
+            {/* Only the SALES CHANNEL group survives empty (groupPublications
+                drops the other two), so this line is always about channels —
+                and `complete` keeps it silent while nothing has loaded. */}
+            {group.rows.length === 0
+              ? complete && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(t.noChannels as string) || "This shop has no sales channels installed."}
+                  </Text>
+                )
+              : group.rows.map(renderChannel)}
+          </BlockStack>
+        ))}
+      </div>
     </BlockStack>
   );
 }

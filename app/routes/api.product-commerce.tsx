@@ -719,8 +719,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // null for a response that carried nothing, and `catalogsKnown` is false
     // when only the app catalogs were re-read — rebuilding from that would
     // delete every market and B2B row the mirror already had, which is the
-    // "wipe on a partial response" rule one level up.
-    if (publications && catalogsKnown) {
+    // "wipe on a partial response" rule one level up. A TRUNCATED window is
+    // refused for the same reason: `ProductPublication` has no column for
+    // "there were more", so a cut-off list persisted here is indistinguishable
+    // from the whole truth the next time a foreign locale reads the mirror
+    // instead of the live panel — the one place that count is judged with no
+    // truncation flag beside it.
+    if (publications && catalogsKnown && !publications.hasMore) {
       await db.productPublication.deleteMany({ where: { shop: session.shop, productId } }).catch(() => undefined);
       if (publications.rows.length > 0) {
         await db.productPublication.createMany({ data: publications.rows, skipDuplicates: true }).catch(() => undefined);
@@ -743,6 +748,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
         isPublished: row.isPublished,
         publishDate: row.publishDate ? row.publishDate.toISOString() : null,
       })) satisfies CommerceChannelView[],
+      /**
+       * FALSE ⇒ the publications could not be read at all, and the empty list
+       * above is not evidence of anything.
+       *
+       * `loadProductPublications` is careful to answer `null` rather than an
+       * empty connection for exactly this case — and then the list was
+       * flattened to `[]` right here, so a THROTTLED read arrived at the client
+       * as the definite claim "on no sales channel". The alarm badge fired, the
+       * panel said the shop has no channels installed, and the summary
+       * overrode the `ProductPublication` mirror that held the real count. An
+       * empty list and an unanswered question are not the same sentence, and
+       * this is the flag that keeps them apart — the `attributesSyncedAt` rule,
+       * one route over.
+       */
+      channelsKnown: publications !== null,
       channelsTruncated: publications?.hasMore === true,
       // False ⇒ the market and B2B connections could not be asked for, so
       // their absence below is not evidence that the shop has none.

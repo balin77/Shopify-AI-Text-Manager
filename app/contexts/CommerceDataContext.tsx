@@ -37,6 +37,7 @@ import {
 } from "react";
 import { useCommerceReloadNonce, useRegisterCommerceSave } from "./CommerceSaveContext";
 import { groupPublications } from "../services/commerce-sync.shared";
+import { parseMoney } from "../services/bulk-editor/columns.shared";
 import type { CommerceChannelView, CommerceVariantView } from "../routes/api.product-commerce";
 
 /** Shopify's `WeightUnit` enum — an unknown value fails at the SCHEMA level. */
@@ -52,6 +53,13 @@ export interface LoadedState {
   variants: CommerceVariantView[];
   variantsTruncated: boolean;
   channels: CommerceChannelView[];
+  /**
+   * False ⇒ the publications could not be READ, so `channels` above is empty
+   * for want of an answer and not for want of channels. Distinct from
+   * `channelsTruncated` (we read some) and from `catalogsKnown` (we read the
+   * app catalogs but not the market/B2B ones).
+   */
+  channelsKnown: boolean;
   channelsTruncated: boolean;
   /**
    * False ⇒ the market and B2B connections could not be asked for, so the
@@ -103,8 +111,11 @@ export interface CommerceDataValue {
    * The selling price(s) of the loaded variants, for the completeness
    * checklist. `null` while nothing is loaded — the checklist then falls back
    * to the cached price rather than reading "not loaded" as "free".
+   *
+   * `truncated` carries the same warning its channel sibling does: a cut-off
+   * variant window cannot support "nothing here is priced".
    */
-  priceSummary: { display: string; pricedVariants: number; totalVariants: number } | null;
+  priceSummary: { display: string; truncated: boolean } | null;
   hasChanges: boolean;
   /**
    * The same function the editor's save bar drives.
@@ -209,6 +220,9 @@ export function CommerceDataProvider({
           variants: body.variants ?? [],
           variantsTruncated: body.variantsTruncated === true,
           channels: body.channels ?? [],
+          // Absent on an older response: treat a payload that predates the flag
+          // as an answer, or every load would report "unknown" after a deploy.
+          channelsKnown: body.channelsKnown !== false,
           channelsTruncated: body.channelsTruncated === true,
           // Absent ⇒ an older server build that could not answer at all.
           catalogsKnown: body.catalogsKnown === true,
@@ -708,7 +722,10 @@ export function CommerceDataProvider({
    * is NOT "off" — the same trap `dirtyChannels` guards above.
    */
   const salesChannelSummary = useMemo(() => {
-    if (!data) return null;
+    // `null` = no answer, which is what makes the sidebar fall back to the
+    // `ProductPublication` mirror. A failed read has to land here rather than
+    // as a confident zero — see `channelsKnown`.
+    if (!data || !data.channelsKnown) return null;
     const channels = groupPublications(data.channels).find((group) => group.id === "channels")?.rows ?? [];
     const publishedCount = channels.filter((channel) => {
       const next = channelState[channel.publicationId];
@@ -731,15 +748,38 @@ export function CommerceDataProvider({
       return raw != null && raw.trim() !== "" ? raw.trim() : null;
     });
     const priced = values.filter((v): v is string => v !== null);
-    if (priced.length === 0) return { display: "", pricedVariants: 0, totalVariants: values.length };
-    const numeric = priced.map((v) => Number.parseFloat(v)).filter((n) => Number.isFinite(n));
+    // A cut-off variant window cannot support "nothing here is priced": the
+    // priced variant may be one of the rows that never arrived. Reported the
+    // same way the channel summary reports its own truncation, rather than
+    // left to the caller to remember.
+    if (priced.length === 0) return { display: "", truncated: data.variantsTruncated };
+    /**
+     * THE money parser, not `Number.parseFloat`.
+     *
+     * These strings come from a free-text `MoneyField`, and on a German or
+     * Spanish keyboard "19,99" is what a merchant types. `parseFloat` reads
+     * that as 19 — so two variants at 19,99 and 5,00 displayed as "5.00–19.00",
+     * a range whose top is below its real bottom. `parseMoney` already owns the
+     * separator decision for the bulk grid; a second copy here is how that rule
+     * would come back missing one of its cases.
+     */
+    const numeric = priced
+      .map((raw) => {
+        const parsed = parseMoney(raw);
+        return parsed.ok && parsed.value !== null ? Number(parsed.value) : null;
+      })
+      .filter((n): n is number => n !== null && Number.isFinite(n));
     const low = numeric.length > 0 ? Math.min(...numeric) : null;
     const high = numeric.length > 0 ? Math.max(...numeric) : null;
+    // Nothing parsed ⇒ show what the merchant typed rather than nothing: the
+    // row asks "is this priced", and an unparseable value is still an answer.
     const display =
-      low !== null && high !== null && low !== high
-        ? `${low.toFixed(2)}–${high.toFixed(2)}`
-        : priced[0];
-    return { display, pricedVariants: priced.length, totalVariants: values.length };
+      low === null || high === null
+        ? priced[0]
+        : low !== high
+          ? `${low.toFixed(2)}–${high.toFixed(2)}`
+          : low.toFixed(2);
+    return { display, truncated: data.variantsTruncated };
   }, [data, priceEdits]);
 
   const value: CommerceDataValue = {

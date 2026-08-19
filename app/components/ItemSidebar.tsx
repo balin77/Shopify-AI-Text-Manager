@@ -454,6 +454,7 @@ export function ItemSidebar({
       // not an "unknown" (null) — which is why the empty display travels
       // instead of falling back to the cache.
       defaultVariantPrice: price ? price.display : attributes.input.defaultVariantPrice ?? null,
+      defaultVariantPriceTruncated: price ? price.truncated : attributes.input.defaultVariantPriceTruncated,
       // Only once the list is an answer for THIS item and locale.
       hasKeyword: keywordTrackingEnabled && keywordsLoaded ? keywords.length > 0 : null,
     });

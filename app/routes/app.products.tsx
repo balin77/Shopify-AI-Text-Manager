@@ -137,7 +137,12 @@ export const loader = createContentLoader({
         // which is the discriminator this block has no dedicated column for.
         // `resourcePublicationsV2(onlyPublished: false)` mirrors every
         // publication, published or not, so a product genuinely on no channel
-        // still has rows and cannot be confused with one nobody asked about.
+        // still has rows and cannot be confused with one nobody asked about —
+        // as long as the SHOP's publication list was readable, which is what
+        // supplies that universe. When it was not, a product on no channel
+        // mirrors nothing and this reads as "unknown" instead of raising the
+        // §2.3 alarm. Silence over a false alarm, deliberately, but it does
+        // mean the alarm is unreachable on that path.
         publications: { select: { catalogType: true, isPublished: true } },
         // The COUNT, not the rows: the default-price field means "the first
         // variant" and says so, which is only honest while there is just one.

@@ -666,6 +666,7 @@ export const de = {
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
+      channelsUnknown: "Die Vertriebskanäle konnten gerade nicht gelesen werden und fehlen deshalb hier. Versuch es gleich nochmal.",
       scheduled: "Geplant für {date}",
       variantPricesHint: "Preise bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen) oder im Shopify-Admin.",
       notStockedHere: "hier nicht bestandsgeführt",

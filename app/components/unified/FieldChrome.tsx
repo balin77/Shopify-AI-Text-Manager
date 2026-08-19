@@ -56,7 +56,20 @@ export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProp
             {requiredIndicator && <span style={{ color: "var(--p-color-text-critical)" }}> *</span>}
           </span>
         </Text>
-        {helpKey && <HelpTooltip helpKey={helpKey} />}
+        {helpKey && (
+          /**
+           * `preventDefault` because this row is handed to Polaris as a
+           * control's `label` prop, so Polaris wraps it in `<label htmlFor>`
+           * — and a click anywhere in a label ACTIVATES the control it names.
+           * On a `Select` that meant the "?" opened the help popover and the
+           * native option list on top of it. Cancelling the click's default
+           * action leaves the trigger's own handler (which already ran, on the
+           * target) untouched and only drops the label's activation.
+           */
+          <span onClick={(event) => event.preventDefault()}>
+            <HelpTooltip helpKey={helpKey} />
+          </span>
+        )}
       </InlineStack>
     </div>
   );
@@ -72,8 +85,16 @@ export interface FieldClearOverlayProps {
    * shove the input down as the merchant typed.
    */
   hasValue: boolean;
-  /** Locked field: no button, whatever the value is. */
-  disabled?: boolean;
+  /**
+   * The field this button empties, for its accessible NAME.
+   *
+   * Four of these sit in one Details row — vendor, product type, collections,
+   * tags — and with the bare word "Leeren" a screen reader announces four
+   * identical buttons with nothing to tell them apart. The visible label stays
+   * the bare word: sighted users have the field beside it, which is exactly
+   * what the accessible name is missing.
+   */
+  fieldLabel?: string;
   children: ReactNode;
 }
 
@@ -85,15 +106,22 @@ export interface FieldClearOverlayProps {
  * inside a Polaris control for most fields, and a button in there would be part
  * of the `<label>` element, i.e. a click target that also focuses the input.
  */
-export function FieldClearOverlay({ onClear, hasValue, disabled, children }: FieldClearOverlayProps) {
+export function FieldClearOverlay({ onClear, hasValue, fieldLabel, children }: FieldClearOverlayProps) {
   const { t } = useI18n();
+  const clearWord = t.common?.clear || "Clear";
   return (
     <div style={{ position: "relative" }}>
-      {onClear && !disabled && (
+      {onClear && (
         <div className="field-clear-overlay" style={{ position: "absolute", top: 0, right: 0, zIndex: 10 }}>
           {hasValue && (
-            <Button size="slim" onClick={onClear} tone="critical" variant="plain">
-              {t.common?.clear || "Clear"}
+            <Button
+              size="slim"
+              onClick={onClear}
+              tone="critical"
+              variant="plain"
+              accessibilityLabel={fieldLabel ? `${clearWord}: ${fieldLabel}` : undefined}
+            >
+              {clearWord}
             </Button>
           )}
         </div>

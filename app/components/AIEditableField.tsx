@@ -154,7 +154,7 @@ export function AIEditableField({
           field chrome now (FieldChrome.tsx) — this component drew both by hand,
           and every control that did not go through it looked different in the
           same card. */}
-      <FieldClearOverlay onClear={onClear} hasValue={!!value}>
+      <FieldClearOverlay onClear={onClear} hasValue={!!value} fieldLabel={label}>
         <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
           <TextField
             label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}

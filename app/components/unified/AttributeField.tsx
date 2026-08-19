@@ -168,8 +168,15 @@ export function AttributeField({
    * button on a status would either write a value the API refuses or silently
    * do nothing. The tags control clears itself (`ChipCombobox`), because it
    * has to keep the locked entries.
+   *
+   * And never on a REQUIRED field. An article's author is `type: "text"` and
+   * required, so it grew a Clear button that `attributeInputFor` then refuses:
+   * the save reports success, the author is not written, and the old value
+   * comes back on the next revalidation. A button that visibly does nothing
+   * reads as a bug — the same rule `ChipCombobox.clearAll` states for the
+   * locked entries it keeps.
    */
-  const clearable = !locked && (field.type === "text" || field.type === "money");
+  const clearable = !locked && !field.required && (field.type === "text" || field.type === "money");
 
   const control = (() => {
     switch (field.type) {
@@ -275,6 +282,7 @@ export function AttributeField({
       <FieldClearOverlay
         onClear={clearable ? () => onChange("") : undefined}
         hasValue={!!value}
+        fieldLabel={label}
       >
         {control}
       </FieldClearOverlay>

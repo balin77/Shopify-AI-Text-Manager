@@ -655,6 +655,7 @@ export const es: Translation = {
       noChannel: "En ningún canal: invisible",
       noChannels: "Esta tienda no tiene canales de venta instalados.",
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
+      channelsUnknown: "No se pudieron leer los canales de venta ahora mismo, por eso no aparecen aquí. Inténtalo de nuevo en un momento.",
       scheduled: "Programado para el {date}",
       variantPricesHint: "Los precios se editan en el editor masivo (pestaña «Bulk», filas de variantes) o en tu panel de Shopify.",
       notStockedHere: "sin stock aquí",

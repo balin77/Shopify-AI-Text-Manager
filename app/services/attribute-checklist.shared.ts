@@ -62,6 +62,12 @@ export interface AttributeInput {
   hasMoreCollections?: boolean;
   /** Price of the default variant, as a string. Loaded separately (§2.3). */
   defaultVariantPrice?: string | null;
+  /**
+   * True ⇒ the variant window was cut off, so an EMPTY price is "not found
+   * yet", never "this product is priceless". The channel row's rule, applied
+   * to the other half the panel loads.
+   */
+  defaultVariantPriceTruncated?: boolean;
 
   // Collection
   sortOrder?: string | null;
@@ -167,12 +173,17 @@ export function buildAttributeChecklist(input: AttributeInput): AttributeRow[] {
       jumpToField: "collections",
     });
 
+    // A truncated variant window that found no price has found none YET — the
+    // same case the channel row above spells out, and the same answer.
+    const priceUnknown =
+      input.defaultVariantPrice == null ||
+      (input.defaultVariantPrice === "" && input.defaultVariantPriceTruncated === true);
     rows.push({
       key: "price",
       // Loaded separately from the item (§2.3) — absent means not loaded, not
       // "free".
-      status: input.defaultVariantPrice == null ? "unknown" : input.defaultVariantPrice ? "ok" : "missing",
-      value: input.defaultVariantPrice ?? undefined,
+      status: priceUnknown ? "unknown" : input.defaultVariantPrice ? "ok" : "missing",
+      value: priceUnknown ? undefined : input.defaultVariantPrice ?? undefined,
       // No `jumpToField`: pricing is per VARIANT and lives in the variants
       // card, not in a field of the Details card this checklist can point at.
     });

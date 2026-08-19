@@ -11,6 +11,7 @@
  */
 
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
+import { FieldClearOverlay, FieldLabel } from "./FieldChrome";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
@@ -344,29 +345,18 @@ export function OptionsField({
 
                       {/* Option Name Translation — always available */}
                       <div>
-                        <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(option.id) ? "bg-fallback" : (translation.name ? "bg-white" : "bg-untranslated")}`} style={{ position: "relative" }}>
-                          <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-                            {translation.name && (
-                              <Button
-                                size="slim"
-                                onClick={() => onOptionNameChange(option.id, "")}
-                                tone="critical"
-                                variant="plain"
-                              >
-                                {t.clearButton || "Clear"}
-                              </Button>
-                            )}
-                          </div>
-                          <TextField
-                            label={
-                              <span style={{ fontWeight: 600 }}>
-                                {t.optionNameLabel || `Name (${localeName})`}
-                              </span>
-                            }
-                            value={translation.name || ""}
-                            onChange={(value) => onOptionNameChange(option.id, value)}
-                            autoComplete="off"
-                          />
+                        <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(option.id) ? "bg-fallback" : (translation.name ? "bg-white" : "bg-untranslated")}`}>
+                          <FieldClearOverlay
+                            onClear={() => onOptionNameChange(option.id, "")}
+                            hasValue={!!translation.name}
+                          >
+                            <TextField
+                              label={<FieldLabel label={t.optionNameLabel || `Name (${localeName})`} />}
+                              value={translation.name || ""}
+                              onChange={(value) => onOptionNameChange(option.id, value)}
+                              autoComplete="off"
+                            />
+                          </FieldClearOverlay>
                         </div>
                         {(onTranslateField || onCopyField) && (
                           <div className="ai-field-footer">
@@ -406,25 +396,22 @@ export function OptionsField({
                             const valueFieldId = `${option.id}:value:${valueIndex}`;
                             return (
                               <div key={optVal.id || valueIndex}>
-                                <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(optVal.id) ? "bg-fallback" : (translation.values[valueIndex] ? "bg-white" : "bg-untranslated")}`} style={{ position: "relative" }}>
-                                  <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-                                    {translation.values[valueIndex] && (
-                                      <Button
-                                        size="slim"
-                                        onClick={() => onOptionValueChange(option.id, valueIndex, "")}
-                                        tone="critical"
-                                        variant="plain"
-                                      >
-                                        {t.clearButton || "Clear"}
-                                      </Button>
-                                    )}
-                                  </div>
-                                  <TextField
-                                    label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
-                                    value={translation.values[valueIndex] || ""}
-                                    onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
-                                    autoComplete="off"
-                                  />
+                                <div className={`ai-editable-field-wrapper ${fallbackResourceIds?.has(optVal.id) ? "bg-fallback" : (translation.values[valueIndex] ? "bg-white" : "bg-untranslated")}`}>
+                                  <FieldClearOverlay
+                                    onClear={() => onOptionValueChange(option.id, valueIndex, "")}
+                                    hasValue={!!translation.values[valueIndex]}
+                                  >
+                                    <TextField
+                                      label={
+                                        <FieldLabel
+                                          label={`${t.valueLabel || "Value"} ${valueIndex + 1}: "${optVal.name}"`}
+                                        />
+                                      }
+                                      value={translation.values[valueIndex] || ""}
+                                      onChange={(newValue) => onOptionValueChange(option.id, valueIndex, newValue)}
+                                      autoComplete="off"
+                                    />
+                                  </FieldClearOverlay>
                                 </div>
                                 {(onTranslateField || onCopyField) && (
                                   <div className="ai-field-footer">
