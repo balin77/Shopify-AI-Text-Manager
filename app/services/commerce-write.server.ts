@@ -676,6 +676,15 @@ export interface VariantPriceFields {
   /** ISBN, UPC, GTIN. "" CLEARS it — a wrong barcode is worse than none. */
   barcode?: string;
   /**
+   * Whether tax is charged on this variant.
+   *
+   * It lives on the VARIANT, which is what this mutation writes and what the
+   * loader reads it from — so the read/write mismatch that kept it read-only
+   * is gone. It was only ever read-only because the panel had no variant write
+   * path; it has had one since the prices moved here.
+   */
+  taxable?: boolean;
+  /**
    * `DENY` or `CONTINUE` — whether Shopify keeps selling at zero stock.
    *
    * A GraphQL ENUM, so a bad value fails at the SCHEMA level: a top-level
@@ -763,6 +772,10 @@ export async function applyVariantPrices(
     input.barcode = barcode === "" ? null : barcode;
     mirror.barcode = barcode === "" ? null : barcode;
   }
+  if (params.fields.taxable !== undefined) {
+    input.taxable = params.fields.taxable;
+    mirror.taxable = params.fields.taxable;
+  }
   if (params.fields.inventoryPolicy !== undefined) {
     const policy = params.fields.inventoryPolicy.trim().toUpperCase();
     // An unrecognised enum is DROPPED and reported, never forwarded: Shopify
@@ -786,6 +799,7 @@ export async function applyVariantPrices(
               compareAtPrice
               barcode
               inventoryPolicy
+              taxable
             }
             userErrors { field message }
           }
@@ -802,6 +816,7 @@ export async function applyVariantPrices(
             compareAtPrice?: string | null;
             barcode?: string | null;
             inventoryPolicy?: string | null;
+            taxable?: boolean | null;
           }> | null;
           userErrors?: Array<{ message: string }>;
         };
@@ -847,6 +862,7 @@ export async function applyVariantPrices(
     if (input.inventoryPolicy !== undefined && echoed.inventoryPolicy !== input.inventoryPolicy) {
       return "priceNotConfirmed";
     }
+    if (input.taxable !== undefined && echoed.taxable !== input.taxable) return "priceNotConfirmed";
 
     // Mirror what Shopify STORED, not what was sent — the same rule the theme
     // path follows for normalised richtext.
@@ -854,6 +870,7 @@ export async function applyVariantPrices(
     mirror.compareAtPrice = echoed.compareAtPrice ?? null;
     if (input.barcode !== undefined) mirror.barcode = echoed.barcode ?? null;
     if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echoed.inventoryPolicy ?? null;
+    if (input.taxable !== undefined) mirror.taxable = echoed.taxable ?? null;
     await db.productVariant
       .updateMany({ where: { id: params.variantId, product: { shop } }, data: mirror as never })
       .catch(() => undefined);

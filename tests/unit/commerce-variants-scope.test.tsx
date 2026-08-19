@@ -301,7 +301,9 @@ describe("the variant's own settings", () => {
     await screen.findByLabelText("Variant");
     expect(screen.getByText(/Continue selling/i)).toBeTruthy();
 
-    const tracked = screen.getAllByRole("switch")[0];
+    // BY NAME, not by index: the panel has several switches now and their
+    // order is a layout decision.
+    const tracked = screen.getByRole("switch", { name: /Track quantity/i });
     fireEvent.click(tracked);
 
     await waitFor(() => expect(screen.queryByText(/Continue selling/i)).toBeNull());
@@ -483,7 +485,7 @@ describe("a mixed group's BOOLEAN controls", () => {
     ui();
     await pick("All Weiss");
 
-    const tracked = screen.getAllByRole("switch")[0];
+    const tracked = screen.getByRole("switch", { name: /Track quantity/i });
     expect(tracked.getAttribute("aria-checked")).toBe("mixed");
   });
 
@@ -496,5 +498,53 @@ describe("a mixed group's BOOLEAN controls", () => {
     await pick("All Weiss");
 
     expect(await screen.findByText(/Continue selling/i)).toBeTruthy();
+  });
+});
+
+describe("the layout the merchant asked for", () => {
+  it("shows no title inside the box — the picker already says it", async () => {
+    ui();
+    const select = await screen.findByLabelText("Variant");
+
+    // Every occurrence of the variant's name belongs to the PICKER. It used to
+    // be repeated as a heading inside the box directly beneath it.
+    const picker = select.closest(".Polaris-Select")!;
+    for (const node of screen.getAllByText("Weiss / 20cm")) {
+      expect(picker.contains(node)).toBe(true);
+    }
+  });
+
+  it("keeps the badge's row even for ONE variant, so nothing jumps", async () => {
+    // Switching from a single variant to a group used to move the whole panel
+    // down by the height of a badge that had just appeared.
+    const { container } = ui();
+    await screen.findByLabelText("Variant");
+
+    const reserved = () =>
+      [...container.querySelectorAll("div")].find((d) => d.style.minHeight === "20px");
+    expect(reserved()).toBeTruthy();
+    expect(reserved()!.textContent).toBe("");
+
+    await pick("All variants");
+    expect(reserved()!.textContent).toMatch(/4 variants/);
+  });
+
+  it("charges tax through a switch that WRITES, not a read-only readout", async () => {
+    ui();
+    await screen.findByLabelText("Variant");
+
+    const taxable = screen.getByRole("switch", { name: /Charge tax/i });
+    expect(taxable.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(taxable);
+    expect(taxable.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("puts SKU and barcode under the stock table", async () => {
+    ui();
+    const sku = await screen.findByLabelText(/^SKU/);
+    const table = document.querySelector("table");
+    expect(table).toBeTruthy();
+    // `compareDocumentPosition` says which comes first in the document.
+    expect(table!.compareDocumentPosition(sku) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
