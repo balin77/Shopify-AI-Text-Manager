@@ -386,6 +386,13 @@ export const de = {
       primaryDisabledHint: "Marktauswahl nur in einer Übersetzungssprache verfügbar – wechsle zuerst zu einer Zielsprache.",
       tooltip: "Wähle einen Markt, um diese Sprache abweichend für ihn zu übersetzen. Ohne Auswahl gilt der globale Wert für alle Märkte.",
       disabledHint: "Cookie-Banner werden über Shopifys Customer-Privacy-API gespeichert, die keine markt-spezifischen Werte unterstützt. Diese Inhalte gelten immer global.",
+      // Die Warnung neben der Marktauswahl: ohne Katalog-Zugehörigkeit ist
+      // jede Übersetzung für diesen Markt unsichtbar. {market} = Marktname.
+      // Verweist bewusst auf den Shopify-Admin und NICHT auf die Details-Karte:
+      // die ist Pro-gated und nur in der Hauptsprache bedienbar, während dieser
+      // Hinweis genau dann erscheint, wenn eine Fremdsprache aktiv ist.
+      notPublishedInMarket:
+        "Dieses Produkt liegt nicht im Katalog des Markts „{market}“ — dort kann es niemand sehen. Übersetzungen für diesen Markt bleiben unsichtbar, bis du es im Shopify-Admin unter Veröffentlichung für diese Region freigibst.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",
@@ -626,6 +633,13 @@ export const de = {
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
       channelsHeading: "Vertriebskanäle",
+      // Shopify beantwortet drei verschiedene Fragen mit einem Mechanismus —
+      // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
+      // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
+      marketsHeading: "Regionen",
+      marketsHint: "Regionen entscheiden, wer das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
+      b2bHeading: "B2B-Kataloge",
+      b2bHint: "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen.",
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",

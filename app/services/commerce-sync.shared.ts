@@ -105,9 +105,60 @@ export const PRODUCT_PUBLICATIONS_SELECTION = `
                     nodes {
                       isPublished
                       publishDate
-                      publication { id name }
+                      publication { id name catalog { __typename } }
                     }
                   }`;
+
+/**
+ * What KIND of thing a publication publishes to.
+ *
+ * Shopify models three different questions with one mechanism. A publication
+ * hangs off a `Catalog`, and the catalog's type is the only thing that says
+ * which question it answers:
+ *
+ *   AppCatalog              a SALES CHANNEL — online store, POS, Shop, Google.
+ *                           "Where is this sold?"
+ *   MarketCatalog           a MARKET/region. "Who may see it?" — availability
+ *                           and pricing per market, not a channel at all.
+ *   CompanyLocationCatalog  a B2B company location. Same question, per buyer.
+ *
+ * The admin's own publishing dialog puts them in three separate lists, and
+ * this app used to put all three in one headed "Sales channels" — so a shop
+ * with markets read its regions as channels it had never installed.
+ *
+ * `""` means UNKNOWN, never "app": the field is nullable, and a row this
+ * shop cached before the column existed carries no answer either. Everything
+ * downstream must treat unknown as "leave where it always was" rather than as
+ * evidence — an empty column is never evidence (CLAUDE.md).
+ */
+export type PublicationCatalogKind = "app" | "market" | "companyLocation" | "";
+
+/** `Catalog.__typename` → the stable code stored and rendered. */
+export function publicationCatalogKind(typename: unknown): PublicationCatalogKind {
+  switch (typename) {
+    case "AppCatalog":
+      return "app";
+    case "MarketCatalog":
+      return "market";
+    case "CompanyLocationCatalog":
+      return "companyLocation";
+    default:
+      return "";
+  }
+}
+
+/**
+ * Is this publication a SALES CHANNEL for the purposes of the "on no channel —
+ * invisible" badge?
+ *
+ * Excludes only what is KNOWN to be something else. An unknown catalog counts
+ * as a channel, deliberately: the badge is an alarm, and raising it for a
+ * product that is in fact on the online store — because one row happened to
+ * arrive without its catalog — is worse than not raising it at all.
+ */
+export function countsAsSalesChannel(kind: PublicationCatalogKind): boolean {
+  return kind !== "market" && kind !== "companyLocation";
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Response shapes
@@ -148,7 +199,11 @@ export interface ShopifyResourcePublications {
   nodes?: Array<{
     isPublished?: boolean | null;
     publishDate?: string | null;
-    publication?: { id?: string | null; name?: string | null } | null;
+    publication?: {
+      id?: string | null;
+      name?: string | null;
+      catalog?: { __typename?: string | null } | null;
+    } | null;
   }> | null;
 }
 
@@ -312,11 +367,100 @@ export function inventoryLevelRows(
   };
 }
 
+/**
+ * Which MARKETS a product's publications scope it to — the mapper behind
+ * `/api/product-market-publications`.
+ *
+ * `scoped` is every market a market catalog covers, published or not; `published`
+ * is the subset the product actually sits in. The two are separate answers on
+ * purpose: a market that NO catalog scopes is unrestricted, which is not the
+ * same as a market the product was left out of, and only the second is worth
+ * warning about.
+ *
+ * `truncated` propagates from BOTH windows — the publication page and each
+ * catalog's market list. A market that fell off either end is indistinguishable
+ * from one the product is genuinely missing from, so the caller must say
+ * nothing rather than guess.
+ */
+export interface MarketPublicationView {
+  scopedMarketIds: string[];
+  publishedMarketIds: string[];
+  /**
+   * Scoped, not live YET — a market launch with a future publish date.
+   *
+   * Shopify reports `isPublished: false` for a scheduled publication, so
+   * without this set a merchant preparing a market launch would be told the
+   * product "is not in the catalog" and sent to add what they already added.
+   * The same distinction `PublicationRow.publishDate` keeps for channels.
+   */
+  scheduledMarketIds: string[];
+  truncated: boolean;
+}
+
+export interface ShopifyMarketPublications {
+  pageInfo?: { hasNextPage?: boolean } | null;
+  nodes?: Array<{
+    isPublished?: boolean | null;
+    publishDate?: string | null;
+    publication?: {
+      id?: string | null;
+      catalog?: {
+        __typename?: string | null;
+        markets?: {
+          pageInfo?: { hasNextPage?: boolean } | null;
+          nodes?: Array<{ id?: string | null }> | null;
+        } | null;
+      } | null;
+    } | null;
+  }> | null;
+}
+
+/** `null` ⇒ the response did not carry the block; the caller must not guess. */
+export function marketPublicationView(
+  connection: ShopifyMarketPublications | null | undefined,
+): MarketPublicationView | null {
+  if (!connection) return null;
+
+  const scoped = new Set<string>();
+  const published = new Set<string>();
+  const scheduled = new Set<string>();
+  let truncated = connection.pageInfo?.hasNextPage === true;
+
+  for (const node of connection.nodes ?? []) {
+    const catalog = node?.publication?.catalog;
+    if (publicationCatalogKind(catalog?.__typename) !== "market") continue;
+    if (catalog?.markets?.pageInfo?.hasNextPage === true) truncated = true;
+    // Not live, but a date is set ⇒ a launch is scheduled. Shopify's
+    // `isPublished` already accounts for the date, so the two together are
+    // the whole answer.
+    const isScheduled = node?.isPublished !== true && !!node?.publishDate;
+    for (const market of catalog?.markets?.nodes ?? []) {
+      const marketId = market?.id;
+      if (!marketId) continue;
+      scoped.add(marketId);
+      // A market served by SEVERAL catalogs counts as published if ANY of
+      // them carries the product — that is what the storefront resolves to.
+      // Same for scheduled: one catalog with a launch date is a launch.
+      if (node?.isPublished === true) published.add(marketId);
+      else if (isScheduled) scheduled.add(marketId);
+    }
+  }
+
+  return {
+    scopedMarketIds: [...scoped],
+    publishedMarketIds: [...published],
+    scheduledMarketIds: [...scheduled],
+    truncated,
+  };
+}
+
 export interface PublicationRow {
   shop: string;
   productId: string;
   publicationId: string;
   publicationName: string;
+  /** "" = unknown. See `publicationCatalogKind`. */
+  catalogType: PublicationCatalogKind;
   isPublished: boolean;
   publishDate: Date | null;
 }
@@ -352,6 +496,7 @@ export function productPublicationRows(
       productId,
       publicationId,
       publicationName: node?.publication?.name ?? "",
+      catalogType: publicationCatalogKind(node?.publication?.catalog?.__typename),
       // Shopify's own `isPublished` already accounts for a future publish
       // date, so it is taken verbatim rather than recomputed from the date —
       // two answers to one question is how they drift apart.

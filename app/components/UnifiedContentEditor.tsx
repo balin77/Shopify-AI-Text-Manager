@@ -46,6 +46,7 @@ import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLanguageBar";
+import { MarketPublicationNotice } from "./unified/MarketPublicationNotice";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -1730,6 +1731,28 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </Card>
                 </div>
               </div>
+
+              {/* The market selector raises a question neither toolbar can
+                  answer: a product missing from the selected market's catalog
+                  cannot be seen there, so every translation made for that
+                  market is invisible by construction. OUTSIDE both toolbars on
+                  purpose — the desktop one is `display: none` below 769px
+                  while MobileToolbar offers the same selector, so a warning
+                  inside either half would be missing from the other. Products
+                  only (publications are a product thing here), and the
+                  component itself stays silent whenever the answer is not
+                  certain. */}
+              {config.contentType === "products" && (
+                <MarketPublicationNotice
+                  productId={String(selectedItem?.id ?? "")}
+                  selectedMarketId={state.selectedMarketId}
+                  marketName={state.markets?.find((m) => m.id === state.selectedMarketId)?.name ?? ""}
+                  notPublishedText={
+                    t.content?.market?.notPublishedInMarket ||
+                    "This product is not in the catalog of the market “{market}”, so nobody there can see it — translations for this market stay invisible until it is published there."
+                  }
+                />
+              )}
 
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>

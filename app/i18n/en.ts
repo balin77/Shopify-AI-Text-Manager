@@ -389,6 +389,8 @@ export const en: Translation = {
       primaryDisabledHint: "Market selection is only available in a translation language — switch to a target language first.",
       tooltip: "Pick a market to translate this language specifically for it. Without a selection the global value applies to all markets.",
       disabledHint: "Cookie banners are stored via Shopify's Customer Privacy API, which doesn't support market-specific values. This content is always global.",
+      notPublishedInMarket:
+        "This product is not in the catalog of the market “{market}”, so nobody there can see it. Translations for this market stay invisible until you publish it for that region under Publishing in your Shopify admin.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Fields in the primary language must not be empty. If a field is saved empty, Shopify removes it permanently and it can never be restored. Please fill in all fields before saving.",
@@ -629,6 +631,10 @@ export const en: Translation = {
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       channelsHeading: "Sales channels",
+      marketsHeading: "Regions",
+      marketsHint: "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
+      b2bHeading: "B2B catalogs",
+      b2bHint: "B2B catalogs decide which business customers can see the product.",
       noChannel: "On no channel — invisible",
       noChannels: "This shop has no sales channels installed.",
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
