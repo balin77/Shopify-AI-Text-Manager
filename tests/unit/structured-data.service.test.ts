@@ -547,12 +547,18 @@ describe("storefront Liquid block: VideoObject", () => {
     expect(liquid).toContain("v_variant.metafields.custom.variant_external_videos");
   });
 
-  it("captures the shared parser's answer and strips it", () => {
+  it("captures the shared parser's answer and unwraps Shopify's snippet markers", () => {
     // `{% render %}` is scope-isolated, so the answer travels as printed text —
-    // and `capture` keeps every whitespace byte, so an id with a leading newline
-    // would build a broken embed URL.
+    // and `capture` keeps every byte Shopify wrote, including the
+    // `<!-- BEGIN app snippet: … -->` markers it wraps an extension snippet's
+    // FIRST render on a page in. A bare `| strip` removes whitespace, not
+    // comments, so `v_ghost` was never `youtube` and the block emitted nothing
+    // at all — no output, no error. The split pair unwraps the markers when
+    // they are there and is a no-op when they are not.
     expect(liquid).toContain("{%- render 'cp-external-video', url: v_gurl -%}");
-    expect(liquid).toContain("{%- assign v_pair = v_pair | strip -%}");
+    expect(liquid).toContain(
+      "{%- assign v_pair = v_pair | split: '-->' | last | split: '<!--' | first | strip -%}",
+    );
   });
 
   it("covers external videos, not just Shopify-hosted ones", () => {

@@ -243,12 +243,39 @@ export interface MetaobjectProbeReport {
     /** What a category offers — the only door the Taxonomy root has. */
     categoryFields?: string[];
     attributeTypeFields?: string[];
-    /** Where the permitted values were found, and how many there are. */
+    /**
+     * Where the permitted values were found. The COUNT deliberately does not
+     * live here: it is per handle, and a single number next to it read as the
+     * definition's answer when it was only whichever handle the category
+     * listing happened to return first.
+     */
     valueSource?: string;
-    valueCount?: number;
-    valueSample?: string[];
-    /** A full page — the true count is "this or more", never invented. */
-    valuesTruncated?: boolean;
+    /**
+     * One entry PER taxonomy attribute handle the definition names — both
+     * value lists, never one of them reported as "the definition's answer".
+     *
+     * `covered` answers the one inference left in this chain: the attribute is
+     * found by matching its NAME against the handle, because the union member
+     * carries no `handle` field. If every value a real entry holds is in the
+     * offered list, this is the right attribute and the list is complete for
+     * the purpose. `inconclusive` is set wherever that comparison could not be
+     * made — a failed sample read, nothing stored, or a miss against a list
+     * that stopped at the page boundary — so a paging limit never reads as a
+     * negative answer.
+     */
+    perHandle?: Array<{
+      handle: string;
+      attributeName: string;
+      attributeId: string;
+      distinctAttributeIds: number;
+      valueCount: number;
+      truncated: boolean;
+      sample: string[];
+      offeredIdSample: string[];
+      covered: { checked: number; covered: number; missing: string[]; inconclusive?: string };
+    }>;
+    /** Per WANTED handle: how far this run got. Absent from perHandle != absent. */
+    handleOutcomes?: Array<{ handle: string; outcome: string }>;
     steps: StepOutcome[];
   };
 
@@ -965,24 +992,43 @@ export async function action({ request }: ActionFunctionArgs) {
         }`,
       { type: sampleType || STANDARD_COLOUR_TYPE, first: 10 },
     );
-    const gidsFromEntries = entries.ok
-      ? ((entries.data?.metaobjects?.nodes ?? []) as Array<{ fields?: Array<{ key: string; value: string | null }> }>)
-          .flatMap((n) => n.fields ?? [])
-          .filter((f) => taxonomyFieldDefs.some((t) => t.key === f.key))
-          .flatMap((f) => {
-            const raw = f.value ?? "";
-            try {
-              const parsed: unknown = JSON.parse(raw);
-              return Array.isArray(parsed) ? parsed.map(String) : [raw];
-            } catch {
-              return [raw];
-            }
-          })
-          .filter((v) => v.startsWith("gid://shopify/"))
-      : [];
-    if (!entries.ok) steps.push({ step: "read stored values", ok: false, detail: describeFailure(entries) });
+    // Kept PER FIELD. A colour value can never be in the pattern attribute's
+    // list and vice versa, so a flat bag of GIDs compared against one list
+    // reports "not covered" by construction — a guaranteed false negative on
+    // the one confirmation this step exists for.
+    const storedByField = new Map<string, Set<string>>();
+    // A failed sample read leaves `storedByField` empty, which at the point of
+    // use is indistinguishable from "the entries hold no taxonomy value" — and
+    // the second is a claim about the merchant's data made from a call that
+    // never returned. This flag keeps the two apart.
+    const storedReadFailed = !entries.ok;
+    if (entries.ok) {
+      for (const node of (entries.data?.metaobjects?.nodes ?? []) as Array<{
+        fields?: Array<{ key: string; value: string | null }>;
+      }>) {
+        for (const field of node.fields ?? []) {
+          if (!taxonomyFieldDefs.some((t) => t.key === field.key)) continue;
+          const raw = field.value ?? "";
+          let parsedValues: string[];
+          try {
+            const parsed: unknown = JSON.parse(raw);
+            parsedValues = Array.isArray(parsed) ? parsed.map(String) : [raw];
+          } catch {
+            parsedValues = [raw];
+          }
+          const bucket = storedByField.get(field.key) ?? new Set<string>();
+          for (const value of parsedValues) {
+            if (value.startsWith("gid://shopify/")) bucket.add(value);
+          }
+          storedByField.set(field.key, bucket);
+        }
+      }
+    } else {
+      steps.push({ step: "read stored values", ok: false, detail: describeFailure(entries) });
+    }
+    const gidsFromEntries = [...new Set([...storedByField.values()].flatMap((set) => [...set]))];
 
-    const gids = [...new Set(gidsFromEntries)].slice(0, 10);
+    const gids = gidsFromEntries.slice(0, 10);
     if (gids.length > 0) {
       // `nodes(ids:)` with __typename only: the concrete type is the ANSWER,
       // and asking for a name before knowing the type is how a probe reports
@@ -1099,7 +1145,11 @@ export async function action({ request }: ActionFunctionArgs) {
     // and a `name` field on one of them: a single wrong name rejects the whole
     // document, and the only step that can answer T1 would then publish
     // "no such API" about an API that works.
-    const wantedHandles = (tax.attributeHandles ?? []).map((h) => h.handle).filter(Boolean);
+    // Deduped: two fields may name the SAME attribute handle, and the round
+    // loop stops at `matchesByHandle.size >= wantedHandles.length` — with a
+    // duplicate in the list that condition can never hold and the cheap first
+    // round would always be followed by the expensive descendants one.
+    const wantedHandles = [...new Set((tax.attributeHandles ?? []).map((h) => h.handle).filter(Boolean))];
     const VALUES_PAGE = 250;
     const ATTRIBUTES_PAGE = 50;
 
@@ -1244,10 +1294,15 @@ export async function action({ request }: ActionFunctionArgs) {
       const attributesOf = (data: any): any[] =>
         unwrap(data?.taxonomy?.categories).flatMap((c) => unwrap(c?.attributes));
 
-      const matchesWanted = (a: any) =>
-        wantedHandles.some(
-          (h) => String(a?.name ?? "").toLowerCase().replace(/\s+/g, "-") === h.toLowerCase(),
-        );
+      // Returns the WANTED handle an attribute answers to, not a handle
+      // re-derived from its name. The map is keyed by that return value, so
+      // every later consumer (`matchesByHandle.has(wanted)`, `h.handle ===
+      // handle`) compares the same string the definition wrote. Re-deriving it
+      // made a handle like `fabric_type` match here and then miss in both
+      // consumers, producing three false statements from one normalization.
+      const normalize = (text: string) => text.toLowerCase().replace(/[\s_]+/g, "-");
+      const wantedHandleFor = (a: any): string | null =>
+        wantedHandles.find((h) => normalize(String(a?.name ?? "")) === normalize(h)) ?? null;
 
       // Top-level verticals first, then the DESCENDANTS of the first one: a
       // colour attribute plausibly hangs off a leaf rather than off "Apparel",
@@ -1257,7 +1312,10 @@ export async function action({ request }: ActionFunctionArgs) {
         { label: "top-level categories", run: () => readCategories("", { first: CATEGORY_PAGE }) },
       ];
 
-      let match: any = null;
+      /** handle -> the attribute that carries it, so both fields get an answer. */
+      const matchesByHandle = new Map<string, any>();
+      /** handle -> every DISTINCT attribute id seen under that name (see V5 note). */
+      const idsByHandle = new Map<string, Set<string>>();
       let sampled = 0;
       for (const round of rounds) {
         const res = await round.run();
@@ -1275,76 +1333,253 @@ export async function action({ request }: ActionFunctionArgs) {
               ? `${attributes.length} attributes: ${attributes.slice(0, 20).map((a: any) => a?.name ?? a?.__typename).join(", ")}`
               : "answered with no attributes here — not proof that none exist, only that these carry none",
         });
-        match = match ?? attributes.find(matchesWanted) ?? null;
-        if (match) break;
+        // Every wanted handle, not just the first: `shopify--color-pattern`
+        // has TWO taxonomy fields and a create form needs both value lists.
+        for (const attribute of attributes) {
+          const handle = wantedHandleFor(attribute);
+          if (!handle) continue;
+          if (!matchesByHandle.has(handle)) matchesByHandle.set(handle, attribute);
+          // Several categories expose an attribute called "Color". Whether
+          // those are ONE attribute or several with different value subsets
+          // decides whether "the permitted values" is even well defined — and
+          // the ids are already in this response, so counting them is free.
+          const ids = idsByHandle.get(handle) ?? new Set<string>();
+          if (attribute?.id) ids.add(String(attribute.id));
+          idsByHandle.set(handle, ids);
+        }
+        if (matchesByHandle.size >= wantedHandles.length) break;
 
         const firstCategory = unwrap(res.data?.taxonomy?.categories)[0]?.id;
         if (firstCategory && rounds.length === 1) {
           rounds.push({
             label: "descendants of the first category",
             run: () =>
-              readCategories("$descendantsOf: ID!, ", { descendantsOf: firstCategory, first: 50 }),
+              // CATEGORY_PAGE, not a second literal: `categories(50) x
+              // attributes(50)` is ~2500 points against the 1000-point ceiling
+              // the cap three lines up exists for, so the ONE round that is
+              // needed when the attribute hangs off a leaf would be the one
+              // that fails.
+              readCategories("$descendantsOf: ID!, ", { descendantsOf: firstCategory, first: CATEGORY_PAGE }),
           });
         }
       }
 
       // Round B: the values of THAT attribute, by its own id. One connection,
       // one page, and the only call in this step that is allowed to be big.
-      if (!match?.id) {
-        steps.push({
-          step: "find the wanted attribute",
-          ok: false,
-          detail: `none of the ${sampled} sampled attributes matched ${wantedHandles.join("/") || "(no handle known)"}`,
-        });
-      } else {
+      steps.push({
+        step: "attributes found per handle",
+        ok: matchesByHandle.size > 0,
+        detail: wantedHandles
+          .map((h) => `${h}: ${matchesByHandle.has(h) ? "found" : "NOT found in the sampled categories"}`)
+          .join(" | "),
+      });
+
+      // Round B, once PER HANDLE. `shopify--color-pattern` has two taxonomy
+      // fields and a create form needs both lists; reporting one of them as
+      // "the definition's answer" would also make which one it is depend on
+      // the order the category listing happened to return.
+      const perHandle: NonNullable<typeof tax.perHandle> = [];
+      /**
+       * Per wanted handle: how far this run actually got. A handle that was
+       * FOUND but whose value query failed is not the same as one that was
+       * never found, and neither is "measured" — without this the T1 verdict
+       * enumerates only what succeeded and a throttled second handle vanishes
+       * from the report entirely, which is the conflation this step exists
+       * to end.
+       */
+      const outcomeByHandle = new Map<string, string>();
+      for (const handle of wantedHandles) {
+        outcomeByHandle.set(handle, matchesByHandle.has(handle) ? "found, values not read" : "NOT found in the sampled categories");
+      }
+
+      for (const [handle, attribute] of matchesByHandle) {
+        const fieldKeys = (tax.attributeHandles ?? [])
+          .filter((h) => h.handle === handle)
+          .map((h) => h.fieldKey);
+        const stored = [...new Set(fieldKeys.flatMap((key) => [...(storedByField.get(key) ?? [])]))];
+
         const valuesRes = await call(
           `#graphql
             query MetaobjectProbeAttributeValues($ids: [ID!]!, $first: Int!) {
               nodes(ids: $ids) {
                 __typename
-                ... on ${match.__typename} { values(first: $first) { nodes { id name } } }
+                ... on ${attribute.__typename} { values(first: $first) { nodes { id name } } }
               }
             }`,
-          { ids: [match.id], first: VALUES_PAGE },
+          { ids: [attribute.id], first: VALUES_PAGE },
         );
-        const values = valuesRes.ok
-          ? (((valuesRes.data?.nodes ?? []) as any[]).flatMap((n) => n?.values?.nodes ?? []).filter(Boolean))
-          : [];
         if (!valuesRes.ok) {
-          steps.push({ step: `values of "${match.name}"`, ok: false, detail: describeFailure(valuesRes) });
-        } else if (values.length === 0) {
+          outcomeByHandle.set(handle, `values query FAILED: ${describeFailure(valuesRes)}`);
           steps.push({
-            step: `values of "${match.name}"`,
+            step: `values of "${attribute.name}" (${handle})`,
+            ok: false,
+            detail: describeFailure(valuesRes),
+          });
+          continue;
+        }
+        const values = ((valuesRes.data?.nodes ?? []) as any[])
+          .flatMap((n) => n?.values?.nodes ?? [])
+          .filter(Boolean);
+        if (values.length === 0) {
+          outcomeByHandle.set(handle, "the values connection answered EMPTY");
+          steps.push({
+            step: `values of "${attribute.name}" (${handle})`,
             ok: false,
             detail: "the query answered with an EMPTY list — that is not a count, it is a path that carried nothing",
           });
-        } else {
-          tax.valueSource = `${match.__typename}.values (found via TaxonomyCategory.attributes)`;
-          tax.valueCount = values.length;
-          // From the page size the query ACTUALLY asked for — a second literal
-          // would drift and flip the T3 verdict between list and search.
-          tax.valuesTruncated = values.length >= VALUES_PAGE;
-          tax.valueSample = values.slice(0, 12).map((v: any) => v?.name ?? v?.id).filter(Boolean);
-          steps.push({
-            step: `values of "${match.name}"`,
-            ok: true,
-            detail: `${values.length}${tax.valuesTruncated ? "+" : ""} — ${tax.valueSample.join(", ")}`,
-          });
+          continue;
         }
+
+        const offered = new Set(values.map((v: any) => String(v?.id ?? "")));
+        const missing = stored.filter((gid) => !offered.has(gid));
+        // From the page size the query ACTUALLY asked for — a second literal
+        // would drift and flip the T3 verdict between list and search.
+        const truncated = values.length >= VALUES_PAGE;
+        const attributeIds = [...(idsByHandle.get(handle) ?? new Set<string>())];
+        const entry = {
+          handle,
+          attributeName: String(attribute.name ?? ""),
+          attributeId: String(attribute.id ?? ""),
+          // Several categories carry an attribute of the same name. If they
+          // are several attributes with different value subsets, "the
+          // permitted values" depends on which category was sampled first —
+          // so the number is reported rather than assumed to be 1.
+          distinctAttributeIds: attributeIds.length,
+          valueCount: values.length,
+          truncated,
+          sample: values.slice(0, 12).map((v: any) => v?.name ?? v?.id).filter(Boolean) as string[],
+          // Ids, not just names: a containment miss has four possible causes
+          // and a GID-spelling difference is one of them. Without a sample of
+          // what the list actually offers, a FAILED verdict is undiagnosable
+          // from the pasted report.
+          offeredIdSample: values.slice(0, 3).map((v: any) => String(v?.id ?? "")).filter(Boolean) as string[],
+          covered: {
+            checked: stored.length,
+            covered: stored.length - missing.length,
+            missing,
+            // A miss against a list that stopped at the page boundary is a
+            // PAGING limit, not a wrong attribute. Reported as inconclusive,
+            // never as failed.
+            inconclusive: storedReadFailed
+              ? "the entry sample could not be read, so nothing was compared"
+              : stored.length === 0
+                ? "the sampled entries stored no value for this field"
+                : missing.length > 0 && truncated
+                  ? "the value list stopped at the page boundary, so a miss may sit on the next page"
+                  : undefined,
+          },
+        };
+        perHandle.push(entry);
+        outcomeByHandle.set(handle, `${values.length}${truncated ? "+" : ""} values`);
+
+        steps.push({
+          step: `values of "${attribute.name}" (${handle})`,
+          ok: true,
+          detail: `${values.length}${truncated ? "+" : ""}${
+            attributeIds.length > 1 ? ` — ${attributeIds.length} distinct attribute ids share this name` : ""
+          } — ${entry.sample.join(", ")}`,
+        });
+        // The one inference left in this chain: the attribute was matched by
+        // NAME, because the union member exposes no `handle`. Containment
+        // settles it — every value a REAL entry stores in THIS field must be
+        // in the list a picker would offer for it. A miss means the wrong
+        // attribute was matched, or the list is partial, and the picker would
+        // refuse a value the shop already uses.
+        steps.push({
+          step: `stored values covered (${handle})`,
+          ok: stored.length > 0 && missing.length === 0,
+          detail:
+            entry.covered.inconclusive
+              ? `INCONCLUSIVE: ${entry.covered.inconclusive}${missing.length ? ` (not in this page: ${missing.join(", ")})` : ""}`
+              : missing.length === 0
+                ? `all ${stored.length} value(s) real entries hold are in the list`
+                : `NOT COVERED: ${missing.join(", ")} — the list offers e.g. ${entry.offeredIdSample.join(", ")}`,
+        });
+      }
+
+      tax.perHandle = perHandle;
+      tax.handleOutcomes = [...outcomeByHandle].map(([handle, outcome]) => ({ handle, outcome }));
+      const primary = perHandle[0];
+      if (primary) {
+        tax.valueSource = `${matchesByHandle.get(primary.handle)?.__typename}.values (found via TaxonomyCategory.attributes)`;
+      }
+      if (matchesByHandle.size === 0) {
+        steps.push({
+          step: "find the wanted attribute",
+          ok: false,
+          detail: `none of the ${sampled} sampled attributes matched ${wantedHandles.join("/") || "(no handle known)"}`,
+        });
       }
     }
 
     report.taxonomy = tax;
-    const reachable = tax.valueCount !== undefined;
-    report.verdicts.push(
-      reachable
-        ? `T1 POSITIVE: the permitted values are reachable via ${tax.valueSource} — ${tax.valueCount}${
-            tax.valuesTruncated ? " or more" : ""
-          } of them. T3 says the editor should be ${
-            tax.valuesTruncated || (tax.valueCount ?? 0) > 60 ? "a SEARCH picker" : "a plain list"
-          }.`
-        : `T1 NOT ANSWERED: no path to the permitted values worked. See the step details — a failed call is not proof that no such API exists, and PLAN_METAOBJECT_TAXONOMY_CREATE §5 (deep link into the Shopify admin) is the fallback only once this has been RE-RUN and still fails.`,
+    // T1 is POSITIVE only when EVERY wanted handle produced a list. Deriving
+    // it from `perHandle` alone made a handle that matched but whose value
+    // query was throttled disappear from the verdict, and the pasted line then
+    // read as the definition's full answer.
+    const measured = tax.perHandle ?? [];
+    const unmeasured = (tax.handleOutcomes ?? []).filter(
+      (o) => !measured.some((h) => h.handle === o.handle),
     );
+    // T3 is decided by the WIDEST list, not by whichever handle came first:
+    // one field needing a search picker is what the form has to build.
+    const widest = measured.reduce(
+      (worst, h) => (h.truncated || h.valueCount > worst.valueCount ? h : worst),
+      { valueCount: -1, truncated: false, handle: "" } as { valueCount: number; truncated: boolean; handle: string },
+    );
+    const listing = measured.map((h) => `${h.handle}: ${h.valueCount}${h.truncated ? "+" : ""}`).join(", ");
+    const shape =
+      widest.truncated || widest.valueCount > 60 ? `a SEARCH picker (widest: ${widest.handle})` : "a plain list";
+    if (measured.length === 0) {
+      report.verdicts.push(
+        `T1 NOT ANSWERED: no path to the permitted values worked. See the step details — a failed call is not proof that no such API exists, and PLAN_METAOBJECT_TAXONOMY_CREATE §5 (deep link into the Shopify admin) is the fallback only once this has been RE-RUN and still fails.`,
+      );
+    } else if (unmeasured.length === 0) {
+      report.verdicts.push(
+        `T1 POSITIVE for every field: the permitted values are reachable via ${tax.valueSource} — ${listing}. T3 says the editor should be ${shape}.`,
+      );
+    } else {
+      report.verdicts.push(
+        `T1 PARTIAL: ${listing} measured via ${tax.valueSource}, but ${unmeasured
+          .map((o) => `\`${o.handle}\` (${o.outcome})`)
+          .join(", ")} produced no list. T3 would say ${shape} on what IS measured — re-run before treating that as the build shape, because an unmeasured field can still be the widest one.`,
+      );
+    }
+    // The containment confirmation belongs in the VERDICTS, not only in the
+    // step table: it is the one inference left in the chain (the attribute is
+    // matched by NAME), and burying the answer among twenty steps is how a
+    // "not covered" gets read as a detail rather than as a blocker.
+    const conclusive = measured.filter((h) => !h.covered.inconclusive);
+    const failed = conclusive.filter((h) => h.covered.missing.length > 0);
+    const open = measured.filter((h) => h.covered.inconclusive);
+    if (failed.length > 0) {
+      report.verdicts.push(
+        `Containment FAILED for ${failed
+          .map((h) => `${h.handle} (missing ${h.covered.missing.join(", ")}; the list offers e.g. ${h.offeredIdSample.join(", ")})`)
+          .join("; ")} — the wrong attribute was matched, its list is partial, or the stored GIDs are spelled differently than the offered ones. A picker built on this list would refuse a value the shop already uses.`,
+      );
+    } else if (conclusive.length > 0) {
+      report.verdicts.push(
+        `Containment CONFIRMED: every taxonomy value real entries hold is in the offered list (${conclusive
+          .map((h) => `${h.handle}: ${h.covered.covered}/${h.covered.checked}`)
+          .join(", ")}). Matching the attribute by name is therefore sound for these fields.`,
+      );
+    }
+    if (open.length > 0) {
+      report.verdicts.push(
+        `Containment NOT CHECKED for ${open
+          .map((h) => `${h.handle} (${h.covered.inconclusive})`)
+          .join("; ")} — an open inference, not a negative result.`,
+      );
+    }
+    const shared = measured.filter((h) => h.distinctAttributeIds > 1);
+    if (shared.length > 0) {
+      report.verdicts.push(
+        `CAUTION: ${shared
+          .map((h) => `${h.distinctAttributeIds} distinct attribute ids answer to "${h.attributeName}" (${h.handle})`)
+          .join("; ")}. A metaobject entry carries no category context, so which of them a picker offers depends on which category was sampled — check whether their value lists agree before Phase 1 picks one.`,
+      );
+    }
     // T2 is answered whatever happens to T1, and it is answered from data that
     // was already in the cache — worth saying on its own so a negative T1 does
     // not bury it.
