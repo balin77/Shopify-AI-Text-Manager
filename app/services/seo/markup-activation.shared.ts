@@ -88,6 +88,21 @@ export type ActivationVerdict =
    * either — do not switch it ON, and if it is already on, change nothing until
    * a crawl can tell. Claiming one cause as fact (which the first cut did) is
    * the inverse of the rule the rest of this module enforces.
+   *
+   * In particular this verdict may NOT be worded as "not from this app". That
+   * is true under the first cause and FALSE under the second: a crawl older
+   * than the marker sees our own block emitting without its attribute, so the
+   * copy it found is ours. The marker is days old (JSON-LD 2026-08-17, social
+   * 2026-08-18), which makes the second cause the common one rather than an
+   * edge case, and the damage concrete — a merchant told "not ours" hunts
+   * through a theme for markup that is not there, then switches OUR working
+   * block off. The copy therefore leads with what IS certain ("already served,
+   * do not switch on") and leaves the origin as the closing clause.
+   *
+   * This becomes decidable the day the marker's release date is known: a crawl
+   * newer than it that found no marker anywhere PROVES the embed is off. That
+   * is a measurement, not an inference — and until the date is a fact rather
+   * than a guess, the hedge stays.
    */
   | "originUnknown"
   /** Repeatable type we co-deliver: same-page duplication is unjudgeable. */
