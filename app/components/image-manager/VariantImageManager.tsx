@@ -13,7 +13,7 @@ import { SortableImageGrid } from "./SortableImageGrid";
 import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
-import { parseExternalVideoUrl, classifyFile } from "../../utils/mediaKind";
+import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -2400,9 +2400,11 @@ export function VariantImageManager({
   // Single selected URL in product gallery (for inline alt text editor)
   const productGallerySelectedUrls = selectedUrlsByGallery.get("product") ?? new Set<string>();
   const noneOrAllSelected = productGallerySelectedUrls.size === 0 || productGallerySelectedUrls.size >= displayedProductUrls.length;
+  // The kind comes from mediaMetaMap via the row's GID — without it a video's
+  // poster url reads as a convertible JPG and the button offers to convert
+  // media Shopify cannot convert (isWebpConvertible owns that rule).
   const imagesToConvert = effectiveProductImages.filter(i =>
-    !i.url.toLowerCase().includes(".webp") &&
-    !i.url.toLowerCase().includes("format=webp") &&
+    isWebpConvertible(i.url, i.mediaId ? mediaMetaMap[i.mediaId]?.kind : undefined) &&
     (noneOrAllSelected ? displayedProductUrls.includes(i.url) : productGallerySelectedUrls.has(i.url))
   );
 

@@ -11,8 +11,9 @@ interface ConvertWebpBody {
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const { productId, productTitle, images }: ConvertWebpBody = await request.json();
+  const { admin, session } = await authenticate.admin(request);
+  const { productId, productTitle, images: requestedImages }: ConvertWebpBody = await request.json();
+  let images = requestedImages;
 
   if (!images?.length) {
     return json({ error: "No images provided" }, { status: 400 });
@@ -38,6 +39,69 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
   if (!owned) {
     return json({ error: "Product not found for this shop" }, { status: 404 });
+  }
+
+  // Only a MediaImage can be converted. Every other product medium — Video,
+  // Model3d, ExternalVideo — is reported to the client under its POSTER url
+  // (a .jpg on the Shopify CDN), so "the URL does not end in .webp" is not
+  // evidence that the row is an image, and this route is directly POST-
+  // reachable anyway. Converting a video would be worse than a wasted
+  // operation: the worker creates a MediaImage from the poster and then
+  // productDeleteMedia's the task's mediaId, i.e. deletes the video. So the
+  // kind is verified against Shopify BEFORE the quota is charged and before
+  // a single task row exists.
+  const mediaIds = [...new Set(images.map(i => i.mediaId).filter((id): id is string => !!id))];
+  if (mediaIds.length > 0) {
+    let kinds: Record<string, string>;
+    try {
+      const res = await admin.graphql(
+        `#graphql
+        query WebpConvertibleMedia($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            id
+            __typename
+          }
+        }`,
+        { variables: { ids: mediaIds } },
+      );
+      const body = await res.json();
+      const nodes = body?.data?.nodes;
+      if (!Array.isArray(nodes)) throw new Error("nodes query returned no data");
+      kinds = Object.fromEntries(
+        nodes.filter((n: any) => n?.id).map((n: any) => [n.id, n.__typename]),
+      );
+    } catch (err: any) {
+      // An unverified kind is never treated as "it is an image" — a throttled
+      // or failed lookup must not be able to delete a merchant's video. The
+      // merchant retries; nothing was charged.
+      console.error("[api.convert-webp] media kind lookup failed:", err?.message);
+      return json(
+        { error: "Could not verify the media types with Shopify", code: "MEDIA_KIND_UNVERIFIED" },
+        { status: 503 },
+      );
+    }
+    // Only a POSITIVELY identified non-image is dropped. An id Shopify cannot
+    // resolve at all (a MediaImage deleted in the admin while the ProductImage
+    // cache row survived) is passed through deliberately: it cannot be the
+    // video this guard exists for, and dropping it would make the image
+    // disappear from the batch with a 200 and no task — silently never
+    // converted. Passed through it becomes a task that FAILS visibly in the
+    // task list and refunds its image operation, which is the observable
+    // outcome and the one a product resync fixes.
+    const convertible = images.filter(i => {
+      if (!i.mediaId) return true;
+      const typename = kinds[i.mediaId];
+      return typename === undefined || typename === "MediaImage";
+    });
+    if (convertible.length !== images.length) {
+      console.warn(
+        `[api.convert-webp] dropped ${images.length - convertible.length} non-image medium/media from the batch`,
+      );
+    }
+    images = convertible;
+    if (images.length === 0) {
+      return json({ error: "No convertible images in the request", code: "NO_CONVERTIBLE_IMAGES" }, { status: 400 });
+    }
   }
 
   // Each image conversion = one billable image operation (real compute/
