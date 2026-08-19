@@ -788,13 +788,14 @@ export const en: Translation = {
       // Validation codes, which used to render as the bare code next to the
       // field ("invalidTaxonomyValue (Solid)").
       errors: {
-        required: "Required",
         tooLong: "Too long ({detail})",
         unknownField: "This app does not know this field.",
         invalidOption: "\u201c{detail}\u201d is not one of the options.",
         invalidHandle: "Only lowercase letters, numbers and dashes.",
         invalidMoney: "Enter an amount, e.g. 19.90",
-        invalidTaxonomyValue: "Pick a value from the list ({detail}).",
+        invalidTaxonomyValue: "Pick a value from the offered list.",
+        tooManyTaxonomyValues: "At most {detail} value(s).",
+        tooFewTaxonomyValues: "At least {detail} value(s).",
       },
       // PLAN §2.5a-d — the AI extras.
       altText: "Alt text",

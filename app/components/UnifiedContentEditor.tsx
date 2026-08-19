@@ -1207,6 +1207,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // on the desktop list and creating is unreachable on a phone.
       onAddItem: createResources.length > 0 ? stableAddItem : null,
       addDisabledReason: createDisabledReason,
+      // The mobile mirror said `Add ${resourceName.singular}` in bare English,
+      // which on this tab named "Metaobject Type" -- the one object this app
+      // cannot create. It takes the same label the desktop bar shows.
+      addLabel: config.createSupport?.fromActionBar
+        ? t.content?.createEntryButtonLabel
+        : t.content?.createButtonLabel,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
@@ -1346,7 +1352,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
-          showAddButton={createResources.length > 0}
+          // Suppressed where the ACTION BAR carries create: the config comment
+          // argues that a "+" over a list of TYPES reads as "add a type", and
+          // leaving it standing next to the new button would have left exactly
+          // the click that lands in the wrong form.
+          showAddButton={createResources.length > 0 && !config.createSupport?.fromActionBar}
           onAddItem={handleAddItem}
           // Visible-but-disabled with the reason, the same as the mobile path.
           // Labelling it without disabling it let a merchant fill in a whole

@@ -780,13 +780,14 @@ export const es: Translation = {
       collectionManual: "Los elijo yo",
       collectionAutomated: "Autom\u00e1ticamente, por reglas",
       errors: {
-        required: "Obligatorio",
         tooLong: "Demasiado largo ({detail})",
         unknownField: "Esta app no conoce este campo.",
         invalidOption: "\u201c{detail}\u201d no es una de las opciones.",
         invalidHandle: "Solo min\u00fasculas, n\u00fameros y guiones.",
         invalidMoney: "Introduce un importe, p. ej. 19.90",
-        invalidTaxonomyValue: "Elige un valor de la lista ({detail}).",
+        invalidTaxonomyValue: "Elige un valor de la lista ofrecida.",
+        tooManyTaxonomyValues: "Como m\u00e1ximo {detail} valor(es).",
+        tooFewTaxonomyValues: "Al menos {detail} valor(es).",
       },
       // PLAN §2.5a-d — los extras de IA.
       altText: "Texto alternativo",

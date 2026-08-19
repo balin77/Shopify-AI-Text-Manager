@@ -792,13 +792,14 @@ export const de = {
       collectionManual: "Ich w\u00e4hle sie selbst aus",
       collectionAutomated: "Automatisch, nach Regeln",
       errors: {
-        required: "Pflichtfeld",
         tooLong: "Zu lang ({detail})",
         unknownField: "Diese App kennt dieses Feld nicht.",
         invalidOption: "\u201e{detail}\u201c ist keine der Auswahlm\u00f6glichkeiten.",
         invalidHandle: "Nur Kleinbuchstaben, Zahlen und Bindestriche.",
         invalidMoney: "Bitte einen Betrag angeben, z. B. 19.90",
-        invalidTaxonomyValue: "Bitte einen Wert aus der Liste w\u00e4hlen ({detail}).",
+        invalidTaxonomyValue: "Bitte einen Wert aus der angebotenen Liste w\u00e4hlen.",
+        tooManyTaxonomyValues: "H\u00f6chstens {detail} Wert(e).",
+        tooFewTaxonomyValues: "Mindestens {detail} Wert(e).",
       },
       // PLAN §2.5a-d — die KI-Extras.
       altText: "Alt-Text",

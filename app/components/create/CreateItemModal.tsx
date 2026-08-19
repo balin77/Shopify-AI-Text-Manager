@@ -578,7 +578,7 @@ export function CreateItemModal({
     // field with a disabled Create button is the worse dead end.
     const errorText = fieldError
       ? fieldError.code === "required"
-        ? t.errors?.required || t.required || "Required"
+        ? t.required || "Required"
         : (t.errors?.[fieldError.code] || `${fieldError.code} {detail}`)
             .replace("{detail}", fieldError.detail ?? "")
             .trim()

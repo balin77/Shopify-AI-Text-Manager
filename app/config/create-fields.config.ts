@@ -507,7 +507,13 @@ export interface CreateValidationError {
     | "invalidOption"
     | "invalidHandle"
     | "invalidMoney"
-    | "invalidTaxonomyValue";
+    | "invalidTaxonomyValue"
+    // Split from `invalidTaxonomyValue` because ONE code cannot carry three
+    // sentences: "that is not a taxonomy value", "that is too many" and "that
+    // is too few" need different remedies, and the shared phrasing told a
+    // merchant who had picked four values to "pick a value from the list".
+    | "tooManyTaxonomyValues"
+    | "tooFewTaxonomyValues";
   detail?: string;
 }
 
@@ -575,14 +581,14 @@ export function validateCreatePayload(
       } else if (field.taxonomy.max !== null && ids.length > field.taxonomy.max) {
         errors.push({
           field: field.key,
-          code: "invalidTaxonomyValue",
-          detail: `${ids.length}/${field.taxonomy.max}`,
+          code: "tooManyTaxonomyValues",
+          detail: String(field.taxonomy.max),
         });
       } else if (field.taxonomy.min !== null && ids.length < field.taxonomy.min) {
         errors.push({
           field: field.key,
-          code: "invalidTaxonomyValue",
-          detail: `${ids.length}/${field.taxonomy.min}`,
+          code: "tooFewTaxonomyValues",
+          detail: String(field.taxonomy.min),
         });
       }
     }
