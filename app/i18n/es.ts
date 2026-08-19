@@ -294,6 +294,9 @@ export const es: Translation = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Idioma principal",
+    // Una traducción que la app inició por su cuenta (hoy: el tipo de producto
+    // derivado de la categoría). Advertencia, no error — el guardado funcionó.
+    autoTranslateFailed: "{field} no se pudo traducir automáticamente. Usa el botón de traducir del campo para hacerlo ahora.",
     noSourceText: "No hay texto en el idioma principal para traducir",
     saveChanges: "Guardar",
     discardChanges: "Descartar",

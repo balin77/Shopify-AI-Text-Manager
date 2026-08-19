@@ -237,9 +237,15 @@ export function TaxonomyField({
   // The top level is fetched when the popover opens, not on mount: most
   // merchants never touch the category of most products, and a request per
   // rendered product row is a request per product for nothing.
+  //
+  // A FAILED level is retried on the next open, not left standing. At the root
+  // there is no Back row to reload from, so without this a single failed fetch
+  // made the picker permanently empty until the page was reloaded — reopening
+  // it is the merchant asking again, and the effect runs once per open, so it
+  // cannot spin.
   useEffect(() => {
     if (!open) return;
-    if (level === null && levelState === "idle") loadLevel(path[path.length - 1]?.id ?? "");
+    if (level === null && levelState !== "loading") loadLevel(path[path.length - 1]?.id ?? "");
     // Only `open` drives this: re-running it on every level change would
     // refetch the level that just arrived.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,12 +260,14 @@ export function TaxonomyField({
   );
 
   const ascend = useCallback(() => {
-    setPath((prev) => {
-      const next = prev.slice(0, -1);
-      loadLevel(next[next.length - 1]?.id ?? "");
-      return next;
-    });
-  }, [loadLevel]);
+    // Computed OUT here, never inside the `setPath` updater: an updater runs in
+    // the render phase and React invokes it twice under StrictMode and on a
+    // replayed render, so a fetch started in there fires two requests per click
+    // (app.menus.tsx carries the same rule for the same reason).
+    const next = path.slice(0, -1);
+    setPath(next);
+    loadLevel(next[next.length - 1]?.id ?? "");
+  }, [path, loadLevel]);
 
   const choose = useCallback(
     (option: TaxonomyOption) => {
@@ -495,7 +503,16 @@ export function TaxonomyField({
 
                     {levelState === "failed" && (
                       <Banner tone="warning">
-                        <p>{t.lookupFailed || "The category list could not be loaded. Try again in a moment."}</p>
+                        <BlockStack gap="200">
+                          <p>{t.lookupFailed || "The category list could not be loaded. Try again in a moment."}</p>
+                          {/* The way out, spelled out. Closing and reopening
+                              also retries now, but nothing on screen says so. */}
+                          <Box>
+                            <Button onClick={() => loadLevel(here?.id ?? "")}>
+                              {t.reload || "Reload"}
+                            </Button>
+                          </Box>
+                        </BlockStack>
                       </Banner>
                     )}
 

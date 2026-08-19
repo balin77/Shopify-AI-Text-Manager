@@ -296,6 +296,10 @@ export const en: Translation = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Primary language",
+    // A translation the app started by itself (today: the product type derived
+    // from the category). A warning, not an error — the save worked, only the
+    // extra step did not.
+    autoTranslateFailed: "{field} could not be translated automatically. Use the translate button on the field to do it now.",
     noSourceText: "No text available in the primary language to translate",
     saveChanges: "Save",
     discardChanges: "Discard",

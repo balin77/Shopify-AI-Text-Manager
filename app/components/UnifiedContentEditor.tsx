@@ -679,7 +679,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // selection the handler then refuses.
     if (state.enabledLanguages.filter((l: string) => l !== primaryLocale).length === 0) return;
 
-    handlers.handleTranslateFieldToAllLocales("productType");
+    // `auto` — the merchant did not press anything. A provider that is not
+    // configured must not turn a save they just watched succeed into a red
+    // error box; the handler reports it as a warning naming the field instead.
+    handlers.handleTranslateFieldToAllLocales("productType", { auto: true });
     // Driven by the save flag alone: adding the values it READS would re-run it
     // on every keystroke, and the falling edge is the whole trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -532,7 +532,9 @@ export interface EditorHandlers {
   /** True while that multi-field run is in flight. */
   isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
-  handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  /** `auto` marks a run the APP started rather than the merchant — it keeps a
+   *  failure off the red error banner. See useFieldHandlers. */
+  handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;

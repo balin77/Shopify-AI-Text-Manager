@@ -293,6 +293,10 @@ export const de = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Hauptsprache",
+    // Eine Uebersetzung, die die App selbst angestossen hat (heute: der aus der
+    // Kategorie abgeleitete Produkttyp). Warnung statt Fehler — das Speichern
+    // hat geklappt, nur der Zusatzschritt nicht.
+    autoTranslateFailed: "{field} konnte nicht automatisch übersetzt werden. Hol es mit dem Übersetzen-Button am Feld nach.",
     noSourceText: "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
     saveChanges: "Speichern",
     discardChanges: "Verwerfen",
