@@ -6,7 +6,12 @@ import {
   activationTone,
   statForSwitch,
   worstActivationVerdict,
+  groupGatesByAction,
+  actionTone,
+  ACTION_BY_VERDICT,
+  ACTION_ORDER,
   JSON_LD_SWITCHES,
+  type ActivationVerdict,
   type MarkupTypeStat,
 } from "~/services/seo/markup-activation.shared";
 
@@ -223,6 +228,51 @@ describe("verdict severity", () => {
   it("keeps the repeatable non-verdict mild — there is nothing to act on", () => {
     expect(worstActivationVerdict(["repeatableUnjudged", "unknown"])).toBe("unknown");
     expect(activationTone("repeatableUnjudged")).toBe("info");
+  });
+});
+
+describe("groupGatesByAction", () => {
+  it("folds nine verdicts into the handful of things a merchant can DO", () => {
+    // A section headed "3 nicht einschalten, 1 ausschalten" is read in a
+    // second; nine sentences are not read at all. The three "hold" verdicts
+    // differ in WHY, which the row still says — not in what to do next.
+    const groups = groupGatesByAction([
+      { label: "Product", verdict: "duplicateApp" },
+      { label: "Article", verdict: "foreignOnly" },
+      { label: "Collection", verdict: "originUnknown" },
+      { label: "Breadcrumb", verdict: "mixed" },
+      { label: "Organization", verdict: "free" },
+      { label: "Video", verdict: "repeatableUnjudged" },
+    ]);
+    expect(groups.map((g) => g.action)).toEqual(["switchOff", "hold", "enable", "noVerdict"]);
+    expect(groups[0].labels).toEqual(["Product"]);
+    expect(groups[1].labels).toEqual(["Article", "Collection", "Breadcrumb"]);
+  });
+
+  it("leads with the most urgent bucket, whatever order the gates arrive in", () => {
+    const groups = groupGatesByAction([
+      { label: "a", verdict: "free" },
+      { label: "b", verdict: "appOnly" },
+      { label: "c", verdict: "duplicateForeign" },
+    ]);
+    expect(groups[0].action).toBe("themeFix");
+    expect(actionTone("themeFix")).toBe("critical");
+    expect(actionTone("hold")).toBe("warning");
+    expect(actionTone("enable")).toBe("success");
+  });
+
+  it("covers every verdict — a new one must not fall out of the summary", () => {
+    const verdicts: ActivationVerdict[] = [
+      "unknown", "free", "appOnly", "foreignOnly", "mixed",
+      "originUnknown", "repeatableUnjudged", "duplicateApp", "duplicateForeign",
+    ];
+    for (const v of verdicts) expect(ACTION_BY_VERDICT[v]).toBeTruthy();
+    // …and every action has a place in the reading order.
+    for (const v of verdicts) expect(ACTION_ORDER).toContain(ACTION_BY_VERDICT[v]);
+  });
+
+  it("returns nothing for no gates, so the banner can be skipped", () => {
+    expect(groupGatesByAction([])).toEqual([]);
   });
 });
 
