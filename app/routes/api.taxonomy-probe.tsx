@@ -20,10 +20,13 @@
  *       auto-filled product type gets translated: from Shopify's own localized
  *       taxonomy (authoritative, free) or through this app's AI path (a
  *       machine translation of a term Shopify has already translated itself).
- *       PARTLY ANSWERED, 2026-08-19: the API returns ENGLISH names on a shop
- *       whose admin renders German ones, and `@inContext` is not defined in
- *       the Admin schema at all. The step now tests the `Accept-Language`
- *       header, the only door left over this transport.
+ *       ANSWERED NO, 2026-08-19: the API returns ENGLISH names on a shop whose
+ *       admin renders German ones; `@inContext` is not defined in the Admin
+ *       schema at all, and `Accept-Language` is accepted and changes nothing
+ *       for any locale of the shop, its primary one included. The step is kept
+ *       so the answer is one click away again if Shopify ever adds a door —
+ *       and because "accepted but identical" is exactly the result a future
+ *       reader would otherwise assume had never been tested.
  *
  * Two rules this probe inherits from every other one in this app. A FAILED
  * call is never reported as a NEGATIVE answer — `missing` (the API answered

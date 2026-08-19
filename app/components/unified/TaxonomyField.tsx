@@ -28,16 +28,22 @@
  * Apparel, Arts, Baby, Business, Cameras, …). Sorting them here would give a
  * different first screen from the one the merchant knows out of their admin.
  *
- * ── The names come back in ENGLISH, and that is not a bug we can fix here ───
+ * ── The names come back in ENGLISH, and the API has no second opinion ──────
  * The same measurement on a shop whose admin renders "Tiere & Tierbedarf"
- * returned "Animals & Pet Supplies". The admin localizes the taxonomy from a
- * source this API does not expose: `@inContext` is NOT DEFINED in the Admin
- * schema at all, so the directive is a closed door rather than a failed try.
- * A picker that showed a translated path would therefore have to translate it
- * itself, and a machine translation of a Shopify category is a worse label
- * than Shopify's own English one — it would not match the admin either.
- * So the paths are shown as Shopify hands them over, and the assumption that
- * they arrive localized (which this comment used to state) is retired.
+ * returned "Animals & Pet Supplies". BOTH doors over this transport are shut,
+ * and each was measured rather than assumed: `@inContext` is NOT DEFINED in
+ * the Admin schema at all, and an `Accept-Language` header is accepted and
+ * changes nothing — for every locale of the shop INCLUDING its primary one.
+ * "Accepted but identical" is the outcome that would otherwise have been read
+ * as success, which is why the probe reports it apart from "refused".
+ *
+ * The German names do exist: Shopify publishes the whole taxonomy per locale
+ * as open data (`Shopify/product-taxonomy`, `dist/<locale>/categories.txt`,
+ * ~2 MB, 14 608 lines of `GID : full path`, keyed by the SAME GIDs the API
+ * returns). That is where the admin gets them. Wiring it up is a decision
+ * about taking an external dependency, not something this component can do on
+ * its own — so until it is made, the paths are shown as the API hands them
+ * over, and the earlier claim that they arrive localized is retired.
  *
  * ── What an empty result means ──────────────────────────────────────────────
  * Never "no such category". A failed lookup says so, and a search that is too
