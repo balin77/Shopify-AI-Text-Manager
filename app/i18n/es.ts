@@ -667,6 +667,13 @@ export const es: Translation = {
     },
     searchEngineListing: "Listado en el motor de búsqueda",
     attributesCardTitle: "Detalles",
+    // Encabezados de las subtarjetas DENTRO de la tarjeta Detalles
+    // (config/details-sections.ts).
+    detailsSections: {
+      commerce: "Precio e inventario",
+      organization: "Organización",
+      theme: "Plantilla del tema",
+    },
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     // UN solo vocabulario de enums, en el nivel superior porque varias

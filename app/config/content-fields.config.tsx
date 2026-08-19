@@ -62,6 +62,7 @@ function tagsField(suggestionsKey: "productTags" | "articleTags"): FieldDefiniti
     key: "tags",
     type: "tags",
     label: ATTRIBUTE_LABELS.tags,
+    detailsSection: "organization",
     translationKey: "",
     supportsAI: false,
     supportsFormatting: false,
@@ -75,6 +76,7 @@ const TEMPLATE_SUFFIX_FIELD: FieldDefinition = {
   key: "templateSuffix",
   type: "text",
   label: ATTRIBUTE_LABELS.templateSuffix,
+  detailsSection: "theme",
   translationKey: "",
   supportsAI: false,
   supportsFormatting: false,
@@ -209,27 +211,44 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
         "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
     },
     {
-      key: "vendor",
-      type: "text",
-      label: ATTRIBUTE_LABELS.vendor,
-      translationKey: "",
-      supportsAI: false,
-      supportsFormatting: false,
-      supportsTranslation: false,
-    },
-    tagsField("productTags"),
-    {
       // §2.3 — the price of the DEFAULT variant only. A product with several
       // variants has several prices and one field cannot mean all of them, so
       // the note says where the rest live rather than pretending otherwise.
       key: "price",
       type: "money",
       label: "Price (default variant)",
+      detailsSection: "commerce",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
       supportsTranslation: false,
       attributeNote: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+    },
+    {
+      // Phase 4 — stock per location and sales channels. NOT part of the
+      // content save: it loads live and writes through its own endpoint, so a
+      // volatile number never travels in the editor's flat value map where it
+      // would be stale by the time the merchant pressed save.
+      key: "commerce",
+      type: "commerce",
+      label: ATTRIBUTE_LABELS.commerce,
+      detailsSection: "commerce",
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      attributeNote:
+        "Stock and channels are saved on their own — the buttons in this section, not the main save.",
+    },
+    {
+      key: "vendor",
+      type: "text",
+      label: ATTRIBUTE_LABELS.vendor,
+      detailsSection: "organization",
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
     },
     {
       // §Phase 3.1 — Shopify's product taxonomy. Not a free-text field: the
@@ -238,6 +257,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       key: "category",
       type: "taxonomy",
       label: ATTRIBUTE_LABELS.category,
+      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -252,6 +272,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       key: "collections",
       type: "collections",
       label: ATTRIBUTE_LABELS.collections,
+      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -259,21 +280,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       attributeNote:
         "Rule-based collections are managed by their own rules — removing the product here would not stick.",
     },
-    {
-      // Phase 4 — stock per location and sales channels. NOT part of the
-      // content save: it loads live and writes through its own endpoint, so a
-      // volatile number never travels in the editor's flat value map where it
-      // would be stale by the time the merchant pressed save.
-      key: "commerce",
-      type: "commerce",
-      label: ATTRIBUTE_LABELS.commerce,
-      translationKey: "",
-      supportsAI: false,
-      supportsFormatting: false,
-      supportsTranslation: false,
-      attributeNote:
-        "Stock and channels are saved on their own — the buttons in this section, not the main save.",
-    },
+    tagsField("productTags"),
     TEMPLATE_SUFFIX_FIELD,
   ],
 };
@@ -366,6 +373,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       key: "collectionRules",
       type: "collectionRules",
       label: "Automatic collection rules",
+      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -375,6 +383,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       key: "sortOrder",
       type: "select",
       label: ATTRIBUTE_LABELS.sortOrder,
+      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -523,6 +532,7 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
     key: "author",
     type: "text",
     label: ATTRIBUTE_LABELS.author,
+    detailsSection: "organization",
     translationKey: "",
     supportsAI: false,
     supportsFormatting: false,

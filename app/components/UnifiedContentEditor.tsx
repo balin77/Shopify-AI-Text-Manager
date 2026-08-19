@@ -7,6 +7,11 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "~/services/content-attributes.shared";
+import {
+  groupDetailsFields,
+  shouldRenderDetailsSections,
+  detailsSectionLabel,
+} from "~/config/details-sections";
 
 /**
  * Attribute field types that need the editor's full width.
@@ -594,6 +599,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
   const attributeFields = useMemo(() => visibleFields.filter((f) => isAttributeField(f)), [visibleFields]);
 
+  // The Details card's own split into subcards. Derived from the ALREADY
+  // filtered list, so a section whose fields all dropped out (the status
+  // control is hoisted into the action bar, the default price only exists for
+  // a single-variant product) simply never appears.
+  const detailsSections = useMemo(() => groupDetailsFields(attributeFields), [attributeFields]);
+  const renderDetailsSections = shouldRenderDetailsSections(detailsSections);
+
   /**
    * Primary-language editing writes to a theme file (themeFilesUpsert), which
    * only exists for the `theme` domain. Read-only when that is off, when the
@@ -656,6 +668,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           apiVersion={apiVersion}
           onReloadAttributes={() => { void handleSyncAll(); }}
         />
+  );
+
+  /**
+   * The Details card's field grid: two columns where a field does not need a
+   * line of its own. A vendor is one word and a status is one dropdown; giving
+   * each the full width of the editor turned eight short answers into eight
+   * rows of mostly empty space. The wide ones keep the full width — a tag list,
+   * a membership picker and the stock panel all use it.
+   */
+  const renderAttributeGrid = (fields: FieldDefinition[]) => (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gap: "1rem",
+        alignItems: "start",
+      }}
+    >
+      {fields.map((field) => (
+        <div
+          key={field.key}
+          style={WIDE_ATTRIBUTE_FIELDS.has(field.type) ? { gridColumn: "1 / -1" } : undefined}
+        >
+          {renderEditorField(field)}
+        </div>
+      ))}
+    </div>
   );
 
   /** One dynamic field, with the product image gallery's replacement slot. */
@@ -1999,30 +2038,31 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Text as="h2" variant="headingMd">
                           {t.content?.attributesCardTitle || "Details"}
                         </Text>
-                        {/* Two columns where the field does not need a line
-                            of its own. A vendor is one word and a status is
-                            one dropdown; giving each the full width of the
-                            editor turned eight short answers into eight rows
-                            of mostly empty space. The wide ones keep the full
-                            width — a tag list, a membership picker and the
-                            stock panel all use it. */}
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                            gap: "1rem",
-                            alignItems: "start",
-                          }}
-                        >
-                          {attributeFields.map((field) => (
-                            <div
-                              key={field.key}
-                              style={WIDE_ATTRIBUTE_FIELDS.has(field.type) ? { gridColumn: "1 / -1" } : undefined}
-                            >
-                              {renderEditorField(field)}
-                            </div>
-                          ))}
-                        </div>
+                        {/* Subcards, the same nested-Card shape the Variants
+                            card uses — but only once there are at least two of
+                            them (`shouldRenderDetailsSections`): a page whose
+                            only attribute is the theme template would otherwise
+                            get a titled box inside a titled box. */}
+                        {detailsSections.map((section) => {
+                          // Keyed by the first field, NOT by the section id
+                          // alone: a section split by another renders as two
+                          // blocks, and two siblings keyed "organization" would
+                          // collide and reconcile into each other's subcard.
+                          const key = `${section.id ?? "unsectioned"}-${section.fields[0].key}`;
+                          if (!renderDetailsSections || !section.id) {
+                            return <Fragment key={key}>{renderAttributeGrid(section.fields)}</Fragment>;
+                          }
+                          return (
+                            <Card key={key} background="bg-surface-secondary" padding="300">
+                              <BlockStack gap="300">
+                                <Text as="h3" variant="bodyMd" fontWeight="semibold">
+                                  {detailsSectionLabel(t, section.id)}
+                                </Text>
+                                {renderAttributeGrid(section.fields)}
+                              </BlockStack>
+                            </Card>
+                          );
+                        })}
                       </BlockStack>
                     </Card>
                   </div>

@@ -1,6 +1,6 @@
 # Taxonomie-Referenzfelder — Plan (damit Farb-Einträge anlegbar werden)
 
-**Status:** **Phase 0 fast durch** (§1.1, §1.2). T1 und T2 sind beantwortet, der Plan ist baubar, und §5 (Rückfallebene) wird nicht gebraucht. **T3 ist für `color` gemessen, für `pattern` nicht** — dessen Werteliste wurde noch nie abgerufen, und genau das ermöglicht der Umbau auf Messung *pro Handle*. Ebenfalls offen: die Bestätigung, dass die angebotene Liste die Werte enthält, die echte Einträge bereits halten. Lauf 3 beantwortet beides in einem Durchgang; danach beginnt Phase 1.
+**Status:** **Phase 0 ist durch** (§1.1–§1.3). T1, T2 und T3 sind für **beide** Felder gemessen, das Enthaltensein ist bestätigt, §5 (Rückfallebene) wird nicht gebraucht. Der Plan ist baubar; Phase 1 kann beginnen. **Und er ist mehr wert als gedacht:** derselbe Editor schaltet neun weitere Standard-Definitionen frei, nicht nur die Farbe (§1.3).
 **Ziel:** Das eine Loch schließen, das [PLAN_METAOBJECTS_EDITOR](PLAN_METAOBJECTS_EDITOR.md) offen gelassen hat: **einen Eintrag einer Shopify-Standard-Definition anlegen** — allen voran eine Farbe.
 **Auslöser:** Gemessen in PLAN_METAOBJECTS_EDITOR §2.1: `shopify--color-pattern` hat **drei** Pflichtfelder, und zwei davon sind Taxonomie-Referenzen (`color_taxonomy_reference: list.product_taxonomy_value_reference*`, `pattern_taxonomy_reference: product_taxonomy_value_reference*`). Diese App hat dafür keinen Editor, also antwortet `metaobjectCreatability` mit `unsupportedRequiredType` und bietet den Typ ausgegraut an. Bearbeiten, Übersetzen und Löschen funktionieren; **Anlegen** nicht — ausgerechnet für den Typ, der den Editor-Plan ausgelöst hat.
 
@@ -86,6 +86,27 @@ Drei Dinge, die der Bericht seither auseinanderhält, weil sie sonst als Antwort
 
 **Was den Plan kippen würde:** Fällt **T1** negativ aus — keine Möglichkeit, die Werte zu erfahren — dann ist ein Picker nicht baubar, und §5 ist die Antwort.
 
+### 1.3 Messung — Lauf 3 (2026-08-19, derselbe Shop). **Phase 0 abgeschlossen.**
+
+Alles, was §1.2 offen ließ, ist beantwortet — und zwar pro Feld:
+
+| Handle | Getroffenes Attribut | distinkte ids | Werte | Enthaltensein |
+|---|---|---|---|---|
+| `color` | Color | **1** | **19** | 7/7 ✅ |
+| `pattern` | Pattern | **1** | **51** | 1/1 ✅ |
+
+**T3 ✅ endgültig: eine LISTE, kein Such-Picker.** 19 bzw. 51 Werte, keine der beiden Listen ist abgeschnitten. `pattern` ist die breitere und bleibt unter der Schwelle — die Bauform steht damit auf dem gemessenen Maximum, nicht auf dem ersten Treffer. *Bauhinweis:* bei 51 Einträgen ist ein Polaris-`Combobox` mit Tippfilter angenehmer als ein reines `Select`; das ist eine Bedienfrage, keine Architekturfrage, und beide lesen dieselbe Liste.
+
+**Enthaltensein ✅ BESTÄTIGT.** Jeder Taxonomie-Wert, den echte Einträge halten, steht in der angebotenen Liste. Damit ist die letzte Schlussfolgerung der Kette geschlossen: das Attribut über seinen **Namen** zu treffen ist für diese Felder belegt und nicht mehr nur plausibel.
+
+**Die „mehrfach Color"-Sorge ist ausgeräumt.** Die zehn Stichproben-Kategorien führten 14 Attribute mit mehrfachem „Color"/„Pattern", aber **je genau eine id**. Es ist EIN Attribut, das an vielen Kategorien hängt — „die zulässigen Werte" ist also wohldefiniert, und ein Picker hängt nicht davon ab, welche Kategorie zufällig zuerst kam. Das war eine echte offene Frage; sie ist gemessen, nicht weggeargumentiert.
+
+**Der eigentliche Fund von Lauf 3 steht in der Definitionstabelle.** Der Shop trägt **zehn** Shopify-Standard-Definitionen, und **neun** davon haben dieselbe Form: `label` plus **ein** Pflichtfeld `taxonomy_reference: product_taxonomy_value_reference*` mit eigenem Handle — `bag-case-storage-features`, `bag-case-material`, `shape`, `material`, `vase-shape`, `decoration-material`, `plant-support-material`, `desk-organizer-features`, `tool-utensil-material`. Alle neun sind heute aus demselben Grund nicht anlegbar wie die Farbe, und **alle neun** werden von Phase 1+2 mit erledigt: der Editor liest den Handle aus den Validierungen, holt die Werte über dieselbe Kategorie-Tür und schreibt dasselbe Feld. Der Nutzen des Plans ist damit „neun blockierte Typen plus die Farbe", nicht „die Farbe". Bei den neun ist das Feld sogar **einfacher** als bei der Farbe: Einzelwert statt Liste mit 1–4 Grenzen.
+
+**Zwei Randbeobachtungen fürs Bauen:**
+- `color_taxonomy_reference` trägt `list.min=1`/`list.max=4`, `pattern_taxonomy_reference` trägt **keine** Grenzen (Einzelwert). Die Formularvalidierung liest sie aus den Validierungen, sie werden nirgends hartkodiert.
+- Jeder Eintrag der Stichprobe hält denselben Musterwert (`TaxonomyValue/2874`). Das ist ein Pflichtfeld, das offenbar durchgereicht wird — ein Vorgabewert im Anlege-Formular („Solid"/das, was die anderen Einträge tragen) erspart dem Merchant eine Entscheidung, die er nicht treffen will. Als Vorschlag, nicht als Zwang.
+
 ---
 
 ## 2. Phase 0 — Messung (schreibfrei, in die bestehende Probe)
@@ -110,7 +131,7 @@ Ein weiterer Schritt in [api.metaobject-probe.tsx](../../app/routes/api.metaobje
 **Unabhängig auslieferbar:** ja. **Setzt Phase 0 voraus** — die Bauform hängt an T1/T3.
 
 - **Neue Rolle** `taxonomyValue` in `metaobjectFieldRole`, für `product_taxonomy_value_reference` **und** `list.product_taxonomy_value_reference`. Die Liste unterscheidet sich nur in der Serialisierung (JSON-Array statt blanker String) — dieselbe Trennung, die `list.single_line_text_field` schon hat, und sie gehört in `parseMetaobjectFieldInput`, nicht in die Komponente.
-- **Neue Komponente** `app/components/metaobjects/TaxonomyValueField.tsx`. Bei **kleiner** Menge (T3) ein `Select`/`ChoiceList` aus den zulässigen Werten; bei großer ein Such-Picker nach dem Vorbild von `TaxonomyField`. **Die Form wird nach Phase 0 entschieden, nicht vorher** — ein Suchfeld über zwölf Farben ist so falsch wie ein Dropdown über zehntausend Kategorien.
+- **Neue Komponente** `app/components/metaobjects/TaxonomyValueField.tsx`. **Die Bauform ist entschieden (§1.3): eine Liste, kein Such-Picker** — 19 Farben, 51 Muster, beide vollständig geladen. Ein `Combobox` mit Tippfilter für die Einzelauswahl, Mehrfachauswahl für `list.*` mit den Grenzen aus `list.min`/`list.max`. Kein Suchfeld gegen die Taxonomie-API: die Liste ist klein genug, um ganz da zu sein, und eine Suche über 51 Einträge wäre ein Netzaufruf pro Tastendruck für nichts.
 - **Neue Route** `app/routes/api.metaobject-taxonomy.tsx`: liefert die zulässigen Werte für ein FELD einer Definition. Gated wie jede Resource-Route (`canAccessContentType(plan, "metaobjects")`), weil sie direkt per GET erreichbar ist.
 - **Anzeige des BESTEHENDEN Werts.** Ein Eintrag im Editor trägt eine GID; ohne Auflösung stünde dort `gid://shopify/TaxonomyValue/11`. Die Route löst deshalb auch einzelne GIDs zu Namen auf, und eine **nicht** auflösbare GID wird als solche gezeigt — nie als leeres Feld, das beim nächsten Speichern den Wert löscht.
 
@@ -130,9 +151,9 @@ Ein weiterer Schritt in [api.metaobject-probe.tsx](../../app/routes/api.metaobje
 
 ---
 
-## 5. Wenn T1 negativ ausfällt
+## 5. Wenn T1 negativ ausfällt — **eingetreten ist das NICHT** (§1.3)
 
-Dann ist ein Picker nicht baubar, und die ehrliche Antwort ist **nicht** ein Formular, das immer scheitert:
+Der Abschnitt bleibt stehen, weil er die Entscheidung dokumentiert, nicht weil sie noch aussteht: T1 ist positiv, also wird nichts davon gebaut. Was hier stünde, wenn es anders gekommen wäre:
 
 Die Farbliste zeigt im leeren Zustand und neben dem gesperrten „+" einen **Deep-Link in den Shopify-Admin**, wo das Anlegen funktioniert, mit einem Satz dazu, warum es hier nicht geht. Das ist heute schon fast der Zustand — es fehlt nur der Link. Kosten: ein Nachmittag statt einer Woche, und der Merchant kommt an sein Ziel.
 
@@ -162,6 +183,7 @@ Dieser Ausgang wird **implementiert, nicht weggelassen**, falls die Messung ihn 
 
 ## 8. Offene Fragen
 
-1. **T1–T4** (§1). Phase 0 beantwortet sie.
+1. **T1–T3 — beantwortet** (§1.1–§1.3). **T4 offen:** ob Shopify Konsistenz zwischen dem `color`-Hexwert und dem gewählten Taxonomie-Wert erzwingt (also ob „Pink" mit `#000000` erlaubt ist). Betrifft nur, ob die Oberfläche warnen muss — kein Blocker für Phase 1, weil beide Felder unabhängig geschrieben werden.
 2. **Soll die Farbe den Taxonomie-Wert vorschlagen?** Wenn der Merchant `#FFC0CB` setzt, ist „Pink" die naheliegende Basisfarbe. Verlockend und riskant: ein automatisch gesetzter Pflichtwert, den niemand geprüft hat, ist genau die Sorte Vermutung, die dieser Code sonst vermeidet. Erst beantworten, wenn T4 gemessen ist.
-3. **Was tun bei einer Definition mit MEHREREN Taxonomie-Feldern?** `shopify--color-pattern` hat zwei, und die anderen neun Standard-Definitionen je eines. Vermutlich unproblematisch, aber die Zuordnung „welches Attribut gehört zu welchem Feld" ist T2 und muss je Feld stimmen, nicht je Definition.
+3. **Was tun bei einer Definition mit MEHREREN Taxonomie-Feldern? — beantwortet.** `shopify--color-pattern` hat zwei, und Lauf 3 hat beide getrennt gemessen: eigener Handle, eigene Werteliste, eigenes Enthaltensein. Die Zuordnung ist je FELD und funktioniert. Die anderen neun Standard-Definitionen haben je eines und sind damit der einfachere Fall.
+4. **Vorbelegung des Musterfelds.** Alle Stichprobeneinträge tragen denselben `pattern_taxonomy_reference` (§1.3). Ein Vorschlagswert im Anlege-Formular wäre bequem — aber ein automatisch gesetzter PFLICHTwert, den niemand geprüft hat, ist dieselbe Sorte Vermutung wie Frage 2. Als vorausgewählter, sichtbarer und änderbarer Vorschlag vertretbar; als stiller Default nicht.

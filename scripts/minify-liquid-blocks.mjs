@@ -318,7 +318,7 @@ export function listBlockFiles(dirs = LIQUID_DIRS) {
  * Read every block and minify it in memory. Writes nothing.
  *
  * @param {string} [dir]
- * @returns {{blocks: BlockReport[], originalBytes: number, minifiedBytes: number}}
+ * @returns {{blocks: BlockReport[], missingDirs: string[], originalBytes: number, minifiedBytes: number}}
  */
 export function buildReport(dirs = LIQUID_DIRS) {
   const blocks = listBlockFiles(dirs).map((path) => {
@@ -335,8 +335,16 @@ export function buildReport(dirs = LIQUID_DIRS) {
     };
   });
 
+  // A configured directory that is not there is REPORTED, never shrugged off.
+  // `listBlockFiles` skips it so a repo without snippets still works, but a
+  // renamed or moved folder would otherwise silently drop out of the budget --
+  // the check would print 'fits' while the deploy fails on the 100 KiB limit,
+  // which is the exact failure this scan was widened to prevent.
+  const missingDirs = (Array.isArray(dirs) ? dirs : [dirs]).filter((d) => !existsSync(d));
+
   return {
     blocks,
+    missingDirs,
     originalBytes: blocks.reduce((sum, b) => sum + b.originalBytes, 0),
     minifiedBytes: blocks.reduce((sum, b) => sum + b.minifiedBytes, 0),
   };
@@ -350,6 +358,9 @@ const kib = (bytes) => `${(bytes / 1024).toFixed(1)} KiB`;
  * @param {{blocks: BlockReport[], originalBytes: number, minifiedBytes: number}} report
  */
 export function printReport(report) {
+  for (const dir of report.missingDirs ?? []) {
+    console.warn(`  ⚠️  configured Liquid directory not found, NOT counted: ${dir}`);
+  }
   const width = Math.max(...report.blocks.map((b) => b.name.length), 5);
   console.log('  file'.padEnd(width + 4) + '     original      minified        saved');
   for (const b of report.blocks) {
