@@ -220,7 +220,7 @@ class WebhookRetryService {
         const admin = await createAdminClientFromShop(shop);
         const sync = new ProductSyncService(admin, shop);
         if (topic === 'PRODUCTS_DELETE') await sync.deleteProduct(productId);
-        else await sync.syncProduct(productId, false, { reconcileTranslations: true });
+        else await sync.syncProduct(productId, false, { reconcileTranslations: topic === 'PRODUCTS_UPDATE' });
       };
     }
     if (topic === 'COLLECTIONS_CREATE' || topic === 'COLLECTIONS_UPDATE' || topic === 'COLLECTIONS_DELETE') {
@@ -232,7 +232,7 @@ class WebhookRetryService {
         const admin = await createAdminClientFromShop(shop);
         const sync = new ContentSyncService(admin, shop);
         if (topic === 'COLLECTIONS_DELETE') await sync.deleteCollection(collectionId);
-        else await sync.syncCollection(collectionId, false, { reconcileTranslations: true });
+        else await sync.syncCollection(collectionId, false, { reconcileTranslations: topic === 'COLLECTIONS_UPDATE' });
       };
     }
     return undefined;

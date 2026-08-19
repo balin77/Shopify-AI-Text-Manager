@@ -81,10 +81,12 @@ async function processWebhookAsync(
     const syncService = new ContentSyncService(admin, shop);
 
     if (topic === "COLLECTIONS_CREATE" || topic === "COLLECTIONS_UPDATE") {
-      // A collections/update webhook IS the "the primary text changed"
+      // A collections/UPDATE webhook IS the "the primary text changed"
       // event — reconcile the now-stale foreign translations (delete, or
-      // re-translate on Max).
-      await syncService.syncCollection(collectionId, false, { reconcileTranslations: true });
+      // re-translate on Max). A CREATE is a first sync, never a change event.
+      await syncService.syncCollection(collectionId, false, {
+        reconcileTranslations: topic === "COLLECTIONS_UPDATE",
+      });
       await enqueueCollectionForIndexNow(db, shop, collectionId);
     } else if (topic === "COLLECTIONS_DELETE") {
       // IndexNow is meant to be told about removed URLs too, so we must

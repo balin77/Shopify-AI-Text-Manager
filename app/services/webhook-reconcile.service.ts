@@ -86,9 +86,13 @@ async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxI
     const localUpdated = localMap.get(id);
     if (!localUpdated || new Date(updatedAt) > localUpdated) {
       try {
-        // Only reached when Shopify's updatedAt is NEWER than our cache —
-        // i.e. a change event this app missed, so it reconciles like a webhook.
-        await svc.syncProduct(id, false, { reconcileTranslations: true });
+        // Stale-translation reconciliation ONLY for a resource we already had
+        // and that Shopify says has changed since — that is the missed change
+        // event. A resource with no cached row at all is a FIRST sync (fresh
+        // install, plan cap lifted, newly created product): reconciling there
+        // would delete every translation Shopify happens to flag outdated
+        // before the merchant has ever seen this app.
+        await svc.syncProduct(id, false, { reconcileTranslations: localMap.has(id) });
         repaired++;
       } catch (e) {
         logger.warn(`[Reconcile] product sync failed ${id}`, { shop, error: e instanceof Error ? e.message : String(e) });
@@ -129,7 +133,9 @@ async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, m
     const localUpdated = localMap.get(id);
     if (!localUpdated || new Date(updatedAt) > localUpdated) {
       try {
-        await svc.syncCollection(id, false, { reconcileTranslations: true });
+        // See reconcileProducts: a never-cached collection is a FIRST sync,
+        // not a missed change event.
+        await svc.syncCollection(id, false, { reconcileTranslations: localMap.has(id) });
         repaired++;
       } catch (e) {
         logger.warn(`[Reconcile] collection sync failed ${id}`, { shop, error: e instanceof Error ? e.message : String(e) });

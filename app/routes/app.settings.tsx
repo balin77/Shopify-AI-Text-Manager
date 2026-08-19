@@ -657,6 +657,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const data = validationResult.data;
 
+      // PLAN GATE FIRST — before anything is written. The Translations
+      // sub-section saves its switches together with the instruction texts, so
+      // a 403 decided after the AIInstructions upsert would leave a
+      // half-applied save that keeps failing on every retry.
+      // Same "would it change anything" rule as the SEO limits: a payload that
+      // matches the stored value is a no-op and must not 403 (a downgraded
+      // shop re-submits its stored `true` on every save of this tab).
+      const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
+      let autoTranslateUpdate: { autoTranslateExternalChanges: boolean } | Record<string, never> = {};
+      if (rawAutoTranslate !== null) {
+        const requested = rawAutoTranslate === "true";
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, autoTranslateExternalChanges: true },
+        });
+        if ((row?.autoTranslateExternalChanges ?? false) !== requested) {
+          const { meetsPlan } = await import("../utils/planUtils");
+          const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+            "../services/translations/translation-change-policy.shared"
+          );
+          const plan = (row?.subscriptionPlan || "free") as Plan;
+          if (!meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN)) {
+            return json(
+              {
+                success: false,
+                error: "Automatic re-translation of external changes is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoTranslateUpdate = { autoTranslateExternalChanges: requested };
+        }
+      }
+
       // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
         // General (Writing Style Instructions)
@@ -749,38 +784,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const purgeUpdate =
         rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
 
-      // Auto-translate on an EXTERNAL change is a Max feature. Gated on the
-      // same "would it change anything" rule as the SEO limits: a payload that
-      // matches the stored value is a no-op and must not 403 (a downgraded
-      // shop re-submits its stored `true` on every save of this tab).
-      const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
-      let autoTranslateUpdate: { autoTranslateExternalChanges: boolean } | Record<string, never> = {};
-      if (rawAutoTranslate !== null) {
-        const requested = rawAutoTranslate === "true";
-        const row = await db.aISettings.findUnique({
-          where: { shop: session.shop },
-          select: { subscriptionPlan: true, autoTranslateExternalChanges: true },
-        });
-        if ((row?.autoTranslateExternalChanges ?? false) !== requested) {
-          const { meetsPlan } = await import("../utils/planUtils");
-          const { AUTO_TRANSLATE_MIN_PLAN } = await import(
-            "../services/translations/translation-change-policy.shared"
-          );
-          const plan = (row?.subscriptionPlan || "free") as Plan;
-          if (!meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN)) {
-            return json(
-              {
-                success: false,
-                error: "Automatic re-translation of external changes is available on the Max plan.",
-                actionType,
-              },
-              { status: 403 },
-            );
-          }
-          autoTranslateUpdate = { autoTranslateExternalChanges: requested };
-        }
-      }
-
+      // (The Max gate for autoTranslateExternalChanges already ran above, so
+      // `autoTranslateUpdate` is either the entitled change or empty.)
       const translationSettingsUpdate = {
         ...modeUpdate,
         ...keywordAwareUpdate,

@@ -28,9 +28,17 @@
  *
  * Max plan (`autoTranslateExternalChanges`): instead of leaving the field
  * untranslated, the NEW primary value is re-translated into that locale and
- * registered right away. Anything that cannot be re-translated (cleared field,
- * missing digest, `handle`, AI error, no API key) falls back to the purge, so
- * the storefront never keeps the stale text because automation failed.
+ * registered. Anything that cannot be re-translated (cleared field, missing
+ * digest, `handle`, AI error, no API key) falls back to the purge, so the
+ * storefront never keeps the stale text because automation failed. That AI run
+ * is DETACHED and Task-tracked — two callers await this sync inside an HTTP
+ * request, and one AI request per locale does not fit in one. The purge stays
+ * inline (one GraphQL call), so the storefront is corrected immediately.
+ *
+ * With the purge ON (the default) an in-app primary save has already removed
+ * the translations before the webhook arrives, so nothing is outdated by then:
+ * the re-translation is reached by changes made OUTSIDE the app, which is
+ * exactly what it is for.
  */
 
 import { logger } from "../../utils/logger.server";
@@ -40,11 +48,7 @@ import {
 } from "../../utils/translation-save-lock.server";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
-import {
-  registerAndVerify,
-  removeAndVerifyAcrossLocales,
-  LOCALE_KEY_SEP,
-} from "../bulk-editor/translations.server";
+import { registerAndVerify, removeAndVerify } from "../bulk-editor/translations.server";
 import { loadTranslationChangePolicy } from "./translation-change-policy.server";
 import {
   findStaleTranslations,
@@ -74,13 +78,18 @@ export interface ReconcileParams {
 }
 
 export interface ReconcileResult {
-  /** (locale, key) pairs removed on Shopify AND locally. */
+  /** (locale, key) pairs removed on Shopify AND locally, inline. */
   removed: number;
-  /** (locale, key) pairs re-translated and registered (Max). */
-  retranslated: number;
+  /**
+   * (locale, key) pairs handed to the DETACHED re-translation run (Max). They
+   * are not finished when this resolves — the run is Task-tracked and the
+   * merchant follows it in the Tasks tab, exactly like every other AI
+   * operation in this app.
+   */
+  retranslating: number;
 }
 
-const NOTHING: ReconcileResult = { removed: 0, retranslated: 0 };
+const NOTHING: ReconcileResult = { removed: 0, retranslating: 0 };
 
 /**
  * Detect and repair stale foreign translations for ONE resource.
@@ -122,36 +131,53 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
       policy.autoTranslateExternalChanges,
     );
 
-    let retranslated = 0;
-    // Entries the AI path could not deliver fall through to the purge, so a
-    // failed automation never leaves the stale translation on the storefront.
-    const purgeQueue: StaleTranslation[] = [...purge];
-
+    // The AI re-translation is DETACHED. Two of the callers (the single-item
+    // reload routes) await this sync inside an HTTP request, and one AI
+    // request per locale does not fit in a request the browser abandons after
+    // 30 seconds. It is Task-tracked, so nothing is lost by not waiting —
+    // while the purge below is one GraphQL call and stays inline, so the
+    // storefront is corrected immediately either way.
     if (retranslate.length > 0) {
-      const outcome = await retranslateStaleEntries(gateway, params, retranslate);
-      retranslated = outcome.registered.length;
-      purgeQueue.push(...outcome.failed);
+      void (async () => {
+        try {
+          const outcome = await retranslateStaleEntries(gateway, params, retranslate);
+          // Entries the AI path could not deliver still have to lose their
+          // stale translation — a failed automation must never leave the old
+          // text on the storefront.
+          if (policy.purgeOnPrimaryChange && outcome.failed.length > 0) {
+            await purgeStaleEntries(gateway, shop, resourceId, resourceType, outcome.failed);
+          }
+          if (outcome.registered.length > 0 || outcome.failed.length > 0) markTranslationSaved(resourceId);
+        } catch (error: unknown) {
+          logger.warn("[StaleTranslations] Detached re-translation run failed", {
+            context: "StaleTranslations",
+            shop,
+            resourceId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      })();
     }
 
     let removed = 0;
-    if (policy.purgeOnPrimaryChange && purgeQueue.length > 0) {
-      removed = await purgeStaleEntries(gateway, shop, resourceId, resourceType, purgeQueue);
+    if (policy.purgeOnPrimaryChange && purge.length > 0) {
+      removed = await purgeStaleEntries(gateway, shop, resourceId, resourceType, purge);
     }
 
-    if (removed > 0 || retranslated > 0) {
-      // Protect the values we just wrote from a racing webhook sync that
-      // re-fetches Shopify before it is consistent again.
+    if (removed > 0) {
+      // Protect what we just changed from a racing webhook sync that re-fetches
+      // Shopify before it is consistent again.
       markTranslationSaved(resourceId);
       logger.info("[StaleTranslations] Reconciled", {
         context: "StaleTranslations",
         shop,
         resourceId,
         removed,
-        retranslated,
+        retranslating: retranslate.length,
       });
     }
 
-    return { removed, retranslated };
+    return { removed, retranslating: retranslate.length };
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Reconciliation failed — stale rows kept", {
       context: "StaleTranslations",
@@ -169,6 +195,14 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
  * Echo-verified removal on Shopify, then the local mirror for CONFIRMED pairs
  * only. Global layer (`marketId ""`) exclusively — a market override is a
  * deliberate separate value and survives, exactly as in both editors.
+ *
+ * ONE call PER LOCALE with exactly that locale's stale keys. `translationsRemove`
+ * takes keys × locales as a cross product, and this set is genuinely per
+ * (locale, key): a locale that was re-translated after the primary change is
+ * not stale, and a key can be stale in one locale while another holds a
+ * current translation of it. Sending the union would delete a translation
+ * nobody flagged — on Shopify, where the local row we kept could no longer
+ * mirror it.
  */
 async function purgeStaleEntries(
   gateway: ShopifyApiGateway,
@@ -177,32 +211,27 @@ async function purgeStaleEntries(
   resourceType: string,
   entries: readonly StaleTranslation[],
 ): Promise<number> {
-  const keys = [...new Set(entries.map((e) => e.key))];
-  const locales = [...new Set(entries.map((e) => e.locale))];
-  if (keys.length === 0 || locales.length === 0) return 0;
-
-  const { confirmedPairs } = await removeAndVerifyAcrossLocales(gateway, resourceId, keys, locales, "");
-  if (confirmedPairs.size === 0) return 0;
-
-  const confirmedKeysByLocale = new Map<string, string[]>();
+  const keysByLocale = new Map<string, string[]>();
   for (const entry of entries) {
-    if (!confirmedPairs.has(`${entry.locale}${LOCALE_KEY_SEP}${entry.key}`)) continue;
-    const list = confirmedKeysByLocale.get(entry.locale) ?? [];
+    const list = keysByLocale.get(entry.locale) ?? [];
     if (!list.includes(entry.key)) list.push(entry.key);
-    confirmedKeysByLocale.set(entry.locale, list);
+    keysByLocale.set(entry.locale, list);
   }
-  if (confirmedKeysByLocale.size === 0) return 0;
+  if (keysByLocale.size === 0) return 0;
 
   const { db } = await import("../../db.server");
   let removed = 0;
-  for (const [locale, localeKeys] of confirmedKeysByLocale) {
+  for (const [locale, localeKeys] of keysByLocale) {
+    const { confirmedKeys } = await removeAndVerify(gateway, resourceId, localeKeys, locale, "");
+    if (confirmedKeys.size === 0) continue;
+    const confirmed = localeKeys.filter((key) => confirmedKeys.has(key));
     await db.contentTranslation.deleteMany({
-      where: { shop, resourceId, resourceType, locale, marketId: "", key: { in: localeKeys } },
+      where: { shop, resourceId, resourceType, locale, marketId: "", key: { in: confirmed } },
     });
     // Counted from Shopify's confirmations, not from the DB result: a row the
     // cache never held (or already dropped) is still a translation that is
     // gone from the storefront, and that is what this number reports.
-    removed += localeKeys.length;
+    removed += confirmed.length;
   }
   return removed;
 }
