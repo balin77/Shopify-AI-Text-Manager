@@ -20,10 +20,16 @@
  *      at all, and what is it called? Asked by INTROSPECTION, not by guessing:
  *      a name from the docs that does not exist would otherwise come back as a
  *      generic "mutation failed" and read like a broken shop.
- *   2. WRITE — if it exists, send one and read the variant back.
- *   3. CLEAR — if the write works, can it be removed again? A field that can
+ *   2. WRITE - if it exists, send one and read the variant back.
+ *   3. CLEAR - if the write works, can it be removed again? A field that can
  *      be set and not unset is a trap, not a feature: the merchant who ticks
  *      it by mistake is stuck with a wrong Grundpreis on the storefront.
+ *   4. HIDE - a separate question from 3, and only asked because the first
+ *      live run answered 3 with NO. `unitPriceMeasurement: null` is accepted,
+ *      reports no errors, and leaves the measurement exactly where it was.
+ *      `showUnitPrice` sat next to it in the same introspection, so the clear
+ *      step is a LADDER of candidates and the two outcomes are reported
+ *      apart: removing a Grundpreis and hiding one are not the same promise.
  *
  * ── The rule every probe in this app follows ────────────────────────────────
  * A FAILED call is never reported as a NEGATIVE answer. `missing` (the API
@@ -145,10 +151,57 @@ export const loader = async (args: LoaderFunctionArgs) => {
   });
 };
 
+
+/** What "nothing is set" actually looks like on the wire.
+ *
+ *  MEASURED: a variant with no Grundpreis does NOT answer `null`. It answers a
+ *  ZEROED struct - `{measuredType: null, quantityValue: 0, quantityUnit: null,
+ *  referenceValue: 0, referenceUnit: null}` - so `=== null` is not the
+ *  emptiness test. Getting this wrong reports a successful clear as a failure,
+ *  which is the same class of mistake as reading an empty column as evidence. */
+function isEmptyMeasurement(measurement: Record<string, unknown> | null | undefined): boolean {
+  return !measurement || !measurement.quantityUnit || !measurement.referenceUnit;
+}
+
+/**
+ * The ways a Grundpreis might be taken off a variant, in the order they are
+ * tried.
+ *
+ * There is more than one candidate because `unitPriceMeasurement: null` is
+ * MEASURED not to work: the mutation accepts it, reports no errors, and the
+ * variant comes back still carrying 500 g / 1 kg. `showUnitPrice` turned up in
+ * the same introspection as its neighbour, which makes it the obvious second
+ * question - and the two are not the same question. Removing the measurement
+ * and hiding it are different outcomes for a merchant, so they are reported
+ * separately rather than folded into one "clear" verdict.
+ */
+const CLEAR_STRATEGIES: Array<{ label: string; input: Record<string, unknown> }> = [
+  { label: "unitPriceMeasurement: null", input: { unitPriceMeasurement: null } },
+  { label: "showUnitPrice: false", input: { showUnitPrice: false } },
+  { label: "both at once", input: { unitPriceMeasurement: null, showUnitPrice: false } },
+];
+
+/** The unit-price state of one variant, as the mutation echoed it back. */
+interface VariantState {
+  measurement: Record<string, unknown> | null;
+  /** `null` when the field is not readable on this API version - "not asked"
+   *  and "off" are different answers. */
+  showUnitPrice: boolean | null;
+}
+
+interface Attempt {
+  strategy: string;
+  measurement: unknown;
+  showUnitPrice: boolean | null;
+  measurementGone: boolean;
+  hidden: boolean;
+  error?: string;
+}
+
 export const action = async (args: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(args.request);
 
-  // Whole-route dev gate — see the header. It WRITES to a live variant, and a
+  // Whole-route dev gate - see the header. It WRITES to a live variant, and a
   // hidden Settings tab is not a permission check.
   if (process.env.APP_ENV !== "development") {
     return json(
@@ -160,185 +213,400 @@ export const action = async (args: ActionFunctionArgs) => {
   const formData = await args.request.formData();
   const variantGid = String(formData.get("variantGid") ?? "");
   const productGid = String(formData.get("productGid") ?? "");
+  /**
+   * `clear` runs ONLY the removal ladder, against whatever the variant holds.
+   *
+   * It exists because the probe's own first run could not put the variant back:
+   * the write worked, every clear failed, and the restore in the `finally`
+   * failed for the identical reason. A probe that can leave a measurement
+   * behind owes the merchant a way to take it off - and re-running the full
+   * probe is not that way, since it would read the leftover as the state to
+   * restore and put it back at the end.
+   */
+  const mode = String(formData.get("mode") ?? "probe") === "clear" ? "clear" : "probe";
 
   if (!variantGid.startsWith("gid://shopify/ProductVariant/")) {
     return json({ success: false, error: "A ProductVariant GID is required." }, { status: 400 });
   }
+  if (!productGid.startsWith("gid://shopify/Product/")) {
+    return json({ success: false, error: "A Product GID is required." }, { status: 400 });
+  }
 
   const results: Record<string, Finding> = {};
   /** What was there before this probe touched anything. */
-  let restore: { quantityValue: number; quantityUnit: string; referenceValue: number; referenceUnit: string } | null =
-    null;
+  let restore: {
+    quantityValue: number;
+    quantityUnit: string;
+    referenceValue: number;
+    referenceUnit: string;
+  } | null = null;
+  let restoreShowUnitPrice: boolean | null = null;
+  /**
+   * Whether `ProductVariant.showUnitPrice` can be SELECTED, established by
+   * introspection before anything selects it. A guessed field name in a
+   * selection set fails the whole query, which would take the answers that do
+   * exist down with it.
+   */
+  let readsShowUnitPrice = false;
+  /** The strategy that actually removed the measurement, once one has. */
+  let workingClear: { label: string; input: Record<string, unknown> } | null = null;
 
   try {
-    // ── 1. Does the INPUT carry a unit-price field, and what is it called? ──
-    try {
-      const response = await admin.graphql(
-        `#graphql
-          query unitPriceInputShape {
-            variantInput: __type(name: "ProductVariantsBulkInput") {
-              inputFields { name type { name kind ofType { name kind } } }
-            }
-            measurementInput: __type(name: "UnitPriceMeasurementInput") {
-              inputFields { name type { name kind ofType { name kind } } }
-            }
-          }`,
-      );
-      const body = (await response.json()) as {
-        data?: {
-          variantInput?: { inputFields?: Array<{ name: string; type?: unknown }> } | null;
-          measurementInput?: { inputFields?: Array<{ name: string }> } | null;
-        };
-        errors?: Array<{ message?: string }>;
-      };
-      if (body.errors?.length) {
-        results.inputShape = fail(body.errors[0]?.message ?? "introspection failed");
-      } else if (!body.data?.variantInput) {
-        // The input type itself is missing, which would be a much bigger
-        // finding than the one this probe is about.
-        results.inputShape = absent({ note: "ProductVariantsBulkInput not found" });
-      } else {
-        const names = (body.data.variantInput.inputFields ?? []).map((f) => f.name);
-        const found = CANDIDATE_FIELDS.filter((c) => names.includes(c));
-        results.inputShape = {
-          ok: found.length > 0,
-          missing: found.length === 0,
-          detail: {
-            found,
-            candidatesProbed: CANDIDATE_FIELDS,
-            // The whole list, so a field under a name nobody guessed is still
-            // visible in the report rather than invisible to the probe.
-            allInputFields: names,
-            measurementInputFields:
-              body.data.measurementInput?.inputFields?.map((f) => f.name) ?? null,
-          },
-        };
-      }
-    } catch (error) {
-      results.inputShape = fail(error instanceof Error ? error.message : String(error));
+    // -- 1. Does the INPUT carry a unit-price field, and what is it called? --
+    if (mode === "probe") {
+      results.inputShape = await probeInputShape(admin);
+    }
+    // The output side is needed in BOTH modes: it decides what may be selected.
+    readsShowUnitPrice = await canReadShowUnitPrice(admin);
+    if (results.inputShape?.detail && typeof results.inputShape.detail === "object") {
+      (results.inputShape.detail as Record<string, unknown>).readsShowUnitPrice = readsShowUnitPrice;
     }
 
-    // ── 2. What does the variant hold right now? ───────────────────────────
-    try {
-      const response = await admin.graphql(
-        `#graphql
-          query unitPriceCurrent($id: ID!) {
-            productVariant(id: $id) {
-              id
-              title
-              unitPriceMeasurement {
-                measuredType
-                quantityValue
-                quantityUnit
-                referenceValue
-                referenceUnit
-              }
-            }
-          }`,
-        { variables: { id: variantGid } },
-      );
-      const body = (await response.json()) as {
-        data?: {
-          productVariant?: {
-            id?: string;
-            title?: string;
-            unitPriceMeasurement?: {
-              measuredType?: string | null;
-              quantityValue?: number | null;
-              quantityUnit?: string | null;
-              referenceValue?: number | null;
-              referenceUnit?: string | null;
-            } | null;
-          } | null;
-        };
-        errors?: Array<{ message?: string }>;
-      };
-      if (body.errors?.length) {
-        results.read = fail(body.errors[0]?.message ?? "read failed");
-      } else if (!body.data?.productVariant) {
-        results.read = absent({ note: "no such variant" });
-      } else {
-        const measurement = body.data.productVariant.unitPriceMeasurement ?? null;
-        if (
-          measurement &&
-          measurement.quantityValue != null &&
-          measurement.quantityUnit &&
-          measurement.referenceValue != null &&
-          measurement.referenceUnit
-        ) {
-          restore = {
-            quantityValue: measurement.quantityValue,
-            quantityUnit: measurement.quantityUnit,
-            referenceValue: measurement.referenceValue,
-            referenceUnit: measurement.referenceUnit,
-          };
-        }
-        results.read = {
-          ok: true,
-          detail: { title: body.data.productVariant.title, measurement, willRestore: restore },
+    // -- 2. What does the variant hold right now? ---------------------------
+    const current = await readVariant(admin, variantGid, readsShowUnitPrice);
+    results.read = current.finding;
+    if (current.state) {
+      const measurement = current.state.measurement;
+      if (
+        measurement &&
+        !isEmptyMeasurement(measurement) &&
+        measurement.quantityValue != null &&
+        measurement.referenceValue != null
+      ) {
+        restore = {
+          quantityValue: Number(measurement.quantityValue),
+          quantityUnit: String(measurement.quantityUnit),
+          referenceValue: Number(measurement.referenceValue),
+          referenceUnit: String(measurement.referenceUnit),
         };
       }
-    } catch (error) {
-      results.read = fail(error instanceof Error ? error.message : String(error));
+      restoreShowUnitPrice = current.state.showUnitPrice;
+      (results.read.detail as Record<string, unknown>).willRestore = restore;
     }
 
-    // ── 3. Can it be WRITTEN? ──────────────────────────────────────────────
+    // -- 3. Can it be WRITTEN? ----------------------------------------------
     // Attempted regardless of what introspection said: the two answers
     // together are the finding. A field that introspects as present and then
     // refuses the write is exactly the case this probe exists to catch, and it
     // is invisible if the write is skipped whenever the shape looks wrong.
-    if (!productGid.startsWith("gid://shopify/Product/")) {
-      results.write = fail("A Product GID is required for the write test.");
-    } else {
-      results.write = await tryWrite(admin, productGid, variantGid, {
+    if (mode === "probe") {
+      const wanted = {
         quantityValue: 500,
         quantityUnit: UNIT_PRICE_UNITS.quantity,
         referenceValue: 1,
         referenceUnit: UNIT_PRICE_UNITS.reference,
-      });
-
-      // ── 4. Can it be CLEARED again? ─────────────────────────────────────
-      // Only worth asking if the write took. A field that can be set and not
-      // unset is a trap: a merchant who fills it in by mistake is stuck with a
-      // wrong Grundpreis on their storefront.
-      if (results.write.ok) {
-        results.clear = await tryWrite(admin, productGid, variantGid, null);
+      };
+      const written = await applyVariantInput(
+        admin,
+        productGid,
+        variantGid,
+        { unitPriceMeasurement: wanted },
+        readsShowUnitPrice,
+      );
+      if (written.error) {
+        results.write = written.error;
+      } else {
+        const got = written.state?.measurement ?? null;
+        const matches =
+          !!got &&
+          Number(got.quantityValue) === wanted.quantityValue &&
+          got.quantityUnit === wanted.quantityUnit &&
+          Number(got.referenceValue) === wanted.referenceValue &&
+          got.referenceUnit === wanted.referenceUnit;
+        results.write = {
+          // ACCEPTED AND IGNORED is its own outcome, and the one worth the
+          // probe: no errors, a healthy response, and the value unchanged.
+          ok: matches,
+          error: matches ? undefined : "accepted, but the variant came back without the value",
+          detail: { sent: wanted, echoed: got, showUnitPrice: written.state?.showUnitPrice ?? null },
+        };
       }
     }
+
+    // -- 4. Can it be REMOVED again, and can it be HIDDEN? ------------------
+    // Two questions, not one. A measurement that cannot be removed but can be
+    // switched off is still a shippable feature - the off-switch is just a
+    // different field. A measurement that can be neither is a trap: the
+    // merchant who fills it in by mistake is stuck with a wrong Grundpreis on
+    // their storefront, and this app must not offer to write it.
+    const worthClearing = mode === "clear" || results.write?.ok;
+    if (worthClearing) {
+      const attempts: Attempt[] = [];
+      for (const strategy of CLEAR_STRATEGIES) {
+        const out = await applyVariantInput(
+          admin,
+          productGid,
+          variantGid,
+          strategy.input,
+          readsShowUnitPrice,
+        );
+        if (out.error) {
+          // Not an answer. The next strategy may still give one.
+          attempts.push({
+            strategy: strategy.label,
+            measurement: null,
+            showUnitPrice: null,
+            measurementGone: false,
+            hidden: false,
+            error: out.error.error ?? "no answer",
+          });
+          continue;
+        }
+        const state = out.state as VariantState;
+        const attempt: Attempt = {
+          strategy: strategy.label,
+          measurement: state.measurement,
+          showUnitPrice: state.showUnitPrice,
+          measurementGone: isEmptyMeasurement(state.measurement),
+          hidden: state.showUnitPrice === false,
+        };
+        attempts.push(attempt);
+        if (attempt.measurementGone && !workingClear) {
+          workingClear = strategy;
+          break;
+        }
+      }
+
+      const removed = attempts.find((a) => a.measurementGone);
+      const hid = attempts.find((a) => a.hidden);
+      const answered = attempts.some((a) => !a.error);
+
+      results.clear = {
+        ok: !!removed,
+        // Every strategy was refused outright, so nothing was learned. Only an
+        // ANSWERED round of attempts can say "it cannot be removed".
+        missing: !removed && answered ? true : undefined,
+        error: removed
+          ? undefined
+          : answered
+            ? "accepted every time, and the measurement stayed on the variant"
+            : "no strategy got an answer",
+        detail: { attempts, worked: removed?.strategy ?? null },
+      };
+      results.hide = {
+        ok: !!hid,
+        missing: !hid && answered && readsShowUnitPrice ? true : undefined,
+        error: hid
+          ? undefined
+          : !readsShowUnitPrice
+            ? "ProductVariant.showUnitPrice is not readable on this API version, so this was not asked"
+            : answered
+              ? "showUnitPrice did not come back false"
+              : "no strategy got an answer",
+        detail: { worked: hid?.strategy ?? null },
+      };
+    }
   } finally {
-    // Put back whatever was there. A probe that leaves a 500 g / kg
-    // measurement on a real product has changed the storefront it came to
-    // measure.
-    if (results.write?.ok) {
-      // Put back exactly what was there — or clear it, when there was nothing.
-      // "Restore" for an empty starting state IS the clear.
-      results.restored = await tryWrite(admin, productGid, variantGid, restore);
+    // Put the variant back the way it was found. A probe that leaves a
+    // 500 g / kg measurement on a real product has changed the storefront it
+    // came to measure - which is exactly what the first run did, and why the
+    // failure below is REPORTED rather than swallowed.
+    if (mode === "probe" && results.write?.ok) {
+      if (restore) {
+        const out = await applyVariantInput(
+          admin,
+          productGid,
+          variantGid,
+          { unitPriceMeasurement: restore },
+          readsShowUnitPrice,
+        );
+        const got = out.state?.measurement ?? null;
+        const back =
+          !!got &&
+          Number(got.quantityValue) === restore.quantityValue &&
+          got.quantityUnit === restore.quantityUnit;
+        results.restored = {
+          ok: back,
+          error: out.error?.error ?? (back ? undefined : "the old measurement did not go back on"),
+          detail: { sent: restore, echoed: got },
+        };
+      } else if (workingClear) {
+        // It started empty, so restoring IS clearing - and the ladder already
+        // found the way. Replaying it here also puts `showUnitPrice` back,
+        // since the strategy that worked may have turned it off.
+        const input = { ...workingClear.input };
+        if (readsShowUnitPrice && restoreShowUnitPrice !== null) {
+          input.showUnitPrice = restoreShowUnitPrice;
+        }
+        const out = await applyVariantInput(admin, productGid, variantGid, input, readsShowUnitPrice);
+        const gone = isEmptyMeasurement(out.state?.measurement);
+        results.restored = {
+          ok: gone,
+          error: out.error?.error ?? (gone ? undefined : "the measurement stayed on the variant"),
+          detail: { strategy: workingClear.label, echoed: out.state?.measurement ?? null },
+        };
+      } else {
+        // Nothing could take it off. Saying so plainly is the only honest
+        // outcome: the variant is left carrying the probe's measurement and
+        // the merchant has to remove it in the Shopify admin.
+        results.restored = {
+          ok: false,
+          error:
+            "the variant still carries the probe's 500 g / 1 kg measurement - nothing could remove it",
+          detail: { leftBehind: true, variantGid },
+        };
+      }
     }
   }
 
   logger.info("[UnitPriceProbe] finished", {
     context: "UnitPriceProbe",
     shop: session.shop,
+    mode,
     steps: Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v.ok])),
   });
 
   return json({ success: true, results });
 };
 
+/** Question 1, on its own so the clear-only mode can skip it. */
+async function probeInputShape(admin: AdminApiContext): Promise<Finding> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query unitPriceInputShape {
+          variantInput: __type(name: "ProductVariantsBulkInput") {
+            inputFields { name type { name kind ofType { name kind } } }
+          }
+          measurementInput: __type(name: "UnitPriceMeasurementInput") {
+            inputFields { name type { name kind ofType { name kind } } }
+          }
+        }`,
+    );
+    const body = (await response.json()) as {
+      data?: {
+        variantInput?: { inputFields?: Array<{ name: string }> } | null;
+        measurementInput?: { inputFields?: Array<{ name: string }> } | null;
+      };
+      errors?: Array<{ message?: string }>;
+    };
+    if (body.errors?.length) return fail(body.errors[0]?.message ?? "introspection failed");
+    if (!body.data?.variantInput) {
+      // The input type itself is missing, which would be a much bigger finding
+      // than the one this probe is about.
+      return absent({ note: "ProductVariantsBulkInput not found" });
+    }
+    const names = (body.data.variantInput.inputFields ?? []).map((f) => f.name);
+    const found = CANDIDATE_FIELDS.filter((c) => names.includes(c));
+    return {
+      ok: found.length > 0,
+      missing: found.length === 0,
+      detail: {
+        found,
+        candidatesProbed: CANDIDATE_FIELDS,
+        // The whole list, so a field under a name nobody guessed is still
+        // visible in the report rather than invisible to the probe.
+        allInputFields: names,
+        measurementInputFields: body.data.measurementInput?.inputFields?.map((f) => f.name) ?? null,
+      },
+    };
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
+  }
+}
+
 /**
- * One `productVariantsBulkUpdate` carrying a unit-price measurement.
+ * May `showUnitPrice` be SELECTED on this API version?
  *
- * `null` clears it. The echo is READ BACK from the variant rather than trusted
- * from the mutation payload: this app's whole experience of new fields is that
- * `userErrors: []` is not the same as "stored".
+ * Asked before anything selects it. GraphQL fails the whole document on one
+ * unknown field, so guessing here would turn a missing extra into a total
+ * failure of the read - and the read is where the restore value comes from.
+ * A failed introspection answers `false`: not asking for a field costs one
+ * detail, asking for one that is not there costs the run.
  */
-async function tryWrite(
+async function canReadShowUnitPrice(admin: AdminApiContext): Promise<boolean> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query unitPriceOutputShape {
+          variantType: __type(name: "ProductVariant") { fields { name } }
+        }`,
+    );
+    const body = (await response.json()) as {
+      data?: { variantType?: { fields?: Array<{ name: string }> } | null };
+    };
+    return (body.data?.variantType?.fields ?? []).some((f) => f.name === "showUnitPrice");
+  } catch {
+    return false;
+  }
+}
+
+/** The selection both the read and every write share. */
+const MEASUREMENT_SELECTION = `unitPriceMeasurement {
+  measuredType
+  quantityValue
+  quantityUnit
+  referenceValue
+  referenceUnit
+}`;
+
+/** Question 2, and the source of the restore value. */
+async function readVariant(
+  admin: AdminApiContext,
+  variantGid: string,
+  readsShowUnitPrice: boolean,
+): Promise<{ finding: Finding; state?: VariantState }> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query unitPriceCurrent($id: ID!) {
+          productVariant(id: $id) {
+            id
+            title
+            ${MEASUREMENT_SELECTION}
+            ${readsShowUnitPrice ? "showUnitPrice" : ""}
+          }
+        }`,
+      { variables: { id: variantGid } },
+    );
+    const body = (await response.json()) as {
+      data?: {
+        productVariant?: {
+          title?: string;
+          unitPriceMeasurement?: Record<string, unknown> | null;
+          showUnitPrice?: boolean | null;
+        } | null;
+      };
+      errors?: Array<{ message?: string }>;
+    };
+    if (body.errors?.length) return { finding: fail(body.errors[0]?.message ?? "read failed") };
+    if (!body.data?.productVariant) return { finding: absent({ note: "no such variant" }) };
+
+    const measurement = body.data.productVariant.unitPriceMeasurement ?? null;
+    const showUnitPrice = readsShowUnitPrice
+      ? (body.data.productVariant.showUnitPrice ?? null)
+      : null;
+    return {
+      finding: {
+        ok: true,
+        detail: {
+          title: body.data.productVariant.title,
+          measurement,
+          isEmpty: isEmptyMeasurement(measurement),
+          showUnitPrice,
+        },
+      },
+      state: { measurement, showUnitPrice },
+    };
+  } catch (error) {
+    return { finding: fail(error instanceof Error ? error.message : String(error)) };
+  }
+}
+
+/**
+ * One `productVariantsBulkUpdate` carrying whatever unit-price input the
+ * caller wants to try, and the state the variant came back with.
+ *
+ * The echo is what decides everything above: this app's whole experience of
+ * new fields is that `userErrors: []` is not the same as "stored".
+ */
+async function applyVariantInput(
   admin: AdminApiContext,
   productGid: string,
   variantGid: string,
-  measurement: { quantityValue: number; quantityUnit: string; referenceValue: number; referenceUnit: string } | null,
-): Promise<Finding> {
-  if (!productGid.startsWith("gid://shopify/Product/")) return fail("no product gid");
+  input: Record<string, unknown>,
+  readsShowUnitPrice: boolean,
+): Promise<{ error?: Finding; state?: VariantState }> {
   try {
     const response = await admin.graphql(
       `#graphql
@@ -346,12 +614,8 @@ async function tryWrite(
           productVariantsBulkUpdate(productId: $productId, variants: $variants) {
             productVariants {
               id
-              unitPriceMeasurement {
-                quantityValue
-                quantityUnit
-                referenceValue
-                referenceUnit
-              }
+              ${MEASUREMENT_SELECTION}
+              ${readsShowUnitPrice ? "showUnitPrice" : ""}
             }
             userErrors { field message }
           }
@@ -359,7 +623,7 @@ async function tryWrite(
       {
         variables: {
           productId: productGid,
-          variants: [{ id: variantGid, unitPriceMeasurement: measurement }],
+          variants: [{ id: variantGid, ...input }],
         },
       },
     );
@@ -369,6 +633,7 @@ async function tryWrite(
           productVariants?: Array<{
             id?: string;
             unitPriceMeasurement?: Record<string, unknown> | null;
+            showUnitPrice?: boolean | null;
           }> | null;
           userErrors?: Array<{ field?: string[]; message?: string }>;
         } | null;
@@ -382,43 +647,33 @@ async function tryWrite(
     //
     // But only a rejection that says the field is NOT THERE. A rejection of
     // the VALUE mentions the same field name while proving the opposite - the
-    // first run was refused with "invalid value for 0.unitPriceMeasurement
-    // .quantityUnit (Expected ... to be one of: ...)", which is the schema
-    // confirming the field exists and disagreeing about the unit. Matching on
-    // the field name alone would have turned that into "not supported" and
-    // closed the question with the answer inverted.
+    // first live run was refused with "invalid value for
+    // 0.unitPriceMeasurement.quantityUnit (Expected ... to be one of: ...)",
+    // which is the schema confirming the field exists and disagreeing about
+    // the unit. Matching on the field name alone would have turned that into
+    // "not supported" and closed the question with the answer inverted.
     if (body.errors?.length) {
       const message = body.errors[0]?.message ?? "";
-      const undefinedField = /is not defined|doesn't exist|does not exist|unknown field|no field/i.test(message);
+      const undefinedField =
+        /is not defined|doesn't exist|does not exist|unknown field|no field/i.test(message);
       const namesTheField = new RegExp(FIELD_NAME, "i").test(message);
-      return undefinedField && namesTheField ? absent({ schemaError: message }) : fail(message);
+      return { error: undefinedField && namesTheField ? absent({ schemaError: message }) : fail(message) };
     }
     const payload = body.data?.productVariantsBulkUpdate;
     if (payload?.userErrors?.length) {
-      return { ok: false, error: payload.userErrors[0]?.message, detail: payload.userErrors };
+      return { error: { ok: false, error: payload.userErrors[0]?.message, detail: payload.userErrors } };
     }
     const echoed = payload?.productVariants?.find((v) => v.id === variantGid);
-    if (!echoed) return fail("the mutation returned no variant — nothing confirms the write");
-
-    const got = echoed.unitPriceMeasurement ?? null;
-    const wanted = measurement;
-    const matches =
-      wanted === null
-        ? got === null
-        : !!got &&
-          Number(got.quantityValue) === wanted.quantityValue &&
-          got.quantityUnit === wanted.quantityUnit &&
-          Number(got.referenceValue) === wanted.referenceValue &&
-          got.referenceUnit === wanted.referenceUnit;
-
+    if (!echoed) {
+      return { error: fail("the mutation returned no variant - nothing confirms the write") };
+    }
     return {
-      // ACCEPTED AND IGNORED is its own outcome, and the one worth the probe:
-      // no errors, a healthy response, and the value unchanged.
-      ok: matches,
-      error: matches ? undefined : "accepted, but the variant came back without the value",
-      detail: { sent: wanted, echoed: got },
+      state: {
+        measurement: echoed.unitPriceMeasurement ?? null,
+        showUnitPrice: readsShowUnitPrice ? (echoed.showUnitPrice ?? null) : null,
+      },
     };
   } catch (error) {
-    return fail(error instanceof Error ? error.message : String(error));
+    return { error: fail(error instanceof Error ? error.message : String(error)) };
   }
 }

@@ -9,6 +9,12 @@
  * one outcome the probe is really hunting for — accepted, no errors, value not
  * stored — is neither.
  *
+ * The live run turned that outcome up where nobody expected it: not on the
+ * write, which works, but on the CLEAR. `unitPriceMeasurement: null` is
+ * accepted, reports no errors, and leaves the measurement on the variant. That
+ * is why the clear step is a ladder and why the probe now has to be able to
+ * admit it could not put a real variant back.
+ *
  * The route is dev-gated and mutates a live variant, so what is tested here is
  * its verdict logic, driven through the module with a stubbed admin client.
  */
@@ -24,38 +30,146 @@ const { action } = await import("~/routes/api.unit-price-probe");
 const PRODUCT = "gid://shopify/Product/1";
 const VARIANT = "gid://shopify/ProductVariant/9";
 
-/** A request carrying the two GIDs the probe needs. */
-function request() {
+/** What Shopify answers for a variant with no Grundpreis: a ZEROED struct, not
+ *  `null`. Measured on a live shop, and the reason emptiness has its own
+ *  predicate in the route. */
+const EMPTY = {
+  measuredType: null,
+  quantityValue: 0,
+  quantityUnit: null,
+  referenceValue: 0,
+  referenceUnit: null,
+};
+
+const PROBE_VALUE = {
+  measuredType: "WEIGHT",
+  quantityValue: 500,
+  quantityUnit: "G",
+  referenceValue: 1,
+  referenceUnit: "KG",
+};
+
+type Strategy = "null" | "showUnitPrice" | "both";
+
+interface FakeShop {
+  /** What the variant holds; the zeroed struct means "nothing". */
+  measurement: Record<string, unknown>;
+  showUnitPrice: boolean;
+  /** Which of the three clear inputs actually empties the measurement. */
+  clearedBy: Strategy[];
+  /** `false` models an API version where the field cannot be selected. */
+  readsShowUnitPrice: boolean;
+  inputFields: string[];
+  /** Replaces the next mutation response wholesale. */
+  mutationAnswers: unknown[];
+}
+
+/** A Shopify that answers by QUERY, not by call order — the probe's call
+ *  sequence is exactly what these tests exercise, so an order-keyed mock would
+ *  have to be rewritten by every change it is supposed to catch. */
+function fakeShop(overrides: Partial<FakeShop> = {}) {
+  const shop: FakeShop = {
+    measurement: { ...EMPTY },
+    showUnitPrice: true,
+    clearedBy: [],
+    readsShowUnitPrice: true,
+    inputFields: ["price", "unitPriceMeasurement", "showUnitPrice"],
+    mutationAnswers: [],
+    ...overrides,
+  };
+
+  const graphql = vi.fn(
+    async (query: string, options?: { variables?: Record<string, unknown> }) => {
+      const answer = (value: unknown) => ({ json: async () => value });
+
+      if (query.includes("ProductVariantsBulkInput\")")) {
+        return answer({
+          data: {
+            variantInput: { inputFields: shop.inputFields.map((name) => ({ name })) },
+            measurementInput: { inputFields: [{ name: "quantityValue" }] },
+          },
+        });
+      }
+      if (query.includes("__type(name: \"ProductVariant\")")) {
+        return answer({
+          data: {
+            variantType: {
+              fields: shop.readsShowUnitPrice
+                ? [{ name: "id" }, { name: "showUnitPrice" }]
+                : [{ name: "id" }],
+            },
+          },
+        });
+      }
+      if (query.includes("unitPriceCurrent")) {
+        return answer({
+          data: {
+            productVariant: {
+              id: VARIANT,
+              title: "Candy",
+              unitPriceMeasurement: shop.measurement,
+              ...(shop.readsShowUnitPrice ? { showUnitPrice: shop.showUnitPrice } : {}),
+            },
+          },
+        });
+      }
+
+      // A mutation.
+      if (shop.mutationAnswers.length) return answer(shop.mutationAnswers.shift());
+
+      const input = (options?.variables?.variants as Array<Record<string, unknown>>)[0];
+      const setsMeasurement = "unitPriceMeasurement" in input;
+      const setsShow = "showUnitPrice" in input;
+      const strategy: Strategy | null =
+        setsMeasurement && input.unitPriceMeasurement === null && setsShow
+          ? "both"
+          : setsMeasurement && input.unitPriceMeasurement === null
+            ? "null"
+            : setsShow
+              ? "showUnitPrice"
+              : null;
+
+      if (setsMeasurement && input.unitPriceMeasurement !== null) {
+        shop.measurement = { measuredType: "WEIGHT", ...(input.unitPriceMeasurement as object) };
+      } else if (strategy && shop.clearedBy.includes(strategy)) {
+        shop.measurement = { ...EMPTY };
+      }
+      if (setsShow) shop.showUnitPrice = input.showUnitPrice as boolean;
+
+      return answer({
+        data: {
+          productVariantsBulkUpdate: {
+            productVariants: [
+              {
+                id: VARIANT,
+                unitPriceMeasurement: shop.measurement,
+                ...(shop.readsShowUnitPrice ? { showUnitPrice: shop.showUnitPrice } : {}),
+              },
+            ],
+            userErrors: [],
+          },
+        },
+      });
+    },
+  );
+
+  authenticate.admin.mockResolvedValue({ admin: { graphql }, session: { shop: "s" } });
+  return { shop, graphql };
+}
+
+type Results = Record<
+  string,
+  { ok: boolean; missing?: boolean; error?: string; detail?: Record<string, unknown> }
+>;
+
+async function run(mode: "probe" | "clear" = "probe"): Promise<Results> {
   const body = new FormData();
   body.set("productGid", PRODUCT);
   body.set("variantGid", VARIANT);
-  return new Request("https://x/api/unit-price-probe", { method: "POST", body });
-}
-
-/** Answers each GraphQL call in turn. */
-function adminWith(answers: unknown[]) {
-  const graphql = vi.fn(async (_query: string, _options?: { variables?: Record<string, unknown> }) => ({
-    json: async () => answers.shift() ?? {},
-  }));
-  authenticate.admin.mockResolvedValue({ admin: { graphql }, session: { shop: "s" } });
-  return graphql;
-}
-
-const introspection = (fields: string[]) => ({
-  data: {
-    variantInput: { inputFields: fields.map((name) => ({ name })) },
-    measurementInput: { inputFields: [{ name: "quantityValue" }] },
-  },
-});
-
-const currentValue = (measurement: unknown) => ({
-  data: { productVariant: { id: VARIANT, title: "500 g", unitPriceMeasurement: measurement } },
-});
-
-async function run(): Promise<Record<string, { ok: boolean; missing?: boolean; error?: string }>> {
-  const response = await action({ request: request(), params: {}, context: {} } as never);
-  const body = (response as unknown as { data: { results: Record<string, never> } }).data;
-  return body.results;
+  body.set("mode", mode);
+  const request = new Request("https://x/api/unit-price-probe", { method: "POST", body });
+  const response = await action({ request, params: {}, context: {} } as never);
+  return (response as unknown as { data: { results: Results } }).data.results;
 }
 
 beforeEach(() => {
@@ -71,20 +185,29 @@ describe("the unit-price probe", () => {
   it("refuses to run outside development", async () => {
     // It writes to a live variant. A hidden Settings tab is not a check.
     vi.stubEnv("APP_ENV", "production");
-    adminWith([]);
+    fakeShop();
 
-    const response = await action({ request: request(), params: {}, context: {} } as never);
+    const body = new FormData();
+    body.set("productGid", PRODUCT);
+    body.set("variantGid", VARIANT);
+    const request = new Request("https://x/api/unit-price-probe", { method: "POST", body });
+    const response = await action({ request, params: {}, context: {} } as never);
     expect((response as unknown as { init?: { status?: number } }).init?.status).toBe(403);
   });
 
   it("reports a MISSING input field as a real negative", async () => {
-    adminWith([
-      introspection(["price", "barcode"]),
-      currentValue(null),
+    fakeShop({
+      inputFields: ["price", "barcode"],
       // The write is attempted anyway — the two answers together are the
       // finding — and Shopify rejects it at the schema level.
-      { errors: [{ message: 'Field is not defined on ProductVariantsBulkInput: "unitPriceMeasurement"' }] },
-    ]);
+      mutationAnswers: [
+        {
+          errors: [
+            { message: 'Field is not defined on ProductVariantsBulkInput: "unitPriceMeasurement"' },
+          ],
+        },
+      ],
+    });
     const results = await run();
 
     expect(results.inputShape.missing).toBe(true);
@@ -94,11 +217,7 @@ describe("the unit-price probe", () => {
 
   it("does NOT report a throttled call as unsupported", async () => {
     // The whole point. One rate limit must not close the question.
-    adminWith([
-      introspection(["unitPriceMeasurement"]),
-      currentValue(null),
-      { errors: [{ message: "Throttled" }] },
-    ]);
+    fakeShop({ mutationAnswers: [{ errors: [{ message: "Throttled" }] }] });
     const results = await run();
 
     expect(results.write.ok).toBe(false);
@@ -109,72 +228,22 @@ describe("the unit-price probe", () => {
   it("catches ACCEPTED AND IGNORED — the outcome the probe is for", async () => {
     // No errors, a healthy response, and the value simply not stored. Read as
     // success this is exactly the silent no-op that would ship a dead feature.
-    adminWith([
-      introspection(["unitPriceMeasurement"]),
-      currentValue(null),
-      {
-        data: {
-          productVariantsBulkUpdate: {
-            productVariants: [{ id: VARIANT, unitPriceMeasurement: null }],
-            userErrors: [],
+    fakeShop({
+      mutationAnswers: [
+        {
+          data: {
+            productVariantsBulkUpdate: {
+              productVariants: [{ id: VARIANT, unitPriceMeasurement: EMPTY }],
+              userErrors: [],
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
     const results = await run();
 
     expect(results.write.ok).toBe(false);
     expect(results.write.error).toMatch(/came back without the value/i);
-  });
-
-  it("confirms a write only when the variant echoes it back", async () => {
-    const stored = {
-      quantityValue: 500,
-      quantityUnit: "G",
-      referenceValue: 1,
-      referenceUnit: "KG",
-    };
-    adminWith([
-      introspection(["unitPriceMeasurement"]),
-      currentValue(null),
-      // write
-      { data: { productVariantsBulkUpdate: { productVariants: [{ id: VARIANT, unitPriceMeasurement: stored }], userErrors: [] } } },
-      // clear
-      { data: { productVariantsBulkUpdate: { productVariants: [{ id: VARIANT, unitPriceMeasurement: null }], userErrors: [] } } },
-      // restore (back to nothing, which is what was there)
-      { data: { productVariantsBulkUpdate: { productVariants: [{ id: VARIANT, unitPriceMeasurement: null }], userErrors: [] } } },
-    ]);
-    const results = await run();
-
-    expect(results.write.ok).toBe(true);
-    expect(results.clear.ok).toBe(true);
-    // …and the variant was put back the way it was found.
-    expect(results.restored.ok).toBe(true);
-  });
-
-  it("sends the unit CODES, not the WeightUnit spelling", async () => {
-    // The first live run cost a whole round trip to this: every other weight
-    // field in this app takes GRAMS/KILOGRAMS, and this one does not — the
-    // schema names G/KG. Sending the wrong spelling makes the probe answer
-    // nothing while looking like it ran.
-    const graphql = adminWith([
-      introspection(["unitPriceMeasurement"]),
-      currentValue(null),
-      { data: { productVariantsBulkUpdate: { productVariants: [], userErrors: [] } } },
-    ]);
-    await run();
-
-    const write = graphql.mock.calls.find((call) =>
-      call[0].includes("productVariantsBulkUpdate"),
-    );
-    const variants = write?.[1]?.variables?.variants as Array<{ unitPriceMeasurement: unknown }>;
-    const sent = variants[0].unitPriceMeasurement;
-    expect(sent).toEqual({
-      quantityValue: 500,
-      quantityUnit: "G",
-      referenceValue: 1,
-      referenceUnit: "KG",
-    });
   });
 
   it("does not read a rejected VALUE as a missing FIELD", async () => {
@@ -182,22 +251,140 @@ describe("the unit-price probe", () => {
     // "invalid value for 0.unitPriceMeasurement.quantityUnit (Expected …)".
     // Matching on the field name alone reports the field as unsupported and
     // closes the question with the answer inverted.
-    adminWith([
-      introspection(["unitPriceMeasurement"]),
-      currentValue(null),
-      {
-        errors: [
-          {
-            message:
-              'Variable $variants of type [ProductVariantsBulkInput!]! was provided invalid value for 0.unitPriceMeasurement.quantityUnit (Expected "GRAMS" to be one of: ML, CL, L, G, KG)',
-          },
-        ],
-      },
-    ]);
+    fakeShop({
+      mutationAnswers: [
+        {
+          errors: [
+            {
+              message:
+                'Variable $variants of type [ProductVariantsBulkInput!]! was provided invalid value for 0.unitPriceMeasurement.quantityUnit (Expected "GRAMS" to be one of: ML, CL, L, G, KG)',
+            },
+          ],
+        },
+      ],
+    });
     const results = await run();
 
     expect(results.write.missing).toBeUndefined();
     expect(results.write.ok).toBe(false);
     expect(results.write.error).toMatch(/invalid value/i);
+  });
+
+  it("sends the unit CODES, not the WeightUnit spelling", async () => {
+    // The first live run cost a whole round trip to this: every other weight
+    // field in this app takes GRAMS/KILOGRAMS, and this one does not — the
+    // schema names G/KG.
+    const { graphql } = fakeShop({ clearedBy: ["null"] });
+    await run();
+
+    const write = graphql.mock.calls.find((call) =>
+      call[0].includes("productVariantsBulkUpdate"),
+    );
+    const variants = write?.[1]?.variables?.variants as Array<{ unitPriceMeasurement: unknown }>;
+    expect(variants[0].unitPriceMeasurement).toEqual({
+      quantityValue: 500,
+      quantityUnit: "G",
+      referenceValue: 1,
+      referenceUnit: "KG",
+    });
+  });
+
+  it("confirms a write, a clear and the restore when the shop honours them", async () => {
+    const { shop } = fakeShop({ clearedBy: ["null"] });
+    const results = await run();
+
+    expect(results.write.ok).toBe(true);
+    expect(results.clear.ok).toBe(true);
+    // …and the variant was put back the way it was found: empty.
+    expect(results.restored.ok).toBe(true);
+    expect(shop.measurement.quantityUnit).toBeNull();
+  });
+
+  it("counts the ZEROED struct as cleared, not as a failed clear", async () => {
+    // Shopify never answers `null` for this object. A `=== null` emptiness
+    // test would call every successful clear a failure and send the probe
+    // hunting for a strategy that already worked.
+    fakeShop({ clearedBy: ["null"] });
+    const results = await run();
+
+    expect(results.clear.ok).toBe(true);
+    expect(results.clear.detail?.worked).toBe("unitPriceMeasurement: null");
+  });
+
+  it("walks on to the next strategy when null is accepted and ignored", async () => {
+    // The MEASURED behaviour: the mutation reports no errors and the
+    // measurement stays. Stopping at the first strategy would have reported
+    // "cannot be removed" while an untried input still could.
+    fakeShop({ clearedBy: ["both"] });
+    const results = await run();
+
+    expect(results.clear.ok).toBe(true);
+    expect(results.clear.detail?.worked).toBe("both at once");
+    expect(results.clear.detail?.attempts).toHaveLength(3);
+  });
+
+  it("reports hiding SEPARATELY from removing", async () => {
+    // A measurement that cannot be removed but can be switched off is still a
+    // shippable feature — with a different off-switch. Folding the two into
+    // one verdict would either overstate what the API does or throw away a
+    // usable answer.
+    fakeShop({ clearedBy: [] });
+    const results = await run();
+
+    expect(results.clear.ok).toBe(false);
+    expect(results.clear.missing).toBe(true);
+    expect(results.hide.ok).toBe(true);
+  });
+
+  it("admits it left the measurement behind when nothing could remove it", async () => {
+    // The honest outcome, and the one the first live run produced. Reporting
+    // "restored" here would tell the merchant their storefront is untouched
+    // while it is showing a Grundpreis the probe wrote.
+    const { shop } = fakeShop({ clearedBy: [] });
+    const results = await run();
+
+    expect(results.restored.ok).toBe(false);
+    expect(results.restored.error).toMatch(/still carries/i);
+    expect(shop.measurement.quantityUnit).toBe("G");
+  });
+
+  it("puts back a measurement the variant already had", async () => {
+    const { shop } = fakeShop({ measurement: { ...PROBE_VALUE, quantityValue: 250 } });
+    const results = await run();
+
+    expect(results.restored.ok).toBe(true);
+    expect(shop.measurement.quantityValue).toBe(250);
+  });
+
+  it("clear mode runs the ladder and writes nothing of its own", async () => {
+    // Re-running the whole probe is NOT the cleanup: it would read the
+    // leftover as the state to restore and put it back at the end.
+    const { shop, graphql } = fakeShop({ measurement: { ...PROBE_VALUE }, clearedBy: ["null"] });
+    const results = await run("clear");
+
+    expect(results.write).toBeUndefined();
+    expect(results.inputShape).toBeUndefined();
+    expect(results.clear.ok).toBe(true);
+    expect(shop.measurement.quantityUnit).toBeNull();
+    const wrote500 = graphql.mock.calls.some((call) =>
+      JSON.stringify(call[1] ?? {}).includes('"quantityValue":500'),
+    );
+    expect(wrote500).toBe(false);
+  });
+
+  it("does not select showUnitPrice where the schema does not have it", async () => {
+    // One unknown field fails the whole document, and the read is where the
+    // restore value comes from — so the extra is asked for only once
+    // introspection says it is there.
+    const { graphql } = fakeShop({ readsShowUnitPrice: false, clearedBy: ["null"] });
+    const results = await run();
+
+    const asked = graphql.mock.calls.some(
+      (call) => call[0].includes("unitPriceCurrent") && call[0].includes("showUnitPrice"),
+    );
+    expect(asked).toBe(false);
+    expect(results.hide.ok).toBe(false);
+    expect(results.hide.missing).toBeUndefined();
+    expect(results.hide.error).toMatch(/not readable/i);
   });
 });
