@@ -17,7 +17,7 @@
  * ask the third question in.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Badge, Banner, BlockStack, Button, Card, InlineStack, Spinner, Text } from "@shopify/polaris";
 
 interface Finding {
@@ -43,6 +43,32 @@ const LABELS: Record<string, string> = {
   localizedNames: "T3 — are category names translated",
 };
 
+/**
+ * The whole run as one pasteable block.
+ *
+ * A probe answer is worth nothing in a browser tab — it gets pasted into a
+ * plan, an issue, a chat. Rendering it in cards only, as the first cut did,
+ * made a reader select nine boxes by hand and lose the labels on the way. Same
+ * shape the other probes emit, so a taxonomy report reads like a publication
+ * or a metaobject one.
+ */
+function formatMarkdown(report: Report, order: string[], shop?: string): string {
+  const lines: string[] = ["# Taxonomy probe", ""];
+  if (shop) lines.push(`Shop: ${shop}`, "");
+  for (const key of order) {
+    const finding = report[key];
+    if (!finding) continue;
+    lines.push(`## ${LABELS[key] || key}`, "", `**${labelOf(finding)}**`, "");
+    if (finding.error) lines.push(finding.error, "");
+    if (finding.detail !== undefined) {
+      const body =
+        typeof finding.detail === "string" ? finding.detail : JSON.stringify(finding.detail, null, 2);
+      lines.push("```", body, "```", "");
+    }
+  }
+  return lines.join("\n");
+}
+
 function toneOf(finding: Finding): "success" | "critical" | "attention" {
   if (finding.ok) return "success";
   // The distinction the whole probe is built on: an unanswered question is
@@ -59,6 +85,7 @@ function labelOf(finding: Finding): string {
 export function SettingsTaxonomyProbeTab() {
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<Report | null>(null);
+  const [shop, setShop] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
   const run = useCallback(async () => {
@@ -75,6 +102,7 @@ export function SettingsTaxonomyProbeTab() {
         return;
       }
       setReport(body.report as Report);
+      setShop(typeof body.shop === "string" ? body.shop : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -83,10 +111,28 @@ export function SettingsTaxonomyProbeTab() {
   }, []);
 
   const keys = report ? Object.keys(report) : [];
-  const ordered = [
-    ...Object.keys(LABELS).filter((k) => keys.includes(k)),
-    ...keys.filter((k) => !(k in LABELS)),
-  ];
+  const ordered = useMemo(
+    () => [
+      ...Object.keys(LABELS).filter((k) => keys.includes(k)),
+      ...keys.filter((k) => !(k in LABELS)),
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [report],
+  );
+
+  const markdown = useMemo(
+    () => (report ? formatMarkdown(report, ordered, shop) : ""),
+    [report, ordered, shop],
+  );
+
+  const copyToClipboard = useCallback(async () => {
+    if (!markdown) return;
+    try {
+      await navigator.clipboard.writeText(markdown);
+    } catch {
+      // The textarea below is the fallback — click into it, ctrl+a, ctrl+c.
+    }
+  }, [markdown]);
 
   return (
     <BlockStack gap="400">
@@ -104,6 +150,7 @@ export function SettingsTaxonomyProbeTab() {
             <Button variant="primary" onClick={run} disabled={running}>
               {running ? "Measuring…" : "Run probe"}
             </Button>
+            {markdown && <Button onClick={() => void copyToClipboard()}>Copy markdown report</Button>}
             {running && <Spinner size="small" accessibilityLabel="Measuring" />}
           </InlineStack>
         </BlockStack>
@@ -155,6 +202,30 @@ export function SettingsTaxonomyProbeTab() {
               </Card>
             );
           })}
+
+          <Card>
+            <BlockStack gap="200">
+              <Text as="h3" variant="headingSm">Report</Text>
+              {/* A read-only TEXTAREA, not a <pre>: one click into it selects
+                  the whole report, so Ctrl+C works even where the clipboard
+                  API is blocked — which it is inside an embedded admin iframe
+                  often enough to matter. Same affordance the other probes use. */}
+              <textarea
+                readOnly
+                value={markdown}
+                onFocus={(e) => e.currentTarget.select()}
+                style={{
+                  width: "100%",
+                  minHeight: "320px",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: "12px",
+                  padding: "12px",
+                  border: "1px solid #c9cccf",
+                  borderRadius: "8px",
+                }}
+              />
+            </BlockStack>
+          </Card>
         </BlockStack>
       )}
     </BlockStack>

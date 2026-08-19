@@ -20,6 +20,10 @@
  *       auto-filled product type gets translated: from Shopify's own localized
  *       taxonomy (authoritative, free) or through this app's AI path (a
  *       machine translation of a term Shopify has already translated itself).
+ *       PARTLY ANSWERED, 2026-08-19: the API returns ENGLISH names on a shop
+ *       whose admin renders German ones, and `@inContext` is not defined in
+ *       the Admin schema at all. The step now tests the `Accept-Language`
+ *       header, the only door left over this transport.
  *
  * Two rules this probe inherits from every other one in this app. A FAILED
  * call is never reported as a NEGATIVE answer — `missing` (the API answered
@@ -89,9 +93,14 @@ async function call(
   admin: AdminApiContext,
   query: string,
   variables?: Record<string, unknown>,
+  /** Request headers. The `Accept-Language` test is the only user. */
+  headers?: Record<string, string>,
 ): Promise<CallResult> {
   try {
-    const response = await admin.graphql(query, variables ? { variables } : undefined);
+    const response = await admin.graphql(query, {
+      ...(variables ? { variables } : {}),
+      ...(headers ? { headers } : {}),
+    } as never);
     const body = (await response.json()) as {
       data?: any;
       errors?: Array<{ message?: string }>;
@@ -392,6 +401,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : { ok: false, error: describe(searchResult) };
 
     // ── T3. The same categories, in the shop's other languages ──────────────
+    //
+    // MEASURED 2026-08-19: the bare query returns ENGLISH names ("Animals &
+    // Pet Supplies") on a shop whose admin renders them in German ("Tiere &
+    // Tierbedarf"), and `@inContext` is NOT DEFINED in the Admin schema at all
+    // — a closed door rather than a failed attempt. The one remaining way to
+    // ask for a language over this transport is the HTTP `Accept-Language`
+    // header, which is what this now tests.
+    //
+    // The PRIMARY locale is tested first and matters most: it decides whether
+    // a product type derived from a category can be in the merchant's own
+    // language at all, or arrives as an English word in a German shop.
     const localesResult = await call(
       admin,
       `#graphql
@@ -401,7 +421,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     );
     const shopLocales: Array<{ locale: string; primary: boolean }> =
       (localesResult.data?.shopLocales ?? []).filter(Boolean);
-    const targets = shopLocales.filter((l) => !l.primary).slice(0, 3);
+    const targets = [
+      ...shopLocales.filter((l) => l.primary),
+      ...shopLocales.filter((l) => !l.primary).slice(0, 3),
+    ];
 
     if (!localesResult.ok) {
       report.localizedNames = { ok: false, error: describe(localesResult) };
@@ -409,13 +432,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       report.localizedNames = {
         ok: false,
         missing: true,
-        detail: "this shop has only its primary locale — nothing to compare against",
+        detail: "no shop locales came back — nothing to ask the question in",
       };
     } else {
-      // Compared against the ids from T1, so "the directive was accepted" and
+      // Compared against the ids from T1, so "the header was accepted" and
       // "the names actually changed" stay two separate results. A silently
-      // ignored directive returns the English names with no error at all,
-      // which is the outcome that would otherwise be read as success.
+      // ignored header returns the same names with no error at all, which is
+      // the outcome that would otherwise be read as success.
       const baseline = new Map<string, string>(
         roots.filter((n) => n?.id && n?.name).map((n) => [String(n.id), String(n.name)]),
       );
@@ -423,15 +446,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       let anyTranslated = false;
 
       for (const target of targets) {
-        const enumValue = languageEnum(target.locale);
-        if (!enumValue) {
-          perLocale[target.locale] = { verdict: "locale is not a LanguageCode this probe can spell" };
-          continue;
-        }
         const localized = await call(
           admin,
           `#graphql
-            query TaxonomyProbeLocalizedRoots($first: Int!) @inContext(language: ${enumValue}) {
+            query TaxonomyProbeLocalizedRoots($first: Int!) {
               taxonomy {
                 categories(first: $first) {
                   nodes { id name fullName }
@@ -439,9 +457,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
               }
             }`,
           { first: Math.min(ROOT_PAGE, 20) },
+          // A weighted list, the way a browser sends one, with English last so
+          // a server that honours the header has something to fall back to.
+          { "Accept-Language": `${target.locale};q=1.0, en;q=0.1` },
         );
         if (!localized.ok) {
-          perLocale[target.locale] = { verdict: "refused", detail: describe(localized) };
+          perLocale[target.locale] = {
+            primary: target.primary,
+            verdict: "refused",
+            detail: describe(localized),
+          };
           continue;
         }
         const localizedNodes = nodesOf(localized.data);
@@ -450,15 +475,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         );
         if (changed.length > 0) anyTranslated = true;
         perLocale[target.locale] = {
+          primary: target.primary,
           verdict:
             changed.length > 0
-              ? "TRANSLATED — Shopify's own taxonomy names come back in this language"
-              : "accepted but IDENTICAL — the directive changes nothing here",
+              ? "TRANSLATED — Accept-Language reaches the taxonomy"
+              : "accepted but IDENTICAL — the header changes nothing here",
           compared: localizedNodes.length,
           changed: changed.length,
           sample: changed.slice(0, 10).map((n) => ({
             id: n.id,
-            primary: baseline.get(String(n.id)),
+            baseline: baseline.get(String(n.id)),
             localized: n.name,
           })),
         };
@@ -468,8 +494,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         ok: anyTranslated,
         detail: {
           verdict: anyTranslated
-            ? "a derived product type can be filled from Shopify's own translation instead of an AI call"
-            : "no locale came back translated — the AI path stays the only source",
+            ? "the picker can show localized paths, and a derived product type can be filled in the merchant's own language"
+            : "no locale came back translated — this API speaks English, whatever the admin renders",
+          note:
+            "@inContext is not defined in the Admin schema (measured), so this header is the only remaining door over this transport.",
           perLocale,
         },
       };

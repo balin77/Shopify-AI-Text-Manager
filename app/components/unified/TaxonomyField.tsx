@@ -22,10 +22,22 @@
  *   - Above it, one row back. It names where it goes, not just "back".
  *
  * ── Order comes from Shopify, and is never re-sorted here ───────────────────
- * The top level arrives in the taxonomy's canonical order (English-sorted,
- * with localized labels — measured on a live German admin: Animals, Apparel,
- * Arts, Baby, Business, Cameras, …). Sorting by the localized name would give
- * every language a different first screen and would disagree with the admin.
+ * MEASURED on a live shop (2026-08-19, Settings → Probes → Taxonomy): a bare
+ * `categories(first: n)` IS the top level — 26 nodes, every one `isRoot`, no
+ * next page — and they arrive in the taxonomy's canonical order (Animals,
+ * Apparel, Arts, Baby, Business, Cameras, …). Sorting them here would give a
+ * different first screen from the one the merchant knows out of their admin.
+ *
+ * ── The names come back in ENGLISH, and that is not a bug we can fix here ───
+ * The same measurement on a shop whose admin renders "Tiere & Tierbedarf"
+ * returned "Animals & Pet Supplies". The admin localizes the taxonomy from a
+ * source this API does not expose: `@inContext` is NOT DEFINED in the Admin
+ * schema at all, so the directive is a closed door rather than a failed try.
+ * A picker that showed a translated path would therefore have to translate it
+ * itself, and a machine translation of a Shopify category is a worse label
+ * than Shopify's own English one — it would not match the admin either.
+ * So the paths are shown as Shopify hands them over, and the assumption that
+ * they arrive localized (which this comment used to state) is retired.
  *
  * ── What an empty result means ──────────────────────────────────────────────
  * Never "no such category". A failed lookup says so, and a search that is too
