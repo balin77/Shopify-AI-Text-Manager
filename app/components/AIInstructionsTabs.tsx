@@ -109,7 +109,10 @@ interface AIInstructionsTabsProps {
   translationPurgeOnPrimaryChange: boolean;
   /**
    * AISettings.autoTranslateExternalChanges (Max) — re-translate instead of
-   * only deleting when the primary text changed OUTSIDE this app.
+   * only deleting when the primary text changed. The column name says
+   * "External" for historic reasons: it reaches an in-app change too, whenever
+   * the purge switch is off (with the purge on, that change's translations are
+   * already gone before any sync runs).
    */
   autoTranslateExternalChanges: boolean;
   /** Drives the Max gate on the auto-translate switch. */
@@ -497,12 +500,24 @@ export function AIInstructionsTabs({
                     <BlockStack gap="100">
                       <Text as="p" variant="bodyMd">
                         {t.settings.autoTranslateExternalChanges ||
-                          'Texte automatisch neu übersetzen, wenn sie ausserhalb der App geändert werden'}
+                          'Texte automatisch neu übersetzen, wenn sich der Originaltext ändert'}
                       </Text>
                       <Text as="p" variant="bodySm" tone="subdued">
                         {t.settings.autoTranslateExternalChangesHelp ||
-                          'Wird ein Text im Shopify-Admin, in einer anderen App oder per Import geändert, übersetzt die KI ihn beim nächsten Sync sofort neu — statt die veraltete Übersetzung nur zu löschen. URL-Handles bleiben ausgenommen.'}
+                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn beim nächsten Sync automatisch neu, statt die veraltete Übersetzung nur zu löschen. URL-Handles bleiben ausgenommen.'}
                       </Text>
+                      {/* The two switches interact, and only in ONE direction:
+                          with the purge on, an in-app save has already deleted
+                          the translations before any sync sees them, so the
+                          re-translation is left with the changes this app did
+                          not make. Shown only while that is actually the case —
+                          a caveat that does not apply is noise. */}
+                      {canAutoTranslateExternal && localAutoTranslateExternal && localPurgeOnChange && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {t.settings.autoTranslateChangesInteractionNote ||
+                            'Solange die Option darüber aktiv ist, wird eine Übersetzung bei einer Änderung in dieser App sofort gelöscht — automatisch neu übersetzt werden dann nur Änderungen von ausserhalb.'}
+                        </Text>
+                      )}
                       {!canAutoTranslateExternal && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {(t.settings.autoTranslateExternalChangesPlanHint ||

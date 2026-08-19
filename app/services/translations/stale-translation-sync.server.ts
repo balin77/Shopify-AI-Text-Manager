@@ -35,10 +35,15 @@
  * request, and one AI request per locale does not fit in one. The purge stays
  * inline (one GraphQL call), so the storefront is corrected immediately.
  *
- * With the purge ON (the default) an in-app primary save has already removed
- * the translations before the webhook arrives, so nothing is outdated by then:
- * the re-translation is reached by changes made OUTSIDE the app, which is
- * exactly what it is for.
+ * WHICH changes it reaches follows from the purge switch, and the column's
+ * name (`autoTranslateExternalChanges`) is historic rather than exact. With the
+ * purge ON, an in-app primary save has already deleted the translations before
+ * any sync sees them — no rows, no baseline digest, nothing stale — so the
+ * re-translation is left with the changes this app did not make. With the purge
+ * OFF the rows survive with their old digest, and the very same detection fires
+ * for an in-app edit too: the merchant's own change is re-translated instead of
+ * dropped. That was not designed, it is a consequence of keying on the digest,
+ * and it is kept deliberately — it is the more useful behaviour.
  */
 
 import { logger } from "../../utils/logger.server";
