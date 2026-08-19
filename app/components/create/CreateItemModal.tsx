@@ -39,6 +39,7 @@ import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
 import { CreateSeoScore } from "./CreateSeoScore";
 import { TaxonomyValuePicker } from "../metaobjects/TaxonomyValueField";
+import { HexColorInput } from "../metaobjects/HexColorInput";
 import { useCreateAiAssist } from "./useCreateAiAssist";
 import {
   createAiSpecFor,
@@ -154,6 +155,15 @@ export interface CreateItemModalProps {
   extraFieldsByOption?: Record<string, CreateFieldDef[]>;
   /** Which field's value selects from `extraFieldsByOption`. */
   extraFieldsKey?: string;
+  /**
+   * Field keys the caller has FIXED, which are therefore not offered.
+   *
+   * Opened from a metaobject type's own page, the type is not a choice: the
+   * page IS the choice, and a Select that could change it invites creating an
+   * entry of a different type than the one on screen. The value still travels
+   * in `initialValues` and is still submitted -- hidden, not dropped.
+   */
+  lockedFieldKeys?: string[];
   /** §1.7 — shown instead of the form when an article has no blog to live in. */
   blocked?: { message: string; actionLabel?: string; onAction?: () => void } | null;
   /** §1.9 — values the form starts with when duplicating. */
@@ -220,6 +230,7 @@ export function CreateItemModal({
   extraFields = [],
   extraFieldsByOption = {},
   extraFieldsKey,
+  lockedFieldKeys,
   blocked = null,
   initialValues,
   rulesAvailable = false,
@@ -308,8 +319,10 @@ export function CreateItemModal({
     [allFields],
   );
 
-  const basicFields = allFields.filter((f) => !f.advanced);
-  const advancedFields = allFields.filter((f) => f.advanced);
+  const locked = useMemo(() => new Set(lockedFieldKeys ?? []), [lockedFieldKeys]);
+  const offeredFields = useMemo(() => allFields.filter((f) => !locked.has(f.key)), [allFields, locked]);
+  const basicFields = offeredFields.filter((f) => !f.advanced);
+  const advancedFields = offeredFields.filter((f) => f.advanced);
 
   // Seed once per opening. Not on every render: the merchant's edits would be
   // overwritten by the source's values on the next keystroke.
@@ -388,6 +401,29 @@ export function CreateItemModal({
 
   const canSubmit =
     !submitting && !blocked && !disabledOptionKey && localErrors.length === 0 && ruleErrors.length === 0;
+
+  /**
+   * Reasons that belong to a field the caller LOCKED, and therefore have no
+   * control to render them on.
+   *
+   * Locking the metaobject type removed the one surface that explained a
+   * refused definition: `disabledOptionKey` still switches Create off, and its
+   * reason lived only as that Select's error. The result was a dialog with a
+   * greyed button and no cause anywhere -- exactly the dead end the disabled
+   * option carries a reason to avoid. A field the merchant cannot see needs
+   * its reason said somewhere they can.
+   */
+  const lockedNotices = useMemo(() => {
+    const notices: string[] = [];
+    for (const key of locked) {
+      const option = (dynamicOptions[key] ?? []).find((o) => o.value === values[key]);
+      if (option?.disabled && option.helpText) notices.push(option.helpText);
+      for (const error of localErrors.filter((e) => e.field === key)) {
+        notices.push(t.errors?.[error.code] || `${error.code} ${error.detail ?? ""}`.trim());
+      }
+    }
+    return notices;
+  }, [locked, dynamicOptions, values, localErrors, t]);
 
   /**
    * Drop `field.*` values belonging to a metaobject definition that is no
@@ -738,6 +774,20 @@ export function CreateItemModal({
         );
       }
 
+      case "color":
+        return (
+          <BlockStack gap="150" key={field.key}>
+            <Text as="p" variant="bodyMd">{label(field)}</Text>
+            <HexColorInput
+              label={label(field)}
+              value={value}
+              onChange={(v) => setValue(field.key, v)}
+              error={errorText}
+              invalidMessage={t.errors?.invalidColor}
+            />
+          </BlockStack>
+        );
+
       case "tags":
         return (
           <TextField
@@ -827,6 +877,15 @@ export function CreateItemModal({
               </Banner>
             )}
 
+            {lockedNotices.length > 0 && (
+              <Banner tone="warning">
+                <BlockStack gap="100">
+                  {lockedNotices.map((notice) => (
+                    <Text as="p" variant="bodySm" key={notice}>{notice}</Text>
+                  ))}
+                </BlockStack>
+              </Banner>
+            )}
             {!blocked && basicFields.map(renderField)}
 
             {!blocked && resource === "collection" && (

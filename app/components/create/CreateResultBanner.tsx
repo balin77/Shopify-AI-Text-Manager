@@ -4,16 +4,17 @@
  * The load-bearing case is the one that looks like a failure and is not: the
  * object EXISTS on Shopify but the cache sync did not pick it up. Reporting
  * that as an error is what produces a second click and therefore a duplicate —
- * and this app has no content delete to undo one with (§0.1). So it reads
+ * and the created thing is deletable from its own card (§0.1). So it reads
  * "created, will appear after a reload" with a reload button, never "failed".
  *
  * The handle shown is the one Shopify ACTUALLY assigned. On a collision it
  * appends `-1` (§1.7), and a merchant who later looks for the handle they typed
  * would not find it.
  *
- * `onUndo` is the seam for §1.8. That decision is deliberately still open, so
- * the prop is optional and the banner simply omits the action until it lands —
- * rather than the banner having to be rebuilt around it later.
+ * There is deliberately NO undo. It was the §1.8 seam and it earned its
+ * removal: what was just created is deletable from its own card with the same
+ * confirmation, so a second path to that delete only put a destructive button
+ * on a SUCCESS banner.
  */
 
 import { Banner, BlockStack, Text, InlineStack, Button, Spinner } from "@shopify/polaris";
@@ -27,8 +28,6 @@ export interface CreateResultBannerProps {
   /** §1.8 — routed through the ONE delete path, with its two-step
    *  confirmation. Absent (e.g. after a failed sync, where there is no
    *  confirmed id to remove) means the action is simply not offered. */
-  onUndo?: () => void;
-  undoLabel?: string;
   /** §2.5a — the chained translate-all has not answered yet. */
   translating?: boolean;
   t?: {
@@ -37,14 +36,13 @@ export interface CreateResultBannerProps {
     createdNotSyncedBody?: string;
     handleChanged?: string;
     reload?: string;
-    undo?: string;
     translating?: string;
     /** Keyed by `CreatedItemInfo.warningCodes` entries. */
     warnings?: Record<string, string>;
   };
 }
 
-export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabel, translating = false, t = {} }: CreateResultBannerProps) {
+export function CreateResultBanner({ info, onDismiss, onReload, translating = false, t = {} }: CreateResultBannerProps) {
   const name = info.title || info.id;
 
   return (
@@ -95,16 +93,9 @@ export function CreateResultBanner({ info, onDismiss, onReload, onUndo, undoLabe
           <Text as="p" key={code} tone="subdued">{t.warnings?.[code] || code}</Text>
         ))}
 
-        {(onReload || onUndo) && (
+        {onReload && !info.synced && (
           <InlineStack gap="200">
-            {!info.synced && onReload && (
-              <Button onClick={onReload}>{t.reload || "Reload"}</Button>
-            )}
-            {onUndo && !translating && (
-              <Button tone="critical" variant="plain" onClick={onUndo}>
-                {undoLabel || t.undo || "Undo this create"}
-              </Button>
-            )}
+            <Button onClick={onReload}>{t.reload || "Reload"}</Button>
           </InlineStack>
         )}
       </BlockStack>

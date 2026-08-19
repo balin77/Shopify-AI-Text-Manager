@@ -36,6 +36,8 @@ export interface DeleteItemModalTexts {
   consequenceBlogArticles?: string;
   /** Metaobject-only: products may reference the entry as an option value. */
   consequenceMetaobjectUsage?: string;
+  /** The TYPE takes its entries with it, and Shopify does not ask about them. */
+  consequenceMetaobjectDefinitionEntries?: string;
   confirmPrompt?: string;
   mismatch?: string;
   cancel?: string;
@@ -48,7 +50,7 @@ export interface DeleteItemModalProps {
   open: boolean;
   onClose: () => void;
   /** What is being removed, and what it is called. */
-  item: { id: string; title: string; resource: string };
+  item: { id: string; title: string; resource: string; /** Entries that go with a deleted TYPE. */ cascadeCount?: number };
   onConfirm: () => void;
   deleting?: boolean;
   error?: string | null;
@@ -110,6 +112,22 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                   what actually happens instead of naming a worst case that
                   cannot occur — an invented consequence is not a safer warning,
                   it is a false one. */}
+              {/* Deleting a DEFINITION cascades to every entry of that type,
+                  and Shopify neither asks nor reports how many. The count is
+                  the app's, from what it has cached — which is why the line
+                  says "known" rather than presenting a cache read as the
+                  shop's truth. */}
+              {item.resource === "metaobjectDefinition" && (
+                <List.Item>
+                  <Text as="span" fontWeight="semibold">
+                    {(t.consequenceMetaobjectDefinitionEntries ||
+                      "Every entry of this type is deleted with it ({count} known here).").replace(
+                      "{count}",
+                      String(item.cascadeCount ?? 0),
+                    )}
+                  </Text>
+                </List.Item>
+              )}
               {item.resource === "metaobject" && (
                 <List.Item>
                   {t.consequenceMetaobjectUsage ||

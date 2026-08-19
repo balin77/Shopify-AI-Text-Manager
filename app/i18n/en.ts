@@ -503,6 +503,8 @@ export const en: Translation = {
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — creating content ─────────────────
     createButtonLabel: "Create",
     createEntryButtonLabel: "Add entry",
+    deleteContainerButtonLabel: "Delete type",
+    deleteContainerNotLoaded: "This type is still loading.",
     createChooserTitle: "What would you like to create?",
     // Two DIFFERENT refusals with different remedies — they must never share
     // the same text (§1.2).
@@ -528,8 +530,8 @@ export const en: Translation = {
       confirm: "Delete permanently",
       deleting: "Deleting \u2026",
       consequenceMetaobjectUsage: "Shopify refuses to delete an entry that a product still uses as an option value \u2014 remove it there first.",
+      consequenceMetaobjectDefinitionEntries: "Every entry of this type is deleted with it \u2014 {count} known here. Shopify does not ask about them.",
     },
-    undoCreate: "Undo this create",
     // ── Duplicating (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicate",
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
@@ -794,6 +796,7 @@ export const en: Translation = {
         invalidOption: "\u201c{detail}\u201d is not one of the options.",
         invalidHandle: "Only lowercase letters, numbers and dashes.",
         invalidMoney: "Enter an amount, e.g. 19.90",
+        invalidColor: "Enter a hex colour, e.g. #A1B2C3.",
         invalidTaxonomyValue: "Pick a value from the offered list.",
         tooManyTaxonomyValues: "At most {detail} value(s).",
         tooFewTaxonomyValues: "At least {detail} value(s).",

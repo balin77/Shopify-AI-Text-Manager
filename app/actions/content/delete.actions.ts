@@ -31,6 +31,7 @@ import {
   DELETE_BLOG,
   DELETE_COLLECTION,
   DELETE_METAOBJECT,
+  DELETE_METAOBJECT_DEFINITION,
   DELETE_PAGE,
   DELETE_PRODUCT,
 } from "~/graphql/content.mutations";
@@ -38,7 +39,15 @@ import { purgeContentFromCache, type DeletableResource } from "~/services/conten
 import { GID_TYPE_BY_RESOURCE, isGidOfResource } from "~/config/create-fields.config";
 import { isValidShopifyGID } from "~/utils/validation";
 
-const DELETABLE: DeletableResource[] = ["product", "collection", "page", "article", "blog", "metaobject"];
+const DELETABLE: DeletableResource[] = [
+  "product",
+  "collection",
+  "page",
+  "article",
+  "blog",
+  "metaobject",
+  "metaobjectDefinition",
+];
 
 type GraphQLResponse = { data?: any; errors?: Array<{ message: string }> };
 
@@ -89,6 +98,18 @@ function deletePlan(resource: DeletableResource, gid: string): {
         mutation: DELETE_METAOBJECT,
         variables: { id: gid },
         read: (d) => ({ deletedId: d?.metaobjectDelete?.deletedId, userErrors: d?.metaobjectDelete?.userErrors }),
+      };
+    case "metaobjectDefinition":
+      // The most destructive call in this codebase: the TYPE goes, and every
+      // entry of it goes with it. Shopify does not ask about the entries, so
+      // the confirmation in front of this one names how many there are.
+      return {
+        mutation: DELETE_METAOBJECT_DEFINITION,
+        variables: { id: gid },
+        read: (d) => ({
+          deletedId: d?.metaobjectDefinitionDelete?.deletedId,
+          userErrors: d?.metaobjectDefinitionDelete?.userErrors,
+        }),
       };
   }
 }
@@ -218,6 +239,15 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
       id: gid,
       /** Articles removed along with a deleted blog — the UI reports it. */
       cascadedArticles: resource === "blog" ? counts.article ?? 0 : 0,
+      /**
+       * Entries removed along with a deleted metaobject TYPE.
+       *
+       * From the CACHE, so it is what this app had, not what Shopify removed:
+       * the mutation reports only the definition's id. The confirmation in
+       * front of the delete says the same thing in the same words, so the
+       * number the merchant agreed to is the number they are told about.
+       */
+      cascadedEntries: resource === "metaobjectDefinition" ? counts.metaobject ?? 0 : 0,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

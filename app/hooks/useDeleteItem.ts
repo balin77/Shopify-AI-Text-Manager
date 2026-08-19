@@ -1,12 +1,12 @@
 /**
  * Client state for the ONE delete path, used by both of its entrances:
- * the item list's delete button, and the post-create undo (§1.8).
+ * the item list's delete button, and the entry card's own Delete.
  *
- * The undo goes through the SAME action and the same confirmation as any other
- * delete. It is tempting to let it skip the dialog — the merchant just created
- * the thing, surely they know what it is — but "I clicked create by mistake"
- * and "I clicked undo by mistake" are the same class of slip, and the second
- * one destroys work while the first only makes some.
+ * Every delete goes through the same two-step confirmation, including the one
+ * for a thing the merchant created seconds ago. It was tempting to let that
+ * case skip the dialog — surely they know what it is — but "I clicked create by
+ * mistake" and "I clicked delete by mistake" are the same class of slip, and
+ * the second one destroys work while the first only makes some.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,8 +17,14 @@ export interface DeleteTarget {
   id: string;
   title: string;
   resource: DeletableResource;
-  /** Set when this delete undoes a create — used only for wording. */
-  isUndo?: boolean;
+  /**
+   * How many objects go with this one, for the confirmation to name.
+   *
+   * Only a metaobject DEFINITION has one today: Shopify deletes its entries
+   * along with it and neither asks nor reports how many, so the number comes
+   * from this app's cache — which is why the sentence says "known here".
+   */
+  cascadeCount?: number;
 }
 
 export interface UseDeleteItemOptions {

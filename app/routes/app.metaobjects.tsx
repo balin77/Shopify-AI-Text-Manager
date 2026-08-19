@@ -191,6 +191,9 @@ export const action = async (args: ActionFunctionArgs) => {
 
 interface LoadedEntries {
   id: string;
+  /** The DEFINITION's Shopify GID. The `id` above is the pseudo type row. */
+  definitionId?: string;
+  definitionName?: string;
   metaobjects: MetaobjectEntryLike[];
   fieldDefinitions?: MetaobjectDefinitionFieldLike[];
   adminAccess?: string | null;
@@ -403,6 +406,18 @@ export default function MetaobjectsPage() {
         t.content?.success || "Success!",
       );
       setFocusEntryId(null);
+      // A deleted TYPE has no entries left to reload: asking the entry loader
+      // for it would fetch an id that is gone. Only the page's own data is
+      // revalidated, and the editor's existing "the selected item disappeared"
+      // effect moves the selection to the first remaining type — re-selecting
+      // here as well would be a second answer to the same question.
+      if (target.resource === "metaobjectDefinition") {
+        setLoaded(null);
+        setUsage({});
+        setEntryError(null);
+        revalidator.revalidate();
+        return;
+      }
       reloadEntries();
       // The type row's entry COUNT lives in the page loader's data.
       revalidator.revalidate();
@@ -449,6 +464,48 @@ export default function MetaobjectsPage() {
     () => metaobjectWriteAccess(loaded?.adminAccess),
     [loaded],
   );
+
+  /**
+   * Deleting the whole TYPE — the definition, and with it every entry.
+   *
+   * The route supplies this because only the route has the definition's GID:
+   * the item list's own id is the pseudo row `metaobject_type_<type>`, which is
+   * not a Shopify object at all, and sending it is how this page once grew a
+   * Delete that 400ed after the merchant had typed the name into the
+   * confirmation.
+   *
+   * `disabledReason` is a STRING and always says why, never a bare greyed
+   * button. Two reasons exist: the definition is not loaded yet (the page is
+   * still fetching, so there is no id to delete), and Shopify refusing our
+   * writes on this definition (§7.2) — which is not measured to cover
+   * definition DELETES, so it is treated as "we do not know that we may" and
+   * refuses rather than offering a destructive call on a guess.
+   */
+  const containerAction = useMemo(() => {
+    if (!selectedType) return null;
+    const definitionId = loaded?.definitionId;
+    const disabledReason = !definitionId
+      ? t.content?.deleteContainerNotLoaded || "Still loading this type."
+      : writeAccess === "readOnly"
+        ? t.content?.metaobjectEntryReadOnlyDefinition ||
+          "This app cannot change entries of this definition."
+        : null;
+    return {
+      label: t.content?.deleteContainerButtonLabel || "Delete type",
+      disabledReason,
+      onAction: () => {
+        if (!definitionId) return;
+        deleteItem.request({
+          id: definitionId,
+          title: loaded?.definitionName || selectedType,
+          resource: "metaobjectDefinition" as const,
+          // From the cache, and the dialog says so: Shopify neither asks about
+          // the entries nor reports how many it removed.
+          cascadeCount: loaded?.contentCount ?? loaded?.metaobjects?.length ?? 0,
+        });
+      },
+    };
+  }, [selectedType, loaded, writeAccess, t, deleteItem]);
 
   const cardTexts = useMemo(
     () => ({
@@ -624,6 +681,7 @@ export default function MetaobjectsPage() {
           revalidator={revalidator}
           isFieldsLoading={entriesLoading}
           fieldsReadOnly={writeAccess === "readOnly"}
+          containerAction={containerAction}
           fieldPagination={fieldPagination}
           fieldSearchPlaceholder={t.content?.metaobjectsSearchEntries}
           onFieldPageChange={(page) => {
