@@ -81,6 +81,10 @@ export interface TaxonomyFieldProps {
   onReload?: () => void;
   /** Set in a foreign locale — the reason, shown instead of silence. */
   foreignLocaleHint?: string;
+  /** One line under the control saying what this field is FOR. Translated by
+   *  the caller, because the config is imported by the server and the bulk
+   *  grid, neither of which has a language. */
+  helpText?: string;
   t: {
     search?: string;
     searching?: string;
@@ -129,6 +133,7 @@ export function TaxonomyField({
   known = true,
   onReload,
   foreignLocaleHint,
+  helpText,
   t,
 }: TaxonomyFieldProps) {
   const [open, setOpen] = useState(false);
@@ -538,6 +543,10 @@ export function TaxonomyField({
           </Button>
         )}
       </InlineStack>
+
+      {helpText && (
+        <Text as="p" variant="bodySm" tone="subdued">{helpText}</Text>
+      )}
     </BlockStack>
   );
 }

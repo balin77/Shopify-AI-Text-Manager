@@ -6,7 +6,7 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { isAttributeField } from "~/services/content-attributes.shared";
+import { fieldCard } from "~/services/content-attributes.shared";
 import {
   groupDetailsFields,
   shouldRenderDetailsSections,
@@ -575,19 +575,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // Three splits, not two. The item's TEXT stays in the main card; the three
   // fields Shopify's own admin groups under "Search engine listing" (SEO
   // title, meta description, URL handle) get a card right below it; the
-  // merchandising attributes keep theirs at the bottom. The search-engine
-  // split is config-driven (`card: "searchEngine"`) rather than a key list,
-  // so a dynamic field that happens to be called `handle` cannot fall into
-  // it.
+  // merchandising attributes keep theirs at the bottom. `fieldCard` is the ONE
+  // rule that decides which — config-driven rather than a key list, so a
+  // dynamic field that happens to be called `handle` cannot fall into the
+  // search-engine card, and a field that swaps cards (the category up, the
+  // product type down) says so in one place instead of in three filters.
   const contentFields = useMemo(
-    () => visibleFields.filter((f) => !isAttributeField(f) && f.card !== "searchEngine"),
+    () => visibleFields.filter((f) => fieldCard(f) === "main"),
     [visibleFields]
   );
   const searchEngineFields = useMemo(
-    () => visibleFields.filter((f) => f.card === "searchEngine"),
+    () => visibleFields.filter((f) => fieldCard(f) === "searchEngine"),
     [visibleFields]
   );
-  const attributeFields = useMemo(() => visibleFields.filter((f) => isAttributeField(f)), [visibleFields]);
+  const attributeFields = useMemo(() => visibleFields.filter((f) => fieldCard(f) === "details"), [visibleFields]);
 
   // The Details card's own split into subcards. Derived from the ALREADY
   // filtered list, so a section whose fields all dropped out (the status

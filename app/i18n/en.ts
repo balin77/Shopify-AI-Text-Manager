@@ -721,10 +721,13 @@ export const en: Translation = {
     // each one exists because merchants reliably assume the opposite.
     attributeNotes: {
       status: "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
-      category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
       collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
     },
     templateSuffixHelp: "Empty = the theme's default template.",
+    // The pair merchants take for one field. Each line names the OTHER —
+    // the only thing that tells them apart at a glance.
+    categoryHelp: "Shopify's own taxonomy. It decides tax rates and whether your product appears on marketplaces and in AI channels. Not translatable — Shopify knows the tree in every language itself. Your own wording is the product type further down.",
+    productTypeHelp: "Your own wording, free to choose and translatable. Rule-based collections, theme filters and Shopify's reports read it. The machine-readable classification is the product category at the top.",
     statusToggle: {
       statusLabel: "Status",
       hidden: "Hidden",

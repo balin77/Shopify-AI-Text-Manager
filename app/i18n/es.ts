@@ -716,10 +716,13 @@ export const es: Translation = {
     // una existe porque los comerciantes asumen de forma fiable lo contrario.
     attributeNotes: {
       status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Gestiona los canales en el admin de Shopify.",
-      category: "Shopify usa la categoría para los tipos impositivos y para los listados de marketplace. Un tipo concreto es mejor que una rama amplia.",
       collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
     },
     templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
+    // El par que los comerciantes toman por un solo campo. Cada línea nombra
+    // el OTRO — lo único que los distingue de un vistazo.
+    categoryHelp: "La taxonomía propia de Shopify. Decide los tipos impositivos y si tu producto aparece en marketplaces y en canales de IA. No es traducible — Shopify conoce el árbol en cada idioma. Tu propia denominación es el tipo de producto más abajo.",
+    productTypeHelp: "Tu propia denominación, libre y traducible. Las colecciones basadas en reglas, los filtros del tema y los informes de Shopify la leen. La clasificación legible por máquinas es la categoría de producto de arriba.",
     statusToggle: {
       statusLabel: "Estado",
       hidden: "Oculto",

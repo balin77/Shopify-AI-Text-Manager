@@ -721,10 +721,13 @@ export const de = {
     // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
     attributeNotes: {
       status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Kanäle verwaltest du im Shopify-Admin.",
-      category: "Shopify nutzt die Kategorie für Steuersätze und für Marktplatz-Listings. Ein konkreter Typ ist besser als ein breiter Ast.",
       collections: "Regelbasierte Kollektionen werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
     },
     templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
+    // Das Paar, das Händler für ein Feld halten. Jede Zeile nennt das ANDERE
+    // — nur so sind sie auf einen Blick auseinanderzuhalten.
+    categoryHelp: "Shopifys eigene Taxonomie. Sie bestimmt Steuersätze und ob dein Produkt auf Marktplätzen und in KI-Kanälen erscheint. Nicht übersetzbar — Shopify kennt den Baum selbst in jeder Sprache. Deine eigene Bezeichnung ist der Produkttyp weiter unten.",
+    productTypeHelp: "Deine eigene Bezeichnung, frei wählbar und übersetzbar. Regelbasierte Kollektionen, Theme-Filter und Shopifys Berichte lesen sie. Die maschinenlesbare Einordnung ist die Produktkategorie ganz oben.",
     statusToggle: {
       statusLabel: "Status",
       hidden: "Versteckt",

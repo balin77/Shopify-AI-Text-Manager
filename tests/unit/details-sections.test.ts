@@ -12,18 +12,23 @@ import {
   PAGES_CONFIG,
   BLOGS_CONFIG,
 } from "../../app/config/content-fields.config";
-import { isAttributeField } from "../../app/services/content-attributes.shared";
+import { fieldCard } from "../../app/services/content-attributes.shared";
 import type { FieldDefinition } from "../../app/types/content-editor.types";
 
 const field = (key: string, detailsSection?: DetailsSectionId) => ({ key, detailsSection });
 
 /**
- * What the Details card actually receives: the attribute fields MINUS the ones
- * the editor hoists into the action bar (`statusControl` takes `status` for
- * products and `isPublished` for pages/articles).
+ * What the Details card actually receives: whatever `fieldCard` routes there,
+ * MINUS the ones the editor hoists into the action bar (`statusControl` takes
+ * `status` for products and `isPublished` for pages/articles).
+ *
+ * `fieldCard`, not `isAttributeField`: the two came apart deliberately for the
+ * category (an attribute rendered in the MAIN card) and the product type
+ * (translatable content rendered HERE). Filtering by the save-semantics
+ * predicate would test a layout this editor no longer has.
  */
 const detailsCardFields = (fields: FieldDefinition[]) =>
-  fields.filter((f) => isAttributeField(f) && f.key !== "status" && f.key !== "isPublished");
+  fields.filter((f) => fieldCard(f) === "details" && f.key !== "status" && f.key !== "isPublished");
 
 describe("groupDetailsFields", () => {
   it("folds consecutive fields of the same section into one subcard", () => {
@@ -88,8 +93,25 @@ describe("content configs", () => {
     // The sales-channel panel leads, UNSECTIONED — see the exception below.
     expect(blocks.map((b) => b.id)).toEqual([null, "organization", "theme"]);
     expect(blocks[0].fields.map((f) => f.key)).toEqual(["commerce"]);
-    expect(blocks[1].fields.map((f) => f.key)).toEqual(["vendor", "category", "collections", "tags"]);
+    expect(blocks[1].fields.map((f) => f.key)).toEqual(["vendor", "productType", "collections", "tags"]);
     expect(shouldRenderDetailsSections(blocks)).toBe(true);
+  });
+
+  it("swaps the category and the product type between the two cards", () => {
+    // The pair merchants confuse. The category is Shopify's taxonomy and now
+    // sits where the admin puts it — high up, in the main card; the free-text
+    // product type moved down next to the rest of the organization. Asserted
+    // on `fieldCard` rather than on the raw `card` mark, because the DEFAULT
+    // is what the rest of the config relies on and a regression would most
+    // likely be a dropped mark, not a changed one.
+    const byKey = new Map(PRODUCTS_CONFIG.fieldDefinitions.map((f) => [f.key, f]));
+    expect(fieldCard(byKey.get("category")!)).toBe("main");
+    expect(fieldCard(byKey.get("productType")!)).toBe("details");
+    // Each keeps its own save semantics: the category is still an attribute
+    // (locked in a foreign locale, gated on changedFields), the product type
+    // is still translatable content.
+    expect(byKey.get("category")!.supportsTranslation).toBe(false);
+    expect(byKey.get("productType")!.supportsTranslation).toBe(true);
   });
 
   it("keeps the default variant's price out of the Details card", () => {
@@ -119,7 +141,7 @@ describe("content configs", () => {
     }
   });
 
-  it("gives every attribute field a section — except the one that draws its own", () => {
+  it("gives every Details-card field a section — except the one that draws its own", () => {
     // `commerce` is the single exception and is named here rather than left as
     // a hole: the sales-channel panel renders its own heading, so a subcard
     // around it would print the same word twice. Anything else without a
