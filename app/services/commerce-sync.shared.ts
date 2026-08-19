@@ -184,7 +184,20 @@ export function publicationCatalogKind(typename: unknown): PublicationCatalogKin
  * arrive without its catalog — is worse than not raising it at all.
  */
 export function countsAsSalesChannel(kind: PublicationCatalogKind): boolean {
-  return kind !== "market" && kind !== "companyLocation";
+  return nonChannelKind(kind) === undefined;
+}
+
+/**
+ * The kinds that are NOT sales channels — the one list both rules read.
+ *
+ * `countsAsSalesChannel` and `publicationGroupOf` used to each name these two
+ * by hand, so the alarm's idea of "a channel" and the list's could drift apart
+ * while both kept passing their own tests.
+ */
+const NON_CHANNEL_KINDS = ["market", "companyLocation"] as const;
+
+function nonChannelKind(kind: PublicationCatalogKind) {
+  return NON_CHANNEL_KINDS.find((candidate) => candidate === kind);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -407,12 +420,11 @@ export const PUBLICATION_GROUP_ORDER = ["channels", "market", "companyLocation"]
 export type PublicationGroupId = (typeof PUBLICATION_GROUP_ORDER)[number];
 
 export function publicationGroupOf(kind: PublicationCatalogKind): PublicationGroupId {
-  // `countsAsSalesChannel` already excluded everything else, but TypeScript
-  // cannot narrow through it — and naming the two explicitly is what makes a
-  // future fourth catalog type a compile error instead of a silent bucket.
-  if (kind === "market") return "market";
-  if (kind === "companyLocation") return "companyLocation";
-  return "channels";
+  // Same list as `countsAsSalesChannel`, so the alarm and the grouping can
+  // never disagree about what a channel is. Anything not on it — including an
+  // UNKNOWN catalog — buckets with the sales channels, which is where it has
+  // always rendered.
+  return nonChannelKind(kind) ?? "channels";
 }
 
 /**
