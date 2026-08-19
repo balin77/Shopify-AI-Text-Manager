@@ -40,7 +40,7 @@ import {
   Box,
   Banner,
   Button,
-  Checkbox,
+  Collapsible,
   Divider,
   InlineStack,
   Select,
@@ -62,6 +62,9 @@ export function CommerceVariantsSection() {
   const commerce = useCommerceData();
   /** The chosen scope id, or null while none has been picked. */
   const [scopeId, setScopeId] = useState<string | null>(null);
+  /** Whether the customs details are folded open. Closed by default, the way
+   *  Shopify folds them: most merchants never touch an HS code. */
+  const [customsOpen, setCustomsOpen] = useState(false);
 
   const variants = commerce?.data?.variants ?? [];
   const t = commerce?.t ?? {};
@@ -209,8 +212,25 @@ export function CommerceVariantsSection() {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
     gap: "12px",
-    alignItems: "start",
+    // STRETCH, not start: side by side the two cards are read as a pair, and
+    // one ending 40px above the other looks like a mistake rather than like
+    // less content. Each card fills the row's height (`minHeight="100%"`
+    // below), so the taller one sets it.
+    alignItems: "stretch",
   };
+
+  /**
+   * Whether the scope is a PHYSICAL product.
+   *
+   * Off, nothing else in the shipping card applies: there is no weight to
+   * declare and no customs to clear, so every input below is disabled rather
+   * than left to be filled in with numbers Shopify will ignore. A mixed group
+   * counts as physical — some of it is, and disabling the fields would take
+   * the merchant's ability to fix the half that needs them.
+   */
+  const isPhysical =
+    itemMixed("requiresShipping") ||
+    itemValue("requiresShipping", String(first.requiresShipping ?? true)) === "true";
 
   /** "Mixed" as a placeholder, so an empty bulk field is not read as "empty". */
   const mixedHint = (mixed: boolean) =>
@@ -296,7 +316,7 @@ export function CommerceVariantsSection() {
           editor is wide, and stack where it is not. Inventory gets its own
           full-width card: it holds a table. */}
       <div style={sectionGrid}>
-        <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+        <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
           <BlockStack gap="300">
                   {/* ── Prices ─────────────────────────────────────────
                       All three on ONE row, because the confusion they cause is
@@ -366,7 +386,7 @@ export function CommerceVariantsSection() {
         {/* The InventoryItem's own settings. Shown for EVERY variant, tracked
             or not: a weight and a customs code are facts about the item, not
             about whether Shopify counts it. */}
-        <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+        <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
           <BlockStack gap="300">
                   {first.inventoryItemId ? (
                     <>
@@ -392,8 +412,10 @@ export function CommerceVariantsSection() {
                         />
                       </InlineStack>
                     </InlineStack>
-                    <InlineStack gap="300" blockAlign="start" wrap>
-                      <Box minWidth="120px">
+                    {/* Weight and its unit are a number and a word — sized
+                        for that, not for the column they used to fill. */}
+                    <InlineStack gap="200" blockAlign="start" wrap={false}>
+                      <Box minWidth="96px" maxWidth="110px">
                         <TextField
                           label={(t.weight as string) || "Weight"}
                           value={itemValue("weight")}
@@ -401,10 +423,11 @@ export function CommerceVariantsSection() {
                           onChange={(value) => setItem("weight", value)}
                           autoComplete="off"
                           inputMode="decimal"
-                          disabled={saving}
+                          align="right"
+                          disabled={saving || !isPhysical}
                         />
                       </Box>
-                      <Box minWidth="140px">
+                      <Box minWidth="104px" maxWidth="124px">
                         <Select
                           label={(t.weightUnit as string) || "Unit"}
                           // `GRAMS` is not a unit anybody writes on a label.
@@ -423,35 +446,45 @@ export function CommerceVariantsSection() {
                           ]}
                           value={itemMixed("weightUnit") ? "" : (itemValue("weightUnit") || "KILOGRAMS")}
                           onChange={(value) => setItem("weightUnit", value)}
-                          disabled={saving}
+                          disabled={saving || !isPhysical}
                         />
                       </Box>
-                      <Box minWidth="140px">
-                        <TextField
-                          label={(t.hsCode as string) || "HS code"}
-                          value={itemValue("harmonizedSystemCode")}
-                          placeholder={mixedHint(itemMixed("harmonizedSystemCode"))}
-                          onChange={(value) =>
-                            setItem("harmonizedSystemCode", value)
-                          }
-                          autoComplete="off"
-                          disabled={saving}
-                        />
-                      </Box>
-                      <Box minWidth="120px">
+                    </InlineStack>
+
+                    {/* Customs, folded away. Shopify folds them for the same
+                        reason: an HS code and a country of origin matter to
+                        the merchants who ship across a border and to nobody
+                        else, and unfolded they doubled the height of a card
+                        that otherwise holds two small fields. */}
+                    <Button
+                      variant="plain"
+                      disclosure={customsOpen ? "up" : "down"}
+                      onClick={() => setCustomsOpen((open) => !open)}
+                      disabled={!isPhysical}
+                    >
+                      {(t.customsDetails as string) || "More details"}
+                    </Button>
+                    <Collapsible open={customsOpen && isPhysical} id="commerce-customs">
+                      <BlockStack gap="300">
                         <TextField
                           label={(t.countryOfOrigin as string) || "Country of origin"}
                           value={itemValue("countryCodeOfOrigin")}
                           placeholder={mixedHint(itemMixed("countryCodeOfOrigin"))}
-                          onChange={(value) =>
-                            setItem("countryCodeOfOrigin", value)
-                          }
+                          onChange={(value) => setItem("countryCodeOfOrigin", value)}
                           autoComplete="off"
                           maxLength={2}
-                          disabled={saving}
+                          disabled={saving || !isPhysical}
                         />
-                      </Box>
-                    </InlineStack>
+                        <TextField
+                          label={(t.hsCode as string) || "HS code"}
+                          value={itemValue("harmonizedSystemCode")}
+                          placeholder={mixedHint(itemMixed("harmonizedSystemCode"))}
+                          onChange={(value) => setItem("harmonizedSystemCode", value)}
+                          autoComplete="off"
+                          disabled={saving || !isPhysical}
+                        />
+                      </BlockStack>
+                    </Collapsible>
                     </>
                   ) : null}
           </BlockStack>

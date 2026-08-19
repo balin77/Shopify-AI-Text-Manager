@@ -557,6 +557,7 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      customsDetails: "Más detalles",
       taxableSwitch: "Cobrar impuestos por esta variante",
       inventoryHeading: "Inventario",
       trackedLabel: "Hacer seguimiento del inventario",

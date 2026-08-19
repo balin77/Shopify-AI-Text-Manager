@@ -558,6 +558,7 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      customsDetails: "Weitere Details",
       taxableSwitch: "Steuer auf diese Variante erheben",
       inventoryHeading: "Inventar",
       trackedLabel: "Inventar wird verfolgt",

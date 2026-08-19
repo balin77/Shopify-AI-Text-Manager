@@ -548,3 +548,38 @@ describe("the layout the merchant asked for", () => {
     expect(table!.compareDocumentPosition(sku) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
+
+describe("the shipping card", () => {
+  it("folds the customs fields away, and opens them on request", async () => {
+    // An HS code and a country of origin matter to merchants who ship across a
+    // border and to nobody else; unfolded they doubled the card's height.
+    ui();
+    await screen.findByLabelText("Variant");
+
+    expect(screen.queryByLabelText(/HS code/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /More details/i }));
+    expect(await screen.findByLabelText(/HS code/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Country of origin/i)).toBeTruthy();
+  });
+
+  it("disables every shipping input when it is not a physical product", async () => {
+    // There is no weight to declare and no customs to clear, so the fields are
+    // locked rather than left to be filled with numbers Shopify ignores.
+    ui();
+    await screen.findByLabelText("Variant");
+    fireEvent.click(screen.getByRole("button", { name: /More details/i }));
+
+    const weight = (await screen.findByLabelText(/^Weight/i)) as HTMLInputElement;
+    const unit = screen.getByLabelText(/^Unit/i) as HTMLSelectElement;
+    const hs = screen.getByLabelText(/HS code/i) as HTMLInputElement;
+    expect(weight.disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole("switch", { name: /Physical product/i }));
+
+    await waitFor(() => expect(weight.disabled).toBe(true));
+    expect(unit.disabled).toBe(true);
+    expect(hs.disabled).toBe(true);
+    // …and the switch itself stays usable, or there would be no way back.
+    expect((screen.getByRole("switch", { name: /Physical product/i }) as HTMLInputElement).disabled).toBe(false);
+  });
+});

@@ -561,6 +561,7 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      customsDetails: "More details",
       taxableSwitch: "Charge tax on this variant",
       inventoryHeading: "Inventory",
       trackedLabel: "Track quantity",
