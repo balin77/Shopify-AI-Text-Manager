@@ -791,8 +791,10 @@ export const COOKIE_BANNER_CONFIG: ContentEditorConfig = {
 
 export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   contentType: "metaobjects",
-  // Entries only — read_metaobject_definitions does not allow new DEFINITIONS,
-  // and only definitions whose required fields are plain text are offered (§1.5).
+  // Entries only — read_metaobject_definitions does not allow new DEFINITIONS.
+  // Which definitions are offered follows `metaobjectCreatability`: since
+  // PLAN_METAOBJECT_TAXONOMY_CREATE Phase 2 that includes the ones whose
+  // required fields are taxonomy references, not just plain text.
   createSupport: { resources: ["metaobject"] },
   resourceType: "Metaobject",
   displayName: "Metaobjects",
