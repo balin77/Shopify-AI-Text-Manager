@@ -179,6 +179,23 @@ const CLEAR_STRATEGIES: Array<{ label: string; input: Record<string, unknown> }>
   { label: "unitPriceMeasurement: null", input: { unitPriceMeasurement: null } },
   { label: "showUnitPrice: false", input: { showUnitPrice: false } },
   { label: "both at once", input: { unitPriceMeasurement: null, showUnitPrice: false } },
+  // The last two send the EMPTY STATE rather than an absence. A variant with
+  // no Grundpreis reads back as `{quantityValue: 0, quantityUnit: null, ...}`,
+  // so writing that shape is a different request from writing `null` - and
+  // `null` is measured not to work. Both are only reached once the three above
+  // have been answered and refused.
+  {
+    label: "the empty measurement, spelled out",
+    input: {
+      unitPriceMeasurement: {
+        quantityValue: 0,
+        quantityUnit: null,
+        referenceValue: 0,
+        referenceUnit: null,
+      },
+    },
+  },
+  { label: "an empty measurement object", input: { unitPriceMeasurement: {} } },
 ];
 
 /** The unit-price state of one variant, as the mutation echoed it back. */
@@ -194,7 +211,9 @@ interface Attempt {
   measurement: unknown;
   showUnitPrice: boolean | null;
   measurementGone: boolean;
-  hidden: boolean;
+  /** Whether this attempt SENT `showUnitPrice` at all. An attempt that never
+   *  sent it cannot be evidence about it either way. */
+  sentShowUnitPrice: boolean;
   error?: string;
 }
 
@@ -347,7 +366,7 @@ export const action = async (args: ActionFunctionArgs) => {
             measurement: null,
             showUnitPrice: null,
             measurementGone: false,
-            hidden: false,
+            sentShowUnitPrice: "showUnitPrice" in strategy.input,
             error: out.error.error ?? "no answer",
           });
           continue;
@@ -358,7 +377,7 @@ export const action = async (args: ActionFunctionArgs) => {
           measurement: state.measurement,
           showUnitPrice: state.showUnitPrice,
           measurementGone: isEmptyMeasurement(state.measurement),
-          hidden: state.showUnitPrice === false,
+          sentShowUnitPrice: "showUnitPrice" in strategy.input,
         };
         attempts.push(attempt);
         if (attempt.measurementGone && !workingClear) {
@@ -368,8 +387,17 @@ export const action = async (args: ActionFunctionArgs) => {
       }
 
       const removed = attempts.find((a) => a.measurementGone);
-      const hid = attempts.find((a) => a.hidden);
+      // Only an attempt that SENT `showUnitPrice` and got `false` back is
+      // evidence of hiding - and only if it was not already false. On the
+      // first live run it WAS already false, and every attempt duly reported
+      // "hidden", turning the variant's untouched state into a finding about
+      // our own write. That is reading an empty column as evidence, one level
+      // up: the value did not change, so nothing about it was measured.
+      const hid = attempts.find(
+        (a) => a.sentShowUnitPrice && a.showUnitPrice === false && restoreShowUnitPrice !== false,
+      );
       const answered = attempts.some((a) => !a.error);
+      const alreadyHidden = restoreShowUnitPrice === false;
 
       results.clear = {
         ok: !!removed,
@@ -385,15 +413,24 @@ export const action = async (args: ActionFunctionArgs) => {
       };
       results.hide = {
         ok: !!hid,
-        missing: !hid && answered && readsShowUnitPrice ? true : undefined,
+        // A real negative only where the field was readable, ON to begin with,
+        // and stayed on. "It was already off" is an unanswered question, not a
+        // no.
+        missing: !hid && answered && readsShowUnitPrice && !alreadyHidden ? true : undefined,
         error: hid
           ? undefined
           : !readsShowUnitPrice
             ? "ProductVariant.showUnitPrice is not readable on this API version, so this was not asked"
-            : answered
-              ? "showUnitPrice did not come back false"
-              : "no strategy got an answer",
-        detail: { worked: hid?.strategy ?? null },
+            : alreadyHidden
+              ? "showUnitPrice was already false before anything was written, so this run cannot say whether it can be switched off"
+              : answered
+                ? "showUnitPrice did not come back false"
+                : "no strategy got an answer",
+        detail: {
+          worked: hid?.strategy ?? null,
+          wasAlreadyHidden: alreadyHidden,
+          before: restoreShowUnitPrice,
+        },
       };
     }
   } finally {
