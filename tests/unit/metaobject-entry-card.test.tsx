@@ -27,13 +27,18 @@ const TEXTS = {
   deleteLabel: "Delete entry",
   usageNone: "No product uses this entry as an option value.",
   unsupportedTitle: "Not editable here",
-  noTranslatableFields: "This entry has no translatable fields.",
+  noTranslatableFields: "No field of this entry can be translated here — edit it in the Shopify admin.",
   noEditableFields: "None of this entry's fields can be edited here.",
+  readOnlyDefinition: "This app cannot change entries of this definition.",
 };
 
-function card(compact: boolean, children: Array<{ key: string; node: React.ReactNode }> = [
-  { key: "gid#label", node: <input aria-label="Label" defaultValue="Gold" /> },
-]) {
+function card(
+  compact: boolean,
+  children: Array<{ key: string; node: React.ReactNode }> = [
+    { key: "gid#label", node: <input aria-label="Label" defaultValue="Gold" /> },
+  ],
+  extra: { readOnlyReason?: "refused" } = {},
+) {
   return render(
     <AppProvider i18n={en}>
       <MetaobjectEntryCard
@@ -43,6 +48,7 @@ function card(compact: boolean, children: Array<{ key: string; node: React.React
         swatch={{ color: "#ffd700", imageUrl: null }}
         unsupportedFields={[{ label: "Rich text", fieldType: "rich_text_field" }]}
         compact={compact}
+        readOnlyReason={extra.readOnlyReason}
         usage={{ state: "known", products: 0 }}
         onDelete={() => {}}
         t={TEXTS}
@@ -72,6 +78,32 @@ describe("MetaobjectEntryCard on a language tab", () => {
     card(true, []);
     expect(screen.getByText(TEXTS.noTranslatableFields)).toBeTruthy();
     expect(screen.queryByText(TEXTS.noEditableFields)).toBeNull();
+  });
+
+  it("KEEPS the reason a definition refuses our writes", () => {
+    // The one hidden line that is not reachable from the primary tab. The
+    // fields stay disabled in a foreign locale too (`fieldsReadOnly` is
+    // locale-independent), so without it the merchant sees a greyed box and
+    // the generic field tooltip — which says the value can still be translated
+    // into other languages, on the very tab where that is being refused.
+    card(true, [], { readOnlyReason: "refused" });
+    expect(screen.getByText(TEXTS.readOnlyDefinition)).toBeTruthy();
+  });
+
+  it("KEEPS the swatch dot — it identifies the entry, it is not a control", () => {
+    // With the handle line gone the title would otherwise be the only thing
+    // telling one colour entry from another.
+    const { container } = card(true);
+    expect(container.querySelector('[data-swatch="true"]')).toBeTruthy();
+  });
+
+  it("names the limit as OURS, not as Shopify's", () => {
+    // Rich text is read-only by policy and an unsupported type has no editor
+    // here — neither is evidence that Shopify considers the key
+    // untranslatable. Claiming "this entry has no translatable fields" would
+    // be the `translatableContent` trap stated in the UI.
+    card(true, []);
+    expect(screen.getByText(TEXTS.noTranslatableFields)).toBeTruthy();
   });
 
   it("still shows the whole card in the PRIMARY locale", () => {

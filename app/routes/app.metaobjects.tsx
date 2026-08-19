@@ -360,15 +360,23 @@ export default function MetaobjectsPage() {
     () => (loaded?.metaobjects ?? []).map((m) => m.id),
     [loaded],
   );
+  /** The editor's current language, as one value both the usage gate and the
+   *  card's `compact` read — two derivations would drift. */
+  const isPrimaryLanguage = editor.state.currentLanguage === primaryLocale;
   const usageKeyRef = useRef<string>("");
   useEffect(() => {
     if (visibleEntryIds.length === 0) return;
+    // Usage exists for the DELETE button and its line, and a language tab
+    // renders neither. Without this gate every page of entries on a foreign
+    // locale still paid a round trip and a scan of the product cache for a
+    // number nobody was going to see.
+    if (!isPrimaryLanguage) return;
     const key = visibleEntryIds.join(",");
     if (usageKeyRef.current === key) return;
     usageKeyRef.current = key;
     usageFetcher.load(`/api/metaobject-usage?ids=${encodeURIComponent(key)}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEntryIds]);
+  }, [visibleEntryIds, isPrimaryLanguage]);
 
   useEffect(() => {
     if (usageFetcher.state !== "idle" || !usageFetcher.data?.success) return;
@@ -581,8 +589,7 @@ export default function MetaobjectsPage() {
       // it is actually editable — in a foreign locale or on a refused
       // definition it stays in the body as a read-only field, because a
       // popover behind a dot is a place to EDIT, not a place to hide a value.
-      const isPrimary = editor.state.currentLanguage === primaryLocale;
-      const colourEditable = writeAccess !== "readOnly" && isPrimary;
+      const colourEditable = writeAccess !== "readOnly" && isPrimaryLanguage;
       const colourEntry =
         colourSpec && colourEditable
           ? rendered.find((r) => r.field.key === colourSpec.compoundKey)
@@ -602,7 +609,7 @@ export default function MetaobjectsPage() {
         .filter((r) => r !== colourEntry)
         .filter(
           (r) =>
-            isPrimary ||
+            isPrimaryLanguage ||
             isTranslatableMetaobjectFieldType(specByKey.get(r.field.key)?.fieldType ?? ""),
         )
         .map((r) => {
@@ -634,7 +641,7 @@ export default function MetaobjectsPage() {
             .filter((s) => s.role === "unsupported")
             .map((s) => ({ label: s.label, fieldType: s.fieldType }))}
           // A language tab shows the translatable fields and nothing else.
-          compact={!isPrimary}
+          compact={!isPrimaryLanguage}
           justCreated={justCreatedId === entry.id}
           readOnlyReason={writeAccess === "readOnly" ? "refused" : undefined}
           usage={entryUsage}
@@ -665,8 +672,7 @@ export default function MetaobjectsPage() {
       cardTexts,
       handleNavigate,
       writeAccess,
-      editor.state.currentLanguage,
-      primaryLocale,
+      isPrimaryLanguage,
       t,
     ],
   );

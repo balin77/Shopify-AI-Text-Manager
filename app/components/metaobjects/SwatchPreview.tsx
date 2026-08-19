@@ -33,6 +33,7 @@ export function SwatchPreview({ name, swatch, size = 20, showEmpty = false }: Pr
     if (!showEmpty) return null;
     return (
       <span
+        data-swatch="true"
         aria-hidden="true"
         style={{
           width: `${size}px`,
@@ -59,6 +60,7 @@ export function SwatchPreview({ name, swatch, size = 20, showEmpty = false }: Pr
   if (resolved.imageUrl) {
     return (
       <span
+        data-swatch="true"
         aria-hidden="true"
         style={{
           ...common,
@@ -69,5 +71,5 @@ export function SwatchPreview({ name, swatch, size = 20, showEmpty = false }: Pr
       />
     );
   }
-  return <span aria-hidden="true" style={{ ...common, backgroundColor: resolved.color }} />;
+  return <span data-swatch="true" aria-hidden="true" style={{ ...common, backgroundColor: resolved.color }} />;
 }

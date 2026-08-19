@@ -64,9 +64,9 @@ interface Props {
   swatch?: OptionValueSwatch | null;
   /** Fields of the definition this app has no editor for: name + Shopify type. */
   unsupportedFields: Array<{ label: string; fieldType: string }>;
-  /** The rendered controls for the fields it CAN edit, minus the colour. */
   /**
-   * The entry's field controls, laid out HORIZONTALLY.
+   * The entry's field controls, laid out HORIZONTALLY — the ones it CAN edit,
+   * minus the colour, which the header lifts out.
    *
    * `wide` takes a whole row. A one-line text box next to another one-line
    * text box reads fine; a textarea, a rich-text preview or a chip list next
@@ -88,19 +88,26 @@ interface Props {
   colorValue?: string;
   /** Sits under the colour control: what changing it actually does (V3). */
   colorNote?: string;
-  /** Highlighted because it was just created. */
   /**
    * A FOREIGN locale: show the translatable fields and nothing else.
    *
    * Everything else on this card is primary-locale business. A colour, a file
    * reference and a taxonomy value have ONE value per shop, so in a foreign
    * locale they render read-only — a row of controls that cannot be used. The
-   * swatch, the handle, the usage line, the "not editable here" list and the
-   * delete button say the same thing on every language tab, and none of it is
-   * what the merchant came to this tab to do. Before the card existed, a
-   * foreign locale WAS just the input and its buttons, and that was right.
+   * handle, the usage line, the "not editable here" list and the delete button
+   * say the same thing on every language tab, and none of it is what the
+   * merchant came to this tab to do. Before the card existed, a foreign locale
+   * WAS just the input and its buttons, and that was right.
+   *
+   * TWO things it does NOT hide. The swatch stays as a plain dot — it is an
+   * identifier, not a control, and with the handle line gone it is the only
+   * thing besides the title that tells one colour entry from another. And a
+   * definition this app may not write keeps its reason: the fields stay
+   * disabled in a foreign locale too, so hiding the explanation leaves a grey
+   * box and no answer.
    */
   compact?: boolean;
+  /** Highlighted because it was just created. */
   justCreated?: boolean;
   usage?: MetaobjectEntryUsage;
   onDelete?: () => void;
@@ -202,7 +209,13 @@ export function MetaobjectEntryCard({
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
           <InlineStack gap="200" blockAlign="center" wrap={false}>
-            {compact ? null : colorControl ? (
+            {/* In compact the swatch stays as a plain DOT: it hides no
+                control, and with the handle line gone the title would
+                otherwise be the only thing telling "Gold" from "Bronze" while
+                translating a colour type. Only the control behind it goes. */}
+            {compact ? (
+              <SwatchPreview name={title} swatch={liveSwatch} />
+            ) : colorControl ? (
               // The dot IS the control. A Popover rather than an inline field:
               // the header is a title row, and a colour picker parked in it
               // permanently would push the name off a narrow screen.
@@ -291,7 +304,14 @@ export function MetaobjectEntryCard({
           )}
         </InlineStack>
 
-        {!compact && readOnlyReason && (
+        {/* NOT hidden by `compact`. Everything else this flag drops is
+            reachable on the primary tab; this is the answer to "why can't I
+            type here", and the fields stay disabled in a foreign locale too
+            (`fieldsReadOnly` is locale-independent). Without it the merchant
+            sees a greyed box and the generic field tooltip, which says the
+            value "can still be translated into other languages" — on the very
+            tab where that is being refused. */}
+        {readOnlyReason && (
           <Text as="p" variant="bodySm" tone="subdued">
             {readOnlyReason === "refused"
               ? t.readOnlyDefinition || "This app cannot change entries of this definition."
@@ -330,8 +350,15 @@ export function MetaobjectEntryCard({
             picker is the kind of wrong that makes a merchant stop looking. */}
         {children.length === 0 && (compact || !colorControl) && (
           <Text as="p" variant="bodySm" tone="subdued">
+            {/* "no field THIS APP can translate HERE", not "this entry has no
+                translatable fields". Rich text is read-only by policy and an
+                unsupported type has no editor — neither is evidence that
+                Shopify considers the key untranslatable, which is the
+                `translatableContent` trap stated in the UI instead of in code.
+                So it names the limit as ours and points at the admin. */}
             {compact
-              ? t.noTranslatableFields || "This entry has no translatable fields."
+              ? t.noTranslatableFields ||
+                "No field of this entry can be translated here — edit it in the Shopify admin."
               : t.noEditableFields || "None of this entry's fields can be edited here."}
           </Text>
         )}
