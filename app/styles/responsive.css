@@ -159,20 +159,34 @@
                                      label and the merchandising controls a
                                      regular one, in the same card.
 
-     --app-attribute-grid-min-width  the Details card's auto-fit column. The
-                                     compact one is for a run of SHORT fields
-                                     that is meant to stay on ONE line
-                                     (vendor / product type / collections /
-                                     tags): with the wide minimum only three of
-                                     the four fit on a normal screen, so the
-                                     last one dropped onto a line of its own
-                                     and the two comboboxes stretched to half
-                                     the card. */
+     --app-attribute-grid-min-width  the auto-fit column of the sales-channel
+                                     panel's three lists (channels / regions /
+                                     B2B). Wider than a field, because each
+                                     column is a list of switch rows.
+
+     --app-details-field-min-width   one short field in the Details card's
+                                     grid. It decides WHEN that row wraps and
+                                     nothing else: auto-fit never makes more
+                                     columns than there are fields.
+
+     --app-details-grid-gap          the gap BETWEEN those fields — named
+                                     rather than written as `1rem` at the two
+                                     call sites, because the two flex bases
+                                     below are computed from it and would
+                                     silently drift out of step. */
   --app-field-border-color: #c9cccf;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
   --app-attribute-grid-min-width: 260px;
-  --app-attribute-grid-min-width-compact: 170px;
+  --app-details-field-min-width: 180px;
+  --app-details-grid-gap: 1rem;
+  /* The two regions of the Details card, expressed in COLUMNS of the grid
+     above: the short fields want three of them side by side before the sales
+     channels are worth putting next to them, and the channel panel is the
+     "double width" one, i.e. two. Derived rather than typed, so moving the
+     field minimum moves the wrap point with it. */
+  --app-details-grid-basis: calc(3 * var(--app-details-field-min-width) + 2 * var(--app-details-grid-gap));
+  --app-details-aside-basis: calc(2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a

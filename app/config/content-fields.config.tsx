@@ -63,7 +63,6 @@ function tagsField(suggestionsKey: "productTags" | "articleTags"): FieldDefiniti
     key: "tags",
     type: "tags",
     label: ATTRIBUTE_LABELS.tags,
-    detailsSection: "organization",
     translationKey: "",
     supportsAI: false,
     supportsFormatting: false,
@@ -77,7 +76,6 @@ const TEMPLATE_SUFFIX_FIELD: FieldDefinition = {
   key: "templateSuffix",
   type: "text",
   label: ATTRIBUTE_LABELS.templateSuffix,
-  detailsSection: "theme",
   translationKey: "",
   supportsAI: false,
   supportsFormatting: false,
@@ -224,30 +222,9 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
         "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
     },
     {
-      // Phase 4 — where the product is published. NOT part of the content
-      // save: it loads live and writes through its own endpoint, so a value
-      // another app may have moved never travels in the editor's flat value
-      // map where it would be stale by the time the merchant pressed save.
-      //
-      // Stock and prices used to live here too. They are per VARIANT, so they
-      // moved to the variants card where the options they belong to are — what
-      // is left is a property of the product itself.
-      key: "commerce",
-      type: "commerce",
-      label: ATTRIBUTE_LABELS.commerce,
-      detailsSection: "publishing",
-      translationKey: "",
-      supportsAI: false,
-      supportsFormatting: false,
-      supportsTranslation: false,
-      attributeNote:
-        "Saved on its own — the button in this section, not the main save.",
-    },
-    {
       key: "vendor",
       type: "text",
       label: ATTRIBUTE_LABELS.vendor,
-      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -266,7 +243,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
     {
       key: "productType",
       card: "details",
-      detailsSection: "organization",
       type: "text",
       label: "Product Type",
       translationKey: "product_type",
@@ -281,7 +257,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       key: "collections",
       type: "collections",
       label: ATTRIBUTE_LABELS.collections,
-      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -291,6 +266,31 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
     },
     tagsField("productTags"),
     TEMPLATE_SUFFIX_FIELD,
+    {
+      // Phase 4 — where the product is published. NOT part of the content
+      // save: it loads live and writes through its own endpoint, so a value
+      // another app may have moved never travels in the editor's flat value
+      // map where it would be stale by the time the merchant pressed save.
+      //
+      // Stock and prices used to live here too. They are per VARIANT, so they
+      // moved to the variants card where the options they belong to are — what
+      // is left is a property of the product itself.
+      //
+      // LAST in the list on purpose. It is the one Details field that renders
+      // as its own region beside the grid (`isDetailsAsideField`), and the
+      // region sits on the RIGHT — so the reading order of the card, "vendor,
+      // product type, collections, tags, theme template, then the channels",
+      // is exactly this order.
+      key: "commerce",
+      type: "commerce",
+      label: ATTRIBUTE_LABELS.commerce,
+      translationKey: "",
+      supportsAI: false,
+      supportsFormatting: false,
+      supportsTranslation: false,
+      attributeNote:
+        "Saved on its own — the button in this section, not the main save.",
+    },
   ],
 };
 
@@ -382,7 +382,6 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       key: "collectionRules",
       type: "collectionRules",
       label: "Automatic collection rules",
-      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -392,7 +391,6 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       key: "sortOrder",
       type: "select",
       label: ATTRIBUTE_LABELS.sortOrder,
-      detailsSection: "organization",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
@@ -541,7 +539,6 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
     key: "author",
     type: "text",
     label: ATTRIBUTE_LABELS.author,
-    detailsSection: "organization",
     translationKey: "",
     supportsAI: false,
     supportsFormatting: false,

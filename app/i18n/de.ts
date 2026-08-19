@@ -713,14 +713,6 @@ export const de = {
     // Shopifys eigener Abschnitt im Admin heißt genauso.
     searchEngineListing: "Suchmaschinen-Eintrag",
     attributesCardTitle: "Details",
-    // Überschriften der Subcards INNERHALB der Details-Karte
-    // (config/details-sections.ts). Shopifys Admin teilt dieselben Angaben
-    // genauso auf.
-    detailsSections: {
-      publishing: "Vertriebskanäle",
-      organization: "Organisation",
-      theme: "Theme-Vorlage",
-    },
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
     // EIN Enum-Vokabular, auf oberster Ebene, weil mehrere Oberflächen

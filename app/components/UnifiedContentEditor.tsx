@@ -7,28 +7,7 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { fieldCard } from "~/services/content-attributes.shared";
-import {
-  groupDetailsFields,
-  shouldRenderDetailsSections,
-  detailsSectionLabel,
-  HEADLESS_DETAILS_SECTIONS,
-  ownsItsSectionTitle,
-} from "~/config/details-sections";
-
-/**
- * Attribute field types that need the editor's full width.
- *
- * Everything else is a short answer — a vendor, a status, a template name — and
- * shares a row. These two are PANELS: the rule builder and the stock panel both
- * grow downwards and carry rows of their own.
- *
- * Tags and collection memberships were in here and are not any more. Both are
- * `ChipCombobox`es — one line plus the chips that are set — and at full width
- * each of them took a row of the card to show a single input, which is what
- * pushed the four organization fields onto three lines. They read fine in a
- * column.
- */
-const WIDE_ATTRIBUTE_FIELDS = new Set(["collectionRules", "commerce"]);
+import { isFullWidthDetailsField, splitDetailsFields } from "~/config/details-layout";
 import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useCreateItem } from "../hooks/useCreateItem";
@@ -629,11 +608,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
   const attributeFields = useMemo(() => visibleFields.filter((f) => fieldCard(f) === "details"), [visibleFields]);
 
-  // The Details card's own split into subcards. Derived from the ALREADY
-  // filtered list, so a section whose fields all dropped out (the status
-  // control is hoisted into the action bar) simply never appears.
-  const detailsSections = useMemo(() => groupDetailsFields(attributeFields), [attributeFields]);
-  const renderDetailsSections = shouldRenderDetailsSections(detailsSections);
+  // The Details card's two regions — the grid of boxes and the sales-channel
+  // aside. Derived from the ALREADY filtered list, so a field the editor
+  // hoists elsewhere (the status control moved into the action bar) never
+  // reaches either of them.
+  const detailsLayout = useMemo(() => splitDetailsFields(attributeFields), [attributeFields]);
 
   /**
    * Primary-language editing writes to a theme file (themeFilesUpsert), which
@@ -778,38 +757,37 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
 
   /**
-   * The Details card's field grid: as many columns as fit, where a field does
-   * not need a line of its own. A vendor is one word and a status is one
-   * dropdown; giving each the full width of the editor turned eight short
-   * answers into eight rows of mostly empty space. The wide ones keep the full
-   * width — the rule builder and the stock panel.
+   * The Details card's layout: one grid of boxes, and — where the type has one
+   * — the sales-channel panel beside it.
    *
-   * `compact` narrows the column minimum so a short RUN of fields stays on one
-   * line: the four organization fields (vendor, product type, collections,
-   * tags) are meant to be read across, and at the default minimum only three of
-   * them fitted on a normal screen. Both numbers live in responsive.css with
-   * every other width in this app — auto-fit never makes more columns than
-   * there are items, so the narrow minimum only decides WHEN the row wraps.
+   * As many columns as fit, because a vendor is one word and a template suffix
+   * is one file name; giving each the full width of the editor turned six short
+   * answers into six rows of mostly empty space. Which field takes which shape
+   * is `details-layout.ts`'s decision, and the widths are tokens in
+   * responsive.css — `auto-fit` never makes more columns than there are fields,
+   * so the minimum only decides WHEN the row wraps.
    */
-  const renderAttributeGrid = (fields: FieldDefinition[], compact = false) => (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: `repeat(auto-fit, minmax(var(${
-          compact ? "--app-attribute-grid-min-width-compact" : "--app-attribute-grid-min-width"
-        }), 1fr))`,
-        gap: "1rem",
-        alignItems: "start",
-      }}
-    >
-      {fields.map((field) => (
-        <div
-          key={field.key}
-          style={WIDE_ATTRIBUTE_FIELDS.has(field.type) ? { gridColumn: "1 / -1" } : undefined}
-        >
-          {renderEditorField(field)}
+  const renderDetailsFields = (layout: { grid: FieldDefinition[]; aside: FieldDefinition[] }) => (
+    <div className="app-details-layout">
+      <div className="app-details-layout__grid">
+        {layout.grid.map((field) => (
+          <div
+            key={field.key}
+            className={isFullWidthDetailsField(field) ? "app-details-field--full" : undefined}
+          >
+            {renderEditorField(field)}
+          </div>
+        ))}
+      </div>
+      {layout.aside.length > 0 && (
+        <div className="app-details-layout__aside">
+          <BlockStack gap="400">
+            {layout.aside.map((field) => (
+              <div key={field.key}>{renderEditorField(field)}</div>
+            ))}
+          </BlockStack>
         </div>
-      ))}
+      )}
     </div>
   );
 
@@ -2237,49 +2215,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Text as="h2" variant="headingMd">
                           {t.content?.attributesCardTitle || "Details"}
                         </Text>
-                        {/* Subcards, the same nested-Card shape the Variants
-                            card uses — but only once there are at least two of
-                            them (`shouldRenderDetailsSections`): a page whose
-                            only attribute is the theme template would otherwise
-                            get a titled box inside a titled box. */}
-                        {detailsSections.map((section) => {
-                          // Keyed by the first field, NOT by the section id
-                          // alone: a section split by another renders as two
-                          // blocks, and two siblings keyed "organization" would
-                          // collide and reconcile into each other's subcard.
-                          const key = `${section.id ?? "unsectioned"}-${section.fields[0].key}`;
-                          // A HEADLESS section drops both the heading and the
-                          // box: "Organisation" says nothing its own fields do
-                          // not already say, and it reads as one compact row of
-                          // short fields instead. The set lives in
-                          // details-sections.ts, because the counting rule
-                          // above has to agree with it.
-                          const headless = !!section.id && HEADLESS_DETAILS_SECTIONS.has(section.id);
-                          if (!renderDetailsSections || !section.id || headless) {
-                            return (
-                              <Fragment key={key}>{renderAttributeGrid(section.fields, headless)}</Fragment>
-                            );
-                          }
-                          return (
-                            <Card key={key} background="bg-surface-secondary" padding="300">
-                              <BlockStack gap="300">
-                                {/* "publishing" draws its OWN title, and must:
-                                    its field lays the sales channels, regions
-                                    and B2B catalogs out as columns, and their
-                                    headings only line up when the section's
-                                    title is the first column's heading rather
-                                    than a line above the grid. A title here as
-                                    well is how the word came to stand twice. */}
-                                {!ownsItsSectionTitle(section.id) && (
-                                  <Text as="h3" variant="bodyMd" fontWeight="semibold">
-                                    {detailsSectionLabel(t, section.id)}
-                                  </Text>
-                                )}
-                                {renderAttributeGrid(section.fields)}
-                              </BlockStack>
-                            </Card>
-                          );
-                        })}
+                        {/* ONE grey panel, one grid. It used to be a subcard
+                            per section, which put a heading reading
+                            "Theme-Vorlage" directly above a field labelled
+                            "Theme-Template" and drew three frames around six
+                            fields. The fields say what they are; a word above
+                            them saying "Organisation" adds a line and no
+                            information. The sales-channel panel still draws its
+                            own heading, because that heading is the first
+                            COLUMN title of its three lists and only lines up
+                            with "Regionen" from inside them. */}
+                        <Card background="bg-surface-secondary" padding="300">
+                          {renderDetailsFields(detailsLayout)}
+                        </Card>
                       </BlockStack>
                     </Card>
                   </div>

@@ -156,7 +156,9 @@ button of its own.**
 - **The numbers live in the `:root` block of [responsive.css](app/styles/responsive.css)**, next to
   `--app-page-padding` and the widths: `--app-field-border-color`,
   `--app-field-border-radius`, `--app-field-label-weight`, plus the Details
-  card's two grid minimums (`--app-attribute-grid-min-width`, `…-compact`).
+  card's grid (`--app-details-field-min-width`, `--app-details-grid-gap` and the
+  two flex bases DERIVED from them) and `--app-attribute-grid-min-width`, which
+  is now only the sales-channel panel's own column.
 - **The frame is drawn on Polaris' Backdrop element**, in the one rule in that
   same file — the input itself has `border: none`, and Polaris hardcodes a
   `border-top-color` one shade darker again, so both have to be named.
@@ -168,6 +170,16 @@ button of its own.**
   style, a border that darkens under the pointer is an affordance.
   responsive.css loads AFTER Polaris' stylesheet ([app.tsx](app/routes/app.tsx)), so equal
   specificity resolves our way.
+- **An opaque background on the INPUT hides that frame completely.** Polaris
+  draws the input with `background: none; border: none` at z-index 20 and the
+  Backdrop behind it at 10, so `.ai-editable-field-wrapper`'s translation-state
+  tints — the whole point of [AIEditableField.css](app/styles/AIEditableField.css) — covered the border the
+  moment they stopped carrying a hand-written `border: 1px solid #c9cccf` of
+  their own. The product type sat in the same card as the vendor with no
+  outline at all. The tints therefore paint the BACKDROP (`!important`, because
+  Polaris' own hover and focus rules on it are more specific, and a state that
+  disappears under the pointer is not one); only the fallback's italic grey TEXT
+  stays on the input, where the characters are.
 - **The SHAPE lives in [FieldChrome.tsx](app/components/unified/FieldChrome.tsx)**: `FieldLabel` (bold, with the
   question mark right after the words) and `FieldClearOverlay` (the Clear button
   in the field's top-right corner, on the label's own line). Every editable
@@ -190,15 +202,46 @@ button of its own.**
   a key may be named before its text is written and never shows as an empty
   circle. `helpText` under the control is for a value hint that changes with the
   value (a character count), not for an explanation a merchant reads once.
-- **A Details section may be HEADLESS.** `HEADLESS_DETAILS_SECTIONS` in
-  [details-sections.ts](app/config/details-sections.ts) is the set; "organization" is in it, because the word
-  says nothing its own fields (vendor, product type, collections, tags) do not
-  already say. A headless section drops the heading AND the subcard and renders
-  as one compact grid row — which is why `shouldRenderDetailsSections` must not
-  count it: it draws no frame, so counting it would leave a single titled box
-  with nothing to be separated from, the box-in-a-box that guard exists to
-  prevent. The two grid minimums are the other half: with the wide one only
-  three of the four organization fields fitted on a normal screen.
+- **The Details card is ONE grey panel and one grid, and a field's SHAPE is the
+  only thing left to decide.** It used to split into a titled subcard per
+  section, which on a product drew three frames around six fields and put a
+  heading reading "Theme-Vorlage" directly above a field labelled
+  "Theme-Template" — the fields ARE the section names, and a word above vendor /
+  product type / collections / tags saying "Organisation" adds a line and no
+  information. [details-layout.ts](app/config/details-layout.ts) is what is left of that module, and it
+  answers by field TYPE, never by key: a `commerce` field is the ASIDE, a
+  `collectionRules` field spans the grid, everything else is a box.
+  **The aside is a flex region, not a wide grid cell**, and that is the load-
+  bearing part: the sales-channel panel is a list of switch rows that wants
+  roughly double the width and grows taller than anything beside it, and as a
+  `span 2` cell inside the same auto-fit grid it can only land where
+  auto-placement puts it — with five boxes ahead of it, the middle of the last
+  row with a hole beside it. As its own region it sits flush RIGHT while there
+  is room and takes a full-width row of its own when there is not. It is
+  therefore LAST in the field config, so the reading order of the card and the
+  order of the list are the same thing. It still draws its own heading, because
+  that heading is the first COLUMN title of its three lists and only lines up
+  with "Regionen" from inside them.
+- **Every control in that card opens with one label row and then its box.**
+  That is what makes the inputs line up across a row, and two of them had to be
+  turned around for it: `ChipCombobox` printed the chosen chips BETWEEN the
+  label and the input (so a tag field's box sat however many chip rows lower
+  than the vendor beside it), and `CollectionsField` stacked its three
+  qualifying banners above the picker — banners that only appear on some shops,
+  so the misalignment came and went. Chips and banners say what the field
+  already holds; they read fine underneath the control that changes it.
+- **A combobox dropdown opens on FOCUS and freezes the page while it is up.**
+  Polaris' `Combobox` opens its popover on focus but renders nothing when there
+  are no options, so `ChipCombobox` offering an empty list at rest read as a
+  control that ignored the click — it now offers the list whenever the field is
+  focused. `open` MIRRORS Polaris' own popover state (focus, keystroke, blur,
+  Escape) because Polaris exposes none, and `allowMultiple` is what stops it
+  closing after each pick — a field that collects several values should stay
+  open for the next one. The freeze is the existing `useScrollLock`
+  ([useScrollLock.ts](app/hooks/useScrollLock.ts), the category picker's), whose allowance here is
+  looked up per EVENT (`.Polaris-PositionedOverlay .Polaris-Popover__Pane`)
+  rather than held in a ref: the pane is portalled out of this component's tree
+  and there is nothing local to attach one to.
 
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 

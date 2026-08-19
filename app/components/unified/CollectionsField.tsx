@@ -156,37 +156,19 @@ export function CollectionsField({
 
   return (
     <BlockStack gap="200">
-      {/* No label here — the combobox below renders it. Two of them stacked is
-          what the first cut showed. */}
-      {failed && (
-        <Banner tone="warning">
-          <p>{t.lookupFailed || "The collection list could not be loaded, so only the current memberships are shown."}</p>
-        </Banner>
-      )}
-
-      {truncated && (
-        <Banner tone="info">
-          <p>{t.truncated || "This product is in more collections than were loaded. Manage the rest in the Shopify admin."}</p>
-        </Banner>
-      )}
-
-      {listTruncated && (
-        <Banner tone="info">
-          <p>{t.listTruncated || "This shop has more collections than are listed here. Use the filter, or manage the rest in the Shopify admin."}</p>
-        </Banner>
-      )}
-
-      {options === null && !failed && (
-        <Spinner size="small" accessibilityLabel={t.loading || "Loading collections"} />
-      )}
-
-      {rows.length === 0 && options !== null && !failed && (
-        <Text as="p" variant="bodySm" tone="subdued">{t.none || "This shop has no collections yet."}</Text>
-      )}
-
       {/* One line plus the memberships that are actually set. It used to print
           a checkbox row per collection IN THE SHOP — on a shop with fifty of
-          them, the product's own text started below the fold. */}
+          them, the product's own text started below the fold.
+
+          No label here — the combobox renders it. Two of them stacked is what
+          the first cut showed.
+
+          It comes FIRST, and the qualifications about the list follow it. They
+          used to stand between the label and the control, which pushed this
+          field's input box a banner's height below the plain text field beside
+          it; the Details card is one row of boxes that are meant to line up,
+          and a banner is exactly the kind of thing that only appears on some
+          shops, so the misalignment came and went. */}
       <ChipCombobox
         label={label}
         helpKey={helpKey}
@@ -214,6 +196,31 @@ export function CollectionsField({
         placeholder={t.filter || "Search collections…"}
       />
 
+      {failed && (
+        <Banner tone="warning">
+          <p>{t.lookupFailed || "The collection list could not be loaded, so only the current memberships are shown."}</p>
+        </Banner>
+      )}
+
+      {truncated && (
+        <Banner tone="info">
+          <p>{t.truncated || "This product is in more collections than were loaded. Manage the rest in the Shopify admin."}</p>
+        </Banner>
+      )}
+
+      {listTruncated && (
+        <Banner tone="info">
+          <p>{t.listTruncated || "This shop has more collections than are listed here. Use the filter, or manage the rest in the Shopify admin."}</p>
+        </Banner>
+      )}
+
+      {options === null && !failed && (
+        <Spinner size="small" accessibilityLabel={t.loading || "Loading collections"} />
+      )}
+
+      {rows.length === 0 && options !== null && !failed && (
+        <Text as="p" variant="bodySm" tone="subdued">{t.none || "This shop has no collections yet."}</Text>
+      )}
     </BlockStack>
   );
 }
