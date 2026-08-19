@@ -63,6 +63,9 @@ interface ProbeReport {
   reverseRelationField?: string | null;
   taxonomy?: {
     taxonomyFields?: string[];
+    attributeHandles?: Array<{ fieldKey: string; handle: string; min?: string; max?: string }>;
+    categoryFields?: string[];
+    attributeTypeFields?: string[];
     valueTypeFields?: string[];
     resolvedValues?: Array<{ gid: string; typename?: string; label?: string; error?: string }>;
     valueSource?: string;
@@ -155,6 +158,15 @@ function formatMarkdown(r: ProbeReport): string {
     lines.push("## Taxonomy reference values (T1-T3)");
     lines.push("");
     if (t.taxonomyFields) lines.push(`- \`Taxonomy\` fields: ${t.taxonomyFields.join(", ")}`);
+    if (t.attributeHandles?.length) {
+      lines.push(
+        `- Attribute handles (T2): ${t.attributeHandles
+          .map((h) => `${h.fieldKey} → \`${h.handle || "none"}\`${h.min || h.max ? ` [${h.min ?? "?"}..${h.max ?? "?"}]` : ""}`)
+          .join(", ")}`,
+      );
+    }
+    if (t.categoryFields) lines.push(`- \`TaxonomyCategory\` fields: ${t.categoryFields.join(", ")}`);
+    if (t.attributeTypeFields) lines.push(`- Attribute type: ${t.attributeTypeFields.join(" | ")}`);
     if (t.valueTypeFields) lines.push(`- Value type fields: ${t.valueTypeFields.join(", ")}`);
     if (t.resolvedValues?.length) {
       lines.push(`- Resolved GIDs: ${t.resolvedValues.map((v) => `${v.gid} → ${v.typename ?? v.error ?? "?"}`).join(", ")}`);
