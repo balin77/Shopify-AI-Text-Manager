@@ -499,6 +499,8 @@ export const es: Translation = {
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — crear contenido ──────────────────
     createButtonLabel: "Crear",
     createEntryButtonLabel: "A\u00f1adir entrada",
+    deleteContainerButtonLabel: "Eliminar tipo",
+    deleteContainerNotPermitted: "Eliminar un tipo de metaobjeto completo no es posible desde esta app: requiere el permiso de Shopify \u201cwrite_metaobject_definitions\u201d, que esta app deliberadamente no solicita \u2014 a\u00f1adir un permiso obliga a cada comerciante a volver a aprobar la app. Elimina el tipo en el panel de Shopify. Sus entradas s\u00ed se pueden eliminar aqu\u00ed.",
     createChooserTitle: "¿Qué quieres crear?",
     // Dos rechazos DISTINTOS con soluciones distintas — nunca deben compartir
     // el mismo texto (§1.2).
@@ -525,7 +527,6 @@ export const es: Translation = {
       deleting: "Eliminando \u2026",
       consequenceMetaobjectUsage: "Shopify rechaza eliminar una entrada que un producto todav\u00eda usa como valor de opci\u00f3n \u2014 qu\u00edtala all\u00ed primero.",
     },
-    undoCreate: "Deshacer la creación",
     // ── Duplicar (§1.9) ───────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicar",
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",

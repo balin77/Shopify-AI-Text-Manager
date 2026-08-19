@@ -289,6 +289,58 @@ describe("create form — Phase 2 unlocks the standard definitions", () => {
   });
 });
 
+describe("create form — the colour field", () => {
+  const COLOR_HEX_FIELD = {
+    key: "color",
+    name: "Colour",
+    type: { name: "color" },
+    required: false,
+  };
+
+  it("offers a colour control instead of skipping the field", () => {
+    // Without it a new colour entry came out WITHOUT its colour, and the
+    // storefront swatch derived from it stayed empty until the merchant
+    // reopened the entry and set it by hand.
+    const defs = metaobjectFieldDefs([LABEL_FIELD, COLOR_HEX_FIELD]);
+    expect(defs.find((d) => d.key === "field.color")?.kind).toBe("color");
+  });
+
+  it("adds the missing '#' rather than refusing it — same as the entry editor", () => {
+    const defs = metaobjectFieldDefs([COLOR_HEX_FIELD]);
+    expect(metaobjectFieldsPayload(defs, { "field.color": "ffd700" })).toEqual([
+      { key: "color", value: "#ffd700" },
+    ]);
+  });
+
+  it("leaves an empty colour out of the payload rather than sending ''", () => {
+    // `metafieldsSet` rejects an empty value; "not set" is an absent key.
+    const defs = metaobjectFieldDefs([COLOR_HEX_FIELD]);
+    expect(metaobjectFieldsPayload(defs, { "field.color": "" })).toEqual([]);
+  });
+
+  it("refuses a non-hex value SERVER-side", () => {
+    const defs = metaobjectFieldDefs([COLOR_HEX_FIELD]);
+    const errors = validateCreatePayload(
+      "metaobject",
+      { type: "shopify--color-pattern", "field.color": "gold" },
+      defs,
+    );
+    expect(errors).toContainEqual({ field: "field.color", code: "invalidColor", detail: "gold" });
+  });
+
+  it("accepts every hex shape the swatch preview can paint", () => {
+    const defs = metaobjectFieldDefs([COLOR_HEX_FIELD]);
+    for (const value of ["#fff", "#FFD700", "#ffd700ff", "ffd700"]) {
+      const errors = validateCreatePayload(
+        "metaobject",
+        { type: "shopify--color-pattern", "field.color": value },
+        defs,
+      );
+      expect(errors, value).toEqual([]);
+    }
+  });
+});
+
 describe("taxonomy value lookup", () => {
   beforeEach(() => clearTaxonomyValueCache());
 

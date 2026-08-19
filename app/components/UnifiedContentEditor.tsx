@@ -41,7 +41,7 @@ import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "rea
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
@@ -984,6 +984,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [unifiedItems, duplicateItem, createItem],
   );
 
+  /**
+   * Why the whole CONTAINER (a metaobject definition) cannot be deleted.
+   *
+   * A string, never a boolean, and never absent: the button is offered and
+   * explains itself. Deleting a definition needs `write_metaobject_definitions`,
+   * which this app deliberately does not request — every added scope forces a
+   * one-time re-consent of every installed merchant, and the two scope changes
+   * this app has already made are the reason that bar is high (CLAUDE.md,
+   * PLAN_METAOBJECTS_EDITOR §9). Shopify would allow it; this app does not ask
+   * to be allowed. When that changes, this becomes a real action rather than a
+   * new button.
+   */
+  const containerDeleteReason = config.createSupport?.fromActionBar
+    ? t.content?.deleteContainerNotPermitted ||
+      "Deleting a whole type is not possible from this app — it needs a Shopify permission this app does not request. Delete it in the Shopify admin."
+    : null;
+
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
     // One creatable resource opens its form directly; the blogs tab has two
@@ -1716,6 +1733,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           t={(t.content?.statusToggle ?? {}) as Record<string, string>}
                         />
                       )}
+                      {selectedItem && resourceOfItem(selectedItem.id) !== null && (
+                        <>
+                          <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
+                            {t.content?.duplicateButtonLabel || "Duplicate"}
+                          </Button>
+                          <Button size="slim" tone="critical" onClick={() => handleDeleteItem(selectedItem.id)}>
+                            {t.content?.deleteButtonLabel || "Delete"}
+                          </Button>
+                        </>
+                      )}
+                    </InlineStack>
+
+                    {/* Right: Reload Button (Save/Discard handled by the native
+                        Shopify save bar — see AppSaveBar above) */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
                       {/* Create, where the item list does not list what gets
                           created — see `createSupport.fromActionBar`. It calls
                           the SAME `handleAddItem` as the "+" above the list, so
@@ -1734,21 +1766,18 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           </Button>
                         </DisabledActionTooltip>
                       )}
-                      {selectedItem && resourceOfItem(selectedItem.id) !== null && (
-                        <>
-                          <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
-                            {t.content?.duplicateButtonLabel || "Duplicate"}
+                      {/* Deleting the CONTAINER the entries live in — a
+                          metaobject definition. Rendered wherever the config
+                          declares one, and DISABLED with the reason wherever
+                          it cannot be done, because "why is this greyed out"
+                          is the question a missing button never answers. */}
+                      {config.createSupport?.fromActionBar && containerDeleteReason && (
+                        <DisabledActionTooltip hint={containerDeleteReason}>
+                          <Button size="slim" tone="critical" icon={DeleteIcon} disabled>
+                            {t.content?.deleteContainerButtonLabel || "Delete type"}
                           </Button>
-                          <Button size="slim" tone="critical" onClick={() => handleDeleteItem(selectedItem.id)}>
-                            {t.content?.deleteButtonLabel || "Delete"}
-                          </Button>
-                        </>
+                        </DisabledActionTooltip>
                       )}
-                    </InlineStack>
-
-                    {/* Right: Reload Button (Save/Discard handled by the native
-                        Shopify save bar — see AppSaveBar above) */}
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
                       <ReloadButton
                         resourceId={selectedItem.id}
                         resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -2361,20 +2390,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           <CreateResultBanner
             info={createItem.created}
             onDismiss={createItem.dismissCreated}
-            // §1.8 — undo is the SAME delete path and the same confirmation.
-            // Letting it skip the dialog was tempting (they just made the
-            // thing), but "clicked undo by mistake" destroys work where
-            // "clicked create by mistake" only makes some.
-            onUndo={() => {
-              const created = createItem.created!;
-              deleteItem.request({
-                id: created.id,
-                title: created.title || created.id,
-                resource: created.resource,
-                isUndo: true,
-              });
-            }}
-            undoLabel={t.content?.undoCreate}
+            // No undo. It was the §1.8 idea and it earned its removal: the
+            // thing that was just created is deletable from its own card, with
+            // the same confirmation, so a second path to the same delete only
+            // added a destructive button to a SUCCESS banner.
             translating={createItem.translating}
             onReload={
               createItem.created.synced
@@ -2437,6 +2456,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           dynamicOptions={createItem.dynamicOptions}
           extraFieldsByOption={createItem.extraFieldsByOption}
           extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}
+          // Opened from a type's own page, the type is fixed by the page. It
+          // still travels in `initialValues` and is still submitted.
+          lockedFieldKeys={
+            createItem.openResource === "metaobject" && createItem.initialValues?.type ? ["type"] : undefined
+          }
           blocked={
             createItem.openResource === "article" && createItem.needsBlogFirst
               ? {

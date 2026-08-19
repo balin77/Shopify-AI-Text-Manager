@@ -17,8 +17,6 @@ export interface DeleteTarget {
   id: string;
   title: string;
   resource: DeletableResource;
-  /** Set when this delete undoes a create — used only for wording. */
-  isUndo?: boolean;
 }
 
 export interface UseDeleteItemOptions {

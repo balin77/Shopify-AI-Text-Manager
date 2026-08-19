@@ -503,6 +503,8 @@ export const en: Translation = {
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — creating content ─────────────────
     createButtonLabel: "Create",
     createEntryButtonLabel: "Add entry",
+    deleteContainerButtonLabel: "Delete type",
+    deleteContainerNotPermitted: "Deleting a whole metaobject type is not possible from this app: it needs the Shopify permission \"write_metaobject_definitions\", which this app deliberately does not request \u2014 adding a permission forces every merchant to re-approve the app. Delete the type in the Shopify admin instead. Its entries can be deleted here.",
     createChooserTitle: "What would you like to create?",
     // Two DIFFERENT refusals with different remedies — they must never share
     // the same text (§1.2).
@@ -529,7 +531,6 @@ export const en: Translation = {
       deleting: "Deleting \u2026",
       consequenceMetaobjectUsage: "Shopify refuses to delete an entry that a product still uses as an option value \u2014 remove it there first.",
     },
-    undoCreate: "Undo this create",
     // ── Duplicating (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicate",
     duplicatePending: "The copy is being created. Reload in a moment to see it.",
