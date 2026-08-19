@@ -548,4 +548,48 @@ describe("summarizeLiveJsonLd", () => {
       expect(sum((t) => t.appIsOneCopy)).toBe(dup.appIsOneCopy);
     }
   });
+
+  describe("appAllCopiesPages — proof that every copy on a page is ours", () => {
+    const statOf = (summary: any, type: string) =>
+      summary.typeStats.find((t: any) => t.type === type);
+
+    it("counts a page whose VideoObject copies are all marked as ours", async () => {
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([
+          page({
+            jsonLdTypes: "Product,VideoObject,VideoObject",
+            jsonLdAppTypes: "VideoObject,VideoObject",
+          }),
+        ]),
+        "shop.myshopify.com",
+      );
+      expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(1);
+    });
+
+    it("does NOT count a page where one copy is unmarked", async () => {
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([
+          page({
+            jsonLdTypes: "VideoObject,VideoObject",
+            jsonLdAppTypes: "VideoObject",
+          }),
+        ]),
+        "shop.myshopify.com",
+      );
+      expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(0);
+    });
+
+    it("refuses a TRUNCATED page as proof, however equal the counts look", async () => {
+      // The crawl caps the collected LIST at 50 entries per page, not the
+      // count per type. A guard that compared the per-type count against that
+      // cap could never fire, and a page whose foreign copies fell off the
+      // end would count as proof that all its markup is ours.
+      const fifty = Array.from({ length: 50 }, () => "VideoObject").join(",");
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([page({ jsonLdTypes: fifty, jsonLdAppTypes: fifty })]),
+        "shop.myshopify.com",
+      );
+      expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(0);
+    });
+  });
 });

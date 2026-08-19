@@ -8,7 +8,7 @@
  * entry, with every field this app can honestly edit, a delete button that says
  * what it would cost, and a swatch where the type describes a colour.
  *
- * Three defects this page carried are fixed here rather than worked around:
+ * Four defects this page carried are fixed here rather than worked around:
  *
  * - Only the first 25 entries of a type were ever shown while the header said
  *   how many there really are: the API accepted `page`/`limit`/`search` from the
@@ -20,6 +20,16 @@
  *   case jumping to it would land on nothing and the banner says so instead.
  * - The type row offered Delete and Duplicate. A type is not a deletable
  *   object; the buttons are gone from it and the delete lives per entry.
+ * - The entries stood in their cards and their COLOURS stood somewhere else:
+ *   a colour, a file reference and a taxonomy reference carry
+ *   `translationKey: "" + supportsTranslation: false` -- one value per SHOP,
+ *   not per locale -- which is the exact shape `isAttributeField` reads as a
+ *   merchandising attribute, so the editor routed them into the page-wide
+ *   "Details" card at the bottom. The page then showed the entries and, far
+ *   below them, a flat list of every entry's colour. `groupId` now vetoes that
+ *   routing (content-attributes.shared.ts): a field that names a group renders
+ *   in that group's card, and the header swatch below finally finds a control
+ *   to open.
  *
  * `?select=` accepts an ENTRY GID and resolves it to its type SERVER-side
  * (§8): the client list only holds types, so an entry id matched nothing and
@@ -45,7 +55,7 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { MetaobjectEntryCard, type MetaobjectEntryUsage } from "../components/metaobjects/MetaobjectEntryCard";
 import { DeleteItemModal } from "../components/create/DeleteItemModal";
 import { useDeleteItem } from "../hooks/useDeleteItem";
-import type { ContentItem } from "../types/content-editor.types";
+import type { ContentItem, RenderedGroupField } from "../types/content-editor.types";
 import { measurePageLoad } from "~/utils/performance.client";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import { logger } from "~/utils/logger.server";
@@ -377,6 +387,15 @@ export default function MetaobjectsPage() {
 
   // ── Delete one entry ────────────────────────────────────────────────────
   const deleteItem = useDeleteItem({
+    // The delete action refuses a still-referenced entry with a CODE; the
+    // sentence lives in the three i18n files, not in the server.
+    translateError: useCallback(
+      (key: string) => {
+        const value = (t.content as unknown as Record<string, unknown> | undefined)?.[key];
+        return typeof value === "string" ? value : undefined;
+      },
+      [t],
+    ),
     onDeleted: (target) => {
       showInfoBox(
         (t.content?.deletedMessage || "“{name}” was deleted.").replace("{name}", target.title || target.id),
@@ -445,6 +464,8 @@ export default function MetaobjectsPage() {
       usageUnknown: t.content?.metaobjectEntryUsageUnknown,
       syncProducts: t.content?.metaobjectEntrySyncProducts,
       createdBadge: t.content?.metaobjectEntryCreated,
+      editColor: t.content?.metaobjectEntryEditColor,
+      colorInvalid: t.content?.metaobjectEntryColorInvalid,
       readOnlyDefinition: t.content?.metaobjectEntryReadOnlyDefinition,
       readOnlyUnknown: t.content?.metaobjectEntryReadOnlyUnknown,
     }),
@@ -452,7 +473,7 @@ export default function MetaobjectsPage() {
   );
 
   const renderFieldGroup = useCallback(
-    (groupId: string, children: React.ReactNode[]) => {
+    (groupId: string, rendered: RenderedGroupField[]) => {
       const entry = entryById.get(groupId);
       if (!entry) return null;
       const specs = metaobjectFieldSpecs(entry, loaded?.fieldDefinitions);
@@ -471,6 +492,23 @@ export default function MetaobjectsPage() {
               imageUrl: fileSpec?.rawValue ? loaded?.filePreviews?.[fileSpec.rawValue] ?? null : null,
             }
           : null;
+
+      // The COLOUR control moves into the card header, where the dot already
+      // is. It is in `rendered` at all only because a grouped field is never
+      // read as a merchandising attribute -- while it was, this lookup found
+      // nothing on every entry and the dot was a picture with no control
+      // behind it. Picked out BY KEY, never by position: the field order follows the
+      // definition and an index would silently grab the wrong control the
+      // moment a merchant reorders their definition. It is only lifted while
+      // it is actually editable — in a foreign locale or on a refused
+      // definition it stays in the body as a read-only field, because a
+      // popover behind a dot is a place to EDIT, not a place to hide a value.
+      const colourEditable = writeAccess !== "readOnly" && editor.state.currentLanguage === primaryLocale;
+      const colourEntry =
+        colourSpec && colourEditable
+          ? rendered.find((r) => r.field.key === colourSpec.compoundKey)
+          : undefined;
+      const bodyFields = rendered.filter((r) => r !== colourEntry);
 
       const raw = usage[groupId];
       const entryUsage: MetaobjectEntryUsage = !raw
@@ -496,13 +534,32 @@ export default function MetaobjectsPage() {
           // `window.location` would drop the embedded session parameters and
           // bounce the merchant through OAuth for a link.
           onSyncProducts={() => handleNavigate("/app/products")}
+          colorControl={colourEntry?.node}
+          colorValue={colourEntry?.value}
+          // MEASURED (PLAN_METAOBJECTS_EDITOR V3, 2026-08-19): writing this
+          // field moved `ProductOptionValue.swatch` on a linked product. The
+          // app may therefore say what the edit reaches — right at the control
+          // rather than in a help page nobody opens.
+          colorNote={t.content?.metaobjectEntryColorStorefrontNote}
           t={cardTexts}
         >
-          {children}
+          {bodyFields.map((r) => r.node)}
         </MetaobjectEntryCard>
       );
     },
-    [entryById, loaded, usage, justCreatedId, deleteItem, cardTexts, handleNavigate, writeAccess],
+    [
+      entryById,
+      loaded,
+      usage,
+      justCreatedId,
+      deleteItem,
+      cardTexts,
+      handleNavigate,
+      writeAccess,
+      editor.state.currentLanguage,
+      primaryLocale,
+      t,
+    ],
   );
 
   // Entries with NO editable field still get a card — deriving the order from
@@ -521,8 +578,11 @@ export default function MetaobjectsPage() {
       totalCount: loaded.pagination.totalCount,
       totalPages: loaded.pagination.totalPages,
       search: loaded.pagination.search ?? entrySearch,
+      // The strip pages ENTRIES here. Its default noun is "fields", which on
+      // this page counted entries and named their parts.
+      noun: t.content?.metaobjectEntriesNoun,
     };
-  }, [loaded, entrySearch]);
+  }, [loaded, entrySearch, t]);
 
   // Show loader error
   useEffect(() => {
@@ -565,6 +625,7 @@ export default function MetaobjectsPage() {
           isFieldsLoading={entriesLoading}
           fieldsReadOnly={writeAccess === "readOnly"}
           fieldPagination={fieldPagination}
+          fieldSearchPlaceholder={t.content?.metaobjectsSearchEntries}
           onFieldPageChange={(page) => {
             // An explicit page change outranks a focus: the merchant is
             // browsing now, and re-snapping to the focused entry would make the

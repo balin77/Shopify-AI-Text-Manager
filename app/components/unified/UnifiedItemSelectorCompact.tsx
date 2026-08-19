@@ -29,6 +29,10 @@ interface UnifiedItemSelectorCompactProps {
   /** Set when creating is refused: the button stays visible and says why,
    *  rather than vanishing and reading as a missing feature. */
   addDisabledReason?: string | null;
+  /** What the add button creates. Composing one from the resource NAME put
+   *  bare English on the screen and, on the metaobjects tab, named the one
+   *  object this app cannot create ("Add Metaobject Type"). */
+  addLabel?: string | null;
   /** Translation strings */
   t?: {
     searchPlaceholder?: string;
@@ -44,6 +48,7 @@ export function UnifiedItemSelectorCompact({
   resourceName,
   onAddItem,
   addDisabledReason,
+  addLabel,
   t = {},
 }: UnifiedItemSelectorCompactProps) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -185,7 +190,7 @@ export function UnifiedItemSelectorCompact({
                       onAddItem();
                     }}
                     disabled={!!addDisabledReason}
-                    accessibilityLabel={addDisabledReason || `Add ${resourceName.singular}`}
+                    accessibilityLabel={addDisabledReason || addLabel || `Add ${resourceName.singular}`}
                     size="slim"
                   />
                 )}

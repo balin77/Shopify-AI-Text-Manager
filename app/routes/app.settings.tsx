@@ -444,6 +444,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Unit price (Grundpreis): same dev-only gate. It WRITES a measurement to
     // a live variant and restores it, so it is a diagnostic, not a feature.
     const showUnitPriceProbeTab = showTranslationProbeTab;
+    const showPublicationProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -503,6 +504,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showCollectionProbeTab,
       showMetaobjectProbeTab,
       showUnitPriceProbeTab,
+      showPublicationProbeTab,
       showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
@@ -1202,7 +1204,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1224,7 +1226,8 @@ export default function SettingsPage() {
     showPageSpeedProbeTab ||
     showCollectionProbeTab ||
     showMetaobjectProbeTab ||
-    showUnitPriceProbeTab;
+    showUnitPriceProbeTab ||
+    showPublicationProbeTab;
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
@@ -1250,6 +1253,7 @@ export default function SettingsPage() {
     if (tabParam === "collectionprobe") return showCollectionProbeTab ? "probes" : "setup";
     if (tabParam === "metaobjectprobe") return showMetaobjectProbeTab ? "probes" : "setup";
     if (tabParam === "unitpriceprobe") return showUnitPriceProbeTab ? "probes" : "setup";
+    if (tabParam === "publicationprobe") return showPublicationProbeTab ? "probes" : "setup";
     if (tabParam === "probes") return showProbesTab ? "probes" : "setup";
     if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
       return tabParam as Section;
@@ -1266,6 +1270,7 @@ export default function SettingsPage() {
     if (tabParam === "collectionprobe" && showCollectionProbeTab) return "collectionprobe";
     if (tabParam === "metaobjectprobe" && showMetaobjectProbeTab) return "metaobjectprobe";
     if (tabParam === "unitpriceprobe" && showUnitPriceProbeTab) return "unitpriceprobe";
+    if (tabParam === "publicationprobe" && showPublicationProbeTab) return "publicationprobe";
     return undefined;
   };
 
@@ -1681,6 +1686,7 @@ export default function SettingsPage() {
                   showCollectionProbe={showCollectionProbeTab}
                   showMetaobjectProbe={showMetaobjectProbeTab}
                   showUnitPriceProbe={showUnitPriceProbeTab}
+                  showPublicationProbe={showPublicationProbeTab}
                   initialSubTab={initialProbeSubTab}
                 />
               )}

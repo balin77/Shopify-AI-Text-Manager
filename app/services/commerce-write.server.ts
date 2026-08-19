@@ -42,6 +42,12 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { parseMoney } from "./bulk-editor/columns.shared";
+import {
+  EMPTY_MEASUREMENT_INPUT,
+  decideUnitPrice,
+  isEmptyMeasurement,
+  type UnitPriceFieldValues,
+} from "./unit-price.shared";
 import { logger } from "~/utils/logger.server";
 
 /** Codes resolved to sentences by the client (`t.content.commerceWarnings`). */
@@ -60,7 +66,13 @@ export type CommerceWarning =
   | "priceInvalid"
   | "priceAmbiguous"
   | "priceNotConfirmed"
-  | "priceFailed";
+  | "priceFailed"
+  | "unitPriceIncomplete"
+  | "unitPriceInvalid"
+  | "unitPriceAmbiguous"
+  | "unitPriceDimension"
+  | "unitPriceNotConfirmed"
+  | "unitPriceNotShown";
 
 export interface StockChange {
   /** gid://shopify/InventoryItem/... */
@@ -277,16 +289,25 @@ export async function applyPublicationChanges(
 ): Promise<CommerceWarning | undefined> {
   if (params.toPublish.length === 0 && params.toUnpublish.length === 0) return undefined;
 
-  const run = async (
+  const runBatch = async (
     mutation: "publishablePublish" | "publishableUnpublish",
     publicationIds: string[],
-  ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
+  ): Promise<{ ok: boolean; confirmed: Set<string>; refusedPerId?: boolean }> => {
     if (publicationIds.length === 0) return { ok: true, confirmed: new Set() };
-    // `publishable` is the echo: which channels the product now sits on.
+    // `publishable` is the echo: which publications the product now sits on.
     // Checked rather than assumed — this is the field the whole feature is
     // about, and "no userErrors" has never meant "stored".
-    const response = await admin.graphql(
-      `#graphql
+    //
+    // THREE connections, because `resourcePublicationsV2` defaults to
+    // `catalogType: APP`: a region or B2B catalog the merchant just ticked
+    // would be missing from a one-connection echo, and the write would report
+    // "not confirmed" for a change that landed. `CatalogType` is an enum
+    // though, so an API version that does not know these names fails the whole
+    // MUTATION at the schema level — hence the retry below, which is safe
+    // because publishing an already-published resource is a no-op.
+    const send = (withCatalogs: boolean) =>
+      admin.graphql(
+        `#graphql
         mutation channelChange($id: ID!, $input: [PublicationInput!]!) {
           ${mutation}(id: $id, input: $input) {
             publishable {
@@ -295,31 +316,48 @@ export async function applyPublicationChanges(
                 resourcePublicationsV2(first: 50) {
                   nodes { isPublished publication { id } }
                 }
+                ${withCatalogs ? `marketEcho: resourcePublicationsV2(first: 50, catalogType: MARKET) {
+                  nodes { isPublished publication { id } }
+                }
+                companyLocationEcho: resourcePublicationsV2(first: 50, catalogType: COMPANY_LOCATION) {
+                  nodes { isPublished publication { id } }
+                }` : ""}
               }
             }
             userErrors { field message }
           }
         }`,
-      {
-        variables: {
-          id: params.productId,
-          input: publicationIds.map((publicationId) => ({ publicationId })),
+        {
+          variables: {
+            id: params.productId,
+            input: publicationIds.map((publicationId) => ({ publicationId })),
+          },
         },
-      },
-    );
+      );
 
-    const body = (await response.json()) as {
+    type EchoConnection = { nodes?: Array<{ isPublished?: boolean; publication?: { id?: string } }> | null } | null;
+    type EchoBody = {
       data?: Record<string, {
         publishable?: {
           id?: string;
-          resourcePublicationsV2?: {
-            nodes?: Array<{ isPublished?: boolean; publication?: { id?: string } }> | null;
-          } | null;
+          resourcePublicationsV2?: EchoConnection;
+          marketEcho?: EchoConnection;
+          companyLocationEcho?: EchoConnection;
         } | null;
         userErrors?: Array<{ message: string }>;
       }>;
       errors?: Array<{ message?: string }>;
     };
+
+    let body = (await (await send(true)).json()) as EchoBody;
+    let echoCoversCatalogs = true;
+    if (body.errors?.length) {
+      logger.warn("[Commerce] Catalog-typed echo refused — retrying without it", {
+        context: "Commerce", shop, mutation, error: body.errors[0]?.message,
+      });
+      echoCoversCatalogs = false;
+      body = (await (await send(false)).json()) as EchoBody;
+    }
 
     if (body.errors?.length) {
       logger.warn("[Commerce] Channel schema-level error", {
@@ -332,19 +370,82 @@ export async function applyPublicationChanges(
       logger.warn("[Commerce] Channel userErrors", {
         context: "Commerce", shop, mutation, error: payload.userErrors[0].message,
       });
-      return { ok: false, confirmed: new Set() };
+      // The ONE failure that is worth isolating: Shopify looked at the input
+      // and declined part of it. A schema error or a throttle is about the
+      // call, not about any single publication.
+      return { ok: false, confirmed: new Set(), refusedPerId: true };
     }
 
-    const nodes = payload?.publishable?.resourcePublicationsV2?.nodes ?? [];
+    const nodes = [
+      ...(payload?.publishable?.resourcePublicationsV2?.nodes ?? []),
+      ...(payload?.publishable?.marketEcho?.nodes ?? []),
+      ...(payload?.publishable?.companyLocationEcho?.nodes ?? []),
+    ];
     const published = new Set(
       nodes.filter((n) => n.isPublished === true && n.publication?.id).map((n) => n.publication!.id as string),
     );
     // The echo means different things per verb, so it is checked per verb:
     // published ⇒ the id must now be in the set, unpublished ⇒ it must not.
+    //
+    // And UNPUBLISH is confirmed by ABSENCE, which is only evidence while the
+    // echo can see everything. On the degraded retry it holds app catalogs
+    // alone, so a market or B2B publication is absent by construction and
+    // every unpublish would "confirm" whether or not anything was written —
+    // a false success, plus a mirror row deleted for a change that did not
+    // happen. Nothing is confirmed there; the caller reports "not confirmed",
+    // which is what it is.
+    if (mutation === "publishableUnpublish" && !echoCoversCatalogs) {
+      logger.warn("[Commerce] Unpublish left unconfirmed — the echo could not see every catalog type", {
+        context: "Commerce", shop, count: publicationIds.length,
+      });
+      return { ok: true, confirmed: new Set() };
+    }
     const confirmed = new Set(
       publicationIds.filter((id) => (mutation === "publishablePublish" ? published.has(id) : !published.has(id))),
     );
     return { ok: true, confirmed };
+  };
+
+  /**
+   * One refused publication must not take the others down with it.
+   *
+   * `publishablePublish` is atomic over its input: a single id Shopify
+   * declines fails the whole call, and the merchant is told none of their
+   * channel changes landed. That became reachable the moment the picker
+   * started offering every publication the SHOP has rather than only the ones
+   * the product already had a record in — a channel a product is not eligible
+   * for is exactly the id Shopify declines.
+   *
+   * So a failed batch is retried one id at a time. Safe to retry, because both
+   * verbs are no-ops on a resource already in the target state; the batch is
+   * kept as the fast path because it is one call for the normal case.
+   */
+  const run = async (
+    mutation: "publishablePublish" | "publishableUnpublish",
+    publicationIds: string[],
+  ): Promise<{ ok: boolean; confirmed: Set<string> }> => {
+    const batch = await runBatch(mutation, publicationIds);
+    // Only a per-input refusal is isolated. A THROTTLED batch arrives as a
+    // top-level `errors` array, and retrying it once per id would turn one
+    // exhausted cost bucket into N more mutations — half of which may land as
+    // the bucket refills, leaving a half-applied change reported as the
+    // softer "not confirmed".
+    if (batch.ok || !batch.refusedPerId || publicationIds.length < 2) return batch;
+
+    logger.warn("[Commerce] Channel batch refused per input — isolating", {
+      context: "Commerce", shop, mutation, count: publicationIds.length,
+    });
+    const confirmed = new Set<string>();
+    let anyOk = false;
+    for (const publicationId of publicationIds) {
+      const single = await runBatch(mutation, [publicationId]);
+      if (single.ok) anyOk = true;
+      for (const id of single.confirmed) confirmed.add(id);
+    }
+    // `ok` means "the call worked", not "everything landed" — an id that is
+    // still missing from `confirmed` is reported as unconfirmed by the caller,
+    // which is the honest outcome for a publication Shopify declined.
+    return { ok: anyOk, confirmed };
   };
 
   try {
@@ -692,6 +793,34 @@ export interface VariantPriceFields {
    * save that reads as a success while nothing was written. Validated here.
    */
   inventoryPolicy?: string;
+  /**
+   * The Grundpreis, as the four raw strings the merchant typed.
+   *
+   * Passed as a quartet rather than as a parsed measurement because the four
+   * are ONE value: Shopify replaces the measurement object instead of merging
+   * into it, so "change only the unit" is not a thing that exists. Parsed and
+   * judged in one place by `decideUnitPrice` — all four empty CLEARS, all four
+   * filled SETS, and anything between is refused rather than half-written.
+   */
+  unitPrice?: UnitPriceFieldValues;
+  /**
+   * Whether the storefront shows it.
+   *
+   * Its own field on the variant, and independent of the measurement — that
+   * much is MEASURED: writing a measurement left it false through every probe
+   * write. What is NOT measured is whether the switch itself can be moved.
+   * The probe was extended to flip it and flip it back, and that run has not
+   * happened yet, so this ships a control over a capability nobody has
+   * confirmed.
+   *
+   * Shipped anyway, deliberately: if the storefront gates the Grundpreis on
+   * this flag, withholding the control means writing a measurement nobody
+   * ever sees. The cost of being wrong is bounded by the echo — a switch that
+   * will not move gets its OWN warning rather than the generic one, because
+   * the measurement may well be stored while only the switch refused, and one
+   * code for both would send a merchant looking for a price that is saved.
+   */
+  showUnitPrice?: boolean;
 }
 
 /** Shopify's `ProductVariantInventoryPolicy`. */
@@ -722,7 +851,6 @@ export async function applyVariantPrices(
   params: { productId: string; variantId: string; variantGid: string; fields: VariantPriceFields },
 ): Promise<CommerceWarning | undefined> {
   const input: Record<string, unknown> = { id: params.variantGid };
-  const mirror: Record<string, unknown> = {};
 
   /**
    * THE money parser — the bulk grid's, not this module's `parseDecimal`.
@@ -748,7 +876,6 @@ export async function applyVariantPrices(
     if ("warning" in parsed) return parsed.warning;
     if (parsed.value === "") return "priceInvalid";
     input.price = parsed.value;
-    mirror.price = parsed.value;
   }
   if (params.fields.compareAtPrice !== undefined) {
     if (params.fields.compareAtPrice.trim() === "") {
@@ -756,12 +883,10 @@ export async function applyVariantPrices(
       // ends a sale — so "" has to reach Shopify as null rather than be
       // dropped as "unchanged".
       input.compareAtPrice = null;
-      mirror.compareAtPrice = null;
     } else {
       const parsed = money(params.fields.compareAtPrice);
       if ("warning" in parsed) return parsed.warning;
       input.compareAtPrice = parsed.value;
-      mirror.compareAtPrice = parsed.value;
     }
   }
 
@@ -770,11 +895,9 @@ export async function applyVariantPrices(
     // one, and dropping that as "unchanged" would leave it in place.
     const barcode = params.fields.barcode.trim();
     input.barcode = barcode === "" ? null : barcode;
-    mirror.barcode = barcode === "" ? null : barcode;
   }
   if (params.fields.taxable !== undefined) {
     input.taxable = params.fields.taxable;
-    mirror.taxable = params.fields.taxable;
   }
   if (params.fields.inventoryPolicy !== undefined) {
     const policy = params.fields.inventoryPolicy.trim().toUpperCase();
@@ -783,10 +906,54 @@ export async function applyVariantPrices(
     // same call would go down with it.
     if (!INVENTORY_POLICIES.has(policy)) return "priceInvalid";
     input.inventoryPolicy = policy;
-    mirror.inventoryPolicy = policy;
   }
 
-  if (Object.keys(input).length <= 1) return undefined;
+  /** What the echo must show, once the four fields have been judged. */
+  let wantedMeasurement: {
+    quantityValue: number;
+    quantityUnit: string;
+    referenceValue: number;
+    referenceUnit: string;
+  } | null = null;
+  /**
+   * A refusal reported at the END, after everything else has been written.
+   *
+   * The measurement is dropped from the input rather than written half - a
+   * Grundpreis the merchant did not describe is worse than none - but dropping
+   * the whole CALL with it was the wrong half of that decision. On a group
+   * edit the client can produce a partial quartet for a member whose
+   * measurement the merchant never saw (the field showed "" because the
+   * members disagree), and returning here took that member's price, barcode
+   * and tax edits down with a Grundpreis they were not editing. Nothing wrong
+   * is written either way; this way nothing right is thrown away.
+   */
+  let unitPriceRefusal: CommerceWarning | undefined;
+  if (params.fields.unitPrice !== undefined) {
+    const decision = decideUnitPrice(params.fields.unitPrice);
+    if (decision.kind === "invalid") {
+      unitPriceRefusal =
+        decision.reason === "incomplete"
+          ? "unitPriceIncomplete"
+          : decision.reason === "ambiguous"
+            ? "unitPriceAmbiguous"
+            : decision.reason === "dimension"
+              ? "unitPriceDimension"
+              : "unitPriceInvalid";
+    } else if (decision.kind === "clear") {
+      // NOT `null`: measured to be accepted and ignored. See the shared
+      // module's header.
+      input.unitPriceMeasurement = EMPTY_MEASUREMENT_INPUT;
+      wantedMeasurement = null;
+    } else {
+      input.unitPriceMeasurement = decision.measurement;
+      wantedMeasurement = decision.measurement;
+    }
+  }
+  if (params.fields.showUnitPrice !== undefined) {
+    input.showUnitPrice = params.fields.showUnitPrice;
+  }
+
+  if (Object.keys(input).length <= 1) return unitPriceRefusal;
 
   try {
     const response = await admin.graphql(
@@ -800,6 +967,13 @@ export async function applyVariantPrices(
               barcode
               inventoryPolicy
               taxable
+              unitPriceMeasurement {
+                quantityValue
+                quantityUnit
+                referenceValue
+                referenceUnit
+              }
+              showUnitPrice
             }
             userErrors { field message }
           }
@@ -817,6 +991,13 @@ export async function applyVariantPrices(
             barcode?: string | null;
             inventoryPolicy?: string | null;
             taxable?: boolean | null;
+            unitPriceMeasurement?: {
+              quantityValue?: number | null;
+              quantityUnit?: string | null;
+              referenceValue?: number | null;
+              referenceUnit?: string | null;
+            } | null;
+            showUnitPrice?: boolean | null;
           }> | null;
           userErrors?: Array<{ message: string }>;
         };
@@ -848,34 +1029,83 @@ export async function applyVariantPrices(
       if (sent === null) return got === null || got === undefined || got === "";
       return Number(got ?? NaN) === Number(sent);
     };
-    if (input.price !== undefined && !sameMoney(input.price, echoed.price)) return "priceNotConfirmed";
-    if (input.compareAtPrice !== undefined && !sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
-      return "priceNotConfirmed";
+    /**
+     * Confirmed field by field, and the cache written from what SURVIVED.
+     *
+     * Returning on the first mismatch threw away the mirror of everything
+     * Shopify had already stored: a save carrying a new price and a refused
+     * display switch left the cached price at its old value while the warning
+     * said everything else was saved. Nothing here mirrors an unconfirmed
+     * value - the echo is still the only source - but a field the echo DID
+     * confirm is no longer punished for its neighbour.
+     */
+    let failure: CommerceWarning | undefined;
+    const refuse = (code: CommerceWarning) => {
+      failure ??= code;
+    };
+    const confirmed: Record<string, unknown> = {};
+
+    if (input.price !== undefined) {
+      if (sameMoney(input.price, echoed.price)) {
+        if (echoed.price != null) confirmed.price = echoed.price;
+      } else refuse("priceNotConfirmed");
+    }
+    if (input.compareAtPrice !== undefined) {
+      if (sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
+        confirmed.compareAtPrice = echoed.compareAtPrice ?? null;
+      } else refuse("priceNotConfirmed");
     }
     // The same rule for the two non-money fields. They were sent and mirrored
     // without ever being asked back for, so Shopify accepting the call and
     // storing nothing left the cache — and the merchant — believing a policy
     // that was never applied.
-    if (input.barcode !== undefined && (echoed.barcode ?? null) !== input.barcode) {
-      return "priceNotConfirmed";
+    if (input.barcode !== undefined) {
+      if ((echoed.barcode ?? null) === input.barcode) confirmed.barcode = echoed.barcode ?? null;
+      else refuse("priceNotConfirmed");
     }
-    if (input.inventoryPolicy !== undefined && echoed.inventoryPolicy !== input.inventoryPolicy) {
-      return "priceNotConfirmed";
+    if (input.inventoryPolicy !== undefined) {
+      if (echoed.inventoryPolicy === input.inventoryPolicy) {
+        confirmed.inventoryPolicy = echoed.inventoryPolicy ?? null;
+      } else refuse("priceNotConfirmed");
     }
-    if (input.taxable !== undefined && echoed.taxable !== input.taxable) return "priceNotConfirmed";
+    if (input.taxable !== undefined) {
+      if (echoed.taxable === input.taxable) confirmed.taxable = echoed.taxable ?? null;
+      else refuse("priceNotConfirmed");
+    }
+
+    // The Grundpreis has the strictest echo of the lot, because its failure
+    // mode is the quiet one: `unitPriceMeasurement: null` is ACCEPTED and
+    // ignored, so a removal that reported success is exactly what a merchant
+    // would discover from their own storefront weeks later. Nothing is
+    // mirrored for it — there is no cache column, the panel reads it live.
+    if (input.unitPriceMeasurement !== undefined) {
+      const got = echoed.unitPriceMeasurement ?? null;
+      const stored = isEmptyMeasurement(got) ? null : got;
+      const same =
+        wantedMeasurement === null
+          ? stored === null
+          : !!stored &&
+            Number(stored.quantityValue) === wantedMeasurement.quantityValue &&
+            stored.quantityUnit === wantedMeasurement.quantityUnit &&
+            Number(stored.referenceValue) === wantedMeasurement.referenceValue &&
+            stored.referenceUnit === wantedMeasurement.referenceUnit;
+      if (!same) refuse("unitPriceNotConfirmed");
+    }
+    // Its OWN code, and deliberately LAST: a switch that would not move
+    // reports only itself, instead of casting doubt on a price that is stored.
+    if (input.showUnitPrice !== undefined && echoed.showUnitPrice !== input.showUnitPrice) {
+      refuse("unitPriceNotShown");
+    }
 
     // Mirror what Shopify STORED, not what was sent — the same rule the theme
     // path follows for normalised richtext.
-    if (echoed.price != null) mirror.price = echoed.price;
-    mirror.compareAtPrice = echoed.compareAtPrice ?? null;
-    if (input.barcode !== undefined) mirror.barcode = echoed.barcode ?? null;
-    if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echoed.inventoryPolicy ?? null;
-    if (input.taxable !== undefined) mirror.taxable = echoed.taxable ?? null;
-    await db.productVariant
-      .updateMany({ where: { id: params.variantId, product: { shop } }, data: mirror as never })
-      .catch(() => undefined);
+    if (Object.keys(confirmed).length > 0) {
+      await db.productVariant
+        .updateMany({ where: { id: params.variantId, product: { shop } }, data: confirmed as never })
+        .catch(() => undefined);
+    }
 
-    return undefined;
+    return failure ?? unitPriceRefusal;
   } catch (error) {
     logger.warn("[Commerce] Price write failed", {
       context: "Commerce", shop,

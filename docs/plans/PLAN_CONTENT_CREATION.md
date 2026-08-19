@@ -720,3 +720,32 @@ Der Review hat drei Punkte gegen bereits getroffene Entscheidungen vorgebracht. 
 **8.4 Bulk-Create über die vorhandene CSV-Pipeline.** [csv-import.server.ts](../../app/services/bulk-editor/csv-import.server.ts) + `csv.shared.ts` sind eine vollständige, getestete, Pro-gegatete Import-Pipeline mit Preview und Caps — sie kann heute nur updaten (`resolveCsvRowId` wirft für Zeilen ohne Treffer). Zeilen *ohne* ID zu Creates zu machen wäre das kleinstmögliche „viele anlegen". **Vorbehalt:** CLAUDE.md beschreibt `applyBulkDiff` als DEN einen Write-Pfad mit genau drei Eingängen — Creates darin wären eine bewusste Erweiterung, keine stille. **Status: nicht v1**, aber hier festgehalten, damit niemand einen zweiten CSV-Parser baut.
 
 **8.5 Weitere Kandidaten, bewusst zurückgestellt:** interne Verlinkung auf ein neues Objekt anbieten (`runInternalLinkSuggestions`, als Button in der Post-Create-InfoBox — der SEO-Contract verbietet automatisches Feuern langer Scans); Metafelder schon im Create-Formular (`scanProductMetafields` weiß, welche der Shop hat); ein shop-weites Alt-Text-Template als deterministische Alternative zum AI-Call (`fillAltTextTemplate`).
+
+---
+
+## 9. Stückpreis (Grundpreis) — gemessen, 2026-08-19, API 2026-07
+
+Shopify zeigt auf seiner eigenen Variantenseite eine Box „Stückpreis": Gesamtmenge einer Packung (500 g) und eine Referenzeinheit (1 kg), woraus die Storefront „CHF 22.90 · CHF 45.80 / kg" macht. Das ist eine Preisauszeichnungspflicht (PAngV in DE, PBV in CH, Richtlinie 98/6/EG hinter beiden) und betrifft alles, was nach Gewicht oder Volumen verkauft wird.
+
+Ob das Feld **schreibbar** ist, stand nicht in der Doku. Gemessen mit [api.unit-price-probe.tsx](../../app/routes/api.unit-price-probe.tsx) (Settings → Probes → Unit price, dev-only) auf einem echten Shop:
+
+| Frage | Antwort |
+|---|---|
+| Feld im Input? | **ja** — `ProductVariantsBulkInput.unitPriceMeasurement`, dazu `showUnitPrice` |
+| `UnitPriceMeasurementInput` | `quantityValue`, `quantityUnit`, `referenceValue`, `referenceUnit` |
+| Einheiten-Enum | **nicht `WeightUnit`.** `ML, CL, L, M3, FLOZ, PT, QT, GAL, MG, G, KG, OZ, LB, MM, CM, M, IN, FT, YD, M2, FT2, ITEM, UNKNOWN` |
+| Schreiben | **ja**, Echo bestätigt |
+| Löschen mit `unitPriceMeasurement: null` | **nein** — akzeptiert, keine `userErrors`, Wert bleibt stehen |
+| Löschen mit der ausgeschriebenen leeren Messung | **ja** |
+
+Die dritte und die fünfte Zeile sind die teuren. `null` ist eine **Abwesenheit**, die die Mutation überspringt; der leere Zustand ist ein **Wert**, und genau als solcher liest eine Variante ohne Grundpreis zurück (`{quantityValue: 0, quantityUnit: null, referenceValue: 0, referenceUnit: null}` — **nicht** `null`). `EMPTY_MEASUREMENT_INPUT` in der Probe-Route hält die Schreibweise fest; wer das Feature baut, nimmt sie von dort, sonst schlägt das Löschen still fehl und der Merchant bekommt einen falschen Grundpreis nicht mehr weg.
+
+Ebenfalls messbar geworden, weil es zweimal falsch beantwortet wurde: **eine Antwort, die den vorgefundenen Zustand wiederholt, ist keine Messung.** Der erste Lauf meldete „hide: yes", weil `showUnitPrice` schon vorher `false` war und jeder Versuch brav `false` zurückgab; ein zweiter meldete `null` als funktionierenden Lösch-Weg, weil die Variante bereits leer war. Beide Schritte prüfen jetzt gegen den Vorher-Zustand, und der Schalter wird **umgelegt und zurückgelegt** statt gelesen.
+
+**Nachgemessen (zweiter Lauf):** `unitPriceMeasurement: null` wird akzeptiert und ignoriert; die **ausgeschriebene leere Messung** löscht. Das ist der Weg, den `EMPTY_MEASUREMENT_INPUT` festhält.
+
+**Weiterhin offen — und das Feature ist damit gebaut, nicht darauf gewartet:** ob `showUnitPrice` ein echter, umkehrbarer Schalter ist. Auf dem Messshop war er durchgehend `false`, also nie bewegt; die Probe legt ihn inzwischen um und wieder zurück, dieser Lauf steht aus. Der Schalter wird trotzdem angeboten: gated die Storefront den Grundpreis daran, hiesse Zurückhalten, eine Messung zu schreiben, die niemand sieht. Der Preis eines Irrtums ist durch das Echo begrenzt — ein Schalter, der sich nicht bewegt, meldet sich mit einem **eigenen** Code (`unitPriceNotShown`), während die Messung gespeichert bleibt. Ebenfalls ungemessen: ob die Storefront den Grundpreis zeigt, solange der Schalter aus ist.
+
+**Bewusst nicht validiert, weil ungemessen:** was Shopify mit gemischten Dimensionen macht (500 **g** pro 1 **l**). Diese App lehnt das Paar selbst ab (`unitPriceDimension`), statt es auf einer Storefront herauszufinden.
+
+**Entscheidung fürs UI, wenn gebaut wird:** eigenes Disclosure in der Preise-Card, wie der Zoll-Block im Versand. Shopifys Popover-Muster (alles ausser dem effektiven Preis hinter einem Aufklapper) wird **nicht** breit übernommen: die drei Preise stehen bewusst nebeneinander, und beim Bulk-Edit über mehrere Varianten müsste man sonst pro Feld auf- und zuklappen.

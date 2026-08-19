@@ -48,8 +48,13 @@ interface ProbeProduct {
   variants: ProbeVariant[];
 }
 
-/** What each step answers, in the order the probe asks it. */
-const STEPS: Array<{ key: string; label: string; question: string }> = [
+/** What each step answers, in the order the probe asks it.
+ *
+ *  `missingLabel` overrides the default "not supported" where that would
+ *  overstate the finding: the clear step measures a LIST of candidate inputs,
+ *  so all of them failing says none of these works, not that the platform has
+ *  no way at all. */
+const STEPS: Array<{ key: string; label: string; question: string; missingLabel?: string }> = [
   {
     key: "inputShape",
     label: "Input shape",
@@ -57,7 +62,19 @@ const STEPS: Array<{ key: string; label: string; question: string }> = [
   },
   { key: "read", label: "Read", question: "What does the variant hold right now?" },
   { key: "write", label: "Write", question: "Does a 500 g / 1 kg measurement stick?" },
-  { key: "clear", label: "Clear", question: "Can it be removed again?" },
+  {
+    key: "clear",
+    label: "Clear",
+    question: "Can it be removed again? Five candidate inputs are tried, in order.",
+    missingLabel: "no way found",
+  },
+  {
+    key: "hide",
+    label: "Hide",
+    question:
+      "Is showUnitPrice a real switch? It is flipped away from where it was and flipped back.",
+    missingLabel: "does not move",
+  },
   { key: "restored", label: "Restored", question: "Was the variant put back the way it was?" },
 ];
 
@@ -68,10 +85,10 @@ const STEPS: Array<{ key: string; label: string; question: string }> = [
  * negative. `error` means no answer arrived, which says nothing at all. One
  * read as the other would close a question that is still open.
  */
-function verdict(finding: Finding | undefined) {
+function verdict(finding: Finding | undefined, missingLabel?: string) {
   if (!finding) return { tone: undefined as never, text: "not run" };
   if (finding.ok) return { tone: "success" as const, text: "yes" };
-  if (finding.missing) return { tone: "critical" as const, text: "not supported" };
+  if (finding.missing) return { tone: "critical" as const, text: missingLabel ?? "not supported" };
   return { tone: "warning" as const, text: "no answer" };
 }
 
@@ -107,13 +124,14 @@ export function SettingsUnitPriceProbeTab() {
    *  button dead with nothing saying why. */
   const variant = product?.variants.find((v) => v.gid === variantGid) ?? product?.variants[0];
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (mode: "probe" | "clear" = "probe") => {
     setRunning(true);
     setError(null);
     try {
       const body = new FormData();
       body.set("productGid", productGid);
       body.set("variantGid", variantGid || variant?.gid || "");
+      body.set("mode", mode);
       const res = await fetch("/api/unit-price-probe", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
@@ -136,7 +154,7 @@ export function SettingsUnitPriceProbeTab() {
     for (const step of STEPS) {
       const finding = report[step.key];
       if (!finding) continue;
-      lines.push(`## ${step.label} — ${verdict(finding).text}`);
+      lines.push(`## ${step.label} — ${verdict(finding, step.missingLabel).text}`);
       lines.push(step.question);
       if (finding.error) lines.push(`error: ${finding.error}`);
       if (finding.detail !== undefined) {
@@ -163,8 +181,12 @@ export function SettingsUnitPriceProbeTab() {
           </Text>
           <Banner tone="warning">
             <p>
-              This WRITES to the variant you pick — 500&nbsp;g per 1&nbsp;kg — and then puts back
-              whatever was there. Use a product you do not mind touching.
+              This WRITES to the variant you pick — 500&nbsp;g per 1&nbsp;kg — and then tries to put
+              back whatever was there. <b>It may not manage to</b>: the measured behaviour is that
+              Shopify accepts a removal and keeps the value, so the report says plainly when the
+              variant was left carrying the probe's measurement. <b>Remove the measurement</b> runs
+              only the removal ladder, which is how that is cleaned up. Use a product you do not
+              mind touching.
             </p>
           </Banner>
 
@@ -210,8 +232,21 @@ export function SettingsUnitPriceProbeTab() {
           )}
 
           <InlineStack gap="200">
-            <Button variant="primary" onClick={run} loading={running} disabled={!canRun}>
+            <Button
+              variant="primary"
+              onClick={() => void run("probe")}
+              loading={running}
+              disabled={!canRun}
+            >
               Run probe
+            </Button>
+            {/* The probe can only put the variant back if something is able to
+                take the measurement off, and the first live run established
+                that the obvious way does not. Re-running the whole probe is
+                NOT the cleanup: it would read the leftover as the state to
+                restore and put it back at the end. */}
+            <Button onClick={() => void run("clear")} loading={running} disabled={!canRun}>
+              Remove the measurement
             </Button>
             {markdown && (
               <Button onClick={() => void navigator.clipboard?.writeText(markdown)}>
@@ -234,7 +269,7 @@ export function SettingsUnitPriceProbeTab() {
             {STEPS.map((step) => {
               const finding = report[step.key];
               if (!finding) return null;
-              const answer = verdict(finding);
+              const answer = verdict(finding, step.missingLabel);
               return (
                 <Box
                   key={step.key}

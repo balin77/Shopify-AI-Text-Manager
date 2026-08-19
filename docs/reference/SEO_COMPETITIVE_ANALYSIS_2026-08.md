@@ -1,6 +1,9 @@
 # SEO-Wettbewerbsanalyse — August 2026
 
 > **Stand:** 2026-08-18 · **Code-Basis:** `develop` @ `f702508`
+> **ABGESCHLOSSEN am 2026-08-19** — Umsetzung, Live-Verifikation und Review sind
+> durch; die Bilanz steht in **§10**. Neue Arbeit gehört in ein eigenes Dokument,
+> nicht mehr hierher.
 > **Nachtrag 2026-08-18:** Die Lücken P1.1, P1.2, P2.3, P2.4 und die Readability-
 > Lücke aus P3 sind auf `claude/competitive-analysis-seo-518odr` umgesetzt — siehe
 > §8. Die Analyse darunter bleibt im Zustand VOR der Umsetzung stehen, damit
@@ -238,6 +241,58 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 
 ---
 
+## 7. Methodik & Vorbehalte
+
+- **App-Stand:** direkt gegen `develop` @ `f702508` verifiziert (Routen, Services, Prisma-Modelle,
+  Plan-Limits) — nicht aus Dokumentation abgeschrieben.
+- **Wettbewerbsdaten:** `apps.shopify.com` und `shopify.dev` waren aus dieser Umgebung durch die
+  Egress-Policy blockiert. Feature-, Preis- und Rating-Angaben stammen aus Sekundärquellen
+  (Vergleichs-Blogs, Review-Portale, Suchergebnis-Zusammenfassungen), Stand August 2026. Vor
+  einer Verwendung in Marketing oder einer Umsetzungsentscheidung an der Primärquelle prüfen.
+- **`agents.md`:** zwei unabhängige Sekundärquellen beschreiben Datum, Fallback-Kette und
+  Template-Namen übereinstimmend; `shopify.dev` war nicht erreichbar. Deshalb steht der
+  Dev-Store-Spike **vor** der Umsetzung, nicht danach.
+
+### Nachtrag 2026-08-19 — was die Live-Prüfung über die Methode lehrte
+
+Vier Annahmen im Testauftrag trafen nicht zu, und die erste ist die wichtigste:
+
+1. **Die Prüfvorgabe war aus der eigenen Implementierung abgeleitet.** Der Auftrag
+   schrieb „`uploadDate` im Format `YYYY-MM-DD`" — genau das, was der Code tat, und
+   genau das, was Google ablehnt. Wer nur dagegen prüft, zertifiziert den Bug.
+   Aufgedeckt hat ihn allein der Schritt gegen eine **fremde** Instanz. Regel:
+   Formatvorgaben nennen ihre Quelle, oder sie stehen nicht im Auftrag.
+2. **Das Testprodukt hatte gar kein natives Video** — die YouTube-URL lag in einem
+   Varianten-Metafeld, `VideoObject` speist sich aber aus `product.media`. Über
+   alle 41 Produkte des Shops: kein einziges natives Video. Das Feature hatte dort
+   null Abdeckung, und ein Teil der Checkliste war schlicht unprüfbar.
+3. **Zwei Apps (Dev und Prod) auf demselben Shop**, mit identisch benannten
+   App-Einbettungen. Aktiv waren die der Dev-App, der Prod-Deploy blieb wirkungslos
+   und sah zwanzig Minuten lang wie ein Propagierungsproblem aus. Vor jeder
+   Storefront-Verifikation die Extension-UUID im Quelltext prüfen, statt aus dem
+   gerenderten Markup auf den Deploy zu schließen.
+4. **„Den Sync anstoßen" ist nicht eindeutig.** Nur der volle Produkt-Sync und der
+   Einzelprodukt-Reload schreiben das Datums-Metafeld; „fehlende Produkte nachladen"
+   holt nur 20 Medien und darf es deshalb nicht.
+
+
+### Quellen
+
+- [Shopify — Agentic Commerce on Shopify (2026)](https://www.shopify.com/blog/how-agentic-commerce-works)
+- [Digital Applied — Shopify Spring '26 Edition: Agentic Commerce, UCP, Catalog](https://www.digitalapplied.com/blog/shopify-spring-2026-edition-agentic-commerce-ucp-catalog)
+- [Weaverse — Shopify agents.md vs llms.txt: What Changed in 2026](https://weaverse.io/blogs/shopify-agents-md-llms-txt-theme-template-customization-may-28-2026)
+- [Consentmo — Shopify's New AI Discovery Files](https://www.consentmo.com/blog-posts/shopifys-new-ai-discovery-files)
+- [Craftshift — Best Shopify SEO apps 2026: 8 verified and ranked](https://craftshift.com/best-shopify-seo-apps-2026/)
+- [SearchAtlas — 12 Best Shopify SEO Apps for 2026, Tested and Compared](https://searchatlas.com/blog/shopify-seo-apps/)
+- [TinyIMG — Services / Feature-Übersicht](https://tiny-img.com/services/)
+- [StoreSEO — Best AI Shopify Apps for LLMs.txt and Schema Markup](https://storeseo.com/best-ai-shopify-apps-for-llms-txt-and-schema-markup/)
+- [Identixweb — Yoast SEO for Shopify Review](https://www.identixweb.com/yoast-seo-for-shopify/)
+- [HulkApps — Avada SEO vs Sherpas Smart SEO](https://www.hulkapps.com/blogs/compare/shopify-seo-apps-avada-seo-image-optimizer-vs-sherpas-smart-seo)
+- [wrkngdigital — Top 6 Tools to Track Shopify AI Shopping Visibility (2026)](https://wrkngdigital.com/post/top-6-tools-track-shopify-ai-shopping-visibility-chatgpt-perplexity-google-2026)
+- [Shopify App Store — LLM Rank · AI Visibility](https://apps.shopify.com/llm-rank) · [Agentic Shopper · AI Visibility](https://apps.shopify.com/ai-mention-tracker)
+
+---
+
 ## 8. Was daraufhin umgesetzt wurde (2026-08-18)
 
 | Lücke | Status | Umsetzung |
@@ -257,6 +312,16 @@ stehen in keinem App-Store-Text der Konkurrenz — bei uns aber auch nirgends pr
 **Was das an §3 ändert:** Die Zeilen `agents.md` (❌ → ✅), `AI-Sichtbarkeits-Tracking`
 (❌ → ⚠️, wir messen Ankünfte statt Prompt-Sichtbarkeit) und `Readability-Analyse`
 (❌ → ✅) sind damit gedreht; `Live-Crawl` läuft jetzt zusätzlich zeitgesteuert.
+
+**Nachtrag 2026-08-19 — was nach diesem Stand noch dazukam** (Details in §10):
+
+| Punkt | Umsetzung |
+|---|---|
+| **agents.md: Einleitung editierbar** | Der Eröffnungsabsatz beider Discovery-Dateien ist merchant-eigener Text mit einem „mit KI verbessern"-Pass; die Katalog-Abschnitte bleiben generiert, weil eine handgepflegte Produktliste beim nächsten Preis- oder URL-Wechsel falsch wäre. |
+| **Aktivierung von Markup wird der letzte Schritt** | Ausgelöst durch 12 ungültige Elemente auf einem Live-Shop: Theme- und App-Markup verschmelzen über dieselbe `@id`. Ein Riegel urteilt jetzt anhand der Crawl-Messung, und eine fehlende Messung ist nie ein grünes Licht. |
+| **Open Graph mit derselben Doppelerkennung** | Was für JSON-LD gilt, gilt für `og:`/`twitter:` genauso — inklusive Marker, um „welche Kopie ist unsere" überhaupt beantworten zu können. |
+| **VideoObject: drei Live-Defekte behoben** | Protokollrelative `contentUrl`, `uploadDate` ohne Uhrzeit/Zone, dreifach kopierter Video-URL-Parser. Zusätzlich decken externe Videos jetzt auch die Varianten-Galerie ab. |
+| **KI-Referral: Beacon zog um** | Vom JSON-LD-Block ins Web-Vitals-Embed — Markup darf man abschalten, ohne eine Messung mit abzuschalten. |
 
 ---
 
@@ -339,10 +404,13 @@ einzeln zurücknehmbar und fassen den Theme-Code des Merchants nicht an.
   Erstellungsdatum für Medien her. Die Admin API gibt es (`File.createdAt` auf
   `Video`/`ExternalVideo`), also holt der Produkt-Sync es mit — dieselbe
   `media`-Abfrage, nur zwei Fragmente mehr — und die App legt eine
-  `{Medien-ID: Datum}`-Karte im Metafeld `custom.video_upload_dates` ab, die
-  der Block pro Video ausliest. Vier Dinge tragen dabei:
-  die **numerische** Medien-ID als Schlüssel (Liquids `media.id` ist eine
-  Zahl, eine GID-Karte wäre auf der Storefront nie auffindbar); ein
+  `{Medien-ID: Zeitstempel}`-Karte im Metafeld `custom.video_upload_dates` ab,
+  die der Block pro Video ausliest. Fünf Dinge tragen dabei:
+  der **vollständige ISO-8601-Zeitstempel mit Zone** — die erste Fassung schnitt
+  auf `YYYY-MM-DD` und warf genau das weg, was Google verlangt (siehe §10.2, am
+  Live-Shop gemessen); die **numerische** Medien-ID als Schlüssel (Liquids
+  `media.id` ist eine Zahl, eine GID-Karte wäre auf der Storefront nie
+  auffindbar); ein
   **diff-getriebener** Schreibpfad gegen die Spiegelspalte
   `Product.videoSchemaJson`, sodass ein unveränderter Katalog null
   Shopify-Aufrufe kostet; „keine Videos" als `metafieldsDelete` statt `{}`
@@ -358,29 +426,108 @@ einzeln zurücknehmbar und fassen den Theme-Code des Merchants nicht an.
 
 ---
 
-## 7. Methodik & Vorbehalte
+## 10. Abschluss (2026-08-19)
 
-- **App-Stand:** direkt gegen `develop` @ `f702508` verifiziert (Routen, Services, Prisma-Modelle,
-  Plan-Limits) — nicht aus Dokumentation abgeschrieben.
-- **Wettbewerbsdaten:** `apps.shopify.com` und `shopify.dev` waren aus dieser Umgebung durch die
-  Egress-Policy blockiert. Feature-, Preis- und Rating-Angaben stammen aus Sekundärquellen
-  (Vergleichs-Blogs, Review-Portale, Suchergebnis-Zusammenfassungen), Stand August 2026. Vor
-  einer Verwendung in Marketing oder einer Umsetzungsentscheidung an der Primärquelle prüfen.
-- **`agents.md`:** zwei unabhängige Sekundärquellen beschreiben Datum, Fallback-Kette und
-  Template-Namen übereinstimmend; `shopify.dev` war nicht erreichbar. Deshalb steht der
-  Dev-Store-Spike **vor** der Umsetzung, nicht danach.
+Damit ist diese Analyse **erledigt**. Alles, was in §5 als P1 und P2.3/P2.4 stand,
+ist umgesetzt, auf einem echten Shop ausgeliefert und gegen eine fremde Instanz
+(Googles Rich Results Test) gegengeprüft. Was bewusst nicht gebaut wurde, steht
+in §9 mit Begründung. Neue Arbeit gehört in ein neues Dokument.
 
-### Quellen
+### 10.1 Was live verifiziert ist
 
-- [Shopify — Agentic Commerce on Shopify (2026)](https://www.shopify.com/blog/how-agentic-commerce-works)
-- [Digital Applied — Shopify Spring '26 Edition: Agentic Commerce, UCP, Catalog](https://www.digitalapplied.com/blog/shopify-spring-2026-edition-agentic-commerce-ucp-catalog)
-- [Weaverse — Shopify agents.md vs llms.txt: What Changed in 2026](https://weaverse.io/blogs/shopify-agents-md-llms-txt-theme-template-customization-may-28-2026)
-- [Consentmo — Shopify's New AI Discovery Files](https://www.consentmo.com/blog-posts/shopifys-new-ai-discovery-files)
-- [Craftshift — Best Shopify SEO apps 2026: 8 verified and ranked](https://craftshift.com/best-shopify-seo-apps-2026/)
-- [SearchAtlas — 12 Best Shopify SEO Apps for 2026, Tested and Compared](https://searchatlas.com/blog/shopify-seo-apps/)
-- [TinyIMG — Services / Feature-Übersicht](https://tiny-img.com/services/)
-- [StoreSEO — Best AI Shopify Apps for LLMs.txt and Schema Markup](https://storeseo.com/best-ai-shopify-apps-for-llms-txt-and-schema-markup/)
-- [Identixweb — Yoast SEO for Shopify Review](https://www.identixweb.com/yoast-seo-for-shopify/)
-- [HulkApps — Avada SEO vs Sherpas Smart SEO](https://www.hulkapps.com/blogs/compare/shopify-seo-apps-avada-seo-image-optimizer-vs-sherpas-smart-seo)
-- [wrkngdigital — Top 6 Tools to Track Shopify AI Shopping Visibility (2026)](https://wrkngdigital.com/post/top-6-tools-track-shopify-ai-shopping-visibility-chatgpt-perplexity-google-2026)
-- [Shopify App Store — LLM Rank · AI Visibility](https://apps.shopify.com/llm-rank) · [Agentic Shopper · AI Visibility](https://apps.shopify.com/ai-mention-tracker)
+Deploy und Prüfung liefen auf `patis-universe.com` gegen die **Dev-App**; Prod
+läuft aus `master` und kennt diese Funktionen noch nicht.
+
+| Geprüft | Ergebnis |
+|---|---|
+| VideoObject auf einer Produktseite | ✅ gültig im Rich Results Test — nach drei Korrekturen, siehe 10.2 |
+| `custom.video_upload_dates` nach Produkt-Sync | ✅ geschrieben, Schlüssel sind numerische Medien-IDs |
+| KI-Referral-Beacon im ausgelieferten Asset | ✅ vorhanden |
+| Testklick aus ChatGPT | ✅ in der AEO-Sektion gezählt |
+| Bild-/Video-Trennung (Alt-Text-Pfade) | ✅ Videos tauchen nicht als Bildzeilen auf |
+
+### 10.2 Drei Defekte, die erst die Live-Prüfung zeigte
+
+1. **`contentUrl` war protokollrelativ.** Shopifys `media.sources[].url` liefert
+   `//cdn…` ohne Schema, Google verlangt absolut. Der Block normalisierte das für
+   `thumbnailUrl` und `logo_url` seit jeher — die Video-Quelle war der eine Pfad
+   ohne diese Behandlung.
+2. **`uploadDate` verlor Uhrzeit und Zone.** Google lehnt ein reines Kalenderdatum
+   ab („ungültiger Datum/Uhrzeit-Wert" plus „Zeitzone fehlt"). `File.createdAt`
+   liefert beides — die Information war da und wurde weggeschnitten. Der
+   Merchant-Override (`custom.video_upload_date`, Typ `date`, hat keine Uhrzeit)
+   bekommt `T12:00:00Z`: Mittag UTC ist der einzige Stempel, der in jeder realen
+   Zeitzone auf dem gewählten Tag landet.
+3. **Der YouTube/Vimeo-URL-Parser existierte dreifach** und war auseinandergelaufen —
+   zwei Kopien kannten `youtube.com/shorts/`, die dritte nicht, und verwarf solche
+   URLs stillschweigend. Jetzt ein gemeinsames Snippet.
+
+### 10.3 Der teuerste Befund war kein Defekt
+
+Der Rich Results Test meldete zwischenzeitlich **12 ungültige Elemente**. Ursache
+war nicht der Code, sondern eine **Doppelaktivierung**: Unser JSON-LD-Block nutzt
+absichtlich Dawns `@id`-Schema, ist also als *Ersatz* des Theme-Markups gedacht.
+Laufen beide, verschmilzt Google über dieselbe `@id` zu einem Knoten mit doppeltem
+`brand`, `availability` und `sku` — einmal pro Variante gezählt.
+
+Daraus wurde ein eigener Umbau (`PLAN_MARKUP_ACTIVATION.md`, umgesetzt): Aktivierung
+ist jetzt der **letzte** Schritt der Sektion statt der erste, ein Riegel urteilt
+anhand der Crawl-Messung statt anhand einer Hoffnung, Open Graph bekommt dieselbe
+Doppelerkennung, und externe Videos kommen ins JSON-LD. Die Regel dahinter steht
+inzwischen als Invariante in CLAUDE.md: **eine fehlende Messung ist nie ein grünes
+Licht.** Ein Review-Durchgang fand denselben Fehler noch einmal eine Ebene tiefer —
+ein nie gecrawlter Seitentyp galt als „nichts liefert das aus" — und er ist mit
+`scopePages` aus dem Crawl geschlossen.
+
+### 10.4 Was sich an §3 und §8 final ändert
+
+- **`agents.md`** ❌ → ✅, und darüber hinaus: der **Einleitungsabsatz ist
+  merchant-editierbar** (mit KI-Verbesserungspass), die Katalog-Abschnitte bleiben
+  generiert. Kein Konkurrent lässt an dieser Datei etwas bearbeiten.
+- **AI-Sichtbarkeits-Tracking** ❌ → ⚠️: wir messen **Ankünfte**, nicht
+  Prompt-Sichtbarkeit. Mit einem **gemessenen blinden Fleck**: Claude gibt weder
+  Referrer noch `utm_source` weiter, ein Klick von dort ist technisch nicht von
+  einem Direkteinstieg zu unterscheiden. ChatGPT und Perplexity kommen an. Steht so
+  in der UI, statt als stille Untererfassung.
+- **Readability** ❌ → ✅, mit eigener Sektion und eigenem Hilfe-Icon; die Zahl
+  nennt ihre Formel und sagt, dass sie zwischen Sprachen nicht vergleichbar ist und
+  nicht in den SEO-Score zählt.
+- **VideoObject** ✅ inkl. `uploadDate` und externer Videos.
+- **Live-Crawl** zusätzlich zeitgesteuert (wöchentlich, Max).
+
+### 10.5 Review-Durchgang über die Schreibpfade
+
+Die Arbeitsvereinbarung verlangt ihn für Schreibpfade; er lief am 2026-08-19 über
+die 14 geänderten Dateien und fand vier Dinge, alle behoben:
+
+- **`metafieldsDelete` verwarf bei einem einzigen `userError` den ganzen Batch.**
+  Eine veraltete Produkt-ID unter 25 blockierte die anderen 24 dauerhaft — sie
+  wären bei jedem Sync erneut gelaufen. Fehlschlag ist jetzt pro **Eintrag**, über
+  den Index aus Shopifys `field`-Pfad; ein nicht zuordenbarer Fehler bestätigt nur
+  noch das explizit Echote.
+- **Ein Owner, dessen Metafeld schon weg war, blieb in einem gemischten Batch
+  unbestätigt** — die Prüfung hing an der Leere der Echo-Liste, was nur den Fall
+  „alle waren schon weg" trifft.
+- **Die Unterdrückung des Metafeld-Schreibens auf dem Webhook-Pfad ist weg.** Die
+  Schleife, gegen die sie schützte, terminiert ohnehin nach einem Durchlauf (der
+  Pass ist diff-getrieben, der Produkt-Upsert fasst die Spiegelspalte nie an).
+  Gekostet hat sie genau den Fall, für den das Feature existiert: wer im
+  Shopify-Admin ein Video hinzufügt, löst **nur** diesen Webhook aus.
+- **Der Aktivierungs-Riegel hielt einen nie gecrawlten Seitentyp für „nichts
+  liefert das aus"** — siehe 10.3.
+
+### 10.6 Was offen bleibt — bewusst
+
+| Punkt | Status |
+|---|---|
+| **LocalBusiness-Schema** | Kandidat, nur als Opt-in mit merchant-eingetragenen Daten (§9.3) |
+| **Bild-Dateinamen-SEO** | Notiert, nicht eingeplant — Benennung beim Upload wäre der interessante Teil (§9.1) |
+| **Long-Form-Blog-Generator** | Offen, eigener Workflow |
+| **Echtes Prompt-Rank-Tracking** | Nicht-Ziel: laufende Modellkosten für eine Stichprobe, während wir Fakten messen |
+| **Speed-Eingriffe / Theme-Code** | ⛔ Nicht-Ziel (§9.2) |
+| **`develop` → `master` + Prod-Deploy** | Freigabeentscheidung, offen |
+
+Die in §6 genannte **kommunikative** Lücke bleibt ebenfalls offen und ist damit die
+größte: Mehrsprachiges SEO, Crawl-Disziplin, Freshness-Audit und die interne
+Verlinkung mit Diff-Preview stehen nach wie vor in keinem App-Store-Text — bei uns
+auch nicht.

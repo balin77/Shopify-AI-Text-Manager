@@ -101,37 +101,45 @@
     # Relative @id, exactly as Dawn emits it — JSON-LD resolves it against the
     # page URL, and matching Dawn keeps the identity stable across the switch.
     assign p_id = product.url | append: '#product'
-    # `page_description` is Shopify's own meta description for the CURRENT
-    # page and follows the active locale; the raw `global.description_tag`
-    # metafield does not, so a Spanish page shipped a German description while
-    # its `name` was correctly Spanish. `product.description` is a translated
-    # native field and makes a safe fallback.
-    # The SEO meta description is stored HTML-ENCODED, and `strip_html` only
-    # removes tags — it does not decode entities, so `&quot;` and `&amp;` went
-    # into the JSON verbatim while the native `name` (never encoded) looked
-    # fine. Decode before `| json`, `&amp;` LAST: doing it first would turn the
-    # literal text "&amp;quot;" into a quote character.
+  -%}
+  {%- comment -%}
+    `page_description` is Shopify's own meta description for the CURRENT
+    page and follows the active locale; the raw `global.description_tag`
+    metafield does not, so a Spanish page shipped a German description while
+    its `name` was correctly Spanish. `product.description` is a translated
+    native field and makes a safe fallback.
+    The SEO meta description is stored HTML-ENCODED, and `strip_html` only
+    removes tags — it does not decode entities, so `&quot;` and `&amp;` went
+    into the JSON verbatim while the native `name` (never encoded) looked
+    fine. Decode before `| json`, `&amp;` LAST: doing it first would turn the
+    literal text "&amp;quot;" into a quote character.
+  {%- endcomment -%}
+  {%- liquid
     assign p_desc = page_description | default: product.description | strip_html | replace: '&quot;', '"' | replace: '&#34;', '"' | replace: '&#39;', "'" | replace: '&apos;', "'" | replace: '&lt;', '<' | replace: '&gt;', '>' | replace: '&nbsp;', ' ' | replace: '&amp;', '&' | truncate: 500
     assign p_currency = cart.currency.iso_code | default: shop.currency
     # Shopify "rating" metafield value is a rating object: .rating / .scale_max
     assign r_obj = product.metafields.reviews.rating.value
     assign r_count = product.metafields.reviews.rating_count.value
     assign p_mpn = product.metafields.custom.mpn.value
-    # priceValidUntil: merchant metafield only, never synthesized, expired
-    # dates dropped — invariant 3 above has the compliance reasoning.
-    #
-    # Both sides of the comparison run through the SAME `%Y-%m-%d | %s` chain,
-    # and that symmetry is the whole point of the detour:
-    #  - `| date: '%Y-%m-%d'` first reduces both to a calendar DAY, so a
-    #    date_time metafield stays valid for the rest of its last day, and a
-    #    date metafield (UTC midnight) is not compared against a shop-local
-    #    midnight — that mismatch dropped the final valid day west of UTC.
-    #  - `| plus: 0` then forces INTEGER comparison. Liquid would otherwise
-    #    compare the two as strings: `>=` on strings is lexicographic, and an
-    #    unparseable metafield ("soon") survives `date` unchanged and would
-    #    sort ABOVE any ISO date — publishing "soon" as priceValidUntil, i.e.
-    #    the very fabrication this code exists to prevent. As an integer it
-    #    coerces to 0 and is dropped.
+  -%}
+  {%- comment -%}
+    priceValidUntil: merchant metafield only, never synthesized, expired
+    dates dropped — invariant 3 above has the compliance reasoning.
+    
+    Both sides of the comparison run through the SAME `%Y-%m-%d | %s` chain,
+    and that symmetry is the whole point of the detour:
+     - `| date: '%Y-%m-%d'` first reduces both to a calendar DAY, so a
+       date_time metafield stays valid for the rest of its last day, and a
+       date metafield (UTC midnight) is not compared against a shop-local
+       midnight — that mismatch dropped the final valid day west of UTC.
+     - `| plus: 0` then forces INTEGER comparison. Liquid would otherwise
+       compare the two as strings: `>=` on strings is lexicographic, and an
+       unparseable metafield ("soon") survives `date` unchanged and would
+       sort ABOVE any ISO date — publishing "soon" as priceValidUntil, i.e.
+       the very fabrication this code exists to prevent. As an integer it
+       coerces to 0 and is dropped.
+  {%- endcomment -%}
+  {%- liquid
     assign p_valid_until = ''
     assign pvu_raw = product.metafields.custom.price_valid_until.value
     if pvu_raw != blank
@@ -144,11 +152,15 @@
     assign variant_count = product.variants | size
     assign max_variant_offers = 25
 
-    # Above the threshold there are no Offers to carry sku/gtin, and Google
-    # Merchant listings need SOME product identifier — so the AggregateOffer
-    # case (like the single-variant case) puts them on the Product. `first`,
-    # never `selected_or_first_available_variant`: the output must not depend
-    # on `?variant=`.
+  -%}
+  {%- comment -%}
+    Above the threshold there are no Offers to carry sku/gtin, and Google
+    Merchant listings need SOME product identifier — so the AggregateOffer
+    case (like the single-variant case) puts them on the Product. `first`,
+    never `selected_or_first_available_variant`: the output must not depend
+    on `?variant=`.
+  {%- endcomment -%}
+  {%- liquid
     assign id_variant = nil
     if variant_count == 1 or variant_count > max_variant_offers
       assign id_variant = product.variants | first
@@ -171,12 +183,16 @@
       endif
     endif
 
-    # AggregateOffer inputs. Availability has to be aggregated rather than
-    # omitted: a product whose 30 variants are ALL sold out would otherwise
-    # hand Google prices with no availability signal at all — the same false
-    # claim the per-variant branch exists to avoid. lowPrice/highPrice come
-    # from the AVAILABLE variants while there are any, so the advertised price
-    # is one a shopper can actually pay.
+  -%}
+  {%- comment -%}
+    AggregateOffer inputs. Availability has to be aggregated rather than
+    omitted: a product whose 30 variants are ALL sold out would otherwise
+    hand Google prices with no availability signal at all — the same false
+    claim the per-variant branch exists to avoid. lowPrice/highPrice come
+    from the AVAILABLE variants while there are any, so the advertised price
+    is one a shopper can actually pay.
+  {%- endcomment -%}
+  {%- liquid
     assign agg_avail_count = 0
     assign agg_backorder_count = 0
     assign agg_has_low = false
@@ -551,7 +567,11 @@
         endif
 
         assign v_duration = ''
-        if v_media.duration and v_media.duration > 0
+        # >= 1000, not > 0: duration is MILLISECONDS here and whole seconds in
+        # ISO-8601, so a 900 ms clip passes '> 0', integer-divides to zero and
+        # publishes 'PT0M0S' - a claim that the video has no length. Omitting
+        # is the same choice priceValidUntil makes; duration is RECOMMENDED.
+        if v_media.duration and v_media.duration >= 1000
           assign v_secs = v_media.duration | divided_by: 1000
           assign v_mins = v_secs | divided_by: 60
           assign v_rest = v_secs | modulo: 60
@@ -625,6 +645,7 @@
     like" with a picture of something else.
   {%- endcomment -%}
   {%- assign v_gallery_urls = '' -%}
+  {%- assign v_seen_toks = ',' -%}
   {%- liquid
     for v_variant in product.variants
       assign v_order_mf = v_variant.metafields.custom.variant_gallery_order
@@ -633,7 +654,14 @@
           if v_entry.kind == 'url'
             assign v_tok = v_entry.value | append: '' | strip | url_encode
             if v_tok != blank
-              assign v_gallery_urls = v_gallery_urls | append: v_tok | append: ','
+              # Dedup at ACCUMULATION, not at emission: the same video hangs on every
+              # variant, and each token costs one snippet render before the emission
+              # check could drop it. variant-gallery-embed.liquid uses this set.
+              assign v_needle_tok = ',' | append: v_tok | append: ','
+              unless v_seen_toks contains v_needle_tok
+                assign v_seen_toks = v_seen_toks | append: v_tok | append: ','
+                assign v_gallery_urls = v_gallery_urls | append: v_tok | append: ','
+              endunless
             endif
           endif
         endfor
@@ -643,7 +671,14 @@
         for v_extvid in v_extvid_mf.value
           assign v_tok = v_extvid | append: '' | strip | url_encode
           if v_tok != blank
-            assign v_gallery_urls = v_gallery_urls | append: v_tok | append: ','
+            # Dedup at ACCUMULATION, not at emission: the same video hangs on every
+            # variant, and each token costs one snippet render before the emission
+            # check could drop it. variant-gallery-embed.liquid uses this set.
+            assign v_needle_tok = ',' | append: v_tok | append: ','
+            unless v_seen_toks contains v_needle_tok
+              assign v_seen_toks = v_seen_toks | append: v_tok | append: ','
+              assign v_gallery_urls = v_gallery_urls | append: v_tok | append: ','
+            endunless
           endif
         endfor
       endif
@@ -656,7 +691,8 @@
       {%- assign v_gurl = v_tok | url_decode -%}
       {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text; the strip is mandatory - capture keeps every whitespace byte) {%- endcomment -%}
       {%- capture v_pair -%}{%- render 'cp-external-video', url: v_gurl -%}{%- endcapture -%}
-      {%- assign v_pair = v_pair | strip -%}
+      {%- comment -%} Shopify annotates a snippet render with "<!-- BEGIN app snippet: … -->" markers, and capture keeps them. Which call site gets them is an ordering accident, so every one of them cuts them off. Both splits are no-ops on an unannotated value. {%- endcomment -%}
+{%- assign v_pair = v_pair | split: '-->' | last | split: '<!--' | first | strip -%}
       {%- assign v_ghost = v_pair | split: '|' | first | default: '' -%}
       {%- assign v_gid = v_pair | split: '|' | last | default: '' -%}
       {%- if v_ghost == 'youtube' and v_gid != blank -%}
@@ -766,7 +802,7 @@
       "type": "checkbox",
       "id": "enable_product",
       "label": "Product (product pages)",
-      "info": "Most themes emit their own product markup. Both at once is not merely duplicated but INVALID: this block uses the same @id as the theme on purpose, because it is meant to replace it, so Google merges the two into one node and every field both sides deliver ends up twice. Check step 3 of the app's Structured data section before switching this on. Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
+      "info": "Most themes emit their own product markup. Both at once is not just duplicated but INVALID: this block uses the theme's @id on purpose, because it is meant to REPLACE it, so Google merges the two and every field both sides deliver appears twice. Check step 3 of the app's Structured data section first. Optional: the product metafield \"custom.price_valid_until\" (type date) is published as priceValidUntil; left unset the property is omitted - the app never invents a price-guarantee date.",
       "default": true
     },
     {
@@ -791,7 +827,7 @@
       "type": "checkbox",
       "id": "enable_video",
       "label": "Video (product pages)",
-      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos in your product media, and for YouTube links that only live in a variant gallery - deduplicated, so one video shared by twelve variants stays one entry. The upload date Google asks for is filled in automatically from the product sync; to state a different one, set the product metafield \"custom.video_upload_date\" (type date) and it wins. A gallery link has no file behind it and therefore no automatic date: without that metafield the property is omitted rather than guessed, and the video rich result stays incomplete. Vimeo gallery links are skipped entirely - the rich result needs a thumbnail and none can be derived from a Vimeo link.",
+      "info": "Emits VideoObject for videos in your product media AND for YouTube links that only live in a variant gallery, deduplicated per product. Google requires an upload date: for product media the sync fills it in automatically. A gallery link has no file behind it, so it is delivered WITHOUT a date - omitted rather than guessed - and Google may then not accept it as a rich result. Vimeo gallery links are skipped: no thumbnail can be derived.",
       "default": true
     },
     {

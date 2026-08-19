@@ -31,6 +31,7 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { StepTile } from "../components/seo/StepTile";
+import { loadCrawlMarkupPages } from "../services/seo/crawl-markup-rows.server";
 import {
   buildOrganizationJsonLd,
   buildProductJsonLd,
@@ -51,6 +52,8 @@ import {
   APP_SOCIAL_TAGS,
   actionTone,
   activationGate,
+  embedBadgeVerdict,
+  scopeCovered,
   activationTone,
   groupGatesByAction,
   statForSwitch,
@@ -418,12 +421,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Both halves read the SAME snapshot, deliberately in one place: two
   // separate single-flight queries would let the two reports drift apart by a
   // crawl and there is no way for a merchant to notice that from the page.
+  const crawlMarkup = await loadCrawlMarkupPages(db, shop).catch(() => null);
   const [liveJsonLd, liveSocial] = await Promise.all([
-    summarizeLiveJsonLd(db, shop).catch(() => null),
-    summarizeLiveSocial(db, shop).catch(() => null),
+    summarizeLiveJsonLd(db, shop, crawlMarkup ?? undefined).catch(() => null),
+    summarizeLiveSocial(db, shop, crawlMarkup ?? undefined).catch(() => null),
   ]);
 
   return json({
+    shop,
+    apiKey,
     previews,
     brandingUrl,
     sampleProductAdminUrl,
@@ -468,6 +474,8 @@ const FIX_LINK_BY_CODE: Record<string, FixLinkKind> = {
 
 export default function SeoStructuredData() {
   const {
+    shop,
+    apiKey,
     previews,
     brandingUrl,
     sampleProductAdminUrl,
@@ -486,8 +494,15 @@ export default function SeoStructuredData() {
   const soc = (s as any).social as Record<string, any>;
 
   /** Every app embed is activated in Settings → Setup, not from here. */
-  const openEmbedSettings = () =>
-    handleNavigate("/app/settings", { searchParams: new URLSearchParams({ tab: "setup" }) });
+  // Straight to the switch, not to Settings. The activation card is where the
+  // decision is made, and a merchant who just read "do not switch this on"
+  // should not have to find the embed on another page first. The deep link
+  // must use the app's api_key (Shopify client_id), NOT the extension UID:
+  // the uuid form is deprecated and answers "app embed doesn't exist".
+  const buildEmbedUrl = (blockHandle: string) =>
+    `https://${shop}/admin/themes/current/editor?context=apps&activateAppId=${apiKey}/${blockHandle}`;
+  const jsonLdEmbedUrl = buildEmbedUrl("structured-data");
+  const socialEmbedUrl = buildEmbedUrl("social-meta");
 
   // Delivery before data quality before activation. The section used to open
   // with the activation buttons and put the measurement below them — i.e. in
@@ -571,7 +586,20 @@ export default function SeoStructuredData() {
     </Badge>
   );
   const hintCopy = (s as any).hints as Record<string, string>;
+  // The raw severity ("error" | "warning" | "info") used to be printed into
+  // the badge untranslated — English words in a German and a Spanish UI.
+  const severityCopy = (s as any).severityLabels as Record<string, string> | undefined;
   const act = (s as any).activation as Record<string, any>;
+  const gv = (s as any).galleryVideos as Record<string, string>;
+  /**
+   * The sweep that rode along on the batch check — see JsonLdAuditAggregate.
+   * `undefined` (never checked, or a task result from before it existed) and
+   * `null` (the sweep ran and was refused) are kept APART on purpose: the first
+   * is answered by pressing the button, the second is not, and a shop whose
+   * sweep throttles every time would otherwise see the pre-feature page forever
+   * with the failure only in a log line.
+   */
+  const galleryVideos = jsonLdAudit ? jsonLdAudit.galleryVideos : undefined;
 
   // §1.2 — the gate. `measured` is deliberately strict: no crawl at all AND a
   // snapshot whose jsonLdTypes column is empty everywhere both count as "not
@@ -580,6 +608,13 @@ export default function SeoStructuredData() {
   // "appPages === 0" as "none of these are ours".
   const jsonLdMeasured = jsonLdKnown;
   const jsonLdOriginKnown = liveJsonLd?.appEmbedDetected === true;
+  // "The crawl saw no article page" and "this shop has no articles" look the
+  // same in a page count and mean opposite things for a switch that emits on
+  // article pages. The coverage rows carry the catalogue size, so the gate can
+  // tell them apart instead of blocking a blogless shop for good.
+  const jsonLdCatalogTotals = Object.fromEntries(
+    (liveJsonLd?.coverage ?? []).map((c) => [c.resourceType, c.catalogTotal]),
+  );
   const switchGates = JSON_LD_SWITCHES.map((sw) => ({
     ...sw,
     // Scoped, never shop-wide: our block emits FAQPage on PRODUCT pages only,
@@ -587,6 +622,20 @@ export default function SeoStructuredData() {
     gate: activationGate(statForSwitch(liveJsonLd?.typeStats, sw.type, sw.scopes), {
       measured: jsonLdMeasured,
       originKnown: jsonLdOriginKnown,
+      // "No bucket" is ambiguous — it is what an untouched page kind and an
+      // UNCRAWLED one look like alike. A switch is only judged where the crawl
+      // actually saw at least one page of its scope.
+      //
+      // `scopes: null` means SHOP-WIDE (Organization sits on every page), and
+      // `null ?? []` turned that into an empty list whose `.some()` is always
+      // false — so Organization reported "not measured" after every crawl, for
+      // good. A shop-wide switch is covered as soon as ANY page was judged.
+      scopeCovered: scopeCovered(
+        sw.scopes,
+        liveJsonLd?.scopePages,
+        liveJsonLd?.pagesChecked ?? 0,
+        jsonLdCatalogTotals,
+      ),
     }),
   }));
 
@@ -611,7 +660,11 @@ export default function SeoStructuredData() {
   // an unmeasured shop gets no green light, and that a measured conflict in
   // one family is not softened by the other family being fine.
   const jsonLdWorst = worstActivationVerdict(switchGates.map((g) => g.gate.verdict));
+  // Card badges answer "can I switch this EMBED on", not "how bad is the worst
+  // type" — see embedBadgeVerdict. The tile badge below keeps the severity roll-up.
+  const jsonLdBadge = embedBadgeVerdict(switchGates.map((g) => g.gate.verdict));
   const socialWorst = worstActivationVerdict(socialGates.map((g) => g.gate.verdict));
+  const socialBadge = embedBadgeVerdict(socialGates.map((g) => g.gate.verdict));
   const activationWorst = worstActivationVerdict([jsonLdWorst, socialWorst]);
   const activationBadge =
     activationWorst === "unknown" ? (
@@ -853,7 +906,39 @@ export default function SeoStructuredData() {
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{(s as any).introBody1 as string}</Text>
             <Text as="p" variant="bodyMd">{(s as any).introBody2 as string}</Text>
-            <Text as="p" variant="bodyMd">{(s as any).introBody3 as string}</Text>
+            {/* One row per step, stacked: the three tiles below are a
+                SEQUENCE, and as a single paragraph they read like three equal
+                options — which is how a merchant ends up in step 3 before
+                step 1 has measured anything. Each row wears the colour its
+                tile wears, so "Schritt 3" here and the third card are
+                recognisably the same thing; the badge REPLACES the bold
+                prefix rather than joining it, saying it twice is noise. */}
+            <BlockStack gap="200">
+              {([
+                ["introStepBadge1", "introStep1", "info"],
+                ["introStepBadge2", "introStep2", "attention"],
+                ["introStepBadge3", "introStep3", "magic"],
+              ] as const).map(([badgeKey, textKey, tone]) => (
+                <InlineStack key={badgeKey} gap="200" blockAlign="start" wrap={false}>
+                  <div style={{ flexShrink: 0 }}>
+                    <Badge tone={tone}>{(s as any)[badgeKey] as string}</Badge>
+                  </div>
+                  <Text as="p" variant="bodyMd">{(s as any)[textKey] as string}</Text>
+                </InlineStack>
+              ))}
+            </BlockStack>
+            {/* Where those numbers come from — the one thing this page never
+                said, so "not measured" sent people hunting for a refresh
+                button that lives on another page. A real button, not a text
+                link: it is the action the sentence above asks for. */}
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd">{emphasize((s as any).introCrawlNote as string)}</Text>
+              <InlineStack>
+                <Button onClick={() => handleNavigate("/app/seo/crawl")}>
+                  {live.goToCrawl}
+                </Button>
+              </InlineStack>
+            </BlockStack>
           </BlockStack>
         </SeoHelpBanner>
 
@@ -872,6 +957,7 @@ export default function SeoStructuredData() {
             title={live.stepTitle}
             body={live.stepBody}
             badge={deliveryBadge}
+            accent="info"
           />
           <StepTile
             selected={step === "data"}
@@ -880,6 +966,7 @@ export default function SeoStructuredData() {
             title={b.stepTitle}
             body={b.stepBody}
             badge={dataBadge}
+            accent="caution"
           />
           <StepTile
             selected={step === "activate"}
@@ -888,6 +975,7 @@ export default function SeoStructuredData() {
             title={act.stepTitle as string}
             body={act.stepBody as string}
             badge={activationBadge}
+            accent="magic"
           />
         </InlineGrid>
 
@@ -1206,7 +1294,10 @@ export default function SeoStructuredData() {
         )}
 
         {/* Step 2 — whether the CATALOG carries the data a rich result needs.
-            Reads the DB cache, never a live page. */}
+            The JSON-LD half reads the DB cache; the gallery-video half of the
+            same batch check is a bounded live Admin sweep, because the two
+            metafields it needs are mirrored nowhere. Neither reads a live PAGE
+            — that is step 1's job. */}
         {step === "data" && (
           <BlockStack gap="400">
           {/* 3. What you see below (preview intro + schema types) */}
@@ -1229,13 +1320,132 @@ export default function SeoStructuredData() {
                     </Badge>
                   ))}
                 </InlineStack>
-                {/* Both of these come from native media / a metafield on the
-                    storefront, so they have no counterpart in the preview
-                    below — which is built from the DB cache. Saying so beats
-                    letting a merchant conclude the video markup is missing. */}
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {(s as any).schemaVideoNote as string}
-                </Text>
+                {/* One box for the three things that are BACKGROUND rather
+                    than action: what the preview below cannot show, why a
+                    gallery video needs a date, and what FAQ waits for.
+                    They stood as three loose subdued lines in three places
+                    and were read as footnotes — a merchant skipped exactly
+                    the sentence that explains a missing preview entry. The
+                    gallery RESULT stays outside: a finding a merchant has to
+                    act on must not sit in the same grey box as the reasons. */}
+                <Banner tone="info">
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm">
+                      {emphasize((s as any).schemaVideoNote as string)}
+                    </Text>
+                    <Text as="p" variant="bodySm">
+                      {emphasize((s as any).schemaVideoDateNote as string)}
+                    </Text>
+                    <Text as="p" variant="bodySm">
+                      {emphasize((s as any).schemaFaqNote as string)}
+                    </Text>
+                  </BlockStack>
+                </Banner>
+                {/* The RESULT of the sweep, in three states that must not be
+                    confused: it never ran or was refused, it ran and found
+                    none, or it found some and names them. Why a date can be
+                    missing at all is explained once, in the box above. */}
+                {/* `null` means the sweep RAN and was refused — a state the
+                    button cannot fix by being pressed again, so it must not
+                    look like "never checked". `undefined` is a result from
+                    before the sweep existed and says nothing at all, so it
+                    prints nothing: the reason why a date can be missing is
+                    already in the box above. */}
+                {!galleryVideos ? (
+                  galleryVideos === null ? (
+                    <Text as="p" variant="bodySm" tone="subdued">{gv.failed as string}</Text>
+                  ) : null
+                ) : galleryVideos.totalProducts === 0 ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(gv.none as string).replace(
+                      "{variants}",
+                      String(galleryVideos.scannedVariants),
+                    )}
+                    {/* A sweep that broke off part-way found nothing SO FAR —
+                        which is not the same as nothing being there. */}
+                    {galleryVideos.capped ? ` ${gv.capped as string}` : ""}
+                  </Text>
+                ) : (
+                  <Banner tone={galleryVideos.missingDate > 0 || (galleryVideos.mediaMissingDate ?? 0) > 0 ? "warning" : "info"}>
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">
+                        {(gv.found as string)
+                          .replace("{products}", String(galleryVideos.totalProducts))
+                          .replace("{missing}", String(galleryVideos.missingDate))}
+                      </Text>
+                      {galleryVideos.missingDate > 0 && (
+                        <Text as="p" variant="bodySm">{emphasize(gv.externalNote as string)}</Text>
+                      )}
+                      {/* The other half, and a different remedy: a video in the
+                          product's OWN media gets its date from the sync, so a
+                          resync fixes it and nobody has to type one. Counted
+                          and phrased separately for exactly that reason —
+                          `?? 0` keeps a task result from before this existed
+                          silent instead of reporting a confident zero. */}
+                      {(galleryVideos.mediaMissingDate ?? 0) > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {emphasize(
+                            (gv.mediaMissing as string).replace(
+                              "{count}",
+                              String(galleryVideos.mediaMissingDate),
+                            ),
+                          )}
+                        </Text>
+                      )}
+                      {/* A Vimeo gallery video produces no markup at all, so a
+                          date would not help it — said whenever one is present,
+                          not only when a product has nothing else, or a product
+                          with one YouTube and one Vimeo video reads as fine. */}
+                      {galleryVideos.withVimeo > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {(gv.vimeo as string).replace(
+                            "{count}",
+                            String(galleryVideos.withVimeo),
+                          )}
+                        </Text>
+                      )}
+                      {galleryVideos.capped && (
+                        <Text as="p" variant="bodySm" tone="subdued">{gv.capped as string}</Text>
+                      )}
+                      <BlockStack gap="050">
+                        {galleryVideos.products.map((prod) => (
+                          <InlineStack key={prod.id} gap="200" blockAlign="center" wrap>
+                            <Button
+                              variant="plain"
+                              onClick={() => openBatchItemInEditor("product", prod.id)}
+                            >
+                              {prod.title}
+                            </Button>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {(prod.hasUploadDate ? (gv.rowOk as string) : (gv.rowMissing as string))
+                                .replace("{youtube}", String(prod.youtube))
+                                .replace("{vimeo}", String(prod.vimeo))}
+                              {(prod.mediaMissingDate ?? 0) > 0
+                                ? ` · ${(gv.rowMedia as string).replace("{count}", String(prod.mediaMissingDate))}`
+                                : ""}
+                            </Text>
+                          </InlineStack>
+                        ))}
+                        {galleryVideos.totalProducts > galleryVideos.products.length && (
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {b.moreItems.replace(
+                              "{count}",
+                              String(galleryVideos.totalProducts - galleryVideos.products.length),
+                            )}
+                          </Text>
+                        )}
+                      </BlockStack>
+                      {/* A merchant who fixed the products and did not re-run
+                          the check would otherwise read a stale list as current. */}
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {b.lastChecked.replace(
+                          "{time}",
+                          new Date(galleryVideos.generatedAt).toLocaleString(),
+                        )}
+                      </Text>
+                    </BlockStack>
+                  </Banner>
+                )}
               </BlockStack>
             </BlockStack>
           </Card>
@@ -1279,7 +1489,7 @@ export default function SeoStructuredData() {
                             <BlockStack key={i} gap="100">
                               <InlineStack gap="100" blockAlign="center">
                                 <Badge tone={severityTone(w.severity)}>
-                                  {w.severity}
+                                  {severityCopy?.[w.severity] || w.severity}
                                 </Badge>
                                 <Text as="span" variant="bodySm">
                                   {localizedMessage}
@@ -1290,12 +1500,12 @@ export default function SeoStructuredData() {
                                   {hint}
                                 </Text>
                               ) : null}
-                              {/* The embed fix-up is an in-app navigation to
-                                  Settings → Setup; the others are external
-                                  admin links. */}
+                              {/* Every fix-up here is an external admin link:
+                                  the embed one goes straight to its switch in
+                                  the theme editor. */}
                               {linkKind === "themeEditorJsonLd" ? (
                                 <InlineStack>
-                                  <Button onClick={openEmbedSettings} variant="plain">
+                                  <Button url={jsonLdEmbedUrl} target="_blank" variant="plain">
                                     {fixLabel}
                                   </Button>
                                 </InlineStack>
@@ -1330,9 +1540,9 @@ export default function SeoStructuredData() {
               )}
             </BlockStack>
           </Card>
-          // Phase 5 (PLAN_SEO_SUITE_COMPLETION.md §7): validateJsonLd over the
-          // WHOLE cached catalog instead of one example item per type,
-          // aggregated by warning code.
+          {/* Phase 5 (PLAN_SEO_SUITE_COMPLETION.md §7): validateJsonLd over the
+              WHOLE cached catalog instead of one example item per type,
+              aggregated by warning code. */}
           <Card>
             <BlockStack gap="300">
               <InlineStack align="space-between" blockAlign="center">
@@ -1446,12 +1656,12 @@ export default function SeoStructuredData() {
                   <InlineStack gap="200" blockAlign="center" wrap>
                     <Text as="h2" variant="headingMd">{act.switchesTitle as string}</Text>
                     {jsonLdMeasured && (
-                      <Badge tone={activationTone(jsonLdWorst)}>
-                        {(act.verdictLabels as Record<string, string>)[jsonLdWorst]}
+                      <Badge tone={activationTone(jsonLdBadge)}>
+                        {(act.verdictLabels as Record<string, string>)[jsonLdBadge]}
                       </Badge>
                     )}
                   </InlineStack>
-                  <Button onClick={openEmbedSettings} variant="primary">
+                  <Button url={jsonLdEmbedUrl} target="_blank" variant="primary">
                     {act.openSwitches as string}
                   </Button>
                 </InlineStack>
@@ -1485,7 +1695,7 @@ export default function SeoStructuredData() {
                 {jsonLdMeasured && !jsonLdOriginKnown && (
                   // Without the marker every "not ours" reading collapses to
                   // "we could not tell" — said once, not under all seven rows.
-                  <Banner tone="warning">
+                  <Banner tone="info">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm">{emphasize(act.originUnknownHint as string)}</Text>
                       <div>
@@ -1526,12 +1736,12 @@ export default function SeoStructuredData() {
                   <InlineStack gap="200" blockAlign="center" wrap>
                     <Text as="h2" variant="headingMd">{act.socialSwitchesTitle as string}</Text>
                     {socialMeasured && (
-                      <Badge tone={activationTone(socialWorst)}>
-                        {(act.verdictLabels as Record<string, string>)[socialWorst]}
+                      <Badge tone={activationTone(socialBadge)}>
+                        {(act.verdictLabels as Record<string, string>)[socialBadge]}
                       </Badge>
                     )}
                   </InlineStack>
-                  <Button onClick={openEmbedSettings} variant="primary">
+                  <Button url={socialEmbedUrl} target="_blank" variant="primary">
                     {act.openSwitches as string}
                   </Button>
                 </InlineStack>
@@ -1560,7 +1770,7 @@ export default function SeoStructuredData() {
                 )}
 
                 {socialMeasured && !socialOriginKnown && (
-                  <Banner tone="warning">
+                  <Banner tone="info">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm">{emphasize(act.socialOriginUnknownHint as string)}</Text>
                       <div>

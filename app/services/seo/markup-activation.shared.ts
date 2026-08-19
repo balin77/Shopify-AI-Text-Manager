@@ -62,6 +62,17 @@ export interface MarkupTypeStat {
    * clean" — the gate must never dress that up as a verified result.
    */
   repeatable: boolean;
+  /**
+   * Pages where EVERY copy of this type carries our marker — i.e. the count we
+   * emitted equals the count served. For a repeatable type this is the only
+   * thing that separates "we are on every such page" from "we are the only
+   * source on every such page"; `appPages` cannot, because our three videos and
+   * a theme's fourth look the same from a page-presence count.
+   *
+   * Optional so a producer that cannot answer it (or predates it) keeps the
+   * cautious old behaviour instead of claiming proof it never had.
+   */
+  appAllCopiesPages?: number;
 }
 
 export type ActivationVerdict =
@@ -76,18 +87,17 @@ export type ActivationVerdict =
   /** Served on some pages by us and on others by someone else. */
   | "mixed"
   /**
-   * Served, but nothing can say by whom. TWO causes produce this and the data
-   * cannot tell them apart: the crawl predates the `data-contentpilot` marker,
-   * OR our embed is switched off — with the embed off no page can carry the
-   * marker, so `appEmbedDetected` is `null` forever and no amount of
-   * re-crawling resolves it.
+   * Served, and nothing can PROVE by whom.
    *
-   * The second cause is the NORMAL state of the merchant this whole section
-   * was built for: embed off, theme serving the type, about to tick the box.
-   * So the copy must name both causes and give the conclusion that holds under
-   * either — do not switch it ON, and if it is already on, change nothing until
-   * a crawl can tell. Claiming one cause as fact (which the first cut did) is
-   * the inverse of the rule the rest of this module enforces.
+   * Two causes produce it and the data cannot separate them: the crawl predates
+   * the `data-contentpilot` marker, or our embed is switched off — with the
+   * embed off no page can carry the marker, so `appEmbedDetected` is `null`
+   * forever and re-crawling resolves nothing.
+   *
+   * Not reachable while `UNMARKED_COUNTS_AS_FOREIGN` is true (see there): the
+   * unproven case is attributed to the theme instead, which is the product
+   * decision, not a change in what the data supports. It stays in the type, in
+   * the gate and in the tests so restoring the hedge is one constant.
    */
   | "originUnknown"
   /** Repeatable type we co-deliver: same-page duplication is unjudgeable. */
@@ -109,6 +119,35 @@ export interface ActivationGate {
 }
 
 /**
+ * PRODUCT DECISION (2026-08-19, by the app's owner): markup we cannot PROVE is
+ * ours is attributed to the theme, instead of reported as "origin unknown".
+ *
+ * The evidence has not changed — `data-contentpilot` is still the only way to
+ * tell two identical blocks apart, and its absence still has two causes: our
+ * embed is off, or the crawl predates the marker (JSON-LD 2026-08-17, social
+ * 2026-08-18). What changed is the judgement about which one is likely: the SEO
+ * section went live days ago with very few installs, so a shop holding a crawl
+ * older than the marker AND running the embed is close to hypothetical, while
+ * "origin unknown" was the state almost every merchant would actually see.
+ * Hedging on a rare case at the cost of the common one is the worse trade.
+ *
+ * Know exactly what this buys and costs before touching it:
+ *  - It cannot cause double markup. Under BOTH causes the type is already on
+ *    the page, so "already served, do not switch on" is right either way; only
+ *    the attribution ("by your theme") can be wrong.
+ *  - The failure mode is a merchant hunting through a theme for markup that is
+ *    actually their own app's. The section says so in one line whenever no
+ *    marker was seen, and offers the crawl that settles it.
+ *
+ * Flip this back to `false` when the install base grows enough that the rare
+ * case stops being rare, or replace it outright the day the marker's release
+ * date is a known fact: a crawl newer than that date which found no marker
+ * anywhere PROVES the embed is off, and then the attribution is measured
+ * rather than assumed. That is the version this constant is a placeholder for.
+ */
+export const UNMARKED_COUNTS_AS_FOREIGN = true;
+
+/**
  * `measured` is the discriminator, and it is the caller's job to be strict
  * about it: pass `false` for "no crawl" AND for a snapshot whose column is
  * empty everywhere (`notMeasured`). `originKnown` is the second, weaker one —
@@ -117,10 +156,17 @@ export interface ActivationGate {
  */
 export function activationGate(
   stat: MarkupTypeStat | undefined,
-  opts: { measured: boolean; originKnown: boolean },
+  opts: { measured: boolean; originKnown: boolean; scopeCovered?: boolean },
 ): ActivationGate {
   const empty = { pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false };
   if (!opts.measured) return { verdict: "unknown", ...empty };
+  // A crawl that ran is not a crawl that looked HERE. With no page of this
+  // switch's scope judged, `pages === 0` below would read as "nothing serves
+  // it" and hand out the green "safe to switch on" — for a page kind we have
+  // no measurement of, which is exactly the duplicate damage the gate exists
+  // to prevent. Absent flag = covered, so callers that cannot answer the
+  // question keep the previous behaviour rather than turning grey by accident.
+  if (opts.scopeCovered === false) return { verdict: "unknown", ...empty };
 
   const s: MarkupTypeStat = stat ?? { type: "", resourceType: "", ...empty };
   const base = {
@@ -139,14 +185,17 @@ export function activationGate(
   // whole plan is about, and it is actionable in exactly one of two ways.
   if (s.duplicatePages > 0) {
     if (s.appIsOneCopy > 0) return { verdict: "duplicateApp", ...base };
-    // Without the marker we cannot claim the duplication is none of ours; with
-    // it, "turn our switch off" would be the wrong advice, so say whose it is.
-    return { verdict: opts.originKnown ? "duplicateForeign" : "originUnknown", ...base };
+    // None of the copies carries our marker. With the marker seen elsewhere
+    // that is proof; without it, it is the assumption UNMARKED_COUNTS_AS_FOREIGN
+    // records. Either way "turn our switch off" would be the wrong advice here.
+    const foreign = opts.originKnown || UNMARKED_COUNTS_AS_FOREIGN;
+    return { verdict: foreign ? "duplicateForeign" : "originUnknown", ...base };
 
   }
 
   if (s.appPages === 0) {
-    return { verdict: opts.originKnown ? "foreignOnly" : "originUnknown", ...base };
+    const foreign = opts.originKnown || UNMARKED_COUNTS_AS_FOREIGN;
+    return { verdict: foreign ? "foreignOnly" : "originUnknown", ...base };
   }
 
   // From here on at least one copy is provably ours.
@@ -155,7 +204,15 @@ export function activationGate(
   // the theme can both emit three VideoObjects on the same page and the
   // duplicate rule — correctly — stays quiet, so `appPages === pages` proves
   // only that we are on every such page, never that we are the only source.
-  if (s.repeatable) return { verdict: "repeatableUnjudged", ...base };
+  if (s.repeatable) {
+    // …unless every copy on every such page is provably ours. Counting beats
+    // presence here: `appPages === pages` says we are THERE, while an equal
+    // COUNT says nothing else is. Without that the switch a merchant has
+    // already turned on reported "not checkable" for good, which reads as a
+    // defect rather than as the caution it was meant to be.
+    if ((s.appAllCopiesPages ?? 0) >= s.pages) return { verdict: "appOnly", ...base };
+    return { verdict: "repeatableUnjudged", ...base };
+  }
 
   if (s.appPages >= s.pages) return { verdict: "appOnly", ...base };
   return { verdict: "mixed", ...base };
@@ -187,6 +244,63 @@ const VERDICT_SEVERITY: Record<ActivationVerdict, number> = {
   free: 0,
 };
 
+/**
+ * Badge for a whole EMBED, which is a different question from the badge for one
+ * type inside it.
+ *
+ * `worstActivationVerdict` answers "how bad is the worst type here" and is right
+ * for a tile that summarises severity. It is WRONG as advice about the embed:
+ * one already-served type made the card read "Nicht einschalten" while several
+ * other types were free, i.e. it told a merchant not to switch on an embed they
+ * should switch on and then configure. The embed is one switch; the types are
+ * checkboxes behind it.
+ *
+ * So a card only repeats a verdict when EVERY type agrees on it. Otherwise it
+ * says the verdicts differ and lets the rows below say which is which — the
+ * same reason the gate refuses to answer when it was not measured.
+ */
+/**
+ * Did the crawl look at any page this switch applies to?
+ *
+ * Lives here rather than at the call site because it shipped wrong there: a
+ * switch with `scopes: null` is SHOP-WIDE (Organization sits on every page),
+ * and `(scopes ?? []).some(...)` turns that into an empty list whose `.some`
+ * is always false — so Organization answered "not measured" after every crawl,
+ * permanently. An expression in a component is an expression nothing tests.
+ *
+ * The distinction it protects is still the original one: no bucket for a page
+ * KIND means the crawl never saw that kind, and reading that as "nothing serves
+ * it" would hand out the green light for a page kind nobody measured.
+ */
+export function scopeCovered(
+  scopes: string[] | null,
+  scopePages: Record<string, number> | undefined,
+  pagesChecked: number,
+  catalogTotals?: Record<string, number>,
+): boolean {
+  if (scopes === null) return pagesChecked > 0;
+  // EVERY scope, not some. A switch emits on ALL of its page kinds, so one
+  // unmeasured kind is enough to make "nothing serves this" a guess:
+  // `enable_breadcrumb` covers product, collection AND article, and with only
+  // products crawled `.some()` handed out the green "safe to switch on" —
+  // then BreadcrumbList shipped twice on every collection and article page.
+  return scopes.every((rt) => {
+    if ((scopePages?.[rt] ?? 0) > 0) return true;
+    // …with one exception, or a shop without a blog could never judge a
+    // switch again: a kind the shop does not HAVE is not an unmeasured kind.
+    // Unknown catalogue (no entry) stays cautious rather than assuming zero.
+    return catalogTotals?.[rt] === 0;
+  });
+}
+
+export type EmbedBadgeVerdict = ActivationVerdict | "varies";
+
+export function embedBadgeVerdict(verdicts: ActivationVerdict[]): EmbedBadgeVerdict {
+  if (verdicts.length === 0) return "unknown";
+  const distinct = new Set(verdicts);
+  return distinct.size === 1 ? verdicts[0] : "varies";
+}
+
 /** The worst of several verdicts. `free` for an empty list — nothing to warn about. */
 export function worstActivationVerdict(verdicts: ActivationVerdict[]): ActivationVerdict {
   let worst: ActivationVerdict = "free";
@@ -198,7 +312,7 @@ export function worstActivationVerdict(verdicts: ActivationVerdict[]): Activatio
 
 /** Polaris tone for a verdict badge. `unknown` stays neutral on purpose. */
 export function activationTone(
-  verdict: ActivationVerdict,
+  verdict: EmbedBadgeVerdict,
 ): "success" | "critical" | "warning" | "info" | undefined {
   switch (verdict) {
     case "free":
@@ -215,6 +329,7 @@ export function activationTone(
       return "warning";
     case "repeatableUnjudged":
       return "info";
+    case "varies":
     case "unknown":
     default:
       return undefined;
@@ -264,7 +379,10 @@ export type ActivationAction =
   | "running" // ours, exactly once — the intended end state
   | "hold" // already served by someone: do not switch ours on
   | "switchOff" // duplicated, one copy ours — our switch fixes it
-  | "themeFix" // duplicated, none of it ours — fixable only in the theme
+  // Duplicated with no copy of ours: not fixable from this app. NOT "themeFix"
+  // — the second source is as often another app as it is the theme, and naming
+  // the theme sends a merchant to the one place the markup may not be.
+  | "foreignFix"
   | "noVerdict"; // not measured, or not judgeable (repeatable type)
 
 export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
@@ -274,7 +392,7 @@ export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
   mixed: "hold",
   originUnknown: "hold",
   duplicateApp: "switchOff",
-  duplicateForeign: "themeFix",
+  duplicateForeign: "foreignFix",
   unknown: "noVerdict",
   repeatableUnjudged: "noVerdict",
 };
@@ -282,7 +400,7 @@ export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
 /** Most urgent first — the order a summary line reads them in. */
 export const ACTION_ORDER: ActivationAction[] = [
   "switchOff",
-  "themeFix",
+  "foreignFix",
   "hold",
   "running",
   "enable",
@@ -311,7 +429,7 @@ export function groupGatesByAction<T>(
 export function actionTone(action: ActivationAction): "critical" | "warning" | "success" | "info" {
   switch (action) {
     case "switchOff":
-    case "themeFix":
+    case "foreignFix":
       return "critical";
     case "hold":
       return "warning";
@@ -368,8 +486,10 @@ export const JSON_LD_SWITCHES: MarkupSwitch[] = [
  * judged on. A page has exactly one `resourceType`, so the buckets are disjoint
  * and summing them is exact rather than an approximation.
  *
- * Returns undefined when no bucket matches — which `activationGate` reads as
- * "nothing serves it", the same as an explicit zero.
+ * Returns undefined when no bucket matches. That alone does NOT mean "nothing
+ * serves it": no bucket is also what an uncrawled page kind looks like, which
+ * is why the caller passes `scopeCovered` to `activationGate` separately —
+ * this function cannot tell the two apart and must not pretend to.
  */
 export function statForSwitch(
   stats: MarkupTypeStat[] | undefined,
@@ -381,6 +501,13 @@ export function statForSwitch(
     (s) => s.type === type && (scopes === null || scopes.includes(s.resourceType)),
   );
   if (matching.length === 0) return undefined;
+  // Every field of MarkupTypeStat has to be carried here, and forgetting one
+  // is silent: this function REBUILDS the object rather than spreading it, so
+  // a field left out simply arrives as undefined at the gate. That already
+  // happened once — appAllCopiesPages was dropped, and because the page feeds
+  // the gate exclusively through this function, the branch it unlocks was
+  // dead in the app while its own unit tests (which build the stat by hand)
+  // stayed green. Add a field to the interface ⇒ add it here.
   return matching.reduce<MarkupTypeStat>(
     (acc, s) => ({
       type,
@@ -390,6 +517,12 @@ export function statForSwitch(
       duplicatePages: acc.duplicatePages + s.duplicatePages,
       appIsOneCopy: acc.appIsOneCopy + s.appIsOneCopy,
       repeatable: acc.repeatable || s.repeatable,
+      // Stays undefined while NO contributing bucket could answer, so
+      // "the producer cannot tell" does not turn into a measured zero.
+      appAllCopiesPages:
+        acc.appAllCopiesPages === undefined && s.appAllCopiesPages === undefined
+          ? undefined
+          : (acc.appAllCopiesPages ?? 0) + (s.appAllCopiesPages ?? 0),
     }),
     { type, resourceType: "", pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false },
   );

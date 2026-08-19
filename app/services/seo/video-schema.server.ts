@@ -25,6 +25,7 @@ import {
   VIDEO_SCHEMA_KEY,
   VIDEO_SCHEMA_NAMESPACE,
   VIDEO_SCHEMA_TYPE,
+  failedBatchIndices,
   serializeVideoUploadDates,
   videoSchemaChanged,
   type VideoUploadDates,
@@ -214,15 +215,26 @@ async function clearBatch(admin: AdminApiContext, productIds: string[]): Promise
     // null === null forever, and the storefront would keep publishing an
     // uploadDate for a video that no longer exists.
     const payload = body?.data?.metafieldsDelete;
-    if (!payload || errors.length > 0) return confirmed;
+    if (!payload) return confirmed;
     const deletedOwners = new Set(
       (payload.deletedMetafields ?? []).map((d: any) => String(d?.ownerId ?? "")),
     );
-    for (const ownerId of productIds) {
-      // Shopify reports nothing for an owner that had no metafield — with the
-      // payload present and no userErrors, that IS the state we wanted.
-      if (deletedOwners.has(ownerId) || deletedOwners.size === 0) confirmed.add(ownerId);
-    }
+    // Failure is per ENTRY, not per batch. One stale product id among 25 must
+    // not strand the other 24: they would be retried on every sync forever,
+    // and the warning would name a batch rather than the row to fix.
+    const failed = errors.length > 0 ? failedBatchIndices(errors) : new Set<number>();
+    productIds.forEach((ownerId, index) => {
+      if (deletedOwners.has(ownerId)) {
+        confirmed.add(ownerId);
+        return;
+      }
+      // Shopify reports nothing for an owner that had no metafield. With the
+      // payload present and no error blaming THIS entry, that absence IS the
+      // state we wanted — checking the whole list's emptiness instead (what
+      // this did first) left every already-clean product in a mixed batch
+      // unconfirmed, so its mirror never advanced.
+      if (failed && !failed.has(index)) confirmed.add(ownerId);
+    });
   } catch (err) {
     logger.warn("[VideoSchema] metafieldsDelete failed", {
       error: err instanceof Error ? err.message : String(err),

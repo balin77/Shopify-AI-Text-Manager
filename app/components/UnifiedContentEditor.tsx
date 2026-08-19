@@ -7,6 +7,11 @@
 
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { isAttributeField } from "~/services/content-attributes.shared";
+import {
+  groupDetailsFields,
+  shouldRenderDetailsSections,
+  detailsSectionLabel,
+} from "~/config/details-sections";
 
 /**
  * Attribute field types that need the editor's full width.
@@ -34,12 +39,14 @@ import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import type { ReactNode } from "react";
+import type { RenderedGroupField } from "../types/content-editor.types";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "./unified/UnifiedLanguageBar";
+import { MarketPublicationNotice } from "./unified/MarketPublicationNotice";
 import { MobileToolbar } from "./unified/MobileToolbar";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
 import { OptionsField } from "./unified/OptionsField";
@@ -148,6 +155,17 @@ interface UnifiedContentEditorProps {
     totalCount: number;
     totalPages: number;
     search: string;
+    /**
+     * What is being paged, already translated and plural — "fields" when the
+     * caller says nothing.
+     *
+     * The theme pages really do page FIELDS. The metaobjects tab pages ENTRIES
+     * and each entry carries several fields, so the strip counted one thing and
+     * named another: "Showing 1-25 of 40 fields" over a list of forty entries,
+     * on the very page whose entries were already hard enough to tell from
+     * their details.
+     */
+    noun?: string;
   } | null;
 
   /** Optional: Handler for field page changes */
@@ -155,6 +173,9 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Handler for field search */
   onFieldSearch?: (search: string) => void;
+
+  /** Placeholder for the search box above the fields — same reason as `noun`. */
+  fieldSearchPlaceholder?: string;
 
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
@@ -168,8 +189,14 @@ interface UnifiedContentEditorProps {
    * entry's controls -- chrome the generic editor has no business knowing
    * about. Without this prop nothing changes: the fields render as a flat list
    * exactly as before.
+   *
+   * Each entry carries its DEFINITION and its current VALUE next to the
+   * rendered node, not just the node: a page that wants to put one control
+   * somewhere else (the metaobjects card lifts the colour into its header)
+   * has to be able to pick it out BY KEY rather than by position, and to paint
+   * the live value beside it while the merchant is still typing.
    */
-  renderFieldGroup?: (groupId: string, children: ReactNode[]) => ReactNode;
+  renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
 
   /**
    * Optional: values the create form opens with.
@@ -298,6 +325,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     apiVersion,
     planLimit,
     fieldPagination,
+    fieldSearchPlaceholder,
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
@@ -556,19 +584,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // counts, and the answer ("both, they write the same field") is not one a
       // merchant should have to work out.
       if (statusControl && field.key === statusControl.fieldKey) return false;
-      // §2.3 — the default price means "the first variant" and says so. That is
-      // only true while there IS one: with several, the per-variant panel owns
-      // pricing. Exactly ONE is therefore the only case this field can
-      // describe. `0` is not "no variants" — every product has at least one on
-      // Shopify — it is a row whose variants were never cached, and an empty
-      // price there ends in a refused save.
-      if (field.key === "price" && config.contentType === "products") {
-        const count = (selectedItem as { variantCount?: number | null } | null)?.variantCount;
-        if (count !== 1) return false;
-      }
       return true;
     });
-  }, [fieldDefinitions, statusControl, config.contentType, selectedItem]);
+  }, [fieldDefinitions, statusControl]);
 
   // Three splits, not two. The item's TEXT stays in the main card; the three
   // fields Shopify's own admin groups under "Search engine listing" (SEO
@@ -586,6 +604,13 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [visibleFields]
   );
   const attributeFields = useMemo(() => visibleFields.filter((f) => isAttributeField(f)), [visibleFields]);
+
+  // The Details card's own split into subcards. Derived from the ALREADY
+  // filtered list, so a section whose fields all dropped out (the status
+  // control is hoisted into the action bar, the default price only exists for
+  // a single-variant product) simply never appears.
+  const detailsSections = useMemo(() => groupDetailsFields(attributeFields), [attributeFields]);
+  const renderDetailsSections = shouldRenderDetailsSections(detailsSections);
 
   /**
    * Primary-language editing writes to a theme file (themeFilesUpsert), which
@@ -649,6 +674,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           apiVersion={apiVersion}
           onReloadAttributes={() => { void handleSyncAll(); }}
         />
+  );
+
+  /**
+   * The Details card's field grid: two columns where a field does not need a
+   * line of its own. A vendor is one word and a status is one dropdown; giving
+   * each the full width of the editor turned eight short answers into eight
+   * rows of mostly empty space. The wide ones keep the full width — a tag list,
+   * a membership picker and the stock panel all use it.
+   */
+  const renderAttributeGrid = (fields: FieldDefinition[]) => (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gap: "1rem",
+        alignItems: "start",
+      }}
+    >
+      {fields.map((field) => (
+        <div
+          key={field.key}
+          style={WIDE_ATTRIBUTE_FIELDS.has(field.type) ? { gridColumn: "1 / -1" } : undefined}
+        >
+          {renderEditorField(field)}
+        </div>
+      ))}
+    </div>
   );
 
   /** One dynamic field, with the product image gallery's replacement slot. */
@@ -1160,6 +1212,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // on the desktop list and creating is unreachable on a phone.
       onAddItem: createResources.length > 0 ? stableAddItem : null,
       addDisabledReason: createDisabledReason,
+      // The mobile mirror said `Add ${resourceName.singular}` in bare English,
+      // which on this tab named "Metaobject Type" -- the one object this app
+      // cannot create. It takes the same label the desktop bar shows.
+      addLabel: config.createSupport?.fromActionBar
+        ? t.content?.createEntryButtonLabel
+        : t.content?.createButtonLabel,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
@@ -1299,7 +1357,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
-          showAddButton={createResources.length > 0}
+          // Suppressed where the ACTION BAR carries create: the config comment
+          // argues that a "+" over a list of TYPES reads as "add a type", and
+          // leaving it standing next to the new button would have left exactly
+          // the click that lands in the wrong form.
+          showAddButton={createResources.length > 0 && !config.createSupport?.fromActionBar}
           onAddItem={handleAddItem}
           // Visible-but-disabled with the reason, the same as the mobile path.
           // Labelling it without disabling it let a merchant fill in a whole
@@ -1654,6 +1716,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           t={(t.content?.statusToggle ?? {}) as Record<string, string>}
                         />
                       )}
+                      {/* Create, where the item list does not list what gets
+                          created — see `createSupport.fromActionBar`. It calls
+                          the SAME `handleAddItem` as the "+" above the list, so
+                          the resource chooser and the prefill still apply and
+                          there is no second create path. */}
+                      {config.createSupport?.fromActionBar && createResources.length > 0 && (
+                        <DisabledActionTooltip hint={createDisabledReason ?? undefined}>
+                          <Button
+                            size="slim"
+                            variant="primary"
+                            icon={PlusIcon}
+                            disabled={!!createDisabledReason}
+                            onClick={handleAddItem}
+                          >
+                            {t.content?.createEntryButtonLabel || "Add entry"}
+                          </Button>
+                        </DisabledActionTooltip>
+                      )}
                       {selectedItem && resourceOfItem(selectedItem.id) !== null && (
                         <>
                           <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
@@ -1685,6 +1765,28 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                 </div>
               </div>
 
+              {/* The market selector raises a question neither toolbar can
+                  answer: a product missing from the selected market's catalog
+                  cannot be seen there, so every translation made for that
+                  market is invisible by construction. OUTSIDE both toolbars on
+                  purpose — the desktop one is `display: none` below 769px
+                  while MobileToolbar offers the same selector, so a warning
+                  inside either half would be missing from the other. Products
+                  only (publications are a product thing here), and the
+                  component itself stays silent whenever the answer is not
+                  certain. */}
+              {config.contentType === "products" && (
+                <MarketPublicationNotice
+                  productId={String(selectedItem?.id ?? "")}
+                  selectedMarketId={state.selectedMarketId}
+                  marketName={state.markets?.find((m) => m.id === state.selectedMarketId)?.name ?? ""}
+                  notPublishedText={
+                    t.content?.market?.notPublishedInMarket ||
+                    "This product is not in the catalog of the market “{market}”, so nobody there can see it — translations for this market stay invisible until it is published there."
+                  }
+                />
+              )}
+
               {/* Scrollable Content Area */}
               <div className="field-editor-area" style={{ flex: 1, overflowY: "auto", marginTop: "1rem" }}>
                 <Card padding="600">
@@ -1709,7 +1811,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           onChange={(value) => {
                             setFieldSearchInput(value);
                           }}
-                          placeholder={t.content?.searchFields || "Search fields..."}
+                          placeholder={fieldSearchPlaceholder || t.content?.searchFields || "Search fields..."}
                           autoComplete="off"
                           prefix={<Icon source={SearchIcon} />}
                           clearButton
@@ -1740,7 +1842,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             <Text as="p" variant="bodySm" tone="subdued">
                               {t.content?.showingFields || "Showing"} {((fieldPagination.page - 1) * fieldPagination.limit) + 1}-
                               {Math.min(fieldPagination.page * fieldPagination.limit, fieldPagination.totalCount)} {t.content?.of || "of"}{" "}
-                              {fieldPagination.totalCount} {t.content?.fields || "fields"}
+                              {fieldPagination.totalCount} {fieldPagination.noun || t.content?.fields || "fields"}
                               {fieldPagination.search && (
                                 <> ({t.content?.filtered || "filtered"})</>
                               )}
@@ -1801,7 +1903,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {!isFieldsLoading && renderFieldGroup &&
                       groupedContentFields.map(([groupId, fields]) => (
                         <Fragment key={groupId}>
-                          {renderFieldGroup(groupId, fields.map(renderContentField))}
+                          {renderFieldGroup(
+                            groupId,
+                            fields.map((field) => ({
+                              field,
+                              value: helpers.getEditableValue(field.key),
+                              node: renderContentField(field),
+                            })),
+                          )}
                         </Fragment>
                       ))}
 
@@ -1985,30 +2094,31 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         <Text as="h2" variant="headingMd">
                           {t.content?.attributesCardTitle || "Details"}
                         </Text>
-                        {/* Two columns where the field does not need a line
-                            of its own. A vendor is one word and a status is
-                            one dropdown; giving each the full width of the
-                            editor turned eight short answers into eight rows
-                            of mostly empty space. The wide ones keep the full
-                            width — a tag list, a membership picker and the
-                            stock panel all use it. */}
-                        <div
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                            gap: "1rem",
-                            alignItems: "start",
-                          }}
-                        >
-                          {attributeFields.map((field) => (
-                            <div
-                              key={field.key}
-                              style={WIDE_ATTRIBUTE_FIELDS.has(field.type) ? { gridColumn: "1 / -1" } : undefined}
-                            >
-                              {renderEditorField(field)}
-                            </div>
-                          ))}
-                        </div>
+                        {/* Subcards, the same nested-Card shape the Variants
+                            card uses — but only once there are at least two of
+                            them (`shouldRenderDetailsSections`): a page whose
+                            only attribute is the theme template would otherwise
+                            get a titled box inside a titled box. */}
+                        {detailsSections.map((section) => {
+                          // Keyed by the first field, NOT by the section id
+                          // alone: a section split by another renders as two
+                          // blocks, and two siblings keyed "organization" would
+                          // collide and reconcile into each other's subcard.
+                          const key = `${section.id ?? "unsectioned"}-${section.fields[0].key}`;
+                          if (!renderDetailsSections || !section.id) {
+                            return <Fragment key={key}>{renderAttributeGrid(section.fields)}</Fragment>;
+                          }
+                          return (
+                            <Card key={key} background="bg-surface-secondary" padding="300">
+                              <BlockStack gap="300">
+                                <Text as="h3" variant="bodyMd" fontWeight="semibold">
+                                  {detailsSectionLabel(t, section.id)}
+                                </Text>
+                                {renderAttributeGrid(section.fields)}
+                              </BlockStack>
+                            </Card>
+                          );
+                        })}
                       </BlockStack>
                     </Card>
                   </div>
@@ -2349,6 +2459,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           t={{
             ...(t.content?.createModal ?? {}),
             rules: t.collectionRules,
+            // The modal titles itself "New {resource}". It used to interpolate
+            // the config's own slug, which is an English word on every locale;
+            // the chooser already carries translated resource names, so the
+            // title reads from the SAME block rather than a second one.
+            resourceLabel: (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
+              createItem.openResource
+            ],
+            // The metaobject field controls (the taxonomy picker) live under
+            // `content`, not under `createModal`: the ENTRY editor renders the
+            // same controls and the strings must not exist twice.
+            content: t.content as unknown as Record<string, string>,
             // Same "one block, two surfaces" rule as the rule builder above:
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.

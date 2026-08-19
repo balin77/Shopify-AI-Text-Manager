@@ -31,7 +31,13 @@ interface DefinitionShape {
   access?: { admin?: string | null; storefront?: string | null } | null;
   capabilities?: Record<string, unknown> | null;
   createdByApp?: string | null;
-  fieldDefinitions: Array<{ key: string; name?: string; type: string; required?: boolean }>;
+  fieldDefinitions: Array<{
+    key: string;
+    name?: string;
+    type: string;
+    required?: boolean;
+    validations?: Array<{ name: string; value: string | null }>;
+  }>;
 }
 
 interface SampleEntry {
@@ -55,6 +61,28 @@ interface ProbeReport {
   metaobjectTypeFields?: string[];
   metaobjectTypeFieldsError?: string;
   reverseRelationField?: string | null;
+  taxonomy?: {
+    taxonomyFields?: string[];
+    attributeHandles?: Array<{ fieldKey: string; handle: string; min?: string; max?: string }>;
+    categoryFields?: string[];
+    attributeTypeFields?: string[];
+    valueTypeFields?: string[];
+    resolvedValues?: Array<{ gid: string; typename?: string; label?: string; error?: string }>;
+    valueSource?: string;
+    perHandle?: Array<{
+      handle: string;
+      attributeName: string;
+      attributeId: string;
+      distinctAttributeIds: number;
+      valueCount: number;
+      truncated: boolean;
+      sample: string[];
+      offeredIdSample: string[];
+      covered: { checked: number; covered: number; missing: string[]; inconclusive?: string };
+    }>;
+    handleOutcomes?: Array<{ handle: string; outcome: string }>;
+    steps: StepOutcome[];
+  };
   reverseRelation?: {
     connectionType?: string;
     connectionFields?: string[];
@@ -104,7 +132,16 @@ function formatMarkdown(r: ProbeReport): string {
       lines.push(
         `| ${escapeCell(d.type)} | ${escapeCell(d.name)} | ${d.standard ? "yes" : "no"} | ${
           d.access?.admin ?? "?"
-        } | ${escapeCell(d.fieldDefinitions.map((f) => `${f.key}:${f.type}${f.required ? "*" : ""}`).join(", "))} |`,
+        } | ${escapeCell(
+          d.fieldDefinitions
+            .map(
+              (f) =>
+                `${f.key}:${f.type}${f.required ? "*" : ""}${
+                  f.validations?.length ? ` {${f.validations.map((v) => `${v.name}=${v.value ?? ""}`).join("; ")}}` : ""
+                }`,
+            )
+            .join(", "),
+        )} |`,
       );
     }
     lines.push("");
@@ -122,6 +159,59 @@ function formatMarkdown(r: ProbeReport): string {
         ? `> Introspection failed: ${r.metaobjectTypeFieldsError} -- **not** a negative answer.`
         : `Reverse relation: **${r.reverseRelationField ?? "none found"}**. Fields: ${(r.metaobjectTypeFields ?? []).join(", ")}`,
     );
+    lines.push("");
+  }
+
+  if (r.taxonomy) {
+    const t = r.taxonomy;
+    lines.push("## Taxonomy reference values (T1-T3)");
+    lines.push("");
+    if (t.taxonomyFields) lines.push(`- \`Taxonomy\` fields: ${t.taxonomyFields.join(", ")}`);
+    if (t.attributeHandles?.length) {
+      lines.push(
+        `- Attribute handles (T2): ${t.attributeHandles
+          .map((h) => `${h.fieldKey} → \`${h.handle || "none"}\`${h.min || h.max ? ` [${h.min ?? "?"}..${h.max ?? "?"}]` : ""}`)
+          .join(", ")}`,
+      );
+    }
+    if (t.categoryFields) lines.push(`- \`TaxonomyCategory\` fields: ${t.categoryFields.join(", ")}`);
+    if (t.attributeTypeFields) lines.push(`- Attribute type: ${t.attributeTypeFields.join(" | ")}`);
+    if (t.valueTypeFields) lines.push(`- Value type fields: ${t.valueTypeFields.join(", ")}`);
+    if (t.resolvedValues?.length) {
+      lines.push(`- Resolved GIDs: ${t.resolvedValues.map((v) => `${v.gid} → ${v.typename ?? v.error ?? "?"}`).join(", ")}`);
+    }
+    if (t.valueSource) lines.push(`- Value source: \`${t.valueSource}\``);
+    if (t.handleOutcomes?.length) {
+      lines.push(
+        `- Per wanted handle: ${t.handleOutcomes.map((o) => `\`${o.handle}\` → ${o.outcome}`).join(", ")}`,
+      );
+    }
+    if (t.perHandle?.length) {
+      lines.push("");
+      lines.push("| Attribute handle | Matched attribute | ids | Values | Covered | Missing / note |");
+      lines.push("|---|---|---|---|---|---|");
+      for (const h of t.perHandle) {
+        lines.push(
+          `| ${escapeCell(h.handle)} | ${escapeCell(h.attributeName)} | ${h.distinctAttributeIds} | ${
+            h.valueCount
+          }${h.truncated ? "+" : ""} | ${h.covered.covered}/${h.covered.checked} | ${escapeCell(
+            h.covered.inconclusive
+              ? `inconclusive — ${h.covered.inconclusive}`
+              : h.covered.missing.join(", ") || "-",
+          )} |`,
+        );
+      }
+      lines.push("");
+      for (const h of t.perHandle) {
+        if (h.sample.length) lines.push(`- \`${h.handle}\` sample: ${h.sample.join(", ")}`);
+      }
+    }
+    lines.push("");
+    lines.push("| Step | OK | Detail |");
+    lines.push("|---|---|---|");
+    for (const step of t.steps) {
+      lines.push(`| ${escapeCell(step.step)} | ${step.ok ? "yes" : "no"} | ${escapeCell(step.detail)} |`);
+    }
     lines.push("");
   }
 
@@ -199,6 +289,7 @@ export function SettingsMetaobjectProbeTab() {
 
   const [runSamples, setRunSamples] = useState(true);
   const [runReferences, setRunReferences] = useState(true);
+  const [runTaxonomy, setRunTaxonomy] = useState(false);
   const [runWrite, setRunWrite] = useState(false);
   const [runLink, setRunLink] = useState(false);
   const [sampleType, setSampleType] = useState("shopify--color-pattern");
@@ -217,6 +308,7 @@ export function SettingsMetaobjectProbeTab() {
       const steps = [
         "definitions",
         ...(runReferences ? ["references"] : []),
+        ...(runTaxonomy ? ["taxonomy"] : []),
         ...(runSamples ? ["samples"] : []),
         ...(runWrite ? ["write"] : []),
         ...(runLink ? ["link"] : []),
@@ -238,7 +330,7 @@ export function SettingsMetaobjectProbeTab() {
     } finally {
       setRunning(false);
     }
-  }, [runSamples, runReferences, runWrite, runLink, sampleType, writeType]);
+  }, [runSamples, runReferences, runTaxonomy, runWrite, runLink, sampleType, writeType]);
 
   /**
    * Remove leftovers a previous run could not.
@@ -312,6 +404,12 @@ export function SettingsMetaobjectProbeTab() {
             }}
             autoComplete="off"
             helpText="Defaults to Shopify's standard colour definition."
+          />
+          <Checkbox
+            label="Taxonomy: can the permitted values of a taxonomy-reference field be reached? (read-only)"
+            checked={runTaxonomy}
+            onChange={setRunTaxonomy}
+            helpText="PLAN_METAOBJECT_TAXONOMY_CREATE Phase 0 — decides whether colour entries can ever be created from this app, and whether the editor is a list or a search."
           />
           <Checkbox
             label="Step 3: write test -- create, update and delete a throwaway entry of that type (WRITES)"

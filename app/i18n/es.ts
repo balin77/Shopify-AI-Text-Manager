@@ -213,7 +213,12 @@ export const es: Translation = {
     metaobjects: "Metaobjetos",
     metaobjectsDescription: "Gestiona y traduce metaobjetos personalizados",
     metaobjectsNoEntries: "Este tipo de metaobjeto no tiene entradas para mostrar.",
+    metaobjectEntriesNoun: "entradas",
+    metaobjectsSearchEntries: "Buscar entradas...",
     // PLAN_METAOBJECTS_EDITOR — la tarjeta de entrada
+    metaobjectDeleteInUse: "Algo en tu tienda todav\u00eda hace referencia a esta entrada, por eso Shopify no la elimina. Quita la referencia all\u00ed primero.",
+    metaobjectEntryEditColor: "Cambiar color",
+    metaobjectEntryColorStorefrontNote: "Este color es tambi\u00e9n el swatch que tu tienda muestra en los productos que usan este valor de opci\u00f3n \u2014 medido, no supuesto.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Ningún campo de esta entrada se puede editar aquí.",
     metaobjectEntryUnsupportedTitle: "No editable aquí",
@@ -233,6 +238,19 @@ export const es: Translation = {
     metaobjectEntryClearImage: "Quitar imagen",
     metaobjectEntryReadOnlyDefinition: "Esta aplicación no puede modificar entradas de esta definición.",
     metaobjectEntryReadOnlyUnknown: "Se desconoce si esta definición admite escritura — vuelve a cargar.",
+    metaobjectEntryOpenInAdmin: "Editar en el panel de Shopify",
+    metaobjectTaxonomyLoading: "Cargando los valores permitidos\u2026",
+    metaobjectTaxonomyNone: "\u2014",
+    metaobjectTaxonomyEmpty: "Ning\u00fan valor seleccionado.",
+    metaobjectTaxonomyMin: "al menos {n}",
+    metaobjectTaxonomyMax: "como m\u00e1ximo {n}",
+    metaobjectTaxonomyMaxReached: "Como m\u00e1ximo {n} valores",
+    metaobjectTaxonomyBelowMin: "Selecciona al menos {n} valor(es).",
+    metaobjectTaxonomyLookupFailed: "Los valores permitidos no se han podido leer de Shopify en este momento.",
+    metaobjectTaxonomyAttributeMissing: "No se encontr\u00f3 ning\u00fan atributo de taxonom\u00eda llamado \"{handle}\" para este campo.",
+    metaobjectTaxonomyNoHandle: "Este campo no indica ning\u00fan atributo de taxonom\u00eda, por lo que sus valores no se pueden listar aqu\u00ed.",
+    metaobjectTaxonomySearch: "Busca o elige un valor\u2026",
+    metaobjectTaxonomyTruncated: "Solo se listan los primeros valores \u2014 puede haber m\u00e1s.",
     pages: "Páginas",
     pagesDescription: "Gestiona las páginas de tu tienda (Aviso legal, Términos, etc.)",
     policies: "Políticas",
@@ -372,6 +390,8 @@ export const es: Translation = {
       primaryDisabledHint: "La selección de mercado solo está disponible en un idioma de traducción: cambia primero a un idioma de destino.",
       tooltip: "Elige un mercado para traducir este idioma de forma específica. Sin selección, el valor global se aplica a todos los mercados.",
       disabledHint: "Los banners de cookies se guardan mediante la API de privacidad del cliente de Shopify, que no admite valores específicos por mercado. Este contenido siempre es global.",
+      notPublishedInMarket:
+        "Este producto no está en el catálogo del mercado “{market}”, por lo que nadie puede verlo allí. Las traducciones para este mercado permanecen invisibles hasta que lo publiques para esa región en Publicación, en tu panel de Shopify.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Los campos en el idioma principal no deben estar vacíos. Si un campo se guarda vacío, Shopify lo elimina permanentemente y nunca se puede restaurar. Por favor, complete todos los campos antes de guardar.",
@@ -414,7 +434,7 @@ export const es: Translation = {
     fieldLabels: {
       collectionRules: "Reglas automáticas",
       images: "Imágenes",
-      commerce: "Inventario y canales de venta",
+      commerce: "Canales de venta",
       category: "Categoría de producto",
       collections: "Colecciones",
       productTitle: "Título del producto",
@@ -437,7 +457,6 @@ export const es: Translation = {
       sortOrder: "Orden",
       templateSuffix: "Plantilla del tema",
       isPublished: "Visible en la tienda online",
-      price: "Precio (variante predeterminada)",
     },
     // Resource names
     resourceNames: {
@@ -479,6 +498,7 @@ export const es: Translation = {
 
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — crear contenido ──────────────────
     createButtonLabel: "Crear",
+    createEntryButtonLabel: "A\u00f1adir entrada",
     createChooserTitle: "¿Qué quieres crear?",
     // Dos rechazos DISTINTOS con soluciones distintas — nunca deben compartir
     // el mismo texto (§1.2).
@@ -557,6 +577,14 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      unitPriceHeading: "Precio por unidad",
+      unitPriceHint: "Para productos vendidos por peso o volumen: la cantidad total del paquete y la unidad a la que se refiere el precio. La tienda muestra entonces también el precio por unidad, por ejemplo por kilogramo.",
+      unitPriceContentUnit: "Unidad de la cantidad total",
+      unitPriceReferenceUnit: "Unidad de referencia",
+      unitPriceContent: "Cantidad total",
+      unitPriceReference: "Cantidad de referencia",
+      unitPriceShow: "Mostrar en la tienda",
+      unitPriceClearHint: "Vaciar los cuatro campos elimina el precio por unidad.",
       customsDetails: "Más detalles",
       taxableSwitch: "Cobrar impuestos por esta variante",
       inventoryHeading: "Inventario",
@@ -601,11 +629,22 @@ export const es: Translation = {
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
       channelsHeading: "Canales de venta",
+      manage: "Gestionar",
+      manageTitle: "Gestionar la publicación",
+      done: "Listo",
+      noneSelected: "No publicado en ningún canal de venta",
+      marketCount: "Regiones: {count}",
+      b2bCount: "Catálogos B2B: {count}",
+      marketsHeading: "Regiones",
+      marketsHint: "Las regiones deciden quién puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
+      b2bHeading: "Catálogos B2B",
+      b2bHint: "Los catálogos B2B deciden qué clientes empresariales pueden ver el producto.",
+      catalogsUnknown: "No se pudieron leer las regiones ni los catálogos B2B, por eso no aparecen aquí — gestiónalos en tu panel de Shopify.",
       noChannel: "En ningún canal: invisible",
       noChannels: "Esta tienda no tiene canales de venta instalados.",
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
-      variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
+      variantPricesHint: "Los precios se editan en el editor masivo (pestaña «Bulk», filas de variantes) o en tu panel de Shopify.",
       notStockedHere: "sin stock aquí",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
@@ -622,6 +661,12 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      unitPriceAmbiguous: "La cantidad es ambigua: escribe 1000 o 1.000,00 para que el separador sea inequívoco. El precio por unidad no se guardó.",
+      unitPriceDimension: "Las dos unidades miden cosas distintas (gramos y litros, por ejemplo). El precio por unidad no se guardó.",
+      unitPriceIncomplete: "Un precio por unidad necesita las cuatro entradas: cantidad y unidad en ambos lados. El precio por unidad no se guardó; todo lo demás sí.",
+      unitPriceInvalid: "El precio por unidad no era una cantidad válida y no se guardó; todo lo demás sí.",
+      unitPriceNotConfirmed: "Shopify no confirmó el precio por unidad. Recarga para ver lo que hay.",
+      unitPriceNotShown: "Shopify no aceptó el interruptor de visualización del precio por unidad.",
       priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. No se guardó nada.",
       priceInvalid: "Un precio no era un número, así que no se guardó.",
       priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Recarga para ver el valor actual.",
@@ -640,16 +685,15 @@ export const es: Translation = {
       channelsNotConfirmed: "Shopify no confirmó todos los cambios de canal. Recarga para ver cuáles se aplicaron.",
       channelsFailed: "No se pudieron cambiar los canales de venta.",
     },
-    priceWarnings: {
-      priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. Todo lo demás se guardó.",
-      priceInvalid: "El precio no se pudo interpretar como un importe. Todo lo demás se guardó.",
-      priceEmpty: "El precio se dejó vacío y no se guardó — Shopify exige un precio en cada variante. Todo lo demás se guardó.",
-      priceNoVariant: "El precio no se pudo guardar porque las variantes de este producto aún no están en la caché local — recarga el producto. Todo lo demás se guardó.",
-      priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Todo lo demás se guardó.",
-      priceFailed: "El precio no se pudo guardar. Todo lo demás se guardó.",
-    },
     searchEngineListing: "Listado en el motor de búsqueda",
     attributesCardTitle: "Detalles",
+    // Encabezados de las subtarjetas DENTRO de la tarjeta Detalles
+    // (config/details-sections.ts).
+    detailsSections: {
+      publishing: "Canales de venta",
+      organization: "Organización",
+      theme: "Plantilla del tema",
+    },
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
     // UN solo vocabulario de enums, en el nivel superior porque varias
@@ -662,6 +706,12 @@ export const es: Translation = {
     // columna de estado de la cuadrícula masiva llevan el suyo. Unificarlos
     // vale la pena; hasta entonces este comentario lo dice.
     enumLabels: {
+      "unitPriceUnit.ITEM": "unidad",
+      "unitPriceGroup.volume": "Volumen",
+      "unitPriceGroup.weight": "Peso",
+      "unitPriceGroup.length": "Longitud",
+      "unitPriceGroup.area": "Superficie",
+      "unitPriceGroup.count": "Unidades",
       "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
       "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
       "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Más vendidos",
@@ -677,11 +727,9 @@ export const es: Translation = {
     // La línea explicativa bajo un campo de atributo. Larga a propósito: cada
     // una existe porque los comerciantes asumen de forma fiable lo contrario.
     attributeNotes: {
-      status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Gestiona los canales en el admin de Shopify.",
-      price: "Se aplica a la primera variante. Los productos con varias variantes se tarifican en el editor masivo.",
+      status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Los gestionas aquí mismo, en Canales de venta.",
       category: "Shopify usa la categoría para los tipos impositivos y para los listados de marketplace. Un tipo concreto es mejor que una rama amplia.",
       collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
-      commerce: "El stock y los canales se guardan por separado — con los botones de esta sección, no con el guardado normal.",
     },
     templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
     statusToggle: {
@@ -718,6 +766,27 @@ export const es: Translation = {
     createdNotSyncedBody: "El elemento se creó en Shopify. Solo falta la copia local — recarga para verlo. NO lo crees por segunda vez.",
     createdHandle: "Handle: {handle}",
     createModal: {
+      titleFor: "Nuevo: {resource}",
+      removeImage: "Quitar",
+      onlyImagesHere: "Aqu\u00ed solo se pueden adjuntar im\u00e1genes. A\u00f1ade v\u00eddeo o 3D en el gestor de medios del elemento despu\u00e9s de crearlo.",
+      externalVideoNotAnImage: "Un enlace de v\u00eddeo externo no se puede usar como imagen.",
+      noneOption: "\u2014",
+      tagsHint: "Separado por comas",
+      createsUnpublishedNotice: "Esto se crea como borrador \u2014 nada se publica hasta que t\u00fa lo publiques.",
+      defaultRuleSetName: "Conjunto de reglas 1",
+      collectionTypeLabel: "\u00bfC\u00f3mo se a\u00f1aden los productos?",
+      collectionManual: "Los elijo yo",
+      collectionAutomated: "Autom\u00e1ticamente, por reglas",
+      errors: {
+        tooLong: "Demasiado largo ({detail})",
+        unknownField: "Esta app no conoce este campo.",
+        invalidOption: "\u201c{detail}\u201d no es una de las opciones.",
+        invalidHandle: "Solo min\u00fasculas, n\u00fameros y guiones.",
+        invalidMoney: "Introduce un importe, p. ej. 19.90",
+        invalidTaxonomyValue: "Elige un valor de la lista ofrecida.",
+        tooManyTaxonomyValues: "Como m\u00e1ximo {detail} valor(es).",
+        tooFewTaxonomyValues: "Al menos {detail} valor(es).",
+      },
       // PLAN §2.5a-d — los extras de IA.
       altText: "Texto alternativo",
       changeImage: "Cambiar imagen",
@@ -2064,9 +2133,15 @@ export const es: Translation = {
     },
     structuredDataPage: {
       introTitle: "¿Qué son los datos estructurados y para qué los necesitas?",
-      introBody1: "Los datos estructurados son metadatos legibles por máquinas dentro del HTML de tu tienda que le dicen a los buscadores y a los sistemas de IA QUÉ hay en una página — no solo el texto en bruto. Google, Bing, ChatGPT y compañía los usan para reconocer tu producto como \"Producto\" (con precio, disponibilidad, valoraciones), tu entrada de blog como \"Artículo\" (con autor, fecha) y tu tienda como \"Organización\" (con logo, perfiles sociales).",
-      introBody2: "En concreto te aporta: Rich Snippets en Google (estrellas, precio, disponibilidad directamente en el resultado), un Knowledge Panel de Google para tu marca, mejores menciones en respuestas de IA (ChatGPT, Perplexity) y la base para Google Merchant Center y anuncios de Shopping. Lo emitimos en formato JSON-LD según el estándar schema.org — exactamente lo que Google recomienda oficialmente.",
-      introBody3: "Además necesitas Open Graph / Twitter Cards para que los enlaces compartidos en Facebook, X, LinkedIn, Slack, WhatsApp y en las vistas previas de chats de IA se muestren con imagen, título y descripción.",
+      introBody1: "Los datos estructurados le dicen a Google y a los sistemas de IA QUÉ hay en una página: que 43,95 € es un precio y no un número cualquiera. Eso te da estrellas, precios y disponibilidad en el propio resultado de búsqueda, un panel de conocimiento para tu marca y mejores menciones en las respuestas de IA.",
+      introBody2: "Open Graph y Twitter Cards hacen que los enlaces compartidos aparezcan con imagen y título en Facebook, LinkedIn, WhatsApp y en los chats de IA.",
+      introStep1: "Muestra qué entregan hoy tus páginas.",
+      introStepBadge1: "Paso 1",
+      introStep2: "Comprueba si tus datos de producto bastan para un rich result.",
+      introStepBadge2: "Paso 2",
+      introStep3: "Activa elementos concretos, pero solo los que aún no entrega nadie.",
+      introStepBadge3: "Paso 3",
+      introCrawlNote: "**Los datos para esto vienen del rastreo del sitio.** Solo él ve lo que hay realmente en tus páginas. Sin un rastreo actual, los pasos 1 y 3 no dan un veredicto, solo «sin medir».",
       activationTitle: "Activación en el editor de temas",
       activationBody: "Para enviar los datos realmente a Google y compañía, activas dos bloques de app en tu tema. Es una configuración única, sin tocar HTML/Liquid. Los bloques se rellenan automáticamente en cada página de producto, colección, blog y tema con los datos nativos de Shopify — sin sincronización por elemento.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) para Google",
@@ -2094,7 +2169,14 @@ export const es: Translation = {
       schemaBreadcrumb: "Migas de pan (BreadcrumbList)",
       schemaVideo: "Vídeo (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "El vídeo se genera en la tienda — a partir de tus medios de producto Y de enlaces de YouTube que solo están en una galería de variantes — y por eso no aparece en la vista previa de abajo. Deduplicado por producto: un vídeo colgado de doce variantes sigue siendo una sola entrada. Para los medios de producto, la fecha de subida que pide Google se obtiene de la API de Shopify durante la sincronización y se guarda en el metacampo \"custom.video_upload_dates\", que la tienda lee. Un enlace de galería no tiene ningún archivo detrás y por tanto no tiene fecha automática: sin el metacampo \"custom.video_upload_date\" (tu propio valor, que siempre gana) la propiedad se omite en vez de inventarse — el resultado enriquecido de vídeo queda entonces incompleto. Los enlaces de Vimeo de una galería se omiten por completo: el resultado enriquecido necesita una miniatura y de un enlace de Vimeo no puede deducirse ninguna. FAQ (FAQPage) se añade en cuanto actives el interruptor en el editor de temas y rellenes el metacampo \"custom.faq\" — ambos están desactivados por defecto a propósito.",
+      schemaVideoNote: "El vídeo se genera en la tienda — a partir de tus medios de producto **y** de enlaces de YouTube que solo están en una galería de variantes. Por eso no aparece en la vista previa de abajo. Deduplicado por producto: un vídeo en doce variantes sigue siendo una entrada.",
+      schemaVideoDateNote: "**Los vídeos de una galería se entregan sin fecha.** Google solo muestra un vídeo con fecha de subida. Para los vídeos en tus medios de producto la app la obtiene automáticamente; un vídeo enlazado (YouTube) no tiene archivo en Shopify y por tanto no hay de dónde sacarla, así que se queda sin rich result.",
+      severityLabels: {
+        error: "Error",
+        warning: "Advertencia",
+        info: "Nota",
+      },
+      schemaFaqNote: "FAQ (FAQPage) se añade en cuanto actives el interruptor en el editor de temas y rellenes el metacampo **custom.faq** — ambos están desactivados por defecto a propósito.",
       setBrandLogo: "Configurar logo en los activos de marca",
       openSampleProduct: "Abrir producto de ejemplo",
       openSampleArticle: "Abrir artículo de ejemplo",
@@ -2141,13 +2223,27 @@ export const es: Translation = {
       // PLAN_MARKUP_ACTIVATION §1.2 — paso 3. Hasta 2026-08 la activación estaba
       // ARRIBA del todo en esta página, es decir, en el orden en el que se
       // comete el error antes de poder verlo.
+      // PLAN_MARKUP_ACTIVATION §3.2 — el hallazgo de los vídeos de galería.
+      // Aparece solo cuando la comprobación por lotes se ha ejecutado.
+      galleryVideos: {
+        failed: "La comprobación de vídeos de galería no pudo ejecutarse esta vez (Shopify rechazó la consulta). La próxima ejecución lo intenta de nuevo.",
+        none: "No se encontraron vídeos de galería ({variants} variantes comprobadas).",
+        found: "Productos con vídeos sin fecha: {products} — de ellos, desde una galería sin fecha: {missing}.",
+        externalNote: "Los vídeos de **fuentes externas** (un enlace de YouTube en una galería) no pueden entregarse con fecha: no tienen archivo en Shopify. Google puede entonces no aceptar el vídeo como rich result.",
+        vimeo: "{count} de ellos tienen al menos un vídeo de Vimeo — para esos no se genera ningún marcado, y una fecha no cambia nada.",
+        capped: "La comprobación no alcanzó todo el catálogo — puede haber más.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · fecha definida",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · falta la fecha",
+        mediaMissing: "En {count} productos el vídeo está en los **medios del producto** y aun así no tiene fecha. Eso lo resuelve solo una **sincronización de productos**: la fecha viene entonces de Shopify.",
+        rowMedia: "{count} de medios del producto sin fecha",
+      },
       activation: {
-        openSwitches: "Abrir interruptores",
+        openSwitches: "Ir al widget",
         summary: {
           switchOff: "{count} para desactivar: {names}",
           switchOffShort: "{count} para desactivar",
-          themeFix: "{count} para arreglar en el tema: {names}",
-          themeFixShort: "{count} en el tema",
+          foreignFix: "{count} para arreglar fuera de esta app: {names}",
+          foreignFixShort: "{count} fuera de esta app",
           hold: "{count} que no debes activar: {names}",
           holdShort: "{count} que no activar",
           running: "{count} funcionan limpio",
@@ -2168,18 +2264,18 @@ export const es: Translation = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "Un interruptor en el editor de temas, nueve etiquetas detrás. Solo es tan seguro como su peor etiqueta.",
         socialNotMeasured: "El último rastreo es anterior a este análisis y no capturó etiquetas de Open Graph. Sin medición no hay recomendación aquí — inicia un rastreo nuevo.",
-        socialOriginUnknownHint: "**Origen poco claro.** El marcador llega con esta actualización — tras la próxima publicación de la extensión y un rastreo nuevo aparecerá aquí un veredicto.",
+        socialOriginUnknownHint: "No se encontró ninguna marca de esta app. Hay dos motivos posibles: esta incrustación está desactivada — entonces las etiquetas las entrega tu tema — o tu último rastreo es anterior a la marca. Lo que aparece abajo como ajeno es probable, pero no está demostrado.",
         title: "Interruptor a interruptor: ¿qué puede activarse?",
-        intro: "El tema y la app usan el mismo @id a propósito — si funcionan los dos, Google los fusiona en UN nodo con cada campo por duplicado. Eso no es marcado duplicado, es marcado **inválido**. Por eso aquí tienes, interruptor por interruptor, lo que midió el paso 1.",
+        intro: "Activa aquí solo lo que tu tema no entrega ya por su cuenta. Si un tipo ya está presente, activarlo genera marcado defectuoso — Google tenderá a descartarlo antes que a usarlo. Abajo tienes, interruptor por interruptor, lo que midió el paso 1.",
         noCrawl: "**Todavía sin rastreo.** Sin medición no hay recomendación.",
         notMeasured: "**Sin medir.** El último rastreo es anterior a este análisis. Sin medición no hay recomendación.",
         basis: "Base: rastreo del {time}, {pages} páginas entregadas comprobadas.",
-        originUnknownHint: "**Origen poco claro.** O el bloque está desactivado, o el rastreo es anterior a la detección de origen. Hasta aclararlo: no actives nada ni cambies nada.",
+        originUnknownHint: "No se encontró ninguna marca de esta app. Hay dos motivos posibles: esta incrustación está desactivada — entonces el marcado lo entrega tu tema — o tu último rastreo es anterior a la marca. Lo que aparece abajo como ajeno es probable, pero no está demostrado.",
         switchesTitle: "JSON-LD (schema.org)",
         defaultOn: "Por defecto: activado",
         defaultOff: "Por defecto: desactivado",
         repeatableCaveat: "Varias por página son normales (tres vídeos de producto = tres VideoObjects), así que aquí no puede medirse la duplicación.",
-        themeHint: "El marcado de tu **tema** se desactiva en el editor de temas — esta app nunca toca código de tema que no sea suyo.",
+        themeHint: "El marcado ajeno se desactiva donde se origina — en el **editor de temas** o en la **otra app**. Esta app nunca toca código que no sea suyo.",
         switches: {
           organization: "Organización (todas las páginas)",
           product: "Producto (páginas de producto)",
@@ -2192,24 +2288,25 @@ export const es: Translation = {
         verdictLabels: {
           unknown: "Sin medir",
           free: "Libre",
+          varies: "Variable",
           appOnly: "Funciona",
           foreignOnly: "No activar",
           mixed: "Desigual",
           originUnknown: "No activar",
           repeatableUnjudged: "No evaluable",
           duplicateApp: "Desactivar",
-          duplicateForeign: "Problema del tema",
+          duplicateForeign: "Duplicado — no es nuestro",
         },
         verdicts: {
           unknown: "**Sin medir.** Sin rastreo no hay veredicto.",
           free: "**Libre.** Nadie entrega este tipo.",
           appOnly: "**Funciona.** {pages} páginas, exactamente una copia — la nuestra.",
-          foreignOnly: "**No activar.** Tu tema ya lo entrega en {pages} páginas.",
-          mixed: "**Desigual.** {appPages} de {pages} páginas nuestras, el resto del tema.",
-          originUnknown: "**No activar.** {pages} páginas lo entregan — de quién, este rastreo no lo dice.",
+          foreignOnly: "**Ya se entrega** en {pages} páginas, por tu tema o por otra app. No lo actives — quedaría duplicado.",
+          mixed: "**Desigual.** {appPages} de {pages} páginas nuestras, el resto de otra fuente.",
+          originUnknown: "**Ya se entrega** en {pages} páginas. No lo actives — quedaría duplicado. Por quién, este rastreo no lo dice.",
           repeatableUnjudged: "**No evaluable.** {pages} páginas; varias por página son normales aquí.",
           duplicateApp: "**Desactivar.** Duplicado en {duplicatePages} páginas, una copia es nuestra.",
-          duplicateForeign: "**Arreglar en el tema.** Duplicado en {duplicatePages} páginas, ninguna copia es nuestra.",
+          duplicateForeign: "**No se puede arreglar aquí.** Duplicado en {duplicatePages} páginas, ninguna copia es nuestra — la fuente es tu tema u otra app.",
         },
       },
       // PLAN_MARKUP_ACTIVATION §2.4 — la mitad social del paso 1. Lee la misma
@@ -3892,8 +3989,9 @@ export const es: Translation = {
     commercePrices: {
       title: "Los tres precios",
       summary:
-        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie.",
+        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie. Detrás de «Precio por unidad» está además el precio por unidad para productos vendidos por peso o volumen: obligatorio en muchos países.",
       tips: [
+        "Vaciar los cuatro campos del precio por unidad lo elimina",
         "Precio comparativo vacío = sin oferta, y la cifra tachada desaparece",
         "El precio de venta no se puede vaciar — Shopify exige uno en cada variante",
         "El precio de compra es opcional y solo lo ves tú",
@@ -3902,8 +4000,9 @@ export const es: Translation = {
     commerceShipping: {
       title: "Envío y aduanas",
       summary:
-        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero.",
+        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero. Ambos están bajo «Más detalles».",
       tips: [
+        "El código arancelario y el país de origen están plegados bajo «Más detalles»",
         "Sin peso no se pueden calcular tarifas de envío por peso",
         "El país de origen es donde se FABRICÓ el artículo, no desde dónde lo envías",
         "\"Requiere envío\" desactivado = producto digital, y no se pide dirección",

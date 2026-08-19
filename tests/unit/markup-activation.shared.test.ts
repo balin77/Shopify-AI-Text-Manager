@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   activationGate,
+  embedBadgeVerdict,
+  scopeCovered,
   activationTone,
   statForSwitch,
   worstActivationVerdict,
   groupGatesByAction,
   actionTone,
+  UNMARKED_COUNTS_AS_FOREIGN,
   ACTION_BY_VERDICT,
   ACTION_ORDER,
   JSON_LD_SWITCHES,
@@ -52,6 +55,20 @@ describe("activationGate", () => {
     expect(activationGate(undefined, measured).verdict).toBe("free");
   });
 
+  it("refuses to judge a scope the crawl never covered", () => {
+    // "No bucket" is what an untouched page kind and an UNCRAWLED one look
+    // like alike. Reading the second as "nothing serves it" hands out a green
+    // "safe to switch on" for a page kind we have no measurement of — the
+    // duplicate damage the gate exists to prevent.
+    const uncovered = { measured: true, originKnown: true, scopeCovered: false };
+    expect(activationGate(undefined, uncovered).verdict).toBe("unknown");
+    expect(activationGate(stat({ pages: 0 }), uncovered).verdict).toBe("unknown");
+  });
+
+  it("keeps judging when the flag is absent, so a caller that cannot answer is unchanged", () => {
+    expect(activationGate(undefined, { measured: true, originKnown: true }).verdict).toBe("free");
+  });
+
   it("warns when only the theme serves the type", () => {
     const g = activationGate(stat({ pages: 12, appPages: 0 }), measured);
     expect(g.verdict).toBe("foreignOnly");
@@ -82,21 +99,35 @@ describe("activationGate", () => {
     expect(theirs.verdict).toBe("duplicateForeign");
   });
 
-  it("does not claim a copy is not ours when the crawl could not tell", () => {
-    // A snapshot predating the data-contentpilot marker reports appPages: 0 for
-    // everything, which is indistinguishable from "the embed is off".
-    const unknownOrigin = { measured: true, originKnown: false };
-    expect(activationGate(stat({ pages: 12 }), unknownOrigin).verdict).toBe("originUnknown");
-    expect(
-      activationGate(stat({ pages: 12, duplicatePages: 3 }), unknownOrigin).verdict,
-    ).toBe("originUnknown");
-    // …but a marker on THIS type still resolves it, marker-blind crawl or not.
+  it("attributes unprovable markup to the theme, per UNMARKED_COUNTS_AS_FOREIGN", () => {
+    // Product decision, not a claim about the evidence: a snapshot predating the
+    // data-contentpilot marker reports appPages: 0 for everything, which is
+    // indistinguishable from "the embed is off". With almost no installs and a
+    // days-old marker, the second cause is the common one, so the section names
+    // the theme instead of hedging — see the constant for what that costs.
+    // Pinned so that flipping the constant fails HERE, at the sentence that
+    // explains it, rather than in a distant expectation about a badge.
+    expect(UNMARKED_COUNTS_AS_FOREIGN).toBe(true);
+    const blind = { measured: true, originKnown: false };
+    expect(activationGate(stat({ pages: 12 }), blind).verdict).toBe("foreignOnly");
+    expect(activationGate(stat({ pages: 12, duplicatePages: 3 }), blind).verdict).toBe(
+      "duplicateForeign",
+    );
+  });
+
+  it("still resolves a type whose OWN marker was seen, marker-blind crawl or not", () => {
+    // The assumption only ever fills a gap; where we ARE provably one of the
+    // copies the gate must say so, and "switch ours off" stays the right advice.
     expect(
       activationGate(
         stat({ pages: 12, appPages: 12, duplicatePages: 3, appIsOneCopy: 3 }),
-        unknownOrigin,
+        { measured: true, originKnown: false },
       ).verdict,
     ).toBe("duplicateApp");
+    expect(
+      activationGate(stat({ pages: 12, appPages: 12 }), { measured: true, originKnown: false })
+        .verdict,
+    ).toBe("appOnly");
   });
 
   it("refuses to judge a repeatable type it co-delivers", () => {
@@ -212,17 +243,13 @@ describe("statForSwitch", () => {
 });
 
 describe("verdict severity", () => {
-  it("does not let an unresolvable origin read as milder than a real warning", () => {
-    // With the embed OFF no page can carry the marker, so `originUnknown` is
-    // the PERMANENT state of exactly the merchant this section exists for:
-    // theme serving the type, about to tick the box. Ranking it below `unknown`
-    // (as the first cut did) put an `info` badge on the one screen that has to
-    // say "stop".
-    expect(worstActivationVerdict(["free", "originUnknown"])).toBe("originUnknown");
-    expect(worstActivationVerdict(["unknown", "originUnknown"])).toBe("originUnknown");
-    expect(activationTone("originUnknown")).toBe("warning");
+  it("ranks 'already served by someone else' above a clean result", () => {
+    expect(worstActivationVerdict(["free", "foreignOnly"])).toBe("foreignOnly");
+    expect(worstActivationVerdict(["appOnly", "foreignOnly"])).toBe("foreignOnly");
     // A real duplicate still outranks it.
-    expect(worstActivationVerdict(["originUnknown", "duplicateApp"])).toBe("duplicateApp");
+    expect(worstActivationVerdict(["foreignOnly", "duplicateApp"])).toBe("duplicateApp");
+    // And the retired hedge keeps its rank, so restoring it changes no badge.
+    expect(worstActivationVerdict(["unknown", "originUnknown"])).toBe("originUnknown");
   });
 
   it("keeps the repeatable non-verdict mild — there is nothing to act on", () => {
@@ -255,8 +282,8 @@ describe("groupGatesByAction", () => {
       { label: "b", verdict: "appOnly" },
       { label: "c", verdict: "duplicateForeign" },
     ]);
-    expect(groups[0].action).toBe("themeFix");
-    expect(actionTone("themeFix")).toBe("critical");
+    expect(groups[0].action).toBe("foreignFix");
+    expect(actionTone("foreignFix")).toBe("critical");
     expect(actionTone("hold")).toBe("warning");
     expect(actionTone("enable")).toBe("success");
   });
@@ -309,5 +336,155 @@ describe("client-safety of the shared module", () => {
       'import { summarizeLiveSocial } from "../services/seo/social-audit.service"',
     );
     expect(route).not.toMatch(/APP_SOCIAL_TAGS[^\n]*social-audit\.service/);
+  });
+});
+
+describe("scopeCovered", () => {
+  it("treats a null scope as SHOP-WIDE, not as 'nothing covered'", () => {
+    // The bug this exists for: `(scopes ?? []).some(...)` is always false, so
+    // Organization reported "not measured" after every crawl, permanently.
+    expect(scopeCovered(null, {}, 12)).toBe(true);
+    expect(scopeCovered(null, { product: 5 }, 5)).toBe(true);
+  });
+
+  it("still refuses a shop-wide switch when NOTHING was judged", () => {
+    expect(scopeCovered(null, {}, 0)).toBe(false);
+  });
+
+  it("judges a scoped switch only where its page kind was actually seen", () => {
+    expect(scopeCovered(["product"], { product: 3 }, 3)).toBe(true);
+    expect(scopeCovered(["product"], { collection: 3 }, 3)).toBe(false);
+    expect(scopeCovered(["product"], undefined, 9)).toBe(false);
+  });
+
+  it("needs EVERY page kind of a multi-scope switch, not just one", () => {
+    // enable_breadcrumb emits on product, collection AND article. With only
+    // products crawled, `.some()` handed out the green "safe to switch on"
+    // and BreadcrumbList then shipped twice on every collection and article.
+    expect(scopeCovered(["product", "collection"], { collection: 1 }, 1)).toBe(false);
+    expect(
+      scopeCovered(["product", "collection"], { product: 2, collection: 1 }, 3),
+    ).toBe(true);
+  });
+
+  it("does not block a switch on a page kind the shop does not have", () => {
+    // A shop without a blog would otherwise never get a verdict for
+    // breadcrumbs again. "No article pages crawled" and "no articles exist"
+    // look the same in a page count and mean opposite things.
+    expect(
+      scopeCovered(["product", "article"], { product: 5 }, 5, { product: 5, article: 0 }),
+    ).toBe(true);
+    // …but an UNKNOWN catalogue stays cautious rather than assuming zero.
+    expect(scopeCovered(["product", "article"], { product: 5 }, 5, { product: 5 })).toBe(false);
+  });
+});
+
+describe("embedBadgeVerdict", () => {
+  it("repeats a verdict only when every type agrees", () => {
+    expect(embedBadgeVerdict(["free", "free"])).toBe("free");
+    expect(embedBadgeVerdict(["foreignOnly"])).toBe("foreignOnly");
+  });
+
+  it("says the types differ instead of advising against the whole embed", () => {
+    // The reported defect: one already-served type made the card read
+    // "do not switch on" while other types were free -- advice against an
+    // embed the merchant should switch on and then configure.
+    expect(embedBadgeVerdict(["foreignOnly", "free"])).toBe("varies");
+    expect(embedBadgeVerdict(["free", "appOnly"])).toBe("varies");
+  });
+
+  it("answers unknown for an empty list rather than a green light", () => {
+    expect(embedBadgeVerdict([])).toBe("unknown");
+  });
+});
+
+describe("repeatable types are judged where the count proves it", () => {
+  const rep = (over: Partial<Parameters<typeof activationGate>[0]> = {}) => ({
+    type: "VideoObject",
+    resourceType: "product",
+    pages: 1,
+    appPages: 1,
+    duplicatePages: 0,
+    appIsOneCopy: 0,
+    repeatable: true,
+    ...over,
+  });
+  const opts = { measured: true, originKnown: true };
+
+  it("says it runs when every copy on every page is ours", () => {
+    // The reported defect: video was switched on, exactly one product had
+    // videos, and the switch reported "not checkable" for good. An equal
+    // COUNT is the proof page-presence could never give.
+    expect(activationGate(rep({ appAllCopiesPages: 1 }), opts).verdict).toBe("appOnly");
+  });
+
+  it("stays unjudged when one page carries a copy that is not ours", () => {
+    expect(activationGate(rep({ pages: 3, appPages: 3, appAllCopiesPages: 2 }), opts).verdict).toBe(
+      "repeatableUnjudged",
+    );
+  });
+
+  it("stays unjudged when the producer cannot answer the question at all", () => {
+    // No field = an older producer. Cautious beats a claim it never had.
+    expect(activationGate(rep(), opts).verdict).toBe("repeatableUnjudged");
+  });
+
+  it("still reports a foreign-only repeatable type rather than calling it unjudged", () => {
+    expect(activationGate(rep({ appPages: 0, appAllCopiesPages: 0 }), opts).verdict).toBe(
+      "foreignOnly",
+    );
+  });
+});
+
+describe("statForSwitch carries every field into the gate", () => {
+  // The defect this exists for: the function REBUILDS MarkupTypeStat field by
+  // field, appAllCopiesPages was left out, and because the page feeds the gate
+  // exclusively through here, the branch it unlocks was dead in the app while
+  // the gate's own unit tests — which build the stat by hand — stayed green.
+  const bucket = (over: Record<string, unknown> = {}) => ({
+    type: "VideoObject",
+    resourceType: "product",
+    pages: 1,
+    appPages: 1,
+    duplicatePages: 0,
+    appIsOneCopy: 0,
+    repeatable: true,
+    appAllCopiesPages: 1,
+    ...over,
+  }) as any;
+
+  it("loses no key on the way through — the generic guard against this bug", () => {
+    // Names every field rather than one of them: the next field added to the
+    // interface fails HERE instead of silently arriving as undefined.
+    const input = bucket();
+    const merged = statForSwitch([input], "VideoObject", ["product"])!;
+    for (const k of Object.keys(input)) {
+      expect(merged, `statForSwitch dropped "${k}"`).toHaveProperty(k);
+    }
+  });
+
+  it("sums it across buckets and lets the gate reach appOnly", () => {
+    const merged = statForSwitch(
+      [bucket(), bucket({ resourceType: "collection" })],
+      "VideoObject",
+      ["product", "collection"],
+    )!;
+    expect(merged.appAllCopiesPages).toBe(2);
+    expect(
+      activationGate(merged, { measured: true, originKnown: true }).verdict,
+    ).toBe("appOnly");
+  });
+
+  it("keeps it undefined while no bucket could answer", () => {
+    // "cannot tell" must not turn into a measured zero on the way here.
+    const merged = statForSwitch(
+      [bucket({ appAllCopiesPages: undefined })],
+      "VideoObject",
+      ["product"],
+    )!;
+    expect(merged.appAllCopiesPages).toBeUndefined();
+    expect(
+      activationGate(merged, { measured: true, originKnown: true }).verdict,
+    ).toBe("repeatableUnjudged");
   });
 });

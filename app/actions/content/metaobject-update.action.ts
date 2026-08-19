@@ -48,6 +48,8 @@ import {
   metaobjectListValueIsAmbiguous,
   isWritableMetaobjectFieldType,
   parseMetaobjectFieldInput,
+  parseMetaobjectTaxonomyValues,
+  taxonomyValueBounds,
   parseMetaobjectFieldKey,
 } from "~/services/metaobject-fields.shared";
 import { writeMetaobjectFields, type MetaobjectFieldWrite } from "~/services/metaobject-write.server";
@@ -68,6 +70,29 @@ interface CachedEntry {
   id: string;
   type: string;
   fields: Array<{ key: string; value: string | null; type?: string }>;
+}
+
+/**
+ * `list.min` / `list.max` for a taxonomy reference, or `null` when they hold.
+ *
+ * Read from the definition's validations, never hardcoded. A field with no
+ * cached definition has no validations and therefore no bounds -- unknown
+ * bounds are not a refusal, the same rule every other "we cannot tell" in this
+ * codebase follows.
+ */
+function taxonomyBoundsError(
+  fieldType: string,
+  storedValue: string,
+  validations: Array<{ name: string; value?: string | null }> | undefined,
+): string | null {
+  if (metaobjectFieldRole(fieldType) !== "taxonomyValue") return null;
+  // An empty value is a CLEAR; Shopify's required-field validation decides.
+  if (storedValue === "") return null;
+  const { min, max } = taxonomyValueBounds(fieldType, validations);
+  const count = parseMetaobjectTaxonomyValues(fieldType, storedValue).length;
+  if (max !== null && count > max) return `at most ${max} value(s) allowed, got ${count}.`;
+  if (min !== null && count < min) return `at least ${min} value(s) required, got ${count}.`;
+  return null;
 }
 
 function fieldTypeOf(
@@ -270,8 +295,31 @@ export async function handleMetaobjectUpdate(
               ? `${field.fieldKey}: "${field.value}" is not a valid hex colour.`
               : parsed.error === "emptyListEntry"
                 ? `${field.fieldKey}: list values must not be empty — separate them with | and remove empty entries.`
-                : `${field.fieldKey}: this field cannot be written from here.`,
+                : parsed.error === "invalidTaxonomyValue"
+                  // Refused HERE rather than forwarded: a value that is not a
+                  // TaxonomyValue GID fails at the GraphQL SCHEMA level, which
+                  // returns a top-level `errors` array with `data: null` and
+                  // never reaches `userErrors` — so a forwarded bad value makes
+                  // the whole save read as a success while nothing was written.
+                  ? `${field.fieldKey}: this must be a Shopify taxonomy value, not "${field.value}".`
+                  : `${field.fieldKey}: this field cannot be written from here.`,
           );
+          continue;
+        }
+        // The list bounds, on the UPDATE path too. `parseMetaobjectFieldInput`
+        // only checks the GID SHAPE, and the create path validates the bounds
+        // server-side -- this action takes a direct POST as well, so leaving
+        // them to the client would make the two write paths disagree about
+        // what a valid entry is. A bad bound does come back as a Shopify
+        // userError rather than a silent success, which is why this is a
+        // symmetry fix and not a data-loss one.
+        const boundsError = taxonomyBoundsError(
+          fieldType,
+          parsed.value,
+          definitionFields.find((f) => f.key === field.fieldKey)?.validations,
+        );
+        if (boundsError) {
+          errors.push(`${field.fieldKey}: ${boundsError}`);
           continue;
         }
         if (stored === parsed.value) continue;

@@ -214,7 +214,15 @@ export const en: Translation = {
     metaobjects: "Metaobjects",
     metaobjectsDescription: "Manage and translate custom metaobjects",
     metaobjectsNoEntries: "This metaobject type has no entries to display.",
+    // The editor's field strip pages ENTRIES here, not fields — one entry
+    // carries several of them, so counting entries and saying "fields" named
+    // the wrong thing on the one page where that distinction is the point.
+    metaobjectEntriesNoun: "entries",
+    metaobjectsSearchEntries: "Search entries...",
     // PLAN_METAOBJECTS_EDITOR — the entry card
+    metaobjectDeleteInUse: "Something in your shop still references this entry, so Shopify will not delete it. Remove the reference there first.",
+    metaobjectEntryEditColor: "Change colour",
+    metaobjectEntryColorStorefrontNote: "This colour is also the swatch your storefront shows on products using this option value \u2014 measured, not assumed.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "None of this entry's fields can be edited here.",
     metaobjectEntryUnsupportedTitle: "Not editable here",
@@ -234,6 +242,19 @@ export const en: Translation = {
     metaobjectEntryClearImage: "Remove image",
     metaobjectEntryReadOnlyDefinition: "This app cannot change entries of this definition.",
     metaobjectEntryReadOnlyUnknown: "Whether this definition is writable is unknown — reload to find out.",
+    metaobjectEntryOpenInAdmin: "Edit in the Shopify admin",
+    metaobjectTaxonomyLoading: "Loading the permitted values\u2026",
+    metaobjectTaxonomyNone: "\u2014",
+    metaobjectTaxonomyEmpty: "No values selected.",
+    metaobjectTaxonomyMin: "at least {n}",
+    metaobjectTaxonomyMax: "at most {n}",
+    metaobjectTaxonomyMaxReached: "At most {n} values",
+    metaobjectTaxonomyBelowMin: "Select at least {n} value(s).",
+    metaobjectTaxonomyLookupFailed: "The permitted values could not be read from Shopify just now.",
+    metaobjectTaxonomyAttributeMissing: "No taxonomy attribute called \"{handle}\" was found for this field.",
+    metaobjectTaxonomyNoHandle: "This field does not name a taxonomy attribute, so its values cannot be listed here.",
+    metaobjectTaxonomySearch: "Search or pick a value\u2026",
+    metaobjectTaxonomyTruncated: "Only the first values are listed \u2014 there may be more.",
     pages: "Pages",
     pagesDescription: "Manage your shop pages (Imprint, Terms, etc.)",
     policies: "Policies",
@@ -373,6 +394,8 @@ export const en: Translation = {
       primaryDisabledHint: "Market selection is only available in a translation language — switch to a target language first.",
       tooltip: "Pick a market to translate this language specifically for it. Without a selection the global value applies to all markets.",
       disabledHint: "Cookie banners are stored via Shopify's Customer Privacy API, which doesn't support market-specific values. This content is always global.",
+      notPublishedInMarket:
+        "This product is not in the catalog of the market “{market}”, so nobody there can see it. Translations for this market stay invisible until you publish it for that region under Publishing in your Shopify admin.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Fields in the primary language must not be empty. If a field is saved empty, Shopify removes it permanently and it can never be restored. Please fill in all fields before saving.",
@@ -415,7 +438,7 @@ export const en: Translation = {
     fieldLabels: {
       collectionRules: "Automated rules",
       images: "Images",
-      commerce: "Stock and sales channels",
+      commerce: "Sales channels",
       category: "Product category",
       collections: "Collections",
       productTitle: "Product Title",
@@ -438,7 +461,6 @@ export const en: Translation = {
       sortOrder: "Sort order",
       templateSuffix: "Theme template",
       isPublished: "Visible in the online store",
-      price: "Price (default variant)",
     },
     // Resource names
     resourceNames: {
@@ -480,6 +502,7 @@ export const en: Translation = {
 
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — creating content ─────────────────
     createButtonLabel: "Create",
+    createEntryButtonLabel: "Add entry",
     createChooserTitle: "What would you like to create?",
     // Two DIFFERENT refusals with different remedies — they must never share
     // the same text (§1.2).
@@ -561,6 +584,14 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      unitPriceHeading: "Unit price",
+      unitPriceHint: "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then also shows the price per unit — per kilogram, say.",
+      unitPriceContentUnit: "Total quantity unit",
+      unitPriceReferenceUnit: "Reference unit",
+      unitPriceContent: "Total quantity",
+      unitPriceReference: "Reference quantity",
+      unitPriceShow: "Show on the storefront",
+      unitPriceClearHint: "Clearing all four fields removes the unit price.",
       customsDetails: "More details",
       taxableSwitch: "Charge tax on this variant",
       inventoryHeading: "Inventory",
@@ -605,11 +636,22 @@ export const en: Translation = {
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       channelsHeading: "Sales channels",
+      manage: "Manage",
+      manageTitle: "Manage publishing",
+      done: "Done",
+      noneSelected: "Not published on any sales channel",
+      marketCount: "Regions: {count}",
+      b2bCount: "B2B catalogs: {count}",
+      marketsHeading: "Regions",
+      marketsHint: "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
+      b2bHeading: "B2B catalogs",
+      b2bHint: "B2B catalogs decide which business customers can see the product.",
+      catalogsUnknown: "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin.",
       noChannel: "On no channel — invisible",
       noChannels: "This shop has no sales channels installed.",
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
       scheduled: "Scheduled for {date}",
-      variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
+      variantPricesHint: "Prices are edited in the bulk editor (Bulk tab, variant rows) or in your Shopify admin.",
       notStockedHere: "not stocked here",
       stockHeading: "Stock",
       variantSelectLabel: "Variant",
@@ -626,6 +668,12 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      unitPriceAmbiguous: "The quantity is ambiguous — write 1000 or 1,000.00 so the separator is unmistakable. The unit price was not saved.",
+      unitPriceDimension: "The two units measure different things (grams and litres, say). The unit price was not saved.",
+      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. The unit price was not saved; everything else was.",
+      unitPriceInvalid: "The unit price was not a valid quantity and was not saved; everything else was.",
+      unitPriceNotConfirmed: "Shopify did not confirm the unit price. Reload to see what it holds.",
+      unitPriceNotShown: "Shopify did not take the unit price's display switch.",
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Nothing was saved.",
       priceInvalid: "A price was not a number, so it was not saved.",
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
@@ -644,16 +692,15 @@ export const en: Translation = {
       channelsNotConfirmed: "Shopify did not confirm every channel change. Reload to see which ones landed.",
       channelsFailed: "The sales channels could not be changed.",
     },
-    priceWarnings: {
-      priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
-      priceInvalid: "The price could not be read as an amount. Everything else was saved.",
-      priceEmpty: "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.",
-      priceNoVariant: "The price could not be saved because this product's variants are not in the local cache yet — reload the product. Everything else was saved.",
-      priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.",
-      priceFailed: "The price could not be saved. Everything else was saved.",
-    },
     searchEngineListing: "Search engine listing",
     attributesCardTitle: "Details",
+    // Headings of the subcards INSIDE the Details card
+    // (config/details-sections.ts).
+    detailsSections: {
+      publishing: "Sales channels",
+      organization: "Organization",
+      theme: "Theme template",
+    },
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
     // ONE enum vocabulary, at the top level because several surfaces render
@@ -666,6 +713,12 @@ export const en: Translation = {
     // status column still carry their own. Folding those in is worth doing,
     // and until it happens this comment says so rather than claiming it.
     enumLabels: {
+      "unitPriceUnit.ITEM": "item",
+      "unitPriceGroup.volume": "Volume",
+      "unitPriceGroup.weight": "Weight",
+      "unitPriceGroup.length": "Length",
+      "unitPriceGroup.area": "Area",
+      "unitPriceGroup.count": "Count",
       "status.DRAFT": "Draft", "status.ACTIVE": "Active",
       "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
       "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
@@ -681,11 +734,9 @@ export const en: Translation = {
     // The explanatory line under an attribute field. Long-form on purpose:
     // each one exists because merchants reliably assume the opposite.
     attributeNotes: {
-      status: "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
-      price: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+      status: "Active does not by itself mean visible — a product also needs a sales channel. You manage those right here under Sales channels.",
       category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
       collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
-      commerce: "Stock and channels are saved on their own — the buttons in this section, not the main save.",
     },
     templateSuffixHelp: "Empty = the theme's default template.",
     statusToggle: {
@@ -722,6 +773,31 @@ export const en: Translation = {
     createdNotSyncedBody: "The item was created in Shopify. Only the local copy is missing — reload to see it. Do NOT create it a second time.",
     createdHandle: "Handle: {handle}",
     createModal: {
+      // The modal TITLE. `New {resource}` used to interpolate a raw config
+      // slug, which is why it read "New metaobject" in every language.
+      titleFor: "New {resource}",
+      removeImage: "Remove",
+      onlyImagesHere: "Only images can be attached here. Add video or 3D from the item's media manager after creating it.",
+      externalVideoNotAnImage: "An external video link cannot be used as an item image.",
+      noneOption: "\u2014",
+      tagsHint: "Comma-separated",
+      createsUnpublishedNotice: "This is created as a draft \u2014 nothing goes live until you publish it.",
+      defaultRuleSetName: "Rule set 1",
+      collectionTypeLabel: "How are products added?",
+      collectionManual: "I pick them myself",
+      collectionAutomated: "Automatically, by rules",
+      // Validation codes, which used to render as the bare code next to the
+      // field ("invalidTaxonomyValue (Solid)").
+      errors: {
+        tooLong: "Too long ({detail})",
+        unknownField: "This app does not know this field.",
+        invalidOption: "\u201c{detail}\u201d is not one of the options.",
+        invalidHandle: "Only lowercase letters, numbers and dashes.",
+        invalidMoney: "Enter an amount, e.g. 19.90",
+        invalidTaxonomyValue: "Pick a value from the offered list.",
+        tooManyTaxonomyValues: "At most {detail} value(s).",
+        tooFewTaxonomyValues: "At least {detail} value(s).",
+      },
       // PLAN §2.5a-d — the AI extras.
       altText: "Alt text",
       changeImage: "Change image",
@@ -2070,9 +2146,15 @@ export const en: Translation = {
     },
     structuredDataPage: {
       introTitle: "What is structured data and why do you need it?",
-      introBody1: "Structured data is machine-readable metadata inside your storefront's HTML that tells search engines and AI systems WHAT is on a page — not just the raw text. Google, Bing, ChatGPT & Co. use it to recognise your product as a \"Product\" (with price, availability, ratings), your blog post as an \"Article\" (with author, date), and your shop as an \"Organization\" (with logo, social profiles).",
-      introBody2: "Concretely this earns you: Rich Snippets on Google (stars, price, availability directly in the search result), a Google Knowledge Panel for your brand, better mentions in AI answers (ChatGPT, Perplexity), and the foundation for Google Merchant Center and Shopping ads. We ship it in JSON-LD format following the schema.org standard — exactly what Google officially recommends.",
-      introBody3: "On top of that you also need Open Graph / Twitter Cards so shared links on Facebook, X, LinkedIn, Slack, WhatsApp and AI-chat link previews render with image, title and description.",
+      introBody1: "Structured data tells Google and AI systems WHAT is on a page — that €43.95 is a price and not just some number. That earns you stars, prices and availability right in the search result, a knowledge panel for your brand and better mentions in AI answers.",
+      introBody2: "Open Graph and Twitter Cards make shared links show up with an image and a title on Facebook, LinkedIn, WhatsApp and in AI chats.",
+      introStep1: "Shows what your pages deliver today.",
+      introStepBadge1: "Step 1",
+      introStep2: "Checks whether your product data is enough for a rich result.",
+      introStepBadge2: "Step 2",
+      introStep3: "Switches on individual elements — but only those nobody delivers yet.",
+      introStepBadge3: "Step 3",
+      introCrawlNote: "**The data for this comes from the website crawl.** Only it sees what is really on your pages. Without a current crawl, steps 1 and 3 give you no verdict, just \"not measured\".",
       activationTitle: "Activation in the theme editor",
       activationBody: "To actually ship the data to Google & Co. you enable two app blocks in your theme. One-time setup, no HTML/Liquid work required. The blocks then auto-populate on every product, collection, blog and theme page with the matching native Shopify data — no per-item sync.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) for Google",
@@ -2100,7 +2182,14 @@ export const en: Translation = {
       schemaBreadcrumb: "Breadcrumbs (BreadcrumbList)",
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
-      schemaVideoNote: "Video is produced on the storefront — from your product media AND from YouTube links that only live in a variant gallery — so it does not appear in the preview below. Deduplicated per product: one video attached to twelve variants stays one entry. For product media, the upload date Google asks for is fetched from the Shopify API during the product sync and stored in the \"custom.video_upload_dates\" metafield, which the storefront reads. A gallery link has no file behind it and therefore no automatic date: without the \"custom.video_upload_date\" metafield (your own value, which always wins) the property is omitted rather than invented — the video rich result then stays incomplete. Vimeo links from a gallery are skipped entirely: the rich result needs a thumbnail and none can be derived from a Vimeo link. FAQ (FAQPage) joins in once you enable the switch in the theme editor and fill the \"custom.faq\" metafield — both are deliberately off by default.",
+      schemaVideoNote: "Video is produced on the storefront — from your product media **and** from YouTube links that only live in a variant gallery. That is why it does not appear in the preview below. Deduplicated per product: one video on twelve variants stays one entry.",
+      schemaVideoDateNote: "**Videos from a gallery are delivered without a date.** Google only shows a video with an upload date. For videos in your product media the app fetches it automatically; a linked video (YouTube) has no file at Shopify and therefore no source for it — so it stays without a rich result.",
+      severityLabels: {
+        error: "Error",
+        warning: "Warning",
+        info: "Note",
+      },
+      schemaFaqNote: "FAQ (FAQPage) joins in once you enable the switch in the theme editor and fill the **custom.faq** metafield — both are deliberately off by default.",
       setBrandLogo: "Set logo in shop brand assets",
       openSampleProduct: "Open sample product",
       openSampleArticle: "Open sample article",
@@ -2147,13 +2236,27 @@ export const en: Translation = {
       // PLAN_MARKUP_ACTIVATION §1.2 — step 3. Activation sat at the very TOP of
       // this page until 2026-08, i.e. in the order in which the mistake is made
       // before it can be seen.
+      // PLAN_MARKUP_ACTIVATION §3.2 — the gallery-video finding. Appears only
+      // once the batch check has run; without it just the general note above.
+      galleryVideos: {
+        failed: "The gallery-video check could not run this time (Shopify refused the query). The next run tries again.",
+        none: "No gallery videos found ({variants} variants checked).",
+        found: "Products with dateless videos: {products} — of those from a gallery without a date: {missing}.",
+        externalNote: "Videos from **external sources** (a YouTube link in a gallery) cannot be delivered with a date — they have no file at Shopify. Google may then not accept the video as a rich result.",
+        vimeo: "{count} of them carry at least one Vimeo video — no markup is produced for those at all, and a date changes nothing.",
+        capped: "The check did not reach the whole catalog — there may be more.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · date set",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · date missing",
+        mediaMissing: "On {count} products the video sits in the **product media** and still has no date. A **product sync** fixes that by itself — the date then comes from Shopify.",
+        rowMedia: "{count} from product media without a date",
+      },
       activation: {
-        openSwitches: "Open switches",
+        openSwitches: "Go to widget",
         summary: {
           switchOff: "{count} to switch off: {names}",
           switchOffShort: "{count} to switch off",
-          themeFix: "{count} to fix in the theme: {names}",
-          themeFixShort: "{count} in the theme",
+          foreignFix: "{count} to fix outside this app: {names}",
+          foreignFixShort: "{count} outside this app",
           hold: "{count} not to switch on: {names}",
           holdShort: "{count} not to switch on",
           running: "{count} running cleanly",
@@ -2174,18 +2277,18 @@ export const en: Translation = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "One switch in the theme editor, nine tags behind it. It is only as safe as its worst tag.",
         socialNotMeasured: "The last crawl predates this analysis and captured no Open Graph tags. Without a measurement there is no recommendation here — start a new crawl.",
-        socialOriginUnknownHint: "**Origin unclear.** The marker ships with this update — after the next extension release and a fresh crawl a verdict appears here.",
+        socialOriginUnknownHint: "No marker of this app was found. There are two reasons for that: this embed is off — then your theme delivers the tags — or your last crawl is older than the marker. What is listed below as foreign is therefore likely, but not proven.",
         title: "Switch by switch: what may go on?",
-        intro: "Theme and app use the same @id on purpose — run both and Google merges them into ONE node with every field twice. That is not duplicate markup, it is **invalid** markup. So here is what step 1 measured, per switch.",
+        intro: "Only switch on what your theme does not already deliver. If a type is already there, switching it on produces faulty markup — Google is then more likely to discard it than to use it. Below is what step 1 measured, per switch.",
         noCrawl: "**No crawl yet.** No measurement, no recommendation.",
         notMeasured: "**Not measured.** The last crawl predates this analysis. No measurement, no recommendation.",
         basis: "Based on: crawl from {time}, {pages} served pages checked.",
-        originUnknownHint: "**Origin unclear.** Either the embed is off, or the crawl predates the origin detection. Until that is settled: switch nothing on, change nothing.",
+        originUnknownHint: "No marker of this app was found. There are two reasons for that: this embed is off — then your theme delivers the markup — or your last crawl is older than the marker. What is listed below as foreign is therefore likely, but not proven.",
         switchesTitle: "JSON-LD (schema.org)",
         defaultOn: "Default: on",
         defaultOff: "Default: off",
         repeatableCaveat: "Several per page are normal (three product videos = three VideoObjects), so duplication cannot be measured here.",
-        themeHint: "You switch your **theme\u2019s** own markup off in the theme editor — this app never touches theme code it does not own.",
+        themeHint: "Foreign markup is switched off where it comes from — in the **theme editor**, or in the **other app**. This app never touches code it does not own.",
         switches: {
           organization: "Organization (all pages)",
           product: "Product (product pages)",
@@ -2198,24 +2301,25 @@ export const en: Translation = {
         verdictLabels: {
           unknown: "Not measured",
           free: "Free",
+          varies: "Varies",
           appOnly: "Running",
           foreignOnly: "Do not switch on",
           mixed: "Inconsistent",
           originUnknown: "Do not switch on",
           repeatableUnjudged: "Not judgeable",
           duplicateApp: "Switch off",
-          duplicateForeign: "Theme issue",
+          duplicateForeign: "Duplicated — not ours",
         },
         verdicts: {
           unknown: "**Not measured.** No crawl, no verdict.",
           free: "**Free.** Nobody serves this type.",
           appOnly: "**Running.** {pages} pages, exactly one copy — ours.",
-          foreignOnly: "**Do not switch on.** Your theme already serves this on {pages} pages.",
-          mixed: "**Inconsistent.** {appPages} of {pages} pages from us, the rest from the theme.",
-          originUnknown: "**Do not switch on.** {pages} pages serve this — by whom, this crawl cannot say.",
+          foreignOnly: "**Already served** on {pages} pages, by your theme or another app. Do not switch on — it would be duplicated.",
+          mixed: "**Inconsistent.** {appPages} of {pages} pages from us, the rest from another source.",
+          originUnknown: "**Already served** on {pages} pages. Do not switch on — it would be duplicated. By whom, this crawl cannot say.",
           repeatableUnjudged: "**Not judgeable.** {pages} pages; several per page are normal here.",
           duplicateApp: "**Switch off.** Duplicated on {duplicatePages} pages, one copy is ours.",
-          duplicateForeign: "**Fix in the theme.** Duplicated on {duplicatePages} pages, no copy is ours.",
+          duplicateForeign: "**Not fixable here.** Duplicated on {duplicatePages} pages, no copy is ours — the source is your theme or another app.",
         },
       },
       // PLAN_MARKUP_ACTIVATION §2.4 — the social half of step 1. Reads the same
@@ -3895,8 +3999,9 @@ export const en: Translation = {
     commercePrices: {
       title: "The three prices",
       summary:
-        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody.",
+        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody. Behind “Unit price” there is additionally the price per unit for goods sold by weight or volume — required by law in many countries.",
       tips: [
+        "Clearing all four unit-price fields removes it again",
         "Empty compare-at price = no sale, and the struck-through number disappears",
         "The price itself cannot be emptied — Shopify requires one on every variant",
         "Cost is optional and only ever seen by you",
@@ -3905,8 +4010,9 @@ export const en: Translation = {
     commerceShipping: {
       title: "Shipping and customs",
       summary:
-        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad.",
+        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad. Both sit under “More details”.",
       tips: [
+        "The HS code and country of origin are folded away under “More details”",
         "Without a weight, weight-based shipping rates cannot be calculated",
         "The country of origin is where the item was MADE, not where you ship it from",
         "\"Needs shipping\" off = a digital product, and no address is asked for",

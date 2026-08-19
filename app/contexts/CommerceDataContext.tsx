@@ -52,6 +52,13 @@ export interface LoadedState {
   variantsTruncated: boolean;
   channels: CommerceChannelView[];
   channelsTruncated: boolean;
+  /**
+   * False ⇒ the market and B2B connections could not be asked for, so the
+   * absence of a region below is not evidence that the shop has none. The
+   * `catalogType` default is APP and it is silent — this flag is what keeps
+   * "we did not ask" distinguishable from "there are none".
+   */
+  catalogsKnown: boolean;
   /** Every location the SHOP has — see the "not stocked here" rows below. */
   shopLocations: Array<{ id: string; name: string; isActive: boolean }>;
 }
@@ -100,6 +107,15 @@ const CommerceDataContext = createContext<CommerceDataValue | null>(null);
 export function useCommerceData(): CommerceDataValue | null {
   return useContext(CommerceDataContext);
 }
+
+/** The four fields of ONE measurement. Named once: the save, the diff and the
+ *  panel all walk them, and a list that drifts writes a partial Grundpreis. */
+const UNIT_FIELDS = [
+  "unitQuantityValue",
+  "unitQuantityUnit",
+  "unitReferenceValue",
+  "unitReferenceUnit",
+] as const;
 
 export function CommerceDataProvider({
   productId,
@@ -173,6 +189,8 @@ export function CommerceDataProvider({
           variantsTruncated: body.variantsTruncated === true,
           channels: body.channels ?? [],
           channelsTruncated: body.channelsTruncated === true,
+          // Absent ⇒ an older server build that could not answer at all.
+          catalogsKnown: body.catalogsKnown === true,
           shopLocations: body.shopLocations ?? [],
         });
         // A refused write reloads to SHOW the number that actually moved —
@@ -329,6 +347,7 @@ export function CommerceDataProvider({
    * variant, so "" cannot mean anything else. The compare-at price is the
    * opposite — "" there is how a merchant ends a sale, so it IS a change.
    */
+  /** The measurement's four boxes, in the order the write path expects. */
   const dirtyPrices = useMemo(() => {
     const byVariant = new Map<
       string,
@@ -338,6 +357,11 @@ export function CommerceDataProvider({
         barcode?: string;
         inventoryPolicy?: string;
         taxable?: string;
+        unitQuantityValue?: string;
+        unitQuantityUnit?: string;
+        unitReferenceValue?: string;
+        unitReferenceUnit?: string;
+        showUnitPrice?: string;
       }
     >();
     for (const [key, value] of Object.entries(priceEdits)) {
@@ -360,7 +384,41 @@ export function CommerceDataProvider({
       } else if (field === "taxable") {
         if (value === String(variant.taxable ?? "")) continue;
         byVariant.set(variantId, { ...byVariant.get(variantId), taxable: value });
+      } else if (field === "showUnitPrice") {
+        if (value === String(variant.showUnitPrice ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), showUnitPrice: value });
       }
+      // The four measurement fields are handled below, as a unit.
+    }
+
+    /**
+     * The Grundpreis, gathered per variant AFTER the loop.
+     *
+     * It is one value in four boxes: Shopify replaces the measurement object
+     * rather than merging into it, so sending only the field that changed
+     * would write a measurement with three fields missing. Any difference in
+     * any of the four therefore emits ALL four — from the edit where there is
+     * one, from what was loaded where there is not.
+     */
+    for (const variant of data?.variants ?? []) {
+      const current = UNIT_FIELDS.map((field) => {
+        const edited = priceEdits[`${variant.id}::${field}`];
+        if (edited !== undefined) return edited;
+        const loaded = (variant as unknown as Record<string, unknown>)[field];
+        return loaded == null ? "" : String(loaded);
+      });
+      const loaded = UNIT_FIELDS.map((field) => {
+        const value = (variant as unknown as Record<string, unknown>)[field];
+        return value == null ? "" : String(value);
+      });
+      if (current.every((value, index) => value === loaded[index])) continue;
+      byVariant.set(variant.id, {
+        ...byVariant.get(variant.id),
+        unitQuantityValue: current[0],
+        unitQuantityUnit: current[1],
+        unitReferenceValue: current[2],
+        unitReferenceUnit: current[3],
+      });
     }
     return [...byVariant.entries()];
   }, [priceEdits, data]);
@@ -409,13 +467,35 @@ export function CommerceDataProvider({
             ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
             ...(fields.inventoryPolicy !== undefined ? { inventoryPolicy: fields.inventoryPolicy } : {}),
             ...(fields.taxable !== undefined ? { taxable: fields.taxable } : {}),
+            // All four or none — the route refuses a partial set, because
+            // three of them describe a measurement nobody typed.
+            ...(fields.unitQuantityValue !== undefined
+              ? {
+                  unitQuantityValue: fields.unitQuantityValue,
+                  unitQuantityUnit: fields.unitQuantityUnit ?? "",
+                  unitReferenceValue: fields.unitReferenceValue ?? "",
+                  unitReferenceUnit: fields.unitReferenceUnit ?? "",
+                }
+              : {}),
+            ...(fields.showUnitPrice !== undefined ? { showUnitPrice: fields.showUnitPrice } : {}),
           },
           "priceFailed",
         );
         // Phrased, like every other branch: pushing the raw code showed the
         // merchant the literal string `priceFailed`, and the two SPECIFIC
         // reasons (invalid, not confirmed) could never reach them at all.
-        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
+        //
+        // NAMED, when more than one variant is being written. A bulk save that
+        // refuses one member produces a sentence with no subject — "a unit
+        // price needs all four entries" — and the merchant has no way to tell
+        // which of twelve variants it is about, or that it is about a variant
+        // at all rather than the whole save.
+        collected.push(
+          ...warnings.map((code) => {
+            const phrased = (t.warnings?.[code] as string) || code;
+            return dirtyPrices.length > 1 && variant.title ? `${variant.title}: ${phrased}` : phrased;
+          }),
+        );
       }
 
       // Grouped per VARIANT: `inventorySetQuantities` is atomic per call, so a
@@ -548,7 +628,10 @@ export function CommerceDataProvider({
       savingRef.current = false;
       setSaving(false);
     }
-    setNotices(collected);
+    // Deduped: an identical sentence repeated once per variant is a wall of
+    // the same line, and where the sentence is per-variant it now carries the
+    // title, so it is no longer identical.
+    setNotices([...new Set(collected)]);
     // Reload either way. On success it confirms; on a refused write it shows
     // the number that actually moved — and then KEEPS the merchant's input,
     // because that is exactly the case where they need it.

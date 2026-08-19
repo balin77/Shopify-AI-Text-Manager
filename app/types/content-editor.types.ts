@@ -7,6 +7,7 @@
 import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
+import type { DetailsSectionId } from "~/config/details-sections";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -267,6 +268,20 @@ export type FieldType =
   // the merchant pressed save.
   | 'commerce';
 
+/**
+ * One dynamic field handed to a page's `renderFieldGroup`.
+ *
+ * The rendered node alone would force the page to place controls by POSITION.
+ * The definition lets it pick one out by key, and the live value lets it paint
+ * something beside the control while the merchant is still typing.
+ */
+export interface RenderedGroupField {
+  field: FieldDefinition;
+  /** What the editor currently holds for it — not what the item stores. */
+  value: string;
+  node: React.ReactNode;
+}
+
 export interface FieldRenderProps {
   value: string;
   onChange: (value: string) => void;
@@ -319,6 +334,14 @@ export interface FieldDefinition {
 
   /** Which card this field renders in (default: "main") */
   card?: FieldCard;
+
+  /**
+   * Merchandising attributes only: which SUBCARD of the Details card this
+   * field sits in. Consecutive fields sharing a section fold into one subcard
+   * (see config/details-sections.ts); with fewer than two sections the card
+   * renders flat, as it did before.
+   */
+  detailsSection?: DetailsSectionId;
 
   /** Field type determines the UI component */
   type: FieldType;
@@ -422,6 +445,21 @@ export interface ContentEditorConfig {
   createSupport?: {
     /** Offered in the create menu, in this order. */
     resources: Array<"product" | "collection" | "page" | "article" | "blog" | "metaobject">;
+    /**
+     * Also offer creating from the EDITOR's action bar, not only from the "+"
+     * above the item list.
+     *
+     * Set where the item list does not list the thing that gets created. On
+     * the metaobjects tab the list holds TYPES ("Color", "Material") while
+     * create makes an ENTRY, so a "+" above that list reads as "add a type" --
+     * which this app cannot do at all, and which is why merchants looked at
+     * an open type and found no way to add anything to it. The action bar sits
+     * above the entry cards, i.e. above the things that actually appear.
+     *
+     * Everywhere else the list holds the created thing and the "+" is already
+     * in the right place; a second button there would be noise.
+     */
+    fromActionBar?: boolean;
   };
 
   /** Custom primary field getter (t is optional for i18n support) */

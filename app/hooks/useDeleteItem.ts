@@ -24,9 +24,18 @@ export interface DeleteTarget {
 export interface UseDeleteItemOptions {
   /** Called after Shopify confirmed and the cache was purged. */
   onDeleted?: (target: DeleteTarget, info: { cascadedArticles: number }) => void;
+  /**
+   * Turns a server `errorKey` into a sentence in the merchant's language.
+   *
+   * A refusal this dialog shows is read by a person, and the server has no
+   * business phrasing it: the app ships in three languages and the action is
+   * shared. Without a resolver the server's `error` is shown as before, so a
+   * caller that does not care loses nothing.
+   */
+  translateError?: (errorKey: string) => string | undefined;
 }
 
-export function useDeleteItem({ onDeleted }: UseDeleteItemOptions = {}) {
+export function useDeleteItem({ onDeleted, translateError }: UseDeleteItemOptions = {}) {
   const fetcher = useFetcher<Record<string, unknown>>();
   const [target, setTarget] = useState<DeleteTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -74,14 +83,19 @@ export function useDeleteItem({ onDeleted }: UseDeleteItemOptions = {}) {
 
     if (!result.success) {
       // Nothing was removed — the dialog stays open with the reason, because
-      // closing it would read as "done".
-      setError(typeof result.error === "string" ? result.error : "Could not delete the item.");
+      // closing it would read as "done". A translated `errorKey` wins over the
+      // server's own wording where the caller supplied a resolver.
+      const key = typeof result.errorKey === "string" ? result.errorKey : null;
+      const translated = key ? translateError?.(key) : undefined;
+      setError(
+        translated ?? (typeof result.error === "string" ? result.error : "Could not delete the item."),
+      );
       return;
     }
 
     setTarget(null);
     onDeleted?.(inFlight, { cascadedArticles: Number(result.cascadedArticles ?? 0) });
-  }, [fetcher.data, fetcher.state, onDeleted]);
+  }, [fetcher.data, fetcher.state, onDeleted, translateError]);
 
   return { target, request, cancel, confirm, deleting, error };
 }
