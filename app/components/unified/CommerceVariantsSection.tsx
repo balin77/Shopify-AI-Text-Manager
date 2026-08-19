@@ -224,6 +224,25 @@ export function CommerceVariantsSection() {
    * column whose width the merchant DRAGS, so a media query would answer the
    * wrong question.
    */
+  /**
+   * The card's own column, so the disclosure can sit at the BOTTOM of it.
+   *
+   * The two cards stretch to the same height (`alignItems: stretch` below),
+   * but their content does not fill it equally — prices carries a row of three
+   * fields and a toggle, shipping two fields — so the two disclosure buttons
+   * landed at different heights and read as a misalignment rather than as
+   * different amounts of content. `marginTop: auto` on the footer puts them on
+   * one line. `BlockStack` cannot express this: it takes no height, and an
+   * auto margin needs a parent with room to give.
+   */
+  const cardColumn: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--p-space-300)",
+    height: "100%",
+  };
+  const cardFooter: CSSProperties = { marginTop: "auto" };
+
   const sectionGrid: CSSProperties = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
@@ -362,7 +381,7 @@ export function CommerceVariantsSection() {
           full-width card: it holds a table. */}
       <div style={sectionGrid}>
         <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
-          <BlockStack gap="300">
+          <div style={cardColumn}>
                   {/* ── Prices ─────────────────────────────────────────
                       All three on ONE row, because the confusion they cause is
                       the difference BETWEEN them: the field that used to sit up
@@ -426,6 +445,7 @@ export function CommerceVariantsSection() {
                     </Text>
                   </InlineStack>
 
+                  <div style={cardFooter}>
                   {/* ── Grundpreis (unit price) ─────────────────────────────
                       Folded away, like customs and for the same reason: it is
                       four inputs that matter to shops selling by weight or
@@ -501,14 +521,15 @@ export function CommerceVariantsSection() {
                       </Text>
                     </BlockStack>
                   </Collapsible>
-          </BlockStack>
+                  </div>
+          </div>
         </Box>
 
         {/* The InventoryItem's own settings. Shown for EVERY variant, tracked
             or not: a weight and a customs code are facts about the item, not
             about whether Shopify counts it. */}
         <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
-          <BlockStack gap="300">
+          <div style={cardColumn}>
                   {first.inventoryItemId ? (
                     <>
                     <InlineStack align="space-between" blockAlign="center" wrap={false}>
@@ -572,6 +593,7 @@ export function CommerceVariantsSection() {
                       </Box>
                     </InlineStack>
 
+                    <div style={cardFooter}>
                     {/* Customs, folded away. Shopify folds them for the same
                         reason: an HS code and a country of origin matter to
                         the merchants who ship across a border and to nobody
@@ -606,9 +628,10 @@ export function CommerceVariantsSection() {
                         />
                       </BlockStack>
                     </Collapsible>
+                    </div>
                     </>
                   ) : null}
-          </BlockStack>
+          </div>
         </Box>
       </div>
 

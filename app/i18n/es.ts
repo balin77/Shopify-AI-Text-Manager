@@ -3929,8 +3929,9 @@ export const es: Translation = {
     commercePrices: {
       title: "Los tres precios",
       summary:
-        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie.",
+        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie. Detrás de «Precio por unidad» está además el precio por unidad para productos vendidos por peso o volumen: obligatorio en muchos países.",
       tips: [
+        "Vaciar los cuatro campos del precio por unidad lo elimina",
         "Precio comparativo vacío = sin oferta, y la cifra tachada desaparece",
         "El precio de venta no se puede vaciar — Shopify exige uno en cada variante",
         "El precio de compra es opcional y solo lo ves tú",
@@ -3939,8 +3940,9 @@ export const es: Translation = {
     commerceShipping: {
       title: "Envío y aduanas",
       summary:
-        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero.",
+        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero. Ambos están bajo «Más detalles».",
       tips: [
+        "El código arancelario y el país de origen están plegados bajo «Más detalles»",
         "Sin peso no se pueden calcular tarifas de envío por peso",
         "El país de origen es donde se FABRICÓ el artículo, no desde dónde lo envías",
         "\"Requiere envío\" desactivado = producto digital, y no se pide dirección",

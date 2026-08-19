@@ -3940,8 +3940,9 @@ export const de = {
     commercePrices: {
       title: "Die drei Preise",
       summary:
-        "Zwei davon sieht deine Kundin, einen nie. Der Verkaufspreis ist, was sie bezahlt. Der Vergleichspreis ist die durchgestrichene Zahl daneben — leer lassen, wenn es kein Angebot gibt. Der Einkaufspreis ist, was DU bezahlt hast; Shopify nutzt ihn für deine Margen-Auswertungen und zeigt ihn niemandem.",
+        "Zwei davon sieht deine Kundin, einen nie. Der Verkaufspreis ist, was sie bezahlt. Der Vergleichspreis ist die durchgestrichene Zahl daneben — leer lassen, wenn es kein Angebot gibt. Der Einkaufspreis ist, was DU bezahlt hast; Shopify nutzt ihn für deine Margen-Auswertungen und zeigt ihn niemandem. Hinter „Grundpreis“ steckt zusätzlich der Preis pro Einheit für Ware, die nach Gewicht oder Volumen verkauft wird — in vielen Ländern Pflicht.",
       tips: [
+        "Alle vier Felder des Grundpreises leeren entfernt ihn wieder",
         "Leerer Vergleichspreis = kein Angebot, die durchgestrichene Zahl verschwindet",
         "Der Verkaufspreis selbst lässt sich nicht leeren — Shopify verlangt auf jeder Variante einen",
         "Der Einkaufspreis ist optional und nur für dich sichtbar",
@@ -3950,8 +3951,9 @@ export const de = {
     commerceShipping: {
       title: "Versand und Zoll",
       summary:
-        "Was Transporteur und Zollformular brauchen. Das Gewicht bestimmt berechnete Versandtarife. Zolltarifnummer und Herkunftsland stehen auf Zollerklärungen bei Auslandsbestellungen — sie auszufüllen lohnt sich nur, wenn du ins Ausland versendest.",
+        "Was Transporteur und Zollformular brauchen. Das Gewicht bestimmt berechnete Versandtarife. Zolltarifnummer und Herkunftsland stehen auf Zollerklärungen bei Auslandsbestellungen — sie auszufüllen lohnt sich nur, wenn du ins Ausland versendest. Beides liegt unter „Weitere Details“.",
       tips: [
+        "Zolltarifnummer und Herkunftsland findest du aufgeklappt unter „Weitere Details“",
         "Ohne Gewicht lassen sich gewichtsbasierte Versandtarife nicht berechnen",
         "Das Herkunftsland ist, wo der Artikel HERGESTELLT wurde, nicht wo du ihn verschickst",
         "\"Versand nötig\" aus = ein digitales Produkt, es wird keine Adresse abgefragt",

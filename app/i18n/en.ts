@@ -3932,8 +3932,9 @@ export const en: Translation = {
     commercePrices: {
       title: "The three prices",
       summary:
-        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody.",
+        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody. Behind “Unit price” there is additionally the price per unit for goods sold by weight or volume — required by law in many countries.",
       tips: [
+        "Clearing all four unit-price fields removes it again",
         "Empty compare-at price = no sale, and the struck-through number disappears",
         "The price itself cannot be emptied — Shopify requires one on every variant",
         "Cost is optional and only ever seen by you",
@@ -3942,8 +3943,9 @@ export const en: Translation = {
     commerceShipping: {
       title: "Shipping and customs",
       summary:
-        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad.",
+        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad. Both sit under “More details”.",
       tips: [
+        "The HS code and country of origin are folded away under “More details”",
         "Without a weight, weight-based shipping rates cannot be calculated",
         "The country of origin is where the item was MADE, not where you ship it from",
         "\"Needs shipping\" off = a digital product, and no address is asked for",
