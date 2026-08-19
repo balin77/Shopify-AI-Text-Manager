@@ -2125,9 +2125,10 @@ export const de = {
     },
     structuredDataPage: {
       introTitle: "Was sind strukturierte Daten und wozu brauchst du sie?",
-      introBody1: "Strukturierte Daten sind maschinenlesbare Metadaten im HTML deines Shops, die Suchmaschinen und KI-Systemen erklären, WAS auf einer Seite steht — nicht nur den reinen Text. Google, Bing, ChatGPT & Co. nutzen sie, um dein Produkt als \"Produkt\" (mit Preis, Verfügbarkeit, Bewertungen), deinen Blog-Artikel als \"Artikel\" (mit Autor, Datum) und deinen Shop als \"Organisation\" (mit Logo, Social-Profilen) zu erkennen.",
-      introBody2: "Konkret bringt dir das: Rich Snippets in Google (Sterne, Preise, Verfügbarkeit direkt im Suchergebnis), ein Google Knowledge Panel für deine Marke, bessere Erwähnungen in KI-Antworten (ChatGPT, Perplexity) und die Grundlage für Google Merchant Center und Shopping-Anzeigen. Wir liefern das im JSON-LD-Format nach dem schema.org-Standard — genau das, was Google offiziell empfiehlt.",
-      introBody3: "Zusätzlich brauchst du Open Graph / Twitter Cards, damit geteilte Links auf Facebook, X, LinkedIn, Slack, WhatsApp und in KI-Chat-Vorschauen mit Bild, Titel und Beschreibung erscheinen.",
+      introBody1: "Strukturierte Daten sagen Google und KI-Systemen, WAS auf einer Seite steht — dass 43,95 € ein Preis ist und keine beliebige Zahl. Das bringt dir Sterne, Preise und Verfügbarkeit direkt im Suchergebnis, ein Knowledge Panel für deine Marke und bessere Erwähnungen in KI-Antworten.",
+      introBody2: "Open Graph und Twitter Cards sorgen dafür, dass geteilte Links auf Facebook, LinkedIn, WhatsApp und in KI-Chats mit Bild und Titel erscheinen.",
+      introFlow: "**Schritt 1** zeigt, was deine Seiten heute ausliefern. **Schritt 2** prüft, ob deine Produktdaten für ein Rich Result reichen. **Schritt 3** schaltet dann einzelne Elemente zu — aber nur die, die noch niemand liefert.",
+      introCrawlNote: "**Die Daten dafür kommen aus dem Website-Crawl.** Nur er sieht, was wirklich auf deinen Seiten steht. Ohne aktuellen Crawl gibt es in Schritt 1 und 3 kein Urteil, sondern nur „nicht gemessen\".",
       activationTitle: "Aktivierung im Theme-Editor",
       activationBody: "Damit die Daten tatsächlich an Google & Co. ausgeliefert werden, aktivierst du zwei App-Blöcke in deinem Theme. Das ist einmalig und ohne Eingriffe in HTML/Liquid. Die Blöcke werden dann für jede Produkt-, Kollektions-, Blog- und Themeseite automatisch mit den passenden nativen Shopify-Daten befüllt — kein Sync pro Artikel nötig.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) für Google",

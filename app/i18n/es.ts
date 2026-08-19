@@ -2110,9 +2110,10 @@ export const es: Translation = {
     },
     structuredDataPage: {
       introTitle: "¿Qué son los datos estructurados y para qué los necesitas?",
-      introBody1: "Los datos estructurados son metadatos legibles por máquinas dentro del HTML de tu tienda que le dicen a los buscadores y a los sistemas de IA QUÉ hay en una página — no solo el texto en bruto. Google, Bing, ChatGPT y compañía los usan para reconocer tu producto como \"Producto\" (con precio, disponibilidad, valoraciones), tu entrada de blog como \"Artículo\" (con autor, fecha) y tu tienda como \"Organización\" (con logo, perfiles sociales).",
-      introBody2: "En concreto te aporta: Rich Snippets en Google (estrellas, precio, disponibilidad directamente en el resultado), un Knowledge Panel de Google para tu marca, mejores menciones en respuestas de IA (ChatGPT, Perplexity) y la base para Google Merchant Center y anuncios de Shopping. Lo emitimos en formato JSON-LD según el estándar schema.org — exactamente lo que Google recomienda oficialmente.",
-      introBody3: "Además necesitas Open Graph / Twitter Cards para que los enlaces compartidos en Facebook, X, LinkedIn, Slack, WhatsApp y en las vistas previas de chats de IA se muestren con imagen, título y descripción.",
+      introBody1: "Los datos estructurados le dicen a Google y a los sistemas de IA QUÉ hay en una página: que 43,95 € es un precio y no un número cualquiera. Eso te da estrellas, precios y disponibilidad en el propio resultado de búsqueda, un panel de conocimiento para tu marca y mejores menciones en las respuestas de IA.",
+      introBody2: "Open Graph y Twitter Cards hacen que los enlaces compartidos aparezcan con imagen y título en Facebook, LinkedIn, WhatsApp y en los chats de IA.",
+      introFlow: "**El paso 1** muestra qué entregan hoy tus páginas. **El paso 2** comprueba si tus datos de producto bastan para un rich result. **El paso 3** activa después elementos concretos, pero solo los que aún no entrega nadie.",
+      introCrawlNote: "**Los datos para esto vienen del rastreo del sitio.** Solo él ve lo que hay realmente en tus páginas. Sin un rastreo actual, los pasos 1 y 3 no dan un veredicto, solo «sin medir».",
       activationTitle: "Activación en el editor de temas",
       activationBody: "Para enviar los datos realmente a Google y compañía, activas dos bloques de app en tu tema. Es una configuración única, sin tocar HTML/Liquid. Los bloques se rellenan automáticamente en cada página de producto, colección, blog y tema con los datos nativos de Shopify — sin sincronización por elemento.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) para Google",

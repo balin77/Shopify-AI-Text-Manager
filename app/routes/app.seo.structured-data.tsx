@@ -892,7 +892,20 @@ export default function SeoStructuredData() {
           <BlockStack gap="200">
             <Text as="p" variant="bodyMd">{(s as any).introBody1 as string}</Text>
             <Text as="p" variant="bodyMd">{(s as any).introBody2 as string}</Text>
-            <Text as="p" variant="bodyMd">{(s as any).introBody3 as string}</Text>
+            {/* The order of the three steps, and where their data comes from.
+                Both were missing: a merchant could not tell that the crawl is
+                what feeds steps 1 and 3, and went looking for a refresh button
+                that does not exist here. The link is the shortest way to fix
+                that — reusing the label the empty states already use. */}
+            <Text as="p" variant="bodyMd">{emphasize((s as any).introFlow as string)}</Text>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">{emphasize((s as any).introCrawlNote as string)}</Text>
+              <InlineStack>
+                <Button variant="plain" onClick={() => handleNavigate("/app/seo/crawl")}>
+                  {live.goToCrawl}
+                </Button>
+              </InlineStack>
+            </BlockStack>
           </BlockStack>
         </SeoHelpBanner>
 

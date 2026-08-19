@@ -2119,9 +2119,10 @@ export const en: Translation = {
     },
     structuredDataPage: {
       introTitle: "What is structured data and why do you need it?",
-      introBody1: "Structured data is machine-readable metadata inside your storefront's HTML that tells search engines and AI systems WHAT is on a page — not just the raw text. Google, Bing, ChatGPT & Co. use it to recognise your product as a \"Product\" (with price, availability, ratings), your blog post as an \"Article\" (with author, date), and your shop as an \"Organization\" (with logo, social profiles).",
-      introBody2: "Concretely this earns you: Rich Snippets on Google (stars, price, availability directly in the search result), a Google Knowledge Panel for your brand, better mentions in AI answers (ChatGPT, Perplexity), and the foundation for Google Merchant Center and Shopping ads. We ship it in JSON-LD format following the schema.org standard — exactly what Google officially recommends.",
-      introBody3: "On top of that you also need Open Graph / Twitter Cards so shared links on Facebook, X, LinkedIn, Slack, WhatsApp and AI-chat link previews render with image, title and description.",
+      introBody1: "Structured data tells Google and AI systems WHAT is on a page — that €43.95 is a price and not just some number. That earns you stars, prices and availability right in the search result, a knowledge panel for your brand and better mentions in AI answers.",
+      introBody2: "Open Graph and Twitter Cards make shared links show up with an image and a title on Facebook, LinkedIn, WhatsApp and in AI chats.",
+      introFlow: "**Step 1** shows what your pages deliver today. **Step 2** checks whether your product data is enough for a rich result. **Step 3** then switches on individual elements — but only those nobody delivers yet.",
+      introCrawlNote: "**The data for this comes from the website crawl.** Only it sees what is really on your pages. Without a current crawl, steps 1 and 3 give you no verdict, just \"not measured\".",
       activationTitle: "Activation in the theme editor",
       activationBody: "To actually ship the data to Google & Co. you enable two app blocks in your theme. One-time setup, no HTML/Liquid work required. The blocks then auto-populate on every product, collection, blog and theme page with the matching native Shopify data — no per-item sync.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) for Google",
