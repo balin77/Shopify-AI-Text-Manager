@@ -148,7 +148,15 @@ async function processWebhookAsync(
       // and the sequence stops — while a merchant who added a video in the
       // admin fires only this webhook, and suppressing it here left that
       // product without an uploadDate until the next full sync.
-      await syncService.syncProduct(productId, false);
+      //
+      // A products/UPDATE webhook is also THE "the primary text changed"
+      // event, so the sync reconciles now-stale foreign translations (delete,
+      // or re-translate on Max) — see
+      // services/translations/stale-translation-sync.server.ts. A CREATE is a
+      // first sync, never a change event.
+      await syncService.syncProduct(productId, false, {
+        reconcileTranslations: topic === "PRODUCTS_UPDATE",
+      });
       await enqueueProductForIndexNow(db, shop, productId, before);
     } else if (topic === "PRODUCTS_DELETE") {
       // IndexNow is meant to be told about removed URLs too, so we must

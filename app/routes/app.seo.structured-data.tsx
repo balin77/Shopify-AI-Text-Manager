@@ -610,11 +610,11 @@ export default function SeoStructuredData() {
   const jsonLdOriginKnown = liveJsonLd?.appEmbedDetected === true;
   // "The crawl saw no article page" and "this shop has no articles" look the
   // same in a page count and mean opposite things for a switch that emits on
-  // article pages. The coverage rows carry the catalogue size, so the gate can
-  // tell them apart instead of blocking a blogless shop for good.
-  const jsonLdCatalogTotals = Object.fromEntries(
-    (liveJsonLd?.coverage ?? []).map((c) => [c.resourceType, c.catalogTotal]),
-  );
+  // article pages. Read from the summary's own field, NOT from `coverage`:
+  // a coverage row exists only for a kind the crawl reached, so deriving it
+  // there produced a number exactly when the gate did not need one — and
+  // nothing in the only case it does.
+  const jsonLdCatalogTotals = liveJsonLd?.catalogTotals;
   const switchGates = JSON_LD_SWITCHES.map((sw) => ({
     ...sw,
     // Scoped, never shop-wide: our block emits FAQPage on PRODUCT pages only,
@@ -917,7 +917,7 @@ export default function SeoStructuredData() {
               {([
                 ["introStepBadge1", "introStep1", "info"],
                 ["introStepBadge2", "introStep2", "attention"],
-                ["introStepBadge3", "introStep3", "magic"],
+                ["introStepBadge3", "introStep3", "success"],
               ] as const).map(([badgeKey, textKey, tone]) => (
                 <InlineStack key={badgeKey} gap="200" blockAlign="start" wrap={false}>
                   <div style={{ flexShrink: 0 }}>
@@ -975,7 +975,7 @@ export default function SeoStructuredData() {
             title={act.stepTitle as string}
             body={act.stepBody as string}
             badge={activationBadge}
-            accent="magic"
+            accent="success"
           />
         </InlineGrid>
 

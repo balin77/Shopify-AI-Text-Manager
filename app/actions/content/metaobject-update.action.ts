@@ -346,9 +346,20 @@ export async function handleMetaobjectUpdate(
     return confirmedTotal;
   }
 
-  /** Echo-verified removal of the now-stale GLOBAL foreign translations. */
+  /**
+   * Echo-verified removal of the now-stale GLOBAL foreign translations.
+   *
+   * Whether this happens at all is a merchant switch (Settings →
+   * Übersetzungen) — the same question every other purge site in this app
+   * asks, through the same module, which fails OPEN so a lookup error keeps
+   * the historic behaviour.
+   */
   async function invalidateForeign(metaobjectId: string, keys: string[]): Promise<void> {
     try {
+      const { isPurgeOnPrimaryChangeEnabled } = await import(
+        "~/services/translations/translation-change-policy.server"
+      );
+      if (!(await isPurgeOnPrimaryChangeEnabled(session.shop, db))) return;
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
         "~/services/bulk-editor/translations.server"
       );

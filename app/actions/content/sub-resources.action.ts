@@ -967,10 +967,21 @@ export async function handleSavePrimarySubResources(
     // An id that appears in both lists (one value of an option saved, another
     // failed) counts as failed: the option's primary text did move, but taking
     // its translations on a half-applied write is the destructive reading.
+    //
+    // Whether the purge happens at all is a merchant switch (Settings →
+    // Übersetzungen); the lookup fails OPEN so an error keeps the historic
+    // behaviour.
     const changedOptionIds = savedOptions.filter((id) => !failedOptions.includes(id));
     const changedMetafieldIds = savedMetafields.filter((id) => !failedMetafields.includes(id));
+    const { isPurgeOnPrimaryChangeEnabled } = await import(
+      "~/services/translations/translation-change-policy.server"
+    );
+    const purgeStaleTranslations =
+      changedOptionIds.length > 0 || changedMetafieldIds.length > 0
+        ? await isPurgeOnPrimaryChangeEnabled(session.shop, db)
+        : false;
 
-    if (changedOptionIds.length > 0 || changedMetafieldIds.length > 0) {
+    if (purgeStaleTranslations && (changedOptionIds.length > 0 || changedMetafieldIds.length > 0)) {
       try {
         // Get all shop locales
         const localesResponse = await gateway.graphql(

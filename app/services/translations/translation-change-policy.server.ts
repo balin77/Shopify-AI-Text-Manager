@@ -1,0 +1,101 @@
+/**
+ * Translation-change policy — what happens to a FOREIGN translation when its
+ * PRIMARY source text changes.
+ *
+ * Until this module existed the answer was hard-coded in every write path:
+ * "delete it". That is right by default (a translation of a text that no
+ * longer exists is worse than no translation), but it is a merchant decision,
+ * not ours — a shop whose translations are hand-written by an agency wants the
+ * old value kept and re-checked, not thrown away. Settings → Übersetzungen
+ * owns both switches; every purge site asks THIS module, never the column.
+ *
+ * Two rules make this module boring on purpose:
+ *
+ *  - **It fails OPEN.** A lookup error resolves to the historic behaviour
+ *    (purge on, auto-translate off). A DB hiccup must never silently start
+ *    keeping stale translations alive on the storefront — that is invisible to
+ *    the merchant, while a purge is not.
+ *  - **The plan gate lives here.** `autoTranslateExternalChanges` is a Max
+ *    feature; the column can legitimately hold `true` on a shop that has since
+ *    downgraded, so the flag is ANDed with the plan on every read instead of
+ *    being reset on downgrade (the same rule the SEO limits follow).
+ */
+
+import type { PrismaClient } from "@prisma/client";
+import { logger } from "../../utils/logger.server";
+import { meetsPlan, type Plan } from "../../utils/planUtils";
+import { AUTO_TRANSLATE_MIN_PLAN } from "./translation-change-policy.shared";
+
+export { AUTO_TRANSLATE_MIN_PLAN };
+
+export interface TranslationChangePolicy {
+  /**
+   * Delete a foreign translation when its primary value changed or was
+   * cleared (in this app AND on a sync that notices an external change).
+   */
+  purgeOnPrimaryChange: boolean;
+  /**
+   * Max plan: when a sync notices the primary text changed OUTSIDE this app,
+   * re-translate the NEW value into that locale instead of leaving the field
+   * untranslated. Already ANDed with the plan gate.
+   */
+  autoTranslateExternalChanges: boolean;
+  /** The shop's plan, for callers that log or surface it. */
+  plan: Plan;
+}
+
+/** The historic, hard-coded behaviour — also the fail-open fallback. */
+const DEFAULT_POLICY: TranslationChangePolicy = {
+  purgeOnPrimaryChange: true,
+  autoTranslateExternalChanges: false,
+  plan: "free",
+};
+
+/**
+ * @param dbClient  Pass the PrismaClient the caller already holds (every write
+ *   path has one); omitted, the shared instance is imported.
+ */
+export async function loadTranslationChangePolicy(
+  shop: string,
+  dbClient?: PrismaClient,
+): Promise<TranslationChangePolicy> {
+  try {
+    const db = dbClient ?? (await import("../../db.server")).db;
+    const row = await db.aISettings.findUnique({
+      where: { shop },
+      select: {
+        translationPurgeOnPrimaryChange: true,
+        autoTranslateExternalChanges: true,
+        subscriptionPlan: true,
+      },
+    });
+    const plan = (row?.subscriptionPlan || "free") as Plan;
+    return {
+      // `?? true` covers both "no settings row yet" and a pre-migration
+      // container reading a column that is not there.
+      purgeOnPrimaryChange: row?.translationPurgeOnPrimaryChange ?? true,
+      autoTranslateExternalChanges:
+        (row?.autoTranslateExternalChanges ?? false) && meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN),
+      plan,
+    };
+  } catch (error: unknown) {
+    logger.warn("[TranslationPolicy] Could not load policy — falling back to purge-on-change", {
+      context: "TranslationPolicy",
+      shop,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return DEFAULT_POLICY;
+  }
+}
+
+/**
+ * The one question every in-app purge site asks before deleting a foreign
+ * translation for a changed/cleared primary value.
+ */
+export async function isPurgeOnPrimaryChangeEnabled(
+  shop: string,
+  dbClient?: PrismaClient,
+): Promise<boolean> {
+  const policy = await loadTranslationChangePolicy(shop, dbClient);
+  return policy.purgeOnPrimaryChange;
+}
