@@ -42,6 +42,12 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { parseMoney } from "./bulk-editor/columns.shared";
+import {
+  EMPTY_MEASUREMENT_INPUT,
+  decideUnitPrice,
+  isEmptyMeasurement,
+  type UnitPriceFieldValues,
+} from "./unit-price.shared";
 import { logger } from "~/utils/logger.server";
 
 /** Codes resolved to sentences by the client (`t.content.commerceWarnings`). */
@@ -60,7 +66,13 @@ export type CommerceWarning =
   | "priceInvalid"
   | "priceAmbiguous"
   | "priceNotConfirmed"
-  | "priceFailed";
+  | "priceFailed"
+  | "unitPriceIncomplete"
+  | "unitPriceInvalid"
+  | "unitPriceAmbiguous"
+  | "unitPriceDimension"
+  | "unitPriceNotConfirmed"
+  | "unitPriceNotShown";
 
 export interface StockChange {
   /** gid://shopify/InventoryItem/... */
@@ -692,6 +704,34 @@ export interface VariantPriceFields {
    * save that reads as a success while nothing was written. Validated here.
    */
   inventoryPolicy?: string;
+  /**
+   * The Grundpreis, as the four raw strings the merchant typed.
+   *
+   * Passed as a quartet rather than as a parsed measurement because the four
+   * are ONE value: Shopify replaces the measurement object instead of merging
+   * into it, so "change only the unit" is not a thing that exists. Parsed and
+   * judged in one place by `decideUnitPrice` — all four empty CLEARS, all four
+   * filled SETS, and anything between is refused rather than half-written.
+   */
+  unitPrice?: UnitPriceFieldValues;
+  /**
+   * Whether the storefront shows it.
+   *
+   * Its own field on the variant, and independent of the measurement — that
+   * much is MEASURED: writing a measurement left it false through every probe
+   * write. What is NOT measured is whether the switch itself can be moved.
+   * The probe was extended to flip it and flip it back, and that run has not
+   * happened yet, so this ships a control over a capability nobody has
+   * confirmed.
+   *
+   * Shipped anyway, deliberately: if the storefront gates the Grundpreis on
+   * this flag, withholding the control means writing a measurement nobody
+   * ever sees. The cost of being wrong is bounded by the echo — a switch that
+   * will not move gets its OWN warning rather than the generic one, because
+   * the measurement may well be stored while only the switch refused, and one
+   * code for both would send a merchant looking for a price that is saved.
+   */
+  showUnitPrice?: boolean;
 }
 
 /** Shopify's `ProductVariantInventoryPolicy`. */
@@ -722,7 +762,6 @@ export async function applyVariantPrices(
   params: { productId: string; variantId: string; variantGid: string; fields: VariantPriceFields },
 ): Promise<CommerceWarning | undefined> {
   const input: Record<string, unknown> = { id: params.variantGid };
-  const mirror: Record<string, unknown> = {};
 
   /**
    * THE money parser — the bulk grid's, not this module's `parseDecimal`.
@@ -748,7 +787,6 @@ export async function applyVariantPrices(
     if ("warning" in parsed) return parsed.warning;
     if (parsed.value === "") return "priceInvalid";
     input.price = parsed.value;
-    mirror.price = parsed.value;
   }
   if (params.fields.compareAtPrice !== undefined) {
     if (params.fields.compareAtPrice.trim() === "") {
@@ -756,12 +794,10 @@ export async function applyVariantPrices(
       // ends a sale — so "" has to reach Shopify as null rather than be
       // dropped as "unchanged".
       input.compareAtPrice = null;
-      mirror.compareAtPrice = null;
     } else {
       const parsed = money(params.fields.compareAtPrice);
       if ("warning" in parsed) return parsed.warning;
       input.compareAtPrice = parsed.value;
-      mirror.compareAtPrice = parsed.value;
     }
   }
 
@@ -770,11 +806,9 @@ export async function applyVariantPrices(
     // one, and dropping that as "unchanged" would leave it in place.
     const barcode = params.fields.barcode.trim();
     input.barcode = barcode === "" ? null : barcode;
-    mirror.barcode = barcode === "" ? null : barcode;
   }
   if (params.fields.taxable !== undefined) {
     input.taxable = params.fields.taxable;
-    mirror.taxable = params.fields.taxable;
   }
   if (params.fields.inventoryPolicy !== undefined) {
     const policy = params.fields.inventoryPolicy.trim().toUpperCase();
@@ -783,10 +817,54 @@ export async function applyVariantPrices(
     // same call would go down with it.
     if (!INVENTORY_POLICIES.has(policy)) return "priceInvalid";
     input.inventoryPolicy = policy;
-    mirror.inventoryPolicy = policy;
   }
 
-  if (Object.keys(input).length <= 1) return undefined;
+  /** What the echo must show, once the four fields have been judged. */
+  let wantedMeasurement: {
+    quantityValue: number;
+    quantityUnit: string;
+    referenceValue: number;
+    referenceUnit: string;
+  } | null = null;
+  /**
+   * A refusal reported at the END, after everything else has been written.
+   *
+   * The measurement is dropped from the input rather than written half - a
+   * Grundpreis the merchant did not describe is worse than none - but dropping
+   * the whole CALL with it was the wrong half of that decision. On a group
+   * edit the client can produce a partial quartet for a member whose
+   * measurement the merchant never saw (the field showed "" because the
+   * members disagree), and returning here took that member's price, barcode
+   * and tax edits down with a Grundpreis they were not editing. Nothing wrong
+   * is written either way; this way nothing right is thrown away.
+   */
+  let unitPriceRefusal: CommerceWarning | undefined;
+  if (params.fields.unitPrice !== undefined) {
+    const decision = decideUnitPrice(params.fields.unitPrice);
+    if (decision.kind === "invalid") {
+      unitPriceRefusal =
+        decision.reason === "incomplete"
+          ? "unitPriceIncomplete"
+          : decision.reason === "ambiguous"
+            ? "unitPriceAmbiguous"
+            : decision.reason === "dimension"
+              ? "unitPriceDimension"
+              : "unitPriceInvalid";
+    } else if (decision.kind === "clear") {
+      // NOT `null`: measured to be accepted and ignored. See the shared
+      // module's header.
+      input.unitPriceMeasurement = EMPTY_MEASUREMENT_INPUT;
+      wantedMeasurement = null;
+    } else {
+      input.unitPriceMeasurement = decision.measurement;
+      wantedMeasurement = decision.measurement;
+    }
+  }
+  if (params.fields.showUnitPrice !== undefined) {
+    input.showUnitPrice = params.fields.showUnitPrice;
+  }
+
+  if (Object.keys(input).length <= 1) return unitPriceRefusal;
 
   try {
     const response = await admin.graphql(
@@ -800,6 +878,13 @@ export async function applyVariantPrices(
               barcode
               inventoryPolicy
               taxable
+              unitPriceMeasurement {
+                quantityValue
+                quantityUnit
+                referenceValue
+                referenceUnit
+              }
+              showUnitPrice
             }
             userErrors { field message }
           }
@@ -817,6 +902,13 @@ export async function applyVariantPrices(
             barcode?: string | null;
             inventoryPolicy?: string | null;
             taxable?: boolean | null;
+            unitPriceMeasurement?: {
+              quantityValue?: number | null;
+              quantityUnit?: string | null;
+              referenceValue?: number | null;
+              referenceUnit?: string | null;
+            } | null;
+            showUnitPrice?: boolean | null;
           }> | null;
           userErrors?: Array<{ message: string }>;
         };
@@ -848,34 +940,83 @@ export async function applyVariantPrices(
       if (sent === null) return got === null || got === undefined || got === "";
       return Number(got ?? NaN) === Number(sent);
     };
-    if (input.price !== undefined && !sameMoney(input.price, echoed.price)) return "priceNotConfirmed";
-    if (input.compareAtPrice !== undefined && !sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
-      return "priceNotConfirmed";
+    /**
+     * Confirmed field by field, and the cache written from what SURVIVED.
+     *
+     * Returning on the first mismatch threw away the mirror of everything
+     * Shopify had already stored: a save carrying a new price and a refused
+     * display switch left the cached price at its old value while the warning
+     * said everything else was saved. Nothing here mirrors an unconfirmed
+     * value - the echo is still the only source - but a field the echo DID
+     * confirm is no longer punished for its neighbour.
+     */
+    let failure: CommerceWarning | undefined;
+    const refuse = (code: CommerceWarning) => {
+      failure ??= code;
+    };
+    const confirmed: Record<string, unknown> = {};
+
+    if (input.price !== undefined) {
+      if (sameMoney(input.price, echoed.price)) {
+        if (echoed.price != null) confirmed.price = echoed.price;
+      } else refuse("priceNotConfirmed");
+    }
+    if (input.compareAtPrice !== undefined) {
+      if (sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
+        confirmed.compareAtPrice = echoed.compareAtPrice ?? null;
+      } else refuse("priceNotConfirmed");
     }
     // The same rule for the two non-money fields. They were sent and mirrored
     // without ever being asked back for, so Shopify accepting the call and
     // storing nothing left the cache — and the merchant — believing a policy
     // that was never applied.
-    if (input.barcode !== undefined && (echoed.barcode ?? null) !== input.barcode) {
-      return "priceNotConfirmed";
+    if (input.barcode !== undefined) {
+      if ((echoed.barcode ?? null) === input.barcode) confirmed.barcode = echoed.barcode ?? null;
+      else refuse("priceNotConfirmed");
     }
-    if (input.inventoryPolicy !== undefined && echoed.inventoryPolicy !== input.inventoryPolicy) {
-      return "priceNotConfirmed";
+    if (input.inventoryPolicy !== undefined) {
+      if (echoed.inventoryPolicy === input.inventoryPolicy) {
+        confirmed.inventoryPolicy = echoed.inventoryPolicy ?? null;
+      } else refuse("priceNotConfirmed");
     }
-    if (input.taxable !== undefined && echoed.taxable !== input.taxable) return "priceNotConfirmed";
+    if (input.taxable !== undefined) {
+      if (echoed.taxable === input.taxable) confirmed.taxable = echoed.taxable ?? null;
+      else refuse("priceNotConfirmed");
+    }
+
+    // The Grundpreis has the strictest echo of the lot, because its failure
+    // mode is the quiet one: `unitPriceMeasurement: null` is ACCEPTED and
+    // ignored, so a removal that reported success is exactly what a merchant
+    // would discover from their own storefront weeks later. Nothing is
+    // mirrored for it — there is no cache column, the panel reads it live.
+    if (input.unitPriceMeasurement !== undefined) {
+      const got = echoed.unitPriceMeasurement ?? null;
+      const stored = isEmptyMeasurement(got) ? null : got;
+      const same =
+        wantedMeasurement === null
+          ? stored === null
+          : !!stored &&
+            Number(stored.quantityValue) === wantedMeasurement.quantityValue &&
+            stored.quantityUnit === wantedMeasurement.quantityUnit &&
+            Number(stored.referenceValue) === wantedMeasurement.referenceValue &&
+            stored.referenceUnit === wantedMeasurement.referenceUnit;
+      if (!same) refuse("unitPriceNotConfirmed");
+    }
+    // Its OWN code, and deliberately LAST: a switch that would not move
+    // reports only itself, instead of casting doubt on a price that is stored.
+    if (input.showUnitPrice !== undefined && echoed.showUnitPrice !== input.showUnitPrice) {
+      refuse("unitPriceNotShown");
+    }
 
     // Mirror what Shopify STORED, not what was sent — the same rule the theme
     // path follows for normalised richtext.
-    if (echoed.price != null) mirror.price = echoed.price;
-    mirror.compareAtPrice = echoed.compareAtPrice ?? null;
-    if (input.barcode !== undefined) mirror.barcode = echoed.barcode ?? null;
-    if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echoed.inventoryPolicy ?? null;
-    if (input.taxable !== undefined) mirror.taxable = echoed.taxable ?? null;
-    await db.productVariant
-      .updateMany({ where: { id: params.variantId, product: { shop } }, data: mirror as never })
-      .catch(() => undefined);
+    if (Object.keys(confirmed).length > 0) {
+      await db.productVariant
+        .updateMany({ where: { id: params.variantId, product: { shop } }, data: confirmed as never })
+        .catch(() => undefined);
+    }
 
-    return undefined;
+    return failure ?? unitPriceRefusal;
   } catch (error) {
     logger.warn("[Commerce] Price write failed", {
       context: "Commerce", shop,

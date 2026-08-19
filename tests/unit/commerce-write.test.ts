@@ -230,7 +230,7 @@ describe("applyVariantPrices", () => {
       },
     },
   });
-  const params = (fields: Record<string, string>) => ({
+  const params = (fields: Record<string, unknown>) => ({
     productId: PRODUCT_GID,
     variantId: "9",
     variantGid: VARIANT_GID,
@@ -251,6 +251,191 @@ describe("applyVariantPrices", () => {
       } as never,
     };
   }
+
+  /** The variant echo, with a Grundpreis on it. */
+  const unitEcho = (
+    measurement: Record<string, unknown> | null,
+    showUnitPrice: boolean | null = null,
+  ) => ({
+    data: {
+      productVariantsBulkUpdate: {
+        productVariants: [
+          { id: VARIANT_GID, price: null, compareAtPrice: null, unitPriceMeasurement: measurement, showUnitPrice },
+        ],
+        userErrors: [],
+      },
+    },
+  });
+  const unit = (
+    quantityValue: string,
+    quantityUnit: string,
+    referenceValue: string,
+    referenceUnit: string,
+  ) => ({ unitPrice: { quantityValue, quantityUnit, referenceValue, referenceUnit } });
+
+  describe("the Grundpreis", () => {
+    it("writes the measurement and confirms it from the echo", async () => {
+      const stored = { quantityValue: 500, quantityUnit: "G", referenceValue: 1, referenceUnit: "KG" };
+      const admin = adminWith(unitEcho(stored));
+      const { db } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", params(unit("500", "G", "1", "KG")));
+
+      expect(warning).toBeUndefined();
+      const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+      expect(sent.variants[0].unitPriceMeasurement).toEqual(stored);
+    });
+
+    it("CLEARS with the empty state, never with null", async () => {
+      // Measured on a live shop: `unitPriceMeasurement: null` is accepted,
+      // reports no errors, and leaves the measurement exactly where it was.
+      // Sending it would make "remove the unit price" a silent no-op.
+      const admin = adminWith(unitEcho({ quantityValue: 0, quantityUnit: null, referenceValue: 0, referenceUnit: null }));
+      const { db } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", params(unit("", "", "", "")));
+
+      expect(warning).toBeUndefined();
+      const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+      expect(sent.variants[0].unitPriceMeasurement).not.toBeNull();
+      expect(sent.variants[0].unitPriceMeasurement).toEqual({
+        quantityValue: 0, quantityUnit: null, referenceValue: 0, referenceUnit: null,
+      });
+    });
+
+    it("catches ACCEPTED AND IGNORED on a removal", async () => {
+      // The exact live failure: no errors, and the measurement still there.
+      const admin = adminWith(unitEcho({ quantityValue: 500, quantityUnit: "G", referenceValue: 1, referenceUnit: "KG" }));
+      const { db, updates } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", params(unit("", "", "", "")));
+
+      expect(warning).toBe("unitPriceNotConfirmed");
+      // …and nothing was mirrored on the strength of it.
+      expect(updates).toHaveLength(0);
+    });
+
+    it("refuses half a measurement instead of writing it", async () => {
+      const admin = adminWith(unitEcho(null));
+      const { db } = variantRecorder();
+
+      expect(await applyVariantPrices(admin, db, "s", params(unit("500", "G", "", "")))).toBe(
+        "unitPriceIncomplete",
+      );
+      // Refused BEFORE the mutation: nothing was sent at all.
+      expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+    });
+
+    it("refuses the WeightUnit spelling rather than forwarding it", async () => {
+      // A bad enum fails at the SCHEMA level — a top-level `errors` array with
+      // `data: null` that never reaches `userErrors` — so forwarding it makes
+      // the whole save read as a success while nothing was written, taking the
+      // price in the same call with it.
+      const admin = adminWith(unitEcho(null));
+      const { db } = variantRecorder();
+
+      expect(
+        await applyVariantPrices(admin, db, "s", params(unit("500", "GRAMS", "1", "KILOGRAMS"))),
+      ).toBe("unitPriceInvalid");
+      expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+    });
+
+    it("still writes the price when the measurement is refused", async () => {
+      // The group case: the merchant edits the reference unit on a scope whose
+      // members disagree, so one member's quartet arrives three quarters
+      // empty — for a Grundpreis that member never showed. Refusing the whole
+      // call took their price, barcode and tax edits with it, and retrying did
+      // the same thing forever.
+      const admin = adminWith({
+        data: {
+          productVariantsBulkUpdate: {
+            productVariants: [{ id: VARIANT_GID, price: "24.90", compareAtPrice: null, unitPriceMeasurement: null, showUnitPrice: null }],
+            userErrors: [],
+          },
+        },
+      });
+      const { db, updates } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", {
+        ...params({}),
+        fields: { price: "24.90", ...unit("", "", "", "KG") },
+      });
+
+      expect(warning).toBe("unitPriceIncomplete");
+      const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+      // The price went; no measurement was sent at all.
+      expect(sent.variants[0].price).toBe("24.90");
+      expect(sent.variants[0].unitPriceMeasurement).toBeUndefined();
+      expect((updates[0] as { data: { price: string } }).data.price).toBe("24.90");
+    });
+
+    it("mirrors the price Shopify DID store even when the switch refused", async () => {
+      // Returning on the first mismatch left the cache holding the old price
+      // while the warning said everything else was saved — and the bulk grid
+      // reads that cache.
+      const stored = { quantityValue: 500, quantityUnit: "G", referenceValue: 1, referenceUnit: "KG" };
+      const admin = adminWith({
+        data: {
+          productVariantsBulkUpdate: {
+            productVariants: [{ id: VARIANT_GID, price: "24.90", compareAtPrice: null, unitPriceMeasurement: stored, showUnitPrice: false }],
+            userErrors: [],
+          },
+        },
+      });
+      const { db, updates } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", {
+        ...params({}),
+        fields: { price: "24.90", ...unit("500", "G", "1", "KG"), showUnitPrice: true },
+      });
+
+      expect(warning).toBe("unitPriceNotShown");
+      expect((updates[0] as { data: { price: string } }).data.price).toBe("24.90");
+    });
+
+    it("refuses a German thousands separator instead of reading 1.000 as 1", async () => {
+      // The money field two rows up has refused this since a review finding;
+      // read as 1 here it stores 1 ml per 1 l, the echo matches, the save
+      // reports success, and the storefront prints a Grundpreis a thousand
+      // times too high — on the field that exists to satisfy a price
+      // disclosure law.
+      const admin = adminWith(unitEcho(null));
+      const { db } = variantRecorder();
+
+      expect(await applyVariantPrices(admin, db, "s", params(unit("1.000", "ML", "1", "L")))).toBe(
+        "unitPriceAmbiguous",
+      );
+      expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+    });
+
+    it("refuses grams per litre", async () => {
+      // Two different questions, not one measurement. What Shopify does with a
+      // mismatched pair is unmeasured, so this refuses rather than finding out
+      // on a merchant's storefront.
+      const admin = adminWith(unitEcho(null));
+      const { db } = variantRecorder();
+
+      expect(await applyVariantPrices(admin, db, "s", params(unit("500", "G", "1", "L")))).toBe(
+        "unitPriceDimension",
+      );
+      expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+    });
+
+    it("reports a switch that would not move on its OWN, not as a price failure", async () => {
+      // The measurement may well be stored while only the switch refused. One
+      // code for both sends a merchant looking for a price that is saved.
+      const stored = { quantityValue: 500, quantityUnit: "G", referenceValue: 1, referenceUnit: "KG" };
+      const admin = adminWith(unitEcho(stored, false));
+      const { db } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", {
+        ...params(unit("500", "G", "1", "KG")),
+        fields: { ...unit("500", "G", "1", "KG"), showUnitPrice: true },
+      });
+
+      expect(warning).toBe("unitPriceNotShown");
+    });
+  });
 
   it("folds a German comma and mirrors what Shopify STORED", async () => {
     const admin = adminWith(priceEcho("9.90"));

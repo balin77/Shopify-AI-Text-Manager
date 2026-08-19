@@ -742,6 +742,10 @@ Die dritte und die fünfte Zeile sind die teuren. `null` ist eine **Abwesenheit*
 
 Ebenfalls messbar geworden, weil es zweimal falsch beantwortet wurde: **eine Antwort, die den vorgefundenen Zustand wiederholt, ist keine Messung.** Der erste Lauf meldete „hide: yes", weil `showUnitPrice` schon vorher `false` war und jeder Versuch brav `false` zurückgab; ein zweiter meldete `null` als funktionierenden Lösch-Weg, weil die Variante bereits leer war. Beide Schritte prüfen jetzt gegen den Vorher-Zustand, und der Schalter wird **umgelegt und zurückgelegt** statt gelesen.
 
-**Offen:** ob `showUnitPrice` ein echter, umkehrbarer Schalter ist (auf dem Messshop war er durchgehend `false`, also nie bewegt), und ob die Storefront den Grundpreis überhaupt zeigt, solange er `false` ist.
+**Nachgemessen (zweiter Lauf):** `unitPriceMeasurement: null` wird akzeptiert und ignoriert; die **ausgeschriebene leere Messung** löscht. Das ist der Weg, den `EMPTY_MEASUREMENT_INPUT` festhält.
+
+**Weiterhin offen — und das Feature ist damit gebaut, nicht darauf gewartet:** ob `showUnitPrice` ein echter, umkehrbarer Schalter ist. Auf dem Messshop war er durchgehend `false`, also nie bewegt; die Probe legt ihn inzwischen um und wieder zurück, dieser Lauf steht aus. Der Schalter wird trotzdem angeboten: gated die Storefront den Grundpreis daran, hiesse Zurückhalten, eine Messung zu schreiben, die niemand sieht. Der Preis eines Irrtums ist durch das Echo begrenzt — ein Schalter, der sich nicht bewegt, meldet sich mit einem **eigenen** Code (`unitPriceNotShown`), während die Messung gespeichert bleibt. Ebenfalls ungemessen: ob die Storefront den Grundpreis zeigt, solange der Schalter aus ist.
+
+**Bewusst nicht validiert, weil ungemessen:** was Shopify mit gemischten Dimensionen macht (500 **g** pro 1 **l**). Diese App lehnt das Paar selbst ab (`unitPriceDimension`), statt es auf einer Storefront herauszufinden.
 
 **Entscheidung fürs UI, wenn gebaut wird:** eigenes Disclosure in der Preise-Card, wie der Zoll-Block im Versand. Shopifys Popover-Muster (alles ausser dem effektiven Preis hinter einem Aufklapper) wird **nicht** breit übernommen: die drei Preise stehen bewusst nebeneinander, und beim Bulk-Edit über mehrere Varianten müsste man sonst pro Feld auf- und zuklappen.

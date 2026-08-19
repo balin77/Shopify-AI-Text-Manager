@@ -560,6 +560,14 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      unitPriceHeading: "Precio por unidad",
+      unitPriceHint: "Para productos vendidos por peso o volumen: la cantidad total del paquete y la unidad a la que se refiere el precio. La tienda muestra entonces también el precio por unidad, por ejemplo por kilogramo.",
+      unitPriceContentUnit: "Unidad de la cantidad total",
+      unitPriceReferenceUnit: "Unidad de referencia",
+      unitPriceContent: "Cantidad total",
+      unitPriceReference: "Cantidad de referencia",
+      unitPriceShow: "Mostrar en la tienda",
+      unitPriceClearHint: "Vaciar los cuatro campos elimina el precio por unidad.",
       customsDetails: "Más detalles",
       taxableSwitch: "Cobrar impuestos por esta variante",
       inventoryHeading: "Inventario",
@@ -625,6 +633,12 @@ export const es: Translation = {
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":
     // solo una de las dos merece una comprobación antes de reintentar.
     commerceWarnings: {
+      unitPriceAmbiguous: "La cantidad es ambigua: escribe 1000 o 1.000,00 para que el separador sea inequívoco. El precio por unidad no se guardó.",
+      unitPriceDimension: "Las dos unidades miden cosas distintas (gramos y litros, por ejemplo). El precio por unidad no se guardó.",
+      unitPriceIncomplete: "Un precio por unidad necesita las cuatro entradas: cantidad y unidad en ambos lados. El precio por unidad no se guardó; todo lo demás sí.",
+      unitPriceInvalid: "El precio por unidad no era una cantidad válida y no se guardó; todo lo demás sí.",
+      unitPriceNotConfirmed: "Shopify no confirmó el precio por unidad. Recarga para ver lo que hay.",
+      unitPriceNotShown: "Shopify no aceptó el interruptor de visualización del precio por unidad.",
       priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. No se guardó nada.",
       priceInvalid: "Un precio no era un número, así que no se guardó.",
       priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Recarga para ver el valor actual.",
@@ -665,6 +679,12 @@ export const es: Translation = {
     // columna de estado de la cuadrícula masiva llevan el suyo. Unificarlos
     // vale la pena; hasta entonces este comentario lo dice.
     enumLabels: {
+      "unitPriceUnit.ITEM": "unidad",
+      "unitPriceGroup.volume": "Volumen",
+      "unitPriceGroup.weight": "Peso",
+      "unitPriceGroup.length": "Longitud",
+      "unitPriceGroup.area": "Superficie",
+      "unitPriceGroup.count": "Unidades",
       "status.DRAFT": "Borrador", "status.ACTIVE": "Activo",
       "status.UNLISTED": "No listado", "status.ARCHIVED": "Archivado",
       "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Más vendidos",
@@ -2146,6 +2166,18 @@ export const es: Translation = {
       // PLAN_MARKUP_ACTIVATION §1.2 — paso 3. Hasta 2026-08 la activación estaba
       // ARRIBA del todo en esta página, es decir, en el orden en el que se
       // comete el error antes de poder verlo.
+      // PLAN_MARKUP_ACTIVATION §3.2 — el hallazgo de los vídeos de galería.
+      // Aparece solo cuando la comprobación por lotes se ha ejecutado.
+      galleryVideos: {
+        failed: "La comprobación de vídeos de galería no pudo ejecutarse esta vez (Shopify rechazó la consulta). La próxima ejecución lo intenta de nuevo.",
+        none: "No se encontraron vídeos de galería ({variants} variantes comprobadas).",
+        found: "Productos con vídeos de galería: {products} — de ellos sin fecha: {missing}.",
+        fix: "Sin fecha no hay resultado enriquecido de vídeo. Define en el producto el metacampo **custom.video_upload_date** (tipo \"fecha\") y el vídeo cuenta.",
+        vimeo: "{count} de ellos tienen al menos un vídeo de Vimeo — para esos no se genera ningún marcado, y una fecha no cambia nada.",
+        capped: "La comprobación no alcanzó todo el catálogo — puede haber más.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · fecha definida",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · falta la fecha",
+      },
       activation: {
         openSwitches: "Abrir interruptores",
         summary: {
@@ -3897,8 +3929,9 @@ export const es: Translation = {
     commercePrices: {
       title: "Los tres precios",
       summary:
-        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie.",
+        "Dos los ve tu clienta, uno nunca. El precio de venta es lo que paga. El precio comparativo es la cifra tachada al lado — déjalo vacío cuando no haya oferta. El precio de compra es lo que pagaste TÚ; Shopify lo usa para tus informes de margen y no se lo muestra a nadie. Detrás de «Precio por unidad» está además el precio por unidad para productos vendidos por peso o volumen: obligatorio en muchos países.",
       tips: [
+        "Vaciar los cuatro campos del precio por unidad lo elimina",
         "Precio comparativo vacío = sin oferta, y la cifra tachada desaparece",
         "El precio de venta no se puede vaciar — Shopify exige uno en cada variante",
         "El precio de compra es opcional y solo lo ves tú",
@@ -3907,8 +3940,9 @@ export const es: Translation = {
     commerceShipping: {
       title: "Envío y aduanas",
       summary:
-        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero.",
+        "Lo que necesitan el transportista y el formulario aduanero. El peso determina las tarifas de envío calculadas. El código arancelario y el país de origen aparecen en las declaraciones de aduana de los pedidos internacionales — solo vale la pena rellenarlos si envías al extranjero. Ambos están bajo «Más detalles».",
       tips: [
+        "El código arancelario y el país de origen están plegados bajo «Más detalles»",
         "Sin peso no se pueden calcular tarifas de envío por peso",
         "El país de origen es donde se FABRICÓ el artículo, no desde dónde lo envías",
         "\"Requiere envío\" desactivado = producto digital, y no se pide dirección",

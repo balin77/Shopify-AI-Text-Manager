@@ -561,6 +561,14 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      unitPriceHeading: "Grundpreis",
+      unitPriceHint: "Für Ware, die nach Gewicht oder Volumen verkauft wird: die Gesamtmenge der Packung und die Einheit, auf die sich der Preis bezieht. Die Storefront zeigt dann zusätzlich den Preis pro Einheit an, etwa pro Kilogramm.",
+      unitPriceContentUnit: "Einheit der Gesamtmenge",
+      unitPriceReferenceUnit: "Einheit der Bezugsmenge",
+      unitPriceContent: "Gesamtmenge",
+      unitPriceReference: "Bezugsmenge",
+      unitPriceShow: "In der Storefront anzeigen",
+      unitPriceClearHint: "Alle vier Felder leeren entfernt den Grundpreis.",
       customsDetails: "Weitere Details",
       taxableSwitch: "Steuer auf diese Variante erheben",
       inventoryHeading: "Inventar",
@@ -626,6 +634,12 @@ export const de = {
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":
     // nur bei einer davon lohnt ein Blick vor dem nächsten Versuch.
     commerceWarnings: {
+      unitPriceAmbiguous: "Die Menge ist mehrdeutig — schreib 1000 oder 1.000,00, damit das Trennzeichen eindeutig ist. Der Grundpreis wurde nicht gespeichert.",
+      unitPriceDimension: "Die beiden Einheiten messen Verschiedenes (etwa Gramm und Liter). Der Grundpreis wurde nicht gespeichert.",
+      unitPriceIncomplete: "Ein Grundpreis braucht alle vier Angaben — Menge und Einheit auf beiden Seiten. Der Grundpreis wurde nicht gespeichert, alles Übrige schon.",
+      unitPriceInvalid: "Der Grundpreis war keine gültige Menge und wurde nicht gespeichert, alles Übrige schon.",
+      unitPriceNotConfirmed: "Shopify hat den Grundpreis nicht bestätigt. Lade neu, um zu sehen, was dort steht.",
+      unitPriceNotShown: "Shopify hat den Anzeige-Schalter für den Grundpreis nicht übernommen.",
       priceAmbiguous: "Der Preis ist mehrdeutig — schreib 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Es wurde nichts gespeichert.",
       priceInvalid: "Ein Preis war keine Zahl und wurde deshalb nicht gespeichert.",
       priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, er wurde deshalb auch lokal nicht gespeichert. Lade neu, um den aktuellen Stand zu sehen.",
@@ -668,6 +682,12 @@ export const de = {
     // Status-Spalte im Bulk-Grid haben eigene. Das zusammenzuführen lohnt sich
     // — bis dahin sagt dieser Kommentar es, statt es zu behaupten.
     enumLabels: {
+      "unitPriceUnit.ITEM": "Stück",
+      "unitPriceGroup.volume": "Volumen",
+      "unitPriceGroup.weight": "Gewicht",
+      "unitPriceGroup.length": "Länge",
+      "unitPriceGroup.area": "Fläche",
+      "unitPriceGroup.count": "Stückzahl",
       "status.DRAFT": "Entwurf", "status.ACTIVE": "Aktiv",
       "status.UNLISTED": "Nicht gelistet", "status.ARCHIVED": "Archiviert",
       "sortOrder.MANUAL": "Manuell", "sortOrder.BEST_SELLING": "Bestseller",
@@ -2152,6 +2172,19 @@ export const de = {
       // PLAN_MARKUP_ACTIVATION §1.2 — Schritt 3. Die Aktivierung stand bis
       // 2026-08 GANZ OBEN auf dieser Seite, also in der Reihenfolge, in der man
       // den Fehler macht, bevor man ihn sehen kann.
+      // PLAN_MARKUP_ACTIVATION §3.2 — der Befund zu den Galerie-Videos. Erscheint
+      // erst, wenn die Batch-Prüfung gelaufen ist; ohne sie steht nur der
+      // allgemeine Hinweis darüber.
+      galleryVideos: {
+        failed: "Die Prüfung der Galerie-Videos konnte diesmal nicht durchgeführt werden (Shopify hat die Abfrage abgelehnt). Der nächste Durchlauf versucht es erneut.",
+        none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
+        found: "Produkte mit Galerie-Videos: {products} — davon ohne Datum: {missing}.",
+        fix: "Ohne Datum entsteht kein Video-Rich-Result. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum\"), dann zählt das Video.",
+        vimeo: "Bei {count} davon liegt mindestens ein Vimeo-Video — dafür wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
+        capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
+      },
       activation: {
         openSwitches: "Schalter öffnen",
         summary: {
@@ -3907,8 +3940,9 @@ export const de = {
     commercePrices: {
       title: "Die drei Preise",
       summary:
-        "Zwei davon sieht deine Kundin, einen nie. Der Verkaufspreis ist, was sie bezahlt. Der Vergleichspreis ist die durchgestrichene Zahl daneben — leer lassen, wenn es kein Angebot gibt. Der Einkaufspreis ist, was DU bezahlt hast; Shopify nutzt ihn für deine Margen-Auswertungen und zeigt ihn niemandem.",
+        "Zwei davon sieht deine Kundin, einen nie. Der Verkaufspreis ist, was sie bezahlt. Der Vergleichspreis ist die durchgestrichene Zahl daneben — leer lassen, wenn es kein Angebot gibt. Der Einkaufspreis ist, was DU bezahlt hast; Shopify nutzt ihn für deine Margen-Auswertungen und zeigt ihn niemandem. Hinter „Grundpreis“ steckt zusätzlich der Preis pro Einheit für Ware, die nach Gewicht oder Volumen verkauft wird — in vielen Ländern Pflicht.",
       tips: [
+        "Alle vier Felder des Grundpreises leeren entfernt ihn wieder",
         "Leerer Vergleichspreis = kein Angebot, die durchgestrichene Zahl verschwindet",
         "Der Verkaufspreis selbst lässt sich nicht leeren — Shopify verlangt auf jeder Variante einen",
         "Der Einkaufspreis ist optional und nur für dich sichtbar",
@@ -3917,8 +3951,9 @@ export const de = {
     commerceShipping: {
       title: "Versand und Zoll",
       summary:
-        "Was Transporteur und Zollformular brauchen. Das Gewicht bestimmt berechnete Versandtarife. Zolltarifnummer und Herkunftsland stehen auf Zollerklärungen bei Auslandsbestellungen — sie auszufüllen lohnt sich nur, wenn du ins Ausland versendest.",
+        "Was Transporteur und Zollformular brauchen. Das Gewicht bestimmt berechnete Versandtarife. Zolltarifnummer und Herkunftsland stehen auf Zollerklärungen bei Auslandsbestellungen — sie auszufüllen lohnt sich nur, wenn du ins Ausland versendest. Beides liegt unter „Weitere Details“.",
       tips: [
+        "Zolltarifnummer und Herkunftsland findest du aufgeklappt unter „Weitere Details“",
         "Ohne Gewicht lassen sich gewichtsbasierte Versandtarife nicht berechnen",
         "Das Herkunftsland ist, wo der Artikel HERGESTELLT wurde, nicht wo du ihn verschickst",
         "\"Versand nötig\" aus = ein digitales Produkt, es wird keine Adresse abgefragt",

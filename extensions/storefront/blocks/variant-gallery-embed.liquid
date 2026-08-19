@@ -160,7 +160,7 @@
               {%- assign cp_url = entry_val | strip -%}
               {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
               {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
-              {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+{%- assign cp_ev_pair = cp_ev_pair | split: '-->' | last | split: '<!--' | first | strip -%}
               {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
               {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
               {%- if cp_ev_host != blank and cp_ev_id != blank -%}
@@ -286,7 +286,7 @@
               {%- assign cp_seen_urls = cp_seen_urls | append: url_tail_token | append: ',' -%}
               {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
               {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
-              {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+{%- assign cp_ev_pair = cp_ev_pair | split: '-->' | last | split: '<!--' | first | strip -%}
               {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
               {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
               {%- if cp_ev_host != blank and cp_ev_id != blank -%}
@@ -442,7 +442,7 @@
               {%- assign cp_url = cp_url_raw | strip -%}
               {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text) {%- endcomment -%}
               {%- capture cp_ev_pair -%}{%- render 'cp-external-video', url: cp_url -%}{%- endcapture -%}
-              {%- assign cp_ev_pair = cp_ev_pair | strip -%}
+{%- assign cp_ev_pair = cp_ev_pair | split: '-->' | last | split: '<!--' | first | strip -%}
               {%- assign cp_ev_host = cp_ev_pair | split: '|' | first | default: '' -%}
               {%- assign cp_ev_id = cp_ev_pair | split: '|' | last | default: '' -%}
               {%- if cp_ev_host != blank and cp_ev_id != blank -%}

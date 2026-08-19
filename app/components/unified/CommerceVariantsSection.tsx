@@ -54,9 +54,24 @@ import { HelpTooltip } from "../HelpTooltip";
 import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData, WEIGHT_UNITS } from "../../contexts/CommerceDataContext";
 import { buildVariantScopes, commonValue, type VariantScope } from "../../services/variant-scope.shared";
+import {
+  UNIT_PRICE_SYMBOLS,
+  UNIT_PRICE_UNIT_GROUPS,
+  formatUnitPrice,
+} from "../../services/unit-price.shared";
 
 /** The fields that live on the VARIANT rather than on its InventoryItem. */
-type VariantField = "price" | "compareAtPrice" | "barcode" | "inventoryPolicy" | "taxable";
+type VariantField =
+  | "price"
+  | "compareAtPrice"
+  | "barcode"
+  | "inventoryPolicy"
+  | "taxable"
+  | "unitQuantityValue"
+  | "unitQuantityUnit"
+  | "unitReferenceValue"
+  | "unitReferenceUnit"
+  | "showUnitPrice";
 
 export function CommerceVariantsSection() {
   const commerce = useCommerceData();
@@ -65,6 +80,7 @@ export function CommerceVariantsSection() {
   /** Whether the customs details are folded open. Closed by default, the way
    *  Shopify folds them: most merchants never touch an HS code. */
   const [customsOpen, setCustomsOpen] = useState(false);
+  const [unitPriceOpen, setUnitPriceOpen] = useState(false);
 
   const variants = commerce?.data?.variants ?? [];
   const t = commerce?.t ?? {};
@@ -208,6 +224,25 @@ export function CommerceVariantsSection() {
    * column whose width the merchant DRAGS, so a media query would answer the
    * wrong question.
    */
+  /**
+   * The card's own column, so the disclosure can sit at the BOTTOM of it.
+   *
+   * The two cards stretch to the same height (`alignItems: stretch` below),
+   * but their content does not fill it equally — prices carries a row of three
+   * fields and a toggle, shipping two fields — so the two disclosure buttons
+   * landed at different heights and read as a misalignment rather than as
+   * different amounts of content. `marginTop: auto` on the footer puts them on
+   * one line. `BlockStack` cannot express this: it takes no height, and an
+   * auto margin needs a parent with room to give.
+   */
+  const cardColumn: CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: "var(--p-space-300)",
+    height: "100%",
+  };
+  const cardFooter: CSSProperties = { marginTop: "auto" };
+
   const sectionGrid: CSSProperties = {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
@@ -235,6 +270,35 @@ export function CommerceVariantsSection() {
   /** "Mixed" as a placeholder, so an empty bulk field is not read as "empty". */
   const mixedHint = (mixed: boolean) =>
     mixed ? ((t.mixedValues as string) || "Different values") : undefined;
+
+  /** A unit's own symbol, overridable per language for the two that are words
+   *  rather than symbols (ITEM, UNKNOWN). */
+  const unitLabel = (unit: string): string =>
+    (t.enumLabels as Record<string, string> | undefined)?.[`unitPriceUnit.${unit}`] ??
+    UNIT_PRICE_SYMBOLS[unit] ??
+    unit;
+  /** The picker's group headings. Untranslated they would read "volume",
+   *  "weight" in every language — the enum's key, not a word. */
+  const unitGroupLabel = (key: string): string =>
+    (t.enumLabels as Record<string, string> | undefined)?.[`unitPriceGroup.${key}`] ?? key;
+
+  /**
+   * "500 g / 1 kg" for the folded button, or nothing.
+   *
+   * Deliberately built from the SAME parser the write path uses: a summary
+   * derived by its own string-joining would keep reading a half-filled
+   * measurement as a value, and the button would advertise something the save
+   * refuses.
+   */
+  const unitPriceSummary = formatUnitPrice(
+    {
+      quantityValue: priceValue("unitQuantityValue"),
+      quantityUnit: priceValue("unitQuantityUnit"),
+      referenceValue: priceValue("unitReferenceValue"),
+      referenceUnit: priceValue("unitReferenceUnit"),
+    },
+    unitLabel,
+  );
 
   /** The picker's entries, grouped the way they are meant to be read. */
   const singleOptions = scopes.filter((s) => s.kind === "variant").map((s) => ({ value: s.id, label: s.label }));
@@ -317,7 +381,7 @@ export function CommerceVariantsSection() {
           full-width card: it holds a table. */}
       <div style={sectionGrid}>
         <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
-          <BlockStack gap="300">
+          <div style={cardColumn}>
                   {/* ── Prices ─────────────────────────────────────────
                       All three on ONE row, because the confusion they cause is
                       the difference BETWEEN them: the field that used to sit up
@@ -380,14 +444,92 @@ export function CommerceVariantsSection() {
                         : (t.taxableSwitch as string) || "Charge tax on this variant"}
                     </Text>
                   </InlineStack>
-          </BlockStack>
+
+                  <div style={cardFooter}>
+                  {/* ── Grundpreis (unit price) ─────────────────────────────
+                      Folded away, like customs and for the same reason: it is
+                      four inputs that matter to shops selling by weight or
+                      volume and to nobody else. What is NOT folded away is the
+                      VALUE — the button says "500 g / 1 kg" when there is one,
+                      because a price a merchant cannot see without unfolding
+                      is a price nobody checks. */}
+                  <Button
+                    variant="plain"
+                    disclosure={unitPriceOpen ? "up" : "down"}
+                    onClick={() => setUnitPriceOpen((open) => !open)}
+                  >
+                    {unitPriceSummary
+                      ? `${(t.unitPriceHeading as string) || "Unit price"} · ${unitPriceSummary}`
+                      : (t.unitPriceHeading as string) || "Unit price"}
+                  </Button>
+                  <Collapsible open={unitPriceOpen} id="commerce-unit-price">
+                    <BlockStack gap="300">
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {(t.unitPriceHint as string) ||
+                          "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then also shows the price per unit \u2014 per kilogram, say."}
+                      </Text>
+                      {/* Two rows of number-plus-unit, in Shopify's order:
+                          what is in the pack, then what the price refers to. */}
+                      <UnitPriceRow
+                        label={(t.unitPriceContent as string) || "Total quantity"}
+                        valueField="unitQuantityValue"
+                        unitField="unitQuantityUnit"
+                        priceValue={priceValue}
+                        priceMixed={priceMixed}
+                        setPrice={setPrice}
+                        mixedHint={mixedHint}
+                        unitFieldLabel={(t.unitPriceContentUnit as string) || "Total quantity unit"}
+                        unitLabel={unitLabel}
+                        unitGroupLabel={unitGroupLabel}
+                        disabled={saving}
+                      />
+                      <UnitPriceRow
+                        label={(t.unitPriceReference as string) || "Reference quantity"}
+                        valueField="unitReferenceValue"
+                        unitField="unitReferenceUnit"
+                        priceValue={priceValue}
+                        priceMixed={priceMixed}
+                        setPrice={setPrice}
+                        mixedHint={mixedHint}
+                        unitFieldLabel={(t.unitPriceReferenceUnit as string) || "Reference unit"}
+                        unitLabel={unitLabel}
+                        unitGroupLabel={unitGroupLabel}
+                        disabled={saving}
+                      />
+                      {/* Its own switch on Shopify's side, and independent of
+                          the measurement: writing one does NOT turn this on
+                          (measured). So it is shown rather than inferred —
+                          setting a Grundpreis nobody sees is the failure this
+                          avoids. */}
+                      <InlineStack gap="300" blockAlign="center" wrap={false}>
+                        <ToggleSwitch
+                          checked={priceValue("showUnitPrice") === "true"}
+                          indeterminate={priceMixed("showUnitPrice")}
+                          ariaLabel={(t.unitPriceShow as string) || "Show on the storefront"}
+                          onChange={(checked) => setPrice("showUnitPrice", String(checked))}
+                          disabled={saving}
+                        />
+                        <Text as="p" variant="bodyMd">
+                          {priceMixed("showUnitPrice")
+                            ? (t.mixedValues as string) || "Different values"
+                            : (t.unitPriceShow as string) || "Show on the storefront"}
+                        </Text>
+                      </InlineStack>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {(t.unitPriceClearHint as string) ||
+                          "Clear all four fields to remove the unit price."}
+                      </Text>
+                    </BlockStack>
+                  </Collapsible>
+                  </div>
+          </div>
         </Box>
 
         {/* The InventoryItem's own settings. Shown for EVERY variant, tracked
             or not: a weight and a customs code are facts about the item, not
             about whether Shopify counts it. */}
         <Box background="bg-surface-secondary" padding="300" borderRadius="200" minHeight="100%">
-          <BlockStack gap="300">
+          <div style={cardColumn}>
                   {first.inventoryItemId ? (
                     <>
                     <InlineStack align="space-between" blockAlign="center" wrap={false}>
@@ -451,6 +593,7 @@ export function CommerceVariantsSection() {
                       </Box>
                     </InlineStack>
 
+                    <div style={cardFooter}>
                     {/* Customs, folded away. Shopify folds them for the same
                         reason: an HS code and a country of origin matter to
                         the merchants who ship across a border and to nobody
@@ -485,9 +628,10 @@ export function CommerceVariantsSection() {
                         />
                       </BlockStack>
                     </Collapsible>
+                    </div>
                     </>
                   ) : null}
-          </BlockStack>
+          </div>
         </Box>
       </div>
 
@@ -942,5 +1086,91 @@ function MoneyField({
         </div>
       </Tooltip>
     </Box>
+  );
+}
+
+/**
+ * One "number + unit" line of the Grundpreis.
+ *
+ * Its own component because the two lines are identical in everything but
+ * which field they address, and a copy of a Select carrying 23 grouped options
+ * is exactly the kind of duplication that ends with the two halves offering
+ * different units.
+ */
+function UnitPriceRow({
+  label,
+  valueField,
+  unitField,
+  priceValue,
+  priceMixed,
+  setPrice,
+  mixedHint,
+  unitFieldLabel,
+  unitLabel,
+  unitGroupLabel,
+  disabled,
+}: {
+  label: string;
+  unitFieldLabel: string;
+  valueField: VariantField;
+  unitField: VariantField;
+  priceValue: (field: VariantField) => string;
+  priceMixed: (field: VariantField) => boolean;
+  setPrice: (field: string, value: string) => void;
+  mixedHint: (mixed: boolean) => string | undefined;
+  unitLabel: (unit: string) => string;
+  unitGroupLabel: (key: string) => string;
+  disabled?: boolean;
+}) {
+  const unitIsMixed = priceMixed(unitField);
+  return (
+    // Bottom-aligned, not top: the unit's label is hidden, so its box would
+    // otherwise sit level with the number's LABEL and the two controls would
+    // step down the row. Shopify puts the unit flush beside the number for the
+    // same reason.
+    <InlineStack gap="200" blockAlign="end" wrap={false}>
+      <Box minWidth="96px" maxWidth="110px">
+        <TextField
+          label={label}
+          value={priceValue(valueField)}
+          placeholder={mixedHint(priceMixed(valueField))}
+          onChange={(value) => setPrice(valueField, value)}
+          autoComplete="off"
+          inputMode="decimal"
+          align="right"
+          disabled={disabled}
+        />
+      </Box>
+      <Box minWidth="104px" maxWidth="124px">
+        <Select
+          // Its OWN label, naming WHICH unit — and HIDDEN. The name has to be
+          // distinct because a screen reader would otherwise read the same
+          // word for pack quantity, reference quantity and shipping weight;
+          // it has to be hidden because a name that distinct wraps to two
+          // lines over a box two words wide, which is what pushed the controls
+          // out of line with each other. Visually the unit belongs to the
+          // number beside it and needs no second caption.
+          label={unitFieldLabel}
+          labelHidden
+          options={[
+            // An EMPTY first entry, unlike the weight unit next door. There a
+            // variant always has a unit; here "no unit" is a real state - it
+            // is half of how a Grundpreis is removed - and a Select that
+            // cannot express it would make the four fields unclearable.
+            {
+              value: "",
+              label: unitIsMixed ? (mixedHint(true) ?? "") : "\u2014",
+            },
+            ...UNIT_PRICE_UNIT_GROUPS.map((group) => ({
+              title: unitGroupLabel(group.key),
+              options: group.units.map((unit) => ({ value: unit, label: unitLabel(unit) })),
+            })),
+          ]}
+          value={unitIsMixed ? "" : priceValue(unitField)}
+          onChange={(value) => setPrice(unitField, value)}
+          disabled={disabled}
+        />
+      </Box>
+    </InlineStack>
   );
 }

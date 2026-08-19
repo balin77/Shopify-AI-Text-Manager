@@ -564,6 +564,14 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      unitPriceHeading: "Unit price",
+      unitPriceHint: "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then also shows the price per unit — per kilogram, say.",
+      unitPriceContentUnit: "Total quantity unit",
+      unitPriceReferenceUnit: "Reference unit",
+      unitPriceContent: "Total quantity",
+      unitPriceReference: "Reference quantity",
+      unitPriceShow: "Show on the storefront",
+      unitPriceClearHint: "Clearing all four fields removes the unit price.",
       customsDetails: "More details",
       taxableSwitch: "Charge tax on this variant",
       inventoryHeading: "Inventory",
@@ -629,6 +637,12 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      unitPriceAmbiguous: "The quantity is ambiguous — write 1000 or 1,000.00 so the separator is unmistakable. The unit price was not saved.",
+      unitPriceDimension: "The two units measure different things (grams and litres, say). The unit price was not saved.",
+      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. The unit price was not saved; everything else was.",
+      unitPriceInvalid: "The unit price was not a valid quantity and was not saved; everything else was.",
+      unitPriceNotConfirmed: "Shopify did not confirm the unit price. Reload to see what it holds.",
+      unitPriceNotShown: "Shopify did not take the unit price's display switch.",
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Nothing was saved.",
       priceInvalid: "A price was not a number, so it was not saved.",
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
@@ -669,6 +683,12 @@ export const en: Translation = {
     // status column still carry their own. Folding those in is worth doing,
     // and until it happens this comment says so rather than claiming it.
     enumLabels: {
+      "unitPriceUnit.ITEM": "item",
+      "unitPriceGroup.volume": "Volume",
+      "unitPriceGroup.weight": "Weight",
+      "unitPriceGroup.length": "Length",
+      "unitPriceGroup.area": "Area",
+      "unitPriceGroup.count": "Count",
       "status.DRAFT": "Draft", "status.ACTIVE": "Active",
       "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
       "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
@@ -2152,6 +2172,18 @@ export const en: Translation = {
       // PLAN_MARKUP_ACTIVATION §1.2 — step 3. Activation sat at the very TOP of
       // this page until 2026-08, i.e. in the order in which the mistake is made
       // before it can be seen.
+      // PLAN_MARKUP_ACTIVATION §3.2 — the gallery-video finding. Appears only
+      // once the batch check has run; without it just the general note above.
+      galleryVideos: {
+        failed: "The gallery-video check could not run this time (Shopify refused the query). The next run tries again.",
+        none: "No gallery videos found ({variants} variants checked).",
+        found: "Products with gallery videos: {products} — of those without a date: {missing}.",
+        fix: "Without a date there is no video rich result. Set the product metafield **custom.video_upload_date** (type \"date\") and the video counts.",
+        vimeo: "{count} of them carry at least one Vimeo video — no markup is produced for those at all, and a date changes nothing.",
+        capped: "The check did not reach the whole catalog — there may be more.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · date set",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · date missing",
+      },
       activation: {
         openSwitches: "Open switches",
         summary: {
@@ -3900,8 +3932,9 @@ export const en: Translation = {
     commercePrices: {
       title: "The three prices",
       summary:
-        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody.",
+        "Two of these are seen by your customer, one never is. Price is what they pay. Compare-at price is the struck-through number beside it — leave it empty when there is no sale. Cost per item is what YOU paid; Shopify uses it for your margin reports and shows it to nobody. Behind “Unit price” there is additionally the price per unit for goods sold by weight or volume — required by law in many countries.",
       tips: [
+        "Clearing all four unit-price fields removes it again",
         "Empty compare-at price = no sale, and the struck-through number disappears",
         "The price itself cannot be emptied — Shopify requires one on every variant",
         "Cost is optional and only ever seen by you",
@@ -3910,8 +3943,9 @@ export const en: Translation = {
     commerceShipping: {
       title: "Shipping and customs",
       summary:
-        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad.",
+        "What a carrier and a customs form need. The weight decides calculated shipping rates. The HS code and country of origin appear on customs declarations for international orders — they are only worth filling in if you ship abroad. Both sit under “More details”.",
       tips: [
+        "The HS code and country of origin are folded away under “More details”",
         "Without a weight, weight-based shipping rates cannot be calculated",
         "The country of origin is where the item was MADE, not where you ship it from",
         "\"Needs shipping\" off = a digital product, and no address is asked for",
