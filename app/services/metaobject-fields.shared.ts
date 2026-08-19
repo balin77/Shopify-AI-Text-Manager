@@ -514,3 +514,70 @@ export function metaobjectWriteAccess(adminAccess: string | null | undefined): M
   // new — see the note above on why an unknown value is not a restriction.
   return "writable";
 }
+
+/**
+ * Every field of every entry that CARRIES a translation, as compound keys.
+ *
+ * THE enumeration behind "does this locale still need work". It exists because
+ * three separate places used to answer that question by looking for a
+ * translation under the BARE metaobject GID — which was right while the GID
+ * was the field key, and became permanently wrong the moment the editor
+ * started addressing a field as `<gid>#<fieldKey>`. Nothing stored a bare-GID
+ * key any more, so every entry read as untranslated in every locale forever
+ * and the language buttons pulsed at a shop with nothing missing.
+ *
+ * Only TRANSLATABLE fields are listed. A colour, a file reference and a
+ * taxonomy reference have one value per shop and no per-locale form at all;
+ * counting them as "missing" would make the pulse permanent for a different
+ * reason. A rich-text field is read-only here and excluded for the same
+ * reason it is never written.
+ */
+/**
+ * Memo for the enumeration below, keyed on the ENTRY ARRAY's identity.
+ *
+ * `hasFieldMissingTranslations` runs once per rendered field, and the editor
+ * re-renders every card on every keystroke: on a page of 25 entries with a
+ * ten-field definition that was ~62 500 spec constructions per keypress, each
+ * one doing a `.find` per field plus a `JSON.parse` for every list value. The
+ * array identity only changes when the loader delivers new data, which is
+ * exactly when the answer may change.
+ *
+ * A WeakMap so a replaced page of entries is collected with its memo.
+ */
+const translatableFieldsMemo = new WeakMap<object, Map<unknown, ReturnType<typeof enumerateTranslatableFields>>>();
+
+function enumerateTranslatableFields(
+  entries: MetaobjectEntryLike[],
+  definitionFields: MetaobjectDefinitionFieldLike[] | undefined,
+): Array<{ entryId: string; compoundKey: string; label: string; primaryValue: string }> {
+  return entries.flatMap((entry) =>
+    metaobjectFieldSpecs(entry, definitionFields)
+      .filter((spec) => isTranslatableMetaobjectFieldType(spec.fieldType))
+      .map((spec) => ({
+        entryId: entry.id,
+        compoundKey: spec.compoundKey,
+        label: entry.displayName || entry.handle || spec.label,
+        primaryValue: spec.displayValue,
+      })),
+  );
+}
+
+export function metaobjectTranslatableFields(
+  entries: MetaobjectEntryLike[] | undefined,
+  definitionFields: MetaobjectDefinitionFieldLike[] | undefined,
+): Array<{ entryId: string; compoundKey: string; label: string; primaryValue: string }> {
+  if (!Array.isArray(entries)) return [];
+  // Keyed by BOTH identities: the same entries rendered against a freshly
+  // synced definition are a different answer, and a memo that ignored the
+  // second key would keep serving the old field set.
+  let byDefinition = translatableFieldsMemo.get(entries);
+  if (!byDefinition) {
+    byDefinition = new Map();
+    translatableFieldsMemo.set(entries, byDefinition);
+  }
+  const cached = byDefinition.get(definitionFields);
+  if (cached) return cached;
+  const computed = enumerateTranslatableFields(entries, definitionFields);
+  byDefinition.set(definitionFields, computed);
+  return computed;
+}

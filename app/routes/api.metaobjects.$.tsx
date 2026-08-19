@@ -234,6 +234,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       // row predates the column, and the client reads that as UNKNOWN: it
       // neither locks the editor nor promises that a save will work.
       adminAccess: definition.adminAccess ?? null,
+      // Shopify's Translations capability for this definition. `null` = the
+      // row predates the column, and the client reads that as UNKNOWN: the
+      // type keeps counting towards "this locale still needs work", because
+      // the alternative is hiding real missing translations behind a guess.
+      translatableCapability: definition.translatableCapability ?? null,
       filePreviews,
       translations: translationsArray, // global rows, compound keys
       marketTranslations, // market rows: [marketId][compoundKey][locale]
