@@ -71,7 +71,9 @@ const STEPS: Array<{ key: string; label: string; question: string; missingLabel?
   {
     key: "hide",
     label: "Hide",
-    question: "Failing that, can showUnitPrice switch it off on the storefront?",
+    question:
+      "Is showUnitPrice a real switch? It is flipped away from where it was and flipped back.",
+    missingLabel: "does not move",
   },
   { key: "restored", label: "Restored", question: "Was the variant put back the way it was?" },
 ];

@@ -59,6 +59,10 @@ interface FakeShop {
   clearedBy: Strategy[];
   /** `false` models an API version where the field cannot be selected. */
   readsShowUnitPrice: boolean;
+  /** The switch is accepted and never moves. */
+  stuckSwitch: boolean;
+  /** The switch turns on and refuses to turn back off. */
+  oneWaySwitch: boolean;
   inputFields: string[];
   /** Replaces the next mutation response wholesale. */
   mutationAnswers: unknown[];
@@ -74,6 +78,8 @@ function fakeShop(overrides: Partial<FakeShop> = {}) {
     clearedBy: [],
     readsShowUnitPrice: true,
     inputFields: ["price", "unitPriceMeasurement", "showUnitPrice"],
+    stuckSwitch: false,
+    oneWaySwitch: false,
     mutationAnswers: [],
     ...overrides,
   };
@@ -142,7 +148,10 @@ function fakeShop(overrides: Partial<FakeShop> = {}) {
       } else if (strategy && shop.clearedBy.includes(strategy)) {
         shop.measurement = { ...EMPTY };
       }
-      if (setsShow) shop.showUnitPrice = input.showUnitPrice as boolean;
+      if (setsShow && !shop.stuckSwitch) {
+        const wanted = input.showUnitPrice as boolean;
+        if (!(shop.oneWaySwitch && shop.showUnitPrice && !wanted)) shop.showUnitPrice = wanted;
+      }
 
       return answer({
         data: {
@@ -346,18 +355,60 @@ describe("the unit-price probe", () => {
     expect(results.hide.ok).toBe(true);
   });
 
-  it("does not credit itself with a showUnitPrice that was ALREADY false", async () => {
+  it("measures the switch by MOVING it, and puts it back", async () => {
     // The first live run reported "hide: yes" off a variant whose
-    // `showUnitPrice` was false before anything was written — every attempt
-    // dutifully echoed false, and the untouched state was read as an effect of
-    // our own call. Nothing changed, so nothing was measured.
-    fakeShop({ clearedBy: [], showUnitPrice: false });
+    // `showUnitPrice` was false before anything was written — the untouched
+    // state read as an effect of our own call. A value that does not change
+    // measures nothing, so the switch is flipped away from where it was.
+    const { shop, graphql } = fakeShop({ clearedBy: ["null"], showUnitPrice: false });
+    const results = await run();
+
+    expect(results.hide.ok).toBe(true);
+    const sent = graphql.mock.calls
+      .map((call) => (call[1]?.variables?.variants as Array<Record<string, unknown>>)?.[0])
+      .filter((input) => input && "showUnitPrice" in input)
+      .map((input) => input.showUnitPrice);
+    // Away from false, then back to it. (The restore at the end sets it once
+    // more, belt and braces, in case a clear strategy moved it.)
+    expect(sent.slice(0, 2)).toEqual([true, false]);
+    expect(shop.showUnitPrice).toBe(false);
+  });
+
+  it("calls a switch that will not move a real negative", async () => {
+    const { graphql } = fakeShop({ clearedBy: ["null"], showUnitPrice: false, stuckSwitch: true });
     const results = await run();
 
     expect(results.hide.ok).toBe(false);
-    // …and it is NOT a negative either: the question is simply unanswered.
+    expect(results.hide.missing).toBe(true);
+    expect(graphql).toHaveBeenCalled();
+  });
+
+  it("says so loudly when the switch turns ON and will not turn back", async () => {
+    // Worse than a switch that does nothing: the storefront is left showing
+    // something the probe turned on.
+    fakeShop({ clearedBy: ["null"], showUnitPrice: false, oneWaySwitch: true });
+    const results = await run();
+
+    expect(results.hide.ok).toBe(false);
     expect(results.hide.missing).toBeUndefined();
-    expect(results.hide.error).toMatch(/already false/i);
+    expect(results.hide.error).toMatch(/would not go back/i);
+  });
+
+  it("does not report a removal on a variant that was already empty", async () => {
+    // Pressing "remove" twice, or after a cleanup in the admin. The ladder
+    // would echo an empty measurement back from the FIRST input and credit
+    // that one — which is how a run reported `null` as working right after
+    // another run had proved it does not.
+    const { graphql } = fakeShop({ clearedBy: [] });
+    const results = await run("clear");
+
+    expect(results.clear.ok).toBe(false);
+    expect(results.clear.error).toMatch(/nothing to remove/i);
+    // …and it wrote nothing at all.
+    const mutated = graphql.mock.calls.some((call) =>
+      call[0].includes("productVariantsBulkUpdate"),
+    );
+    expect(mutated).toBe(false);
   });
 
   it("tries the empty-shaped inputs once null has been refused", async () => {

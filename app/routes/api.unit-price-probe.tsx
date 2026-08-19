@@ -175,6 +175,26 @@ function isEmptyMeasurement(measurement: Record<string, unknown> | null | undefi
  * and hiding it are different outcomes for a merchant, so they are reported
  * separately rather than folded into one "clear" verdict.
  */
+/**
+ * How a Grundpreis is actually REMOVED. MEASURED, and not the obvious spelling.
+ *
+ * `unitPriceMeasurement: null` is accepted, reports no errors and leaves the
+ * measurement exactly where it was - the silent no-op this app has been bitten
+ * by before. Writing the EMPTY STATE works: a variant without a Grundpreis
+ * reads back as this shape, so sending it is a value, where `null` is an
+ * absence the mutation simply skips.
+ *
+ * Named rather than inlined because a unit-price feature has to clear as well
+ * as set, and the wrong spelling fails silently in exactly the way nobody
+ * notices until a merchant cannot undo something.
+ */
+const EMPTY_MEASUREMENT_INPUT = {
+  quantityValue: 0,
+  quantityUnit: null,
+  referenceValue: 0,
+  referenceUnit: null,
+} as const;
+
 const CLEAR_STRATEGIES: Array<{ label: string; input: Record<string, unknown> }> = [
   { label: "unitPriceMeasurement: null", input: { unitPriceMeasurement: null } },
   { label: "showUnitPrice: false", input: { showUnitPrice: false } },
@@ -184,17 +204,7 @@ const CLEAR_STRATEGIES: Array<{ label: string; input: Record<string, unknown> }>
   // so writing that shape is a different request from writing `null` - and
   // `null` is measured not to work. Both are only reached once the three above
   // have been answered and refused.
-  {
-    label: "the empty measurement, spelled out",
-    input: {
-      unitPriceMeasurement: {
-        quantityValue: 0,
-        quantityUnit: null,
-        referenceValue: 0,
-        referenceUnit: null,
-      },
-    },
-  },
+  { label: "the empty measurement, spelled out", input: { unitPriceMeasurement: EMPTY_MEASUREMENT_INPUT } },
   { label: "an empty measurement object", input: { unitPriceMeasurement: {} } },
 ];
 
@@ -348,7 +358,47 @@ export const action = async (args: ActionFunctionArgs) => {
     // different field. A measurement that can be neither is a trap: the
     // merchant who fills it in by mistake is stuck with a wrong Grundpreis on
     // their storefront, and this app must not offer to write it.
-    const worthClearing = mode === "clear" || results.write?.ok;
+    // -- 4. Is `showUnitPrice` a real, REVERSIBLE switch? -------------------
+    // Asked by flipping it and flipping it back, never by reading what the
+    // variant already held. The first live run inferred this from the clear
+    // ladder and reported "yes" off a variant whose switch was false before
+    // anything was written - a value that did not change measures nothing.
+    //
+    // It runs BEFORE the removal ladder deliberately: should the flip stick,
+    // the ladder still takes the measurement off, and a switch with nothing to
+    // show is harmless.
+    if (mode === "probe" && results.write?.ok) {
+      if (!readsShowUnitPrice || restoreShowUnitPrice === null) {
+        results.hide = fail(
+          "ProductVariant.showUnitPrice is not readable on this API version, so this was not asked",
+        );
+      } else {
+        results.hide = await probeToggle(
+          admin,
+          productGid,
+          variantGid,
+          restoreShowUnitPrice,
+          readsShowUnitPrice,
+        );
+      }
+    }
+
+    // Nothing to remove is not a successful removal. In `clear` mode the
+    // variant may already be empty - pressing the button twice, or a merchant
+    // who cleaned up in the admin - and running the ladder over it would echo
+    // an empty measurement back from the FIRST input and report that one as
+    // the way to clear, which is how a run once reported `null` as working
+    // right after another run had proved it does not.
+    const alreadyEmpty = isEmptyMeasurement(current.state?.measurement);
+    if (mode === "clear" && alreadyEmpty) {
+      results.clear = {
+        ok: false,
+        error: "the variant carries no measurement, so there was nothing to remove",
+        detail: { attempts: [], worked: null },
+      };
+    }
+
+    const worthClearing = (mode === "clear" && !alreadyEmpty) || results.write?.ok;
     if (worthClearing) {
       const attempts: Attempt[] = [];
       for (const strategy of CLEAR_STRATEGIES) {
@@ -387,17 +437,7 @@ export const action = async (args: ActionFunctionArgs) => {
       }
 
       const removed = attempts.find((a) => a.measurementGone);
-      // Only an attempt that SENT `showUnitPrice` and got `false` back is
-      // evidence of hiding - and only if it was not already false. On the
-      // first live run it WAS already false, and every attempt duly reported
-      // "hidden", turning the variant's untouched state into a finding about
-      // our own write. That is reading an empty column as evidence, one level
-      // up: the value did not change, so nothing about it was measured.
-      const hid = attempts.find(
-        (a) => a.sentShowUnitPrice && a.showUnitPrice === false && restoreShowUnitPrice !== false,
-      );
       const answered = attempts.some((a) => !a.error);
-      const alreadyHidden = restoreShowUnitPrice === false;
 
       results.clear = {
         ok: !!removed,
@@ -410,27 +450,6 @@ export const action = async (args: ActionFunctionArgs) => {
             ? "accepted every time, and the measurement stayed on the variant"
             : "no strategy got an answer",
         detail: { attempts, worked: removed?.strategy ?? null },
-      };
-      results.hide = {
-        ok: !!hid,
-        // A real negative only where the field was readable, ON to begin with,
-        // and stayed on. "It was already off" is an unanswered question, not a
-        // no.
-        missing: !hid && answered && readsShowUnitPrice && !alreadyHidden ? true : undefined,
-        error: hid
-          ? undefined
-          : !readsShowUnitPrice
-            ? "ProductVariant.showUnitPrice is not readable on this API version, so this was not asked"
-            : alreadyHidden
-              ? "showUnitPrice was already false before anything was written, so this run cannot say whether it can be switched off"
-              : answered
-                ? "showUnitPrice did not come back false"
-                : "no strategy got an answer",
-        detail: {
-          worked: hid?.strategy ?? null,
-          wasAlreadyHidden: alreadyHidden,
-          before: restoreShowUnitPrice,
-        },
       };
     }
   } finally {
@@ -713,4 +732,56 @@ async function applyVariantInput(
   } catch (error) {
     return { error: fail(error instanceof Error ? error.message : String(error)) };
   }
+}
+
+/**
+ * Flip `showUnitPrice` away from where it was, and put it back.
+ *
+ * Both halves are echo-checked, because both matter: a switch that turns ON
+ * and refuses to turn off is worse than one that does not work at all, and
+ * only the round trip can tell them apart. The variant is left on the value it
+ * started from.
+ */
+async function probeToggle(
+  admin: AdminApiContext,
+  productGid: string,
+  variantGid: string,
+  before: boolean,
+  readsShowUnitPrice: boolean,
+): Promise<Finding> {
+  const flipped = await applyVariantInput(
+    admin,
+    productGid,
+    variantGid,
+    { showUnitPrice: !before },
+    readsShowUnitPrice,
+  );
+  if (flipped.error) return flipped.error;
+  if (flipped.state?.showUnitPrice !== !before) {
+    return {
+      // Answered, and the answer is no: the mutation reported no errors and
+      // the switch did not move.
+      ok: false,
+      missing: true,
+      error: `accepted, but showUnitPrice stayed ${String(flipped.state?.showUnitPrice)}`,
+      detail: { before, sent: !before, echoed: flipped.state?.showUnitPrice ?? null },
+    };
+  }
+
+  const back = await applyVariantInput(
+    admin,
+    productGid,
+    variantGid,
+    { showUnitPrice: before },
+    readsShowUnitPrice,
+  );
+  const restored = !back.error && back.state?.showUnitPrice === before;
+  return {
+    ok: restored,
+    error: restored
+      ? undefined
+      : (back.error?.error ??
+        `it switched to ${String(!before)} and would not go back - the variant is left showing that`),
+    detail: { before, flippedTo: !before, backTo: back.state?.showUnitPrice ?? null },
+  };
 }
