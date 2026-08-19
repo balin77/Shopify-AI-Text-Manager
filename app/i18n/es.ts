@@ -2146,7 +2146,12 @@ export const es: Translation = {
       schemaVideo: "Vídeo (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "El vídeo se genera en la tienda — a partir de tus medios de producto **y** de enlaces de YouTube que solo están en una galería de variantes. Por eso no aparece en la vista previa de abajo. Deduplicado por producto: un vídeo en doce variantes sigue siendo una entrada.",
-      schemaVideoDateNote: "**Los vídeos de galería necesitan una fecha tuya.** Google exige una fecha de subida para el resultado enriquecido de vídeo. Para los medios de producto la app la obtiene durante la sincronización; un enlace de galería no tiene ningún archivo detrás y por tanto ninguna fuente. Sin el metacampo de producto **custom.video_upload_date** (tipo \"fecha\") omitimos la propiedad en vez de inventarla — el vídeo no se muestra entonces como resultado enriquecido. Los enlaces de Vimeo de galería se omiten por completo: les falta una miniatura.",
+      schemaVideoDateNote: "**Los vídeos de una galería necesitan una fecha tuya.** Google solo muestra un vídeo con fecha de subida. Para los vídeos en los medios del producto la app la obtiene automáticamente; un vídeo enlazado (YouTube) no tiene archivo en Shopify y por tanto no hay de dónde sacarla. Configura el metacampo **custom.video_upload_date** en el producto, o el vídeo se queda sin rich result.",
+      severityLabels: {
+        error: "Error",
+        warning: "Advertencia",
+        info: "Nota",
+      },
       schemaFaqNote: "FAQ (FAQPage) se añade en cuanto actives el interruptor en el editor de temas y rellenes el metacampo **custom.faq** — ambos están desactivados por defecto a propósito.",
       setBrandLogo: "Configurar logo en los activos de marca",
       openSampleProduct: "Abrir producto de ejemplo",

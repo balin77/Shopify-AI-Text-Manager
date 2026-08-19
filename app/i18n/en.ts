@@ -2155,7 +2155,12 @@ export const en: Translation = {
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "Video is produced on the storefront — from your product media **and** from YouTube links that only live in a variant gallery. That is why it does not appear in the preview below. Deduplicated per product: one video on twelve variants stays one entry.",
-      schemaVideoDateNote: "**Gallery videos need a date from you.** Google requires an upload date for the video rich result. For product media the app fetches it during the sync; a gallery link has no file behind it and therefore no source for one. Without the product metafield **custom.video_upload_date** (type \"date\") we omit the property rather than invent it — the video is then not shown as a rich result. Vimeo gallery links are skipped entirely: there is no thumbnail for them.",
+      schemaVideoDateNote: "**Videos from a gallery need a date from you.** Google only shows a video with an upload date. For videos in the product media the app fetches it automatically; a linked video (YouTube) has no file at Shopify and therefore no source for it. Set the product metafield **custom.video_upload_date**, or the video stays without a rich result.",
+      severityLabels: {
+        error: "Error",
+        warning: "Warning",
+        info: "Note",
+      },
       schemaFaqNote: "FAQ (FAQPage) joins in once you enable the switch in the theme editor and fill the **custom.faq** metafield — both are deliberately off by default.",
       setBrandLogo: "Set logo in shop brand assets",
       openSampleProduct: "Open sample product",

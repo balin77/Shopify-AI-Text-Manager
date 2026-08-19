@@ -2161,7 +2161,12 @@ export const de = {
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "Video entsteht erst auf der Storefront — aus deinen Produkt-Medien **und** aus YouTube-Links, die nur in einer Varianten-Galerie liegen. Deshalb taucht es in der Vorschau unten nicht auf. Produktweit dedupliziert: ein Video an zwölf Varianten bleibt ein Eintrag.",
-      schemaVideoDateNote: "**Galerie-Videos brauchen ein Datum von dir.** Google verlangt für das Video-Rich-Result ein Upload-Datum. Bei Produkt-Medien holt die App es beim Sync automatisch; ein Galerie-Link hat keine Datei dahinter und damit keine Quelle dafür. Ohne das Produkt-Metafeld **custom.video_upload_date** (Typ „Datum\") lassen wir die Angabe weg statt sie zu erfinden — das Video wird dann nicht als Rich Result angezeigt. Vimeo-Galerie-Links überspringen wir ganz: dafür fehlt ein Vorschaubild.",
+      schemaVideoDateNote: "**Videos aus einer Galerie brauchen ein Datum von dir.** Google zeigt ein Video nur mit Upload-Datum an. Bei Videos in den Produktmedien holt die App es automatisch; ein verlinktes Video (YouTube) hat keine Datei bei Shopify, also keine Quelle dafür. Trag am Produkt das Metafeld **custom.video_upload_date** ein, sonst bleibt das Video ohne Rich Result.",
+      severityLabels: {
+        error: "Fehler",
+        warning: "Warnung",
+        info: "Hinweis",
+      },
       schemaFaqNote: "FAQ (FAQPage) kommt dazu, sobald du den Schalter im Theme-Editor einschaltest und das Metafeld **custom.faq** gefüllt ist — beides ist bewusst standardmäßig aus.",
       setBrandLogo: "Logo in Shop-Markenassets festlegen",
       openSampleProduct: "Beispielprodukt öffnen",
