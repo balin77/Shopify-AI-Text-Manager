@@ -31,7 +31,12 @@ import {
   parseMetaobjectFieldInput,
   parseMetaobjectFieldKey,
 } from "~/services/metaobject-fields.shared";
-import { countLinkedOptionUsage, LINKED_OPTION_SCAN_CAP } from "~/services/metaobject-usage.server";
+import {
+  countLinkedOptionUsage,
+  liveMetaobjectUsage,
+  LINKED_OPTION_SCAN_CAP,
+  LIVE_REFERENCE_PAGE,
+} from "~/services/metaobject-usage.server";
 import { isGidOfResource } from "~/config/create-fields.config";
 import { resolveSwatch } from "~/services/product-option-swatch.shared";
 
@@ -432,5 +437,83 @@ describe("the display-form comparison that decides 'unchanged'", () => {
     expect(shown).toBe("Rot | Blau");
     const reparsed = parseMetaobjectFieldInput("list.single_line_text_field", shown);
     expect(reparsed).toEqual({ ok: true, value: stored });
+  });
+});
+
+// ─── 8. The live cross-check (V4, measured 2026-08-19) ─────────────────────
+
+describe("liveMetaobjectUsage", () => {
+  const ENTRY_ID = "gid://shopify/Metaobject/1";
+
+  /** Only `graphql(...).json()` is ever reached — the cast keeps the stub to
+   *  what the function actually uses instead of building a whole Response. */
+  function adminWith(body: unknown) {
+    return { graphql: vi.fn(async () => ({ json: async () => body })) } as never;
+  }
+
+  function relations(...productIds: Array<string | null>) {
+    return {
+      data: {
+        metaobject: {
+          id: ENTRY_ID,
+          referencedBy: {
+            nodes: productIds.map((id) =>
+              id === null
+                ? { referencer: { __typename: "Collection" } }
+                : { referencer: { __typename: "Product", id } },
+            ),
+          },
+        },
+      },
+    };
+  }
+
+  it("counts DISTINCT products for the message, and ALL references for the decision", async () => {
+    const usage = await liveMetaobjectUsage(adminWith(relations("p1", "p1", "p2")), ENTRY_ID);
+    expect(usage).toEqual({ known: true, references: 3, products: 2, atLeast: false });
+  });
+
+  it("reports a real zero when Shopify says nothing references it", async () => {
+    const usage = await liveMetaobjectUsage(adminWith(relations()), ENTRY_ID);
+    expect(usage).toEqual({ known: true, references: 0, products: 0, atLeast: false });
+  });
+
+  it("flags a full page as 'at least', because the connection has no count field", async () => {
+    const many = Array.from({ length: LIVE_REFERENCE_PAGE }, (_, i) => `p${i}`);
+    const usage = await liveMetaobjectUsage(adminWith(relations(...many)), ENTRY_ID);
+    expect(usage).toEqual({
+      known: true,
+      references: LIVE_REFERENCE_PAGE,
+      products: LIVE_REFERENCE_PAGE,
+      atLeast: true,
+    });
+  });
+
+  it("still COUNTS a referencer that is not a product — Shopify refuses on any of them", async () => {
+    // This is the case that decides: zero products but one reference. Reading
+    // only the product count would let the delete through into a raw platform
+    // refusal for an entry something else holds.
+    const usage = await liveMetaobjectUsage(adminWith(relations(null)), ENTRY_ID);
+    expect(usage).toEqual({ known: true, references: 1, products: 0, atLeast: false });
+  });
+
+  it("returns UNKNOWN — never zero — when the query errors", async () => {
+    const usage = await liveMetaobjectUsage(
+      adminWith({ data: null, errors: [{ message: "Throttled" }] }),
+      ENTRY_ID,
+    );
+    expect(usage).toEqual({ known: false });
+  });
+
+  it("returns UNKNOWN when the entry itself does not resolve", async () => {
+    // Another shop's id, or one deleted meanwhile. An absent metaobject is a
+    // question that was not asked, not an entry nothing references.
+    const usage = await liveMetaobjectUsage(adminWith({ data: { metaobject: null } }), ENTRY_ID);
+    expect(usage).toEqual({ known: false });
+  });
+
+  it("returns UNKNOWN when the call throws", async () => {
+    const admin = { graphql: vi.fn(async () => { throw new Error("socket hang up"); }) } as never;
+    expect(await liveMetaobjectUsage(admin, ENTRY_ID)).toEqual({ known: false });
   });
 });

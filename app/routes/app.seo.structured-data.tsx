@@ -23,7 +23,7 @@
 
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator } from "react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Card, Box, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -49,13 +49,37 @@ import type { JsonLdAuditAggregate, JsonLdAuditItemType } from "../services/seo/
 import { summarizeLiveSocial } from "../services/seo/social-audit.service";
 import {
   APP_SOCIAL_TAGS,
+  actionTone,
   activationGate,
   activationTone,
+  groupGatesByAction,
   statForSwitch,
   worstActivationVerdict,
   JSON_LD_SWITCHES,
   type ActivationVerdict,
 } from "../services/seo/markup-activation.shared";
+
+/**
+ * Render `**bold**` inside an i18n string.
+ *
+ * This section's copy is read under time pressure by someone deciding whether
+ * to flip a switch, and the deciding words ("Nicht einschalten", "Ausschalten")
+ * have to survive a glance. Keeping the emphasis IN the translated string keeps
+ * it where a translator can move it — German and Spanish do not stress the same
+ * word as English — instead of hard-coding which half of a sentence is bold.
+ *
+ * Deliberately not markdown: only `**` pairs, no links, no nesting. An unpaired
+ * `**` renders literally rather than swallowing the rest of the sentence.
+ */
+function emphasize(text: string): ReactNode[] {
+  return text.split("**").map((part, i) =>
+    i % 2 === 1 ? (
+      <Text key={i} as="span" fontWeight="bold">{part}</Text>
+    ) : (
+      <span key={i}>{part}</span>
+    ),
+  );
+}
 
 /** Extract the trailing numeric id from a GID like "gid://shopify/Product/123". */
 function gidToNumericId(gid: string | null | undefined): string | null {
@@ -490,6 +514,35 @@ export default function SeoStructuredData() {
     (jsonLdKnown && liveJsonLd!.coverage.some((c) => c.withMarkup < c.total)) ||
     (socialKnown &&
       liveSocial!.coverage.some((c) => c.withTitle < c.total || c.withImage < c.total));
+  // "What exactly is missing", in the numbers the summary lines print. Built
+  // per page KIND, because "12 pages without markup" is unactionable next to
+  // "12 of 41 product pages" — the merchant fixes a page kind, not a total.
+  const jsonLdMissing = {
+    total: (liveJsonLd?.coverage ?? []).reduce((n, c) => n + (c.total - c.withMarkup), 0),
+    parts: (liveJsonLd?.coverage ?? [])
+      .filter((c) => c.withMarkup < c.total)
+      .map(
+        (c) =>
+          `${(live.pageTypes as unknown as Record<string, string>)[c.resourceType] || c.resourceType}: ${c.total - c.withMarkup}/${c.total}`,
+      ),
+  };
+  // The social half names the TAG, not the page kind: og:image missing on 40
+  // pages is one fix (the block's default share image), wherever they sit.
+  const socialMissing = {
+    parts: [
+      ...((liveSocial?.coverage ?? []).reduce((n, c) => n + (c.total - c.withTitle), 0) > 0
+        ? [
+            `og:title: ${(liveSocial?.coverage ?? []).reduce((n, c) => n + (c.total - c.withTitle), 0)}`,
+          ]
+        : []),
+      ...((liveSocial?.coverage ?? []).reduce((n, c) => n + (c.total - c.withImage), 0) > 0
+        ? [
+            `og:image: ${(liveSocial?.coverage ?? []).reduce((n, c) => n + (c.total - c.withImage), 0)}`,
+          ]
+        : []),
+    ],
+  };
+
   const deliveryBadge = !jsonLdKnown && !socialKnown ? (
     <Badge>{live.badgeUnknown}</Badge>
   ) : anyDeliveryDuplicates ? (
@@ -557,10 +610,9 @@ export default function SeoStructuredData() {
   // is its own rung rather than the best of the set — the whole point is that
   // an unmeasured shop gets no green light, and that a measured conflict in
   // one family is not softened by the other family being fine.
-  const activationWorst = worstActivationVerdict([
-    ...switchGates.map((g) => g.gate.verdict),
-    ...socialGates.map((g) => g.gate.verdict),
-  ]);
+  const jsonLdWorst = worstActivationVerdict(switchGates.map((g) => g.gate.verdict));
+  const socialWorst = worstActivationVerdict(socialGates.map((g) => g.gate.verdict));
+  const activationWorst = worstActivationVerdict([jsonLdWorst, socialWorst]);
   const activationBadge =
     activationWorst === "unknown" ? (
       <Badge>{act.badgeUnknown as string}</Badge>
@@ -575,9 +627,14 @@ export default function SeoStructuredData() {
     );
 
   /**
-   * One switch, one verdict. Shared by the seven JSON-LD switches and the nine
+   * One switch, one line. Shared by the seven JSON-LD switches and the nine
    * social tags — they differ only in what "the switch" is called, and giving
    * them two renderers is how the two halves would drift apart.
+   *
+   * Deliberately ONE sentence per row. The first cut spent three on each, so a
+   * section was twenty sentences of prose in which the one switch that needed
+   * action was indistinguishable from the six that did not. The bold lead-in IS
+   * the instruction; the rest is the evidence for it.
    */
   const renderGateRow = ({
     key,
@@ -589,7 +646,7 @@ export default function SeoStructuredData() {
   }: {
     key: string;
     label: string;
-    /** The `block.settings.*` id, or the raw tag name — shown verbatim so the
+    /** The `block.settings.*` id, or the tag's namespace — shown verbatim so the
      *  merchant can find the same string in the theme editor / page source. */
     settingId: string;
     gate: ReturnType<typeof activationGate>;
@@ -600,35 +657,99 @@ export default function SeoStructuredData() {
   }) => {
     const showExamples = gate.verdict === "duplicateApp" || gate.verdict === "duplicateForeign";
     return (
-      <Box key={key} padding="300" borderWidth="025" borderColor="border" borderRadius="200">
-        <BlockStack gap="150">
+      <Box key={key} padding="200" borderBlockStartWidth="025" borderColor="border">
+        <BlockStack gap="050">
           <InlineStack gap="200" blockAlign="center" wrap>
-            <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
             <Badge tone={activationTone(gate.verdict)}>
               {(act.verdictLabels as Record<string, string>)[gate.verdict]}
             </Badge>
-            <Text as="span" variant="bodySm" tone="subdued">{settingId}</Text>
+            <Text as="span" variant="bodyMd" fontWeight="semibold">{label}</Text>
+            <Text as="span" variant="bodySm" tone="subdued">
+              {defaultOn === undefined
+                ? settingId
+                : `${settingId} · ${defaultOn ? (act.defaultOn as string) : (act.defaultOff as string)}`}
+            </Text>
           </InlineStack>
-          <Text as="p" variant="bodySm">{verdictText(gate.verdict, gate)}</Text>
+          <Text as="p" variant="bodySm">{emphasize(verdictText(gate.verdict, gate))}</Text>
           {/* Several VideoObjects on one page are three product videos, not a
               collision — the duplicate rule is off for those types, so a clean
               result there means "not checked", never "checked and fine". */}
           {gate.repeatable && gate.pages > 0 && (
             <Text as="p" variant="bodySm" tone="subdued">{act.repeatableCaveat as string}</Text>
           )}
-          {/* A merchant who never opened the theme editor has the shipped
-              default, so "which state am I in" is answerable from here. */}
-          {defaultOn !== undefined && (
-            <Text as="p" variant="bodySm" tone="subdued">
-              {defaultOn ? (act.defaultOn as string) : (act.defaultOff as string)}
-            </Text>
-          )}
           {showExamples &&
-            examples.map((u) => (
+            examples.slice(0, 3).map((u) => (
               <Text as="p" variant="bodySm" tone="subdued" key={u}>{u}</Text>
             ))}
         </BlockStack>
       </Box>
+    );
+  };
+
+  /**
+   * The section's bottom line, above its switches: what to do, in one bolded
+   * phrase, with the affected switches named. Merchants act on this line; the
+   * rows below it are the evidence.
+   */
+  const renderVerdictSummary = (
+    gates: { label: string; verdict: ActivationVerdict }[],
+    measured: boolean,
+  ) => {
+    if (!measured) return null;
+    const groups = groupGatesByAction(gates);
+    const lead = groups[0];
+    if (!lead) return null;
+    const summary = act.summary as Record<string, string>;
+    return (
+      <Banner tone={actionTone(lead.action)}>
+        <BlockStack gap="100">
+          <Text as="p" variant="bodyMd" fontWeight="semibold">
+            {(summary[lead.action] || "")
+              .replace("{count}", String(lead.labels.length))
+              .replace("{names}", lead.labels.join(", "))}
+          </Text>
+          {groups.length > 1 && (
+            <Text as="p" variant="bodySm">
+              {groups
+                .slice(1)
+                .map((g) =>
+                  (summary[`${g.action}Short`] || "").replace("{count}", String(g.labels.length)),
+                )
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          )}
+        </BlockStack>
+      </Banner>
+    );
+  };
+
+  /**
+   * Step 1's bottom line, per half. The tile badge said "Lücken" while the card
+   * below it only showed a table — a merchant reading "gaps" has to be told
+   * WHICH, in numbers, in the first line of the card. Duplicates outrank gaps:
+   * markup served twice is a defect, markup missing is an omission.
+   */
+  const renderDeliverySummary = (
+    parts: { tone: "critical" | "warning" | "success"; text: string }[],
+  ) => {
+    const lead = parts.find((p) => p.tone === "critical") ?? parts.find((p) => p.tone === "warning") ?? parts[0];
+    if (!lead) return null;
+    return (
+      <Banner tone={lead.tone}>
+        <BlockStack gap="050">
+          {parts.map((p) => (
+            <Text
+              key={p.text}
+              as="p"
+              variant="bodyMd"
+              fontWeight={p === lead ? "semibold" : "regular"}
+            >
+              {p.text}
+            </Text>
+          ))}
+        </BlockStack>
+      </Banner>
     );
   };
 
@@ -804,6 +925,35 @@ export default function SeoStructuredData() {
                 </Banner>
               ) : (
                 <BlockStack gap="300">
+                  {/* The bottom line first, in numbers. The tile badge used to
+                      say "Lücken" while the card below only offered a table to
+                      derive them from. */}
+                  {renderDeliverySummary([
+                    ...(liveJsonLd.duplicates.length > 0
+                      ? [{
+                          tone: "critical" as const,
+                          text: (live.sumDuplicates as string)
+                            .replace("{count}", String(liveJsonLd.duplicates.length))
+                            .replace(
+                              "{names}",
+                              liveJsonLd.duplicates
+                                .map((d) => `${d.type} (${d.pages})`)
+                                .join(", "),
+                            ),
+                        }]
+                      : []),
+                    ...(jsonLdMissing.total > 0
+                      ? [{
+                          tone: "warning" as const,
+                          text: (live.sumGaps as string)
+                            .replace("{count}", String(jsonLdMissing.total))
+                            .replace("{names}", jsonLdMissing.parts.join(", ")),
+                        }]
+                      : []),
+                    ...(liveJsonLd.duplicates.length === 0 && jsonLdMissing.total === 0
+                      ? [{ tone: "success" as const, text: live.sumClean as string }]
+                      : []),
+                  ])}
                   <Text as="p" variant="bodySm" tone="subdued">
                     {live.basis
                       .replace("{time}", new Date(liveJsonLd.crawledAt).toLocaleString())
@@ -936,6 +1086,31 @@ export default function SeoStructuredData() {
                 </Banner>
               ) : (
                 <BlockStack gap="300">
+                  {renderDeliverySummary([
+                    ...(liveSocial.duplicates.length > 0
+                      ? [{
+                          tone: "critical" as const,
+                          text: (soc.sumDuplicates as string)
+                            .replace("{count}", String(liveSocial.duplicates.length))
+                            .replace(
+                              "{names}",
+                              liveSocial.duplicates.map((d) => `${d.tag} (${d.pages})`).join(", "),
+                            ),
+                        }]
+                      : []),
+                    ...(socialMissing.parts.length > 0
+                      ? [{
+                          tone: "warning" as const,
+                          text: (soc.sumGaps as string).replace(
+                            "{names}",
+                            socialMissing.parts.join(", "),
+                          ),
+                        }]
+                      : []),
+                    ...(liveSocial.duplicates.length === 0 && socialMissing.parts.length === 0
+                      ? [{ tone: "success" as const, text: soc.sumClean as string }]
+                      : []),
+                  ])}
                   <Text as="p" variant="bodySm" tone="subdued">
                     {live.basis
                       .replace("{time}", new Date(liveSocial.crawledAt).toLocaleString())
@@ -1257,47 +1432,72 @@ export default function SeoStructuredData() {
             merchant decides, in the theme editor. */}
         {step === "activate" && (
           <BlockStack gap="400">
+            <Text as="p" variant="bodyMd" tone="subdued">{emphasize(act.intro as string)}</Text>
+            {/* Each embed is its own card: its own verdict, its own bottom line
+                and its own way into the theme editor, right next to the verdict
+                rather than at the foot of the page. The two are gated
+                separately because the social columns are younger than the
+                JSON-LD ones — a snapshot can know one half and not the other,
+                and a shared banner would claim knowledge for a half nobody
+                looked at. */}
             <Card>
               <BlockStack gap="300">
-                <Text as="h2" variant="headingLg">{act.title as string}</Text>
-                <Text as="p" variant="bodyMd" tone="subdued">{act.intro as string}</Text>
+                <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Text as="h2" variant="headingMd">{act.switchesTitle as string}</Text>
+                    {jsonLdMeasured && (
+                      <Badge tone={activationTone(jsonLdWorst)}>
+                        {(act.verdictLabels as Record<string, string>)[jsonLdWorst]}
+                      </Badge>
+                    )}
+                  </InlineStack>
+                  <Button onClick={openEmbedSettings} variant="primary">
+                    {act.openSwitches as string}
+                  </Button>
+                </InlineStack>
 
-                {/* The two embeds are gated separately and each carries its
-                    OWN measured-ness: the social columns are younger than the
-                    JSON-LD ones, so a snapshot can easily know one and not the
-                    other, and one shared banner would claim knowledge for a
-                    half nobody looked at. */}
-                <BlockStack gap="300">
-                  <Text as="h3" variant="headingMd">{act.switchesTitle as string}</Text>
-                  {!jsonLdMeasured ? (
-                    // The core rule of this section, restated in place: a
-                    // missing measurement is not a free pass. No crawl ⇒ no
-                    // verdict, only the invitation to run step 1.
-                    <Banner tone="info">
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodyMd">
-                          {liveJsonLd ? (act.notMeasured as string) : (act.noCrawl as string)}
-                        </Text>
-                        <div>
-                          <Button onClick={() => handleNavigate("/app/seo/crawl")}>
-                            {live.goToCrawl}
-                          </Button>
-                        </div>
-                      </BlockStack>
-                    </Banner>
-                  ) : (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {(act.basis as string)
-                        .replace("{time}", new Date(liveJsonLd!.crawledAt).toLocaleString())
-                        .replace("{pages}", String(liveJsonLd!.pagesChecked))}
-                    </Text>
-                  )}
-                  {jsonLdMeasured && !jsonLdOriginKnown && (
-                    // Without the marker every "not ours" reading collapses to
-                    // "we could not tell" — say so once instead of repeating it
-                    // under all seven switches.
-                    <Banner tone="info">{act.originUnknownHint as string}</Banner>
-                  )}
+                {!jsonLdMeasured ? (
+                  // The core rule of this section, restated in place: a missing
+                  // measurement is not a free pass. No crawl ⇒ no verdict, only
+                  // the invitation to run step 1.
+                  <Banner tone="info">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd">
+                        {emphasize(liveJsonLd ? (act.notMeasured as string) : (act.noCrawl as string))}
+                      </Text>
+                      <div>
+                        <Button onClick={() => handleNavigate("/app/seo/crawl")}>
+                          {live.goToCrawl}
+                        </Button>
+                      </div>
+                    </BlockStack>
+                  </Banner>
+                ) : (
+                  renderVerdictSummary(
+                    switchGates.map((sw) => ({
+                      label: (act.switches as Record<string, string>)[sw.labelKey],
+                      verdict: sw.gate.verdict,
+                    })),
+                    true,
+                  )
+                )}
+
+                {jsonLdMeasured && !jsonLdOriginKnown && (
+                  // Without the marker every "not ours" reading collapses to
+                  // "we could not tell" — said once, not under all seven rows.
+                  <Banner tone="warning">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodySm">{emphasize(act.originUnknownHint as string)}</Text>
+                      <div>
+                        <Button size="slim" onClick={() => handleNavigate("/app/seo/crawl")}>
+                          {live.goToCrawl}
+                        </Button>
+                      </div>
+                    </BlockStack>
+                  </Banner>
+                )}
+
+                <BlockStack gap="0">
                   {switchGates.map((sw) =>
                     renderGateRow({
                       key: sw.settingId,
@@ -1310,94 +1510,96 @@ export default function SeoStructuredData() {
                   )}
                 </BlockStack>
 
-                {/* Open Graph / Twitter. One embed toggle in the theme editor,
-                    nine tags behind it — and a theme that sets og:title while
-                    leaving twitter:* alone is the normal case, so a single
-                    verdict for the whole embed would hide the half that
-                    matters. */}
-                <BlockStack gap="300">
-                  <Text as="h3" variant="headingMd">{act.socialSwitchesTitle as string}</Text>
+                {jsonLdMeasured && (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    {act.socialSwitchesBody as string}
+                    {(act.basis as string)
+                      .replace("{time}", new Date(liveJsonLd!.crawledAt).toLocaleString())
+                      .replace("{pages}", String(liveJsonLd!.pagesChecked))}
                   </Text>
-                  {!socialMeasured ? (
-                    <Banner tone="info">
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodyMd">
-                          {liveSocial ? (act.socialNotMeasured as string) : (act.noCrawl as string)}
-                        </Text>
-                        <div>
-                          <Button onClick={() => handleNavigate("/app/seo/crawl")}>
-                            {live.goToCrawl}
-                          </Button>
-                        </div>
-                      </BlockStack>
-                    </Banner>
-                  ) : (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {(act.basis as string)
-                        .replace("{time}", new Date(liveSocial!.crawledAt).toLocaleString())
-                        .replace("{pages}", String(liveSocial!.pagesChecked))}
-                    </Text>
-                  )}
-                  {socialMeasured && !socialOriginKnown && (
-                    <Banner tone="info">{act.socialOriginUnknownHint as string}</Banner>
-                  )}
+                )}
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center" gap="200" wrap>
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Text as="h2" variant="headingMd">{act.socialSwitchesTitle as string}</Text>
+                    {socialMeasured && (
+                      <Badge tone={activationTone(socialWorst)}>
+                        {(act.verdictLabels as Record<string, string>)[socialWorst]}
+                      </Badge>
+                    )}
+                  </InlineStack>
+                  <Button onClick={openEmbedSettings} variant="primary">
+                    {act.openSwitches as string}
+                  </Button>
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {act.socialSwitchesBody as string}
+                </Text>
+
+                {!socialMeasured ? (
+                  <Banner tone="info">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd">
+                        {emphasize(liveSocial ? (act.socialNotMeasured as string) : (act.noCrawl as string))}
+                      </Text>
+                      <div>
+                        <Button onClick={() => handleNavigate("/app/seo/crawl")}>
+                          {live.goToCrawl}
+                        </Button>
+                      </div>
+                    </BlockStack>
+                  </Banner>
+                ) : (
+                  renderVerdictSummary(
+                    socialGates.map((sg) => ({ label: sg.tag, verdict: sg.gate.verdict })),
+                    true,
+                  )
+                )}
+
+                {socialMeasured && !socialOriginKnown && (
+                  <Banner tone="warning">
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodySm">{emphasize(act.socialOriginUnknownHint as string)}</Text>
+                      <div>
+                        <Button size="slim" onClick={() => handleNavigate("/app/seo/crawl")}>
+                          {live.goToCrawl}
+                        </Button>
+                      </div>
+                    </BlockStack>
+                  </Banner>
+                )}
+
+                <BlockStack gap="0">
                   {socialGates.map((sg) =>
                     renderGateRow({
                       key: sg.tag,
                       label: sg.tag,
-                      // Proper nouns, identical in all three shipped
-                      // languages — an i18n key here would only be a place for
-                      // them to drift apart.
+                      // Proper nouns, identical in all three shipped languages —
+                      // an i18n key here would only be a place for them to drift.
                       settingId: sg.tag.startsWith("og:") ? "Open Graph" : "Twitter Card",
                       gate: sg.gate,
                       examples: liveSocial?.duplicates.find((d) => d.tag === sg.tag)?.examples ?? [],
                     }),
                   )}
                 </BlockStack>
+
+                {socialMeasured && (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(act.basis as string)
+                      .replace("{time}", new Date(liveSocial!.crawledAt).toLocaleString())
+                      .replace("{pages}", String(liveSocial!.pagesChecked))}
+                  </Text>
+                )}
               </BlockStack>
             </Card>
 
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingLg">
-                  {(s as any).activationTitle as string}
-                </Text>
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  {(s as any).activationBody as string}
-                </Text>
-
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">
-                    {(s as any).activationJsonLdTitle as string}
-                  </Text>
-                  <InlineStack>
-                    <Button onClick={openEmbedSettings} variant="primary">
-                      {(s as any).activateInSettings as string}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
-
-                <BlockStack gap="200">
-                  <Text as="h3" variant="headingMd">
-                    {(s as any).activationOgTitle as string}
-                  </Text>
-                  <InlineStack>
-                    <Button onClick={openEmbedSettings} variant="primary">
-                      {(s as any).activateInSettings as string}
-                    </Button>
-                  </InlineStack>
-                </BlockStack>
-
-                {/* The app names the conflict; it does not resolve it in the
-                    merchant's theme code (plan §4, and the standing rule that
-                    this app never edits theme code it does not own). */}
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {act.themeHint as string}
-                </Text>
-              </BlockStack>
-            </Card>
+            {/* The app names the conflict; it does not resolve it in the
+                merchant's theme code (plan §4, and the standing rule that this
+                app never edits theme code it does not own). */}
+            <Text as="p" variant="bodySm" tone="subdued">{emphasize(act.themeHint as string)}</Text>
           </BlockStack>
         )}
 

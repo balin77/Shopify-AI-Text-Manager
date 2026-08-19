@@ -15,6 +15,13 @@
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { runCrawl, pruneOldCrawlSnapshots } from "./crawl.service";
+// Root module, shared verbatim with the standalone boot recovery
+// (task-recovery.service.js) — see its header for why "is this run dead" may
+// exist only once.
+import {
+  HEARTBEAT_STALL_MS,
+  recoverOrphanedRuns,
+} from "../../../orphan-run-recovery.js";
 import type { PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 
@@ -63,16 +70,47 @@ export type StartCrawlResult =
  *
  * Single-flight is a hard rule for both callers: a second live crawl doubles
  * the request load on the merchant's own storefront, and the sweep must never
- * be the thing that starts it while a merchant is watching one run.
+ * be the thing that starts it while a merchant is watching one run. "Running"
+ * means a run that is still HEARTBEATING though — a Task row whose process died
+ * (redeploy, OOM) is not a crawl, and treating it as one is what made every new
+ * app version leave the crawl hanging: nothing could start until the reaper
+ * came round, and the snapshot behind it stayed open even then.
  */
 export async function startCrawlRun(args: StartCrawlArgs): Promise<StartCrawlResult> {
   const { db, admin, shop } = args;
 
   const runningTask = await db.task.findFirst({
     where: { shop, type: "seoCrawl", status: "running" },
-    select: { id: true },
+    select: { id: true, updatedAt: true },
   });
-  if (runningTask) return { started: false, reason: "alreadyRunning", taskId: runningTask.id };
+  if (runningTask) {
+    // Single-flight must not outlive the runner. A crawl writes Task.progress
+    // at least every 10s (HEARTBEAT_MAX_INTERVAL_MS) through every phase, so a
+    // row that has been silent for HEARTBEAT_STALL_MS belongs to a process that
+    // is gone — a redeploy, an OOM kill — and refusing the merchant's new crawl
+    // on its behalf is the hang, not the safety. The boot recovery closes such
+    // a row on the next start as well; this is the way out for a merchant who
+    // is standing in front of it now.
+    const silentMs = Date.now() - runningTask.updatedAt.getTime();
+    if (silentMs < HEARTBEAT_STALL_MS) {
+      return { started: false, reason: "alreadyRunning", taskId: runningTask.id };
+    }
+    logger.warn("[SeoCrawl] Taking over an orphaned crawl run", {
+      shop,
+      taskId: runningTask.id,
+      silentMs,
+    });
+    // Both halves, and BEFORE the new snapshot exists: the snapshot reconcile
+    // recognises an orphan by "this shop has no running crawl task", so a new
+    // running snapshot created first would look like the live one and leave the
+    // old row open for good.
+    await recoverOrphanedRuns(db, { olderThan: null, shops: [shop] }).catch((err: unknown) => {
+      logger.error("[SeoCrawl] Failed to close the orphaned run (starting anyway)", {
+        shop,
+        error: errorMessage(err),
+      });
+    });
+  }
 
   const task = await db.task.create({
     data: {

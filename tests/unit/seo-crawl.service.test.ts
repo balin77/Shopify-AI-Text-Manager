@@ -1804,6 +1804,48 @@ describe("runCrawl — progress reporting (§3.5)", () => {
     expect(tail).toBeLessThan(100);
   });
 
+  it("keeps beating through the post-crawl tail, which is DB work with no pages left to count", async () => {
+    // The tail — URL resolve, head drift, two bulk inserts — used to run with no
+    // heartbeat at all. `seoCrawl` is reaped on heartbeat SILENCE
+    // (orphan-run-recovery.js), so an unbeaten tail is a LIVE run that looks
+    // dead: reaped mid-flight, its snapshot closed under it and single-flight
+    // opened for a second crawl of the same storefront.
+    server.use(
+      http.get(`${BASE}/robots.txt`, () => HttpResponse.text("")),
+      http.get(`${BASE}/sitemap.xml`, () => HttpResponse.xml(`<urlset></urlset>`)),
+      http.get(`${BASE}/`, () =>
+        HttpResponse.html(html("Home – Acme", `<a href="/p/1">p1</a>`)),
+      ),
+      http.get(`${BASE}/p/:n`, ({ params }) =>
+        HttpResponse.html(html(`p${params.n} – Acme`, `<h1>p${params.n}</h1><p>hi</p>`)),
+      ),
+    );
+    const beats: number[] = [];
+
+    await runCrawl("snap-progress-tail", {
+      db: makeDb(),
+      shop: "shop.myshopify.com",
+      primaryDomain: HOST,
+      myshopifyDomain: "shop.myshopify.com",
+      shopName: "Acme",
+      appUrl: "https://app.example.com",
+      maxPages: 100,
+      spacingMs: 0,
+      // No external pass, and a page cadence the two-page loop can never reach:
+      // every beat left is a tail beat or the phase-complete one.
+      checkExternalLinks: false,
+      heartbeatEvery: 1000,
+      onProgress: (_crawled, _total, percent) => {
+        beats.push(percent);
+      },
+    });
+
+    // One per boundary (loop end, URL resolve, head drift, page insert) plus the
+    // explicit phase-complete beat — an exact count would just re-count the
+    // await sites, so this asserts the tail is not silent.
+    expect(beats.filter((p) => p === CRAWL_PHASE_MAX_PERCENT).length).toBeGreaterThanOrEqual(4);
+  });
+
   it("beats on time as well as on pages, so a cool-down is not silence", async () => {
     const COOLDOWN_PATHS = ["a", "b", "c", "d", "e", "f", "g", "h"];
     server.use(

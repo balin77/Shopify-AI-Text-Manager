@@ -1925,8 +1925,16 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
   }
 
   // ---- Post-crawl analysis (§3.1) ----------------------------------------
+  // The loop's beat stops here, and everything below is DB work over up to
+  // `maxPages` rows — a URL resolve, a head-drift read, two bulk inserts. The
+  // stuck-task reaper reaps a crawl on heartbeat SILENCE (orphan-run-recovery.js),
+  // so an unbeaten tail is a live run that looks dead: beat at each boundary,
+  // which bounds the silence by the longest single step rather than by the whole
+  // phase. Cheap — four writes per run, not per page.
+  await heartbeat();
   const pageUrls = Array.from(pages.keys());
   const resolvedByUrl = await resolvePathsToResources(db, shop, pageUrls);
+  await heartbeat();
 
   let pagesOk = 0;
   let pagesBroken = 0;
@@ -2036,6 +2044,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     (p) => p.resourceId && isAuditType(p.resourceType) && p.inboundCount === 0,
   ).length;
   const headDrift = await computeHeadDrift(db, shop, headDriftCandidates, shopName, Infinity);
+  await heartbeat();
 
   // Only genuinely broken targets become SeoCrawlBrokenLink rows — a 403/429
   // target is a firewall artifact and would otherwise flood the list with
@@ -2057,6 +2066,7 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
 
   if (persistablePages.length > 0) {
     await db.seoCrawlPage.createMany({ data: persistablePages });
+    await heartbeat();
   }
   if (brokenLinkRows.length > 0) {
     await db.seoCrawlBrokenLink.createMany({ data: brokenLinkRows });
