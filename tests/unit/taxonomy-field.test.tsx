@@ -239,30 +239,24 @@ describe("TaxonomyField — the page behind the popover", () => {
 });
 
 /**
- * How wide the panel gets.
+ * How wide the two boxes get — and that it is ONE width, not two.
  *
  * Both failure modes were shipped once: a panel with a width of its own hung
- * out past a narrower field, and a panel that simply took the field's width
+ * out past a narrower control, and a panel that simply took the control's width
  * (Polaris' `fullWidth`) spanned the whole page — this field is as wide as the
- * editor column. The rule is the SMALLER of the measured field and the app's
- * ceiling, and each half has to be able to drop out alone: a NaN in there is a
- * panel with no width.
+ * editor column. The ceiling therefore sits on the CONTROL, and the panel is
+ * whatever the control measured, so the closed box and the open one cannot come
+ * to disagree.
  */
-describe("TaxonomyField — how wide the panel gets", () => {
+describe("TaxonomyField — how wide the boxes get", () => {
   /** The panel is the box that carries the width; the list sits inside it. */
   const panelStyle = () =>
     (document.querySelector("[style*='overscroll-behavior']")?.parentElement?.parentElement
       ?.getAttribute("style") ?? "");
 
-  /** jsdom resolves no custom properties, so the ceiling is stubbed where a
-   *  test needs one. */
-  const withCeiling = (value: string) => {
-    const real = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation(((node: Element) => {
-      const style = real(node);
-      return { ...style, getPropertyValue: () => value } as CSSStyleDeclaration;
-    }) as typeof window.getComputedStyle);
-  };
+  /** The control the panel hangs off — the box the ceiling is spent on. */
+  const controlStyle = () =>
+    document.querySelector("[style*='--app-dropdown-panel-max-width']")?.getAttribute("style") ?? "";
 
   beforeEach(() => {
     vi.stubGlobal("fetch", mockFetch());
@@ -273,41 +267,35 @@ describe("TaxonomyField — how wide the panel gets", () => {
     vi.restoreAllMocks();
   });
 
-  it("clamps a wide field down to the ceiling", async () => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 1400 } as DOMRect);
-    withCeiling("480px");
+  it("caps the control itself, so the closed box cannot span the page", () => {
+    render(ui());
+
+    // The ONE ceiling, spent as a max-width — and as the token, never as a
+    // number this component made up.
+    expect(controlStyle()).toContain("max-width: var(--app-dropdown-panel-max-width)");
+  });
+
+  it("opens a panel exactly as wide as the control", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 420 } as DOMRect);
 
     render(ui());
     await openPicker();
 
-    expect(panelStyle()).toContain("width: 480px");
+    expect(panelStyle()).toContain("width: 420px");
   });
 
-  it("follows a field that is narrower than the ceiling", async () => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 300 } as DOMRect);
-    withCeiling("480px");
+  it("follows a narrower control just as well", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 260 } as DOMRect);
 
     render(ui());
     await openPicker();
 
-    // Never wider than the control it hangs off — the other half of the rule.
-    expect(panelStyle()).toContain("width: 300px");
+    expect(panelStyle()).toContain("width: 260px");
   });
 
-  it("keeps the measured width when the ceiling does not parse as px", async () => {
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 300 } as DOMRect);
-    withCeiling("");
-
-    render(ui());
-    await openPicker();
-
-    // Half a clamp, not a NaN.
-    expect(panelStyle()).toContain("width: 300px");
-  });
-
-  it("falls back to the bare token when there is nothing to measure at all", async () => {
+  it("falls back to the bare ceiling when there is nothing to measure", async () => {
     // jsdom reports 0 for every box. `width: 0px` would be a panel with no
-    // content in it, which is why neither half may reach Math.min as a zero.
+    // content in it, which is the one thing the measurement may not produce.
     render(ui());
     await openPicker();
 
