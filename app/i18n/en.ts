@@ -221,7 +221,6 @@ export const en: Translation = {
     metaobjectEntryUnsupportedHint: "This app has no editor for these field types. Edit them in the Shopify admin.",
     metaobjectEntryRichTextHint: "Rich text is shown only — edit it in the Shopify admin.",
     metaobjectEntryDelete: "Delete entry",
-    metaobjectEntryDeleteUsageUnknown: "We do not know whether this entry is in use — sync your products first.",
     metaobjectEntryDeleteInUse: "{products} product(s) use this entry as an option value. Remove it there first.",
     metaobjectEntryUsageChecking: "Checking usage…",
     metaobjectEntryUsageNone: "No product uses this entry as an option value.",
@@ -505,7 +504,7 @@ export const en: Translation = {
       next: "Continue",
       confirm: "Delete permanently",
       deleting: "Deleting \u2026",
-      consequenceMetaobjectUsage: "Option values in products pointing at this entry can be lost with it.",
+      consequenceMetaobjectUsage: "Shopify refuses to delete an entry that a product still uses as an option value \u2014 remove it there first.",
     },
     undoCreate: "Undo this create",
     // ── Duplicating (§1.9) ────────────────────────────────────────────────

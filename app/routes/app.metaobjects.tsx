@@ -438,7 +438,6 @@ export default function MetaobjectsPage() {
       unsupportedTitle: t.content?.metaobjectEntryUnsupportedTitle,
       unsupportedHint: t.content?.metaobjectEntryUnsupportedHint,
       deleteLabel: t.content?.metaobjectEntryDelete,
-      deleteUsageUnknown: t.content?.metaobjectEntryDeleteUsageUnknown,
       deleteInUse: t.content?.metaobjectEntryDeleteInUse,
       usageChecking: t.content?.metaobjectEntryUsageChecking,
       usageNone: t.content?.metaobjectEntryUsageNone,
