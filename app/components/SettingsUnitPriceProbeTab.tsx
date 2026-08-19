@@ -6,13 +6,15 @@
  * depends on the answer, and the docs do not give it — so it is measured on a
  * real variant before anything is built.
  *
- * Two things about the flow are deliberate. The merchant supplies the product
- * and variant GIDs themselves: a probe that picks its own target writes to a
- * product nobody chose. And the run RESTORES whatever measurement the variant
- * had, so the storefront is not left showing "CHF x / kg" for a vase.
+ * Two things about the flow are deliberate. The merchant PICKS the product and
+ * the variant — from the cache, in two dropdowns — because a probe that chose
+ * its own target would write to a product nobody selected, and one that asked
+ * for a pasted GID would not get run at all. And the run RESTORES whatever
+ * measurement the variant had, so the storefront is not left showing
+ * "CHF x / kg" for a vase.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Badge,
   Banner,
@@ -21,8 +23,9 @@ import {
   Button,
   Card,
   InlineStack,
+  Select,
+  Spinner,
   Text,
-  TextField,
 } from "@shopify/polaris";
 
 interface Finding {
@@ -33,6 +36,17 @@ interface Finding {
 }
 
 type Report = Record<string, Finding>;
+
+interface ProbeVariant {
+  gid: string;
+  title: string;
+  sku: string | null;
+}
+interface ProbeProduct {
+  gid: string;
+  title: string;
+  variants: ProbeVariant[];
+}
 
 /** What each step answers, in the order the probe asks it. */
 const STEPS: Array<{ key: string; label: string; question: string }> = [
@@ -67,14 +81,39 @@ export function SettingsUnitPriceProbeTab() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  /** `null` while loading — an empty list and "not loaded yet" are different
+   *  answers, and a picker showing "no products" for the first is a lie. */
+  const [products, setProducts] = useState<ProbeProduct[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/unit-price-probe")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        setProducts(data?.success ? (data.products as ProbeProduct[]) : []);
+      })
+      .catch(() => {
+        if (!cancelled) setProducts([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const product = products?.find((p) => p.gid === productGid);
+  /** The variant, falling back to the product's first: a selection pointing at
+   *  a variant of a product that is no longer chosen would leave the run
+   *  button dead with nothing saying why. */
+  const variant = product?.variants.find((v) => v.gid === variantGid) ?? product?.variants[0];
 
   const run = useCallback(async () => {
     setRunning(true);
     setError(null);
     try {
       const body = new FormData();
-      body.set("productGid", productGid.trim());
-      body.set("variantGid", variantGid.trim());
+      body.set("productGid", productGid);
+      body.set("variantGid", variantGid || variant?.gid || "");
       const res = await fetch("/api/unit-price-probe", { method: "POST", body });
       const data = await res.json();
       if (!data.success) {
@@ -88,7 +127,7 @@ export function SettingsUnitPriceProbeTab() {
     } finally {
       setRunning(false);
     }
-  }, [productGid, variantGid]);
+  }, [productGid, variantGid, variant]);
 
   /** The report as markdown, to paste into the plan. */
   const markdown = useMemo(() => {
@@ -108,9 +147,7 @@ export function SettingsUnitPriceProbeTab() {
     return lines.join("\n");
   }, [report]);
 
-  const canRun =
-    productGid.trim().startsWith("gid://shopify/Product/") &&
-    variantGid.trim().startsWith("gid://shopify/ProductVariant/");
+  const canRun = !!product && !!variant;
 
   return (
     <BlockStack gap="400">
@@ -126,26 +163,51 @@ export function SettingsUnitPriceProbeTab() {
           </Text>
           <Banner tone="warning">
             <p>
-              This WRITES to the variant you name — 500&nbsp;g per 1&nbsp;kg — and then puts back
+              This WRITES to the variant you pick — 500&nbsp;g per 1&nbsp;kg — and then puts back
               whatever was there. Use a product you do not mind touching.
             </p>
           </Banner>
 
-          <TextField
-            label="Product GID"
-            value={productGid}
-            onChange={setProductGid}
-            autoComplete="off"
-            placeholder="gid://shopify/Product/123"
-            helpText="The variant's product. The mutation is addressed per product."
-          />
-          <TextField
-            label="Variant GID"
-            value={variantGid}
-            onChange={setVariantGid}
-            autoComplete="off"
-            placeholder="gid://shopify/ProductVariant/456"
-          />
+          {products === null ? (
+            <Spinner size="small" accessibilityLabel="Loading products" />
+          ) : products.length === 0 ? (
+            <Banner tone="warning">
+              <p>
+                No synced products with variants. Run a product sync first — this list comes from
+                the cache, not from Shopify.
+              </p>
+            </Banner>
+          ) : (
+            <InlineStack gap="300" blockAlign="start" wrap>
+              <Box minWidth="260px">
+                <Select
+                  label="Product"
+                  options={[
+                    { label: "Choose a product…", value: "" },
+                    ...products.map((p) => ({ label: p.title || p.gid, value: p.gid })),
+                  ]}
+                  value={productGid}
+                  onChange={(value) => {
+                    setProductGid(value);
+                    // The old variant belongs to the old product.
+                    setVariantGid("");
+                  }}
+                />
+              </Box>
+              <Box minWidth="260px">
+                <Select
+                  label="Variant"
+                  disabled={!product}
+                  options={(product?.variants ?? []).map((v) => ({
+                    label: v.sku ? `${v.title} · ${v.sku}` : v.title,
+                    value: v.gid,
+                  }))}
+                  value={variant?.gid ?? ""}
+                  onChange={setVariantGid}
+                />
+              </Box>
+            </InlineStack>
+          )}
 
           <InlineStack gap="200">
             <Button variant="primary" onClick={run} loading={running} disabled={!canRun}>
