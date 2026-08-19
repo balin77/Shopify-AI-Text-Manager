@@ -69,17 +69,18 @@ interface ProbeReport {
     valueTypeFields?: string[];
     resolvedValues?: Array<{ gid: string; typename?: string; label?: string; error?: string }>;
     valueSource?: string;
-    valueCount?: number;
-    valueSample?: string[];
-    valuesTruncated?: boolean;
     perHandle?: Array<{
       handle: string;
       attributeName: string;
+      attributeId: string;
+      distinctAttributeIds: number;
       valueCount: number;
       truncated: boolean;
       sample: string[];
-      covered: { checked: number; covered: number; missing: string[] };
+      offeredIdSample: string[];
+      covered: { checked: number; covered: number; missing: string[]; inconclusive?: string };
     }>;
+    handleOutcomes?: Array<{ handle: string; outcome: string }>;
     steps: StepOutcome[];
   };
   reverseRelation?: {
@@ -179,26 +180,30 @@ function formatMarkdown(r: ProbeReport): string {
     if (t.resolvedValues?.length) {
       lines.push(`- Resolved GIDs: ${t.resolvedValues.map((v) => `${v.gid} → ${v.typename ?? v.error ?? "?"}`).join(", ")}`);
     }
-    if (t.valueCount !== undefined) {
+    if (t.valueSource) lines.push(`- Value source: \`${t.valueSource}\``);
+    if (t.handleOutcomes?.length) {
       lines.push(
-        `- **Permitted values: ${t.valueCount}${t.valuesTruncated ? " or more" : ""}** via \`${t.valueSource}\`` +
-          (t.valueSample?.length ? ` — ${t.valueSample.join(", ")}` : ""),
+        `- Per wanted handle: ${t.handleOutcomes.map((o) => `\`${o.handle}\` → ${o.outcome}`).join(", ")}`,
       );
     }
     if (t.perHandle?.length) {
       lines.push("");
-      lines.push("| Attribute handle | Matched attribute | Values | Stored values covered | Missing |");
-      lines.push("|---|---|---|---|---|");
+      lines.push("| Attribute handle | Matched attribute | ids | Values | Covered | Missing / note |");
+      lines.push("|---|---|---|---|---|---|");
       for (const h of t.perHandle) {
         lines.push(
-          `| ${escapeCell(h.handle)} | ${escapeCell(h.attributeName)} | ${h.valueCount}${
-            h.truncated ? "+" : ""
-          } | ${h.covered.covered}/${h.covered.checked} | ${escapeCell(h.covered.missing.join(", ") || "-")} |`,
+          `| ${escapeCell(h.handle)} | ${escapeCell(h.attributeName)} | ${h.distinctAttributeIds} | ${
+            h.valueCount
+          }${h.truncated ? "+" : ""} | ${h.covered.covered}/${h.covered.checked} | ${escapeCell(
+            h.covered.inconclusive
+              ? `inconclusive — ${h.covered.inconclusive}`
+              : h.covered.missing.join(", ") || "-",
+          )} |`,
         );
       }
       lines.push("");
       for (const h of t.perHandle) {
-        if (h.sample.length) lines.push(`- \`${escapeCell(h.handle)}\` sample: ${h.sample.join(", ")}`);
+        if (h.sample.length) lines.push(`- \`${h.handle}\` sample: ${h.sample.join(", ")}`);
       }
     }
     lines.push("");
