@@ -17,8 +17,8 @@ import { SettingsSEOTab } from "../components/SettingsSEOTab";
 import { SettingsUsageLimitsTab } from "../components/SettingsUsageLimitsTab";
 import { SettingsPlanTab } from "../components/SettingsPlanTab";
 import { SettingsOtherTab, type OtherSubTab } from "../components/SettingsOtherTab";
-import { SettingsTranslationProbeTab } from "../components/SettingsTranslationProbeTab";
-import { SettingsPageSpeedProbeTab } from "../components/SettingsPageSpeedProbeTab";
+import { SettingsProbesTab } from "../components/SettingsProbesTab";
+import type { ProbeSubTab } from "../components/SettingsProbesTab";
 import type { Plan } from "../utils/planUtils";
 import { db } from "../db.server";
 import { useI18n } from "../contexts/I18nContext";
@@ -433,6 +433,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // dev-only gate as the Translation Probe tab (APP_ENV === "development").
     // Temporary.
     const showPageSpeedProbeTab = showTranslationProbeTab;
+    // PLAN_CONTENT_CREATION Phase 0 §5: collection-model probe — same dev-only
+    // gate. The route additionally refuses its WRITE test outside
+    // APP_ENV=development; a hidden tab is not a permission check.
+    const showCollectionProbeTab = showTranslationProbeTab;
+    // PLAN_METAOBJECTS_EDITOR Phase 0: metaobject probe (V1-V5, M2) — same
+    // dev-only gate, and the route refuses itself outside development too
+    // because two of its four steps WRITE to the merchant's live shop.
+    const showMetaobjectProbeTab = showTranslationProbeTab;
+    // Unit price (Grundpreis): same dev-only gate. It WRITES a measurement to
+    // a live variant and restores it, so it is a diagnostic, not a feature.
+    const showUnitPriceProbeTab = showTranslationProbeTab;
+    const showPublicationProbeTab = showTranslationProbeTab;
 
     const groupedFieldTranslations = await db.groupedFieldTranslation.findMany({
       where: { shop: session.shop },
@@ -489,6 +501,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       showImageManagerTab,
       showSkuTab,
       showTranslationProbeTab,
+      showCollectionProbeTab,
+      showMetaobjectProbeTab,
+      showUnitPriceProbeTab,
+      showPublicationProbeTab,
       showPageSpeedProbeTab,
       shopifyApiKey: (process.env.SHOPIFY_API_KEY || "").trim(),
       groupedFieldTranslations,
@@ -542,10 +558,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // services/seo/audit-auto-run.service.ts. Shown on every plan but only
         // editable where the plan grants scheduledAudit.
         seoAutoAuditEnabled: settings.seoAutoAuditEnabled ?? true,
+        seoAutoCrawlEnabled: settings.seoAutoCrawlEnabled ?? true,
 
         // SEO title suffix
         seoTitleSuffixEnabled: settings.seoTitleSuffixEnabled ?? false,
         seoTitleSuffix: settings.seoTitleSuffix || '',
+
+        // PLAN §Phase 3.3 — redirect the old URL when a handle changes.
+        seoAutoHandleRedirect: settings.seoAutoHandleRedirect ?? true,
 
         // Merchant-editable SEO character limits (Pro+). null = defaults
         // from character-limits.ts — no need to widen the client bundle with
@@ -832,7 +852,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // rule — a no-op payload from an unentitled shop must not 403.
       const rawAutoAudit = formData.get("seoAutoAuditEnabled");
       const autoAuditRequested = rawAutoAudit === null ? undefined : rawAutoAudit === "true";
+      // Weekly crawl switch — same present-or-absent rule as the audit one.
+      const rawAutoCrawl = formData.get("seoAutoCrawlEnabled");
+      const autoCrawlRequested = rawAutoCrawl === null ? undefined : rawAutoCrawl === "true";
       const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
+
+      // PLAN §Phase 3.3 — auto-redirect on handle change. Read as
+      // present-or-absent, NOT as `=== "true"` on a possibly-missing field:
+      // this setting defaults to ON, so a payload that simply does not carry
+      // it (an older client, another caller of this action) would otherwise
+      // switch it off without anyone asking.
+      const rawAutoRedirect = formData.get("seoAutoHandleRedirect");
+      const autoRedirectUpdate =
+        rawAutoRedirect === null ? undefined : String(rawAutoRedirect) === "true";
 
       // Merchant-editable SEO character limits (Pro+). Parse first, then
       // decide whether the plan gate needs to fire — a payload that would
@@ -914,20 +946,48 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
 
+      let autoCrawlUpdate: boolean | undefined = undefined;
+      if (autoCrawlRequested !== undefined) {
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, seoAutoCrawlEnabled: true },
+        });
+        const current = row?.seoAutoCrawlEnabled ?? true;
+        if (current !== autoCrawlRequested) {
+          const { canAccessSeoFeature } = await import("../utils/planUtils");
+          const plan = (row?.subscriptionPlan || "free") as "free" | "basic" | "pro" | "max";
+          if (!canAccessSeoFeature(plan, "scheduledCrawl")) {
+            return json(
+              {
+                success: false,
+                error: "The weekly storefront crawl is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoCrawlUpdate = autoCrawlRequested;
+        }
+      }
+
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
+          ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+          ...(autoCrawlUpdate !== undefined ? { seoAutoCrawlEnabled: autoCrawlUpdate } : {}),
         },
         create: {
           shop: session.shop,
           seoTitleSuffixEnabled: enabled,
           seoTitleSuffix: suffix,
+          ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
+          ...(autoCrawlUpdate !== undefined ? { seoAutoCrawlEnabled: autoCrawlUpdate } : {}),
         },
       });
 
@@ -1201,7 +1261,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function SettingsPage() {
-  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
+  const { shop, shopDisplayName, settings, instructions, productCount, translationCount, webhookCount, collectionCount, articleCount, pageCount, themeTranslationCount, imageOperationCount, localeCount, subscriptionPlan, inTrial, trialRemainingDays, isTestStore, devPlanMode, imageManagerSettings, showImageManagerTab, showSkuTab, showTranslationProbeTab, showPageSpeedProbeTab, showCollectionProbeTab, showMetaobjectProbeTab, showUnitPriceProbeTab, showPublicationProbeTab, shopifyApiKey, groupedFieldTranslations, optionValueMemory, primaryShopLocale, shopLocales = [], glossaryEntries = [], corruptedApiKeys = [], enabledMetafieldDefinitions = [], metafieldsLastScanAt = null } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const revalidator = useRevalidator();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1214,7 +1274,17 @@ export default function SettingsPage() {
 
   // Get initial tab from URL parameter (e.g., ?tab=plan).
   // Billing callbacks always land on the plan tab so the merchant sees the result.
-  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "translationprobe" | "pagespeedprobe";
+  type Section = "setup" | "ai" | "instructions" | "other" | "seo" | "plan" | "probes";
+
+  // The three dev-only probes share ONE tab with a sub-tab strip. Their gates
+  // stay per probe (unchanged), so the tab itself exists iff any of them is on.
+  const showProbesTab =
+    showTranslationProbeTab ||
+    showPageSpeedProbeTab ||
+    showCollectionProbeTab ||
+    showMetaobjectProbeTab ||
+    showUnitPriceProbeTab ||
+    showPublicationProbeTab;
 
   const getInitialSection = (): Section => {
     if (searchParams.get("billing")) return "plan";
@@ -1232,12 +1302,33 @@ export default function SettingsPage() {
       tabParam === "richtext" ||
       tabParam === "imagemanager"
     ) return "other";
-    if (tabParam === "translationprobe" && !showTranslationProbeTab) return "setup";
-    if (tabParam === "pagespeedprobe" && !showPageSpeedProbeTab) return "setup";
-    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan", "translationprobe", "pagespeedprobe"].includes(tabParam)) {
+    // Legacy probe deep-links keep working: each one now opens the shared
+    // "Probes" tab on its own sub-tab. A probe whose own gate is closed still
+    // falls back to setup — the group gate must not re-open an individual one.
+    if (tabParam === "translationprobe") return showTranslationProbeTab ? "probes" : "setup";
+    if (tabParam === "pagespeedprobe") return showPageSpeedProbeTab ? "probes" : "setup";
+    if (tabParam === "collectionprobe") return showCollectionProbeTab ? "probes" : "setup";
+    if (tabParam === "metaobjectprobe") return showMetaobjectProbeTab ? "probes" : "setup";
+    if (tabParam === "unitpriceprobe") return showUnitPriceProbeTab ? "probes" : "setup";
+    if (tabParam === "publicationprobe") return showPublicationProbeTab ? "probes" : "setup";
+    if (tabParam === "probes") return showProbesTab ? "probes" : "setup";
+    if (tabParam && ["setup", "ai", "instructions", "other", "seo", "plan"].includes(tabParam)) {
       return tabParam as Section;
     }
     return "setup";
+  };
+
+  // Deep-link target inside the "Probes" tab (undefined ⇒ the tab picks its
+  // own first available sub-tab).
+  const getInitialProbeSubTab = (): ProbeSubTab | undefined => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "translationprobe" && showTranslationProbeTab) return "translationprobe";
+    if (tabParam === "pagespeedprobe" && showPageSpeedProbeTab) return "pagespeedprobe";
+    if (tabParam === "collectionprobe" && showCollectionProbeTab) return "collectionprobe";
+    if (tabParam === "metaobjectprobe" && showMetaobjectProbeTab) return "metaobjectprobe";
+    if (tabParam === "unitpriceprobe" && showUnitPriceProbeTab) return "unitpriceprobe";
+    if (tabParam === "publicationprobe" && showPublicationProbeTab) return "publicationprobe";
+    return undefined;
   };
 
   // Deep-link target inside the "Weiteres" tab. imagemanager only makes sense
@@ -1254,6 +1345,7 @@ export default function SettingsPage() {
 
   const [selectedSection, setSelectedSection] = useState<Section>(getInitialSection);
   const [initialOtherSubTab] = useState<OtherSubTab | undefined>(getInitialOtherSubTab);
+  const [initialProbeSubTab] = useState<ProbeSubTab | undefined>(getInitialProbeSubTab);
   const [hasAIChanges, setHasAIChanges] = useState(false);
   const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
@@ -1321,8 +1413,7 @@ export default function SettingsPage() {
       { id: "seo", title: t.settings.seoSettings || "SEO" },
       { id: "other", title: t.settings.otherSettings || "Weiteres" },
       { id: "plan", title: t.settings.plan },
-      ...(showTranslationProbeTab ? [{ id: "translationprobe", title: "Translation Probe" }] : []),
-      ...(showPageSpeedProbeTab ? [{ id: "pagespeedprobe", title: "PageSpeed Probe" }] : []),
+      ...(showProbesTab ? [{ id: "probes", title: "Probes" }] : []),
     ];
 
     registerItems({
@@ -1477,45 +1568,24 @@ export default function SettingsPage() {
                   {t.settings.plan}
                 </Text>
               </button>
-              {showTranslationProbeTab && (
+              {showProbesTab && (
               <button
-                onClick={() => handleSectionChange("translationprobe")}
+                onClick={() => handleSectionChange("probes")}
                 style={{
                   width: "100%",
                   padding: "1rem",
-                  background: selectedSection === "translationprobe" ? "#f1f8f5" : "white",
+                  background: selectedSection === "probes" ? "#f1f8f5" : "white",
                   borderTop: "1px solid #e1e3e5",
                   borderRight: "none",
                   borderBottom: "none",
-                  borderLeft: selectedSection === "translationprobe" ? "3px solid #008060" : "3px solid transparent",
+                  borderLeft: selectedSection === "probes" ? "3px solid #008060" : "3px solid transparent",
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "translationprobe" ? "semibold" : "regular"}>
-                  Translation Probe
-                </Text>
-              </button>
-              )}
-              {showPageSpeedProbeTab && (
-              <button
-                onClick={() => handleSectionChange("pagespeedprobe")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  background: selectedSection === "pagespeedprobe" ? "#f1f8f5" : "white",
-                  borderTop: "1px solid #e1e3e5",
-                  borderRight: "none",
-                  borderBottom: "none",
-                  borderLeft: selectedSection === "pagespeedprobe" ? "3px solid #008060" : "3px solid transparent",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "pagespeedprobe" ? "semibold" : "regular"}>
-                  PageSpeed Probe
+                <Text as="p" variant="bodyMd" fontWeight={selectedSection === "probes" ? "semibold" : "regular"}>
+                  Probes
                 </Text>
               </button>
               )}
@@ -1667,12 +1737,18 @@ export default function SettingsPage() {
                 </>
               )}
 
-              {/* Translation Coverage Probe (Phase 0 dev tool) */}
-              {selectedSection === "translationprobe" && showTranslationProbeTab && (
-                <SettingsTranslationProbeTab />
-              )}
-              {selectedSection === "pagespeedprobe" && showPageSpeedProbeTab && (
-                <SettingsPageSpeedProbeTab />
+              {/* Dev-only diagnostic probes — one tab, one sub-tab per probe,
+                  each still behind its own gate (see SettingsProbesTab). */}
+              {selectedSection === "probes" && showProbesTab && (
+                <SettingsProbesTab
+                  showTranslationProbe={showTranslationProbeTab}
+                  showPageSpeedProbe={showPageSpeedProbeTab}
+                  showCollectionProbe={showCollectionProbeTab}
+                  showMetaobjectProbe={showMetaobjectProbeTab}
+                  showUnitPriceProbe={showUnitPriceProbeTab}
+                  showPublicationProbe={showPublicationProbeTab}
+                  initialSubTab={initialProbeSubTab}
+                />
               )}
             </BlockStack>
           </div>

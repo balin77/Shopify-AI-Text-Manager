@@ -1,10 +1,13 @@
+import type { ReloadResourceType } from "../utils/reload-resource-type";
 import { Button, Tooltip } from "@shopify/polaris";
 import { RefreshIcon } from "@shopify/polaris-icons";
 import { startReload, useIsReloading } from "../hooks/useReloadingResources";
 
 interface ReloadButtonProps {
   resourceId: string;
-  resourceType: "product" | "collection" | "article" | "page" | "policy" | "templates";
+  /** "blog" is the BLOG CONTAINER, not an article — the blogs tab serves both
+   *  and they reload through different Shopify resources. */
+  resourceType: ReloadResourceType;
   locale: string;
   onReloadComplete?: () => void;
   onReloadSuccess?: () => void;

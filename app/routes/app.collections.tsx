@@ -8,6 +8,7 @@
 import { type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher, useRevalidator, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
+import { editableSourcesFromEnvelope, withoutRawTrees } from "../config/collection-rules.shared";
 import { UnifiedContentEditor } from "../components/UnifiedContentEditor";
 import { useUnifiedContentEditor } from "../hooks/useUnifiedContentEditor";
 import { handleUnifiedContentActions } from "../actions/unified-content.actions";
@@ -23,6 +24,26 @@ import type { FetcherData } from "~/types/content-editor.types";
 // ============================================================================
 // LOADER - Incremental sync + load from database
 // ============================================================================
+
+/**
+ * The rule sources an editor may touch, from the stored envelope.
+ *
+ * Returns null for anything that is not a 2026-07 `sources` tree — a
+ * `ruleSet` row, an unsynced collection, a malformed value. Null is not
+ * "no rules": it is "nothing here may be edited", and the field renders an
+ * explanation rather than an empty rule set the merchant could accidentally
+ * save over the real one.
+ */
+function rulesFromEnvelope(envelope: unknown): unknown[] | null {
+  // The SAME predicate the write path diffs with — a loader that offers an
+  // editable builder over a row the save then refuses is worse than no editor.
+  const sources = editableSourcesFromEnvelope(envelope);
+  if (!sources) return null;
+  // Stripped of the raw sub-trees: they are the server's business only, and
+  // shipping them would weigh down every page load with a blob the builder
+  // does not render.
+  return withoutRawTrees(sources) as unknown[];
+}
 
 export const loader = createContentLoader({
   logPrefix: "COLLECTIONS",
@@ -111,9 +132,32 @@ export const loader = createContentLoader({
           : undefined,
         images: [],
         seo: { title: c.seoTitle, description: c.seoDescription },
+        // §2.2 attribute checklist — `attributesSyncedAt` travels WITH the
+        // values it discriminates; without it every row below reads as the
+        // migration's defaults rather than the merchant's data.
+        attributesSyncedAt: c.attributesSyncedAt ?? null,
+        sortOrder: c.sortOrder ?? null,
+        templateSuffix: c.templateSuffix ?? null,
+        featuredImageUrl: c.imageUrl || null,
+        isSmart: c.isSmart === true,
+        // §3.1 — the rule tree, parsed into the editor's model HERE rather
+        // than in the component: the envelope names which of the two
+        // incompatible models the row holds, and only a `sources` row can be
+        // edited. A `ruleSet` row (API 2025-10) is a lossy back-projection —
+        // editing through it would silently change the collection's
+        // membership — so the editor gets nothing and says why.
+        ruleSources: rulesFromEnvelope(c.sourcesJson),
       })),
       ids: collections.map((c: any) => c.id),
     };
+  },
+
+  async extraData() {
+    // §3.1 — the rule editor is gated on the API VERSION, so the client has to
+    // know it. Resolved from the same helper the server uses; importing
+    // `apiVersion` from shopify.server would boot the whole embedded app.
+    const { resolveApiVersionString } = await import("~/utils/api-version");
+    return { apiVersion: resolveApiVersionString() };
   },
 });
 
@@ -149,7 +193,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function CollectionsPage() {
-  const { collections, shopLocales, primaryLocale, markets, error, aiSettings } = useLoaderData<typeof loader>();
+  const { collections, shopLocales, primaryLocale, markets, error, aiSettings, apiVersion } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -209,6 +253,7 @@ export default function CollectionsPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={COLLECTIONS_CONFIG}
+          apiVersion={apiVersion}
           items={collections as unknown as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}

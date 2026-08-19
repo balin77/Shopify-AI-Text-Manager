@@ -118,6 +118,21 @@ export const loader = createContentLoader({
           : false,
         options: { orderBy: { position: "asc" } },
         metafields: true,
+        // §2.2 attribute checklist. Both are narrowed on purpose: this loader
+        // runs over the whole (bounded) catalogue, so pulling full variant and
+        // membership rows for a count and one price would multiply its cost for
+        // nothing.
+        // `automated` rides along for §Phase 3.1's membership picker: a
+        // rule-based membership renders locked, because unticking it would be
+        // a save the rule silently undoes.
+        collections: { select: { collectionId: true, collectionTitle: true, automated: true } },
+        variants: { select: { price: true }, orderBy: { position: "asc" }, take: 1 },
+        // The COUNT, not the rows: the default-price field means "the first
+        // variant" and says so, which is only honest while there is just one.
+        // With several, the field is hidden and the per-variant panel takes
+        // over — so the editor has to know how many there are without paying
+        // for them.
+        _count: { select: { variants: true } },
       },
       orderBy: { title: "asc" },
       take: effectiveTake,
@@ -197,17 +212,20 @@ export const loader = createContentLoader({
           return !isDefaultTitleOption({ name: opt.name, values: valNames });
         } catch { return true; }
       }).map((opt: any) => {
-        let values: Array<{ id: string; name: string; linked?: boolean }> = [];
+        let values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }> = [];
         try {
           const parsed = JSON.parse(opt.values || "[]");
-          // Support both new format [{id, name, linked}] and legacy ["string"] format
+          // Support both new format [{id, name, linked}] and legacy ["string"] format.
+          // `linkedValue` is the METAOBJECT GID behind a linked value — the only
+          // thing that addresses the entry itself, so the editor's link into
+          // /app/metaobjects can select it rather than guessing at a type.
           values = Array.isArray(parsed)
-            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked })
+            ? parsed.map((v: any) => typeof v === "string" ? { id: "", name: v } : { id: v.id, name: v.name, linked: !!v.linked, linkedValue: v.linkedValue || undefined })
             : [];
         } catch { values = []; }
         // Option is linked if linkedMetafieldKey is set (most reliable) OR any value has linked flag
         const isLinked = !!opt.linkedMetafieldKey || values.some(v => v.linked);
-        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetaobjectType: opt.linkedMetafieldKey || undefined };
+        return { id: opt.id, name: opt.name, position: opt.position, values, isLinked, linkedMetafieldKey: opt.linkedMetafieldKey || undefined };
       }) || [],
       metafields: p.metafields?.filter((mf: any) =>
         // Shared predicate — the bulk editor's metafield columns use the SAME
@@ -248,6 +266,55 @@ export const loader = createContentLoader({
         }
         return result;
       })(),
+      // ── PLAN_CONTENT_CREATION §2.2/§2.3 — the attribute checklist ────────
+      // Without these the sidebar has nothing to judge and renders every row
+      // "unknown" forever. `attributesSyncedAt` is THE discriminator and must
+      // travel with them: shipped alone, the values below are the migration's
+      // defaults (null / []), which the checklist would otherwise read as
+      // "the merchant left it empty" — a screen full of confident, wrong red.
+      attributesSyncedAt: p.attributesSyncedAt ?? null,
+      vendor: p.vendor ?? null,
+      tags: Array.isArray(p.tags) ? p.tags : null,
+      categoryName: p.categoryName ?? null,
+      // §Phase 3.1 — the picker writes the GID, the checklist shows the name.
+      // Both travel: `categoryName` alone cannot be sent back as a value, and
+      // `categoryId` alone has no label.
+      //
+      // GATED on the discriminator, like `collections` below. Ungated, an
+      // un-attribute-synced row's `null` reaches the picker as "" and renders a
+      // confident "Not set" — right next to `vendor` and `tags` correctly
+      // saying "not loaded from Shopify yet". Same block, same question,
+      // opposite answers.
+      categoryId: p.attributesSyncedAt ? p.categoryId ?? null : null,
+      templateSuffix: p.templateSuffix ?? null,
+      featuredImageUrl: p.featuredImageUrl || null,
+      // Membership count comes from the Phase-0 join rows. `hasMoreCollections`
+      // marks the window Shopify truncated, so "3" never reads as "exactly 3".
+      // NULL until the attribute sync has run, never `[]`. The membership rows
+      // are part of the Phase-0 attribute block, so on a product an older sync
+      // wrote there simply are none — and an empty array would make the
+      // checklist report a confident "missing" while every row beside it says
+      // "unknown". Same discriminator, same rule, applied at the source.
+      collections: p.attributesSyncedAt
+        ? (p.collections || []).map((c: any) => ({
+            id: c.collectionId,
+            title: c.collectionTitle || "",
+            // §Phase 3.1 — the membership picker must show a rule-based
+            // membership as LOCKED. Dropping the flag here would make it
+            // untickable-looking-but-tickable, and the save would appear to do
+            // nothing.
+            automated: c.automated === true,
+          }))
+        : null,
+      hasMoreCollections: p.hasMoreCollections === true,
+      // §2.3: the price lives on ProductVariant, NOT in the attribute block —
+      // it is therefore NOT gated on attributesSyncedAt. Decimal has no place
+      // in a loader payload, so it goes over as a string.
+      defaultVariantPrice: p.variants?.[0]?.price != null ? String(p.variants[0].price) : null,
+      // `undefined` on a row this loader did not count is NOT "one variant":
+      // the price field would then show for a product whose price it cannot
+      // represent. Readers treat anything but a number as unknown.
+      variantCount: typeof p._count?.variants === "number" ? p._count.variants : null,
     }));
 
     return {
@@ -268,7 +335,12 @@ export const loader = createContentLoader({
     const newFeaturesEnabled = !isProductionLocked();
     const showImageManager = canAccessVariantImageManagerInEnv(plan, newFeaturesEnabled) && (imageManagerSettings.enabled ?? true);
     const showImageProcessingTab = canAccessImageProcessingTab(plan, newFeaturesEnabled);
-    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings };
+    // §Phase 3.2 — the shop currency, as a suffix on the price field. Shop-wide
+    // and memoized per boot (changing it is a support-gated Shopify operation),
+    // so this costs one query per shop, not one per load.
+    const { getShopCurrencyCode } = await import("../services/bulk-editor/load.server");
+    const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
+    return { plan, maxProducts: planLimits.maxProducts, productCount, showImageManager, showImageProcessingTab, imageManagerSettings, currencyCode };
   },
 });
 
@@ -304,7 +376,7 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function ProductsPage() {
-  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings } = useLoaderData<typeof loader>();
+  const { products, shopLocales, primaryLocale, markets, error, aiSettings, plan, maxProducts, productCount, showImageManager, imageManagerSettings, currencyCode } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const fetcher = useFetcher<FetcherData>();
   const syncFetcher = useFetcher<{ success: boolean; synced: number; total: number }>();
@@ -424,6 +496,13 @@ export default function ProductsPage() {
       optionValuesEmpty: t.products.optionValuesEmpty,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
       success: t.products.successTitle,
+      // One per failure code the option write paths return. Keyed by code so
+      // the server can stay in codes and this app can stay in three languages.
+      optionWarning_optionsNotConfirmed: t.products.optionWarningNotConfirmed,
+      optionWarning_optionsFailed: t.products.optionWarningFailed,
+      optionWarning_optionNameEmpty: t.products.optionWarningNameEmpty,
+      optionWarning_optionValueEmpty: t.products.optionWarningValueEmpty,
+      optionWarning_optionLastOne: t.products.optionWarningLastOne,
     },
   });
 
@@ -894,6 +973,7 @@ export default function ProductsPage() {
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         <UnifiedContentEditor
           config={PRODUCTS_CONFIG}
+          currencyCode={currencyCode}
           items={products as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}
@@ -988,6 +1068,11 @@ export default function ProductsPage() {
               seedThreeDPreviewUrls={imageManagerState.pendingVariant3dPreviews}
               onGalleryOrderChange={imageManagerState.setPendingGalleryOrder}
               onVariantsLoaded={imageManagerState.handleVariantsLoaded}
+              // Media Shopify created on the last save but is still
+              // processing. Keeps the tile (and the media count) stable
+              // between the save and the moment the CDN URL appears.
+              settlingMedia={imageManagerState.settlingMedia}
+              onSettlingMediaResolved={imageManagerState.handleSettlingMediaResolved}
               resetKey={imageManagerState.resetCounter}
               currentLanguage={editor.state.currentLanguage}
               primaryLocale={primaryLocale}

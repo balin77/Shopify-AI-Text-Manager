@@ -13,6 +13,7 @@ import {
 } from "@shopify/polaris";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DEFAULT_SEO_LIMITS, resolveSeoLimits, type SeoLimits } from "../utils/character-limits";
 import { meetsPlan, canAccessSeoFeature, getMinimumPlanForSeoFeature, type Plan } from "../utils/planUtils";
 import { PLAN_DISPLAY_NAMES } from "../config/plans";
@@ -20,8 +21,12 @@ import { PLAN_DISPLAY_NAMES } from "../config/plans";
 interface Settings {
   seoTitleSuffixEnabled: boolean;
   seoTitleSuffix: string;
+  /** PLAN §Phase 3.3 — redirect the old URL when a handle changes. */
+  seoAutoHandleRedirect?: boolean;
   /** Nightly automatic store audit (Max plan). */
   seoAutoAuditEnabled: boolean;
+  /** Weekly automatic storefront crawl (Max plan). */
+  seoAutoCrawlEnabled: boolean;
   /** Stored merchant overrides; `null` = defaults from character-limits.ts. */
   seoLimits: Partial<SeoLimits> | null;
 }
@@ -130,14 +135,34 @@ export function SettingsSEOTab({
   // get, and the action re-checks server-side.
   const canScheduleAudit = canAccessSeoFeature(subscriptionPlan, "scheduledAudit");
   const scheduledAuditPlan = getMinimumPlanForSeoFeature("scheduledAudit");
+  const canScheduleCrawl = canAccessSeoFeature(subscriptionPlan, "scheduledCrawl");
+  const scheduledCrawlPlan = getMinimumPlanForSeoFeature("scheduledCrawl");
+  /** Tooltip for a switch the plan does not grant. Null plan ⇒ no tooltip. */
+  const planHint = (plan: Plan | null | undefined) =>
+    plan
+      ? (t.settings.seoAutoAuditPlanHint || "Ab dem {plan}-Plan verfügbar.").replace(
+          "{plan}",
+          PLAN_DISPLAY_NAMES[plan],
+        )
+      : undefined;
   const initialDraft = toDraft(settings.seoLimits ?? null);
 
   const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
     settings.seoTitleSuffixEnabled ?? false,
   );
   const [seoTitleSuffix, setSeoTitleSuffix] = useState(settings.seoTitleSuffix || "");
+  // Defaults to ON — see the toggle's comment below. `?? true` is not a
+  // fallback for a failed load here: the column has the same default, so an
+  // undefined value means "shop row predates the column", which is exactly the
+  // state that should behave as on.
+  const [autoHandleRedirect, setAutoHandleRedirect] = useState(
+    settings.seoAutoHandleRedirect ?? true,
+  );
   const [seoAutoAuditEnabled, setSeoAutoAuditEnabled] = useState(
     settings.seoAutoAuditEnabled ?? true,
+  );
+  const [seoAutoCrawlEnabled, setSeoAutoCrawlEnabled] = useState(
+    settings.seoAutoCrawlEnabled ?? true,
   );
   const [limits, setLimits] = useState<Record<keyof SeoLimits, string>>(initialDraft);
   const [hasChanges, setHasChanges] = useState(false);
@@ -147,14 +172,17 @@ export function SettingsSEOTab({
       seoTitleSuffixEnabled !== (settings.seoTitleSuffixEnabled ?? false) ||
       seoTitleSuffix !== (settings.seoTitleSuffix || "");
     const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
+    const redirectChanged = autoHandleRedirect !== (settings.seoAutoHandleRedirect ?? true);
     const autoAuditChanged = seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true);
-    const changed = suffixChanged || limitsChanged || autoAuditChanged;
+    const autoCrawlChanged = seoAutoCrawlEnabled !== (settings.seoAutoCrawlEnabled ?? true);
+    const changed =
+      suffixChanged || limitsChanged || redirectChanged || autoAuditChanged || autoCrawlChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
     // initialDraft is derived from `settings` — including it in deps would
     // create a new object each render and loop indefinitely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seoTitleSuffixEnabled, seoTitleSuffix, limits, seoAutoAuditEnabled, settings, onHasChangesChange]);
+  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, seoAutoAuditEnabled, seoAutoCrawlEnabled, limits, settings, onHasChangesChange]);
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -169,12 +197,16 @@ export function SettingsSEOTab({
         actionType: "saveSeoSettings",
         seoTitleSuffixEnabled: String(seoTitleSuffixEnabled),
         seoTitleSuffix,
+        seoAutoHandleRedirect: String(autoHandleRedirect),
         ...(limitsChanged ? { seoLimits: JSON.stringify(coerceLimits(limits)) } : {}),
         // Same rule as the limits payload: only send the field when the
         // merchant may change it AND did, so a read-only render on a lower
         // plan can never write the column.
         ...(canScheduleAudit && seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true)
           ? { seoAutoAuditEnabled: String(seoAutoAuditEnabled) }
+          : {}),
+        ...(canScheduleCrawl && seoAutoCrawlEnabled !== (settings.seoAutoCrawlEnabled ?? true)
+          ? { seoAutoCrawlEnabled: String(seoAutoCrawlEnabled) }
           : {}),
       },
       { method: "POST" },
@@ -184,8 +216,10 @@ export function SettingsSEOTab({
   const handleDiscard = () => {
     setSeoTitleSuffixEnabled(settings.seoTitleSuffixEnabled ?? false);
     setSeoTitleSuffix(settings.seoTitleSuffix || "");
+    setAutoHandleRedirect(settings.seoAutoHandleRedirect ?? true);
     setLimits(toDraft(settings.seoLimits ?? null));
     setSeoAutoAuditEnabled(settings.seoAutoAuditEnabled ?? true);
+    setSeoAutoCrawlEnabled(settings.seoAutoCrawlEnabled ?? true);
   };
 
   const handleResetLimits = () => {
@@ -225,6 +259,27 @@ export function SettingsSEOTab({
         </Text>
 
         <BlockStack gap="400">
+          {/* PLAN §Phase 3.3 / §A1 — until now, changing a handle in this app
+              silently 404'd every existing link to the old address. On by
+              default: a stray redirect is untidy, a broken URL costs traffic.
+              Toggle on the LEFT, matching the row style develop adopted for
+              every pill toggle. */}
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <ToggleSwitch
+              checked={autoHandleRedirect}
+              onChange={setAutoHandleRedirect}
+            />
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.autoHandleRedirect || "Weiterleitung bei Handle-Änderung"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.autoHandleRedirectHint ||
+                  "Ändert sich der Handle eines Eintrags, wird die alte URL automatisch auf die neue weitergeleitet."}
+              </Text>
+            </BlockStack>
+          </InlineStack>
+
           <InlineStack gap="300" blockAlign="center" wrap={false}>
             <ToggleSwitch
               checked={seoTitleSuffixEnabled}
@@ -295,11 +350,17 @@ export function SettingsSEOTab({
             {t.settings.seoAutoAuditHeading || "Automatischer Audit"}
           </Text>
           <InlineStack gap="300" blockAlign="center" wrap={false}>
-            <ToggleSwitch
-              checked={canScheduleAudit && seoAutoAuditEnabled}
-              disabled={!canScheduleAudit}
-              onChange={setSeoAutoAuditEnabled}
-            />
+            {/* A disabled control dispatches no pointer events, so the tooltip
+                needs the wrapper — a bare Polaris <Tooltip> around it never
+                opens. The plan hint below the label stays: the tooltip answers
+                "why can't I click this", the line answers "what would I get". */}
+            <DisabledActionTooltip hint={canScheduleAudit ? undefined : planHint(scheduledAuditPlan)}>
+              <ToggleSwitch
+                checked={canScheduleAudit && seoAutoAuditEnabled}
+                disabled={!canScheduleAudit}
+                onChange={setSeoAutoAuditEnabled}
+              />
+            </DisabledActionTooltip>
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
                 {t.settings.seoAutoAuditLabel || "Nächtlicher SEO-Audit"}
@@ -314,6 +375,38 @@ export function SettingsSEOTab({
                     "Ab dem {plan}-Plan verfügbar.").replace(
                     "{plan}",
                     PLAN_DISPLAY_NAMES[scheduledAuditPlan],
+                  )}
+                </Text>
+              )}
+            </BlockStack>
+          </InlineStack>
+
+          {/* Second unattended job, same section: both answer "what does the
+              app do while I'm not here". Separate switches because they cost
+              very different things — the audit reads the cache, the crawl
+              fetches every page of the storefront. */}
+          <InlineStack gap="300" blockAlign="center" wrap={false}>
+            <DisabledActionTooltip hint={canScheduleCrawl ? undefined : planHint(scheduledCrawlPlan)}>
+              <ToggleSwitch
+                checked={canScheduleCrawl && seoAutoCrawlEnabled}
+                disabled={!canScheduleCrawl}
+                onChange={setSeoAutoCrawlEnabled}
+              />
+            </DisabledActionTooltip>
+            <BlockStack gap="100">
+              <Text as="p" variant="bodyMd">
+                {t.settings.seoAutoCrawlLabel || "Wöchentlicher Website-Crawl"}
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {t.settings.seoAutoCrawlDescription ||
+                  "Einmal pro Woche wird deine Storefront automatisch gecrawlt: kaputte Links, Serverfehler, Weiterleitungsketten und verwaiste Seiten. Es wird nur gelesen — keine Inhalte werden verändert."}
+              </Text>
+              {!canScheduleCrawl && scheduledCrawlPlan && (
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {(t.settings.seoAutoAuditPlanHint ||
+                    "Ab dem {plan}-Plan verfügbar.").replace(
+                    "{plan}",
+                    PLAN_DISPLAY_NAMES[scheduledCrawlPlan],
                   )}
                 </Text>
               )}

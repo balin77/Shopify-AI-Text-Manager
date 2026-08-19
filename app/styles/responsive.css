@@ -28,12 +28,37 @@
      --app-page-width-full     data grids that turn every extra pixel into
                                column width (the bulk editor).
 
+     --app-page-width-with-list
+                               the same reading width for the CONTENT column of
+                               a page that also carries the item column: the
+                               list is ADDED to the reading width, not taken out
+                               of it, so the editor next to it is exactly as
+                               wide as an SEO page. Spent by
+                               `.app-page-width-start` — see below.
+
+     The three classes above CENTRE their page. `.app-page-width-start` is
+     left-aligned instead: on the content pages the left column
+     (UnifiedItemList) has to stay flush with the window gutter, so only the
+     right edge may be capped. That is the class for every content page WITHOUT
+     the item sidebar (the panel carrying the SEO-score tab) — with the sidebar
+     the editor is a three-column workbench that earns the full width, without
+     it the middle column just keeps growing on a 4K screen.
+
      Pages built on the .app-page-content frame (Polaris <Page fullWidth>) put
      the class on that same element — capping the frame keeps its inner scroll
      container and its padding intact. */
   --app-page-width-content: 1452px;
   --app-page-width-narrow: 1200px;
   --app-page-width-full: none;
+  /* Derived, never a second number: the item column, the gap between the two
+     columns, the reading width, and the frame's two gutters. Every page that
+     spends this puts its columns in a flex row with `gap: var(--app-page-
+     padding)` (16px) inside a border-box frame padded with the same token —
+     which is why one gutter's worth of gap and two of padding are what has to
+     be added for the CONTENT column to come out at --app-page-width-content. */
+  --app-page-width-with-list: calc(
+    var(--app-list-column-width) + var(--app-page-width-content) + 3 * var(--app-page-padding)
+  );
 
   /* …and how wide the COLUMNS inside a page are. Same rule: the numbers live
      here, components spend them as `width: var(--…)` in their inline style —
@@ -50,11 +75,27 @@
                               DEFAULT it opens at, plus the drag bounds — kept
                               here so the panel can be reused elsewhere without
                               re-deriving them. The drag reads the bounds off
-                              these variables (UnifiedContentEditor.tsx). */
+                              these variables (UnifiedContentEditor.tsx).
+     --app-short-field-width  a text input that holds a SHORT value — a colour
+                              name, a size, an option's name. Left to itself a
+                              Polaris TextField fills its container, so on a
+                              wide screen "Rot" got a field the width of the
+                              window. It is a max-width, not a width: on a
+                              narrow screen the field still shrinks.
+     --app-value-chip-width   one option VALUE in the variants card. The values
+                              lay out horizontally and wrap, the way Shopify
+                              shows them, so each one needs a width of its own
+                              — a row that stretched would put three colours on
+                              three screen-wide lines. */
   --app-list-column-width: 330px;
   --app-editor-sidebar-width: 320px;
   --app-editor-sidebar-min-width: 200px;
   --app-editor-sidebar-max-width: 600px;
+  --app-short-field-width: 380px;
+  --app-value-chip-width: 230px;
+  /* Polaris' Icon box. Spent where a row has to line up with one that starts
+     with a drag handle but has no handle of its own. */
+  --app-drag-handle-width: 20px;
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
@@ -181,10 +222,25 @@ html {
    would silently win or lose by rule order. */
 .app-page-width,
 .app-page-width-narrow,
-.app-page-width-full {
+.app-page-width-full,
+.app-page-width-start {
   width: 100%;
-  margin-inline: auto;
   box-sizing: border-box;
+}
+.app-page-width,
+.app-page-width-narrow,
+.app-page-width-full {
+  margin-inline: auto;
+}
+/* Anchored to the left instead of centred — see the note in :root. Centring is
+   what would move the item list away from the gutter, which is the one thing
+   these pages must NOT do. The cap is the WITH-LIST width: these pages put the
+   item column inside the same frame, so capping them at the bare reading width
+   would spend a third of it on the list and leave the editor narrower than any
+   SEO page. */
+.app-page-width-start {
+  max-width: var(--app-page-width-with-list);
+  margin-inline: 0 auto;
 }
 .app-page-width {
   max-width: var(--app-page-width-content);
@@ -916,3 +972,4 @@ a:focus:not(:focus-visible) {
   outline: none !important;
   box-shadow: none !important;
 }
+

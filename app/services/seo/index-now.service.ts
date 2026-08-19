@@ -182,6 +182,36 @@ export function shouldEnqueueProductChange(
   return previous === "ACTIVE";
 }
 
+/**
+ * The same question for the types that have a BOOLEAN visibility instead of a
+ * status enum: pages, articles and blogs (PLAN_CONTENT_CREATION §Phase 3.4).
+ *
+ * They matter more than products do, and for an unhappy reason: Shopify emits
+ * NO webhook for any of them. A product published in this app is reported by
+ * `products/update`; a page published here reaches IndexNow only when someone
+ * remembers to send the whole catalogue by hand. This rule is the only thing
+ * standing between "published" and "unindexed".
+ *
+ * The shape mirrors `shouldEnqueueProductChange` exactly, and for the same
+ * reasons:
+ *   current true  → yes, the URL is live now.
+ *   current false → only if it WAS live, in which case it just became a 404 —
+ *                   and reporting removals is half of what IndexNow is for.
+ *   never live    → nothing. An item created as a draft has a URL no engine
+ *                   ever knew about; submitting it is noise.
+ *
+ * Note the deliberate asymmetry with CREATE: a draft is not pinged, so the
+ * enqueue belongs at the TRANSITION and not at creation — which is exactly why
+ * the caller reads the previous value before the write.
+ */
+export function shouldEnqueuePublishChange(
+  previous: boolean | null | undefined,
+  current: boolean | null | undefined,
+): boolean {
+  if (current === true) return true;
+  return previous === true;
+}
+
 export interface IndexNowSubmitBody {
   host: string;
   key: string;

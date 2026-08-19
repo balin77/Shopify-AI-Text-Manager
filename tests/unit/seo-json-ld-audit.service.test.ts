@@ -249,6 +249,11 @@ describe("summarizeLiveJsonLd", () => {
     resourceType: "product",
     jsonLdTypes: "",
     jsonLdAppTypes: "",
+    ogTags: "",
+    twitterTags: "",
+    ogAppTags: "",
+    socialKnown: false,
+    indexabilityKnown: false,
     ...over,
   });
 
@@ -322,6 +327,24 @@ describe("summarizeLiveJsonLd", () => {
     expect(summary!.crawlStatus).toBe("capped");
   });
 
+  it("does not call several VideoObjects on one page a duplicate", async () => {
+    // A product with three videos carries three VideoObjects for the same
+    // reason it carries three videos. The duplicate rule exists for the
+    // theme-vs-app collision (two Products), not for markup doing its job —
+    // and without the exception our own block would trip our own audit.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({
+          url: "https://s/p/1",
+          jsonLdTypes: "Product,VideoObject,VideoObject,VideoObject",
+          jsonLdAppTypes: "Product,VideoObject,VideoObject,VideoObject",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.duplicates).toEqual([]);
+  });
+
   it("attributes a duplicate to this app when one copy carries our marker", async () => {
     const summary = await summarizeLiveJsonLd(
       crawlDb([
@@ -391,5 +414,182 @@ describe("summarizeLiveJsonLd", () => {
     const products = summary!.coverage.find((c) => c.resourceType === "product")!;
     expect(products.total).toBe(1);
     expect(products.catalogTotal).toBe(3);
+  });
+
+  // PLAN_MARKUP_ACTIVATION §1.2 — the per-type stats the activation gate reads.
+  it("counts pages and app pages per CANONICAL type", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        // Theme-only Product on one page…
+        page({ url: "https://s/p/1", jsonLdTypes: "Product" }),
+        // …ours alone on the next…
+        page({ url: "https://s/p/2", jsonLdTypes: "Product", jsonLdAppTypes: "Product" }),
+        // …and both at once on the third, which is the damage state. The theme
+        // spelling is ProductGroup, so a raw-name tally would see no collision.
+        page({
+          url: "https://s/p/3",
+          jsonLdTypes: "ProductGroup,Product",
+          jsonLdAppTypes: "Product",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const product = summary!.typeStats.find((t) => t.type === "Product")!;
+    expect(product.pages).toBe(3);
+    expect(product.appPages).toBe(2);
+    expect(product.duplicatePages).toBe(1);
+    expect(product.appIsOneCopy).toBe(1);
+    expect(product.repeatable).toBe(false);
+  });
+
+  it("marks a repeatable type as such instead of reporting a clean 0", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "VideoObject,VideoObject", jsonLdAppTypes: "VideoObject" })]),
+      "shop.myshopify.com",
+    );
+    const video = summary!.typeStats.find((t) => t.type === "VideoObject")!;
+    expect(video.pages).toBe(1);
+    expect(video.appPages).toBe(1);
+    // Two VideoObjects on one page are two videos, not a collision — so the
+    // duplicate rule stays quiet AND says why.
+    expect(video.duplicatePages).toBe(0);
+    expect(video.repeatable).toBe(true);
+    expect(summary!.duplicates).toEqual([]);
+  });
+
+  // The two ways "nobody looked" used to come out as "nothing is served" — and
+  // from there, through the activation gate, as "safe to switch on".
+  it("reports a crawl with no served page at all as unmeasured", async () => {
+    // Password-protected storefront / maintenance / bot shield: every row 4xx.
+    // The old rule was `served.length > 0 && served.every(empty)`, so an empty
+    // `served` made notMeasured FALSE and every switch went green.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ statusCode: 401 }), page({ url: "https://s/p/2", statusCode: 503 })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.notMeasured).toBe(true);
+    expect(summary!.pagesChecked).toBe(0);
+  });
+
+  it("ignores a 2xx row whose body this crawl never parsed", async () => {
+    // runCrawl persists a row for every URL it touched but fills the markup
+    // columns only where it parsed a body — past CRAWL_BFS_MAX_DEPTH, on a
+    // cheerio failure, or on a 3xx (still inside the 200-399 served window) it
+    // does not. `indexabilityKnown` is set on the same line group, so it is the
+    // discriminator. Judging those rows as "no markup" told a merchant their
+    // deep-paginated product pages carry none.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/p/1", jsonLdTypes: "Product", indexabilityKnown: true }),
+        page({ url: "https://s/p/2", jsonLdTypes: "", indexabilityKnown: false }),
+      ]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.pagesChecked).toBe(1);
+    const product = summary!.typeStats.find((t) => t.type === "Product")!;
+    expect(product.pages).toBe(1);
+    // …and the coverage table does not report the unparsed page as missing.
+    const coverage = summary!.coverage.find((c) => c.resourceType === "product")!;
+    expect(coverage.total).toBe(1);
+    expect(coverage.withMarkup).toBe(1);
+    expect(coverage.missingExamples).toEqual([]);
+  });
+
+  it("falls back to every served row when NO row knows", async () => {
+    // A snapshot from before indexabilityKnown existed. Dropping everything
+    // there would report a shop with real markup as unmeasured.
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([page({ jsonLdTypes: "Product" })]),
+      "shop.myshopify.com",
+    );
+    expect(summary!.notMeasured).toBe(false);
+    expect(summary!.pagesChecked).toBe(1);
+  });
+
+  it("buckets the stats by page kind so a page-scoped switch is judged fairly", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({ url: "https://s/pages/faq", resourceType: "page", jsonLdTypes: "FAQPage" }),
+        page({ url: "https://s/p/1", resourceType: "product", jsonLdTypes: "Product" }),
+      ]),
+      "shop.myshopify.com",
+    );
+    const faqOnPages = summary!.typeStats.find(
+      (t) => t.type === "FAQPage" && t.resourceType === "page",
+    )!;
+    expect(faqOnPages.pages).toBe(1);
+    // Our block emits FAQPage on product pages only — there is no bucket there,
+    // which is what keeps the switch from being warned about a page it never
+    // touches.
+    expect(
+      summary!.typeStats.some((t) => t.type === "FAQPage" && t.resourceType === "product"),
+    ).toBe(false);
+  });
+
+  it("keeps the duplicate rows and the type stats in agreement", async () => {
+    const summary = await summarizeLiveJsonLd(
+      crawlDb([
+        page({
+          url: "https://s/blogs/news/a",
+          resourceType: "article",
+          jsonLdTypes: "Article,BlogPosting",
+          jsonLdAppTypes: "BlogPosting",
+        }),
+      ]),
+      "shop.myshopify.com",
+    );
+    for (const dup of summary!.duplicates) {
+      // The duplicate ROWS are shop-wide (one finding, listed once); the stats
+      // are per page kind, so the comparison sums them.
+      const buckets = summary!.typeStats.filter((t) => t.type === dup.type);
+      const sum = (pick: (t: (typeof buckets)[number]) => number) =>
+        buckets.reduce((a, t) => a + pick(t), 0);
+      expect(sum((t) => t.duplicatePages)).toBe(dup.pages);
+      expect(sum((t) => t.appIsOneCopy)).toBe(dup.appIsOneCopy);
+    }
+  });
+
+  describe("appAllCopiesPages — proof that every copy on a page is ours", () => {
+    const statOf = (summary: any, type: string) =>
+      summary.typeStats.find((t: any) => t.type === type);
+
+    it("counts a page whose VideoObject copies are all marked as ours", async () => {
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([
+          page({
+            jsonLdTypes: "Product,VideoObject,VideoObject",
+            jsonLdAppTypes: "VideoObject,VideoObject",
+          }),
+        ]),
+        "shop.myshopify.com",
+      );
+      expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(1);
+    });
+
+    it("does NOT count a page where one copy is unmarked", async () => {
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([
+          page({
+            jsonLdTypes: "VideoObject,VideoObject",
+            jsonLdAppTypes: "VideoObject",
+          }),
+        ]),
+        "shop.myshopify.com",
+      );
+      expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(0);
+    });
+
+    it("refuses a TRUNCATED page as proof, however equal the counts look", async () => {
+      // The crawl caps the collected LIST at 50 entries per page, not the
+      // count per type. A guard that compared the per-type count against that
+      // cap could never fire, and a page whose foreign copies fell off the
+      // end would count as proof that all its markup is ours.
+      const fifty = Array.from({ length: 50 }, () => "VideoObject").join(",");
+      const summary = await summarizeLiveJsonLd(
+        crawlDb([page({ jsonLdTypes: fifty, jsonLdAppTypes: fifty })]),
+        "shop.myshopify.com",
+      );
+      expect(statOf(summary, "VideoObject").appAllCopiesPages).toBe(0);
+    });
   });
 });

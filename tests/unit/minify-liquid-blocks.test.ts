@@ -5,7 +5,10 @@ import {
   scanRegions,
   LIQUID_LIMIT_BYTES,
   LIQUID_TARGET_BYTES,
+  LIQUID_DIRS,
+  EXTENSION_DIR,
 } from '../../scripts/minify-liquid-blocks.mjs';
+import { join } from 'node:path';
 
 /**
  * The minifier only exists so `shopify app deploy` fits under Shopify's 100 KiB
@@ -211,6 +214,21 @@ describe('the real extension bundle', () => {
   it('fits under the Shopify limit with the safety margin intact once minified', () => {
     expect(report.minifiedBytes).toBeLessThan(LIQUID_TARGET_BYTES);
     expect(LIQUID_TARGET_BYTES).toBeLessThan(LIQUID_LIMIT_BYTES);
+  });
+
+  it('counts every configured Liquid directory, and NAMES one it could not find', () => {
+    // The budget only means something if it covers what actually ships.
+    // `listBlockFiles` skips a missing directory so a repo without snippets
+    // still works -- but a renamed or moved folder would then drop out of the
+    // total silently, and the check would print 'fits' while the deploy fails
+    // on the 100 KiB limit. Reporting it is what makes that visible.
+    expect(report.missingDirs).toEqual([]);
+    expect(report.blocks.some((b) => b.name.startsWith('blocks/'))).toBe(true);
+    expect(report.blocks.some((b) => b.name.startsWith('snippets/'))).toBe(true);
+
+    const withGhost = buildReport([...LIQUID_DIRS, join(EXTENSION_DIR, 'does-not-exist')]);
+    expect(withGhost.missingDirs).toHaveLength(1);
+    expect(withGhost.minifiedBytes).toBe(report.minifiedBytes);
   });
 
   it('keeps every protected region of every block byte-identical', () => {

@@ -9,7 +9,7 @@ import { logger } from "~/utils/logger.server";
 import { isValidShopifyGID } from "~/utils/validation";
 
 // Resource types whose resourceId must be a valid Shopify GID
-const GID_RESOURCE_TYPES = new Set(["product", "products", "collection", "collections", "article", "page"]);
+const GID_RESOURCE_TYPES = new Set(["product", "products", "collection", "collections", "article", "blog", "page"]);
 
 export async function action({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
@@ -94,6 +94,32 @@ export async function action({ request }: ActionFunctionArgs) {
           : resourceId;
 
         result = await contentSyncService.syncSingleArticle(articleId);
+        break;
+      }
+
+      // PLAN_CONTENT_CREATION Phase 0, step 4. Blogs have no Prisma model on
+      // purpose — the blog route loads their primary fields live on every
+      // visit, so only the translations have a store to refresh. Without this
+      // case the blog tab was the one content type whose reload button could
+      // not reach Shopify at all.
+      case "blog": {
+        const contentSyncService = new ContentSyncService(
+          admin,
+          session.shop
+        );
+
+        const blogId = resourceId.includes("gid://")
+          ? resourceId.split("/").pop()!
+          : resourceId;
+
+        result = await contentSyncService.syncSingleBlog(blogId);
+
+        if (!result) {
+          return json(
+            { success: false, error: "Blog not found" },
+            { status: 404 }
+          );
+        }
         break;
       }
 

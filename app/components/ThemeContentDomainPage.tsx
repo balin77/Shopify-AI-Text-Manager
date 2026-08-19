@@ -1087,17 +1087,26 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     [selectedThemeId, revalidator, showInfoBox, t]
   );
 
+  // Mirrors the width choice UnifiedContentEditor makes for this config, so
+  // everything stacked on this page ends at the same right edge.
+  const editorWidthClass = config.showItemSidebar ? "app-page-width-full" : "app-page-width-start";
+
   return (
     <PlanAccessGate contentType={planContentType}>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {/* Top padding (16px) matches the editor page's grey padding border
-            below, so the gap nav→banner equals the gap banner→content. */}
+            below, so the gap nav→banner equals the gap banner→content. The
+            width class is the same one the editor below picks for these pages
+            (no item sidebar → capped at the with-list width, responsive.css
+            :root) — a
+            banner running the full 4K width above a capped editor would read as
+            two different pages. */}
         {infoBanner && (
-          <div style={{ padding: "1rem 1rem 0" }}>{infoBanner}</div>
+          <div className={editorWidthClass} style={{ padding: "1rem 1rem 0" }}>{infoBanner}</div>
         )}
         {selectedEmbedTechnical && (
-          <div style={{ padding: "1rem 1rem 0" }}>
+          <div className={editorWidthClass} style={{ padding: "1rem 1rem 0" }}>
             <Banner tone="warning" title={t.content?.appEmbedWarningTitle || "Technical content"}>
               {t.content?.appEmbedWarning ||
                 "This is app-embed content. It can contain CSS selectors and technical configuration — translating it may break the embed on your storefront."}

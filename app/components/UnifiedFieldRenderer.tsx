@@ -10,6 +10,12 @@ import { Text, Tooltip } from "@shopify/polaris";
 import { AIEditableField } from "./AIEditableField";
 import { AIEditableHTMLField } from "./AIEditableHTMLField";
 import { ImageGalleryField } from "./unified/ImageGalleryField";
+import { AttributeField } from "./unified/AttributeField";
+import { CollectionRulesField } from "./unified/CollectionRulesField";
+import { TaxonomyField } from "./unified/TaxonomyField";
+import { CollectionsField } from "./unified/CollectionsField";
+import { CommerceField } from "./unified/CommerceField";
+import { isAttributeField } from "../services/content-attributes.shared";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { useI18n } from "../contexts/I18nContext";
 import { resolveSeoLimits } from "../utils/character-limits";
@@ -61,6 +67,24 @@ export interface FieldRendererProps {
   contentType: string;
   t: any;
   validationOverlays?: ValidationOverlays;
+  /** PLAN §Phase 3 — tags already in use in this shop, for the `tags` field's
+   *  autocomplete. Derived from the loaded list, so it costs no extra query and
+   *  is naturally scoped to the resource the merchant is editing. */
+  tagSuggestions?: string[];
+  /** PLAN §2.4 — false ⇒ the item's attribute block has never been fetched, so
+   *  the values in it are the migration's defaults and not the merchant's data.
+   *  The attribute controls lock and say so instead of inviting an edit that
+   *  would overwrite what is actually in the shop. */
+  attributesKnown?: boolean;
+  /** The way out of that state. */
+  onReloadAttributes?: () => void;
+  /** PLAN §Phase 3.1 — the API version the app talks to. The rule editor needs
+   *  2026-07; below that `sources[]` does not exist and it says so instead of
+   *  offering a control that cannot work. */
+  apiVersion?: string;
+  /** Shop currency ("EUR"), shown as the `money` field's suffix. Currency is
+   *  shop-wide, never per field — the same rule the bulk money columns follow. */
+  currencyCode?: string;
 }
 
 export function UnifiedFieldRenderer(
@@ -105,6 +129,11 @@ export function UnifiedFieldRenderer(
     fetcherState,
     fetcherFormData,
     validationOverlays,
+    tagSuggestions = [],
+    attributesKnown,
+    onReloadAttributes,
+    currencyCode,
+    apiVersion = "",
   } = props;
 
   const currentAction = fetcherFormData?.get("action");
@@ -131,8 +160,17 @@ export function UnifiedFieldRenderer(
   const translatedFieldLabel = fieldLabelMap[field.key] || field.label;
   const label = `${translatedFieldLabel} (${localeName})`;
 
-  let helpText = "";
-  if (typeof field.helpText === "function") {
+  // Per-field help that is a fixed SENTENCE gets translated here rather than in
+  // the config: the config is imported by the server and by the bulk grid,
+  // neither of which has a language. `templateSuffix` is the only one today.
+  const staticHelpText: Record<string, string | undefined> = {
+    templateSuffix: t.content?.templateSuffixHelp as string | undefined,
+  };
+
+  let helpText = staticHelpText[field.key] ?? "";
+  if (helpText) {
+    // already resolved
+  } else if (typeof field.helpText === "function") {
     helpText = field.helpText(value);
   } else if (field.helpText) {
     helpText = field.helpText;
@@ -196,6 +234,10 @@ export function UnifiedFieldRenderer(
       field,
       value,
       onChange,
+      // Forwarded, not dropped: this branch returns BEFORE the generic
+      // read-only handling below, so a custom control that never sees the flag
+      // stays editable on a resource the editor has already locked.
+      readOnly,
       suggestion,
       isPrimaryLocale,
       isTranslated,
@@ -285,6 +327,166 @@ export function UnifiedFieldRenderer(
     );
   }
 
+  // ── PLAN §Phase 3.1 — the product taxonomy ───────────────────────────────
+  // Its own branch, not a case inside AttributeField: the value is a GID and
+  // the LABEL lives on the item, so it needs a second input the generic
+  // attribute control has no shape for.
+  if (field.type === "taxonomy") {
+    return (
+      <TaxonomyField
+        value={value}
+        onChange={onChange}
+        currentLabel={(selectedItem?.categoryName as string) || ""}
+        label={translatedFieldLabel}
+        // Same rule as every other attribute: one value per product, so a
+        // foreign locale reads it only — WITH the reason, never in silence.
+        disabled={!isPrimaryLocale}
+        foreignLocaleHint={isPrimaryLocale ? undefined : t.content?.attributesForeignLocale}
+        // §2.4 — the same discriminator the neighbouring attribute fields read.
+        // Without it an unsynced row renders a confident "Not set" next to
+        // fields correctly saying "not loaded yet".
+        known={attributesKnown !== false}
+        onReload={onReloadAttributes}
+        t={(t.content?.taxonomy ?? {}) as Record<string, string>}
+      />
+    );
+  }
+
+  // ── PLAN §Phase 3.1 — collection membership ──────────────────────────────
+  if (field.type === "collections") {
+    return (
+      <CollectionsField
+        value={value}
+        onChange={onChange}
+        memberships={
+          Array.isArray(selectedItem?.collections)
+            ? (selectedItem.collections as Array<{ id: string; title?: string; automated?: boolean | null }>).map((c) => ({
+                collectionId: c.id,
+                collectionTitle: c.title ?? "",
+                // `null` stays null — unknown is not manual, and the picker
+                // locks it rather than offering a change Shopify would refuse.
+                automated: c.automated ?? null,
+              }))
+            : []
+        }
+        truncated={selectedItem?.hasMoreCollections === true}
+        onReload={onReloadAttributes}
+        // `collections: null` means the row was never attribute-synced — the
+        // same discriminator every other attribute reads. An empty list would
+        // say "in no collections", which the save would then act on.
+        known={Array.isArray(selectedItem?.collections)}
+        label={translatedFieldLabel}
+        disabled={!isPrimaryLocale}
+        t={{
+          ...((t.content?.collectionsField ?? {}) as Record<string, string>),
+          // The same sentence the other attribute fields show in a foreign
+          // locale — greying every box with no reason is the "DISABLE +
+          // tooltip, don't hide" rule half-applied.
+          ...(isPrimaryLocale ? {} : { foreignLocale: t.content?.attributesForeignLocale }),
+        }}
+      />
+    );
+  }
+
+  // ── PLAN Phase 4 — stock and sales channels ──────────────────────────────
+  // Deliberately NOT wired to `value`/`onChange`: it loads live and saves
+  // through its own endpoint, because a stock number carried in the editor's
+  // flat value map would be stale by the time the merchant pressed save.
+  if (field.type === "commerce") {
+    return (
+      // Only the CHANNELS half. The product id, the locale and the strings all
+      // come from `CommerceDataProvider` now — the variant half of this panel
+      // moved into the variants card and the two share one load, one set of
+      // pending edits and one registration with the save bar.
+      <CommerceField label={translatedFieldLabel} />
+    );
+  }
+
+  // ── PLAN §Phase 3.1 — the rule editor for an existing collection ─────────
+  // Its own branch rather than a case inside AttributeField: it carries state
+  // of its own (an array of sources), its own validation, and its own reason
+  // for being unavailable — the API VERSION, not the plan and not the locale.
+  if (field.type === "collectionRules") {
+    return (
+      <CollectionRulesField
+        // Keyed on the item so the "advanced" disclosure does not survive a
+        // switch to another collection — it was opened about THIS rule set.
+        key={selectedItem?.id ? String(selectedItem.id) : "collection-rules"}
+        value={value}
+        onChange={onChange}
+        label={translatedFieldLabel}
+        isPrimaryLocale={isPrimaryLocale}
+        apiVersion={apiVersion}
+        adminUrlForCollection={
+          selectedItem?.id ? `shopify://admin/collections/${String(selectedItem.id).split("/").pop()}` : undefined
+        }
+        t={t}
+      />
+    );
+  }
+
+  // ── PLAN §Phase 3 merchandising attributes ───────────────────────────────
+  // Handled before the read-only plumbing below because none of it applies:
+  // these fields carry no AI actions, no translate/copy buttons and no
+  // suggestion state, and their one locked case (a foreign locale) has a
+  // reason of its own that the generic hint would get wrong.
+  if (isAttributeField(field)) {
+    const suggestions: string[] = field.suggestionsKey ? tagSuggestions : [];
+    // Enum labels are shared with the create modal (`t.content.enumLabels`,
+    // keyed `"status.DRAFT"`) rather than duplicated: the two surfaces offer
+    // the same values, and a status the modal calls "Draft" while the editor
+    // calls it "DRAFT" reads as two different things. This read used to name
+    // `createModal.options`, which the move left pointing at nothing —
+    // silently `{}`, because `t` is typed `any` here.
+    const optionLabels: Record<string, string> = t.content?.enumLabels || {};
+    const localizedField = {
+      ...field,
+      ...(field.type === "money" ? { currencyCode } : {}),
+      ...(field.options
+        ? {
+            options: field.options.map((o) => ({
+              ...o,
+              label: (o.labelKey && optionLabels[o.labelKey]) || optionLabels[`${field.key}.${o.value}`] || o.label,
+            })),
+          }
+        : {}),
+    };
+    return (
+      <AttributeField
+        field={localizedField}
+        value={value}
+        onChange={onChange}
+        label={translatedFieldLabel}
+        isPrimaryLocale={isPrimaryLocale}
+        readOnly={readOnly}
+        attributesKnown={attributesKnown}
+        onReloadAttributes={onReloadAttributes}
+        readOnlyHint={
+          t.content?.primaryReadOnlyHint ||
+          "This field can't be edited in the main language here — manage the original in your Shopify admin."
+        }
+        suggestions={suggestions}
+        // ONE enum vocabulary, shared with the create modal — two copies of
+        // "Draft"/"Entwurf" would drift, and the raw wire values are what the
+        // editor showed before this existed.
+        optionLabels={(t.content?.enumLabels ?? {}) as Record<string, string>}
+        // Translated per field key; the config's own English string is the
+        // fallback for a note nobody has translated yet.
+        attributeNote={((t.content?.attributeNotes ?? {}) as Record<string, string>)[field.key]}
+        helpText={staticHelpText[field.key]}
+        t={{
+          notTranslatable: t.content?.attributesForeignLocale,
+          addTag: t.content?.addTag,
+          add: t.common?.add,
+          yes: t.common?.yes,
+          no: t.common?.no,
+          notSyncedYet: t.content?.attributesNotSyncedYet,
+          reload: t.common?.reload,
+        }}
+      />
+    );
+  }
+
   // Options Field
   if (field.type === "options") {
     return (
@@ -303,14 +505,23 @@ export function UnifiedFieldRenderer(
   // clear); it shows the inherited locale value greyed, with its own hint.
   const slugMarketLocked =
     field.type === "slug" && !isPrimaryLocale && !!selectedMarketId;
-  const effectiveReadOnly = readOnly || slugMarketLocked;
+  // PLAN §Phase 3.5 — a field Shopify stores ONCE per item (vendor, author,
+  // template suffix) has nothing to translate. Left editable it would accept a
+  // foreign-locale edit and write it to the primary value, which reads as a
+  // lost save. `productType` is deliberately not in this class: it IS
+  // translatable, shop-wide, through GroupedFieldTranslation.
+  const attributeForeignLocked = field.supportsTranslation === false && !isPrimaryLocale;
+  const effectiveReadOnly = readOnly || slugMarketLocked || attributeForeignLocked;
 
   // App-embed technical fields (CSS selectors / config) are locked in EVERY
   // locale, so they get a dedicated hint; the market-locked slug gets its own;
   // other read-only fields (main language of resource-backed rubrics like
   // Abo-Pläne) get the primary-read-only hint.
   const readOnlyHint = String(
-    slugMarketLocked
+    attributeForeignLocked
+      ? (t.content?.attributesForeignLocale ||
+         "This detail exists once per item, not per language. Switch to the main language to change it.")
+      : slugMarketLocked
       ? (t.content?.slugMarketLockedHint ||
          "The URL handle can't be customized per market — Shopify only allows translating it per language. The global (translated) handle is used for every market.")
       : embedTechnical

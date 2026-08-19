@@ -142,9 +142,16 @@ async function processWebhookAsync(
       // Snapshot first: the sync is what erases the previous status/handle,
       // and both decide what IndexNow should hear about.
       const before = await loadIndexNowSnapshot(db, shop, productId);
-      // A products/UPDATE webhook IS the "the primary text changed" event, so
-      // the sync also reconciles now-stale foreign translations (delete, or
-      // re-translate on Max) — see
+      // This run writes the video-date metafield like every other sync path.
+      // It may well BE the echo of our own write, but the pass is diff-driven
+      // and the mirror has already advanced, so the echo run writes nothing
+      // and the sequence stops — while a merchant who added a video in the
+      // admin fires only this webhook, and suppressing it here left that
+      // product without an uploadDate until the next full sync.
+      //
+      // A products/UPDATE webhook is also THE "the primary text changed"
+      // event, so the sync reconciles now-stale foreign translations (delete,
+      // or re-translate on Max) — see
       // services/translations/stale-translation-sync.server.ts. A CREATE is a
       // first sync, never a change event.
       await syncService.syncProduct(productId, false, {

@@ -13,17 +13,21 @@
 import { Card, BlockStack, Text, TextField, Button, Divider, Badge, Banner, Icon, InlineStack } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../../contexts/I18nContext";
-import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
-import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useAppNavigation } from "../../hooks/useAppNavigation";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
 import type { ShopLocale } from "../../types/content-editor.types";
+import { VariantOptionsEditor } from "./VariantOptionsEditor";
 import "../../styles/AIEditableField.css";
 
 export interface OptionValueData {
   id: string;  // gid://shopify/ProductOptionValue/...
   name: string;
   linked?: boolean;  // true = metaobject-linked value
+  /** The METAOBJECT GID behind a linked value. The only identifier that
+   *  addresses the entry itself — the option's `linkedMetafieldKey` is a
+   *  metafield namespace/key and only coincides with the metaobject type for
+   *  Shopify's own standard definitions. */
+  linkedValue?: string;
 }
 
 export interface OptionData {
@@ -32,7 +36,9 @@ export interface OptionData {
   position: number;
   values: OptionValueData[];
   isLinked?: boolean;  // true = metaobject-linked option
-  linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
+  /** The linked METAFIELD's `namespace--key` — see the note on OptionData in
+   *  content-editor.types.ts. Not the metaobject definition type. */
+  linkedMetafieldKey?: string;
 }
 
 export interface OptionTranslation {
@@ -90,6 +96,30 @@ interface OptionsFieldProps {
   /** Primary option data (indexed by option ID) - used when editing primary locale */
   primaryOptions?: Record<string, { name: string; values: string[] }>;
 
+  /** Bumped on every landed save, so the card can drop cached variant counts. */
+  savedNonce?: number;
+  /** Rendered inside the variants card, below a divider. */
+  footer?: React.ReactNode;
+  /** The product's GID — the variants editor asks how many variants hang off a
+   *  value before offering to delete it. */
+  productId?: string;
+  /** Pending structural edits, so the card can show them before the save. */
+  valuesToAdd?: Record<string, string[]>;
+  linkedValuesToAdd?: Record<string, Array<{ id: string; name: string }>>;
+  valuesToDelete?: Record<string, string[]>;
+  optionsToCreate?: Array<{ name: string; values: string[] }>;
+  optionsToDelete?: string[];
+  onAddOptionValue?: (optionId: string, name: string) => void;
+  onAddLinkedOptionValue?: (optionId: string, entry: { id: string; name: string }) => void;
+  onRemoveLinkedOptionValue?: (optionId: string, entryId: string) => void;
+  onRemoveOptionValue?: (optionId: string, valueId: string, addedIndex?: number) => void;
+  onEditPendingValue?: (optionId: string, index: number, name: string) => void;
+  onCreateOption?: (name: string, values: string[]) => void;
+  onCancelCreateOption?: (index: number) => void;
+  onDeleteOption?: (optionId: string) => void;
+  onReorderOptions?: (orderedIds: string[]) => void;
+  onReorderOptionValues?: (optionId: string, orderedValueIds: string[]) => void;
+
   /** Set of field IDs currently being translated (e.g. "optId:name", "optId:value:0") */
   translatingFieldIds?: Set<string>;
 
@@ -121,7 +151,25 @@ interface OptionsFieldProps {
     linkedNotEditableHintBefore?: string;
     linkedNotEditableHintAfter?: string;
     metaobjectsLinkText?: string;
-    optionPositionLabel?: string;
+    /** The variants card's own vocabulary. */
+    addOption?: string;
+    optionNamePlaceholder?: string;
+    deleteOption?: string;
+    deleteOptionTitle?: string;
+    editMetaobject?: string;
+    choicesUnavailable?: string;
+    choicesAllUsed?: string;
+    choicesTruncated?: string;
+    choicesSyncedAt?: string;
+    loading?: string;
+    deleteValueTitle?: string;
+    deleteOptionConfirm?: string;
+    deleteValueCount?: string;
+    deleteValueUnknown?: string;
+    pendingBadge?: string;
+    done?: string;
+    cancel?: string;
+    add?: string;
     clearButton?: string;
     copyButton?: string;
     copyToAllLocalesButton?: string;
@@ -144,18 +192,40 @@ export function OptionsField({
   onPrimaryOptionNameChange,
   onPrimaryOptionValuesChange,
   primaryOptions = {},
+  productId = "",
+  savedNonce = 0,
+  footer,
+  valuesToAdd = {},
+  linkedValuesToAdd = {},
+  valuesToDelete = {},
+  optionsToCreate = [],
+  optionsToDelete = [],
+  onAddOptionValue,
+  onAddLinkedOptionValue,
+  onRemoveLinkedOptionValue,
+  onRemoveOptionValue,
+  onEditPendingValue,
+  onCreateOption,
+  onCancelCreateOption,
+  onDeleteOption,
+  onReorderOptions,
+  onReorderOptionValues,
   translatingFieldIds = new Set(),
   missingTranslationIds,
   t = {},
 }: OptionsFieldProps) {
   const { locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
-  // Single-language shop → the option translate buttons have no target locale.
-  const singleLocaleHint = useSingleLocaleHint();
 
   // Navigate to metaobjects page with optional type pre-selection
   const navigateToMetaobjects = (option: OptionData) => {
-    const selectValue = option.linkedMetaobjectType || option.name;
+    // The entry's own GID first: it addresses one metaobject unambiguously and
+    // lands the merchant ON it. `linkedMetafieldKey` is a metafield
+    // namespace/key ("custom--material") and equals the metaobject type only
+    // for Shopify's standard definitions, where the two happen to be spelled
+    // the same; for a custom one it matches nothing and the page opens blank.
+    const linkedGid = option.values.find((v) => v.linkedValue)?.linkedValue;
+    const selectValue = linkedGid || option.linkedMetafieldKey || option.name;
     handleNavigate("/app/metaobjects", {
       searchParams: new URLSearchParams({ select: selectValue }),
     });
@@ -168,290 +238,58 @@ export function OptionsField({
     shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name
   );
 
-  if (!options || options.length === 0) {
+  // A product without options still gets the primary card: that is where "add
+  // a variant" lives, and a single-variant product is the one that needs it.
+  // In a foreign locale there is nothing to translate, so nothing renders.
+  if ((!options || options.length === 0) && !isPrimaryLocale) {
     return null;
+  }
+
+  // The primary editor brings its own Card: its header row hosts the "add"
+  // button, which a shared wrapper could not. The FOREIGN branch below is a
+  // different job — it edits TRANSLATIONS of the same values, and must not
+  // gain a delete button.
+  if (isPrimaryLocale) {
+    return (
+      <VariantOptionsEditor
+        productId={productId}
+        options={options}
+        primaryOptions={primaryOptions}
+        valuesToAdd={valuesToAdd}
+        linkedValuesToAdd={linkedValuesToAdd}
+        valuesToDelete={valuesToDelete}
+        optionsToCreate={optionsToCreate}
+        optionsToDelete={optionsToDelete}
+        onNameChange={(id, value) => onPrimaryOptionNameChange?.(id, value)}
+        onValuesChange={(id, values) => onPrimaryOptionValuesChange?.(id, values)}
+        onAddValue={(id, name) => onAddOptionValue?.(id, name)}
+        onAddLinkedValue={(id, entry) => onAddLinkedOptionValue?.(id, entry)}
+        onRemoveLinkedValue={(id, entryId) => onRemoveLinkedOptionValue?.(id, entryId)}
+        onRemoveValue={(id, valueId, addedIndex) => onRemoveOptionValue?.(id, valueId, addedIndex)}
+        onEditPendingValue={(id, index, name) => onEditPendingValue?.(id, index, name)}
+        onCreateOption={(name, values) => onCreateOption?.(name, values)}
+        onCancelCreateOption={(index) => onCancelCreateOption?.(index)}
+        onDeleteOption={(id) => onDeleteOption?.(id)}
+        onReorder={(ids) => onReorderOptions?.(ids)}
+        onReorderValues={(id, valueIds) => onReorderOptionValues?.(id, valueIds)}
+        onOpenMetaobjects={navigateToMetaobjects}
+        onTranslate={onTranslate}
+        translatingFieldIds={translatingFieldIds}
+        savedNonce={savedNonce}
+        footer={footer}
+        t={t as Record<string, string | undefined>}
+      />
+    );
   }
 
   return (
     <Card>
       <BlockStack gap="400">
         <Text as="h3" variant="headingMd" fontWeight="bold">
-          {t.title || "Product Options"}
+          {t.title || "Variants"}
         </Text>
 
-        {isPrimaryLocale ? (
-          // Editable fields in primary language
-          <BlockStack gap="300">
-            {options.map((option, index) => {
-              // Get current values from primaryOptions state, fallback to original option data
-              const currentName = primaryOptions[option.id]?.name !== undefined
-                ? primaryOptions[option.id].name
-                : option.name;
-              const currentValues = primaryOptions[option.id]?.values !== undefined
-                ? primaryOptions[option.id].values
-                : option.values.map(v => v.name);
-
-              // Handler for individual value changes (no add/remove)
-              const handleValueChange = (valueIndex: number, newValue: string) => {
-                const updatedValues = [...currentValues];
-                updatedValues[valueIndex] = newValue;
-                onPrimaryOptionValuesChange?.(option.id, updatedValues);
-              };
-
-              const nameFieldId = `${option.id}:name`;
-              const entireFieldId = `${option.id}:entire`;
-
-              return (
-                <div key={option.id}>
-                  <Card>
-                    <BlockStack gap="300">
-                      {/* `flexWrap` lets the button drop to its own line on a
-                          phone instead of squeezing "Option 1" into two lines;
-                          the title itself never breaks. */}
-                      <div className="option-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
-                          <Text as="p" variant="bodyMd" fontWeight="semibold" breakWord={false}>
-                            <span style={{ whiteSpace: "nowrap" }}>
-                              {t.optionPositionLabel || "Option"} {option.position}
-                            </span>
-                          </Text>
-                          {option.isLinked && (
-                            <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>
-                          )}
-                        </div>
-                        {/* Translate Entire Option Button — on same line as Option
-                            header. NOT for a metaobject-linked option: its values live
-                            in the metaobjects, so `buildSourceData` reduces it to the
-                            name alone — the very same single request the Translate
-                            button under the name field already sends. */}
-                        {onTranslate && !option.isLinked && (
-                          <DisabledActionTooltip hint={singleLocaleHint}>
-                            <Button
-                              size="slim"
-                              onClick={() => onTranslate(option.id)}
-                              loading={translatingFieldIds.has(entireFieldId)}
-                              disabled={!!singleLocaleHint}
-                            >
-                              🌍 {t.translateButton || "Translate option"}
-                            </Button>
-                          </DisabledActionTooltip>
-                        )}
-                      </div>
-
-                      {option.isLinked ? (
-                        // Metaobject-linked options: Only option name is editable, values are not
-                        <>
-                          {/* Option Name — editable for metaobjects */}
-                          <div>
-                            <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
-                              <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-                                {currentName && (
-                                  <Button
-                                    size="slim"
-                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
-                                    tone="critical"
-                                    variant="plain"
-                                  >
-                                    {t.clearButton || "Clear"}
-                                  </Button>
-                                )}
-                              </div>
-                              <TextField
-                                label={
-                                  <span style={{ fontWeight: 600 }}>
-                                    {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                                  </span>
-                                }
-                                value={currentName}
-                                onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
-                                autoComplete="off"
-                              />
-                            </div>
-                            {(onTranslateField || onCopyFieldToAllLocales) && (
-                              <div className="ai-field-footer">
-                                <div className="ai-field-footer-left" />
-                                <div className="ai-field-footer-right">
-                                  {onTranslateField && (
-                                    <DisabledActionTooltip hint={singleLocaleHint}>
-                                      <Button
-                                        size="slim"
-                                        onClick={() => onTranslateField(option.id, "name")}
-                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                        disabled={!!singleLocaleHint}
-                                      >
-                                        🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                      </Button>
-                                    </DisabledActionTooltip>
-                                  )}
-                                  {onCopyFieldToAllLocales && (
-                                    <DisabledActionTooltip hint={singleLocaleHint}>
-                                      <Button
-                                        size="slim"
-                                        onClick={() => onCopyFieldToAllLocales(option.id, "name")}
-                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                        disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId) || !!singleLocaleHint}
-                                      >
-                                        📋 {t.copyToAllLocalesButton || "Copy to all languages"}
-                                      </Button>
-                                    </DisabledActionTooltip>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Info banner about values — link to metaobjects page */}
-                          <Banner tone="info">
-                            <p>
-                              {t.linkedNotEditableHintBefore || "The values of this option are linked to metaobjects. You can edit them under "}
-                              <span
-                                role="link"
-                                tabIndex={0}
-                                onClick={() => navigateToMetaobjects(option)}
-                                onKeyDown={(e) => e.key === "Enter" && navigateToMetaobjects(option)}
-                                style={{ textDecoration: "underline", color: "var(--p-color-text-interactive)", cursor: "pointer" }}
-                              >
-                                {t.metaobjectsLinkText || "Metaobjects"}
-                              </span>
-                              {t.linkedNotEditableHintAfter || "."}
-                            </p>
-                          </Banner>
-                        </>
-                      ) : (
-                        <>
-                          {/* Option Name */}
-                          <div>
-                            <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
-                              <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-                                {currentName && (
-                                  <Button
-                                    size="slim"
-                                    onClick={() => onPrimaryOptionNameChange?.(option.id, "")}
-                                    tone="critical"
-                                    variant="plain"
-                                  >
-                                    {t.clearButton || "Clear"}
-                                  </Button>
-                                )}
-                              </div>
-                              <TextField
-                                label={
-                                  <span style={{ fontWeight: 600 }}>
-                                    {t.optionNameLabel || "Name"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                                  </span>
-                                }
-                                value={currentName}
-                                onChange={(value) => onPrimaryOptionNameChange?.(option.id, value)}
-                                autoComplete="off"
-                              />
-                            </div>
-                            {(onTranslateField || onCopyFieldToAllLocales) && (
-                              <div className="ai-field-footer">
-                                <div className="ai-field-footer-left" />
-                                <div className="ai-field-footer-right">
-                                  {onTranslateField && (
-                                    <DisabledActionTooltip hint={singleLocaleHint}>
-                                      <Button
-                                        size="slim"
-                                        onClick={() => onTranslateField(option.id, "name")}
-                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                        disabled={!!singleLocaleHint}
-                                      >
-                                        🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                      </Button>
-                                    </DisabledActionTooltip>
-                                  )}
-                                  {onCopyFieldToAllLocales && (
-                                    <DisabledActionTooltip hint={singleLocaleHint}>
-                                      <Button
-                                        size="slim"
-                                        onClick={() => onCopyFieldToAllLocales(option.id, "name")}
-                                        loading={translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId)}
-                                        disabled={!currentName || translatingFieldIds.has(nameFieldId) || translatingFieldIds.has(entireFieldId) || !!singleLocaleHint}
-                                      >
-                                        📋 {t.copyToAllLocalesButton || "Copy to all languages"}
-                                      </Button>
-                                    </DisabledActionTooltip>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Option Values */}
-                          <BlockStack gap="200">
-                            <Text as="p" variant="bodyMd" fontWeight="semibold">
-                              {t.valuesLabel || "Values"} <span style={{ color: 'var(--p-color-text-critical)' }}>*</span>
-                            </Text>
-                            {currentValues.map((value, valueIndex) => {
-                              const valueFieldId = `${option.id}:value:${valueIndex}`;
-                              const originalValue = option.values[valueIndex]?.name;
-                              return (
-                                <div key={valueIndex}>
-                                  <div className={`ai-editable-field-wrapper ${missingTranslationIds?.has(option.values[valueIndex]?.id) ? "bg-missing-translation" : "bg-white"}`} style={{ position: "relative" }}>
-                                    <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-                                      {value && (
-                                        <Button
-                                          size="slim"
-                                          onClick={() => handleValueChange(valueIndex, "")}
-                                          tone="critical"
-                                          variant="plain"
-                                        >
-                                          {t.clearButton || "Clear"}
-                                        </Button>
-                                      )}
-                                    </div>
-                                    <TextField
-                                      label={`${t.valueLabel || "Value"} ${valueIndex + 1}`}
-                                      value={value}
-                                      onChange={(newValue) => handleValueChange(valueIndex, newValue)}
-                                      autoComplete="off"
-                                    />
-                                  </div>
-                                  {(onTranslateField || onCopyFieldToAllLocales) && (
-                                    <div className="ai-field-footer">
-                                      <div className="ai-field-footer-left" />
-                                      <div className="ai-field-footer-right">
-                                        {onTranslateField && (
-                                          <DisabledActionTooltip hint={singleLocaleHint}>
-                                            <Button
-                                              size="slim"
-                                              onClick={() => onTranslateField(option.id, "value", valueIndex)}
-                                              loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                              disabled={!!singleLocaleHint}
-                                            >
-                                              🌍 {t.translateFieldButton || t.translateButton || "Translate"}
-                                            </Button>
-                                          </DisabledActionTooltip>
-                                        )}
-                                        {onCopyFieldToAllLocales && (
-                                          <DisabledActionTooltip hint={singleLocaleHint}>
-                                            <Button
-                                              size="slim"
-                                              onClick={() => onCopyFieldToAllLocales(option.id, "value", valueIndex)}
-                                              loading={translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId)}
-                                              disabled={!value || translatingFieldIds.has(valueFieldId) || translatingFieldIds.has(entireFieldId) || !!singleLocaleHint}
-                                            >
-                                              📋 {t.copyToAllLocalesButton || "Copy to all languages"}
-                                            </Button>
-                                          </DisabledActionTooltip>
-                                        )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </BlockStack>
-                        </>
-                      )}
-                    </BlockStack>
-                  </Card>
-                </div>
-              );
-            })}
-          </BlockStack>
-        ) : (
+        {(
           // Editable translation fields in foreign languages
           <BlockStack gap="400">
             {options.map((option, index) => {
@@ -467,10 +305,11 @@ export function OptionsField({
                           rules as the primary-locale header above) */}
                       <div className="option-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px", minWidth: 0 }}>
+                          {/* The option's own NAME, not "Option 1". A position
+                              names where a card sits, which the merchant can
+                              already see; the name says what is being edited. */}
                           <Text as="p" variant="bodyMd" fontWeight="semibold" breakWord={false}>
-                            <span style={{ whiteSpace: "nowrap" }}>
-                              {t.optionPositionLabel || "Option"} {option.position}
-                            </span>
+                            {option.name}
                           </Text>
                           {option.isLinked && (
                             <Badge tone="info">{t.linkedBadge || "Metaobject"}</Badge>

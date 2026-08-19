@@ -1,6 +1,25 @@
 # Inhalte in ContentPilot erstellen — Plan (Phasen 0–4)
 
-**Status:** Entwurf, Umsetzung nicht begonnen. Grundsatzentscheidungen getroffen (§2), Review-Durchlauf eingearbeitet (2026-08).
+**Status (2026-08-17, Branch `claude/plan-content-creation-4fqoph`):** Phasen 0–4 umgesetzt, jeder Schritt mit eigenem Review-Durchlauf und behobenen Befunden.
+
+| Phase | Stand |
+|---|---|
+| 0 | ✅ Migration, Attribut-Sync (`attribute-sync.shared.ts`), Join-Modell `ProductCollection`, `blog`-Case, Messungen (Collection-Probe) |
+| 1 | ✅ Create-Modal + `createContent`, sechs Typen, Idempotenz, Delete mit Doppelbestätigung, Undo, Duplizieren |
+| 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts`, im Create-Modal **und** im Editor bestehender Collections (API-Guard ≥2026-07, Bearbeiten als Bedingungs-Diff) |
+| 1b | ✅ `SeoSidebar` → `ItemSidebar` |
+| 2 | ✅ Attribut-Tab; Loader liefern den Attributblock (nachgezogen in Phase 3) |
+| 3.1/3.2/3.5 | ✅ `status`, `vendor`, `tags`, `author`, `sortOrder`, `templateSuffix`, `isPublished`, `money`, `taxonomy` (Kategorie-Suche), `collections` (Mitgliedschafts-Diff), `collectionRules` im Editor |
+| 3.3 | ✅ Redirect bei Handle-Wechsel (Einzel- **und** Bulk-Editor), als Diff über bestehende Redirects |
+| 3.4 | ✅ IndexNow am Publish-Übergang für Pages/Artikel/Blogs (die drei ohne Webhook) |
+| 3.6 | ✅ `vendor`/`tags` als Bulk-Spalten |
+| 4 | ✅ Scopes in beiden TOMLs, Schema + Sync (`commerce-sync.shared.ts`), `inventorySetQuantities` mit `compareQuantity`, `inventoryItemUpdate` (Kosten, Gewicht, Zolltarif, Ursprungsland), `publishablePublish`/`Unpublish`, eigene Route + Panel, Merchant-Hinweis zum Scope-Change. `taxable` bewusst nur lesend (liegt bei uns auf der Variante, nicht am InventoryItem) |
+
+§2.5 ist vollständig umgesetzt (KI-Extras: Rest generieren, Live-SEO-Score im Modal, Auto-Alt-Text, danach übersetzen, Glossar in `generate*`). Ebenfalls offen: §8.2–§8.4.
+
+**Phase 4, Schritt 5 (Task-Recovery):** entfällt bewusst — Bestand und Kanäle schreiben synchron im Request, es entsteht kein `Task`-Eintrag, also gibt es auch keinen Typ für `LONG_RUNNING_TASK_TYPES`.
+
+**Ursprünglicher Status:** Entwurf, Umsetzung nicht begonnen. Grundsatzentscheidungen getroffen (§2), Review-Durchlauf eingearbeitet (2026-08).
 **Ziel:** Der Merchant soll für das **Anlegen und Bearbeiten von Content** nicht mehr in den Shopify-Admin wechseln müssen. Einstieg ist der bereits vorhandene „+"-Button in [UnifiedItemList](../../app/components/unified/UnifiedItemList.tsx), der ein Create-Modal öffnet; ergänzend ein neuer Sidebar-Tab, der die *nicht-SEO*-Vollständigkeit eines Items zeigt.
 **Baut auf:** [unified-content.actions.ts](../../app/actions/unified-content.actions.ts) (der EINE Action-Handler), [UnifiedContentEditor](../../app/components/UnifiedContentEditor.tsx), [FilePickerModal](../../app/components/image-manager/FilePickerModal.tsx) + Staged-Upload-Pipeline, [text-generation.handler.ts](../../app/routes/api-ai-handlers/text-generation.handler.ts) (kann bereits aus einem Bild generieren).
 
@@ -165,6 +184,75 @@ Konsequenzen:
 3. **Die „Typ ist unveränderlich"-Regel ist zu messen, nicht anzunehmen.** Das Help Center sagt, der Collection-Typ lasse sich nach dem Anlegen nicht ändern; `CollectionUpdateInput` hat aber ein Feld `sourcesToCreate`. Beides zugleich kann nicht stimmen (Phase 0, Schritt 5).
 4. **Vorbedingung für Phase 3:** [content.mutations.ts:103](../../app/graphql/content.mutations.ts#L103) benutzt für `collectionUpdate` noch das deprecatete `input: CollectionInput` (während `articleUpdate` bereits die neue Form nutzt). `sourcesToCreate`/`sourcesToUpdate` erzwingt die Migration dieser Mutation.
 
+### 1.2a Messergebnis 2026-07 (2026-08-16, Dev-Store `8c19f3-ce`)
+
+Introspektion + Schreibtest über die Collection-Probe (Settings → Collection Probe). Alle zehn API-Versionen von 2024-10 bis `unstable` antworten auf dem Store, **2026-07 eingeschlossen** — Phase −1 hat kein Erreichbarkeitsproblem.
+
+Der Zuschnitt aus §2.4 ist vollständig durch die API gedeckt: `CollectionCreateSourceTargetInput` hat genau die drei Zweige `source` / `subCollections` / `shareableSource`, `CollectionCreateConditionsSourceInput` trägt `title!`, `description`, `inclusion`, `exclusion`, `targetType`, und `inclusion`/`exclusion` haben je `matchType`, `conditions[]` **und** `selections[]`. `CollectionConditionMatchType` = `ANY | ALL`, `CollectionSourceTargetType` = `PRODUCTS | VARIANTS`.
+
+#### Messung B: ✅ Eine manuelle Collection LÄSST sich umwandeln
+
+`collectionUpdate` mit `sourcesToCreate` auf einer frisch als manuell angelegten Collection ging durch, und das Zurücklesen bestätigte die Regel. Die Help-Center-Aussage „der Typ ist nach dem Anlegen unveränderlich" gilt für die API **nicht**. §1.2 Punkt 3 ist damit zugunsten des Eingabefelds entschieden, und Phase 3 darf die Umwandlung anbieten.
+
+> **⚠ Dabei der wichtigste Fund des ganzen Laufs: `ruleSet` ist eine VERLUSTBEHAFTETE Rückprojektion des neuen Modells.**
+>
+> Gesendet wurde `productTag { relation: TAGGED_WITH, values: […], matchType: ANY }`. Zurückgelesen kam über `ruleSet`:
+> `{ appliedDisjunctively: false, rules: [{ column: "TAG", relation: "EQUALS", condition: "…" }] }`.
+>
+> Also: `TAGGED_WITH` → `EQUALS`, und der **eigene `matchType` der Bedingung ist ersatzlos verschwunden**. Shopify projiziert das neue Modell in die alte Form, wo das überhaupt geht — und wo es nicht geht (Ausschlüsse, mehrere Quellen, Varianten-Targeting), kann es nur weglassen. Das erklärt die §1.0-Warnung, dass solche Collections aus Vor-2026-07-Ergebnissen *herausgefiltert* werden, und verschärft sie: was NICHT gefiltert wird, kommt möglicherweise **vereinfacht** zurück.
+>
+> **Regel daraus:** ab 2026-07 wird `sources` gelesen, **nie** `ruleSet`. Ein Editor, der `ruleSet` liest und zurückschreibt, würde die Mitgliedschaft einer Collection stillschweigend ändern — genau das, was die Read-only-Regel aus §2.4 verhindern soll, nur eine Ebene tiefer. Der `sourcesJson`-Umschlag aus Phase 0 hält das auseinander: eine `{shape: "ruleSet"}`-Zeile ist eine Projektion, keine Wahrheit.
+
+#### Die Bedingungen — Grundlage für `collection-rules.shared.ts`
+
+**Kein generisches `{column, relation, condition}`-Tripel mehr.** Das ist die alte `ruleSet`-Form (`CollectionRuleInput`), die auf 2026-07 nur noch am deprecateten `CollectionInput` hängt. `CollectionSourceInclusionConditionInput` ist eine **Union mit einem Feld pro Attribut** — 18 für Einschlüsse, 5 für Ausschlüsse:
+
+| | Einschluss | Ausschluss |
+|---|---|---|
+| `productTag` | ✅ `TAGGED_WITH`, `NOT_TAGGED_WITH` | ✅ nur `TAGGED_WITH` |
+| `productTitle` | ✅ `EQUALS`, `NOT_EQUALS`, `STARTS_WITH`, `ENDS_WITH`, `CONTAINS`, `DOES_NOT_CONTAIN` | ❌ |
+| `productType` | ✅ wie productTitle | ✅ nur `EQUALS`, `CONTAINS` |
+| `productVendor` | ✅ wie productTitle | ✅ nur `EQUALS`, `CONTAINS` |
+| `productCategory` | ✅ `EQUALS`, `NOT_EQUALS` | ✅ nur `EQUALS` |
+| `productStatus` | ✅ `EQUALS`, `NOT_EQUALS` (Werte: `ProductStatus`) | ❌ |
+| `collection` | ❌ | ✅ (nur `values: [ID!]!`, ohne Relation) |
+| `variantTitle` | ✅ wie productTitle | ❌ |
+| `variantPrice` | ✅ `EQUALS`, `NOT_EQUALS`, `GREATER_THAN`, `LESS_THAN` (`MoneyInput`) | ❌ |
+| `variantCompareAtPrice` | ✅ dieselben + `IS_SET`, `IS_NOT_SET` | ❌ |
+| `variantInventory` | ✅ `EQUALS`, `GREATER_THAN`, `LESS_THAN` (`Int`) | ❌ |
+| `variantWeight` | ✅ `EQUALS`, `NOT_EQUALS`, `GREATER_THAN`, `LESS_THAN` (`WeightInput`) | ❌ |
+| `metafieldString` | ✅ nur `EQUALS` | ❌ |
+| `metafieldStringList` | ✅ nur `INCLUDES` | ❌ |
+| `metafieldInteger` / `metafieldDecimal` | ✅ `EQUALS`, `GREATER_THAN`, `LESS_THAN` | ❌ |
+| `metafieldBoolean` | ✅ nur `EQUALS` | ❌ |
+| `metafieldMetaobject` | ✅ nur `EQUALS` | ❌ |
+| `metafieldMetaobjectList` | ✅ nur `INCLUDES` | ❌ |
+
+**Drei Formen, nicht eine.** Das UI kann darüber generisch rendern, die Datenform darf es nicht flachklopfen:
+
+1. **Listenwertig** — `{ relation, values: [...], matchType }`. Die Bedingung hat also ihren **eigenen** `matchType` über ihre Werte, zusätzlich zum `matchType` der Quelle. Zwei Ebenen, und die untere ist genau die, die `ruleSet` verschluckt.
+2. **Skalarwertig** — `{ relation, value }`. Betrifft die Varianten- und die numerischen Metafeld-Bedingungen; `value` ist je nach Art `MoneyInput`, `WeightInput`, `Int`, `Decimal`, `Boolean` oder `ID`.
+3. **Metafeld-Bedingungen** tragen zusätzlich `definitionId: ID!`.
+
+**Ausschlüsse können weniger als Einschlüsse.** Das UI darf nicht annehmen, jede Einschlussbedingung ließe sich spiegeln — weder die Bedingungsart noch die Relationen decken sich.
+
+**Ein `...ConditionUnknown` existiert auf beiden Seiten.** Shopify sieht selbst vor, dass eine Bedingung auftaucht, die der Client nicht kennt. Die Read-only-Regel aus §2.4 ist damit nicht bloß unsere Vorsicht, sondern die vorgesehene Behandlung.
+
+#### Bearbeiten ist ein DIFF, kein Ersetzen
+
+`CollectionUpdateSourceInclusionInput` (und das Ausschluss-Pendant) hat `conditionsToCreate` / `conditionsToDelete` / `conditionsToUpdate` sowie `selectionsToAdd` / `selectionsToRemove`. Eine bestehende Quelle wird also **differenziell** geändert, und `CollectionUpdateConditionsSourceInput` verlangt `id: ID!` — der Editor braucht die Quellen- und Bedingungs-IDs aus dem Lesepfad, ein „ganze Liste neu schreiben" gibt es nicht. Das passt zur Read-only-Regel: was der Editor nicht rendert, fasst er auch nicht an, weil er es schlicht nicht in seine `*ToUpdate`-Liste aufnimmt.
+
+**`CollectionUpdateSourceTargetInput` hat nur `condition` und `subCollections` — kein `shareableSource`.** Eine geteilte Quelle lässt sich anlegen, aber nicht ändern. Bestätigt §2.4, sie draußen zu lassen.
+
+#### Drei Funde, die andere Planstellen korrigieren
+
+1. **`redirectNewHandle: Boolean` existiert** auf `CollectionUpdateInput` **und** auf dem alten `CollectionInput`, also schon unter dem heutigen Pin. §Phase 3.3 behauptet, der Shopify-Admin biete für den Redirect bei Handle-Wechsel eine Checkbox, „die API nicht". Für Collections stimmt das nicht: die Weiterleitung ist ein Flag an der Mutation und braucht **kein** `createRedirect`. Vor 3.3 ist dasselbe für Product/Page/Article zu prüfen — wo das Flag existiert, ist es der richtige Weg, weil Shopify die Weiterleitung dann selbst verwaltet.
+2. **`collectionDuplicate` existiert** (`CollectionDuplicateInput { collectionId, newTitle, copyPublications }`, asynchron über `job`). §2.5f nimmt an, nur Produkte hätten eine Duplicate-Mutation. Phase 1.9 kann für Collections denselben serverseitigen Weg gehen — inklusive `copyPublications`, was die §2.3-Sichtbarkeitsfalle gleich mit erledigt.
+3. **`CollectionIdentifierInput { id, customId, handle }` existiert.** §1.7 setzt für Idempotenz auf `productSet(identifier: { handle })` und nimmt an, für andere Typen brauche es eine Request-ID. Für Collections gibt es eine Handle-Identität — ob eine Create-or-Update-Mutation sie annimmt, ist die Anschlussfrage.
+4. **Metafeld-Bedingungen sind gegated:** `MetafieldCapabilitySmartCollectionConditionInput { enabled: Boolean! }`. Eine Metafeld-Definition muss für Smart-Collection-Bedingungen **freigeschaltet** sein, bevor sie in einer Regel benutzt werden kann. Der Regel-Editor muss die Auswahl auf freigeschaltete Definitionen beschränken oder die Freischaltung anbieten — sonst baut der Merchant eine Regel, die Shopify ablehnt.
+
+---
+
 ### 1.3 Page
 
 `PageCreateInput`: `title` (Pflicht), `handle`, `body`, `isPublished` (bzw. geplantes Datum), `templateSuffix`. Scope: `write_content` **oder** `write_online_store_pages` — beides vorhanden.
@@ -244,7 +332,7 @@ Die drei letzten Zeilen sind bewusst draußen (Begründung §8.2): sie fügen je
 
 **Read-only-Regel:** Trifft der Editor auf eine Struktur, die er nicht rendert — Sub-Collections, Varianten-Targeting, `shareableSource` oder künftige Erweiterungen —, zeigt er sie **read-only mit Admin-Link** und überschreibt sie nicht. Eine Regelstruktur stillschweigend zu vereinfachen würde die Mitgliedschaft einer Collection ändern, ohne dass es jemand merkt. Die interne Datenform ist deshalb immer die volle `sources[]`-Liste.
 
-> **Ehrlichkeitsvorbehalt zur dritten Spalte:** Sie beschreibt den *klassischen* Editor. Das `sources`-Modell ist neu — möglicherweise zeigt Shopifys aktueller Admin bereits Teile davon. Phase-0-Messung, bevor „mehr als Shopify" nach außen behauptet wird.
+> **Zur dritten Spalte (entschieden 2026-08-16):** Sie beschreibt den *klassischen* Editor; das `sources`-Modell ist neu und Shopifys Admin zeigt davon womöglich längst Teile. Das bleibt ungemessen, weil nichts daran hängt: **„mehr als Shopify" wird nach außen gar nicht behauptet.** Der Zuschnitt wird gebaut, weil er dem Merchant nützt — kann Shopify es heute noch nicht, kann es das morgen, und dann war die Behauptung ohnehin nur kurz haltbar.
 
 ### 2.5 Leitlinie: wo möglich mehr können als das Shopify-Interface ✅ ENTSCHIEDEN
 
@@ -344,6 +432,24 @@ Steht vor allem anderen und ist **auch ohne diesen Plan** bis **2026-10-16** zu 
 ---
 
 ### Phase 0 — Fundament: Messungen, Schema, Sync
+
+> **Stand 2026-08-16 — Schritte 2–4 umgesetzt, Schritt 5 teilweise.** Migration
+> [`20260818000000_content_creation_attributes`](../../prisma/migrations/20260818000000_content_creation_attributes/migration.sql),
+> Sync-Mapping in [attribute-sync.shared.ts](../../app/services/attribute-sync.shared.ts),
+> `blog`-Case entschieden und gebaut. `typecheck` + `test` grün (110 Dateien / 2248 Tests).
+> Offen bleiben die Messungen, die eine **echte Shop-Verbindung** brauchen — siehe Schritt 5.
+>
+> **Eine Ergänzung gegenüber dem Entwurf, die tragend ist:** jedes der vier Modelle
+> bekommt zusätzlich ein `attributesSyncedAt DateTime?`. Ohne diesen Diskriminator wäre
+> „vor dem ersten Sync = unbekannt" (§2.4) nicht *darstellbar*: `vendor NULL`,
+> `tags '{}'` und `isPublished true` sind die Migrations-Defaults und von „der Merchant
+> hat nichts eingetragen" nicht zu unterscheiden — exakt die Falle, die CLAUDE.md für
+> `SeoCrawlPage.metaRobots` beschreibt. `attributesKnown()` ist das Gate, durch das jeder
+> Leser dieser Spalten muss. Die Mapper erzwingen die andere Hälfte derselben Regel:
+> liefert eine Antwort den Attribut-Block **nicht**, geben sie `{}` zurück und schreiben
+> weder Defaults über vorhandene Werte noch einen `attributesSyncedAt`-Stempel für Daten,
+> die nie ankamen.
+
 2. **Prisma-Migration:**
    - `Product`: `vendor String?`, `tags String[]`, `categoryId String?`, `categoryName String?`, `templateSuffix String?`, `publishedAt DateTime?`
    - `Collection`: `sortOrder String?`, `templateSuffix String?`, `isSmart Boolean @default(false)`, `sourcesJson Json?` (voller Baum, nicht flachgeklopft — §2.4)
@@ -355,15 +461,26 @@ Steht vor allem anderen und ist **auch ohne diesen Plan** bis **2026-10-16** zu 
    - **GDPR-Drift-Guard:** [gdpr.service.ts](../../app/services/gdpr.service.ts) muss jedes neue shop-scoped Modell löschen, sonst schlägt `tests/unit/gdpr.service.test.ts` fehl — der Test parst das Schema.
 3. **Sync-Queries erweitern:** [product-sync.service.ts:178](../../app/services/product-sync.service.ts#L178) (`vendor`, `tags`, `category`, `templateSuffix`, `publishedAt`, Collection-Mitgliedschaft), analog in [content-sync.service.ts](../../app/services/content-sync.service.ts). Backfill über den regulären Sync; bis dahin sind die Spalten `null` = „unbekannt", nicht „fehlt".
 4. **`blog`-Case in [api.sync-single-resource.tsx](../../app/routes/api.sync-single-resource.tsx)** — und dabei entscheiden, **wohin** er synct: Es gibt kein `Blog`-Modell, heute existieren nur `ContentTranslation`-Zeilen mit `resourceType: "Blog"`. Entweder ein Modell anlegen oder den Case auf „Loader-Revalidierung anstoßen" beschränken. So oder so explizit, nicht implizit.
+
+   **✅ Entschieden (2026-08-16): kein `Blog`-Modell.** Die Primärfelder eines Blog-Containers holt der Loader von [app.blog.tsx](../../app/routes/app.blog.tsx) ohnehin bei **jedem** Besuch live — eine Cache-Zeile wäre eine zweite Wahrheit für Daten, die nie veralten. Nur die Übersetzungen brauchen einen Speicher, und den haben sie (`ContentTranslation`, `resourceType: "Blog"`). `syncSingleBlog` in [content-sync.service.ts](../../app/services/content-sync.service.ts) frischt genau die auf: delete + recreate, **skopiert auf die erfolgreich geholten Market-Layer**, wie im Artikel-Pfad. Nebenbei geschlossen: der Loader backfillt Blog-Übersetzungen nur, wenn ein Blog **gar keine** hat — eine geänderte Übersetzung war damit aus Shopify nie nachladbar. Existiert der Blog nicht, gibt der Case 404 zurück statt einen erfolgreichen No-Op zu melden.
 5. **Messungen** (Ergebnisse hier im Dokument festhalten):
-   - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts`
-   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3)
-   - Zeigt Shopifys aktueller Admin bereits Ausschlüsse/Mehrfachquellen? (§2.4)
-   - **Upsertet `syncSingleX` einen bisher UNBEKANNTEN GID?** CLAUDE.md sagt „Reload only refreshes known IDs"; `syncProduct` holt per ID und upsertet, für Collection/Page/Article/Metaobject ist das ungeprüft. Phase 1.6 verlässt sich darauf.
-   - Reichen `write_inventory`/`write_publications` ohne ihre `read_`-Pendants? (§2.1)
+   - Enums für Ein- **und** Ausschlussbedingungen + `CollectionConditionMatchType` + Limit für die Anzahl Quellen → Grundlage für `collection-rules.shared.ts` — **✅ gemessen 2026-08-16 gegen 2026-07 auf `8c19f3-ce`. Ergebnisse in §1.2a.**
+   - Verwandelt `collectionUpdate` mit `sourcesToCreate` eine bestehende manuelle Collection? (§1.2 Punkt 3) — **✅ JA, gemessen.** Details und Konsequenzen in §1.2a.
+   - ~~Zeigt Shopifys aktueller Admin bereits Ausschlüsse/Mehrfachquellen? (§2.4)~~ — **gestrichen (2026-08-16).** Die Messung sollte nur absichern, ob man „mehr als Shopify" behaupten darf. Wir behaupten es nicht: der Zuschnitt aus §2.4 wird gebaut, weil er nützlich ist, und wir gehen davon aus, dass Shopify es entweder schon kann oder bald können wird. Damit hängt keine Entscheidung mehr an der Antwort.
+   - **Upsertet `syncSingleX` einen bisher UNBEKANNTEN GID?** — **✅ Ja, für alle fünf; am Code beantwortet, keine Shop-Verbindung nötig.** `syncSingleProduct`/`syncSingleCollection`/`syncSingleArticle`/`syncSinglePage` holen per ID und schreiben ein `upsert` **mit `create`-Zweig** — ein unbekannter GID wird angelegt, nicht verworfen. Metaobjects gehen über `syncMetaobjectsForType`, das den ganzen Typ neu holt, also einen neuen Eintrag ebenfalls findet. Die CLAUDE.md-Regel „Reload only refreshes known IDs" meint etwas anderes und bleibt richtig: die **Liste** entdeckt nichts Neues (nur `syncAll*` tut das) — aber ein gezielter Reload auf einen bekannten neuen GID, und genau den hat Phase 1.6 nach dem Create, funktioniert.
+   - Reichen `write_inventory`/`write_publications` ohne ihre `read_`-Pendants? (§2.1) — **offen, erst in Phase 4 messbar.**
 6. **Webhooks:** `products/create` feuert bei unserem eigenen Create mit ([webhooks.products.tsx:141](../../app/routes/webhooks.products.tsx#L141)). Zusammen mit dem expliziten Sync ergibt das zwei Syncs — beide Upserts, also idempotent. `altTextModifiedAt` (5-Min-Preserve-Fenster) muss auch beim Create gesetzt werden.
 
 **DoD:** Migration angewendet, ein Sync-Lauf füllt die Spalten, alle Messungen beantwortet und notiert, `typecheck` + `test` grün.
+
+> **Migration gegen ein echtes Postgres verifiziert (2026-08-16), nicht nur gelesen:** Basis-Schema per `db push` materialisiert, mit je einer Zeile pro Tabelle befüllt, `migration.sql` angewendet, danach `prisma migrate diff` gegen das Ziel-Schema → **leer**. Die bestehenden Zeilen tragen anschließend die Defaults **und `attributesSyncedAt = NULL`**, also „unbekannt" — genau das Verhalten aus §2.4. Der Lauf hat auch den Grund für die zwei expliziten `@default([])` geliefert: ohne sie meldet `migrate diff` gegen **jede** deployte DB dauerhaft Drift, weil Postgres eine `NOT NULL`-Spalte nur mit Default zu einer gefüllten Tabelle hinzufügen kann.
+>
+> **Dabei aufgefallen und mitgefixt (unabhängig von diesem Plan): eine frische Datenbank kam bisher nicht hoch.** Zwei getrennte Ursachen, beide erst sichtbar, wenn man `migrate deploy` tatsächlich einmal gegen eine leere DB laufen lässt:
+>
+> 1. `20260516000004_add_initial_sync_completed_at` brach mit `42804` ab — `SELECT DISTINCT p."shop", NULL, …`, und Postgres typt ein nacktes `NULL` als `text`, während `uninstalledAt` `timestamp` ist. Die Spalte wird dort gar nicht gesetzt, gehört also nicht in die Spaltenliste; das ist der ehrlichere Fix als ein `NULL::timestamp`.
+> 2. Danach zeigte ein `migrate diff` gegen das Schema vier Spalten, die in **keiner** Migration stehen (`AISettings.selectedModel` / `seoTitleSuffix` / `seoTitleSuffixEnabled`, `Task.aiModel`) — irgendwann per `db push` auf die bestehenden DBs gebracht und nie festgehalten. Das ist die unangenehmere Hälfte: der Deploy wäre durchgelaufen und erst der **erste Request** wäre gescheitert. Nachgetragen in `20260818000100_fresh_db_schema_gaps`, alles `IF NOT EXISTS` und damit auf bestehenden DBs ein reiner No-Op (gemessen).
+>
+> Die Prüfsummen-Sorge bei (1) hat sich gemessen erledigt: `prisma migrate deploy` verifiziert die Prüfsummen bereits angewendeter Migrationen **nicht** — es meldet „No pending migrations to apply" und wendet nachfolgende Migrationen normal an (Postgres 16 / Prisma 6.19). Nur `migrate dev` würde Drift monieren, und das läuft in keinem Deploy-Pfad. Ergebnis: volle Historie auf einer leeren DB grün, `migrate diff` gegen das Schema leer.
 
 ---
 
@@ -499,6 +616,10 @@ Jede Zeile mit Ampel und klickbar → springt zum Feld im Editor (Phase 3) bzw. 
    - `collectionRules` — der `CollectionRuleBuilder` für bestehende Collections, über `collectionUpdate` (`sourcesToCreate`/`sourcesToUpdate`; erzwingt die Migration aus §1.2 Punkt 4). Read-only-Regel §2.4.
 2. **Schreiben** über den bestehenden `updateContent`-Pfad, damit die Change-Detection gegen die Session-Baseline unverändert gilt. Preis über `productSet`/`productVariantsBulkUpdate`, danach `ProductVariant`-Mirror.
 3. **Redirect bei Handle-Wechsel (§A1).** Die App ändert Handles heute an drei Stellen — Einzel-Editor, Bulk-Spalte `field.handle`, bulk-translate — und legt **nie** einen Redirect an; jede Änderung bricht still die alte URL. Der Shopify-Admin bietet dafür eine Checkbox, die API nicht. `createRedirect` aus [redirects.service.ts](../../app/services/seo/redirects.service.ts) einhängen, per Checkbox angeboten, bei brandneuen Objekten unterdrückt.
+
+   **Offene Frage 3 — Redirect × Locale-Präfix — ist GEMESSEN (2026-08, Live-Shop, [api.redirect-locale-probe.tsx](../../app/routes/api.redirect-locale-probe.tsx)).** Ein Wegwerf-Redirect `/<probe>` → `/<target>`, beide Seiten unverwechselbar, beantwortet beide Hälften: `/en/<probe>` liefert **301**, ein präfigierter Pfad greift also auf die pfadbasierte Redirect-Tabelle zu; und die `Location` ist `/en/<target>`, das Präfix wird also **mitgeführt**. Damit deckt **eine unpräfigierte Zeile jede Sprache ab** — pro Locale eine eigene Zeile wäre überflüssig, nicht nötig.
+
+   **Gebaut:** `decideTranslatedHandleRedirect` ([handle-redirect.shared.ts](../../app/services/seo/handle-redirect.shared.ts)) deckt die Fremdsprachen-Hälfte ab — Bulk-Grid-Zelle `field.handle` im Fremdsprachen-Modus und der Fremdsprachen-Save des Einzel-Editors. Genau die Reichweite der einen Zeile macht sie heikel (sie greift unter *jedem* Präfix), deshalb verweigert sie vier Fälle: **keine vorherige Übersetzung** (die Sprache wurde unter dem PRIMÄR-Handle ausgeliefert, das live bleibt — deshalb erzeugt bulk-translate, das nur leere Werte füllt, keinen einzigen Redirect), ein altes Handle, das noch das primäre oder **das einer anderen Sprache** desselben Objekts ist (die Zeile würde eine lebende Seite kapern), eine **markt-spezifische** Übersetzung (shop-weite Zeile ≠ Markt-URL) und einen **Artikel unter einem Blog mit übersetztem Handle** (zwei übersetzbare Segmente, welche Schreibweise der Storefront ausliefert ist ungemessen → `localeBlogHandleUnknown`, nie geraten). Eine **gelöschte** Übersetzung leitet zurück auf das Primär-Handle. Bewusst offen: eine Kollision mit dem Handle eines *anderen* Objekts in einer anderen Sprache wird nicht geprüft — `ContentTranslation.value` hat keinen Index.
 4. **IndexNow am Statuswechsel (§A2).** Produkte/Collections sind über Webhooks abgedeckt; für **Pages, Artikel und Blogs existiert kein Webhook** — eine hier angelegte Page erreicht IndexNow erst beim manuellen Katalog-Versand. Enqueue gehört an den Übergang auf `ACTIVE`/`isPublished`, nicht an den Create (Draft-URLs pingt man nicht); die Regel dafür ist `shouldEnqueueProductChange`, für Artikel `articleUrl` + `enqueueIndexNowUrl`.
 5. **Übersetzungs-Semantik markieren:** `tags`, `vendor`, `category`, `status`, `price` bekommen `supportsTranslation: false` und im Fremdsprachen-Modus einen erklärenden deaktivierten Zustand. `productType` bleibt übersetzbar — dort greift `GroupedFieldTranslation` (shop-weit einheitlich), das darf nicht umgangen werden.
 6. **Bulk-Editor nachziehen:** `vendor` und `tags` als Spalten (`status` existiert bereits).
@@ -561,7 +682,7 @@ Die Phase mit dem Scope-Change → **ein Deploy, eine Re-Consent-Runde**. Vorher
 | **−1** | **API-Umzug 2025-10 → 2026-07 — Frist 2026-10-16, auch ohne diesen Plan fällig** | **1–2 Tage** | nein |
 | 0 | Migration, Sync-Felder, Join-Modell, `blog`-Case, Messungen | 1–2 Tage | nein |
 | 1 | Create-Modal + `createContent`, sechs Typen, Idempotenz, Undo, Duplizieren | 3–4 Tage | nein |
-| 1.4b | `CollectionRuleBuilder` + `collection-rules.shared.ts` | 2–3 Tage | nein |
+| 1.4b | ✅ `CollectionRuleBuilder` + `collection-rules.shared.ts`, im Create-Modal **und** im Editor bestehender Collections (API-Guard ≥2026-07, Bearbeiten als Bedingungs-Diff) |
 | 1b | Rename `SeoSidebar` → `ItemSidebar` (eigener Commit) | ~1 h | nein |
 | 2 | Attribute-Tab | 1 Tag | nein |
 | 3 | Feldtypen, Status, Preis, Redirects, IndexNow | 3–4 Tage | nein |
@@ -599,3 +720,32 @@ Der Review hat drei Punkte gegen bereits getroffene Entscheidungen vorgebracht. 
 **8.4 Bulk-Create über die vorhandene CSV-Pipeline.** [csv-import.server.ts](../../app/services/bulk-editor/csv-import.server.ts) + `csv.shared.ts` sind eine vollständige, getestete, Pro-gegatete Import-Pipeline mit Preview und Caps — sie kann heute nur updaten (`resolveCsvRowId` wirft für Zeilen ohne Treffer). Zeilen *ohne* ID zu Creates zu machen wäre das kleinstmögliche „viele anlegen". **Vorbehalt:** CLAUDE.md beschreibt `applyBulkDiff` als DEN einen Write-Pfad mit genau drei Eingängen — Creates darin wären eine bewusste Erweiterung, keine stille. **Status: nicht v1**, aber hier festgehalten, damit niemand einen zweiten CSV-Parser baut.
 
 **8.5 Weitere Kandidaten, bewusst zurückgestellt:** interne Verlinkung auf ein neues Objekt anbieten (`runInternalLinkSuggestions`, als Button in der Post-Create-InfoBox — der SEO-Contract verbietet automatisches Feuern langer Scans); Metafelder schon im Create-Formular (`scanProductMetafields` weiß, welche der Shop hat); ein shop-weites Alt-Text-Template als deterministische Alternative zum AI-Call (`fillAltTextTemplate`).
+
+---
+
+## 9. Stückpreis (Grundpreis) — gemessen, 2026-08-19, API 2026-07
+
+Shopify zeigt auf seiner eigenen Variantenseite eine Box „Stückpreis": Gesamtmenge einer Packung (500 g) und eine Referenzeinheit (1 kg), woraus die Storefront „CHF 22.90 · CHF 45.80 / kg" macht. Das ist eine Preisauszeichnungspflicht (PAngV in DE, PBV in CH, Richtlinie 98/6/EG hinter beiden) und betrifft alles, was nach Gewicht oder Volumen verkauft wird.
+
+Ob das Feld **schreibbar** ist, stand nicht in der Doku. Gemessen mit [api.unit-price-probe.tsx](../../app/routes/api.unit-price-probe.tsx) (Settings → Probes → Unit price, dev-only) auf einem echten Shop:
+
+| Frage | Antwort |
+|---|---|
+| Feld im Input? | **ja** — `ProductVariantsBulkInput.unitPriceMeasurement`, dazu `showUnitPrice` |
+| `UnitPriceMeasurementInput` | `quantityValue`, `quantityUnit`, `referenceValue`, `referenceUnit` |
+| Einheiten-Enum | **nicht `WeightUnit`.** `ML, CL, L, M3, FLOZ, PT, QT, GAL, MG, G, KG, OZ, LB, MM, CM, M, IN, FT, YD, M2, FT2, ITEM, UNKNOWN` |
+| Schreiben | **ja**, Echo bestätigt |
+| Löschen mit `unitPriceMeasurement: null` | **nein** — akzeptiert, keine `userErrors`, Wert bleibt stehen |
+| Löschen mit der ausgeschriebenen leeren Messung | **ja** |
+
+Die dritte und die fünfte Zeile sind die teuren. `null` ist eine **Abwesenheit**, die die Mutation überspringt; der leere Zustand ist ein **Wert**, und genau als solcher liest eine Variante ohne Grundpreis zurück (`{quantityValue: 0, quantityUnit: null, referenceValue: 0, referenceUnit: null}` — **nicht** `null`). `EMPTY_MEASUREMENT_INPUT` in der Probe-Route hält die Schreibweise fest; wer das Feature baut, nimmt sie von dort, sonst schlägt das Löschen still fehl und der Merchant bekommt einen falschen Grundpreis nicht mehr weg.
+
+Ebenfalls messbar geworden, weil es zweimal falsch beantwortet wurde: **eine Antwort, die den vorgefundenen Zustand wiederholt, ist keine Messung.** Der erste Lauf meldete „hide: yes", weil `showUnitPrice` schon vorher `false` war und jeder Versuch brav `false` zurückgab; ein zweiter meldete `null` als funktionierenden Lösch-Weg, weil die Variante bereits leer war. Beide Schritte prüfen jetzt gegen den Vorher-Zustand, und der Schalter wird **umgelegt und zurückgelegt** statt gelesen.
+
+**Nachgemessen (zweiter Lauf):** `unitPriceMeasurement: null` wird akzeptiert und ignoriert; die **ausgeschriebene leere Messung** löscht. Das ist der Weg, den `EMPTY_MEASUREMENT_INPUT` festhält.
+
+**Weiterhin offen — und das Feature ist damit gebaut, nicht darauf gewartet:** ob `showUnitPrice` ein echter, umkehrbarer Schalter ist. Auf dem Messshop war er durchgehend `false`, also nie bewegt; die Probe legt ihn inzwischen um und wieder zurück, dieser Lauf steht aus. Der Schalter wird trotzdem angeboten: gated die Storefront den Grundpreis daran, hiesse Zurückhalten, eine Messung zu schreiben, die niemand sieht. Der Preis eines Irrtums ist durch das Echo begrenzt — ein Schalter, der sich nicht bewegt, meldet sich mit einem **eigenen** Code (`unitPriceNotShown`), während die Messung gespeichert bleibt. Ebenfalls ungemessen: ob die Storefront den Grundpreis zeigt, solange der Schalter aus ist.
+
+**Bewusst nicht validiert, weil ungemessen:** was Shopify mit gemischten Dimensionen macht (500 **g** pro 1 **l**). Diese App lehnt das Paar selbst ab (`unitPriceDimension`), statt es auf einer Storefront herauszufinden.
+
+**Entscheidung fürs UI, wenn gebaut wird:** eigenes Disclosure in der Preise-Card, wie der Zoll-Block im Versand. Shopifys Popover-Muster (alles ausser dem effektiven Preis hinter einem Aufklapper) wird **nicht** breit übernommen: die drei Preise stehen bewusst nebeneinander, und beim Bulk-Edit über mehrere Varianten müsste man sonst pro Feld auf- und zuklappen.

@@ -483,3 +483,105 @@ describe("storefront Liquid block: priceValidUntil parity with the service", () 
     expect(liquid).toMatch(/pvu_raw = product\.metafields\./);
   });
 });
+
+/**
+ * VideoObject lives ONLY in the storefront block: the DB cache holds product
+ * IMAGES, not videos, so the app-side builder has nothing to build from and the
+ * preview deliberately says so. A unit test cannot render Liquid, but it can
+ * pin the rules that make this markup trustworthy.
+ */
+describe("storefront Liquid block: VideoObject", () => {
+  const liquid = readFileSync(
+    join(__dirname, "../../extensions/storefront/blocks/structured-data.liquid"),
+    "utf8",
+  );
+
+  it("never invents an upload date", () => {
+    // The only date source is the merchant's metafield — the same rule
+    // priceValidUntil follows. A clock-derived value would be a fabricated
+    // claim about when a video was published.
+    expect(liquid).toContain("product.metafields.custom.video_upload_date.value");
+    expect(liquid).not.toMatch(/v_upload\s*=\s*'now'/);
+    expect(liquid).not.toMatch(/v_upload\s*=\s*product\.published_at/);
+    expect(liquid).not.toMatch(/v_upload\s*=\s*product\.created_at/);
+  });
+
+  it("guards every uploadDate emission with a non-empty check", () => {
+    // Two emission sites since PLAN_MARKUP_ACTIVATION Phase 3: the product-media
+    // loop and the variant-gallery loop. Both must be guarded — an unguarded one
+    // would print `"uploadDate": ""`, which is a claim, not an omission.
+    const emissions = liquid.split("\n").filter((l) => l.includes('"uploadDate":'));
+    expect(emissions).toHaveLength(2);
+    for (const line of emissions) {
+      expect(line).toMatch(/\{%-?\s*if v_upload(_override)? != blank/);
+    }
+  });
+
+  it("uses ONLY the merchant override for a gallery video's upload date", () => {
+    // A URL entry has no `File` record, so `File.createdAt` — and with it the
+    // whole custom.video_upload_dates map the product sync writes — cannot
+    // apply. Reading the map there would date a gallery video by some other
+    // video's file, which is worse than omitting the property.
+    const galleryEmission = liquid
+      .split("\n")
+      .filter((l) => l.includes('"uploadDate":'))
+      .find((l) => l.includes("v_upload_override"));
+    expect(galleryEmission).toBeDefined();
+    expect(galleryEmission).not.toContain("v_upload_map");
+  });
+
+  it("deduplicates gallery videos by host+id, product-wide", () => {
+    // The same video arrives as a watch link, a youtu.be short link and a native
+    // external_video; deduplicating on the raw URL would print three
+    // VideoObjects for one video — the duplicate markup this whole plan is
+    // about. The seen-set is comma-fenced so a `,needle,` check cannot match a
+    // partial id.
+    expect(liquid).toContain("assign v_seen_ids = ','");
+    expect(liquid).toMatch(/v_seen_ids \| append: v_media\.host \| append: '\|' \| append: v_media\.external_id/);
+    expect(liquid).toMatch(/assign v_needle = ',' \| append: v_pair \| append: ','/);
+    expect(liquid).toContain("{%- unless v_seen_ids contains v_needle -%}");
+  });
+
+  it("reads both variant metafields that can hold an external video URL", () => {
+    expect(liquid).toContain("v_variant.metafields.custom.variant_gallery_order");
+    expect(liquid).toContain("v_variant.metafields.custom.variant_external_videos");
+  });
+
+  it("captures the shared parser's answer and unwraps Shopify's snippet markers", () => {
+    // `{% render %}` is scope-isolated, so the answer travels as printed text —
+    // and `capture` keeps every byte Shopify wrote, including the
+    // `<!-- BEGIN app snippet: … -->` markers it wraps an extension snippet's
+    // FIRST render on a page in. A bare `| strip` removes whitespace, not
+    // comments, so `v_ghost` was never `youtube` and the block emitted nothing
+    // at all — no output, no error. The split pair unwraps the markers when
+    // they are there and is a no-op when they are not.
+    expect(liquid).toContain("{%- render 'cp-external-video', url: v_gurl -%}");
+    expect(liquid).toContain(
+      "{%- assign v_pair = v_pair | split: '-->' | last | split: '<!--' | first | strip -%}",
+    );
+  });
+
+  it("covers external videos, not just Shopify-hosted ones", () => {
+    expect(liquid).toContain("external_video");
+    expect(liquid).toContain("https://www.youtube.com/embed/");
+    expect(liquid).toContain("https://player.vimeo.com/video/");
+  });
+
+  it("emits nothing without a thumbnail AND a video URL", () => {
+    // Liquid has no operator precedence and evaluates and/or RIGHT TO LEFT, so
+    // the guard must stay a single flag rather than a compound condition —
+    // otherwise it silently means something other than it reads.
+    expect(liquid).toContain("{%- if v_thumb != blank and v_has_url -%}");
+    expect(liquid).not.toMatch(/if v_thumb != blank and .* or .* and /);
+  });
+
+  it("converts the duration from Liquid milliseconds to ISO-8601", () => {
+    expect(liquid).toMatch(/v_secs = v_media\.duration \| divided_by: 1000/);
+    expect(liquid).toMatch(/v_rest = v_secs \| modulo: 60/);
+  });
+
+  it("is offered as its own opt-out setting", () => {
+    expect(liquid).toContain('"id": "enable_video"');
+    expect(liquid).toContain("assign want_video = block.settings.enable_video");
+  });
+});

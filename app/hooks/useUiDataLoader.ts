@@ -13,8 +13,14 @@ import { isThemeContentType } from "~/utils/content-type-groups";
 import { useRef, useState, useCallback } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import type { MetaobjectEntry } from "../utils/contentEditor.utils";
+import {
+  metaobjectFieldValueFor,
+  type MetaobjectDefinitionFieldLike,
+  type MetaobjectEntryLike,
+} from "../services/metaobject-fields.shared";
 import { debugLog } from "../utils/debug";
 import { isMetaobjectLabelField } from "../constants/shopifyFields";
+import { RULES_UNREADABLE } from "../config/collection-rules.shared";
 import type {
   TranslatableContentItem,
   ContentEditorConfig,
@@ -212,19 +218,25 @@ export function getItemFieldValue(
     return content?.value || "";
   }
 
-  // Metaobjects: Check metaobjects array
-  // fieldKey is the metaobject ID, find the metaobject and get its label field
-  const itemWithMetaobjects = item as { metaobjects?: MetaobjectEntry[] };
+  // Metaobjects: the field key is `<Metaobject GID>#<field key>` (§6.1). Only
+  // reached when no config was passed — METAOBJECTS_CONFIG has a getFieldValue
+  // and short-circuits above — but it answers through the SAME reader so the
+  // two cannot disagree about what a compound key means.
+  const itemWithMetaobjects = item as {
+    metaobjects?: MetaobjectEntry[];
+    fieldDefinitions?: MetaobjectDefinitionFieldLike[];
+  };
   if (itemWithMetaobjects.metaobjects && Array.isArray(itemWithMetaobjects.metaobjects)) {
-    const metaobject = itemWithMetaobjects.metaobjects.find((m) => m.id === fieldKey);
-    if (metaobject) {
-      // Find the label field (display_name, name, or label)
-      const labelField = metaobject.fields?.find((f) => isMetaobjectLabelField(f.key));
-      return labelField?.value || metaobject.displayName || "";
-    }
+    return metaobjectFieldValueFor(
+      itemWithMetaobjects.metaobjects as MetaobjectEntryLike[] | undefined,
+      itemWithMetaobjects.fieldDefinitions,
+      fieldKey,
+      isMetaobjectLabelField,
+    );
   }
 
   // Standard content types: Common field mappings
+  const row = item as unknown as Record<string, unknown>;
   const fieldMappings: Record<string, string> = {
     title: item.title || "",
     description: item.descriptionHtml || item.body || "",
@@ -234,6 +246,40 @@ export function getItemFieldValue(
     body: item.body || "",
     summary: item.summary || "",
     productType: item.productType || "",
+    // ── PLAN §Phase 3 merchandising attributes ──────────────────────────────
+    // Every editor value is a STRING — `getChangedFields` compares strings —
+    // so the two non-string columns are flattened here, at the one place that
+    // turns an item into editable values, rather than in each control.
+    status: String(row.status ?? ""),
+    vendor: String(row.vendor ?? ""),
+    author: String(row.author ?? ""),
+    sortOrder: String(row.sortOrder ?? ""),
+    templateSuffix: String(row.templateSuffix ?? ""),
+    // Comma-joined, matching AttributeField's parse/serialize pair.
+    tags: Array.isArray(row.tags) ? (row.tags as string[]).join(", ") : "",
+    // `isPublished` defaults to TRUE in the schema, so a missing value must
+    // read as published — the same rule as the column's own default.
+    isPublished: row.isPublished === false ? "false" : "true",
+    // §3.1 — the rule sources, already parsed into the editor's model by the
+    // loader. JSON because every editor value is a string and change detection
+    // compares strings; an empty string means "no rules", which is a value the
+    // save acts on and not a missing one. That is exactly why the loader's
+    // `null` must NOT collapse into "": null means the row holds a model this
+    // editor may not touch (a `ruleSet` projection, an unsynced collection),
+    // and an empty builder over a collection that HAS rules would make its own
+    // emptiness true on the first save.
+    // §Phase 3.1 — the category travels as its GID, which is what the write
+    // path needs; the NAME is a label and lives on the item, not in this map.
+    category: typeof row.categoryId === "string" ? row.categoryId : "",
+    // §Phase 3.1 — membership as a comma-joined GID list, like every other
+    // value here. `null` means the row was never attribute-synced, and "" would
+    // read as "in no collections" — which the save would then act on.
+    collections: Array.isArray(row.collections)
+      ? (row.collections as Array<{ id?: string }>).map((c) => c.id ?? "").filter(Boolean).join(",")
+      : "",
+    collectionRules: Array.isArray(row.ruleSources)
+      ? JSON.stringify(row.ruleSources)
+      : RULES_UNREADABLE,
   };
 
   return fieldMappings[fieldKey] || "";
@@ -302,6 +348,27 @@ export function useUiDataLoader(
       translationKey: string,
       locale: string
     ): ResolvedField => {
+      // ---- NOT TRANSLATABLE AT ALL (PLAN §Phase 3 attributes) ----
+      // An empty `translationKey` means Shopify stores ONE value for this
+      // field, not one per locale — status, vendor, tags, author, sort order.
+      // Sent down the foreign chain below it would match no market row, no
+      // override and no translation, and come back "" — so a foreign locale
+      // would show an ACTIVE product as DRAFT (a Polaris Select with value ""
+      // renders its first option) and a hidden page as visible. The control is
+      // read-only there and correctly says the value exists once per item; the
+      // one thing it must not do is show a value the item does not have.
+      if (!translationKey) {
+        const savedOverride = savedPrimaryValuesRef.current[item.id];
+        if (savedOverride && savedOverride[fieldKey] !== undefined) {
+          return { value: savedOverride[fieldKey], source: "savedPrimaryCache", isFallback: false };
+        }
+        return {
+          value: getItemFieldValue(item, fieldKey, primaryLocale, config),
+          source: "itemField",
+          isFallback: false,
+        };
+      }
+
       // ---- PRIMARY LOCALE ----
       if (locale === primaryLocale) {
         // 1. Check savedPrimaryCache

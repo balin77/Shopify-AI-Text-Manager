@@ -7,6 +7,7 @@
 import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
+import type { DetailsSectionId } from "~/config/details-sections";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -99,9 +100,14 @@ export interface TranslatableContentItem {
     id: string;           // gid://shopify/ProductOption/...
     name: string;
     position: number;
-    values: Array<{ id: string; name: string; linked?: boolean }>;  // ProductOptionValue GIDs
+    values: Array<{ id: string; name: string; linked?: boolean; linkedValue?: string }>;  // ProductOptionValue GIDs; linkedValue = the metaobject GID behind a linked value
     isLinked?: boolean;   // true = metaobject-linked (values translated via Metaobjects, not here)
-    linkedMetaobjectType?: string;  // metaobject definition type handle (e.g. "color")
+    /** The linked METAFIELD's `namespace--key` (e.g. "shopify--color-pattern"),
+     *  NOT the metaobject definition type. The two are spelled alike only for
+     *  Shopify's standard definitions; for a custom option (`custom--stoff` over
+     *  the definition `stoff`) they differ, which is why the metaobjects page
+     *  strips the namespace before matching and prefers a linked entry GID. */
+    linkedMetafieldKey?: string;
   }>;
   metafields?: Array<{
     id: string;           // gid://shopify/Metafield/...
@@ -238,15 +244,57 @@ export interface TranslationStrings {
   [key: string]: Record<string, TranslationValue> | Record<string, HelpContent> | undefined;
 }
 
-export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
+export type ContentType = 'products' | 'collections' | 'blogs' | 'pages' | 'policies' | 'templates' | 'metaobjects' | 'directTranslations' | 'menus' | 'system' | 'delivery' | 'sellingPlans' | 'onlineStoreExtras';
 
-export type FieldType = 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options';
+/**
+ * `select`, `tags` and `toggle` are the PLAN_CONTENT_CREATION §Phase 3
+ * merchandising attributes. They differ from every type above them in one way
+ * that runs through the whole editor: they are NOT translatable. Shopify stores
+ * one value per item, not one per locale (`FIELD_TO_TRANSLATION_KEY` lists what
+ * is translatable, and none of these are on it), so in a foreign locale they
+ * render read-only with an explanation rather than looking editable and then
+ * silently writing the primary value.
+ */
+export type FieldType =
+  | 'text' | 'html' | 'slug' | 'textarea' | 'number' | 'image-gallery' | 'options'
+  | 'select' | 'tags' | 'toggle' | 'money' | 'collectionRules'
+  // §Phase 3.1 — two lookups the cache cannot answer alone. `taxonomy` is
+  // Shopify's own ~10k-node category tree (searched live); `collections` is
+  // the shop's collection list, read from this app's own cache.
+  | 'taxonomy' | 'collections'
+  // Phase 4 — stock per location and sales channels. Its own type because it
+  // loads LIVE and saves through its own endpoint: stock is volatile, so a
+  // number carried in the editor's flat value map would be stale by the time
+  // the merchant pressed save.
+  | 'commerce';
+
+/**
+ * One dynamic field handed to a page's `renderFieldGroup`.
+ *
+ * The rendered node alone would force the page to place controls by POSITION.
+ * The definition lets it pick one out by key, and the live value lets it paint
+ * something beside the control while the merchant is still typing.
+ */
+export interface RenderedGroupField {
+  field: FieldDefinition;
+  /** What the editor currently holds for it — not what the item stores. */
+  value: string;
+  node: React.ReactNode;
+}
 
 export interface FieldRenderProps {
   value: string;
   onChange: (value: string) => void;
   field: FieldDefinition;
   disabled?: boolean;
+  /**
+   * The editor's own read-only verdict — theme content in the primary locale,
+   * an app-embed technical field, or a metaobject definition Shopify does not
+   * let this app write (§7.2). A custom renderer that ignores it presents an
+   * editable control whose save can only fail, which is what the flag exists
+   * to prevent.
+   */
+  readOnly?: boolean;
   suggestion?: string;
   isPrimaryLocale?: boolean;
   isTranslated?: boolean;
@@ -269,9 +317,31 @@ export interface FieldRenderProps {
   t?: TranslationStrings;
 }
 
+/**
+ * Which card a field renders in.
+ *
+ * `searchEngine` collects the three fields Shopify's own admin groups under
+ * "Search engine listing" (SEO title, meta description, URL handle) into a
+ * card of their own, below the item's text. Everything else defaults to the
+ * main content card; merchandising attributes are routed separately by
+ * `isAttributeField`, from their marks rather than from this one.
+ */
+export type FieldCard = 'main' | 'searchEngine';
+
 export interface FieldDefinition {
   /** Unique key for this field */
   key: string;
+
+  /** Which card this field renders in (default: "main") */
+  card?: FieldCard;
+
+  /**
+   * Merchandising attributes only: which SUBCARD of the Details card this
+   * field sits in. Consecutive fields sharing a section fold into one subcard
+   * (see config/details-sections.ts); with fewer than two sections the card
+   * renders flat, as it did before.
+   */
+  detailsSection?: DetailsSectionId;
 
   /** Field type determines the UI component */
   type: FieldType;
@@ -281,6 +351,17 @@ export interface FieldDefinition {
 
   /** Translation key used in Shopify API */
   translationKey: string;
+
+  /**
+   * Dynamic fields only: which CARD this field belongs to.
+   *
+   * The metaobjects tab builds one field per entry x definition field, and a
+   * flat list of them repeats every label ("Label", "Colour", "Label", ...)
+   * with nothing saying which entry it belongs to. Fields sharing a groupId
+   * are handed to the page's `renderFieldGroup` as one group; without one the
+   * editor renders the fields exactly as it always did.
+   */
+  groupId?: string;
 
   /** Optional help text */
   helpText?: string | ((value: string) => string);
@@ -308,6 +389,27 @@ export interface FieldDefinition {
 
   /** Optional: Custom render function for special field types */
   renderField?: (props: FieldRenderProps) => React.ReactNode;
+
+  // ── PLAN_CONTENT_CREATION §Phase 3 — merchandising attributes ─────────────
+
+  /** `select` only. `labelKey` resolves under `t.content.fieldOptions`, with
+   *  `label` as the fallback so a missing translation degrades to English
+   *  rather than to a raw enum value. */
+  options?: Array<{ value: string; labelKey?: string; label: string }>;
+
+  /** `tags` only: suggestions for the autocomplete, gathered from the shop. */
+  suggestionsKey?: 'productTags' | 'articleTags';
+
+  /** `toggle` only: what the two states mean, e.g. published vs. hidden. */
+  toggleLabels?: { on: string; off: string };
+
+  /** Rendered under the control — for the things a merchant cannot see, like
+   *  "Active does not mean visible without a sales channel" (§2.3). */
+  attributeNote?: string;
+
+  /** `money` only: the shop currency, shown as a suffix. Currency is shop-wide,
+   *  never per field — the same rule the bulk editor's money columns follow. */
+  currencyCode?: string;
 }
 
 export interface ContentEditorConfig {
@@ -327,7 +429,38 @@ export interface ContentEditorConfig {
   displayNameSingular: string;
 
   /** Whether to show SEO sidebar */
-  showSeoSidebar?: boolean;
+  showItemSidebar?: boolean;
+
+  /**
+   * PLAN_CONTENT_CREATION §1.1/§2.6 — which resource the "+" button creates.
+   *
+   * A FLAG per config, not a global default, because create is impossible on
+   * several tabs and for different reasons: policies are a fixed set of six
+   * with no create API, the whole theme-content family has no creatable
+   * resources at all. Leaving it unset is how those tabs say so.
+   *
+   * `blogs` is the one tab with TWO creatable resources (the blog container
+   * and an article inside it), which is why this is a list.
+   */
+  createSupport?: {
+    /** Offered in the create menu, in this order. */
+    resources: Array<"product" | "collection" | "page" | "article" | "blog" | "metaobject">;
+    /**
+     * Also offer creating from the EDITOR's action bar, not only from the "+"
+     * above the item list.
+     *
+     * Set where the item list does not list the thing that gets created. On
+     * the metaobjects tab the list holds TYPES ("Color", "Material") while
+     * create makes an ENTRY, so a "+" above that list reads as "add a type" --
+     * which this app cannot do at all, and which is why merchants looked at
+     * an open type and found no way to add anything to it. The action bar sits
+     * above the entry cards, i.e. above the things that actually appear.
+     *
+     * Everywhere else the list holds the created thing and the "+" is already
+     * in the right place; a second button there would be noise.
+     */
+    fromActionBar?: boolean;
+  };
 
   /** Custom primary field getter (t is optional for i18n support) */
   getPrimaryField?: (item: TranslatableContentItem, t?: I18nTranslation) => string | undefined;

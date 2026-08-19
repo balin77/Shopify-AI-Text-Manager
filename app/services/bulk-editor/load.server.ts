@@ -650,6 +650,13 @@ async function loadBulkRowsInner(
         descriptionHtml: true,
         productType: true,
         status: true,
+        // §Phase 3.6 merchandising columns. `attributesSyncedAt` travels with
+        // them for the same reason it does everywhere else: `vendor: null` and
+        // `tags: []` on a row an older sync wrote are the migration's
+        // defaults, not the merchant's data.
+        vendor: true,
+        tags: true,
+        attributesSyncedAt: true,
         featuredImageUrl: true,
         featuredImageAlt: true,
         // Dynamic cell payloads (Phase 2), loaded only when the plan's cache
@@ -706,6 +713,12 @@ async function loadBulkRowsInner(
             descriptionHtml: (i.descriptionHtml as string | null) ?? "",
             productType: (i.productType as string | null) ?? "",
             status: (i.status as string | null) ?? "",
+            vendor: (i.vendor as string | null) ?? "",
+            // ONE cell holding a list, comma-joined the same way the single
+            // editor's chips serialise — the grid stores strings, and a save
+            // REPLACES the product's tags rather than adding to them.
+            tags: Array.isArray(i.tags) ? (i.tags as string[]).join(", ") : "",
+            attributesKnown: !!i.attributesSyncedAt,
             imageUrl: (i.featuredImageUrl as string | null) ?? undefined,
             imageAlt: (i.featuredImageAlt as string | null) ?? undefined,
             metafields: mapRowMetafields(i.metafields),

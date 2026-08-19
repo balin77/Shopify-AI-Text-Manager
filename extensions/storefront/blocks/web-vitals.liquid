@@ -1,6 +1,13 @@
 {%- comment -%}
   App Embed Block (target: body) — real-user Core Web Vitals monitoring
-  ("Web Vitals (RUM)").
+  ("Web Vitals (RUM)"), plus the AI-referral beacon.
+
+  This embed carries BOTH measurements the app takes on a live pageview. The
+  referral beacon started out in structured-data.liquid and moved here: JSON-LD
+  is markup a merchant may legitimately switch off, and switching off markup
+  must not silently switch off the visit counter. Both beacons live in
+  assets/web-vitals.js (assets are served statically and do not count towards
+  the extension's 100 KiB Liquid budget).
 
   Loads a small client-side script that observes LCP, CLS, INP, FCP and TTFB
   for the current pageview via the browser's PerformanceObserver APIs, then
@@ -29,6 +36,7 @@
 <script>
   window.__cpWebVitals = {
     endpoint: '/apps/contentpilot/web-vitals',
+    referralEndpoint: '/apps/contentpilot/ai-referral',
     template: {{ template.name | default: request.page_type | json }}
   };
 </script>
@@ -41,7 +49,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Collects real visitor Core Web Vitals (LCP, CLS, INP) for ContentPilot's SEO → Ladezeit report. No visitor identifiers or cookies are used. Enable once - no placement or configuration needed."
+      "content": "Collects real visitor Core Web Vitals (LCP, CLS, INP) for ContentPilot's SEO speed report, and counts visits that arrive from an AI assistant (ChatGPT, Perplexity, ...) for the AI search report. No visitor identifiers or cookies are used. Enable once - no placement or configuration needed."
     }
   ]
 }

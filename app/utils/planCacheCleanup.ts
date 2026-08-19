@@ -148,11 +148,21 @@ export async function cleanupCacheForPlan(shop: string, newPlan: Plan): Promise<
 }
 
 /**
- * Delete all menus (menus have no ContentTranslation rows).
+ * Delete all menus AND their item translations.
+ *
+ * A menu ITEM's translation is a ContentTranslation row of resourceType
+ * "Link" (its resourceId is the Link GID derived from the MenuItem GID — see
+ * menu-translations.shared.ts). Those rows used to not exist, which is what
+ * the old comment here recorded; deleting only the Menu cache now strands
+ * them, because nothing else can enumerate a menu item once its menu is gone.
  */
 async function deleteMenus(shop: string): Promise<number> {
-  const result = await db.menu.deleteMany({ where: { shop } });
-  return result.count;
+  const { menusCount } = await db.$transaction(async (tx) => {
+    await tx.contentTranslation.deleteMany({ where: { shop, resourceType: "Link" } });
+    const menus = await tx.menu.deleteMany({ where: { shop } });
+    return { menusCount: menus.count };
+  });
+  return menusCount;
 }
 
 /**

@@ -109,4 +109,10 @@ export interface ImageMeta {
    *  Drives a semi-transparent treatment + a "Save?" badge so the merchant
    *  sees at a glance which tiles still need saving. */
   isPending?: boolean;
+  /** Tile IS saved — Shopify created the media — but Shopify is still
+   *  processing the file, so no CDN URL exists for it yet and the fetched
+   *  media maps cannot report it. We render the local preview with a spinner
+   *  until it lands. Distinct from isPending ("not saved yet") and from
+   *  isConverting ("we are rewriting this file"). */
+  isProcessing?: boolean;
 }

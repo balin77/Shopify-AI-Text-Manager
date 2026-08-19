@@ -16,7 +16,19 @@
  *   ProductVariant.price/compareAtPrice goes through it.
  * - A missing `variants` block (query error, partial response) syncs NOTHING
  *   and deletes NOTHING — never wipe cached rows on uncertainty.
+ * - PLAN_CONTENT_CREATION Phase 4: the COMMERCE block (cost, shipping, customs)
+ *   is picked up here OPPORTUNISTICALLY — `variantCommerceColumns` returns `{}`
+ *   for a response that did not carry it, so a narrower query cannot overwrite
+ *   what a full read established, and cannot stamp `commerceSyncedAt`.
+ *
+ *   STOCK is deliberately NOT synced here. Two reasons, both decisive: the
+ *   selection costs roughly 60 points per variant, so embedding it in a
+ *   100-product batch query blows past Shopify's 1000-point ceiling; and stock
+ *   is volatile, so a value written by a nightly catalogue sync is wrong by
+ *   morning. `/api/product-commerce` reads it live per product instead.
  */
+
+import { variantCommerceColumns, type ShopifyVariantCommerce } from "./commerce-sync.shared";
 
 /** Variant node shape of the sync queries (getProductsBulk / getProduct). */
 export interface ShopifySyncVariant {
@@ -30,6 +42,10 @@ export interface ShopifySyncVariant {
   position: number;
   barcode: string | null;
   image?: { url: string } | null;
+  /** PLAN Phase 4 — present only when the query selected the commerce block. */
+  taxable?: boolean | null;
+  inventoryPolicy?: string | null;
+  inventoryItem?: ShopifyVariantCommerce["inventoryItem"];
 }
 
 /**
@@ -89,6 +105,9 @@ export async function syncProductVariantRows(
     if (!variant?.id) continue;
     keptGids.push(variant.id);
     const numericId = variant.id.replace("gid://shopify/ProductVariant/", "");
+    // `{}` when the query did not select the block — so this spread adds
+    // nothing and the existing columns (and `commerceSyncedAt`) survive.
+    const commerce = variantCommerceColumns(variant as ShopifyVariantCommerce);
     const shared = {
       title: variant.title,
       sku: variant.sku ?? null,
@@ -96,6 +115,7 @@ export async function syncProductVariantRows(
       price: moneyToDecimalString(variant.price),
       compareAtPrice: moneyToDecimalString(variant.compareAtPrice),
       barcode: variant.barcode ?? null,
+      ...commerce,
     };
     await tx.productVariant.upsert({
       where: { shopifyGid: variant.id },
@@ -110,6 +130,7 @@ export async function syncProductVariantRows(
       // manager data must survive every sync (§5.1/§10.3).
       update: { productId, ...shared },
     });
+
   }
 
   // Targeted removal of vanished variants only. An empty keptGids list means

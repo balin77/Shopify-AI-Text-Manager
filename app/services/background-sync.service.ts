@@ -15,6 +15,11 @@ import { db } from '../db.server';
 import { getSyncScope, canAccessContentType, type Plan } from '../utils/planUtils';
 import { ContentSyncService } from './content-sync.service';
 import { stripLiquid } from '../utils/liquid-strip';
+import {
+  PAGE_ATTRIBUTE_SELECTION,
+  pageAttributeColumns,
+  type ShopifyPageAttributes,
+} from './attribute-sync.shared';
 
 /** A single translatable content item from Shopify */
 interface TranslatableContentItem {
@@ -25,7 +30,7 @@ interface TranslatableContentItem {
 }
 
 /** Page data from Shopify GraphQL */
-interface ShopifyPageData {
+interface ShopifyPageData extends ShopifyPageAttributes {
   id: string;
   title: string;
   handle: string;
@@ -238,6 +243,18 @@ export interface SyncStats {
 // shop; entries are always removed on settle (see syncAllThemes).
 const inFlightThemeSyncs = new Map<string, Promise<number>>();
 
+/**
+ * An abort is not a sync failure. The initial-sync orchestrator asserts the
+ * abort signal from INSIDE the progress callback, so a `throw` can surface in
+ * any try block that reports progress — where a plain `catch` would log it as
+ * "resource type failed", skip orphan cleanup, and (on a single-type domain)
+ * let the empty-result health check raise a bogus data-loss error at the
+ * merchant. Every catch that wraps an onProgress call re-throws through this.
+ */
+function isAbortError(error: unknown): boolean {
+  return !!error && (error as { name?: string }).name === "AbortError";
+}
+
 export class BackgroundSyncService {
   private gateway: ShopifyApiGateway;
 
@@ -298,7 +315,7 @@ export class BackgroundSyncService {
                   title
                   handle
                   body
-                  updatedAt
+                  updatedAt${PAGE_ATTRIBUTE_SELECTION}
                   seoTitle: metafield(namespace: "global", key: "title_tag") { value }
                   seoDescription: metafield(namespace: "global", key: "description_tag") { value }
                 }
@@ -432,7 +449,7 @@ export class BackgroundSyncService {
             title
             handle
             body
-            updatedAt
+            updatedAt${PAGE_ATTRIBUTE_SELECTION}
             seoTitle: metafield(namespace: "global", key: "title_tag") { value }
             seoDescription: metafield(namespace: "global", key: "description_tag") { value }
           }
@@ -517,6 +534,11 @@ export class BackgroundSyncService {
     // from a partially failed market stay harmless (no delete involved).
     const fetchedLayers = fetchedMarketLayers(markets.filter((m) => !failedMarketIds.has(m.id)));
 
+    // PLAN_CONTENT_CREATION Phase 0. `{}` when the response did not carry the
+    // attribute block — the stored values (and attributesSyncedAt) then stay
+    // untouched instead of being overwritten with the migration defaults.
+    const attributes = pageAttributeColumns(pageData);
+
     // Use transaction to ensure all-or-nothing data consistency
     await db.$transaction(async (tx) => {
       // Upsert page
@@ -535,6 +557,7 @@ export class BackgroundSyncService {
           handle: pageData.handle,
           seoTitle: pageData.seoTitle?.value ?? null,
           seoDescription: pageData.seoDescription?.value ?? null,
+          ...attributes,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -544,6 +567,7 @@ export class BackgroundSyncService {
           handle: pageData.handle,
           seoTitle: pageData.seoTitle?.value ?? null,
           seoDescription: pageData.seoDescription?.value ?? null,
+          ...attributes,
           shopifyUpdatedAt: new Date(pageData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -2091,6 +2115,7 @@ export class BackgroundSyncService {
             }
           }
         } catch (error) {
+          if (isAbortError(error)) throw error;
           logger.error(`[BackgroundSync] Error syncing theme type ${resourceTypeConfig.type}`, { error });
         }
       }
@@ -2288,11 +2313,24 @@ export class BackgroundSyncService {
     // cleanup for this run and let the next successful cycle reconcile.
     let anySourceFailed = false;
 
+    // Progress is reported per RESOURCE, not just once per resource type. Each
+    // resource fans out over every non-primary locale x market layer, so a shop
+    // with many storefront filters spends minutes inside a single type — with
+    // one tick per type the nav banner sat at 0% for that whole stretch, which
+    // reads as a hung sync rather than a slow one.
+    const typeSpan = 100 / resourceTypes.length;
+    const reportType = (message: string) => {
+      if (onProgress) onProgress(Math.round((typeIndex - 1) * typeSpan), 100, message);
+    };
+    const reportResource = (done: number, total: number, message: string) => {
+      if (!onProgress) return;
+      const within = total > 0 ? (done / total) * typeSpan : 0;
+      onProgress(Math.round((typeIndex - 1) * typeSpan + within), 100, message);
+    };
+
     for (const rt of resourceTypes) {
       typeIndex++;
-      if (onProgress) {
-        onProgress(Math.round((typeIndex - 1) / resourceTypes.length * 100), 100, `Syncing ${rt.label}...`);
-      }
+      reportType(`Syncing ${rt.label}...`);
 
       try {
         // Paginate translatableResources for this type
@@ -2321,6 +2359,7 @@ export class BackgroundSyncService {
           resources.push(...edges.map((e: { node: ThemeResource }) => e.node));
           hasNextPage = pageInfo?.hasNextPage || false;
           cursor = pageInfo?.endCursor || null;
+          reportType(`Loading ${rt.label}... (${resources.length})`);
         }
 
         if (resources.length === 0) {
@@ -2328,7 +2367,10 @@ export class BackgroundSyncService {
           continue;
         }
 
+        let resourceIndex = 0;
         for (const resource of resources) {
+          reportResource(resourceIndex, resources.length, `${rt.label}: ${resourceIndex + 1}/${resources.length}`);
+          resourceIndex++;
           const content = (resource.translatableContent || []).filter((c) => c.key);
           if (content.length === 0) continue;
 
@@ -2456,6 +2498,7 @@ export class BackgroundSyncService {
           totalGroups++;
         }
       } catch (error) {
+        if (isAbortError(error)) throw error;
         anySourceFailed = true;
         logger.error(`[BackgroundSync] Error syncing ${rt.type} (domain=${domain})`, { error });
       }

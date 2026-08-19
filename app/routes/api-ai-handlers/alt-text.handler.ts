@@ -10,7 +10,7 @@ import { logger } from "~/utils/logger.server";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
-import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale } from "./keyword-prompt";
+import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale, resolveWrittenLocale } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
 
 /**
@@ -128,7 +128,12 @@ Image URL: ${imageUrl}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
     // last and outranking every rule above. No-op when the box was empty.
     prompt = withUserInstruction(prompt, formData);
 
-    const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt, sendImageToAI);
+    // §2.5e — a product name is most of an alt text, so a do-not-translate
+    // term forced by the merchant belongs here as much as in a translation.
+    const altText = await aiService.generateImageAltText(imageUrl, productTitle, prompt, sendImageToAI, {
+      contextTexts: [productTitle || ""],
+      locale: await resolveWrittenLocale(ctx.admin, session.shop, formData),
+    });
 
     // Update task to completed with full AI response
     await db.task.update({
@@ -209,6 +214,8 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
       )
     ).primary,
   );
+  // Same reasoning as the keyword line: one product, one language, one lookup.
+  const writtenLocale = await resolveWrittenLocale(ctx.admin, session.shop, formData);
 
   const bulkTask = await db.task.create({
     data: {
@@ -243,6 +250,7 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
     format: sharedFormat,
     instructions: sharedInstructions,
     keywordLine,
+    writtenLocale,
   }).catch((err) => {
     logger.error("[API-AI] Bulk alt-text generation crashed", {
       context: "AI",
@@ -267,10 +275,13 @@ interface BulkAltTextRunArgs {
   instructions: string;
   /** Pre-rendered target-keyword requirement, "" when the product tracks none. */
   keywordLine: string;
+  /** §2.5e — the language being written, resolved once for the batch. "" only
+   *  when the locale lookup failed, which yields no glossary block at all. */
+  writtenLocale: string;
 }
 
 async function runBulkAltTextGeneration(taskId: string, args: BulkAltTextRunArgs): Promise<void> {
-  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions, keywordLine } = args;
+  const { db, settings, shop, imagesData, productTitle, mainLanguage, sendImageToAI, charLimit, format, instructions, keywordLine, writtenLocale } = args;
   const totalImages = imagesData.length;
   const aiService = createAIService(settings, shop, taskId);
   const generatedAltTexts: Record<number, string> = {};
@@ -296,7 +307,10 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
       if (instructions) prompt += `\n\nGuidelines:\n${instructions}`;
       prompt += `\n\nIMPORTANT: Return ONLY the alt text, nothing else.${mainLanguage ? ` Output in ${mainLanguage}.` : ''}`;
 
-      const altText = await aiService.generateImageAltText(image.url, productTitle, prompt, sendImageToAI);
+      const altText = await aiService.generateImageAltText(image.url, productTitle, prompt, sendImageToAI, {
+        contextTexts: [productTitle || ""],
+        locale: writtenLocale,
+      });
       generatedAltTexts[i] = altText;
     } catch (imgError: unknown) {
       const message = errorMessage(imgError);

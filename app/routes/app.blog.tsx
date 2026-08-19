@@ -34,7 +34,14 @@ export const loader = createContentLoader({
     const { ContentSyncService } = await import("../services/content-sync.service");
     const syncService = new ContentSyncService(ctx.admin, ctx.session.shop);
 
-    // Fetch blogs with their titles and article IDs from Shopify
+    // Fetch blogs with their titles and article IDs from Shopify.
+    //
+    // `templateSuffix` is PLAN §Phase 3 — a blog container's one merchandising
+    // attribute. Read LIVE, so unlike the cached types there is no "written by
+    // an older sync" ambiguity: whatever comes back IS current.
+    //
+    // The prose stays out here on purpose: a `#` comment inside the document
+    // travels to Shopify (see the GraphQL-comment gotcha in CLAUDE.md).
     const blogsResponse = await ctx.admin.graphql(
       `#graphql
         query getBlogs {
@@ -44,6 +51,7 @@ export const loader = createContentLoader({
                 id
                 title
                 handle
+                templateSuffix
                 seoTitle: metafield(namespace: "global", key: "title_tag") { value }
                 seoDescription: metafield(namespace: "global", key: "description_tag") { value }
                 articles(first: 250) {
@@ -60,6 +68,7 @@ export const loader = createContentLoader({
       id: string;
       title: string;
       handle: string;
+      templateSuffix?: string | null;
       seoTitle?: { value: string } | null;
       seoDescription?: { value: string } | null;
       articles?: { edges: Array<{ node: { id: string } }> };
@@ -172,6 +181,14 @@ export const loader = createContentLoader({
       imageAltText: string | null;
       seoTitle: string | null;
       seoDescription: string | null;
+      // PLAN §2.2 attribute block. `attributesSyncedAt` is the discriminator —
+      // without it the defaults below (null / [] / true) would be read as the
+      // merchant's own data instead of "never fetched".
+      attributesSyncedAt: Date | null;
+      author: string | null;
+      tags: string[];
+      templateSuffix: string | null;
+      isPublished: boolean;
     }
 
     // Build Blog container items (appear as section headers in the list)
@@ -193,6 +210,12 @@ export const loader = createContentLoader({
         description: blog.seoDescription?.value ?? null,
       },
       images: [],
+      // The query above just delivered it, so the editor may judge and edit it.
+      // The stamp is what the attribute controls gate on — without it they read
+      // "known" by default, which on the one type this data is live for would
+      // be the only place the discriminator lied.
+      attributesSyncedAt: new Date().toISOString(),
+      templateSuffix: blog.templateSuffix ?? null,
     }));
 
     // Load article image alt-text translations from contentTranslation table
@@ -237,6 +260,14 @@ export const loader = createContentLoader({
         : undefined,
       images: [],
       seo: { title: a.seoTitle, description: a.seoDescription },
+      // §2.2 attribute checklist (articles only — a Blog CONTAINER has no
+      // attribute block and gets no tab).
+      attributesSyncedAt: a.attributesSyncedAt ?? null,
+      author: a.author ?? null,
+      tags: Array.isArray(a.tags) ? a.tags : null,
+      templateSuffix: a.templateSuffix ?? null,
+      isPublished: a.isPublished,
+      featuredImageUrl: a.imageUrl || null,
     }));
 
     // Combine: blog containers first, then articles (sorted by blog title)

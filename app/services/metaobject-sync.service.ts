@@ -13,19 +13,35 @@ import { logger } from '~/utils/logger.server';
 import type { ShopifyGraphQLClient, ShopLocale } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchShopMarkets, marketLayersForLocale } from './sync-utils';
-import { isMetaobjectLabelField } from '~/constants/shopifyFields';
 
 interface MetaobjectDefinition {
   id: string;
   type: string;
   name: string;
   description?: string | null;
+  /**
+   * PLAN_METAOBJECTS_EDITOR §7.2 — the definition's admin access regime.
+   * ABSENT means the query did not carry it; the mapper below writes UNDEFINED
+   * rather than null in that case, so a narrower response can neither claim
+   * knowledge nor erase it.
+   */
+  access?: { admin?: string | null } | null;
+  /**
+   * PLAN_CONTENT_CREATION Phase 0 (§1.5): `required` and `validations` were
+   * added because the create form cannot mark a field as mandatory without
+   * them — and would offer entries Shopify then rejects. Definitions cached
+   * BEFORE Phase 0 carry entries where `required` is ABSENT; absent is not
+   * false. A reader that needs the flag must treat `undefined` as unknown and
+   * re-sync, never as "optional".
+   */
   fieldDefinitions: Array<{
     key: string;
     name: string;
     type: {
       name: string;
     };
+    required?: boolean;
+    validations?: Array<{ name: string; value: string | null }>;
   }>;
 }
 
@@ -43,6 +59,21 @@ interface Metaobject {
 }
 
 const TRANSLATION_BATCH_SIZE = 250;
+
+/**
+ * The `adminAccess` column for one definition, or `{}` when the response did
+ * not carry the block.
+ *
+ * `{}` and `null` are NOT the same thing here: a response without `access`
+ * means nobody asked, so the column must keep whatever a fuller sync
+ * established. Writing null would turn "we know it is writable" back into
+ * "unknown" every time a narrower query ran -- the same rule the merchandising
+ * attribute mappers follow.
+ */
+function accessColumn(def: MetaobjectDefinition): { adminAccess?: string | null } {
+  if (def.access === undefined) return {};
+  return { adminAccess: def.access?.admin ?? null };
+}
 
 export class MetaobjectSyncService {
   private cachedLocales: ShopLocale[] | null = null;
@@ -155,11 +186,19 @@ export class MetaobjectSyncService {
               type
               name
               description
+              access {
+                admin
+              }
               fieldDefinitions {
                 key
                 name
+                required
                 type {
                   name
+                }
+                validations {
+                  name
+                  value
                 }
               }
             }
@@ -198,12 +237,14 @@ export class MetaobjectSyncService {
           name: def.name,
           description: def.description,
           fieldDefinitions: def.fieldDefinitions,
+          ...accessColumn(def),
           lastSyncedAt: new Date()
         },
         update: {
           name: def.name,
           description: def.description,
           fieldDefinitions: def.fieldDefinitions,
+          ...accessColumn(def),
           lastSyncedAt: new Date()
         }
       });
@@ -419,8 +460,17 @@ export class MetaobjectSyncService {
 
               for (const trans of translations) {
                 if (!trans.value) continue;
-                // Only sync translatable field keys
-                if (isMetaobjectLabelField(trans.key)) {
+                // Mirror what SHOPIFY reports as translated, whatever the key.
+                // This used to be filtered to the label fields, which was the
+                // mirror image of an editor that could only edit the label
+                // (PLAN_METAOBJECTS_EDITOR §6.1) -- a description or a list
+                // translated in Shopify's own editor was simply invisible here.
+                //
+                // The reverse reading stays forbidden: a key MISSING from this
+                // response only means it has no value in that locale, never
+                // that the field cannot be translated (the translatableContent
+                // trap in CLAUDE.md).
+                {
                   upsertOps.push(
                     db.metaobjectTranslation.upsert({
                       where: {

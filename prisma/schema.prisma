@@ -52,6 +52,17 @@ model AISettings {
   //   "error"     — never rewrite merchant HTML; surface a clear instruction.
   themeRichtextMode String @default("autofix")
 
+  // PLAN_CONTENT_CREATION §Phase 3.3 / §A1 — create a URL redirect when a
+  // handle changes.
+  //
+  // Default ON, deliberately: changing a handle silently 404s every existing
+  // link to the old address (search results, the merchant's own newsletter,
+  // other sites), and this app changed handles in three places while creating
+  // a redirect in none of them. A stray redirect is untidy; a broken URL costs
+  // traffic. Off is for merchants still shaping their handles, where the
+  // redirects would only be noise.
+  seoAutoHandleRedirect Boolean @default(true)
+
   // Theme selected by the merchant for theme-bezogene Inhalte (Templates /
   // Theme-Settings / Locale-Content). Stored as the Shopify Theme-GID
   // ("gid://shopify/OnlineStoreTheme/<id>"). null = automatically use the
@@ -73,6 +84,17 @@ model AISettings {
   // sweep idempotent across replicas and restarts, and lets a shop refreshed
   // through the in-app path skip the sweep entirely.
   llmsTxtLastAutoRunAt DateTime?
+
+  // Merchant-authored opening paragraph of the two AI-discovery files
+  // (SEO → AI search, step 2). Everything else in those documents is generated
+  // from the catalog and MUST stay generated — a hand-edited product list goes
+  // stale the moment a price or a handle changes, and the auto-refresh would
+  // overwrite it anyway. The intro is the one part no catalog query can know:
+  // who is behind the shop, where it ships, what it wants an agent to say
+  // about it. NULL means "use the generated default", which is what every shop
+  // starts with.
+  aiDiscoveryIntroAgents String?
+  aiDiscoveryIntroLlms   String?
 
   // "Übersetzungen mitführen" on SEO → interne Verlinkung. Accepting a
   // suggestion only wraps an existing word in an <a>, so the wording is
@@ -136,20 +158,20 @@ model AISettings {
   deepseekMaxRequestsPerMinute Int? @default(60)
 
   // SEO Title suffix (shop name appended by Shopify theme)
-  seoTitleSuffixEnabled Boolean @default(false)
+  seoTitleSuffixEnabled Boolean   @default(false)
   seoTitleSuffix        String? // e.g., " – Patis Universe"
   // Merchant switch for the nightly audit (Settings → SEO). Default ON so an
   // entitled shop gets the trend without hunting for a checkbox; the sweep
   // filters on it IN THE QUERY, so switching it off costs nothing per tick.
   // Independent of the plan gate: both must hold for a scan to happen.
-  seoAutoAuditEnabled Boolean @default(true)
+  seoAutoAuditEnabled   Boolean   @default(true)
   // Last automatic (nightly) SEO audit run for this shop — see
   // services/seo/audit-auto-run.service.ts. Null = never auto-scanned. Drives
   // the sweep's "is this shop due" query and is stamped on every path
   // (success, skip, error) so a broken shop cannot win it forever. Backoff
   // stamp, NOT a lock. Only shops on a plan with seo.scheduledAudit are ever
   // selected.
-  lastAutoAuditAt DateTime?
+  lastAutoAuditAt       DateTime?
 
   // PLAN_SEO_CRAWL_EXPANSION §6.5 — check outbound links to OTHER domains
   // after the storefront crawl. Default ON (the report is worth little
@@ -157,6 +179,19 @@ model AISettings {
   // requests to servers neither the merchant nor we control, and it makes the
   // crawl take longer.
   seoCrawlExternalLinks Boolean @default(true)
+
+  // Merchant switch for the weekly automatic storefront crawl (Settings → SEO).
+  // Default ON for the same reason as seoAutoAuditEnabled — an entitled shop
+  // should get the delivery report without hunting for a checkbox — and ANDed
+  // into the sweep's due-query, so switching it off costs nothing per tick.
+  seoAutoCrawlEnabled Boolean   @default(true)
+  // Last automatic storefront crawl for this shop — see
+  // services/seo/crawl-auto-run.service.ts. Null = never auto-crawled. Same
+  // backoff-stamp rules as lastAutoAuditAt: written on every path, never a
+  // lock, and only shops on a plan with seo.scheduledCrawl are selected.
+  // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
+  // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
+  lastAutoCrawlAt     DateTime?
 
   // Keyword-aware translation: a translation into a foreign locale is
   // phrased so THAT locale's own tracked keyword survives, instead of being
@@ -217,11 +252,19 @@ model AISettings {
   // ["Product:gid://shopify/Product/123"]. null/absent = nothing dismissed.
   seoFreshnessDismissed Json?
 
+  /// UNUSED. Backed an in-app banner explaining the Phase 4 re-consent, which
+  /// was removed as unwanted. Kept because its migration may already be
+  /// applied, and a drop-migration for a column that might not exist is the
+  /// riskier error than a dead nullable one. Safe to drop deliberately.
+  commerceNoticeDismissedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Backs the nightly-audit sweep's due-query (audit-auto-run.service.ts).
   @@index([subscriptionPlan, lastAutoAuditAt])
+  // Same, for the weekly crawl sweep (crawl-auto-run.service.ts).
+  @@index([subscriptionPlan, lastAutoCrawlAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the
@@ -478,21 +521,92 @@ model Product {
   // does NOT paginate variants (§5.1).
   hasMoreVariants Boolean @default(false)
 
+  // Mirror of the product-video upload dates this app last wrote to the
+  // `custom.video_upload_dates` metafield (services/seo/video-schema.*).
+  // Liquid cannot know when a video was uploaded, and `uploadDate` is one of
+  // Google's required VideoObject properties — so the sync carries the Admin
+  // API's `File.createdAt` into a metafield the storefront block reads back.
+  // This column exists to make that write DIFF-driven: null means "nothing
+  // written / no videos", and a value equal to the freshly built one means no
+  // Shopify call at all. It mirrors what was PUSHED (and echoed), never what
+  // was merely intended.
+  videoSchemaJson String? @db.Text
+
+  // ── PLAN_CONTENT_CREATION Phase 0 — merchandising attributes ──────────────
+  // Everything below is fetched by the product sync from Phase 0 on. Rows
+  // written by an OLDER sync carry the column defaults, which for `vendor`
+  // (null), `tags` ([]) and `isSmart`-style booleans is INDISTINGUISHABLE from
+  // "the merchant left it empty" — the same trap as SeoCrawlPage.metaRobots.
+  // `attributesSyncedAt` is the discriminator and the ONLY thing that tells
+  // them apart: null ⇒ every column in this block is UNKNOWN, not "missing".
+  // The attribute sidebar (§Phase 2) must gate on it before it shows a red dot.
+  vendor             String?
+  // Shopify product tags, verbatim and in Shopify's order. A scalar list can
+  // never be null in Prisma, so [] alone says nothing — read it together with
+  // `attributesSyncedAt`. The explicit @default([]) is what the migration's
+  // `DEFAULT ARRAY[]::TEXT[]` needs to be declared as, or `migrate diff` reports
+  // permanent drift against every deployed database.
+  tags               String[]  @default([])
+  // Shopify's product taxonomy. `categoryName` mirrors `fullName`
+  // ("Apparel & Accessories > Clothing"), so the UI can label the category
+  // without a second lookup.
+  categoryId         String?
+  categoryName       String?
+  templateSuffix     String?
+  publishedAt        DateTime?
+  // Collection membership window of the sync: true when the product belongs to
+  // MORE collections than `collections(first: N)` fetched. Same reason as
+  // hasMoreVariants — "N memberships" must not read as complete when it is a
+  // truncation.
+  hasMoreCollections Boolean   @default(false)
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
 
   // Relations
   // NOTE: Translations are now stored in ContentTranslation table (polymorphic)
-  images     ProductImage[]
-  options    ProductOption[]
-  metafields ProductMetafield[]
-  variants   ProductVariant[]
+  images       ProductImage[]
+  options      ProductOption[]
+  metafields   ProductMetafield[]
+  variants     ProductVariant[]
+  collections  ProductCollection[]
+  publications ProductPublication[]
 
   @@unique([shop, id])
   @@index([shop])
   @@index([shop, status])
   @@index([lastSyncedAt])
+}
+
+/// Collection membership of a product (PLAN_CONTENT_CREATION Phase 0).
+///
+/// Deliberately NOT a foreign key to `Collection`: the collection cache is
+/// capped by the merchant's plan (`maxCollections`), so a membership can point
+/// at a collection this shop never cached. `collectionTitle` is mirrored for
+/// exactly that case — without it a capped-out membership would render as a
+/// bare GID. Rows are rebuilt per product on every sync (delete-by-product +
+/// createMany), so they never accumulate.
+model ProductCollection {
+  id        String  @id @default(cuid())
+  shop      String
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  collectionId    String
+  collectionTitle String
+
+  // True for a collection whose membership is rule-based on Shopify's side —
+  // Phase 3's membership picker must not offer to "remove" such a row, the
+  // rule would just re-add it.
+  automated Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([productId, collectionId])
+  @@index([productId])
+  @@index([shop, collectionId])
 }
 
 model ProductImage {
@@ -596,7 +710,132 @@ model ProductVariant {
   compareAtPrice Decimal? @db.Decimal(12, 2)
   barcode        String?
 
+  // ── PLAN_CONTENT_CREATION Phase 4 — the commerce block ────────────────────
+  //
+  // `inventoryItemId` is the KEY to all of it: quantities, cost and the
+  // shipping fields live on InventoryItem, not on the variant, and every write
+  // below addresses that GID. A variant without one cannot have its stock
+  // edited — which is a fact to SHOW, not to guess around.
+  inventoryItemId      String?
+  // Cost per item (`InventoryItem.unitCost`). Decimal for the same reason
+  // `price` is: money as Float is a rounding error waiting to happen.
+  cost                 Decimal?  @db.Decimal(12, 2)
+  // These four are `InventoryItem` fields, not variant fields. Nullable
+  // because "not fetched" and "the merchant left it empty" must stay
+  // distinguishable — `commerceSyncedAt` is the discriminator.
+  taxable              Boolean?
+  requiresShipping     Boolean?
+  weight               Decimal?  @db.Decimal(12, 3)
+  weightUnit           String?
+  harmonizedSystemCode String?
+  countryCodeOfOrigin  String?
+  // `tracked` on InventoryItem; `inventoryPolicy` on the variant. Together
+  // they decide whether a quantity means anything at all — an untracked
+  // variant has no stock to show, and showing 0 for one is a lie.
+  inventoryTracked     Boolean?
+  inventoryPolicy      String?
+  /// THE discriminator for the block above (same rule as
+  /// `Product.attributesSyncedAt`): unset ⇒ every field in it is UNKNOWN, not
+  /// "empty". Without it a variant row written by an older sync would report
+  /// cost 0, untaxed and untracked — confident and wrong.
+  commerceSyncedAt     DateTime?
+
+  inventoryLevels InventoryLevel[]
+
   @@index([productId])
+}
+
+/// A location that can hold stock (PLAN_CONTENT_CREATION Phase 4).
+///
+/// Cached for LABELS and ordering only. Stock itself is volatile and the truth
+/// is always Shopify's — this table exists so the inventory UI can say
+/// "Warehouse Berlin" instead of a GID, and so the location list survives a
+/// throttled lookup.
+model Location {
+  id       String  @id // gid://shopify/Location/...
+  shop     String
+  name     String
+  /// A deactivated location keeps its stock but accepts no writes. Shown
+  /// greyed rather than hidden: its quantity is still part of the total, and a
+  /// location that silently vanishes reads as stock that disappeared.
+  isActive Boolean @default(true)
+  /// Shopify's own primary/fulfilment ordering, mirrored so the UI does not
+  /// have to invent one.
+  position Int     @default(0)
+
+  syncedAt DateTime @default(now())
+
+  levels InventoryLevel[]
+
+  @@unique([shop, id])
+  @@index([shop])
+}
+
+/// On-hand and available stock of ONE variant at ONE location.
+///
+/// ── This cache is a DISPLAY, never a base for arithmetic ────────────────────
+/// Stock changes from orders, returns and other apps between two page loads.
+/// Computing `new = cached + delta` and writing that back is the classic
+/// source of inventory drift, and it is why the write path uses
+/// `inventorySetQuantities` with an ABSOLUTE value and a compareQuantity —
+/// never a delta over anything stored here.
+model InventoryLevel {
+  id              String         @id @default(cuid())
+  shop            String
+  /// gid://shopify/InventoryItem/... — the address every write uses.
+  inventoryItemId String
+  variantId       String
+  variant         ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  locationId      String
+  location        Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  /// Physically present. The number a merchant counts in the room.
+  onHand    Int?
+  /// On hand minus what is committed to unfulfilled orders. The number a
+  /// storefront sells against. Both nullable: an untracked item reports
+  /// neither, and 0 would be a different claim.
+  available Int?
+
+  syncedAt DateTime @default(now())
+
+  @@unique([variantId, locationId])
+  @@index([shop])
+  @@index([inventoryItemId])
+}
+
+/// A sales channel a product is published to (PLAN_CONTENT_CREATION Phase 4).
+///
+/// §2.3's trap made concrete: `status: ACTIVE` is NOT visibility. A product
+/// that is active but published to no channel is invisible everywhere, and
+/// nothing in the Shopify admin says so on the product page either. This table
+/// is what lets the editor say it.
+model ProductPublication {
+  id        String  @id @default(cuid())
+  shop      String
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// gid://shopify/Publication/...
+  publicationId   String
+  /// Mirrored so a publication the shop later loses still renders as a name.
+  publicationName String
+  /// Which KIND of catalog this publication belongs to: "app" (a sales
+  /// channel), "market" (a region), "companyLocation" (B2B) — or "" for
+  /// UNKNOWN, which is what a row written before this column existed and a
+  /// publication whose catalog Shopify did not deliver both carry. Unknown is
+  /// never read as "app": it renders where it always did, but it is not
+  /// evidence for the "on no channel — invisible" alarm.
+  catalogType     String    @default("")
+  /// Published AND its publish date has passed. A future date is `false` with
+  /// `publishDate` set — "scheduled" is not "live", and collapsing the two
+  /// makes a scheduled launch look like a mistake.
+  isPublished     Boolean   @default(false)
+  publishDate     DateTime?
+
+  syncedAt DateTime @default(now())
+
+  @@unique([productId, publicationId])
+  @@index([shop])
 }
 
 model OptionValueMemory {
@@ -689,6 +928,28 @@ model Collection {
   seoTitle        String?
   seoDescription  String? @db.Text
 
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  sortOrder      String? // Shopify CollectionSortOrder, verbatim (e.g. "BEST_SELLING")
+  templateSuffix String?
+  // True when membership is rule-based rather than hand-picked. Derived from
+  // whatever the pinned API version exposes (2025-10: `ruleSet`; 2026-07 on:
+  // a non-empty `sources[]`), never from a client claim.
+  isSmart        Boolean @default(false)
+  /// The FULL rule tree, never flattened (PLAN §2.4): the editor must be able
+  /// to hand back structures it cannot render instead of silently simplifying
+  /// them, which would change a collection's membership unnoticed.
+  ///
+  /// Stored as a DISCRIMINATED envelope, because the shape depends on the API
+  /// version the sync ran against and the two are not interchangeable:
+  ///   { "shape": "ruleSet", "apiVersion": "2025-10", "data": { … } }
+  ///   { "shape": "sources", "apiVersion": "2026-07", "data": [ … ] }
+  /// A bare tree would leave a reader guessing which model it is looking at —
+  /// exactly the "empty column is never evidence" trap. null = never synced.
+  sourcesJson    Json?
+
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
@@ -712,6 +973,18 @@ model Article {
   seoTitle       String?
   seoDescription String? @db.Text
 
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  // `author` is the one field here that is not merely a gap: ArticleCreateInput
+  // requires it, so article creation is impossible without it (§1.4).
+  author         String?
+  tags           String[]  @default([]) // see Product.tags for why the default is explicit
+  templateSuffix String?
+  isPublished    Boolean   @default(true)
+  publishedAt    DateTime?
+
+  attributesSyncedAt DateTime?
+
   // Shopify Metadata
   shopifyUpdatedAt DateTime
   lastSyncedAt     DateTime @default(now())
@@ -732,6 +1005,14 @@ model Page {
   // SEO fields (optional — only present if set in Shopify admin)
   seoTitle       String?
   seoDescription String? @db.Text
+
+  // ── PLAN_CONTENT_CREATION Phase 0 ────────────────────────────────────────
+  // Read `attributesSyncedAt` before any of these — see Product for why.
+  templateSuffix String?
+  isPublished    Boolean   @default(true)
+  publishedAt    DateTime?
+
+  attributesSyncedAt DateTime?
 
   // Shopify Metadata
   shopifyUpdatedAt DateTime
@@ -908,7 +1189,25 @@ model MetaobjectDefinition {
   type             String // Metaobject type identifier (e.g., "size_guide", "product_spec")
   name             String // Display name
   description      String? @db.Text
-  fieldDefinitions Json // Array of field definitions with keys and types
+  /// Array of field definitions. Shape (PLAN_CONTENT_CREATION Phase 0):
+  ///   { key, name, type: { name }, required, validations: [{ name, value }] }
+  ///
+  /// `required` and `validations` were added in Phase 0 — WITHOUT them the
+  /// create form cannot mark a field as mandatory, and it would offer entries
+  /// Shopify then rejects (§1.5). Rows synced before Phase 0 carry entries
+  /// with `required` ABSENT: absent ≠ false. A reader that needs the flag must
+  /// treat `undefined` as "unknown" and re-sync, not as "optional".
+  fieldDefinitions Json
+
+  /// PLAN_METAOBJECTS_EDITOR §7.2 — Shopify's `MetaobjectAccess.admin` for this
+  /// definition ("MERCHANT_READ_WRITE", "MERCHANT_READ", "PRIVATE", ...).
+  ///
+  /// NULL means UNKNOWN — the row predates the column or the sync could not
+  /// read it — and is NEVER read as "writable" or as "read-only". Only a value
+  /// this app KNOWS excludes writes locks the entry editor; unknown behaves as
+  /// it always did and offers a resync. Same discriminator rule as
+  /// `attributesSyncedAt`.
+  adminAccess String?
 
   lastSyncedAt DateTime @default(now())
 
@@ -1250,21 +1549,55 @@ model GoogleSearchConsoleConnection {
   lastKeywordSyncAt DateTime?
 }
 
+// Visits that arrived from an AI assistant (ChatGPT, Perplexity, Claude, …).
+//
+// Aggregate ONLY: one row per (shop, source, UTC day, landing path) with a
+// counter. No visitor identifier, no cookie, no session, no IP — the beacon
+// sends the referrer's classified SOURCE, never the referrer itself, so a
+// referrer carrying a conversation id or a search term cannot land in the
+// database at all. That is what makes this reportable without a consent
+// dialog, and it is also why the report can never answer "which visitor".
+//
+// Day bucketing rather than raw hits keeps the table bounded (sources ×
+// paths × days) and is the granularity the report actually draws.
+model SeoAiReferral {
+  id       String   @id @default(cuid())
+  shop     String
+  // Normalized source key from classifyAiReferral (e.g. "chatgpt"), never the
+  // raw referrer.
+  source   String
+  // UTC day bucket. Date, not DateTime: the report groups by day and a
+  // timestamp would fragment every bucket by the millisecond.
+  day      DateTime @db.Date
+  // Landing path, query stripped (same rule as Seo404Hit).
+  path     String
+  pathHash String
+  count    Int      @default(1)
+
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([shop, source, day, pathHash])
+  @@index([shop, day])
+  @@index([shop, source, day])
+}
+
 // SEO tab Phase 8: IndexNow config (per shop). The `key` is a PUBLIC token by
 // design (it is served at keyLocation for verification), so it is intentionally
 // stored in plaintext — NOT a secret. Shop-scoped; purged in redactShopData.
+
 model SeoIndexNowConfig {
-  shop        String @id
-  key         String // public IndexNow token (plaintext by design)
+  shop             String    @id
+  key              String // public IndexNow token (plaintext by design)
   // URL where the key file is served: `https://<host>/<key>.txt` — the ROOT of
   // the storefront, because a key under a sub-path only verifies that sub-path
   // (measured; see the service header). A Shopify URL redirect maps that root
   // path onto the app proxy, which does the actual serving.
-  keyLocation String
+  keyLocation      String
   // GID of that `urlRedirect`, so it can be updated/removed instead of
   // orphaned in the merchant's admin. null = not created yet (every row the
   // migration backfilled) — the section loader and the sweep repair it.
-  keyRedirectId String?
+  keyRedirectId    String?
   // Storefront host every submission uses for `host`, `urlList` AND
   // `keyLocation` — the shop's PRIMARY domain, not `*.myshopify.com`. Shopify
   // 301s the myshopify host to the primary domain, which would make both the
@@ -1273,31 +1606,31 @@ model SeoIndexNowConfig {
   // from the config row they already loaded; `syncIndexNowHost` refreshes it
   // whenever the merchant opens the section, so adding a custom domain later
   // fixes itself WITHOUT minting a new key.
-  host        String
+  host             String
   // Last time `host` was checked against the shop's actual primary domain.
   // null = never verified (the migration backfill, or a provision whose lookup
   // failed) — the background sweep refreshes those first, so a shop that never
   // reopens the section still stops submitting myshopify URLs.
-  hostCheckedAt DateTime?
-  enabled       Boolean   @default(true)
+  hostCheckedAt    DateTime?
+  enabled          Boolean   @default(true)
   // Last successful submission of ANY kind (queue drain or full catalog).
-  lastSubmittedAt DateTime?
+  lastSubmittedAt  DateTime?
   // Last successful FULL-catalog submit — separate from lastSubmittedAt so the
   // "submit everything" cooldown isn't reset by every queue drain.
   lastFullSubmitAt DateTime?
   // Stamped by the background sweep on EVERY path (success, skip, error) so an
   // ineligible shop can't win the "due" query forever — same guard the
   // llms/GSC sweeps document. NOT a lock.
-  lastAutoRunAt DateTime?
+  lastAutoRunAt    DateTime?
   // Rolling monthly submission quota (PlanLimits.seo.monthlyIndexNowSubmissions).
   // `submitPeriod` is the UTC "YYYY-MM" key the counter belongs to — the same
   // convention as the image-operation quota, so a new month resets the counter
   // lazily on the next write instead of needing a cron. Usage data, not
   // entitlement data: never touched by planCacheCleanup.
-  submitPeriod  String?
-  submitCount   Int       @default(0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  submitPeriod     String?
+  submitCount      Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Drives the sweep's due-query (index-now-auto-submit.service.ts).
   @@index([enabled, lastAutoRunAt])
@@ -1434,32 +1767,32 @@ model SeoCrawlSnapshot {
 // `resolvePathsToResources` (seo/url-resolver.server.ts) — null when the path
 // doesn't map to a known content type (theme/metaobject pages, §3.8).
 model SeoCrawlPage {
-  id            String  @id @default(cuid())
-  shop          String
-  snapshotId    String
-  url           String // normalized URL (query params stripped, §3.2)
-  statusCode    Int
-  redirectedTo  String? // final URL, if a 3xx chain was followed
-  responseMs    Int
-  title         String? // <title> from the rendered HTML
-  metaDesc      String?
-  canonical     String?
-  h1Count       Int     @default(0)
-  wordCount     Int     @default(0)
-  resourceType  String? // "product" | "collection" | "article" | "page" | "unknown"
-  resourceId    String? // Shopify GID, when resolvable (editor deep-link)
-  locale        String  @default("") // from the URL prefix (/fr/...) — "" = primary
-  inboundCount  Int     @default(0) // internal links pointing HERE
-  outboundCount Int     @default(0)
+  id             String  @id @default(cuid())
+  shop           String
+  snapshotId     String
+  url            String // normalized URL (query params stripped, §3.2)
+  statusCode     Int
+  redirectedTo   String? // final URL, if a 3xx chain was followed
+  responseMs     Int
+  title          String? // <title> from the rendered HTML
+  metaDesc       String?
+  canonical      String?
+  h1Count        Int     @default(0)
+  wordCount      Int     @default(0)
+  resourceType   String? // "product" | "collection" | "article" | "page" | "unknown"
+  resourceId     String? // Shopify GID, when resolvable (editor deep-link)
+  locale         String  @default("") // from the URL prefix (/fr/...) — "" = primary
+  inboundCount   Int     @default(0) // internal links pointing HERE
+  outboundCount  Int     @default(0)
   // schema.org @type values found in the page's <script type="application/ld+json">
   // blocks, comma-separated, REPEATS PRESERVED ("Product,Product" = two blocks,
   // which is what makes duplicate markup detectable). "" = none found, which is
   // also what every row written before this column existed reports.
-  jsonLdTypes   String  @default("")
+  jsonLdTypes    String  @default("")
   // Subset of jsonLdTypes emitted by THIS app's storefront block, identified by
   // its data-contentpilot attribute. Lets the report say which copy of a
   // duplicated type is ours — the delivered HTML tells nobody otherwise.
-  jsonLdAppTypes String @default("")
+  jsonLdAppTypes String  @default("")
 
   // PLAN_SEO_CRAWL_EXPANSION §1.1 / §2.1-§2.2 — indexability, stored RAW and
   // never pre-interpreted: `deriveIndexability` (onpage.service.ts) is a pure
@@ -1488,6 +1821,25 @@ model SeoCrawlPage {
   // §2.4 — observed redirect chain length (0 = no redirect). `redirectedTo`
   // above holds the end of the chain; the hop count is the report value.
   redirectHops Int @default(0)
+
+  // PLAN_MARKUP_ACTIVATION §2.1 — Open Graph / Twitter Cards, measured exactly
+  // like jsonLdTypes above and for the same reason: most themes set og:title
+  // and og:image themselves, and two og:image tags on one page are for
+  // Facebook/LinkedIn what two Product nodes are for Google.
+  //
+  // Full property names, comma-separated, REPEATS PRESERVED ("og:image,
+  // og:image" = two tags, which is what makes duplication detectable).
+  ogTags      String  @default("")
+  twitterTags String  @default("")
+  // The subset THIS app's social-meta block emitted, identified by its
+  // data-contentpilot attribute — holds both namespaces, since the names carry
+  // their own prefix. Same purpose as jsonLdAppTypes: the delivered HTML tells
+  // nobody otherwise which of two copies is ours.
+  ogAppTags   String  @default("")
+  // The discriminator, same shape as indexabilityKnown: "" above means EITHER
+  // "nothing served" OR "row written before these columns existed". Only ever
+  // true when this crawl actually parsed a body and looked.
+  socialKnown Boolean @default(false)
 
   snapshot SeoCrawlSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 

@@ -15,6 +15,16 @@ import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { isDefaultTitleOption } from '~/utils/shopify-product.utils';
 import { syncProductVariantRows, type ShopifySyncVariant } from './product-variant-sync.server';
+import { PRODUCT_VIDEO_MEDIA_FIELDS, videoUploadDatesFromMedia } from './seo/video-schema.shared';
+import { persistVideoSchema } from './seo/video-schema.server';
+import {
+  PRODUCT_ATTRIBUTE_SELECTION,
+  PRODUCT_COLLECTIONS_SELECTION,
+  productAttributeColumns,
+  productCollectionRows,
+  type ShopifyProductAttributes,
+  type ShopifyProductCollections,
+} from './attribute-sync.shared';
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -46,13 +56,40 @@ interface TranslatableResourcesByIdsResponse {
   errors?: GraphQLError[];
 }
 
-/** Product media image from Shopify */
+/**
+ * Product media from Shopify. The selection asks for MediaImage AND (via
+ * PRODUCT_VIDEO_MEDIA_FIELDS) Video/ExternalVideo, so a node is one of two
+ * shapes: an image carries `image`, a video carries `createdAt`. Both stay
+ * optional rather than being split into a union — every existing reader tests
+ * for `image` and must keep compiling.
+ */
 interface ShopifyMediaImage {
   id: string;
   alt: string | null;
-  image: {
+  image?: {
     url: string;
   };
+  /** Only on Video / ExternalVideo — the file's creation date. */
+  createdAt?: string | null;
+}
+
+/** Media node that is certainly an IMAGE — the type guard every image path uses. */
+type ShopifyImageMedia = ShopifyMediaImage & { image: { url: string } };
+
+/**
+ * Image media of a product, videos excluded.
+ *
+ * Since the media selection also asks for Video/ExternalVideo, "has an id" is
+ * no longer enough to recognise an image — a video has one too, and letting it
+ * through would create ProductImage rows for videos and put video GIDs into
+ * the alt-text translation queries.
+ */
+function imageMediaNodes(
+  edges: GraphQLEdge<ShopifyMediaImage>[] | null | undefined,
+): ShopifyImageMedia[] {
+  return (edges ?? [])
+    .map((edge) => edge.node)
+    .filter((node): node is ShopifyImageMedia => !!node?.id && !!node.image?.url);
 }
 
 /** Product option value from Shopify */
@@ -81,7 +118,7 @@ interface ShopifyMetafield {
 }
 
 /** Product data from Shopify GraphQL */
-interface ShopifyProductData {
+interface ShopifyProductData extends ShopifyProductAttributes {
   id: string;
   title: string;
   descriptionHtml: string | null;
@@ -89,6 +126,8 @@ interface ShopifyProductData {
   status: string;
   productType: string | null;
   updatedAt: string;
+  /** PLAN_CONTENT_CREATION Phase 0 — membership window, see the shared module. */
+  collections?: ShopifyProductCollections | null;
   /** Variant window of the sync (Plan §5.1): first 100 only, NO pagination —
    * hasNextPage marks products whose remainder stays in the Shopify admin. */
   variants?: {
@@ -190,7 +229,7 @@ export class ProductSyncService {
                   handle
                   status
                   productType
-                  updatedAt
+                  updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
                   seo {
                     title
                     description
@@ -209,6 +248,7 @@ export class ProductSyncService {
                             url
                           }
                         }
+                        ${PRODUCT_VIDEO_MEDIA_FIELDS}
                       }
                     }
                   }
@@ -309,6 +349,13 @@ export class ProductSyncService {
       const hasMoreVariants = product.variants
         ? product.variants.pageInfo?.hasNextPage ?? false
         : undefined;
+      // PLAN_CONTENT_CREATION Phase 0. Same "only when delivered" rule as
+      // hasMoreVariants: an absent attribute block yields {} and leaves the
+      // stored values (and attributesSyncedAt) untouched — writing the
+      // defaults would erase what an earlier full sync established and would
+      // claim knowledge this response never carried.
+      const attributes = productAttributeColumns(product);
+      const membership = productCollectionRows(this.shop, product.id, product.collections);
       await tx.product.upsert({
         where: { shop_id: { shop: this.shop, id: product.id } },
         create: {
@@ -324,6 +371,8 @@ export class ProductSyncService {
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
           hasMoreVariants: hasMoreVariants ?? false,
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -338,16 +387,26 @@ export class ProductSyncService {
           featuredImageUrl: product.featuredImage?.url || null,
           featuredImageAlt: product.featuredImage?.altText || null,
           ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(product.updatedAt),
           lastSyncedAt: new Date(),
         },
       });
 
+      // Collection membership: rebuilt per product, never accumulated. Skipped
+      // entirely when the query did not deliver the block (membership === null)
+      // — deleting then would report "in 0 collections" for data we never saw.
+      if (membership) {
+        await tx.productCollection.deleteMany({ where: { productId: product.id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      }
+
       // Save images
       if (cacheProductImages) {
-        const mediaImages = product.media?.edges
-          ?.filter((edge) => edge.node.id && edge.node.image?.url)
-          .map((edge) => edge.node) ?? [];
+        const mediaImages = imageMediaNodes(product.media?.edges);
 
         if (mediaImages.length > 0) {
           // Deleting ProductImage rows CASCADES away every
@@ -474,6 +533,27 @@ export class ProductSyncService {
         }
       }
       reportProgress();
+    }
+
+    // Video upload dates → product metafield. AFTER the write loop, because
+    // the mirror column it diffs against lives on the rows just written; and
+    // as ONE pass over the fetched products rather than per batch, so the
+    // common case (nothing changed) costs a single indexed read and no
+    // Shopify call at all. Never throws — it is not the sync's job.
+    // A cancelled sync must not keep writing to Shopify — the pass talks to
+    // the Admin API for every changed product and would run to completion long
+    // after the client disconnected.
+    checkAborted();
+    if (synced > 0) {
+      onProgress?.({ overallPercent: 60, message: "Video-Daten werden aktualisiert…" });
+      await persistVideoSchema(
+        this.admin as never,
+        db,
+        allProducts.map((product) => ({
+          productId: product.id,
+          uploadDates: videoUploadDatesFromMedia(product.media?.edges),
+        })),
+      );
     }
 
     // ==========================================
@@ -722,10 +802,7 @@ export class ProductSyncService {
           // 3c. Image alt-text translations (90-100%)
           const allMediaIds: string[] = [];
           for (const product of allProducts) {
-            const mediaImages = product.media?.edges
-              ?.filter((edge) => edge.node.id)
-              .map((edge) => edge.node.id) ?? [];
-            allMediaIds.push(...mediaImages);
+            allMediaIds.push(...imageMediaNodes(product.media?.edges).map((node) => node.id));
           }
 
           if (allMediaIds.length > 0) {
@@ -872,7 +949,17 @@ export class ProductSyncService {
   }
 
   /**
-   * Sync a single product with all its translations
+   * Sync ONE product.
+   *
+   * This WRITES the video-date metafield, webhook-driven runs included. That
+   * write changes the product and makes Shopify fire `products/update`, which
+   * lands in webhooks.products.tsx and calls this method again — but the pass
+   * is diff-driven against `Product.videoSchemaJson`, which the product upsert
+   * never touches, so the echo run finds nothing to write and the sequence
+   * ends after exactly one extra pass. Skipping it on the webhook path (what
+   * this did first) bought nothing and cost the case the feature exists for:
+   * a merchant who adds a video in the Shopify admin fires ONLY that webhook,
+   * and would have had no `uploadDate` until the next full catalog sync.
    *
    * @param options.reconcileTranslations  Opt-in: after the cache is written,
    *   check whether the PRIMARY text changed outside this app and repair the
@@ -1006,9 +1093,22 @@ export class ProductSyncService {
         subResources: subResFailedMarketIds,
       });
 
-      // 6. Stale-translation reconciliation (change events only). Runs AFTER
-      // the cache write so a removal deletes the row that was just mirrored,
-      // and is best-effort by contract — it never fails the sync.
+      // Video upload dates → product metafield. AFTER the save (the mirror
+      // column it diffs against was just written) and outside it, because this
+      // talks to Shopify rather than the database.
+      {
+        const { db } = await import("../db.server");
+        await persistVideoSchema(this.admin as never, db, [
+          {
+            productId: productData.id,
+            uploadDates: videoUploadDatesFromMedia(productData.media?.edges),
+          },
+        ]);
+      }
+
+      // Stale-translation reconciliation (change events only). Runs AFTER the
+      // cache write so a removal deletes the row that was just mirrored, and is
+      // best-effort by contract — it never fails the sync.
       if (options.reconcileTranslations) {
         const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
         await reconcileStaleTranslations({
@@ -1046,9 +1146,7 @@ export class ProductSyncService {
     const altTranslations: Array<{ mediaId: string; locale: string; altText: string; marketId: string }> = [];
 
     // Get all media images from product
-    const mediaImages = productData.media?.edges
-      ?.filter((edge) => edge.node.id) // Filter out non-MediaImage types
-      .map((edge) => edge.node) || [];
+    const mediaImages = imageMediaNodes(productData.media?.edges);
 
     if (mediaImages.length === 0) {
       logger.debug(`[ProductSync] No media images found for alt-text translations`);
@@ -1249,7 +1347,7 @@ export class ProductSyncService {
             handle
             status
             productType
-            updatedAt
+            updatedAt${PRODUCT_ATTRIBUTE_SELECTION}${PRODUCT_COLLECTIONS_SELECTION}
             seo {
               title
               description
@@ -1268,6 +1366,7 @@ export class ProductSyncService {
                       url
                     }
                   }
+                  ${PRODUCT_VIDEO_MEDIA_FIELDS}
                 }
               }
             }
@@ -1684,9 +1783,7 @@ export class ProductSyncService {
       logger.debug(`[ProductSync] Skipping ${skippedCount} translations with null/undefined values or failed market layers`);
     }
 
-    const mediaImages: ShopifyMediaImage[] = productData.media?.edges
-      ?.filter((edge) => edge.node.id && edge.node.image?.url)
-      .map((edge) => edge.node) || [];
+    const mediaImages: ShopifyImageMedia[] = imageMediaNodes(productData.media?.edges);
 
     // Use transaction to ensure all-or-nothing data consistency. Wrapped in
     // the race-retry: this is the webhook-driven sync that wipes+recreates
@@ -1706,6 +1803,10 @@ export class ProductSyncService {
       const hasMoreVariants = productData.variants
         ? productData.variants.pageInfo?.hasNextPage ?? false
         : undefined;
+      // PLAN_CONTENT_CREATION Phase 0 — see the bulk path for the "only when
+      // delivered" rule these two encode.
+      const attributes = productAttributeColumns(productData);
+      const membership = productCollectionRows(this.shop, productData.id, productData.collections);
       // Upsert product
       await tx.product.upsert({
         where: {
@@ -1727,6 +1828,8 @@ export class ProductSyncService {
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
           hasMoreVariants: hasMoreVariants ?? false,
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
@@ -1741,10 +1844,21 @@ export class ProductSyncService {
           featuredImageUrl: productData.featuredImage?.url || null,
           featuredImageAlt: productData.featuredImage?.altText || null,
           ...(hasMoreVariants !== undefined ? { hasMoreVariants } : {}),
+          ...attributes,
+          ...(membership ? { hasMoreCollections: membership.hasMore } : {}),
           shopifyUpdatedAt: new Date(productData.updatedAt),
           lastSyncedAt: new Date(),
         },
       });
+
+      // Collection membership — rebuilt per product; skipped when the block
+      // was not delivered (see the bulk path).
+      if (membership) {
+        await tx.productCollection.deleteMany({ where: { productId: productData.id } });
+        if (membership.rows.length > 0) {
+          await tx.productCollection.createMany({ data: membership.rows, skipDuplicates: true });
+        }
+      }
 
       // Check if user recently saved translations for this product
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data

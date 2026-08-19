@@ -7,6 +7,7 @@
  */
 
 import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/content-type-groups";
+import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
@@ -343,6 +344,21 @@ const handleSave = () => {
     if (changedFields.length > 0) {
       formDataObj.changedFields = JSON.stringify(changedFields);
       debugLog.save(' Changed fields (translations will be deleted on server):', changedFields);
+    }
+
+    // PLAN §Phase 3 — a SEPARATE list, because it answers a different question.
+    // `changedFields` says which translations went stale; this says which
+    // merchandising attributes the merchant actually touched. A primary save
+    // carries every field, so without it the server cannot tell an edit from a
+    // passenger — and would rewrite vendor/tags/visibility on every save.
+    // They are separate rather than one list because the accept-and-translate
+    // flow deliberately withholds `changedFields` (see useEditorAutoSave).
+    const changedAttributes = changedFields.filter((fieldKey) => {
+      const field = effectiveFieldDefinitions.find((f) => f.key === fieldKey);
+      return !!field && isAttributeField(field);
+    });
+    if (changedAttributes.length > 0) {
+      formDataObj.changedAttributeFields = JSON.stringify(changedAttributes);
     }
 
     if (changedAltTextIndices.length > 0) {

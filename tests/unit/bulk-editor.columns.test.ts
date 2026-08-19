@@ -550,6 +550,41 @@ const productRow: BulkRow = {
 };
 
 describe("resolveCellValue (Plan §12 column resolution)", () => {
+  /**
+   * PLAN_CONTENT_CREATION §2.4 / §3.6 — a `vendor`/`tags` cell on a row the
+   * attribute sync never touched shows the migration's default, not the
+   * merchant's data.
+   *
+   * Read-only rather than merely ghosted, because `productUpdate` REPLACES the
+   * tag list rather than merging it: typing one tag into such a row would wipe
+   * the product's real tags, on a row the grid itself admits it does not know.
+   * `status` is deliberately NOT in this class — it predates the attribute
+   * block and is non-null in the schema.
+   */
+  it("locks vendor and tags on a row whose attribute block was never fetched", () => {
+    const unsynced: BulkRow = { ...productRow, attributesKnown: false, vendor: "", tags: "" };
+    expect(resolveCellValue(unsynced, col("field.vendor"))).toEqual({
+      value: "",
+      editable: false,
+      readOnlyReason: "attributesNotSynced",
+    });
+    expect(resolveCellValue(unsynced, col("field.tags")).editable).toBe(false);
+    // Not a blanket lock on the row — status is a different column class.
+    expect(resolveCellValue(unsynced, col("field.status")).editable).toBe(true);
+  });
+
+  it("leaves them editable once the block IS known", () => {
+    const synced: BulkRow = { ...productRow, attributesKnown: true, vendor: "Acme", tags: "sale" };
+    expect(resolveCellValue(synced, col("field.vendor"))).toEqual({ value: "Acme", editable: true });
+    expect(resolveCellValue(synced, col("field.tags"))).toEqual({ value: "sale", editable: true });
+  });
+
+  it("treats an ABSENT flag as known, so no other row type is affected", () => {
+    // Only the four types that have an attribute block supply it; a row that
+    // does not carry the flag must not be locked out of editing.
+    expect(resolveCellValue(productRow, col("field.vendor")).editable).toBe(true);
+  });
+
   it("resolves a metafield column WITHOUT a ProductMetafield row to an empty, editable cell", () => {
     const resolved = resolveCellValue(productRow, col(metafieldColumnId("custom", "care")));
     expect(resolved).toEqual({ value: "", editable: true });
