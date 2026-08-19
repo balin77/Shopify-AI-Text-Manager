@@ -894,6 +894,10 @@ model TaxonomyCategoryName {
   /// The last segment, split at import so no read has to do it. This is what a
   /// derived product type is built from.
   name     String
+  /// Has no children. DERIVED from the GID hierarchy at import (the file does
+  /// not carry it) — the picker marks a non-leaf "(broad)", and a search hit
+  /// with no answer here would be marked broad whether it is or not.
+  isLeaf   Boolean
   /// The taxonomy release these rows came from ("2026-05"). Diagnostic: the
   /// import is triggered by an unknown GID, not by comparing versions.
   version  String   @default("")

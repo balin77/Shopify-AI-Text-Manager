@@ -19,6 +19,15 @@ export interface ParsedTaxonomyName {
   fullName: string;
   /** The last segment of the path — what a derived product type is built from. */
   name: string;
+  /**
+   * Derived, because the file does not carry it — see `deriveLeafFlags`.
+   *
+   * It is not decoration: the picker marks a non-leaf "(broad)", and a product
+   * filed under a branch shows up wrong in marketplace listings. Getting it
+   * wrong in either direction is a false statement — every hit marked broad,
+   * or the warning missing where it is due.
+   */
+  isLeaf: boolean;
 }
 
 export interface ParsedTaxonomyFile {
@@ -46,13 +55,32 @@ const GID_PREFIX = "gid://shopify/TaxonomyCategory/";
 const PATH_SEPARATOR = ">";
 
 /**
+ * Which of these categories have children — read off the GIDs themselves.
+ *
+ * Shopify's taxonomy ids ARE the hierarchy: `hg-3-66-1` sits under `hg-3-66`
+ * sits under `hg-3` sits under `hg` (measured on a live shop, where the API's
+ * own `parentId` agreed with exactly this reading at every sampled depth). So
+ * a category is a leaf when no other line names it as a prefix — no second
+ * lookup, no second source, and it cannot disagree with the file it came from.
+ */
+function deriveLeafFlags(gids: string[]): Set<string> {
+  const parents = new Set<string>();
+  for (const gid of gids) {
+    const lastDash = gid.lastIndexOf("-");
+    // A vertical ("…/hg") has no dash and therefore no parent to record.
+    if (lastDash > 0) parents.add(gid.slice(0, lastDash));
+  }
+  return parents;
+}
+
+/**
  * Parse the file. Unreadable lines are SKIPPED, never guessed at — a line this
  * does not understand is one category missing its translation, which falls
  * back to the API's English name; a line misread is a category labelled wrong.
  */
 export function parseTaxonomyCategoriesFile(text: string): ParsedTaxonomyFile {
   let version = "";
-  const entries: ParsedTaxonomyName[] = [];
+  const entries: Array<Omit<ParsedTaxonomyName, "isLeaf">> = [];
 
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
@@ -83,7 +111,13 @@ export function parseTaxonomyCategoriesFile(text: string): ParsedTaxonomyFile {
     entries.push({ gid, fullName, name });
   }
 
-  return { version, entries };
+  // Two passes, because a leaf can only be recognised once every line is in:
+  // the children of "hg-3" are scattered through the file, not next to it.
+  const parents = deriveLeafFlags(entries.map((e) => e.gid));
+  return {
+    version,
+    entries: entries.map((e) => ({ ...e, isLeaf: !parents.has(e.gid) })),
+  };
 }
 
 /**
@@ -103,6 +137,22 @@ export function taxonomyLocaleFolder(locale: string): string | null {
   if (!/^[A-Za-z]{2,3}$/.test(language)) return null;
   const lower = language.toLowerCase();
   return region ? `${lower}-${region.toUpperCase()}` : lower;
+}
+
+/**
+ * The dist folders to try for a locale, best first.
+ *
+ * A regional locale falls back to its base language: Shopify publishes
+ * `dist/fr` but no `dist/fr-CA`, and without this a Canadian-French shop 404s
+ * once and is then remembered as "no translations" for the whole process —
+ * pinned to English although its language is right there. Canadian French
+ * labelled from `dist/fr` is the correct answer, not a compromise.
+ */
+export function taxonomyFolderCandidates(locale: string): string[] {
+  const folder = taxonomyLocaleFolder(locale);
+  if (!folder) return [];
+  const base = folder.split("-")[0];
+  return folder === base ? [folder] : [folder, base];
 }
 
 /**

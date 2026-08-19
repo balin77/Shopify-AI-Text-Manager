@@ -14,6 +14,7 @@ import {
   MIN_PLAUSIBLE_ENTRIES,
   needsLocalization,
   parseTaxonomyCategoriesFile,
+  taxonomyFolderCandidates,
   taxonomyLocaleFolder,
 } from "../../app/services/taxonomy-localization.shared";
 
@@ -39,6 +40,7 @@ describe("parseTaxonomyCategoriesFile", () => {
       // The leaf is what a derived product type is built from — the whole path
       // would be unusable as a filter value.
       name: "Vasen",
+      isLeaf: true,
     });
   });
 
@@ -48,6 +50,8 @@ describe("parseTaxonomyCategoriesFile", () => {
       gid: "gid://shopify/TaxonomyCategory/ap",
       fullName: "Tiere & Tierbedarf",
       name: "Tiere & Tierbedarf",
+      // "…/ap-1" is in the file, so this vertical has a child.
+      isLeaf: false,
     });
   });
 
@@ -84,6 +88,55 @@ describe("parseTaxonomyCategoriesFile", () => {
     // …and that is below the plausibility floor, which is what stops it from
     // replacing a good table.
     expect(entries.length).toBeLessThan(MIN_PLAUSIBLE_ENTRIES);
+  });
+});
+
+describe("leaf flags", () => {
+  it("reads the hierarchy off the GIDs", () => {
+    // The file carries no leaf column. Marking every category broad — which is
+    // what a blanket default does — prints a marketplace warning over
+    // categories it is not true of.
+    const { entries } = parseTaxonomyCategoriesFile(
+      [
+        "gid://shopify/TaxonomyCategory/hg : Heim & Garten",
+        "gid://shopify/TaxonomyCategory/hg-3 : Heim & Garten > Dekoration",
+        "gid://shopify/TaxonomyCategory/hg-3-72 : Heim & Garten > Dekoration > Vasen",
+      ].join("\n"),
+    );
+    expect(entries.map((e) => [e.gid.split("/").pop(), e.isLeaf])).toEqual([
+      ["hg", false],
+      ["hg-3", false],
+      ["hg-3-72", true],
+    ]);
+  });
+
+  it("does not read a SIBLING as a parent", () => {
+    // "hg-3" and "hg-4" share a prefix but neither contains the other. A
+    // prefix test without the dash boundary would call both branches.
+    const { entries } = parseTaxonomyCategoriesFile(
+      [
+        "gid://shopify/TaxonomyCategory/hg-3 : A > B",
+        "gid://shopify/TaxonomyCategory/hg-4 : A > C",
+      ].join("\n"),
+    );
+    expect(entries.every((e) => e.isLeaf)).toBe(true);
+  });
+});
+
+describe("taxonomyFolderCandidates", () => {
+  it("falls back from a region to its base language", () => {
+    // Shopify publishes dist/fr but no dist/fr-CA. Without the fallback a
+    // Canadian-French shop 404s once and is then pinned to English for the
+    // whole process, although its language is right there.
+    expect(taxonomyFolderCandidates("fr-CA")).toEqual(["fr-CA", "fr"]);
+  });
+
+  it("offers a plain language once, not twice", () => {
+    expect(taxonomyFolderCandidates("de")).toEqual(["de"]);
+  });
+
+  it("offers nothing for something that is not a locale", () => {
+    expect(taxonomyFolderCandidates("")).toEqual([]);
   });
 });
 

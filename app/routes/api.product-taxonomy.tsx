@@ -124,10 +124,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
    * locale" and simply leaves everything in English — never as a wrong
    * language. Not fatal to the request either way: the names are a layer over
    * an answer that is already complete without them.
+   *
+   * NOT wrapped in a `catch`. `getCachedShopLocales` swallows its own errors
+   * and re-throws a 401 deliberately, so the request can re-authenticate;
+   * catching here would turn an expired token into a generic 500 and leave the
+   * merchant with a picker that never recovers.
    */
-  const primaryLocale = await getCachedShopLocales(admin, session.shop)
-    .then((locales) => locales.find((l) => l.primary)?.locale ?? "")
-    .catch(() => "");
+  const primaryLocale = (await getCachedShopLocales(admin, session.shop)).find((l) => l.primary)?.locale ?? "";
 
   /** Paint the merchant's language over what the API returned, per entry. */
   const localize = async (nodes: TaxonomyOption[]): Promise<TaxonomyOption[]> => {
@@ -165,7 +168,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       // matches — and then Shopify's own search below is the better answer.
       if (primaryLocale) {
         const localHits = await searchLocalizedNames(db, primaryLocale, search, TAXONOMY_PAGE_SIZE);
-        if (localHits) {
+        // NO hits falls THROUGH to Shopify's own search rather than answering
+        // "nothing matches". The table only knows the merchant's language, so
+        // a German shop whose owner types the English word Shopify uses would
+        // otherwise be told a category does not exist — and the API path below
+        // gets its labels localized on the way out anyway, so the answer comes
+        // back in German either way.
+        if (localHits && localHits.length > 0) {
           return json({
             success: true,
             tooShort: false,
@@ -173,12 +182,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
               id: hit.gid,
               fullName: hit.fullName,
               name: hit.name,
-              // The file carries no leaf flag. `isLeaf: false` would mark every
-              // hit "(broad)", and `true` would hide the warning where it is
-              // due — so the row DESCENDS on click and the level it opens says
-              // whether anything is below it. A search hit is a destination,
-              // not a verdict about the tree.
-              isLeaf: false,
+              // Derived from the GID hierarchy at import, not invented here: a
+              // blanket `false` marked every hit "(broad)", which is a warning
+              // about marketplace listings printed over categories it is not
+              // true of.
+              isLeaf: hit.isLeaf,
             })) satisfies TaxonomyOption[],
           });
         }

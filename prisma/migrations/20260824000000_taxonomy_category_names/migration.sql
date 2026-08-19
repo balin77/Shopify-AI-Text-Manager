@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS "TaxonomyCategoryName" (
   "gid"       TEXT NOT NULL,
   "fullName"  TEXT NOT NULL,
   "name"      TEXT NOT NULL,
+  -- Derived from the GID hierarchy at import; the file does not carry it. The
+  -- picker marks a non-leaf "(broad)", so a column that defaulted would state
+  -- something about every category rather than nothing.
+  "isLeaf"    BOOLEAN NOT NULL,
   "version"   TEXT NOT NULL DEFAULT '',
   "updatedAt" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "TaxonomyCategoryName_pkey" PRIMARY KEY ("id")

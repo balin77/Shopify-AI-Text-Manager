@@ -36,6 +36,17 @@
  * at all, because one bad minute must not become an hour of "this shop has no
  * translations" — the same rule `taxonomy-values.server.ts` follows.
  *
+ * ── One residual, stated rather than hidden ─────────────────────────────────
+ * The table is a PINNED release; the live taxonomy is not. A category Shopify
+ * retired since the pin is still offered by the localized SEARCH (the browse
+ * half cannot be stale — it asks the API for the structure and only borrows
+ * names from here), and picking one ends in a refused `productUpdate`. Closing
+ * it means verifying a search hit against the live API, and whether
+ * `TaxonomyCategory` resolves through `nodes(ids:)` is UNMEASURED — so it is
+ * named here instead of guessed at. The other half is already covered: a
+ * category ADDED since the pin has no localized row, so the search falls
+ * through to Shopify's own and finds it.
+ *
  * ── One row set for every shop ──────────────────────────────────────────────
  * `TaxonomyCategoryName` is deliberately NOT scoped by shop. It is Shopify's
  * public taxonomy, identical for every merchant and carrying nothing a shop
@@ -49,6 +60,7 @@ import {
   MIN_PLAUSIBLE_ENTRIES,
   needsLocalization,
   parseTaxonomyCategoriesFile,
+  taxonomyFolderCandidates,
   taxonomyLocaleFolder,
   type ParsedTaxonomyName,
 } from "./taxonomy-localization.shared";
@@ -66,6 +78,27 @@ const TAXONOMY_TAG = "v2026-05";
 
 const fileUrl = (folder: string) =>
   `https://raw.githubusercontent.com/Shopify/product-taxonomy/${TAXONOMY_TAG}/dist/${folder}/categories.txt`;
+
+/**
+ * How long an import counts as "already tried", per outcome.
+ *
+ * THE guard that keeps a missing GID from becoming a download loop. The pin
+ * goes stale by design (see `TAXONOMY_TAG`), so some category will eventually
+ * have no row no matter how often the file is fetched — and the trigger is
+ * exactly "a GID with no row". Without a cooldown, every single picker request
+ * on such a shop would start a 2 MB download and a 14 608-row rewrite, for a
+ * gap that re-importing cannot close.
+ *
+ * A SUCCESS is trusted for hours: the file cannot have changed under a pinned
+ * tag, so a miss after a fresh import is a fact about the release, not a stale
+ * table. A refusal or a failure is retried much sooner — those can be a bad
+ * minute rather than a bad answer.
+ */
+const COOLDOWN_MS = {
+  imported: 6 * 60 * 60 * 1000,
+  refused: 10 * 60 * 1000,
+  failed: 10 * 60 * 1000,
+} as const;
 
 /** The file is ~2 MB; a stalled fetch must not hold a runner open forever. */
 const FETCH_TIMEOUT_MS = 30_000;
@@ -90,6 +123,17 @@ const inFlight = new Map<string, Promise<void>>();
  * absent from this set.
  */
 const noFileForLocale = new Set<string>();
+
+/** When each locale was last attempted, and how it went. Process-local: a
+ *  redeploy re-asking once is cheap, and holding it anywhere else would make a
+ *  cache into a schema. */
+const lastAttempt = new Map<string, { at: number; outcome: keyof typeof COOLDOWN_MS }>();
+
+function withinCooldown(folder: string): boolean {
+  const attempt = lastAttempt.get(folder);
+  if (!attempt) return false;
+  return Date.now() - attempt.at < COOLDOWN_MS[attempt.outcome];
+}
 
 export interface LocalizedName {
   fullName: string;
@@ -153,11 +197,14 @@ export async function lookupLocalizedNames(
 export function scheduleTaxonomyImport(db: PrismaClient, locale: string): void {
   const folder = taxonomyLocaleFolder(locale);
   if (!folder || !needsLocalization(locale) || noFileForLocale.has(folder)) return;
-  if (inFlight.has(folder)) return;
+  if (inFlight.has(folder) || withinCooldown(folder)) return;
 
-  const run: Promise<void> = importTaxonomyLocale(db, folder)
+  const run: Promise<void> = importTaxonomyLocale(db, folder, taxonomyFolderCandidates(locale))
     .then(() => undefined)
     .catch((error) => {
+      // A thrown import is a FAILURE, and it has to be recorded as one — else
+      // the next request starts another download of the file that just broke.
+      lastAttempt.set(folder, { at: Date.now(), outcome: "failed" });
       logger.error("[TaxonomyL10n] Import failed", {
         context: "TaxonomyL10n",
         locale: folder,
@@ -175,26 +222,40 @@ export function scheduleTaxonomyImport(db: PrismaClient, locale: string): void {
 export async function importTaxonomyLocale(
   db: PrismaClient,
   folder: string,
+  /** Which folders to try, best first. Defaults to the folder itself; the
+   *  scheduler passes the regional-then-base list. */
+  candidates: string[] = [folder],
 ): Promise<{ imported: number; version: string } | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let text: string | null = null;
 
-  let text: string;
-  try {
-    const response = await fetch(fileUrl(folder), { signal: controller.signal });
-    if (response.status === 404) {
-      // Definitive on a pinned tag: Shopify does not publish this language.
-      // Remembered so the next page load does not ask again.
-      noFileForLocale.add(folder);
-      logger.info("[TaxonomyL10n] No published file for locale", {
-        context: "TaxonomyL10n", locale: folder, tag: TAXONOMY_TAG,
-      });
-      return null;
+  for (const candidate of candidates) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(fileUrl(candidate), { signal: controller.signal });
+      if (response.status === 404) {
+        // Definitive on a pinned tag — but only for THIS folder. A regional
+        // locale still has its base language to try, which is why the 404 is
+        // not the end of the loop.
+        continue;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      text = await response.text();
+      break;
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    text = await response.text();
-  } finally {
-    clearTimeout(timer);
+  }
+
+  if (text === null) {
+    // Every candidate answered 404: Shopify does not publish this language at
+    // all. Remembered, because a pinned tag cannot start publishing it.
+    noFileForLocale.add(folder);
+    lastAttempt.set(folder, { at: Date.now(), outcome: "refused" });
+    logger.info("[TaxonomyL10n] No published file for locale", {
+      context: "TaxonomyL10n", locale: folder, tried: candidates, tag: TAXONOMY_TAG,
+    });
+    return null;
   }
 
   const { version, entries } = parseTaxonomyCategoriesFile(text);
@@ -203,6 +264,7 @@ export async function importTaxonomyLocale(
   // taxonomy. Refused BEFORE anything is deleted, so a bad fetch leaves the
   // good table exactly where it was.
   if (entries.length < MIN_PLAUSIBLE_ENTRIES) {
+    lastAttempt.set(folder, { at: Date.now(), outcome: "refused" });
     logger.warn("[TaxonomyL10n] Refused an implausibly small file", {
       context: "TaxonomyL10n",
       locale: folder,
@@ -213,6 +275,7 @@ export async function importTaxonomyLocale(
   }
 
   await replaceLocale(db, folder, version, entries);
+  lastAttempt.set(folder, { at: Date.now(), outcome: "imported" });
 
   logger.info("[TaxonomyL10n] Imported", {
     context: "TaxonomyL10n", locale: folder, entries: entries.length, version,
@@ -245,6 +308,7 @@ async function replaceLocale(
             gid: e.gid,
             fullName: e.fullName,
             name: e.name,
+            isLeaf: e.isLeaf,
             version,
           })),
           skipDuplicates: true,
@@ -272,19 +336,21 @@ export async function searchLocalizedNames(
   locale: string,
   query: string,
   limit: number,
-): Promise<Array<{ gid: string; fullName: string; name: string }> | null> {
+): Promise<Array<{ gid: string; fullName: string; name: string; isLeaf: boolean }> | null> {
   const folder = taxonomyLocaleFolder(locale);
   if (!folder || !needsLocalization(locale) || noFileForLocale.has(folder)) return null;
 
   try {
     const rows = await db.taxonomyCategoryName.findMany({
       where: { locale: folder, fullName: { contains: query, mode: "insensitive" } },
-      select: { gid: true, fullName: true, name: true },
-      // Alphabetical by path, which groups a branch with its own children
-      // instead of scattering them — the API's search returns its own order and
-      // this at least is a stated one.
-      orderBy: [{ fullName: "asc" }],
-      take: limit,
+      select: { gid: true, fullName: true, name: true, isLeaf: true },
+      // Deliberately WIDER than the limit, because the ranking below is what
+      // decides which ones matter and it cannot rank what it never saw. A
+      // database-side `orderBy` would have to be alphabetical, and alphabetical
+      // is exactly the order that buries the answer: "kleid" matches every
+      // "Bekleidung & Accessoires > …" path in the shop, and 20 of those would
+      // arrive before "Kleider" ever did.
+      take: Math.max(limit * 10, 200),
     });
     // An empty TABLE and an empty RESULT are different answers. With no rows
     // at all the locale is simply not imported yet, and Shopify's own search
@@ -296,7 +362,7 @@ export async function searchLocalizedNames(
       });
       if (!any) return null;
     }
-    return rows;
+    return rankLocalizedHits(rows, query).slice(0, limit);
   } catch (error) {
     logger.warn("[TaxonomyL10n] Localized search failed", {
       context: "TaxonomyL10n",
@@ -305,4 +371,29 @@ export async function searchLocalizedNames(
     });
     return null;
   }
+}
+
+/**
+ * What the merchant meant, ahead of what merely contains their letters.
+ *
+ * A substring match over full PATHS is generous by nature: every descendant of
+ * a matching branch matches too. Ranked by path alphabetically, a query lands
+ * on twenty children of one branch and never reaches the category actually
+ * named that. So the LEAF decides first — the leaf is what the merchant typed
+ * — and a shallower path wins ties, because a branch is the more likely
+ * intention than one of its fifty children.
+ */
+function rankLocalizedHits<T extends { fullName: string; name: string }>(rows: T[], query: string): T[] {
+  const needle = query.trim().toLowerCase();
+  const score = (row: T): number => {
+    const leaf = row.name.toLowerCase();
+    if (leaf === needle) return 0;
+    if (leaf.startsWith(needle)) return 1;
+    if (leaf.includes(needle)) return 2;
+    return 3;
+  };
+  const depth = (row: T): number => row.fullName.split(">").length;
+  return [...rows].sort(
+    (a, b) => score(a) - score(b) || depth(a) - depth(b) || a.fullName.localeCompare(b.fullName),
+  );
 }
