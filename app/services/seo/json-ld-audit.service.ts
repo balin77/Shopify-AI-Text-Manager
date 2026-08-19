@@ -41,6 +41,7 @@ import { MAX_AUDIT_ITEMS_PER_TYPE, MAX_PROBLEM_BUCKET_ITEMS } from "./audit.serv
 import type { GalleryVideoAudit } from "./gallery-video-audit.server";
 import type { MarkupTypeStat } from "./markup-activation.shared";
 import { loadCrawlMarkupPages } from "./crawl-markup-rows.server";
+import { MAX_JSON_LD_TYPES_PER_PAGE } from "./crawl.shared";
 
 export type JsonLdAuditItemType = "product" | "collection" | "article";
 
@@ -493,6 +494,8 @@ export async function summarizeLiveJsonLd(
   const coverage: LiveJsonLdCoverageRow[] = [];
   const pagesByType = new Map<string, number>();
   const duplicatePages = new Map<string, string[]>();
+  /** Pages where every copy of a type was ours — see MarkupTypeStat.appAllCopiesPages. */
+  const canonicalAppAllPages = new Map<string, number>();
   // The example lists are capped, so the page COUNT has to be tallied
   // separately or a shop with six duplicate pages would report five.
   //
@@ -530,11 +533,15 @@ export async function summarizeLiveJsonLd(
     const seen = new Set(types);
     for (const t of seen) pagesByType.set(t, (pagesByType.get(t) ?? 0) + 1);
 
-    const appTypes = new Set(
-      (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
-        canonicalJsonLdType,
-      ),
+    const appList = (row.jsonLdAppTypes ? row.jsonLdAppTypes.split(",").filter(Boolean) : []).map(
+      canonicalJsonLdType,
     );
+    const appTypes = new Set(appList);
+    // Counted, not just seen: for a REPEATABLE type only an equal count can
+    // show that nothing else emits it too. The crawl preserves repeats in both
+    // columns for exactly this.
+    const appCanonical = new Map<string, number>();
+    for (const t of appList) appCanonical.set(t, (appCanonical.get(t) ?? 0) + 1);
     const canonical = new Map<string, number>();
     for (const t of types) {
       const c = canonicalJsonLdType(t);
@@ -544,6 +551,13 @@ export async function summarizeLiveJsonLd(
       const k = key(t, rt);
       canonicalPages.set(k, (canonicalPages.get(k) ?? 0) + 1);
       if (appTypes.has(t)) canonicalAppPages.set(k, (canonicalAppPages.get(k) ?? 0) + 1);
+      // A page whose list hit the per-page cap may be truncated on either side,
+      // and two truncated lists can be equal without meaning it. Such a page is
+      // simply not counted as proof.
+      const appN = appCanonical.get(t) ?? 0;
+      if (appN >= n && n < MAX_JSON_LD_TYPES_PER_PAGE) {
+        canonicalAppAllPages.set(k, (canonicalAppAllPages.get(k) ?? 0) + 1);
+      }
       if (n <= 1 || REPEATABLE_JSON_LD_TYPES.has(t)) continue;
       const list = duplicatePages.get(t) ?? [];
       if (list.length < MAX_LIVE_EXAMPLES) list.push(row.url);
@@ -564,6 +578,7 @@ export async function summarizeLiveJsonLd(
         duplicatePages: duplicateCounts.get(k) ?? 0,
         appIsOneCopy: duplicateAppCounts.get(k) ?? 0,
         repeatable: REPEATABLE_JSON_LD_TYPES.has(type),
+        appAllCopiesPages: canonicalAppAllPages.get(k) ?? 0,
       };
     })
     .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type));

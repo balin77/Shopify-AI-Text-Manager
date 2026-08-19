@@ -42,6 +42,7 @@ import {
   PRODUCT_PUBLICATIONS_SELECTION,
   inventoryLevelRows,
   productPublicationRows,
+  type PublicationCatalogKind,
   variantCommerceColumns,
   SHOP_LOCATION_PAGE_SIZE,
 } from "~/services/commerce-sync.shared";
@@ -158,6 +159,11 @@ export interface CommerceVariantView {
 export interface CommerceChannelView {
   publicationId: string;
   name: string;
+  /**
+   * "app" | "market" | "companyLocation" | "" — see `publicationCatalogKind`.
+   * The client groups by it; "" keeps rendering with the sales channels.
+   */
+  catalogType: PublicationCatalogKind;
   isPublished: boolean;
   publishDate: string | null;
 }
@@ -511,6 +517,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       channels: (publications?.rows ?? []).map((row) => ({
         publicationId: row.publicationId,
         name: row.publicationName,
+        catalogType: row.catalogType,
         isPublished: row.isPublished,
         publishDate: row.publishDate ? row.publishDate.toISOString() : null,
       })) satisfies CommerceChannelView[],

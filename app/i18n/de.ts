@@ -386,6 +386,13 @@ export const de = {
       primaryDisabledHint: "Marktauswahl nur in einer Übersetzungssprache verfügbar – wechsle zuerst zu einer Zielsprache.",
       tooltip: "Wähle einen Markt, um diese Sprache abweichend für ihn zu übersetzen. Ohne Auswahl gilt der globale Wert für alle Märkte.",
       disabledHint: "Cookie-Banner werden über Shopifys Customer-Privacy-API gespeichert, die keine markt-spezifischen Werte unterstützt. Diese Inhalte gelten immer global.",
+      // Die Warnung neben der Marktauswahl: ohne Katalog-Zugehörigkeit ist
+      // jede Übersetzung für diesen Markt unsichtbar. {market} = Marktname.
+      // Verweist bewusst auf den Shopify-Admin und NICHT auf die Details-Karte:
+      // die ist Pro-gated und nur in der Hauptsprache bedienbar, während dieser
+      // Hinweis genau dann erscheint, wenn eine Fremdsprache aktiv ist.
+      notPublishedInMarket:
+        "Dieses Produkt liegt nicht im Katalog des Markts „{market}“ — dort kann es niemand sehen. Übersetzungen für diesen Markt bleiben unsichtbar, bis du es im Shopify-Admin unter Veröffentlichung für diese Region freigibst.",
     },
     // Primary language empty-field protection
     emptyPrimaryFieldsError: "Felder in der Hauptsprache dürfen nicht leer gespeichert werden. Wenn ein Feld leer gespeichert wird, entfernt Shopify es dauerhaft und es kann nie wiederhergestellt werden. Bitte füllen Sie alle Felder aus, bevor Sie speichern.",
@@ -626,6 +633,13 @@ export const de = {
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
       channelsHeading: "Vertriebskanäle",
+      // Shopify beantwortet drei verschiedene Fragen mit einem Mechanismus —
+      // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
+      // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
+      marketsHeading: "Regionen",
+      marketsHint: "Regionen entscheiden, wer das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
+      b2bHeading: "B2B-Kataloge",
+      b2bHint: "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen.",
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
@@ -2207,7 +2221,7 @@ export const de = {
         rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
       },
       activation: {
-        openSwitches: "Schalter öffnen",
+        openSwitches: "Zum Widget",
         summary: {
           switchOff: "{count} ausschalten: {names}",
           switchOffShort: "{count} ausschalten",
@@ -2233,13 +2247,13 @@ export const de = {
         socialSwitchesTitle: "Open Graph / Twitter Cards",
         socialSwitchesBody: "Ein Schalter im Theme-Editor, neun Tags dahinter. Er ist nur so sicher wie sein schlechtestes Tag.",
         socialNotMeasured: "Der letzte Crawl ist älter als diese Auswertung und hat Open-Graph-Tags noch nicht erfasst. Ohne Messung gibt es hier keine Empfehlung — starte einen neuen Crawl.",
-        socialOriginUnknownHint: "Kein Merkmal dieser App gefunden. Was unten als fremd gilt, ist deshalb sehr wahrscheinlich, aber nicht bewiesen — ein neuer Crawl beweist es.",
+        socialOriginUnknownHint: "Kein Merkmal dieser App gefunden. Dafür gibt es zwei Gründe: Diese Einbettung ist aus — dann liefert dein Theme die Tags — oder dein letzter Crawl ist älter als das Merkmal. Was unten als fremd gilt, ist deshalb wahrscheinlich, aber nicht bewiesen.",
         title: "Schalter für Schalter: was darf an?",
-        intro: "Theme und App benutzen absichtlich dieselbe @id — laufen beide, verschmilzt Google sie zu EINEM Knoten und jedes Feld steht doppelt drin. Das ist nicht doppeltes, sondern **ungültiges** Markup. Deshalb hier für jeden Schalter, was Schritt 1 gemessen hat.",
+        intro: "Schalte hier nur ein, was dein Theme nicht schon selbst ausliefert. Ist ein Typ bereits da, entsteht beim Einschalten fehlerhaftes Markup — Google verwirft es dann eher, als dass es dir hilft. Unten steht für jeden Schalter, was Schritt 1 gemessen hat.",
         noCrawl: "**Noch kein Crawl.** Ohne Messung keine Empfehlung.",
         notMeasured: "**Nicht gemessen.** Der letzte Crawl ist älter als diese Auswertung. Ohne Messung keine Empfehlung.",
         basis: "Grundlage: Crawl vom {time}, {pages} ausgelieferte Seiten geprüft.",
-        originUnknownHint: "Kein Merkmal dieser App gefunden. Was unten als fremd gilt, ist deshalb sehr wahrscheinlich, aber nicht bewiesen — ein neuer Crawl beweist es.",
+        originUnknownHint: "Kein Merkmal dieser App gefunden. Dafür gibt es zwei Gründe: Diese Einbettung ist aus — dann liefert dein Theme das Markup — oder dein letzter Crawl ist älter als das Merkmal. Was unten als fremd gilt, ist deshalb wahrscheinlich, aber nicht bewiesen.",
         switchesTitle: "JSON-LD (schema.org)",
         defaultOn: "Standard: an",
         defaultOff: "Standard: aus",

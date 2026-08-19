@@ -62,6 +62,17 @@ export interface MarkupTypeStat {
    * clean" — the gate must never dress that up as a verified result.
    */
   repeatable: boolean;
+  /**
+   * Pages where EVERY copy of this type carries our marker — i.e. the count we
+   * emitted equals the count served. For a repeatable type this is the only
+   * thing that separates "we are on every such page" from "we are the only
+   * source on every such page"; `appPages` cannot, because our three videos and
+   * a theme's fourth look the same from a page-presence count.
+   *
+   * Optional so a producer that cannot answer it (or predates it) keeps the
+   * cautious old behaviour instead of claiming proof it never had.
+   */
+  appAllCopiesPages?: number;
 }
 
 export type ActivationVerdict =
@@ -193,7 +204,15 @@ export function activationGate(
   // the theme can both emit three VideoObjects on the same page and the
   // duplicate rule — correctly — stays quiet, so `appPages === pages` proves
   // only that we are on every such page, never that we are the only source.
-  if (s.repeatable) return { verdict: "repeatableUnjudged", ...base };
+  if (s.repeatable) {
+    // …unless every copy on every such page is provably ours. Counting beats
+    // presence here: `appPages === pages` says we are THERE, while an equal
+    // COUNT says nothing else is. Without that the switch a merchant has
+    // already turned on reported "not checkable" for good, which reads as a
+    // defect rather than as the caution it was meant to be.
+    if ((s.appAllCopiesPages ?? 0) >= s.pages) return { verdict: "appOnly", ...base };
+    return { verdict: "repeatableUnjudged", ...base };
+  }
 
   if (s.appPages >= s.pages) return { verdict: "appOnly", ...base };
   return { verdict: "mixed", ...base };

@@ -377,3 +377,41 @@ describe("embedBadgeVerdict", () => {
     expect(embedBadgeVerdict([])).toBe("unknown");
   });
 });
+
+describe("repeatable types are judged where the count proves it", () => {
+  const rep = (over: Partial<Parameters<typeof activationGate>[0]> = {}) => ({
+    type: "VideoObject",
+    resourceType: "product",
+    pages: 1,
+    appPages: 1,
+    duplicatePages: 0,
+    appIsOneCopy: 0,
+    repeatable: true,
+    ...over,
+  });
+  const opts = { measured: true, originKnown: true };
+
+  it("says it runs when every copy on every page is ours", () => {
+    // The reported defect: video was switched on, exactly one product had
+    // videos, and the switch reported "not checkable" for good. An equal
+    // COUNT is the proof page-presence could never give.
+    expect(activationGate(rep({ appAllCopiesPages: 1 }), opts).verdict).toBe("appOnly");
+  });
+
+  it("stays unjudged when one page carries a copy that is not ours", () => {
+    expect(activationGate(rep({ pages: 3, appPages: 3, appAllCopiesPages: 2 }), opts).verdict).toBe(
+      "repeatableUnjudged",
+    );
+  });
+
+  it("stays unjudged when the producer cannot answer the question at all", () => {
+    // No field = an older producer. Cautious beats a claim it never had.
+    expect(activationGate(rep(), opts).verdict).toBe("repeatableUnjudged");
+  });
+
+  it("still reports a foreign-only repeatable type rather than calling it unjudged", () => {
+    expect(activationGate(rep({ appPages: 0, appAllCopiesPages: 0 }), opts).verdict).toBe(
+      "foreignOnly",
+    );
+  });
+});
