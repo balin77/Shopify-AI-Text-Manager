@@ -34,7 +34,9 @@ function request() {
 
 /** Answers each GraphQL call in turn. */
 function adminWith(answers: unknown[]) {
-  const graphql = vi.fn(async () => ({ json: async () => answers.shift() ?? {} }));
+  const graphql = vi.fn(async (_query: string, _options?: { variables?: Record<string, unknown> }) => ({
+    json: async () => answers.shift() ?? {},
+  }));
   authenticate.admin.mockResolvedValue({ admin: { graphql }, session: { shop: "s" } });
   return graphql;
 }
@@ -128,9 +130,9 @@ describe("the unit-price probe", () => {
   it("confirms a write only when the variant echoes it back", async () => {
     const stored = {
       quantityValue: 500,
-      quantityUnit: "GRAMS",
+      quantityUnit: "G",
       referenceValue: 1,
-      referenceUnit: "KILOGRAMS",
+      referenceUnit: "KG",
     };
     adminWith([
       introspection(["unitPriceMeasurement"]),
@@ -148,5 +150,54 @@ describe("the unit-price probe", () => {
     expect(results.clear.ok).toBe(true);
     // …and the variant was put back the way it was found.
     expect(results.restored.ok).toBe(true);
+  });
+
+  it("sends the unit CODES, not the WeightUnit spelling", async () => {
+    // The first live run cost a whole round trip to this: every other weight
+    // field in this app takes GRAMS/KILOGRAMS, and this one does not — the
+    // schema names G/KG. Sending the wrong spelling makes the probe answer
+    // nothing while looking like it ran.
+    const graphql = adminWith([
+      introspection(["unitPriceMeasurement"]),
+      currentValue(null),
+      { data: { productVariantsBulkUpdate: { productVariants: [], userErrors: [] } } },
+    ]);
+    await run();
+
+    const write = graphql.mock.calls.find((call) =>
+      call[0].includes("productVariantsBulkUpdate"),
+    );
+    const variants = write?.[1]?.variables?.variants as Array<{ unitPriceMeasurement: unknown }>;
+    const sent = variants[0].unitPriceMeasurement;
+    expect(sent).toEqual({
+      quantityValue: 500,
+      quantityUnit: "G",
+      referenceValue: 1,
+      referenceUnit: "KG",
+    });
+  });
+
+  it("does not read a rejected VALUE as a missing FIELD", async () => {
+    // The live refusal named `unitPriceMeasurement` while proving it exists:
+    // "invalid value for 0.unitPriceMeasurement.quantityUnit (Expected …)".
+    // Matching on the field name alone reports the field as unsupported and
+    // closes the question with the answer inverted.
+    adminWith([
+      introspection(["unitPriceMeasurement"]),
+      currentValue(null),
+      {
+        errors: [
+          {
+            message:
+              'Variable $variants of type [ProductVariantsBulkInput!]! was provided invalid value for 0.unitPriceMeasurement.quantityUnit (Expected "GRAMS" to be one of: ML, CL, L, G, KG)',
+          },
+        ],
+      },
+    ]);
+    const results = await run();
+
+    expect(results.write.missing).toBeUndefined();
+    expect(results.write.ok).toBe(false);
+    expect(results.write.error).toMatch(/invalid value/i);
   });
 });
