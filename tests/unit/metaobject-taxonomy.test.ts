@@ -501,3 +501,17 @@ describe("deleting a metaobject DEFINITION", () => {
     expect(Object.keys(CREATE_SPECS)).not.toContain("metaobjectDefinition");
   });
 });
+
+describe("deleting a type — the plan gate and the content type", () => {
+  it("maps every deletable resource to a plan content type", async () => {
+    const { planContentTypeForDelete } = await import("~/config/create-fields.config");
+    // The definition has no create spec — this app offers no form for one —
+    // so it needs its own answer rather than an index into CREATE_SPECS.
+    expect(planContentTypeForDelete("metaobjectDefinition")).toBe("metaobjects");
+    // Everything else derives from the create spec, so the two gates cannot
+    // disagree about which plan may touch a type.
+    expect(planContentTypeForDelete("metaobject")).toBe("metaobjects");
+    expect(planContentTypeForDelete("product")).toBe("products");
+    expect(planContentTypeForDelete("blog")).toBe("blogs");
+  });
+});

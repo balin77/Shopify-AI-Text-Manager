@@ -56,6 +56,35 @@ export function isAttributeField(field: {
   return field.supportsTranslation === false && !field.translationKey;
 }
 
+/**
+ * WHICH CARD a field renders in — the one place that decides, for all three.
+ *
+ * WHERE a field sits and HOW it saves are separate questions. `isAttributeField`
+ * above answers the second and nothing here changes that: it still decides the
+ * not-translatable notice, the `attributesSyncedAt` lock and the `changedFields`
+ * gate. This answers only the first, and DERIVES it from the second — an
+ * attribute belongs in the Details card, everything else in the main one — so
+ * that a new field lands in the right place without saying anything.
+ *
+ * `card` is how the two deliberately come apart, and there are exactly two
+ * such fields. `category` is an attribute that renders UP in the main card,
+ * because Shopify's own admin puts the category next to the description and a
+ * merchant who knows that admin looks there. `productType` is translatable
+ * content that renders DOWN in the Details card, right next to the category —
+ * the two are constantly taken for one field, and two cards apart there was
+ * nothing to compare. Both keep their own save semantics either way.
+ */
+export function fieldCard(field: {
+  card?: string;
+  translationKey?: string;
+  supportsTranslation?: boolean;
+}): "main" | "searchEngine" | "details" {
+  if (field.card === "searchEngine") return "searchEngine";
+  if (field.card === "details") return "details";
+  if (field.card === "main") return "main";
+  return isAttributeField(field) ? "details" : "main";
+}
+
 /** Shaped for the four `*UpdateInput`s. `author` stays a plain name here — the
  *  service wraps it in Shopify's `AuthorInput` at the call. */
 export interface AttributeInput {

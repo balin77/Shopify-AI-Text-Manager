@@ -513,7 +513,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Forwarding-Refs for functions defined later (Ref-Forwarding-Pattern for circular dep)
   const buildFieldsForSaveRef = useRef<(v: Record<string, string>, l: string) => Record<string, string>>(() => ({}));
   const safeSubmitRef = useRef<(data: Record<string, any>, opts?: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" }) => void>(() => {});
-  const submitAIActionRef = useRef<(data: Record<string, string>, fieldKey: string, onSuccess?: (r: Record<string, unknown>) => void, onError?: (e: string) => void) => void>(async () => {});
+  const submitAIActionRef = useRef<(data: Record<string, string>, fieldKey: string, onSuccess?: (r: Record<string, unknown>) => void, onError?: (e: string) => void, options?: { suppressErrorBox?: boolean }) => void>(async () => {});
 
   // ============================================================================
   // SUB-HOOK: useEditorAltText
@@ -907,7 +907,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     data: Record<string, string>,
     fieldKey: string,
     onSuccess?: (result: Record<string, unknown>) => void,
-    onError?: (error: string) => void
+    onError?: (error: string) => void,
+    /**
+     * `suppressErrorBox` hands the failure to `onError` ALONE, without the red
+     * banner. For an action the merchant TRIGGERED the banner is right — they
+     * are waiting for an answer. For one the app started by itself, a critical
+     * error appearing on top of a save they just watched succeed reads as "the
+     * save broke", which it did not. The caller then says what actually failed,
+     * in its own words and its own tone. Default off: every existing call site
+     * keeps the banner it has today.
+     */
+    options?: { suppressErrorBox?: boolean }
   ) => {
     const itemId = selectedItemIdRef.current;
     if (!itemId) return;
@@ -982,8 +992,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         // Only show error if user is still on the same item
         if (selectedItemIdRef.current === itemId) {
           onError?.(errorMsg);
-          const translatedError = translateErrorMessage(errorMsg, t);
-          showInfoBox(translatedError, "critical", t.common?.error || "Error");
+          if (!options?.suppressErrorBox) {
+            const translatedError = translateErrorMessage(errorMsg, t);
+            showInfoBox(translatedError, "critical", t.common?.error || "Error");
+          }
         }
       }
     } catch (error) {
@@ -991,8 +1003,10 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (selectedItemIdRef.current === itemId) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         onError?.(errorMessage);
-        const translatedError = translateErrorMessage(errorMessage, t);
-        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        if (!options?.suppressErrorBox) {
+          const translatedError = translateErrorMessage(errorMessage, t);
+          showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        }
       }
     }
   }, [showInfoBox, t, pollTaskUntilDone]);

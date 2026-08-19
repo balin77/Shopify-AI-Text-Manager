@@ -6,6 +6,7 @@ import { SettingsCollectionModelProbeTab } from "./SettingsCollectionModelProbeT
 import { SettingsMetaobjectProbeTab } from "./SettingsMetaobjectProbeTab";
 import { SettingsUnitPriceProbeTab } from "./SettingsUnitPriceProbeTab";
 import { SettingsPublicationProbeTab } from "./SettingsPublicationProbeTab";
+import { SettingsTaxonomyProbeTab } from "./SettingsTaxonomyProbeTab";
 
 export type ProbeSubTab =
   | "translationprobe"
@@ -13,7 +14,8 @@ export type ProbeSubTab =
   | "collectionprobe"
   | "metaobjectprobe"
   | "unitpriceprobe"
-  | "publicationprobe";
+  | "publicationprobe"
+  | "taxonomyprobe";
 
 interface Props {
   /** Same per-probe gates as before — one flag per sub-tab, not one for the group. */
@@ -23,6 +25,7 @@ interface Props {
   showMetaobjectProbe: boolean;
   showUnitPriceProbe: boolean;
   showPublicationProbe: boolean;
+  showTaxonomyProbe: boolean;
   initialSubTab?: ProbeSubTab;
 }
 
@@ -45,6 +48,7 @@ export function SettingsProbesTab({
   showMetaobjectProbe,
   showUnitPriceProbe,
   showPublicationProbe,
+  showTaxonomyProbe,
   initialSubTab,
 }: Props) {
   const subTabs: { id: ProbeSubTab; label: string }[] = [
@@ -54,6 +58,7 @@ export function SettingsProbesTab({
     ...(showMetaobjectProbe ? [{ id: "metaobjectprobe" as ProbeSubTab, label: "Metaobjects" }] : []),
     ...(showUnitPriceProbe ? [{ id: "unitpriceprobe" as ProbeSubTab, label: "Unit price" }] : []),
     ...(showPublicationProbe ? [{ id: "publicationprobe" as ProbeSubTab, label: "Publications" }] : []),
+    ...(showTaxonomyProbe ? [{ id: "taxonomyprobe" as ProbeSubTab, label: "Taxonomy" }] : []),
   ];
 
   // Hooks must run unconditionally, so the fallback tolerates an empty list and
@@ -119,6 +124,8 @@ export function SettingsProbesTab({
       {selected === "unitpriceprobe" && showUnitPriceProbe && <SettingsUnitPriceProbeTab />}
 
       {selected === "publicationprobe" && showPublicationProbe && <SettingsPublicationProbeTab />}
+      {/* Taxonomy probe — what the category picker can be built on. */}
+      {selected === "taxonomyprobe" && showTaxonomyProbe && <SettingsTaxonomyProbeTab />}
     </BlockStack>
   );
 }

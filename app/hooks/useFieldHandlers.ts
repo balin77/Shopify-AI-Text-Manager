@@ -91,7 +91,8 @@ export interface FieldHandlerProps {
     data: Record<string, string>,
     fieldKey: string,
     onSuccess?: (result: Record<string, unknown>) => void,
-    onError?: (error: string) => void
+    onError?: (error: string) => void,
+    options?: { suppressErrorBox?: boolean }
   ) => Promise<void>;
   performAutoSave: (valuesToSave: Record<string, string>, locale: string) => void;
   safeSubmit: (
@@ -152,7 +153,7 @@ export interface FieldHandlers {
   /** True while that multi-field run is in flight. */
   isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
-  handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;
@@ -751,19 +752,35 @@ const handleTranslateField = (fieldKey: string) => {
   );
 };
 
-const handleTranslateFieldToAllLocales = (fieldKey: string) => {
+/**
+ * `options.auto` marks a run the APP started, not the merchant — today only
+ * the product type derived from a category pick.
+ *
+ * It changes nothing about the translation and everything about the reporting.
+ * A merchant who presses the translate button is waiting for an answer, so a
+ * missing text or an unreachable provider belongs on screen. A merchant who
+ * just pressed Save is not waiting for anything, and a red "Error" landing on
+ * top of a save they watched succeed reads as "the save broke". So the
+ * pre-flight refusals go quiet (the caller has already checked them) and a
+ * real failure comes back as ONE warning that names what did not happen and
+ * what to press — never as a critical box, and never as silence either.
+ */
+const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: boolean }) => {
   if (!selectedItemId || !selectedItem) return;
 
+  const auto = options?.auto === true;
   const requestItemId = selectedItemId;
 
   // Filter out primary locale and disabled languages
   const targetLocales = enabledLanguages.filter(l => l !== primaryLocale);
   if (targetLocales.length === 0) {
-    showInfoBox(
-      t.common?.noTargetLanguagesSelected || "No target languages selected",
-      "warning",
-      t.common?.warning || "Warning"
-    );
+    if (!auto) {
+      showInfoBox(
+        t.common?.noTargetLanguagesSelected || "No target languages selected",
+        "warning",
+        t.common?.warning || "Warning"
+      );
+    }
     return;
   }
 
@@ -774,11 +791,13 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
     savedPrimaryValuesRef.current[selectedItemId]?.[fieldKey] ||
     getItemFieldValue(selectedItem, fieldKey, primaryLocale, config);
   if (!sourceText) {
-    showInfoBox(
-      t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-      "warning",
-      "Warnung"
-    );
+    if (!auto) {
+      showInfoBox(
+        t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
+        "warning",
+        "Warnung"
+      );
+    }
     return;
   }
 
@@ -897,7 +916,23 @@ const handleTranslateFieldToAllLocales = (fieldKey: string) => {
       if (revalidatorRef.current.state === 'idle') {
         revalidatorRef.current.revalidate();
       }
-    }
+    },
+    // An automatic run reports its own failure, in its own words: what did not
+    // happen and what to press. Never silence — a translation that quietly did
+    // not run is indistinguishable from one nobody wanted.
+    auto
+      ? () => {
+          showInfoBox(
+            String(
+              t.content?.autoTranslateFailed ||
+                "{field} could not be translated automatically. Use the translate button on the field to do it now.",
+            ).replace("{field}", resolveFieldLabel(fieldKey)),
+            "warning",
+            t.common?.warning || "Warning",
+          );
+        }
+      : undefined,
+    auto ? { suppressErrorBox: true } : undefined,
   );
 };
 

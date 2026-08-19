@@ -22,6 +22,10 @@ export const de = {
   // Products Page
   products: {
     variantsTitle: "Varianten",
+    // Dieselbe Karte, wenn das Produkt (noch) keine Option hat: sie zeigt
+    // dann Preis, Bestand und Versand der einen Standardvariante — und den
+    // Button, mit dem Varianten überhaupt erst entstehen.
+    variantsTitleNoVariants: "Preis und Bestand",
     addOption: "Variante hinzufügen",
     optionNamePlaceholder: "Grösse, Farbe, Material",
     deleteOption: "Löschen",
@@ -304,6 +308,10 @@ export const de = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Hauptsprache",
+    // Eine Uebersetzung, die die App selbst angestossen hat (heute: der aus der
+    // Kategorie abgeleitete Produkttyp). Warnung statt Fehler — das Speichern
+    // hat geklappt, nur der Zusatzschritt nicht.
+    autoTranslateFailed: "{field} konnte nicht automatisch übersetzt werden. Hol es mit dem Übersetzen-Button am Feld nach.",
     noSourceText: "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
     saveChanges: "Speichern",
     discardChanges: "Verwerfen",
@@ -439,7 +447,7 @@ export const de = {
       images: "Bilder",
       commerce: "Vertriebskanäle",
       category: "Produktkategorie",
-      collections: "Kategorien",
+      collections: "Kollektionen",
       productTitle: "Produkttitel",
       title: "Titel",
       description: "Beschreibung",
@@ -530,6 +538,7 @@ export const de = {
       deleting: "Wird gelöscht \u2026",
       consequenceMetaobjectUsage: "Shopify verweigert das L\u00f6schen, solange ein Produkt den Eintrag als Optionswert benutzt \u2014 dort zuerst entfernen.",
       consequenceMetaobjectDefinitionEntries: "Jeder Eintrag dieses Typs wird mitgel\u00f6scht \u2014 hier bekannt: {count}. Shopify fragt nicht nach ihnen.",
+      consequenceMetaobjectDefinitionOptions: "Eintr\u00e4ge dieses Typs k\u00f6nnen Produktoptionswerte mit Storefront-Farbfeldern sein. Was noch einen benutzt, wird abgelehnt \u2014 entferne es zuerst dort.",
     },
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplizieren",
@@ -562,24 +571,31 @@ export const de = {
       none: "Nicht gesetzt",
       clear: "Entfernen",
       broad: "(allgemein)",
+      // Durch den Baum klicken. Die Zurueck-Zeile NENNT ihr Ziel: ein blosses
+      // "Zurueck" laesst den Haendler drei Ebenen tief Klicks zaehlen.
+      backTo: "Zurück zu {name}",
+      backToAll: "Zurück zu allen",
+      chooseThis: "diese Kategorie wählen",
+      noChildren: "Diese Kategorie hat keine Unterkategorien.",
+      levelTruncated: "Diese Ebene hat mehr Unterkategorien, als geladen wurden — nutze die Suche oben.",
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
       reload: "Neu laden",
-      automatedUnknown: "Noch nicht von Shopify geladen — lade die Kategorien neu, um das zu ändern.",
-      listTruncated: "Dieser Shop hat mehr Kategorien, als hier aufgelistet sind. Nutze den Filter, oder verwalte den Rest im Shopify-Admin.",
-      filter: "Kategorien filtern …",
-      loading: "Kategorien werden geladen",
-      lookupFailed: "Die Kategorieliste konnte nicht geladen werden — angezeigt werden nur die aktuellen Zuordnungen.",
-      automated: "Wird von den Regeln dieser Kategorie bestimmt",
-      truncated: "Dieses Produkt ist in mehr Kategorien, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
-      unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kategorien zu sehen.",
-      none: "Dieser Shop hat noch keine Kategorien.",
+      automatedUnknown: "Noch nicht von Shopify geladen — lade die Kollektionen neu, um das zu ändern.",
+      listTruncated: "Dieser Shop hat mehr Kollektionen, als hier aufgelistet sind. Nutze den Filter, oder verwalte den Rest im Shopify-Admin.",
+      filter: "Kollektionen filtern …",
+      loading: "Kollektionen werden geladen",
+      lookupFailed: "Die Kollektionsliste konnte nicht geladen werden — angezeigt werden nur die aktuellen Zuordnungen.",
+      automated: "Wird von den Regeln dieser Kollektion bestimmt",
+      truncated: "Dieses Produkt ist in mehr Kollektionen, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
+      unknown: "Noch nicht geladen — lade dieses Produkt neu, um seine Kollektionen zu sehen.",
+      none: "Dieser Shop hat noch keine Kollektionen.",
     },
     // PLAN §Phase 3.1 — Attribut-Warnungen. Ein Code, hier formuliert, weil die
     // App in drei Sprachen ausgeliefert wird.
     attributeWarnings: {
-      collectionsAutomatedKept: "Eine regelbasierte Kategorie wurde beibehalten — ihre eigenen Regeln entscheiden, wer dazugehört. Alles andere wurde gespeichert.",
+      collectionsAutomatedKept: "Eine regelbasierte Kollektion wurde beibehalten — ihre eigenen Regeln entscheiden, wer dazugehört. Alles andere wurde gespeichert.",
     },
     // PLAN Phase 4 — Bestand und Vertriebskanäle. Werden separat gespeichert,
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
@@ -742,10 +758,13 @@ export const de = {
     // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
     attributeNotes: {
       status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Die verwaltest du gleich hier unter Vertriebskanäle.",
-      category: "Shopify nutzt die Kategorie für Steuersätze und für Marktplatz-Listings. Ein konkreter Typ ist besser als ein breiter Ast.",
-      collections: "Regelbasierte Kategorien werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
+      collections: "Regelbasierte Kollektionen werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
     },
     templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
+    // Das Paar, das Händler für ein Feld halten. Jede Zeile nennt das ANDERE
+    // — nur so sind sie auf einen Blick auseinanderzuhalten.
+    categoryHelp: "Shopifys eigene Taxonomie. Sie bestimmt Steuersätze und ob dein Produkt auf Marktplätzen und in KI-Kanälen erscheint. Nicht übersetzbar — Shopify kennt den Baum selbst in jeder Sprache. Deine eigene Bezeichnung ist der Produkttyp weiter unten.",
+    productTypeHelp: "Deine eigene Bezeichnung, frei wählbar und übersetzbar. Regelbasierte Kollektionen, Theme-Filter und Shopifys Berichte lesen sie. Die maschinenlesbare Einordnung ist die Produktkategorie ganz oben.",
     statusToggle: {
       statusLabel: "Status",
       hidden: "Versteckt",
@@ -849,7 +868,7 @@ export const de = {
   },
 
   // Direct translations ("Direktübersetzungen") content type
-  // PLAN_CONTENT_CREATION §1.4b / §3.1 — der Regel-Baukasten für Kategorien.
+  // PLAN_CONTENT_CREATION §1.4b / §3.1 — der Regel-Baukasten für Kollektionen.
   // EIN Block für beide Oberflächen: Anlege-Dialog und Editor rendern
   // dasselbe Steuerelement, zwei Kopien dieser Texte würden auseinanderlaufen.
   collectionRules: {
@@ -872,14 +891,14 @@ export const de = {
     readOnlyHeading: "Regel bleibt unverändert",
     readOnlyBody: "Diese Regel nutzt etwas, das dieser Editor nicht darstellen kann. Sie bleibt genau so, wie sie ist — Speichern rührt sie nicht an.",
     openInAdmin: "Im Shopify-Admin öffnen",
-    unreadableTree: "Die Regeln dieser Kategorie ließen sich nicht in einer Form lesen, die dieser Editor versteht — sie bleiben unangetastet. Bearbeite sie im Shopify-Admin.",
-    requiresNewerApi: "Automatische Kategorie-Regeln brauchen eine neuere Shopify-API-Version, als diese App derzeit nutzt. Bis dahin verwaltest du sie im Shopify-Admin.",
+    unreadableTree: "Die Regeln dieser Kollektion ließen sich nicht in einer Form lesen, die dieser Editor versteht — sie bleiben unangetastet. Bearbeite sie im Shopify-Admin.",
+    requiresNewerApi: "Automatische Kollektions-Regeln brauchen eine neuere Shopify-API-Version, als diese App derzeit nutzt. Bis dahin verwaltest du sie im Shopify-Admin.",
     kinds: {
       productTag: "Produkt-Tag",
       productTitle: "Produkttitel",
       productType: "Produktart",
       productVendor: "Hersteller",
-      productCategory: "Kategorie",
+      productCategory: "Produktkategorie",
       productStatus: "Status",
       variantTitle: "Variantentitel",
       variantPrice: "Preis",
@@ -893,7 +912,7 @@ export const de = {
       metafieldBoolean: "Metafeld (ja/nein)",
       metafieldMetaobject: "Metafeld (Metaobjekt)",
       metafieldMetaobjectList: "Metafeld (Metaobjekt-Liste)",
-      collection: "Kategorie",
+      collection: "Kollektion",
     },
     relations: {
       EQUALS: "ist gleich",
@@ -1174,15 +1193,15 @@ export const de = {
     productMetaDescInstructionsPlaceholder: "z.B. 150-160 Zeichen, 2-3 Keywords, Handlungsaufforderung",
     // AI Instructions Placeholders - Collections
     collectionTitleFormatPlaceholder: "z.B. Leder Accessoires - Handgefertigt & Zeitlos",
-    collectionTitleInstructionsPlaceholder: "z.B. Maximal 50 Zeichen, Kategorie + USP",
+    collectionTitleInstructionsPlaceholder: "z.B. Maximal 50 Zeichen, Kollektion + USP",
     collectionDescriptionFormatPlaceholder: "z.B. <h2>Handgefertigte Leder Accessoires</h2><p>Entdecken Sie...</p>",
-    collectionDescriptionInstructionsPlaceholder: "z.B. 100-200 Wörter, Übersicht der Kategorie",
+    collectionDescriptionInstructionsPlaceholder: "z.B. 100-200 Wörter, Übersicht der Kollektion",
     collectionHandleFormatPlaceholder: "z.B. leder-accessoires",
     collectionHandleInstructionsPlaceholder: "z.B. Nur Kleinbuchstaben, keine Umlaute, max 40 Zeichen",
     collectionSeoTitleFormatPlaceholder: "z.B. Leder Accessoires kaufen | Handgefertigt",
     collectionSeoTitleInstructionsPlaceholder: "z.B. 50-60 Zeichen, Category-Keyword am Anfang",
     collectionMetaDescFormatPlaceholder: "z.B. Hochwertige Leder Accessoires. Geldbörsen, Gürtel & mehr...",
-    collectionMetaDescInstructionsPlaceholder: "z.B. 150-160 Zeichen, Kategorie beschreiben, 2-3 Beispiele",
+    collectionMetaDescInstructionsPlaceholder: "z.B. 150-160 Zeichen, Kollektion beschreiben, 2-3 Beispiele",
     // AI Instructions Placeholders - Blogs
     blogTitleFormatPlaceholder: "z.B. 5 Tipps für die richtige Pflege Ihrer Lederprodukte",
     blogTitleInstructionsPlaceholder: "z.B. Maximal 60 Zeichen, Zahlen verwenden, Nutzen kommunizieren",
@@ -1864,7 +1883,7 @@ export const de = {
         channels: "Vertriebskanäle",
         tags: "Tags",
         vendor: "Hersteller",
-        category: "Kategorie",
+        category: "Produktkategorie",
         productType: "Produkttyp",
         collections: "In Kollektionen",
         price: "Preis",
@@ -4146,7 +4165,7 @@ export const de = {
       summary:
         "Eine Vorschau der maschinenlesbaren Daten, die Ihr Storefront zu diesem Eintrag meldet — die Grundlage für Rich Results bei Google und für Antworten in KI-Suchen.",
       tips: [
-        "Suchmaschinen lesen daraus, was die Seite ist: Produkt, Artikel, Kategorie",
+        "Suchmaschinen lesen daraus, was die Seite ist: Produkt, Artikel, Kollektion",
         "Die Prüfung meldet fehlende oder fehlerhafte Felder, bevor sie ein Rich Result kosten",
         "Den <script>-Tag kopieren, um ihn im Google Rich Results Test zu prüfen",
       ],
@@ -4365,7 +4384,7 @@ export const de = {
     },
     productType: {
       title: "Produkttyp",
-      summary: "Kategorie zur Filterung und Organisation von Produkten im Shop.",
+      summary: "Freie Bezeichnung zur Filterung und Organisation von Produkten im Shop — nicht zu verwechseln mit der Produktkategorie aus Shopifys Taxonomie.",
       details: "Der Produkttyp hilft Kunden, Produkte zu finden und ermöglicht die Erstellung automatischer Kollektionen. Er erscheint in Filtern und kann für die Navigation verwendet werden.",
       tips: [
         "Kurz und prägnant halten (z.B. T-Shirt, Schuhe)",

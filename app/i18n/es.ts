@@ -24,6 +24,9 @@ export const es: Translation = {
   // Products Page
   products: {
     variantsTitle: "Variantes",
+    // La misma tarjeta en un producto sin opciones (todavía): muestra el
+    // precio, el inventario y el envío de la única variante predeterminada.
+    variantsTitleNoVariants: "Precio e inventario",
     addOption: "Añadir variante",
     optionNamePlaceholder: "Talla, Color, Material",
     deleteOption: "Eliminar",
@@ -306,6 +309,9 @@ export const es: Translation = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Idioma principal",
+    // Una traducción que la app inició por su cuenta (hoy: el tipo de producto
+    // derivado de la categoría). Advertencia, no error — el guardado funcionó.
+    autoTranslateFailed: "{field} no se pudo traducir automáticamente. Usa el botón de traducir del campo para hacerlo ahora.",
     noSourceText: "No hay texto en el idioma principal para traducir",
     saveChanges: "Guardar",
     discardChanges: "Descartar",
@@ -527,6 +533,7 @@ export const es: Translation = {
       deleting: "Eliminando \u2026",
       consequenceMetaobjectUsage: "Shopify rechaza eliminar una entrada que un producto todav\u00eda usa como valor de opci\u00f3n \u2014 qu\u00edtala all\u00ed primero.",
       consequenceMetaobjectDefinitionEntries: "Cada entrada de este tipo se elimina con \u00e9l \u2014 {count} conocidas aqu\u00ed. Shopify no pregunta por ellas.",
+      consequenceMetaobjectDefinitionOptions: "Las entradas de este tipo pueden ser valores de opci\u00f3n con muestras en la tienda. Todo lo que a\u00fan use una se rechaza \u2014 qu\u00edtalo primero all\u00ed.",
     },
     // ── Duplicar (§1.9) ───────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicar",
@@ -556,6 +563,13 @@ export const es: Translation = {
       none: "Sin definir",
       clear: "Quitar",
       broad: "(general)",
+      // Navegar por el árbol. La fila de vuelta NOMBRA su destino: un simple
+      // "atrás" obliga a contar clics tres niveles más abajo.
+      backTo: "Volver a {name}",
+      backToAll: "Volver a todas",
+      chooseThis: "elegir esta categoría",
+      noChildren: "Esta categoría no tiene subcategorías.",
+      levelTruncated: "Este nivel tiene más subcategorías de las que se cargaron — usa la búsqueda de arriba.",
     },
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {
@@ -730,10 +744,13 @@ export const es: Translation = {
     // una existe porque los comerciantes asumen de forma fiable lo contrario.
     attributeNotes: {
       status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Los gestionas aquí mismo, en Canales de venta.",
-      category: "Shopify usa la categoría para los tipos impositivos y para los listados de marketplace. Un tipo concreto es mejor que una rama amplia.",
       collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
     },
     templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
+    // El par que los comerciantes toman por un solo campo. Cada línea nombra
+    // el OTRO — lo único que los distingue de un vistazo.
+    categoryHelp: "La taxonomía propia de Shopify. Decide los tipos impositivos y si tu producto aparece en marketplaces y en canales de IA. No es traducible — Shopify conoce el árbol en cada idioma. Tu propia denominación es el tipo de producto más abajo.",
+    productTypeHelp: "Tu propia denominación, libre y traducible. Las colecciones basadas en reglas, los filtros del tema y los informes de Shopify la leen. La clasificación legible por máquinas es la categoría de producto de arriba.",
     statusToggle: {
       statusLabel: "Estado",
       hidden: "Oculto",

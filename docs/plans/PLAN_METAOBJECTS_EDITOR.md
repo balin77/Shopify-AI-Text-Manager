@@ -9,7 +9,7 @@
 
 > **Release-Randbedingung vorab — es ist KEINE Scope-Erweiterung nötig, und das ist die wichtigste Zahl dieses Plans.**
 > `write_metaobjects` und `read_metaobject_definitions` stehen **bereits in beiden TOMLs** ([shopify.app.dev.toml:7](../../shopify.app.dev.toml#L7), [shopify.app.prod.toml:9](../../shopify.app.prod.toml#L9)), ebenso `read_files,write_files` (Swatch-Bilder) und `read_products` (Verwendungszählung). Damit läuft **kein** Re-Consent aller installierten Merchants an — der Kostenpunkt, den CLAUDE.md als „das, was Merchants verliert" führt, fällt hier nicht an.
-> **Die eine Ausnahme, die diesen Satz kippen würde:** Metaobjekt-**DEFINITIONEN** anlegen oder ändern braucht `write_metaobject_definitions`. Das ist deshalb in §9 ein ausdrückliches Nicht-Ziel und darf nicht „nebenbei" in eine Phase rutschen.
+> **Die eine Ausnahme, die diesen Satz kippte:** Metaobjekt-**DEFINITIONEN** anlegen, ändern oder löschen braucht `write_metaobject_definitions`. Das war in §9 ein ausdrückliches Nicht-Ziel, damit es nicht „nebenbei" in eine Phase rutscht. **Am 2026-08-19 auf ausdrückliche Anweisung aufgehoben** — der Scope steht in beiden TOMLs, und das LÖSCHEN eines Typs ist gebaut (§9). Anlegen und Ändern von Definitionen bleiben Nicht-Ziele.
 
 ---
 
@@ -434,7 +434,7 @@ Die eine neue Spalte ist eine bewusste Ausnahme von „kein neues Modell": Sie e
 
 ## 9. Nicht-Ziele (ausdrücklich)
 
-1. **Metaobjekt-DEFINITIONEN anlegen, ändern, löschen.** Braucht `write_metaobject_definitions` ⇒ Re-Consent aller Merchants. Wenn das je kommt, dann **in einem Deploy mit allen anderen dann fälligen Scopes**, nicht als Beiwerk dieses Plans.
+1. **Metaobjekt-DEFINITIONEN anlegen und ändern.** Weiterhin Nicht-Ziel. — **LÖSCHEN ist es nicht mehr:** `write_metaobject_definitions` wurde am 2026-08-19 auf ausdrückliche Anweisung in beide TOMLs aufgenommen (ein Deploy, eine Re-Consent-Runde), und der Löschpfad ist gebaut. Er ist der destruktivste Aufruf im Code: Shopify entfernt jeden EINTRAG des Typs mit. Deshalb ist `metaobjectDefinition` eine eigene `DeletableResource`, die Bestätigung nennt die ungefilterte Eintragszahl aus dem Typ-Cache (die gefilterte Suchzahl war der erste Fehler dieser Umsetzung), ein bekannt benutzter Eintrag lehnt ab wie beim Einzel-Löschen, und der Cache-Purge darf nach dem Echo nicht mehr als „Löschen fehlgeschlagen" berichtet werden. **Ungemessen:** ob Shopify das Löschen einer STANDARD-Definition zulässt und was genau dabei mit `ProductOptionValue.swatch` passiert — die Kaskade steht als Warnung im Dialog, nicht als Messung.
 2. **Einen Metaobjekt-Eintrag einem Produkt als Optionswert hinzufügen oder entfernen.** Verändert die Variantenmatrix (Varianten entstehen bzw. verschwinden mitsamt Bestand und Preisen). Gehört zum Produkt, nicht in die Metaobjekt-Verwaltung.
 3. **Massenlöschen** von Einträgen (§5.5).
 4. **Rich-Text- und Referenzfeld-Editoren** außer `file_reference` (§6.5).

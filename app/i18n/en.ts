@@ -25,6 +25,10 @@ export const en: Translation = {
   // Products Page
   products: {
     variantsTitle: "Variants",
+    // The same card on a product that has no option (yet): it shows the
+    // price, stock and shipping of the single default variant — and the
+    // button that creates variants in the first place.
+    variantsTitleNoVariants: "Price and inventory",
     addOption: "Add variant",
     optionNamePlaceholder: "Size, Colour, Material",
     deleteOption: "Delete",
@@ -310,6 +314,10 @@ export const en: Translation = {
     blogPrefix: "Blog:",
     idPrefix: "ID:",
     primaryLanguageSuffix: "Primary language",
+    // A translation the app started by itself (today: the product type derived
+    // from the category). A warning, not an error — the save worked, only the
+    // extra step did not.
+    autoTranslateFailed: "{field} could not be translated automatically. Use the translate button on the field to do it now.",
     noSourceText: "No text available in the primary language to translate",
     saveChanges: "Save",
     discardChanges: "Discard",
@@ -531,6 +539,7 @@ export const en: Translation = {
       deleting: "Deleting \u2026",
       consequenceMetaobjectUsage: "Shopify refuses to delete an entry that a product still uses as an option value \u2014 remove it there first.",
       consequenceMetaobjectDefinitionEntries: "Every entry of this type is deleted with it \u2014 {count} known here. Shopify does not ask about them.",
+      consequenceMetaobjectDefinitionOptions: "Entries of this type can be product option values with storefront swatches. Anything still using one is refused \u2014 remove it there first.",
     },
     // ── Duplicating (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicate",
@@ -563,6 +572,13 @@ export const en: Translation = {
       none: "Not set",
       clear: "Clear",
       broad: "(broad)",
+      // Browsing the tree. The back row NAMES where it goes: "back" alone
+      // makes a merchant three levels deep count clicks.
+      backTo: "Back to {name}",
+      backToAll: "Back to all",
+      chooseThis: "choose this category",
+      noChildren: "This category has no subcategories.",
+      levelTruncated: "This level has more subcategories than were loaded — use the search above.",
     },
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
@@ -737,10 +753,13 @@ export const en: Translation = {
     // each one exists because merchants reliably assume the opposite.
     attributeNotes: {
       status: "Active does not by itself mean visible — a product also needs a sales channel. You manage those right here under Sales channels.",
-      category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
       collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
     },
     templateSuffixHelp: "Empty = the theme's default template.",
+    // The pair merchants take for one field. Each line names the OTHER —
+    // the only thing that tells them apart at a glance.
+    categoryHelp: "Shopify's own taxonomy. It decides tax rates and whether your product appears on marketplaces and in AI channels. Not translatable — Shopify knows the tree in every language itself. Your own wording is the product type further down.",
+    productTypeHelp: "Your own wording, free to choose and translatable. Rule-based collections, theme filters and Shopify's reports read it. The machine-readable classification is the product category at the top.",
     statusToggle: {
       statusLabel: "Status",
       hidden: "Hidden",

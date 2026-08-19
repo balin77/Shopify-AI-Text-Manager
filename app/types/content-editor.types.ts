@@ -322,11 +322,20 @@ export interface FieldRenderProps {
  *
  * `searchEngine` collects the three fields Shopify's own admin groups under
  * "Search engine listing" (SEO title, meta description, URL handle) into a
- * card of their own, below the item's text. Everything else defaults to the
- * main content card; merchandising attributes are routed separately by
- * `isAttributeField`, from their marks rather than from this one.
+ * card of their own, below the item's text. `details` is the merchandising
+ * card at the bottom. Everything else defaults to the main content card.
+ *
+ * WHERE a field renders and HOW it saves are two questions, and this type
+ * answers only the first. `isAttributeField` still answers the second — it
+ * decides the not-translatable notice, the `attributesSyncedAt` lock and the
+ * `changedFields` gate on the save, none of which follow from a position on
+ * screen. The default derives one from the other (an attribute lands in
+ * `details`, everything else in `main`), and `card` is how a field opts out:
+ * `category` is an attribute that renders in the MAIN card, and `productType`
+ * is translatable content that renders in the DETAILS card, next to the
+ * category it is so easily confused with. Both keep their own save semantics.
  */
-export type FieldCard = 'main' | 'searchEngine';
+export type FieldCard = 'main' | 'searchEngine' | 'details';
 
 export interface FieldDefinition {
   /** Unique key for this field */
@@ -336,8 +345,9 @@ export interface FieldDefinition {
   card?: FieldCard;
 
   /**
-   * Merchandising attributes only: which SUBCARD of the Details card this
-   * field sits in. Consecutive fields sharing a section fold into one subcard
+   * Which SUBCARD of the Details card this field sits in — for anything that
+   * lands there, by its marks or by `card: "details"`.
+   * Consecutive fields sharing a section fold into one subcard
    * (see config/details-sections.ts); with fewer than two sections the card
    * renders flat, as it did before.
    */
@@ -537,7 +547,9 @@ export interface EditorHandlers {
   /** True while that multi-field run is in flight. */
   isInsertingKeywords: boolean;
   handleTranslateField: (fieldKey: string) => void;
-  handleTranslateFieldToAllLocales: (fieldKey: string) => void;
+  /** `auto` marks a run the APP started rather than the merchant — it keeps a
+   *  failure off the red error banner. See useFieldHandlers. */
+  handleTranslateFieldToAllLocales: (fieldKey: string, options?: { auto?: boolean }) => void;
   handleCopyField: (fieldKey: string) => void;
   handleCopyFieldToAllLocales: (fieldKey: string) => void;
   handleTranslateAll: () => void;

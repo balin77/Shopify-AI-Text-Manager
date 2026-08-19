@@ -29,6 +29,13 @@ export interface FieldRendererProps {
   field: FieldDefinition;
   value: string;
   onChange: (value: string) => void;
+  /**
+   * Only the taxonomy field fires this: the category that was just picked,
+   * with its NAME. The value map takes the GID alone, but deriving a product
+   * type needs the label, and at that moment it exists nowhere else — the
+   * cache still holds the previous category.
+   */
+  onCategoryPicked?: (option: { name: string; fullName: string; id: string }) => void;
   suggestion?: string;
   isPrimaryLocale: boolean;
   isTranslated: boolean;
@@ -94,6 +101,7 @@ export function UnifiedFieldRenderer(
     field,
     value,
     onChange,
+    onCategoryPicked,
     suggestion,
     isPrimaryLocale,
     isTranslated,
@@ -165,6 +173,13 @@ export function UnifiedFieldRenderer(
   // neither of which has a language. `templateSuffix` is the only one today.
   const staticHelpText: Record<string, string | undefined> = {
     templateSuffix: t.content?.templateSuffixHelp as string | undefined,
+    // The pair merchants take for one field. Each line names the OTHER, which
+    // is the only thing that tells them apart at a glance — and the category's
+    // note had nowhere to render before: `attributeNote` is drawn by
+    // `AttributeField`, and the taxonomy picker has its own branch above it, so
+    // the sentence in the config was dead text.
+    category: t.content?.categoryHelp as string | undefined,
+    productType: t.content?.productTypeHelp as string | undefined,
   };
 
   let helpText = staticHelpText[field.key] ?? "";
@@ -336,6 +351,7 @@ export function UnifiedFieldRenderer(
       <TaxonomyField
         value={value}
         onChange={onChange}
+        onPick={onCategoryPicked}
         currentLabel={(selectedItem?.categoryName as string) || ""}
         label={translatedFieldLabel}
         // Same rule as every other attribute: one value per product, so a
@@ -347,6 +363,7 @@ export function UnifiedFieldRenderer(
         // fields correctly saying "not loaded yet".
         known={attributesKnown !== false}
         onReload={onReloadAttributes}
+        helpText={staticHelpText.category}
         t={(t.content?.taxonomy ?? {}) as Record<string, string>}
       />
     );

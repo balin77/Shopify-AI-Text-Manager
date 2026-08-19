@@ -116,29 +116,27 @@ export async function purgeContentFromCache(
         // cache has to follow -- otherwise the page keeps listing entries of a
         // type that no longer exists and every save against them fails.
         //
-        // The entries are read BEFORE they are deleted: their translations are
-        // keyed by `metaobjectId`, not by the definition, so a delete-first
-        // order would leave a table of rows nothing can ever reach again.
+        // Both deletes go by TYPE, in one indexed statement each:
+        // `MetaobjectTranslation` carries `type` with an index of its own, so
+        // reading every entry id first and passing them as an unbounded `in`
+        // was the biggest statement in this module for the largest types --
+        // and this whole block runs inside one interactive transaction.
         const definition = await tx.metaobjectDefinition.findFirst({
           where: { shop, id: gid },
           select: { type: true },
         });
         if (definition) {
-          const entries = await tx.metaobject.findMany({
-            where: { shop, type: definition.type },
-            select: { id: true },
-          });
-          const entryIds = entries.map((e) => e.id);
-          if (entryIds.length > 0) {
-            counts.metaobjectTranslation = (
-              await tx.metaobjectTranslation.deleteMany({
-                where: { shop, metaobjectId: { in: entryIds } },
-              })
-            ).count;
-          }
+          counts.metaobjectTranslation = (
+            await tx.metaobjectTranslation.deleteMany({ where: { shop, type: definition.type } })
+          ).count;
           counts.metaobject = (
             await tx.metaobject.deleteMany({ where: { shop, type: definition.type } })
           ).count;
+        } else {
+          // No cached definition means no way to name the type, so the entries
+          // cannot be found. Reported rather than passed over in silence: a
+          // partial purge that says nothing looks exactly like a complete one.
+          counts.metaobjectEntriesUnreachable = 1;
         }
         counts.metaobjectDefinition = (
           await tx.metaobjectDefinition.deleteMany({ where: { shop, id: gid } })
