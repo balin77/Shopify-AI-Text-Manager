@@ -604,9 +604,11 @@ export function VariantOptionsEditor({
    * variant" is. Titled "Variants" it named the one thing the card did NOT
    * show, so it reads as its content instead until an option exists.
    *
-   * `optionsToCreate` counts: an option typed but not yet saved is already
-   * about variants, and a heading that only catches up after a save would flip
-   * under the merchant's hands at an unrelated moment.
+   * `optionsToCreate` counts -- an option added but not yet saved is already
+   * about variants, and a heading that only catches up after the save would
+   * flip at a moment that has nothing to do with it. The OPEN draft form does
+   * not: while the merchant is still deciding, nothing has been added yet, and
+   * a heading that flipped on "add" and back on "cancel" would just twitch.
    */
   const hasVariants = visible.length > 0 || optionsToCreate.length > 0;
 
