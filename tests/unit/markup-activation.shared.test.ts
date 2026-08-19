@@ -8,6 +8,7 @@ import {
   worstActivationVerdict,
   groupGatesByAction,
   actionTone,
+  UNMARKED_COUNTS_AS_FOREIGN,
   ACTION_BY_VERDICT,
   ACTION_ORDER,
   JSON_LD_SWITCHES,
@@ -96,21 +97,35 @@ describe("activationGate", () => {
     expect(theirs.verdict).toBe("duplicateForeign");
   });
 
-  it("does not claim a copy is not ours when the crawl could not tell", () => {
-    // A snapshot predating the data-contentpilot marker reports appPages: 0 for
-    // everything, which is indistinguishable from "the embed is off".
-    const unknownOrigin = { measured: true, originKnown: false };
-    expect(activationGate(stat({ pages: 12 }), unknownOrigin).verdict).toBe("originUnknown");
-    expect(
-      activationGate(stat({ pages: 12, duplicatePages: 3 }), unknownOrigin).verdict,
-    ).toBe("originUnknown");
-    // …but a marker on THIS type still resolves it, marker-blind crawl or not.
+  it("attributes unprovable markup to the theme, per UNMARKED_COUNTS_AS_FOREIGN", () => {
+    // Product decision, not a claim about the evidence: a snapshot predating the
+    // data-contentpilot marker reports appPages: 0 for everything, which is
+    // indistinguishable from "the embed is off". With almost no installs and a
+    // days-old marker, the second cause is the common one, so the section names
+    // the theme instead of hedging — see the constant for what that costs.
+    // Pinned so that flipping the constant fails HERE, at the sentence that
+    // explains it, rather than in a distant expectation about a badge.
+    expect(UNMARKED_COUNTS_AS_FOREIGN).toBe(true);
+    const blind = { measured: true, originKnown: false };
+    expect(activationGate(stat({ pages: 12 }), blind).verdict).toBe("foreignOnly");
+    expect(activationGate(stat({ pages: 12, duplicatePages: 3 }), blind).verdict).toBe(
+      "duplicateForeign",
+    );
+  });
+
+  it("still resolves a type whose OWN marker was seen, marker-blind crawl or not", () => {
+    // The assumption only ever fills a gap; where we ARE provably one of the
+    // copies the gate must say so, and "switch ours off" stays the right advice.
     expect(
       activationGate(
         stat({ pages: 12, appPages: 12, duplicatePages: 3, appIsOneCopy: 3 }),
-        unknownOrigin,
+        { measured: true, originKnown: false },
       ).verdict,
     ).toBe("duplicateApp");
+    expect(
+      activationGate(stat({ pages: 12, appPages: 12 }), { measured: true, originKnown: false })
+        .verdict,
+    ).toBe("appOnly");
   });
 
   it("refuses to judge a repeatable type it co-delivers", () => {
@@ -226,17 +241,13 @@ describe("statForSwitch", () => {
 });
 
 describe("verdict severity", () => {
-  it("does not let an unresolvable origin read as milder than a real warning", () => {
-    // With the embed OFF no page can carry the marker, so `originUnknown` is
-    // the PERMANENT state of exactly the merchant this section exists for:
-    // theme serving the type, about to tick the box. Ranking it below `unknown`
-    // (as the first cut did) put an `info` badge on the one screen that has to
-    // say "stop".
-    expect(worstActivationVerdict(["free", "originUnknown"])).toBe("originUnknown");
-    expect(worstActivationVerdict(["unknown", "originUnknown"])).toBe("originUnknown");
-    expect(activationTone("originUnknown")).toBe("warning");
+  it("ranks 'already served by someone else' above a clean result", () => {
+    expect(worstActivationVerdict(["free", "foreignOnly"])).toBe("foreignOnly");
+    expect(worstActivationVerdict(["appOnly", "foreignOnly"])).toBe("foreignOnly");
     // A real duplicate still outranks it.
-    expect(worstActivationVerdict(["originUnknown", "duplicateApp"])).toBe("duplicateApp");
+    expect(worstActivationVerdict(["foreignOnly", "duplicateApp"])).toBe("duplicateApp");
+    // And the retired hedge keeps its rank, so restoring it changes no badge.
+    expect(worstActivationVerdict(["unknown", "originUnknown"])).toBe("originUnknown");
   });
 
   it("keeps the repeatable non-verdict mild — there is nothing to act on", () => {
@@ -269,8 +280,8 @@ describe("groupGatesByAction", () => {
       { label: "b", verdict: "appOnly" },
       { label: "c", verdict: "duplicateForeign" },
     ]);
-    expect(groups[0].action).toBe("themeFix");
-    expect(actionTone("themeFix")).toBe("critical");
+    expect(groups[0].action).toBe("foreignFix");
+    expect(actionTone("foreignFix")).toBe("critical");
     expect(actionTone("hold")).toBe("warning");
     expect(actionTone("enable")).toBe("success");
   });

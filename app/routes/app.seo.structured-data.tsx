@@ -1491,7 +1491,7 @@ export default function SeoStructuredData() {
                 {jsonLdMeasured && !jsonLdOriginKnown && (
                   // Without the marker every "not ours" reading collapses to
                   // "we could not tell" — said once, not under all seven rows.
-                  <Banner tone="warning">
+                  <Banner tone="info">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm">{emphasize(act.originUnknownHint as string)}</Text>
                       <div>
@@ -1566,7 +1566,7 @@ export default function SeoStructuredData() {
                 )}
 
                 {socialMeasured && !socialOriginKnown && (
-                  <Banner tone="warning">
+                  <Banner tone="info">
                     <BlockStack gap="200">
                       <Text as="p" variant="bodySm">{emphasize(act.socialOriginUnknownHint as string)}</Text>
                       <div>

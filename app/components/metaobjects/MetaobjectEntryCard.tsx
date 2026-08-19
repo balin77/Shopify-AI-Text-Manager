@@ -22,9 +22,10 @@
  *   merchant has typed the entry's name into a confirmation dialog.
  */
 
-import type { ReactNode } from "react";
-import { BlockStack, Badge, Button, Card, InlineStack, Text, Tooltip } from "@shopify/polaris";
+import { useMemo, useState, type ReactNode } from "react";
+import { BlockStack, Badge, Button, Card, InlineStack, Popover, Text, Tooltip } from "@shopify/polaris";
 import { SwatchPreview } from "./SwatchPreview";
+import { METAOBJECT_HEX_PATTERN } from "~/services/metaobject-fields.shared";
 import type { OptionValueSwatch } from "~/services/product-option-swatch.shared";
 
 /** What the page knows about an entry's usage as a product option value. */
@@ -48,6 +49,8 @@ export interface MetaobjectEntryCardTexts {
   usageUnknown?: string;
   syncProducts?: string;
   createdBadge?: string;
+  editColor?: string;
+  colorInvalid?: string;
   readOnlyDefinition?: string;
   readOnlyUnknown?: string;
 }
@@ -60,8 +63,22 @@ interface Props {
   swatch?: OptionValueSwatch | null;
   /** Fields of the definition this app has no editor for: name + Shopify type. */
   unsupportedFields: Array<{ label: string; fieldType: string }>;
-  /** The rendered controls for the fields it CAN edit. */
+  /** The rendered controls for the fields it CAN edit, minus the colour. */
   children: ReactNode[];
+  /**
+   * The COLOUR control, lifted out of the field list into the header.
+   *
+   * A colour is the one field whose value the merchant reads as a picture
+   * rather than as text, and the card already draws that picture at the top.
+   * Leaving the control further down meant looking at the dot and reaching
+   * somewhere else to change it. Absent when the definition has no colour
+   * field, or when the entry is read-only — then the dot stays a plain dot.
+   */
+  colorControl?: ReactNode;
+  /** The colour as the EDITOR currently holds it, so the dot follows typing. */
+  colorValue?: string;
+  /** Sits under the colour control: what changing it actually does (V3). */
+  colorNote?: string;
   /** Highlighted because it was just created. */
   justCreated?: boolean;
   usage?: MetaobjectEntryUsage;
@@ -79,6 +96,9 @@ export function MetaobjectEntryCard({
   swatch,
   unsupportedFields,
   children,
+  colorControl,
+  colorValue,
+  colorNote,
   justCreated = false,
   usage,
   onDelete,
@@ -86,6 +106,37 @@ export function MetaobjectEntryCard({
   readOnlyReason,
   t = {},
 }: Props) {
+  const [colorOpen, setColorOpen] = useState(false);
+
+  /**
+   * The colour the dot paints, preferring what the merchant has TYPED over
+   * what the entry stores. Without this the dot would keep showing the saved
+   * colour while the picker above it shows a different one.
+   *
+   * The stored IMAGE is dropped while the dot is the colour control:
+   * `resolveSwatch` prefers an image over a colour, so on an entry that has
+   * both, the dot would show the image and the colour picker behind it would
+   * have no visible effect at all — a control whose result cannot be seen.
+   */
+  const liveSwatch = useMemo(
+    () => (colorValue !== undefined ? { color: colorValue, imageUrl: null } : swatch),
+    [swatch, colorValue],
+  );
+
+  /**
+   * A colour the merchant has typed that is not a colour.
+   *
+   * The control's own error message lives inside a popover that is closed by
+   * default, so without this the card would look fine while holding a value
+   * `metaobjectUpdate` refuses. Checked with the SAME pattern the parser uses,
+   * so the card cannot disagree with the save about what a colour is.
+   */
+  const colorInvalid = useMemo(() => {
+    const value = (colorValue ?? "").trim();
+    if (!colorControl || value === "") return false;
+    return !METAOBJECT_HEX_PATTERN.test(value.startsWith("#") ? value : `#${value}`);
+  }, [colorControl, colorValue]);
+
   // MEASURED (PLAN_METAOBJECTS_EDITOR V5): Shopify itself refuses to delete an
   // entry a product still references, so nothing can be destroyed by trying.
   // The button therefore only stops for a usage this app KNOWS about -- where
@@ -129,7 +180,59 @@ export function MetaobjectEntryCard({
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
           <InlineStack gap="200" blockAlign="center" wrap={false}>
-            <SwatchPreview name={title} swatch={swatch} />
+            {colorControl ? (
+              // The dot IS the control. A Popover rather than an inline field:
+              // the header is a title row, and a colour picker parked in it
+              // permanently would push the name off a narrow screen.
+              <Popover
+                active={colorOpen}
+                onClose={() => setColorOpen(false)}
+                activator={
+                  <button
+                    type="button"
+                    onClick={() => setColorOpen((open) => !open)}
+                    aria-label={t.editColor || "Change colour"}
+                    style={{
+                      padding: 0,
+                      border: "none",
+                      background: "none",
+                      cursor: "pointer",
+                      lineHeight: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      borderRadius: "50%",
+                      // A red ring, because the reason itself is behind a
+                      // popover the merchant has to open.
+                      outline: colorInvalid ? "2px solid var(--p-color-border-critical)" : undefined,
+                      outlineOffset: "2px",
+                    }}
+                  >
+                    {/* `showEmpty`: without a colour there is nothing to click,
+                        and a control the merchant cannot find is the defect
+                        being fixed. */}
+                    <SwatchPreview name={title} swatch={liveSwatch} showEmpty />
+                  </button>
+                }
+              >
+                <Popover.Section>
+                  <BlockStack gap="200">
+                    {colorControl}
+                    {/* The storefront claim is only made where the entry is
+                        KNOWN to be used as an option value. On an entry no
+                        product references, "this changes your storefront
+                        swatch" is simply untrue — and an unknown usage is not
+                        a licence to say it either. */}
+                    {colorNote && usage?.state === "known" && usage.products > 0 && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {colorNote}
+                      </Text>
+                    )}
+                  </BlockStack>
+                </Popover.Section>
+              </Popover>
+            ) : (
+              <SwatchPreview name={title} swatch={liveSwatch} />
+            )}
             <BlockStack gap="050">
               <InlineStack gap="150" blockAlign="center">
                 <Text as="h3" variant="headingSm">
@@ -137,8 +240,12 @@ export function MetaobjectEntryCard({
                 </Text>
                 {justCreated && <Badge tone="success">{t.createdBadge || "Just created"}</Badge>}
               </InlineStack>
-              <Text as="span" variant="bodySm" tone="subdued">
-                {handle ? `${t.handleLabel || "Handle"}: ${handle}` : entryId.split("/").pop()}
+              <Text as="span" variant="bodySm" tone={colorInvalid ? "critical" : "subdued"}>
+                {colorInvalid
+                  ? t.colorInvalid || "That is not a valid hex colour."
+                  : handle
+                    ? `${t.handleLabel || "Handle"}: ${handle}`
+                    : entryId.split("/").pop()}
               </Text>
             </BlockStack>
           </InlineStack>
@@ -165,9 +272,11 @@ export function MetaobjectEntryCard({
           </Text>
         )}
 
-        {children.length > 0 ? (
-          <BlockStack gap="300">{children}</BlockStack>
-        ) : (
+        {children.length > 0 && <BlockStack gap="300">{children}</BlockStack>}
+        {/* The COLOUR counts as an editable field even though it renders in the
+            header — saying "nothing here can be edited" above a working colour
+            picker is the kind of wrong that makes a merchant stop looking. */}
+        {children.length === 0 && !colorControl && (
           <Text as="p" variant="bodySm" tone="subdued">
             {t.noEditableFields || "None of this entry's fields can be edited here."}
           </Text>
