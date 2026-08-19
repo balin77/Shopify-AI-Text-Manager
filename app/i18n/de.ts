@@ -2213,12 +2213,14 @@ export const de = {
       galleryVideos: {
         failed: "Die Prüfung der Galerie-Videos konnte diesmal nicht durchgeführt werden (Shopify hat die Abfrage abgelehnt). Der nächste Durchlauf versucht es erneut.",
         none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
-        found: "Produkte mit Galerie-Videos: {products} — davon ohne Datum: {missing}.",
-        fix: "Ohne Datum entsteht kein Video-Rich-Result. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum\"), dann zählt das Video.",
+        found: "Produkte mit Videos ohne Datum: {products} — davon aus einer Galerie ohne Datum: {missing}.",
+        fix: "Videos aus **externen Quellen** (YouTube-Link in einer Galerie) haben keine Datei bei Shopify und damit kein Datum — Google akzeptiert das Video-Rich-Result dann unter Umständen nicht. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum“), dann zählt das Video.",
         vimeo: "Bei {count} davon liegt mindestens ein Vimeo-Video — dafür wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
         capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",
         rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
+        mediaMissing: "Bei {count} Produkten liegt das Video in den **Produktmedien** und hat trotzdem kein Datum. Das behebt ein **Produkt-Sync** von selbst — das Datum kommt dann aus Shopify.",
+        rowMedia: "{count} aus Produktmedien ohne Datum",
       },
       activation: {
         openSwitches: "Zum Widget",

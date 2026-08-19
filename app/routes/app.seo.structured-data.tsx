@@ -1315,7 +1315,7 @@ export default function SeoStructuredData() {
                     {galleryVideos.capped ? ` ${gv.capped as string}` : ""}
                   </Text>
                 ) : (
-                  <Banner tone={galleryVideos.missingDate > 0 ? "warning" : "info"}>
+                  <Banner tone={galleryVideos.missingDate > 0 || (galleryVideos.mediaMissingDate ?? 0) > 0 ? "warning" : "info"}>
                     <BlockStack gap="200">
                       <Text as="p" variant="bodyMd" fontWeight="semibold">
                         {(gv.found as string)
@@ -1324,6 +1324,22 @@ export default function SeoStructuredData() {
                       </Text>
                       {galleryVideos.missingDate > 0 && (
                         <Text as="p" variant="bodySm">{emphasize(gv.fix as string)}</Text>
+                      )}
+                      {/* The other half, and a different remedy: a video in the
+                          product's OWN media gets its date from the sync, so a
+                          resync fixes it and nobody has to type one. Counted
+                          and phrased separately for exactly that reason —
+                          `?? 0` keeps a task result from before this existed
+                          silent instead of reporting a confident zero. */}
+                      {(galleryVideos.mediaMissingDate ?? 0) > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {emphasize(
+                            (gv.mediaMissing as string).replace(
+                              "{count}",
+                              String(galleryVideos.mediaMissingDate),
+                            ),
+                          )}
+                        </Text>
                       )}
                       {/* A Vimeo gallery video produces no markup at all, so a
                           date would not help it — said whenever one is present,
@@ -1353,6 +1369,9 @@ export default function SeoStructuredData() {
                               {(prod.hasUploadDate ? (gv.rowOk as string) : (gv.rowMissing as string))
                                 .replace("{youtube}", String(prod.youtube))
                                 .replace("{vimeo}", String(prod.vimeo))}
+                              {(prod.mediaMissingDate ?? 0) > 0
+                                ? ` · ${(gv.rowMedia as string).replace("{count}", String(prod.mediaMissingDate))}`
+                                : ""}
                             </Text>
                           </InlineStack>
                         ))}

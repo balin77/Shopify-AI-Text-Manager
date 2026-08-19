@@ -2203,12 +2203,14 @@ export const en: Translation = {
       galleryVideos: {
         failed: "The gallery-video check could not run this time (Shopify refused the query). The next run tries again.",
         none: "No gallery videos found ({variants} variants checked).",
-        found: "Products with gallery videos: {products} — of those without a date: {missing}.",
-        fix: "Without a date there is no video rich result. Set the product metafield **custom.video_upload_date** (type \"date\") and the video counts.",
+        found: "Products with dateless videos: {products} — of those from a gallery without a date: {missing}.",
+        fix: "Videos from **external sources** (a YouTube link in a gallery) have no file at Shopify and therefore no date — Google may then not accept the video rich result. Set the product metafield **custom.video_upload_date** (type \"date\") and the video counts.",
         vimeo: "{count} of them carry at least one Vimeo video — no markup is produced for those at all, and a date changes nothing.",
         capped: "The check did not reach the whole catalog — there may be more.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · date set",
         rowMissing: "{youtube} YouTube, {vimeo} Vimeo · date missing",
+        mediaMissing: "On {count} products the video sits in the **product media** and still has no date. A **product sync** fixes that by itself — the date then comes from Shopify.",
+        rowMedia: "{count} from product media without a date",
       },
       activation: {
         openSwitches: "Go to widget",

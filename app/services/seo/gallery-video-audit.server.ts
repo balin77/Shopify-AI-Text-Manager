@@ -87,16 +87,26 @@ const VARIANT_SWEEP_QUERY = `#graphql
   }
 `;
 
+// `uploadDates` is the per-media map the product sync writes from
+// File.createdAt. A media video whose numeric id is missing there gets NO
+// uploadDate on the storefront -- the block omits it rather than inventing
+// one, which is the whole point of asking for it here.
+//
+// The explanation lives OUTSIDE the template on purpose: a `#graphql`
+// document is sent to Shopify verbatim and must carry no comments (CLAUDE.md;
+// three comment lines once took /app/blog down with a bogus syntax error).
 const PRODUCT_LOOKUP_QUERY = `#graphql
   query seoGalleryVideoProducts($ids: [ID!]!, $mediaWindow: Int!) {
     nodes(ids: $ids) {
       ... on Product {
         id
         uploadDate: metafield(namespace: "custom", key: "video_upload_date") { value }
+        uploadDates: metafield(namespace: "custom", key: "video_upload_dates") { value }
         media(first: $mediaWindow) {
           nodes {
             mediaContentType
-            ... on ExternalVideo { originUrl }
+            ... on Video { id }
+            ... on ExternalVideo { id originUrl }
           }
         }
       }
@@ -113,6 +123,15 @@ export interface GalleryVideoProduct {
   youtube: number;
   /** DISTINCT Vimeo videos from the gallery. The block emits nothing for them. */
   vimeo: number;
+  /**
+   * Videos in the product's OWN media that the storefront emits WITHOUT an
+   * uploadDate. Independent of the gallery numbers above: the usual cause is a
+   * video uploaded after the last product sync, so `custom.video_upload_dates`
+   * has no entry for it yet — and a resync fixes it without anyone typing a
+   * date. That is why it is counted separately from the gallery case, where no
+   * sync can ever help.
+   */
+  mediaMissingDate: number;
   /** Whether `custom.video_upload_date` is set on the product. */
   hasUploadDate: boolean;
 }
@@ -130,6 +149,13 @@ export interface GalleryVideoAudit {
   /** …of which have a YouTube gallery video but no `custom.video_upload_date`:
    *  markup is emitted and can never become a rich result. */
   missingDate: number;
+  /**
+   * Products whose OWN media videos are emitted without an uploadDate. A
+   * separate number from `missingDate`, because the remedy is a different one:
+   * here a product sync fills the date in by itself, while a gallery video has
+   * no file behind it and needs the merchant's own date.
+   */
+  mediaMissingDate: number;
   /** …of which carry at least one VIMEO gallery video: nothing is emitted for
    *  those at all, whatever the date says. Overlaps `missingDate` on purpose —
    *  one product can have both problems and needs to hear about both. */
@@ -222,6 +248,15 @@ export async function runGalleryVideoAudit(
     /** productGid → { title, keys } — keys are `"<host>|<id>"`, so one video
      *  hanging on twelve variants counts once, exactly as the block dedupes. */
     const byProduct = new Map<string, { title: string; keys: Set<string> }>();
+    /**
+     * Every ACTIVE product the sweep passed, gallery or not. The media-date
+     * check needs it: a product whose only video is its own media never has a
+     * gallery URL, so `byProduct` would never contain it and the whole class
+     * of "video emitted without a date" stayed invisible. The variant sweep is
+     * already capped at MAX_VARIANT_PAGES x VARIANTS_PER_PAGE, so this set is
+     * bounded by the same number rather than by the catalogue.
+     */
+    const activeProducts = new Map<string, string>();
 
     let cursor: string | null = null;
     let pages = 0;
@@ -269,6 +304,7 @@ export async function runGalleryVideoAudit(
         // cannot become a rich result" reports merchant intent as a defect —
         // the rule catalog-readiness.service.ts already follows.
         if (node?.product?.status !== "ACTIVE") continue;
+        if (!activeProducts.has(productGid)) activeProducts.set(productGid, node.product?.title ?? "");
         for (const url of urlsOfVariant(node)) {
           const key = keyOf(url);
           if (!key) continue;
@@ -298,34 +334,49 @@ export async function runGalleryVideoAudit(
     // never read a row. An empty shop is the same answer for the same reason.
     if (scannedVariants === 0) return null;
 
-    const productGids = [...byProduct.keys()];
+    const productGids = [...activeProducts.keys()];
     const context = await fetchProductContext(admin, productGids, shop);
 
     const products: GalleryVideoProduct[] = [];
     for (const id of productGids) {
-      const e = byProduct.get(id)!;
+      const e = byProduct.get(id);
       const ctx = context.get(id);
-
-      // The block prints the product's OWN media videos first and skips any
-      // gallery link it already emitted — so those are not gallery-only, and
-      // they already carry an automatic date.
-      const galleryOnly = [...e.keys].filter((k) => !ctx?.mediaKeys.has(k));
-      if (galleryOnly.length === 0) continue;
-      // …and once the media alone fill the block's 5-video cap, no gallery
-      // video prints at all, whatever its date.
-      if ((ctx?.mediaVideoCount ?? 0) >= BLOCK_VIDEO_CAP) continue;
+      const mediaMissingDate = ctx?.mediaMissingDate ?? 0;
 
       let youtube = 0;
       let vimeo = 0;
-      for (const key of galleryOnly) {
-        if (key.startsWith("vimeo|")) vimeo += 1;
-        else youtube += 1;
+      if (e) {
+        // The block prints the product's OWN media videos first and skips any
+        // gallery link it already emitted — so those are not gallery-only, and
+        // they already carry an automatic date. And once the media alone fill
+        // the block's 5-video cap, no gallery video prints at all, whatever
+        // its date.
+        const capped5 = (ctx?.mediaVideoCount ?? 0) >= BLOCK_VIDEO_CAP;
+        if (!capped5) {
+          for (const key of [...e.keys].filter((k) => !ctx?.mediaKeys.has(k))) {
+            if (key.startsWith("vimeo|")) vimeo += 1;
+            else youtube += 1;
+          }
+        }
       }
-      products.push({ id, title: e.title, youtube, vimeo, hasUploadDate: ctx?.hasUploadDate === true });
+
+      // Two independent reasons to appear here, and a product can have both:
+      // a gallery video the block emits without a date, or a MEDIA video in
+      // the same state. Neither implies the other.
+      if (youtube === 0 && vimeo === 0 && mediaMissingDate === 0) continue;
+      products.push({
+        id,
+        title: activeProducts.get(id) ?? e?.title ?? "",
+        youtube,
+        vimeo,
+        mediaMissingDate,
+        hasUploadDate: ctx?.hasUploadDate === true,
+      });
     }
 
     const withVimeo = products.filter((p) => p.vimeo > 0).length;
     const missingDate = products.filter((p) => p.youtube > 0 && !p.hasUploadDate).length;
+    const mediaMissingDate = products.filter((p) => p.mediaMissingDate > 0).length;
 
     return {
       generatedAt: new Date().toISOString(),
@@ -336,12 +387,14 @@ export async function runGalleryVideoAudit(
         .sort(
           (a, b) =>
             Number(a.hasUploadDate) - Number(b.hasUploadDate) ||
+            b.mediaMissingDate - a.mediaMissingDate ||
             b.youtube - a.youtube ||
             a.title.localeCompare(b.title),
         )
         .slice(0, MAX_LISTED_PRODUCTS),
       totalProducts: products.length,
       missingDate,
+      mediaMissingDate,
       withVimeo,
     };
   } catch (err: unknown) {
@@ -360,6 +413,15 @@ interface ProductContext {
   mediaKeys: Set<string>;
   /** Video media of any kind — what the block's 5-video cap counts first. */
   mediaVideoCount: number;
+  /**
+   * Media videos the storefront emits WITHOUT an uploadDate — Google lists the
+   * property as required for the video rich result, so those blocks are served
+   * and cannot become one. The usual cause is mundane: the video was uploaded
+   * after the last product sync, so `custom.video_upload_dates` has no entry
+   * for its id yet. Nothing reported this before; the gallery sweep next door
+   * covers only videos that are NOT product media.
+   */
+  mediaMissingDate: number;
 }
 
 async function fetchProductContext(
@@ -379,6 +441,27 @@ async function fetchProductContext(
         if (!node?.id) continue;
         const mediaKeys = new Set<string>();
         let mediaVideoCount = 0;
+        let mediaMissingDate = 0;
+        const override =
+          typeof node.uploadDate?.value === "string" && node.uploadDate.value.trim() !== "";
+        // The map is `{ "<numeric media id>": "<ISO timestamp>" }`. It arrives
+        // as a raw STRING from the Admin API, and a hand-edited metafield can
+        // hold anything -- an unreadable one contributes no dates rather than
+        // throwing the whole sweep.
+        const dated = new Set<string>();
+        const rawDates = node.uploadDates?.value;
+        if (typeof rawDates === "string" && rawDates.trim()) {
+          try {
+            const parsed = JSON.parse(rawDates);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              for (const [k, v] of Object.entries(parsed)) {
+                if (typeof v === "string" && v.trim()) dated.add(k);
+              }
+            }
+          } catch {
+            // Same rule as the gallery metafield above.
+          }
+        }
         for (const m of node.media?.nodes ?? []) {
           if (m?.mediaContentType !== "VIDEO" && m?.mediaContentType !== "EXTERNAL_VIDEO") continue;
           mediaVideoCount += 1;
@@ -386,12 +469,20 @@ async function fetchProductContext(
             const key = keyOf(m.originUrl);
             if (key) mediaKeys.add(key);
           }
+          // The product-wide override wins for every video, exactly as the
+          // block reads it, so one date set by hand clears the whole product.
+          if (override) continue;
+          // Only a video the block would actually PRINT can be missing a date
+          // on a live page: past the 5-video cap nothing is emitted.
+          if (mediaVideoCount > BLOCK_VIDEO_CAP) continue;
+          const numeric = typeof m.id === "string" ? (m.id.split("/").pop() ?? "") : "";
+          if (!/^[0-9]+$/.test(numeric) || !dated.has(numeric)) mediaMissingDate += 1;
         }
         out.set(node.id, {
-          hasUploadDate:
-            typeof node.uploadDate?.value === "string" && node.uploadDate.value.trim() !== "",
+          hasUploadDate: override,
           mediaKeys,
           mediaVideoCount,
+          mediaMissingDate,
         });
       }
     } catch (err: unknown) {

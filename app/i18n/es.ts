@@ -2197,12 +2197,14 @@ export const es: Translation = {
       galleryVideos: {
         failed: "La comprobación de vídeos de galería no pudo ejecutarse esta vez (Shopify rechazó la consulta). La próxima ejecución lo intenta de nuevo.",
         none: "No se encontraron vídeos de galería ({variants} variantes comprobadas).",
-        found: "Productos con vídeos de galería: {products} — de ellos sin fecha: {missing}.",
-        fix: "Sin fecha no hay resultado enriquecido de vídeo. Define en el producto el metacampo **custom.video_upload_date** (tipo \"fecha\") y el vídeo cuenta.",
+        found: "Productos con vídeos sin fecha: {products} — de ellos, desde una galería sin fecha: {missing}.",
+        fix: "Los vídeos de **fuentes externas** (un enlace de YouTube en una galería) no tienen archivo en Shopify y por tanto no tienen fecha — Google puede entonces no aceptar el rich result de vídeo. Configura el metacampo **custom.video_upload_date** (tipo «fecha») en el producto y el vídeo contará.",
         vimeo: "{count} de ellos tienen al menos un vídeo de Vimeo — para esos no se genera ningún marcado, y una fecha no cambia nada.",
         capped: "La comprobación no alcanzó todo el catálogo — puede haber más.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · fecha definida",
         rowMissing: "{youtube} YouTube, {vimeo} Vimeo · falta la fecha",
+        mediaMissing: "En {count} productos el vídeo está en los **medios del producto** y aun así no tiene fecha. Eso lo resuelve solo una **sincronización de productos**: la fecha viene entonces de Shopify.",
+        rowMedia: "{count} de medios del producto sin fecha",
       },
       activation: {
         openSwitches: "Ir al widget",
