@@ -573,8 +573,15 @@ export default function SeoStructuredData() {
   const hintCopy = (s as any).hints as Record<string, string>;
   const act = (s as any).activation as Record<string, any>;
   const gv = (s as any).galleryVideos as Record<string, string>;
-  /** The sweep that rode along on the batch check — see JsonLdAuditAggregate. */
-  const galleryVideos = jsonLdAudit?.galleryVideos ?? null;
+  /**
+   * The sweep that rode along on the batch check — see JsonLdAuditAggregate.
+   * `undefined` (never checked, or a task result from before it existed) and
+   * `null` (the sweep ran and was refused) are kept APART on purpose: the first
+   * is answered by pressing the button, the second is not, and a shop whose
+   * sweep throttles every time would otherwise see the pre-feature page forever
+   * with the failure only in a log line.
+   */
+  const galleryVideos = jsonLdAudit ? jsonLdAudit.galleryVideos : undefined;
 
   // §1.2 — the gate. `measured` is deliberately strict: no crawl at all AND a
   // snapshot whose jsonLdTypes column is empty everywhere both count as "not
@@ -1215,7 +1222,10 @@ export default function SeoStructuredData() {
         )}
 
         {/* Step 2 — whether the CATALOG carries the data a rich result needs.
-            Reads the DB cache, never a live page. */}
+            The JSON-LD half reads the DB cache; the gallery-video half of the
+            same batch check is a bounded live Admin sweep, because the two
+            metafields it needs are mirrored nowhere. Neither reads a live PAGE
+            — that is step 1's job. */}
         {step === "data" && (
           <BlockStack gap="400">
           {/* 3. What you see below (preview intro + schema types) */}
@@ -1261,11 +1271,19 @@ export default function SeoStructuredData() {
                     task result from before this existed, `null` a sweep that was
                     throttled or refused — neither is "no gallery videos". */}
                 {!galleryVideos ? (
-                  <Banner tone="info">
-                    <Text as="p" variant="bodySm">
-                      {emphasize((s as any).schemaVideoDateNote as string)}
-                    </Text>
-                  </Banner>
+                  <BlockStack gap="100">
+                    <Banner tone="info">
+                      <Text as="p" variant="bodySm">
+                        {emphasize((s as any).schemaVideoDateNote as string)}
+                      </Text>
+                    </Banner>
+                    {/* `null` means the sweep RAN and was refused — a state the
+                        button cannot fix by being pressed again, so it must not
+                        look like "never checked". */}
+                    {galleryVideos === null && (
+                      <Text as="p" variant="bodySm" tone="subdued">{gv.failed as string}</Text>
+                    )}
+                  </BlockStack>
                 ) : galleryVideos.totalProducts === 0 ? (
                   <Text as="p" variant="bodySm" tone="subdued">
                     {(gv.none as string).replace(
@@ -1288,13 +1306,14 @@ export default function SeoStructuredData() {
                         <Text as="p" variant="bodySm">{emphasize(gv.fix as string)}</Text>
                       )}
                       {/* A Vimeo gallery video produces no markup at all, so a
-                          date would not help it — counted apart, or a merchant
-                          sets a date that changes nothing. */}
-                      {galleryVideos.vimeoOnly > 0 && (
+                          date would not help it — said whenever one is present,
+                          not only when a product has nothing else, or a product
+                          with one YouTube and one Vimeo video reads as fine. */}
+                      {galleryVideos.withVimeo > 0 && (
                         <Text as="p" variant="bodySm">
-                          {(gv.vimeoOnly as string).replace(
+                          {(gv.vimeo as string).replace(
                             "{count}",
-                            String(galleryVideos.vimeoOnly),
+                            String(galleryVideos.withVimeo),
                           )}
                         </Text>
                       )}
@@ -1326,10 +1345,18 @@ export default function SeoStructuredData() {
                           </Text>
                         )}
                       </BlockStack>
+                      {/* A merchant who fixed the products and did not re-run
+                          the check would otherwise read a stale list as current. */}
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {b.lastChecked.replace(
+                          "{time}",
+                          new Date(galleryVideos.generatedAt).toLocaleString(),
+                        )}
+                      </Text>
                     </BlockStack>
                   </Banner>
                 )}
-                <Text as="p" variant="bodySm" tone="subdued">
+                                <Text as="p" variant="bodySm" tone="subdued">
                   {emphasize((s as any).schemaFaqNote as string)}
                 </Text>
               </BlockStack>

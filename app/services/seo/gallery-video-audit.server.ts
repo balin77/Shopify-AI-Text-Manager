@@ -14,34 +14,40 @@
  * result. For product media the sync fills it from `File.createdAt`; a gallery
  * entry is a URL with no `File` behind it, so the ONLY source is the merchant's
  * own `custom.video_upload_date` — and without it the storefront block omits
- * the property rather than inventing one. That is the right call and it used to
- * be invisible: nothing in the app said which products were affected, or that
- * any were. This is that measurement.
+ * the property rather than inventing one. That used to be invisible: nothing
+ * said which products were affected, or that any were.
+ *
+ * **"ONLY in a gallery" is a real condition, not a figure of speech, and
+ * getting it wrong makes this feature actively harmful.** The storefront block
+ * seeds its dedup set from the product's own media before the gallery pass runs
+ * (structured-data.liquid, `v_seen_ids`), so a video that is BOTH product media
+ * and a gallery link is emitted once — from the media loop, with the automatic
+ * date. Reporting it as "missing a date" would push the merchant to set
+ * `custom.video_upload_date`, which is the product-WIDE override: it replaces
+ * the accurate `File.createdAt` stamp of every media video on that product with
+ * one guessed date. So the media keys are subtracted before anything is
+ * counted, exactly as the block subtracts them.
  *
  * Two facts it reports separately, because they need different actions:
  *  - a YouTube gallery video WITHOUT a date → markup is emitted but can never
  *    become a rich result. One metafield fixes it.
- *  - a VIMEO gallery video → the block emits NOTHING for it at all (the rich
- *    result needs a thumbnail and none can be derived from a Vimeo link), so no
- *    date would help. Reporting the two as one number would send a merchant to
- *    set a date that changes nothing.
+ *  - a VIMEO gallery video → the block emits NOTHING for it (the rich result
+ *    needs a thumbnail and none can be derived from a Vimeo link), so no date
+ *    would help. Reporting the two as one number would send a merchant to set a
+ *    date that changes nothing.
  *
- * The usual known-vs-empty rule applies to the whole thing, in THREE places:
- * a task result written before this existed carries no `galleryVideos` key at
- * all; a sweep that threw returns `null`; and a sweep that was refused before
- * it read a single variant ALSO returns `null` rather than a zero — a zero
- * there would render as "no gallery videos found", which is a confident false
+ * The known-vs-empty rule applies in FOUR places, and none of them may render
+ * as "no gallery videos found": a task result written before this existed
+ * carries no `galleryVideos` key; a sweep that threw returns `null`; a sweep
+ * refused before reading a single variant returns `null`; and a sweep that read
+ * nothing at all returns `null` too — a zero there would be a confident false
  * negative from a query that never ran. Only a sweep that actually looked
- * reports a count, and if it broke off part-way it carries `capped` next to it.
+ * reports a count, and one that broke off part-way carries `capped` beside it.
  */
 
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { logger } from "~/utils/logger.server";
-import {
-  parseExternalVideoUrl,
-  externalVideoKey,
-  type ExternalVideoHost,
-} from "./external-video-url.shared";
+import { parseExternalVideoUrl } from "~/utils/mediaKind";
 
 /** Variants per page. Flat over `productVariants` rather than nested inside
  *  `products`, because a nested connection multiplies the query cost by its
@@ -50,18 +56,30 @@ const VARIANTS_PER_PAGE = 100;
 /** Hard bound on the sweep. 20 × 100 = 2000 variants; past that the report
  *  says so instead of silently describing a prefix as the whole shop. */
 const MAX_VARIANT_PAGES = 20;
-/** Products listed by name in the report. The COUNTS above stay complete. */
+/** Products listed by name in the report. The COUNTS stay complete. */
 const MAX_LISTED_PRODUCTS = 25;
-/** Products per `custom.video_upload_date` lookup page. */
-const DATE_LOOKUP_CHUNK = 50;
+/** Products per follow-up lookup page. */
+const PRODUCT_LOOKUP_CHUNK = 50;
+/** Media window of the follow-up lookup — the block's own cap is 5 emitted
+ *  videos, so a window this wide cannot miss a colliding one in practice. */
+const PRODUCT_MEDIA_WINDOW = 50;
+/**
+ * The storefront block stops after 5 emitted VideoObjects per product
+ * (`v_printed >= 5`), counting media videos FIRST. A product already at the cap
+ * from its own media prints nothing for its gallery links, so telling the
+ * merchant to date them would be advice about markup that never appears.
+ */
+const BLOCK_VIDEO_CAP = 5;
+/** Throttle retries per page before the sweep gives up on it. */
+const MAX_THROTTLE_RETRIES = 4;
 
 const VARIANT_SWEEP_QUERY = `#graphql
-  query seoGalleryVideoSweep($cursor: String) {
-    productVariants(first: 100, after: $cursor) {
+  query seoGalleryVideoSweep($cursor: String, $first: Int!) {
+    productVariants(first: $first, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes {
         id
-        product { id title handle }
+        product { id title status }
         galleryOrder: metafield(namespace: "custom", key: "variant_gallery_order") { value }
         externalVideos: metafield(namespace: "custom", key: "variant_external_videos") { value }
       }
@@ -69,12 +87,18 @@ const VARIANT_SWEEP_QUERY = `#graphql
   }
 `;
 
-const UPLOAD_DATE_QUERY = `#graphql
-  query seoGalleryVideoDates($ids: [ID!]!) {
+const PRODUCT_LOOKUP_QUERY = `#graphql
+  query seoGalleryVideoProducts($ids: [ID!]!, $mediaWindow: Int!) {
     nodes(ids: $ids) {
       ... on Product {
         id
         uploadDate: metafield(namespace: "custom", key: "video_upload_date") { value }
+        media(first: $mediaWindow) {
+          nodes {
+            mediaContentType
+            ... on ExternalVideo { originUrl }
+          }
+        }
       }
     }
   }
@@ -84,11 +108,10 @@ export interface GalleryVideoProduct {
   /** Product GID — the editor deep-link (`?select=<GID>`). */
   id: string;
   title: string;
-  handle: string;
-  /** DISTINCT YouTube videos, deduplicated product-wide exactly as the
-   *  storefront block deduplicates them (`"<host>|<id>"`). */
+  /** DISTINCT YouTube videos that the gallery contributes and the product's own
+   *  media do NOT already carry — deduplicated product-wide as the block is. */
   youtube: number;
-  /** DISTINCT Vimeo videos. The block emits nothing for these. */
+  /** DISTINCT Vimeo videos from the gallery. The block emits nothing for them. */
   vimeo: number;
   /** Whether `custom.video_upload_date` is set on the product. */
   hasUploadDate: boolean;
@@ -98,18 +121,19 @@ export interface GalleryVideoAudit {
   generatedAt: string;
   /** Variants actually looked at. */
   scannedVariants: number;
-  /** True when the sweep stopped at MAX_VARIANT_PAGES — a prefix, not the shop. */
+  /** True when the sweep stopped early — a prefix of the shop, not the shop. */
   capped: boolean;
-  /** Products carrying at least one external gallery video, capped for display. */
+  /** Products carrying at least one gallery-only video, capped for display. */
   products: GalleryVideoProduct[];
   /** TRUE total of such products — never capped. */
   totalProducts: number;
   /** …of which have a YouTube gallery video but no `custom.video_upload_date`:
    *  markup is emitted and can never become a rich result. */
   missingDate: number;
-  /** …of which carry ONLY Vimeo gallery videos: nothing is emitted for them at
-   *  all, and a date would not change that. */
-  vimeoOnly: number;
+  /** …of which carry at least one VIMEO gallery video: nothing is emitted for
+   *  those at all, whatever the date says. Overlaps `missingDate` on purpose —
+   *  one product can have both problems and needs to hear about both. */
+  withVimeo: number;
 }
 
 /** Every external video URL a variant's two metafields hold. */
@@ -150,47 +174,89 @@ function urlsOfVariant(node: any): string[] {
   return out;
 }
 
+/** `"<host>|<id>"` — the identity the storefront block's dedup set uses, so the
+ *  audit counts the videos the block would emit rather than the URLs a merchant
+ *  happened to paste. */
+function keyOf(url: string): string | null {
+  const parsed = parseExternalVideoUrl(url);
+  return parsed ? `${parsed.host}|${parsed.externalId}` : null;
+}
+
+const isThrottled = (body: any): boolean =>
+  Array.isArray(body?.errors) &&
+  body.errors.some((e: any) => e?.extensions?.code === "THROTTLED");
+
+/** Seconds to wait before retrying a throttled page, from Shopify's own
+ *  bucket state when it sends one and a plain back-off otherwise. */
+function throttleDelayMs(body: any, attempt: number): number {
+  const status = body?.extensions?.cost?.throttleStatus;
+  const requested = body?.extensions?.cost?.requestedQueryCost;
+  if (
+    status &&
+    typeof status.currentlyAvailable === "number" &&
+    typeof status.restoreRate === "number" &&
+    status.restoreRate > 0 &&
+    typeof requested === "number"
+  ) {
+    const deficit = Math.max(0, requested - status.currentlyAvailable);
+    return Math.min(10_000, Math.ceil((deficit / status.restoreRate) * 1000) + 250);
+  }
+  return Math.min(10_000, 1000 * 2 ** attempt);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * Sweep the shop's variants for external gallery videos, then resolve the
- * upload-date metafield for the products that have any.
+ * Sweep the shop's variants for gallery videos, then resolve each affected
+ * product's upload-date metafield and its own media.
  *
  * Never throws: this runs inside the JSON-LD batch task, whose main report must
  * survive a throttled or refused sweep. A failure yields `null`, which the UI
- * reads as "not checked" — the same rule as a task result written before this
- * existed.
+ * reads as "not checked".
  */
 export async function runGalleryVideoAudit(
   admin: AdminApiContext,
   shop: string,
 ): Promise<GalleryVideoAudit | null> {
   try {
-    /** productGid → { title, handle, keys } — keys are `"<host>|<id>"`, so one
-     *  video hanging on twelve variants counts once, exactly as the storefront
-     *  block deduplicates it. */
-    const byProduct = new Map<
-      string,
-      { title: string; handle: string; keys: Set<string>; hosts: Map<string, ExternalVideoHost> }
-    >();
+    /** productGid → { title, keys } — keys are `"<host>|<id>"`, so one video
+     *  hanging on twelve variants counts once, exactly as the block dedupes. */
+    const byProduct = new Map<string, { title: string; keys: Set<string> }>();
 
     let cursor: string | null = null;
     let pages = 0;
     let scannedVariants = 0;
     let capped = false;
 
-    while (pages < MAX_VARIANT_PAGES) {
-      const res: Response = await admin.graphql(VARIANT_SWEEP_QUERY, {
-        variables: { cursor },
-      });
-      const body: any = await res.json();
-      const conn = body?.data?.productVariants;
-      if (!conn) {
-        // A top-level GraphQL error (throttle, permission) — report what we
-        // have as capped rather than claiming a complete scan.
+    sweep: while (pages < MAX_VARIANT_PAGES) {
+      let conn: any = null;
+
+      // Shopify reports throttling as HTTP 200 with a THROTTLED entry in
+      // `errors`, which the transport does not retry — without this loop the
+      // sweep gives up on the first busy moment, and a shop big enough to have
+      // variant galleries is exactly a shop big enough to throttle.
+      for (let attempt = 0; attempt <= MAX_THROTTLE_RETRIES; attempt += 1) {
+        const res: Response = await admin.graphql(VARIANT_SWEEP_QUERY, {
+          variables: { cursor, first: VARIANTS_PER_PAGE },
+        });
+        const body: any = await res.json();
+        if (body?.data?.productVariants) {
+          conn = body.data.productVariants;
+          break;
+        }
+        if (isThrottled(body) && attempt < MAX_THROTTLE_RETRIES) {
+          await sleep(throttleDelayMs(body, attempt));
+          continue;
+        }
         logger.warn("[gallery-video-audit] variant sweep returned no data", {
           context: "SEO",
           shop,
           errors: JSON.stringify(body?.errors ?? null).slice(0, 500),
         });
+        capped = true;
+        break sweep;
+      }
+      if (!conn) {
         capped = true;
         break;
       }
@@ -199,62 +265,66 @@ export async function runGalleryVideoAudit(
         scannedVariants += 1;
         const productGid: string | undefined = node?.product?.id;
         if (!productGid) continue;
+        // A DRAFT or ARCHIVED product has no storefront page, so "its video
+        // cannot become a rich result" reports merchant intent as a defect —
+        // the rule catalog-readiness.service.ts already follows.
+        if (node?.product?.status !== "ACTIVE") continue;
         for (const url of urlsOfVariant(node)) {
-          const ref = parseExternalVideoUrl(url);
-          if (!ref) continue;
-          const entry =
-            byProduct.get(productGid) ??
-            {
-              title: node.product?.title ?? "",
-              handle: node.product?.handle ?? "",
-              keys: new Set<string>(),
-              hosts: new Map<string, ExternalVideoHost>(),
-            };
-          const key = externalVideoKey(ref);
+          const key = keyOf(url);
+          if (!key) continue;
+          const entry = byProduct.get(productGid) ?? {
+            title: node.product?.title ?? "",
+            keys: new Set<string>(),
+          };
           entry.keys.add(key);
-          entry.hosts.set(key, ref.host);
           byProduct.set(productGid, entry);
         }
       }
 
       pages += 1;
       if (!conn.pageInfo?.hasNextPage) break;
+      // A missing cursor with hasNextPage set would restart the sweep from the
+      // beginning and count the first page twenty times.
+      if (!conn.pageInfo?.endCursor) {
+        capped = true;
+        break;
+      }
       cursor = conn.pageInfo.endCursor;
       if (pages >= MAX_VARIANT_PAGES) capped = true;
     }
 
-    // Nothing looked at AND the sweep broke off: we learned NOTHING, and
-    // returning a zero here would render as "no gallery videos found" — a
-    // confident false negative from a query that never ran. `null` is the
-    // honest answer and the UI reads it as "not checked". The partial case
-    // (some variants scanned, then throttled) keeps its numbers and carries
-    // `capped`, which the UI shows alongside them.
-    if (capped && scannedVariants === 0) return null;
+    // Nothing looked at: we learned NOTHING, and a zero here would render as
+    // "no gallery videos found" — a confident false negative from a sweep that
+    // never read a row. An empty shop is the same answer for the same reason.
+    if (scannedVariants === 0) return null;
 
     const productGids = [...byProduct.keys()];
-    const dates = await fetchUploadDates(admin, productGids, shop);
+    const context = await fetchProductContext(admin, productGids, shop);
 
-    const products: GalleryVideoProduct[] = productGids.map((id) => {
+    const products: GalleryVideoProduct[] = [];
+    for (const id of productGids) {
       const e = byProduct.get(id)!;
+      const ctx = context.get(id);
+
+      // The block prints the product's OWN media videos first and skips any
+      // gallery link it already emitted — so those are not gallery-only, and
+      // they already carry an automatic date.
+      const galleryOnly = [...e.keys].filter((k) => !ctx?.mediaKeys.has(k));
+      if (galleryOnly.length === 0) continue;
+      // …and once the media alone fill the block's 5-video cap, no gallery
+      // video prints at all, whatever its date.
+      if ((ctx?.mediaVideoCount ?? 0) >= BLOCK_VIDEO_CAP) continue;
+
       let youtube = 0;
       let vimeo = 0;
-      for (const key of e.keys) {
-        if (e.hosts.get(key) === "vimeo") vimeo += 1;
+      for (const key of galleryOnly) {
+        if (key.startsWith("vimeo|")) vimeo += 1;
         else youtube += 1;
       }
-      return {
-        id,
-        title: e.title,
-        handle: e.handle,
-        youtube,
-        vimeo,
-        hasUploadDate: dates.get(id) === true,
-      };
-    });
+      products.push({ id, title: e.title, youtube, vimeo, hasUploadDate: ctx?.hasUploadDate === true });
+    }
 
-    // A product with only Vimeo videos gets nothing emitted at all, so a date
-    // would not help it — counted apart from the ones a date actually fixes.
-    const vimeoOnly = products.filter((p) => p.youtube === 0 && p.vimeo > 0).length;
+    const withVimeo = products.filter((p) => p.vimeo > 0).length;
     const missingDate = products.filter((p) => p.youtube > 0 && !p.hasUploadDate).length;
 
     return {
@@ -272,7 +342,7 @@ export async function runGalleryVideoAudit(
         .slice(0, MAX_LISTED_PRODUCTS),
       totalProducts: products.length,
       missingDate,
-      vimeoOnly,
+      withVimeo,
     };
   } catch (err: unknown) {
     logger.warn("[gallery-video-audit] sweep failed", {
@@ -284,27 +354,52 @@ export async function runGalleryVideoAudit(
   }
 }
 
-/** productGid → whether `custom.video_upload_date` holds a non-empty value. */
-async function fetchUploadDates(
+interface ProductContext {
+  hasUploadDate: boolean;
+  /** `"<host>|<id>"` of the product's OWN external-video media. */
+  mediaKeys: Set<string>;
+  /** Video media of any kind — what the block's 5-video cap counts first. */
+  mediaVideoCount: number;
+}
+
+async function fetchProductContext(
   admin: AdminApiContext,
   gids: string[],
   shop: string,
-): Promise<Map<string, boolean>> {
-  const out = new Map<string, boolean>();
-  for (let i = 0; i < gids.length; i += DATE_LOOKUP_CHUNK) {
-    const chunk = gids.slice(i, i + DATE_LOOKUP_CHUNK);
+): Promise<Map<string, ProductContext>> {
+  const out = new Map<string, ProductContext>();
+  for (let i = 0; i < gids.length; i += PRODUCT_LOOKUP_CHUNK) {
+    const chunk = gids.slice(i, i + PRODUCT_LOOKUP_CHUNK);
     try {
-      const res: Response = await admin.graphql(UPLOAD_DATE_QUERY, { variables: { ids: chunk } });
+      const res: Response = await admin.graphql(PRODUCT_LOOKUP_QUERY, {
+        variables: { ids: chunk, mediaWindow: PRODUCT_MEDIA_WINDOW },
+      });
       const body: any = await res.json();
       for (const node of body?.data?.nodes ?? []) {
         if (!node?.id) continue;
-        out.set(node.id, typeof node.uploadDate?.value === "string" && node.uploadDate.value.trim() !== "");
+        const mediaKeys = new Set<string>();
+        let mediaVideoCount = 0;
+        for (const m of node.media?.nodes ?? []) {
+          if (m?.mediaContentType !== "VIDEO" && m?.mediaContentType !== "EXTERNAL_VIDEO") continue;
+          mediaVideoCount += 1;
+          if (typeof m.originUrl === "string") {
+            const key = keyOf(m.originUrl);
+            if (key) mediaKeys.add(key);
+          }
+        }
+        out.set(node.id, {
+          hasUploadDate:
+            typeof node.uploadDate?.value === "string" && node.uploadDate.value.trim() !== "",
+          mediaKeys,
+          mediaVideoCount,
+        });
       }
     } catch (err: unknown) {
-      // Leave the chunk unset. `hasUploadDate` then reads false, which shows a
-      // product as needing a date it may already have — the milder error: it
-      // sends a merchant to look, never tells them nothing is wrong.
-      logger.warn("[gallery-video-audit] upload-date lookup failed", {
+      // Leave the chunk unset. `hasUploadDate` then reads false and no media
+      // key is subtracted, so a product may be reported that is actually fine —
+      // the milder error: it sends a merchant to look, never tells them nothing
+      // is wrong.
+      logger.warn("[gallery-video-audit] product lookup failed", {
         context: "SEO",
         shop,
         error: err instanceof Error ? err.message : String(err),

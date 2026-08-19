@@ -14,27 +14,33 @@ import { runGalleryVideoAudit } from "~/services/seo/gallery-video-audit.server"
 const variant = (
   productId: string,
   title: string,
-  over: { order?: unknown; list?: string[] } = {},
+  over: { order?: unknown; list?: string[]; status?: string } = {},
 ) => ({
   id: `gid://shopify/ProductVariant/${Math.random()}`,
-  product: { id: productId, title, handle: title.toLowerCase() },
+  product: { id: productId, title, status: over.status ?? "ACTIVE" },
   galleryOrder: over.order ? { value: JSON.stringify(over.order) } : null,
   externalVideos: over.list ? { value: JSON.stringify(over.list) } : null,
 });
 
 /** Admin stub: one variant page, then the upload-date lookup. */
-function adminStub(nodes: any[], dates: Record<string, string | null> = {}, opts: { pages?: any[][] } = {}) {
+function adminStub(
+  nodes: any[],
+  dates: Record<string, string | null> = {},
+  opts: { pages?: any[][]; media?: Record<string, any[]> } = {},
+) {
+  const media = opts.media ?? {};
   const pages = opts.pages ?? [nodes];
   let page = 0;
   return {
     graphql: async (query: string, args?: any) => {
-      if (query.includes("seoGalleryVideoDates")) {
+      if (query.includes("seoGalleryVideoProducts")) {
         return {
           json: async () => ({
             data: {
               nodes: (args?.variables?.ids ?? []).map((id: string) => ({
                 id,
                 uploadDate: dates[id] ? { value: dates[id] } : null,
+                media: { nodes: media[id] ?? [] },
               })),
             },
           }),
@@ -118,7 +124,7 @@ describe("runGalleryVideoAudit", () => {
     );
     expect(out!.totalProducts).toBe(2);
     expect(out!.missingDate).toBe(1);
-    expect(out!.vimeoOnly).toBe(1);
+    expect(out!.withVimeo).toBe(1);
   });
 
   it("does not count a product whose date IS set as missing", async () => {
@@ -180,7 +186,7 @@ describe("runGalleryVideoAudit", () => {
     let call = 0;
     const admin = {
       graphql: async (query: string, args?: any) => {
-        if (query.includes("seoGalleryVideoDates")) {
+        if (query.includes("seoGalleryVideoProducts")) {
           return { json: async () => ({ data: { nodes: (args?.variables?.ids ?? []).map((id: string) => ({ id, uploadDate: null })) } }) };
         }
         call += 1;
@@ -220,7 +226,7 @@ describe("runGalleryVideoAudit", () => {
     // wrong when something is.
     const admin = {
       graphql: async (query: string) => {
-        if (query.includes("seoGalleryVideoDates")) throw new Error("throttled");
+        if (query.includes("seoGalleryVideoProducts")) throw new Error("throttled");
         return {
           json: async () => ({
             data: {
@@ -235,6 +241,151 @@ describe("runGalleryVideoAudit", () => {
     } as any;
     const out = await runGalleryVideoAudit(admin, "s.myshopify.com");
     expect(out!.missingDate).toBe(1);
+  });
+
+  it("does NOT report a video the product's own media already carries", async () => {
+    // The harmful case. The block seeds its dedup set from product media, so
+    // this video is emitted once — from the media loop, WITH the automatic date
+    // from custom.video_upload_dates. Reporting it as "missing a date" would
+    // push the merchant to set custom.video_upload_date, which is the
+    // product-WIDE override: it would replace the accurate File.createdAt stamp
+    // of every media video on that product with one guessed date.
+    const out = await runGalleryVideoAudit(
+      adminStub([variant(P1, "Kumiko", { list: ["https://youtu.be/ABC12345678"] })], {}, {
+        media: {
+          [P1]: [
+            { mediaContentType: "EXTERNAL_VIDEO", originUrl: "https://www.youtube.com/watch?v=ABC12345678" },
+          ],
+        },
+      }),
+      "s.myshopify.com",
+    );
+    expect(out!.totalProducts).toBe(0);
+    expect(out!.missingDate).toBe(0);
+  });
+
+  it("still reports the gallery videos the media do NOT carry", async () => {
+    const out = await runGalleryVideoAudit(
+      adminStub(
+        [variant(P1, "Kumiko", { list: ["https://youtu.be/AAA11111111", "https://youtu.be/BBB22222222"] })],
+        {},
+        {
+          media: {
+            [P1]: [{ mediaContentType: "EXTERNAL_VIDEO", originUrl: "https://youtu.be/AAA11111111" }],
+          },
+        },
+      ),
+      "s.myshopify.com",
+    );
+    expect(out!.totalProducts).toBe(1);
+    expect(out!.products[0].youtube).toBe(1);
+  });
+
+  it("stays quiet once the product's media fill the block's 5-video cap", async () => {
+    // `v_printed >= 5` counts media videos first, so no gallery video prints —
+    // advice about markup that never appears is noise.
+    const out = await runGalleryVideoAudit(
+      adminStub([variant(P1, "Kumiko", { list: ["https://youtu.be/ABC12345678"] })], {}, {
+        media: { [P1]: Array.from({ length: 5 }, () => ({ mediaContentType: "VIDEO" })) },
+      }),
+      "s.myshopify.com",
+    );
+    expect(out!.totalProducts).toBe(0);
+  });
+
+  it("skips draft and archived products", async () => {
+    // No storefront page at all — reporting one as a defect reports merchant
+    // intent as a defect, the rule catalog-readiness.service.ts already follows.
+    const out = await runGalleryVideoAudit(
+      adminStub([
+        variant(P1, "Draft", { list: ["https://youtu.be/ABC12345678"], status: "DRAFT" }),
+        variant(P2, "Archived", { list: ["https://youtu.be/BBB22222222"], status: "ARCHIVED" }),
+      ]),
+      "s.myshopify.com",
+    );
+    expect(out!.totalProducts).toBe(0);
+    expect(out!.scannedVariants).toBe(2);
+  });
+
+  it("names the Vimeo problem even when the product also has a YouTube video", async () => {
+    // vimeoOnly required youtube === 0, so "1 YouTube, 1 Vimeo · date set" read
+    // as "both fine" while the Vimeo entry emitted nothing at all.
+    const out = await runGalleryVideoAudit(
+      adminStub(
+        [variant(P1, "Mixed", { list: ["https://youtu.be/ABC12345678", "https://vimeo.com/123456789"] })],
+        { [P1]: "2024-01-01" },
+      ),
+      "s.myshopify.com",
+    );
+    expect(out!.withVimeo).toBe(1);
+    expect(out!.missingDate).toBe(0);
+  });
+
+  it("retries a throttled page instead of giving up on the sweep", async () => {
+    // Shopify reports throttling as HTTP 200 with a THROTTLED entry in
+    // `errors`, which the transport does not retry. Without this the feature
+    // mostly answers "we did not look" on exactly the shops that have galleries.
+    let calls = 0;
+    const admin = {
+      graphql: async (query: string, args?: any) => {
+        if (query.includes("seoGalleryVideoProducts")) {
+          return { json: async () => ({ data: { nodes: (args?.variables?.ids ?? []).map((id: string) => ({ id, uploadDate: null, media: { nodes: [] } })) } }) };
+        }
+        calls += 1;
+        if (calls === 1) {
+          return {
+            json: async () => ({
+              errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }],
+              extensions: {
+                cost: { requestedQueryCost: 302, throttleStatus: { currentlyAvailable: 300, restoreRate: 1000 } },
+              },
+            }),
+          };
+        }
+        return {
+          json: async () => ({
+            data: {
+              productVariants: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [variant(P1, "Kumiko", { list: ["https://youtu.be/ABC12345678"] })],
+              },
+            },
+          }),
+        };
+      },
+    } as any;
+    const out = await runGalleryVideoAudit(admin, "s.myshopify.com");
+    expect(calls).toBe(2);
+    expect(out!.capped).toBe(false);
+    expect(out!.totalProducts).toBe(1);
+  });
+
+  it("does not restart the sweep when a cursor is missing", async () => {
+    // hasNextPage with no endCursor would re-read page one twenty times and
+    // report 2000 scanned variants on a 1-variant shop.
+    let calls = 0;
+    const admin = {
+      graphql: async (query: string, args?: any) => {
+        if (query.includes("seoGalleryVideoProducts")) {
+          return { json: async () => ({ data: { nodes: (args?.variables?.ids ?? []).map((id: string) => ({ id, uploadDate: null, media: { nodes: [] } })) } }) };
+        }
+        calls += 1;
+        return {
+          json: async () => ({
+            data: {
+              productVariants: {
+                pageInfo: { hasNextPage: true, endCursor: null },
+                nodes: [variant(P1, "Kumiko", { list: ["https://youtu.be/ABC12345678"] })],
+              },
+            },
+          }),
+        };
+      },
+    } as any;
+    const out = await runGalleryVideoAudit(admin, "s.myshopify.com");
+    expect(calls).toBe(1);
+    expect(out!.scannedVariants).toBe(1);
+    expect(out!.capped).toBe(true);
   });
 
   it("pages through the sweep and keeps the totals whole", async () => {

@@ -2156,10 +2156,11 @@ export const de = {
       // erst, wenn die Batch-Prüfung gelaufen ist; ohne sie steht nur der
       // allgemeine Hinweis darüber.
       galleryVideos: {
+        failed: "Die Prüfung der Galerie-Videos konnte diesmal nicht durchgeführt werden (Shopify hat die Abfrage abgelehnt). Der nächste Durchlauf versucht es erneut.",
         none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
-        found: "{products} Produkte haben Videos aus einer Galerie — {missing} davon ohne Datum.",
+        found: "Produkte mit Galerie-Videos: {products} — davon ohne Datum: {missing}.",
         fix: "Ohne Datum entsteht kein Video-Rich-Result. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum\"), dann zählt das Video.",
-        vimeoOnly: "{count} davon haben nur Vimeo-Videos — für die wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
+        vimeo: "Bei {count} davon liegt mindestens ein Vimeo-Video — dafür wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
         capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",
         rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
