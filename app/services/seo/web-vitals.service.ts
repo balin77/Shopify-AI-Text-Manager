@@ -293,7 +293,7 @@ function buildSummaryRows(rows: SummaryRawRow[]): WebVitalsSummaryRow[] {
 
   for (const r of rows) {
     const device: WebVitalDevice = r.device === "desktop" ? "desktop" : "mobile";
-    const key = `${r.template} ${device}`;
+    const key = `${r.template}\u0000${device}`;
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = { template: r.template, device, samples: 0, lcp: [], cls: [], inp: [] };
@@ -343,7 +343,7 @@ function buildElementIssues(rows: SummaryRawRow[]): WebVitalsElementIssue[] {
 
   const bump = (kind: WebVitalsElementIssue["kind"], label: string | null) => {
     if (!label) return;
-    const key = `${kind} ${label}`;
+    const key = `${kind}\u0000${label}`;
     const existing = counts.get(key);
     if (existing) existing.occurrences += 1;
     else counts.set(key, { kind, label, occurrences: 1 });

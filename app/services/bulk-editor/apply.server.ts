@@ -294,11 +294,14 @@ async function invalidateStaleForeignTranslations(
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
   const keys = [...new Set(translationKeys.filter(Boolean))];
-  // A SUB-RESOURCE (metafield / option / option value), an image alt and a
-  // metaobject field are never re-translated by the sync, so the merchant's
-  // stored choice governs them; a row's own fields are.
+  // An ALLOWLIST, never a denylist: a row type that is not named here — a new
+  // one, or `variant`, whose ContentTranslation resourceType the reconciliation
+  // never sees — must fall on the side that keeps deleting, not the one that
+  // silently keeps stale content. Only a row's OWN fields on the two
+  // webhook-backed types are re-translated automatically; sub-resources
+  // (`resourceTypeOverride`), image alts and metaobject fields never are.
   const reconciledSurface =
-    !resourceTypeOverride && rowType !== "image" && rowType !== "metaobject";
+    !resourceTypeOverride && (rowType === "product" || rowType === "collection");
   const mayPurge = reconciledSurface
     ? deps.purgeStaleTranslations
     : deps.purgeStaleSubResourceTranslations;

@@ -310,17 +310,24 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.removeCalls).toEqual([]);
   });
 
-  it("waits for a running re-translation instead of dropping the second event's work", async () => {
+  it("waits for a running re-translation and actually WRITES the second event's work", async () => {
     // The gate is created UP FRONT: the detached run reaches the AI call only
     // after several awaits, so a `release` assigned inside the mock would still
     // be undefined when the test wants to open it.
+    //
+    // The mock returns REAL translations on purpose. With an empty result run 1
+    // registers nothing and never marks the resource — which is the one shape
+    // in which a queued run cannot abort itself, so the test would pass while
+    // the defect was live.
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    ai.translate = vi.fn(async () => {
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => {
       await gate;
-      return {};
+      return {
+        [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+      };
     });
 
     // Two admin edits a minute apart: the second event's entries were detected
@@ -335,7 +342,25 @@ describe("auto-translation path (Max)", () => {
 
     release();
     await awaitDetachedRetranslations();
-    // Both runs reached the AI — the second was queued, not discarded.
-    expect((ai.translate as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThan(2);
+    // BOTH runs registered their two entries — the second was queued, not
+    // discarded, and it did not abandon itself over the first run's mark.
+    expect(shopify.registerCalls).toHaveLength(4);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("keeps the stale rows when the run cannot even START", async () => {
+    // The realistic trigger is a DATABASE error. Answering it with the purge
+    // would delete the translations on Shopify while the local mirror delete
+    // fails for the same reason — storefront content lost because our own
+    // database blinked. A stale text is visible and repairable; a deleted one
+    // is neither.
+    db.task.create.mockRejectedValueOnce(new Error("connection pool exhausted"));
+
+    await reconcileStaleTranslations(baseParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+    expect(shopify.removeCalls).toEqual([]);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 });

@@ -500,11 +500,16 @@ export function AIInstructionsTabs({
                           'Eine Übersetzung eines Textes, den es so nicht mehr gibt, wird sonst weiter im Shop ausgeliefert. Aus: Die alten Übersetzungen bleiben stehen und Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet.'}
                       </Text>
                       {/* Greyed out rather than hidden, with the reason in
-                          place: a switch that disappears reads as a bug. */}
+                          place: a switch that disappears reads as a bug. The
+                          note must NOT say "deletion is off" flatly — the
+                          precedence only holds where an automatic event
+                          re-translates (products, collections), and saying
+                          otherwise would describe a destructive behaviour as
+                          disabled while it still runs. */}
                       {autoTranslateActive && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {t.settings.translationPurgeSupersededNote ||
-                            'Nicht nötig, solange automatisch neu übersetzt wird: Der veraltete Text wird ersetzt statt gelöscht.'}
+                            'Für Produkte und Kollektionen nicht nötig, solange automatisch neu übersetzt wird — überall sonst wird weiter gelöscht, weil dort nur ein Reload neu übersetzt.'}
                         </Text>
                       )}
                     </BlockStack>
@@ -523,7 +528,7 @@ export function AIInstructionsTabs({
                       </Text>
                       <Text as="p" variant="bodySm" tone="subdued">
                         {t.settings.autoTranslateExternalChangesHelp ||
-                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn beim nächsten Sync automatisch neu, statt die veraltete Übersetzung nur zu löschen. URL-Handles bleiben ausgenommen.'}
+                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen. Bei Produkten und Kollektionen automatisch beim nächsten Sync, sonst beim nächsten Reload des Eintrags. URL-Handles bleiben ausgenommen.'}
                       </Text>
                       {!canAutoTranslateExternal && (
                         <Text as="p" variant="bodySm" tone="subdued">

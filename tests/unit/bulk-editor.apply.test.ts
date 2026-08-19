@@ -187,6 +187,15 @@ function mockDb() {
       findMany: vi.fn(async () => [] as { key: string; locale: string }[]),
       deleteMany: vi.fn(async (_args?: unknown) => ({ count: 1 })),
     },
+    // The translation-change policy (Settings → Übersetzungen). Default: the
+    // historic behaviour, so every existing test keeps purging.
+    aISettings: {
+      findUnique: vi.fn(async () => ({
+        translationPurgeOnPrimaryChange: true,
+        autoTranslateExternalChanges: false,
+        subscriptionPlan: "max",
+      })),
+    },
   };
 }
 
@@ -877,6 +886,56 @@ describe("applyBulkDiff — top-level GraphQL errors on productUpdate", () => {
 
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
     expect(calls.some((c) => c.query.includes("translationsRemove("))).toBe(false);
+  });
+
+  it("with auto-translate on, a ROW's own field is left to the re-translation…", async () => {
+    // Product rows are reconciled by the products/update webhook, so deleting
+    // the translation would only throw away what the re-translation refreshes.
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+    db.aISettings.findUnique.mockResolvedValue({
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    } as never);
+    db.contentTranslation.findMany.mockResolvedValue([{ key: "title", locale: "de" }] as never);
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsFor([]), foreignLocales: ["de"] },
+      [entry("field.title", "New title")],
+    );
+
+    expect(calls.some((c) => c.query.includes("translationsRemove("))).toBe(false);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("…while a METAFIELD's translation is still purged — nothing re-translates it", async () => {
+    // Sub-resources ride on their own Shopify resource, which the sync's
+    // reconciliation never looks at. Suppressing the deletion here would leave
+    // a translation of text that no longer exists live for good.
+    const { admin, calls } = mockAdmin();
+    const db = mockDb();
+    db.aISettings.findUnique.mockResolvedValue({
+      translationPurgeOnPrimaryChange: true,
+      autoTranslateExternalChanges: true,
+      subscriptionPlan: "max",
+    } as never);
+    db.contentTranslation.findMany.mockResolvedValue([{ key: "value", locale: "de" }] as never);
+
+    await applyBulkDiff(
+      {
+        db: db as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([MATERIAL_SPEC]),
+        foreignLocales: ["de"],
+      },
+      [entry("mf.custom.material", "Eiche")],
+    );
+
+    const remove = calls.find((c) => c.query.includes("translationsRemove("));
+    expect(remove?.variables?.translationKeys).toEqual(["value"]);
+    expect(db.contentTranslation.deleteMany).toHaveBeenCalled();
   });
 
   it("still fails the cell when the payload is missing entirely", async () => {
