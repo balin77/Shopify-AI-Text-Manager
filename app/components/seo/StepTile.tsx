@@ -72,9 +72,7 @@ export function StepTile({
         borderWidth={selected ? "050" : "025"}
         borderColor={selected ? "border-emphasis" : "border"}
         borderRadius="200"
-        background={
-          accent ? `bg-surface-${accent}` : selected ? "bg-surface-secondary" : "bg-surface"
-        }
+        background={accent ? ACCENT_BG[accent] : selected ? "bg-surface-secondary" : "bg-surface"}
         minHeight="100%"
       >
         <BlockStack gap="200">

@@ -31,6 +31,7 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { StepTile } from "../components/seo/StepTile";
+import { loadCrawlMarkupPages } from "../services/seo/crawl-markup-rows.server";
 import {
   buildOrganizationJsonLd,
   buildProductJsonLd,
@@ -420,9 +421,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Both halves read the SAME snapshot, deliberately in one place: two
   // separate single-flight queries would let the two reports drift apart by a
   // crawl and there is no way for a merchant to notice that from the page.
+  const crawlMarkup = await loadCrawlMarkupPages(db, shop).catch(() => null);
   const [liveJsonLd, liveSocial] = await Promise.all([
-    summarizeLiveJsonLd(db, shop).catch(() => null),
-    summarizeLiveSocial(db, shop).catch(() => null),
+    summarizeLiveJsonLd(db, shop, crawlMarkup ?? undefined).catch(() => null),
+    summarizeLiveSocial(db, shop, crawlMarkup ?? undefined).catch(() => null),
   ]);
 
   return json({
@@ -606,6 +608,13 @@ export default function SeoStructuredData() {
   // "appPages === 0" as "none of these are ours".
   const jsonLdMeasured = jsonLdKnown;
   const jsonLdOriginKnown = liveJsonLd?.appEmbedDetected === true;
+  // "The crawl saw no article page" and "this shop has no articles" look the
+  // same in a page count and mean opposite things for a switch that emits on
+  // article pages. The coverage rows carry the catalogue size, so the gate can
+  // tell them apart instead of blocking a blogless shop for good.
+  const jsonLdCatalogTotals = Object.fromEntries(
+    (liveJsonLd?.coverage ?? []).map((c) => [c.resourceType, c.catalogTotal]),
+  );
   const switchGates = JSON_LD_SWITCHES.map((sw) => ({
     ...sw,
     // Scoped, never shop-wide: our block emits FAQPage on PRODUCT pages only,
@@ -621,7 +630,12 @@ export default function SeoStructuredData() {
       // `null ?? []` turned that into an empty list whose `.some()` is always
       // false — so Organization reported "not measured" after every crawl, for
       // good. A shop-wide switch is covered as soon as ANY page was judged.
-      scopeCovered: scopeCovered(sw.scopes, liveJsonLd?.scopePages, liveJsonLd?.pagesChecked ?? 0),
+      scopeCovered: scopeCovered(
+        sw.scopes,
+        liveJsonLd?.scopePages,
+        liveJsonLd?.pagesChecked ?? 0,
+        jsonLdCatalogTotals,
+      ),
     }),
   }));
 

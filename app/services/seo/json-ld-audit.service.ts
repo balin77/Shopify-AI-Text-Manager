@@ -473,8 +473,16 @@ const MAX_LIVE_EXAMPLES = 5;
 export async function summarizeLiveJsonLd(
   db: PrismaClient,
   shop: string,
+  /**
+   * Preloaded snapshot rows. Both live summaries describe the SAME crawl,
+   * so the caller may read it once and hand it to both — without this, a
+   * crawl finishing between the two reads makes the two cards describe
+   * different measurements while the page claims one basis for both.
+   * Optional: leaving it off keeps the standalone behaviour.
+   */
+  preloaded?: Awaited<ReturnType<typeof loadCrawlMarkupPages>>,
 ): Promise<LiveJsonLdSummary | null> {
-  const loaded = await loadCrawlMarkupPages(db, shop);
+  const loaded = preloaded ?? (await loadCrawlMarkupPages(db, shop));
   if (!loaded) return null;
   const { snapshot, judged } = loaded;
 

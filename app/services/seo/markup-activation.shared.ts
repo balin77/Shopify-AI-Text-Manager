@@ -276,9 +276,21 @@ export function scopeCovered(
   scopes: string[] | null,
   scopePages: Record<string, number> | undefined,
   pagesChecked: number,
+  catalogTotals?: Record<string, number>,
 ): boolean {
   if (scopes === null) return pagesChecked > 0;
-  return scopes.some((rt) => (scopePages?.[rt] ?? 0) > 0);
+  // EVERY scope, not some. A switch emits on ALL of its page kinds, so one
+  // unmeasured kind is enough to make "nothing serves this" a guess:
+  // `enable_breadcrumb` covers product, collection AND article, and with only
+  // products crawled `.some()` handed out the green "safe to switch on" —
+  // then BreadcrumbList shipped twice on every collection and article page.
+  return scopes.every((rt) => {
+    if ((scopePages?.[rt] ?? 0) > 0) return true;
+    // …with one exception, or a shop without a blog could never judge a
+    // switch again: a kind the shop does not HAVE is not an unmeasured kind.
+    // Unknown catalogue (no entry) stays cautious rather than assuming zero.
+    return catalogTotals?.[rt] === 0;
+  });
 }
 
 export type EmbedBadgeVerdict = ActivationVerdict | "varies";

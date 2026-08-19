@@ -354,8 +354,28 @@ describe("scopeCovered", () => {
   it("judges a scoped switch only where its page kind was actually seen", () => {
     expect(scopeCovered(["product"], { product: 3 }, 3)).toBe(true);
     expect(scopeCovered(["product"], { collection: 3 }, 3)).toBe(false);
-    expect(scopeCovered(["product", "collection"], { collection: 1 }, 1)).toBe(true);
     expect(scopeCovered(["product"], undefined, 9)).toBe(false);
+  });
+
+  it("needs EVERY page kind of a multi-scope switch, not just one", () => {
+    // enable_breadcrumb emits on product, collection AND article. With only
+    // products crawled, `.some()` handed out the green "safe to switch on"
+    // and BreadcrumbList then shipped twice on every collection and article.
+    expect(scopeCovered(["product", "collection"], { collection: 1 }, 1)).toBe(false);
+    expect(
+      scopeCovered(["product", "collection"], { product: 2, collection: 1 }, 3),
+    ).toBe(true);
+  });
+
+  it("does not block a switch on a page kind the shop does not have", () => {
+    // A shop without a blog would otherwise never get a verdict for
+    // breadcrumbs again. "No article pages crawled" and "no articles exist"
+    // look the same in a page count and mean opposite things.
+    expect(
+      scopeCovered(["product", "article"], { product: 5 }, 5, { product: 5, article: 0 }),
+    ).toBe(true);
+    // …but an UNKNOWN catalogue stays cautious rather than assuming zero.
+    expect(scopeCovered(["product", "article"], { product: 5 }, 5, { product: 5 })).toBe(false);
   });
 });
 

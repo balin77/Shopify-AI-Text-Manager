@@ -58,8 +58,26 @@ const VARIANTS_PER_PAGE = 100;
 const MAX_VARIANT_PAGES = 20;
 /** Products listed by name in the report. The COUNTS stay complete. */
 const MAX_LISTED_PRODUCTS = 25;
-/** Products per follow-up lookup page. */
-const PRODUCT_LOOKUP_CHUNK = 50;
+/**
+ * Products per follow-up lookup page.
+ *
+ * 15, not 50, and the number is a COST budget rather than a preference.
+ * Shopify prices a connection at roughly `first` x node cost, so
+ * `nodes(ids: N)` each carrying `media(first: 50)` lands near N x 55 —
+ * fifty products blow past the 1000-point single-query maximum, the query is
+ * REJECTED rather than throttled, and `data` comes back null. Without the
+ * error check below that was silent: every chunk yielded an empty context,
+ * so no media key was ever subtracted and every gallery video read as
+ * "date missing".
+ */
+const PRODUCT_LOOKUP_CHUNK = 15;
+/**
+ * Bound on the follow-up lookups. The sweep looks up every ACTIVE product,
+ * so a large catalogue would otherwise turn into hundreds of requests inside
+ * one task. Reaching it reports `capped`, which the UI already renders as
+ * "not the whole catalogue" — never as a clean result.
+ */
+const MAX_LOOKUP_CHUNKS = 60;
 /** Media window of the follow-up lookup — the block's own cap is 5 emitted
  *  videos, so a window this wide cannot miss a colliding one in practice. */
 const PRODUCT_MEDIA_WINDOW = 50;
@@ -335,7 +353,14 @@ export async function runGalleryVideoAudit(
     if (scannedVariants === 0) return null;
 
     const productGids = [...activeProducts.keys()];
-    const context = await fetchProductContext(admin, productGids, shop);
+    const { contexts: context, capped: lookupCapped } = await fetchProductContext(
+      admin,
+      productGids,
+      shop,
+    );
+    // A lookup that could not read part of the catalogue makes the whole report
+    // a prefix, exactly like a truncated variant sweep.
+    if (lookupCapped) capped = true;
 
     const products: GalleryVideoProduct[] = [];
     for (const id of productGids) {
@@ -428,16 +453,49 @@ async function fetchProductContext(
   admin: AdminApiContext,
   gids: string[],
   shop: string,
-): Promise<Map<string, ProductContext>> {
+): Promise<{ contexts: Map<string, ProductContext>; capped: boolean }> {
   const out = new Map<string, ProductContext>();
+  let capped = false;
+  let chunks = 0;
   for (let i = 0; i < gids.length; i += PRODUCT_LOOKUP_CHUNK) {
+    if (chunks >= MAX_LOOKUP_CHUNKS) {
+      capped = true;
+      break;
+    }
+    chunks += 1;
     const chunk = gids.slice(i, i + PRODUCT_LOOKUP_CHUNK);
     try {
-      const res: Response = await admin.graphql(PRODUCT_LOOKUP_QUERY, {
-        variables: { ids: chunk, mediaWindow: PRODUCT_MEDIA_WINDOW },
-      });
-      const body: any = await res.json();
-      for (const node of body?.data?.nodes ?? []) {
+      let body: any = null;
+      // Same regime as the variant sweep above: Shopify reports throttling as
+      // HTTP 200 with a THROTTLED entry in `errors`, which the transport does
+      // not retry — without this the lookup gave up on the first busy moment.
+      for (let attempt = 0; attempt <= MAX_THROTTLE_RETRIES; attempt += 1) {
+        const res: Response = await admin.graphql(PRODUCT_LOOKUP_QUERY, {
+          variables: { ids: chunk, mediaWindow: PRODUCT_MEDIA_WINDOW },
+        });
+        body = await res.json();
+        if (body?.data?.nodes) break;
+        if (isThrottled(body) && attempt < MAX_THROTTLE_RETRIES) {
+          await sleep(throttleDelayMs(body, attempt));
+          continue;
+        }
+        break;
+      }
+      // A cost rejection ("max cost exceeded") arrives as HTTP 200 with
+      // `data: null` and an `errors` array — indistinguishable from success
+      // if you only read `data`. It has to be LOUD and it has to mark the run
+      // incomplete: an unset context makes every gallery video of the chunk
+      // look dateless, which is the advice this module exists to avoid.
+      if (!body?.data?.nodes) {
+        capped = true;
+        logger.warn("[gallery-video-audit] product lookup returned no data", {
+          context: "SEO",
+          shop,
+          errors: JSON.stringify(body?.errors ?? null).slice(0, 500),
+        });
+        continue;
+      }
+      for (const node of body.data.nodes ?? []) {
         if (!node?.id) continue;
         const mediaKeys = new Set<string>();
         let mediaVideoCount = 0;
@@ -497,5 +555,5 @@ async function fetchProductContext(
       });
     }
   }
-  return out;
+  return { contexts: out, capped };
 }
