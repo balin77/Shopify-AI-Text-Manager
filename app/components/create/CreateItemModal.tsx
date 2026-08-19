@@ -38,6 +38,7 @@ import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModa
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
 import { CreateSeoScore } from "./CreateSeoScore";
+import { TaxonomyValuePicker } from "../metaobjects/TaxonomyValueField";
 import { useCreateAiAssist } from "./useCreateAiAssist";
 import {
   createAiSpecFor,
@@ -665,6 +666,37 @@ export function CreateItemModal({
             helpText={t.keywordHint}
           />
         );
+
+      // The taxonomy picker is the SAME component the entry editor renders, so
+      // the form and the editor cannot come to write different bytes into one
+      // field. It needs the definition TYPE, which is the value of whichever
+      // field selects the runtime fields — the modal already knows it, and it
+      // is what the route resolves the attribute handle from.
+      case "taxonomyValue": {
+        const metaobjectType = extraFieldsKey ? values[extraFieldsKey] ?? "" : "";
+        const taxonomy = field.taxonomy;
+        if (!metaobjectType || !taxonomy) return null;
+        return (
+          <TaxonomyValuePicker
+            key={field.key}
+            label={label(field)}
+            value={value}
+            onChange={(next) => setValue(field.key, next)}
+            metaobjectType={metaobjectType}
+            taxonomyFieldKey={taxonomy.fieldKey}
+            fieldType={taxonomy.fieldType}
+            // The create form never has the definition's validations on the
+            // client: the route reads the handle server-side out of the cached
+            // definition, so `null` here means "ask the route", not "there is
+            // no attribute". The route answers with its own reason either way.
+            attributeHandle={null}
+            isList={taxonomy.isList}
+            min={taxonomy.min}
+            max={taxonomy.max}
+            error={errorText}
+          />
+        );
+      }
 
       case "tags":
         return (

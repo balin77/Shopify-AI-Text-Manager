@@ -1,6 +1,6 @@
 # Taxonomie-Referenzfelder — Plan (damit Farb-Einträge anlegbar werden)
 
-**Status:** **Phase 0 ist durch** (§1.1–§1.3). T1, T2 und T3 sind für **beide** Felder gemessen, das Enthaltensein ist bestätigt, §5 (Rückfallebene) wird nicht gebraucht. Der Plan ist baubar; Phase 1 kann beginnen. **Und er ist mehr wert als gedacht:** derselbe Editor schaltet neun weitere Standard-Definitionen frei, nicht nur die Farbe (§1.3).
+**Status:** **UMGESETZT.** Phase 0 gemessen (§1.1–§1.3), Phase 1 und 2 gebaut (§9). Farb-Einträge — und die neun gleich gebauten Standard-Definitionen — lassen sich anlegen, bearbeiten, übersetzen und löschen. §5 (Rückfallebene) wird als Gesamtausgang nicht gebraucht, ist aber **pro Feld** gebaut: wenn die Werteliste eines einzelnen Felds nicht gelesen werden kann, zeigt das Steuerelement den Grund und einen Deep-Link in den Shopify-Admin, statt eine leere Auswahl anzubieten.
 **Ziel:** Das eine Loch schließen, das [PLAN_METAOBJECTS_EDITOR](PLAN_METAOBJECTS_EDITOR.md) offen gelassen hat: **einen Eintrag einer Shopify-Standard-Definition anlegen** — allen voran eine Farbe.
 **Auslöser:** Gemessen in PLAN_METAOBJECTS_EDITOR §2.1: `shopify--color-pattern` hat **drei** Pflichtfelder, und zwei davon sind Taxonomie-Referenzen (`color_taxonomy_reference: list.product_taxonomy_value_reference*`, `pattern_taxonomy_reference: product_taxonomy_value_reference*`). Diese App hat dafür keinen Editor, also antwortet `metaobjectCreatability` mit `unsupportedRequiredType` und bietet den Typ ausgegraut an. Bearbeiten, Übersetzen und Löschen funktionieren; **Anlegen** nicht — ausgerechnet für den Typ, der den Editor-Plan ausgelöst hat.
 
@@ -187,3 +187,30 @@ Dieser Ausgang wird **implementiert, nicht weggelassen**, falls die Messung ihn 
 2. **Soll die Farbe den Taxonomie-Wert vorschlagen?** Wenn der Merchant `#FFC0CB` setzt, ist „Pink" die naheliegende Basisfarbe. Verlockend und riskant: ein automatisch gesetzter Pflichtwert, den niemand geprüft hat, ist genau die Sorte Vermutung, die dieser Code sonst vermeidet. Erst beantworten, wenn T4 gemessen ist.
 3. **Was tun bei einer Definition mit MEHREREN Taxonomie-Feldern? — beantwortet.** `shopify--color-pattern` hat zwei, und Lauf 3 hat beide getrennt gemessen: eigener Handle, eigene Werteliste, eigenes Enthaltensein. Die Zuordnung ist je FELD und funktioniert. Die anderen neun Standard-Definitionen haben je eines und sind damit der einfachere Fall.
 4. **Vorbelegung des Musterfelds.** Alle Stichprobeneinträge tragen denselben `pattern_taxonomy_reference` (§1.3). Ein Vorschlagswert im Anlege-Formular wäre bequem — aber ein automatisch gesetzter PFLICHTwert, den niemand geprüft hat, ist dieselbe Sorte Vermutung wie Frage 2. Als vorausgewählter, sichtbarer und änderbarer Vorschlag vertretbar; als stiller Default nicht.
+
+---
+
+## 9. Was gebaut wurde (2026-08-19)
+
+**Phase 1 — der Werteditor.**
+
+- `metaobject-fields.shared.ts` bekommt die Rolle **`taxonomyValue`** für beide Typen, dazu `parseMetaobjectTaxonomyValues` / `serializeMetaobjectTaxonomyValues` (JSON-Array vs. blanker String), `taxonomyAttributeHandle`, `taxonomyValueBounds` und `TAXONOMY_VALUE_GID_PATTERN`. Der `MetaobjectFieldSpec` trägt Handle und Grenzen mit, weil das Feldconfig das Steuerelement daraus baut und die Validierungen sonst nirgends erreichbar sind.
+- **Die Anzeigeform IST die Speicherform.** `formatMetaobjectFieldValue` lässt eine Taxonomie-Referenz unverändert; das Steuerelement spricht GIDs und zeigt Namen daneben. Jede verlustbehaftete Hin-und-Rück-Umwandlung in diesem Modul war bisher ein Fehler (der `|`-Trenner in einem Listenwert ist das stehende Beispiel), und hier ist keine nötig.
+- `taxonomy-values.server.ts` liest die zulässigen Werte: Runde A findet das Attribut über `TaxonomyCategory.attributes` (billig, ~500 Punkte gegen die 1000-Punkte-Grenze), Runde B holt seine Werte über die id. Drei begrenzte Suchrunden — ohne Suche, mit den Wörtern des Handles, mit dem ersten Wort — statt eines Laufs durch den ganzen Baum. Erfolge werden eine Stunde gemerkt, **Fehlschläge nicht**: eine gedrosselte Minute darf nicht zu einer Stunde „dieses Feld hat keine Werte" werden.
+- `api.metaobject-taxonomy.tsx` ist die Route. Sie **gated sich selbst** und liest das Attribut-Handle SERVERSEITIG aus der gecachten Definition — der Client nennt Typ und Feldschlüssel, nie ein Attribut.
+- `TaxonomyValuePicker` ist das Steuerelement, `TaxonomyValueField` der Adapter auf `FieldRenderProps`. Einzelwert ⇒ `Select`, Liste ⇒ `ChipCombobox` mit den Grenzen aus den Validierungen; am Maximum werden die übrigen Optionen **mit Begründung gesperrt** statt weggefiltert.
+
+**Phase 2 — Anlegen freigeschaltet.**
+
+- `EDITABLE_METAOBJECT_FIELD_TYPES` enthält beide Taxonomie-Typen. Diese Liste ist damit **absichtlich nicht mehr gleich** `isEditableMetaobjectFieldType`: die eine beantwortet „kann ein Formular das erheben?", die andere „kann eine Tabellenzelle das halten?", und die Taxonomie-Referenz ist genau die Stelle, wo die Antworten auseinandergehen (§3, Nicht-Ziel Bulk-Editor).
+- Der Create-Feldtyp `taxonomyValue` rendert **denselben** Picker wie der Editor. Der Wert wird bereits in der Speicherform übergeben und im Payload **unverändert** durchgereicht — `listValue` (kommagetrennt, hier serialisieren) wäre eine zweite Meinung über dieselben Bytes.
+- `validateCreatePayload` prüft serverseitig GID-Form und `list.min`/`list.max`.
+
+**Vier Dinge, die still schiefgingen und deshalb geprüft werden.**
+
+1. Ein Wert, der keine `TaxonomyValue`-GID ist, scheitert auf **Schema**-Ebene: ein `errors`-Array mit `data: null`, das `userErrors` nie erreicht — weitergereicht liest sich der ganze Save als Erfolg, während nichts geschrieben wurde. Beide Schreibpfade lehnen vorher ab.
+2. Ein **gespeicherter Wert außerhalb der angebotenen Liste** bleibt sichtbar (eigene Option bzw. eigener Chip). Ein leeres Steuerelement wäre die einzige Variante, die beim nächsten Speichern echte Daten löscht.
+3. Die Liste wird **einmal pro (Typ, Feld)** geholt, nicht einmal pro Eintrag: 25 Farbeinträge auf einer Seite wären sonst 25 identische Anfragen samt Kategorie-Sweep.
+4. Taxonomie-Felder sind **nicht übersetzbar** (`translationKey: ""`). Über die Fremdsprachenkette würden sie zu `""` auflösen, und der nächste Save in einer Fremdsprache würde die shopweite Referenz löschen — dieselbe Regel wie bei Farbe und Datei.
+
+**Nicht gebaut, bewusst:** das Feld im Bulk-Editor (§3), ein eigener Cache der Taxonomie (§6), und T4 (ob Shopify Konsistenz zwischen Hexwert und Taxonomie-Farbe erzwingt) bleibt offen — beide Felder werden unabhängig geschrieben, es blockiert nichts.

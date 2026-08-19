@@ -18,6 +18,18 @@
  * page in the wrong layout. It lives in the attribute tab instead.
  */
 
+// The taxonomy rules live in `metaobject-fields.shared` because the ENTRY
+// editor needs the same ones, and a second copy of "how is a list of taxonomy
+// GIDs serialised" is how the create form and the editor would come to write
+// different bytes into the same field.
+import {
+  isMetaobjectTaxonomyListType,
+  metaobjectFieldRole,
+  parseMetaobjectTaxonomyValues,
+  taxonomyValueBounds,
+  TAXONOMY_VALUE_GID_PATTERN,
+} from "~/services/metaobject-fields.shared";
+
 export type CreatableResource = "product" | "collection" | "page" | "article" | "blog" | "metaobject";
 
 /**
@@ -72,7 +84,15 @@ export type CreateFieldKind =
   /** Picks the parent blog for an article. Options are loaded live, not from this file. */
   | "blogPicker"
   /** Picks the metaobject definition. Options are loaded live and filtered (§1.5). */
-  | "metaobjectType";
+  | "metaobjectType"
+  /**
+   * Picks one or more values out of Shopify's product taxonomy
+   * (`product_taxonomy_value_reference`). The permitted values are loaded live
+   * from `/api/metaobject-taxonomy` -- the definition's validations name the
+   * attribute by handle and the values hang off a taxonomy CATEGORY, neither
+   * of which the form could know by itself.
+   */
+  | "taxonomyValue";
 
 export interface CreateFieldDef {
   key: string;
@@ -98,6 +118,24 @@ export interface CreateFieldDef {
    * creatable and then always rejected.
    */
   listValue?: boolean;
+  /**
+   * `taxonomyValue` only. Everything the picker needs that a bare key cannot
+   * carry: which field of the definition this is (the route resolves the
+   * attribute handle from it server-side) and how many values are allowed.
+   *
+   * The bounds come from the definition's `list.min` / `list.max` validations
+   * and are never hardcoded -- `color_taxonomy_reference` is 1..4 on a live
+   * shop and the next definition will be something else.
+   */
+  taxonomy?: {
+    /** The definition's own field key, without the `field.` prefix. */
+    fieldKey: string;
+    /** The Shopify field type, which decides list vs. single serialisation. */
+    fieldType: string;
+    isList: boolean;
+    min: number | null;
+    max: number | null;
+  };
 }
 
 export interface CreateResourceSpec {
@@ -301,17 +339,30 @@ export function allowedFieldKeys(resource: CreatableResource): Set<string> {
 }
 
 /**
- * The three metaobject field types this app can actually edit.
+ * The metaobject field types the CREATE FORM can collect a value for.
  *
- * Kept in step with `isEditableMetaobjectFieldType` (§1.5). A definition whose
- * REQUIRED fields include anything outside this set is not offerable: the form
- * could not collect a value Shopify will accept, so it would produce a
- * guaranteed rejection with no way for the merchant to fix it.
+ * A definition whose REQUIRED fields include anything outside this set is not
+ * offerable: the form could not collect a value Shopify will accept, so it
+ * would produce a guaranteed rejection with no way for the merchant to fix it.
+ *
+ * It deliberately no longer equals `isEditableMetaobjectFieldType` (the BULK
+ * grid's set). The two answer different questions -- "can a spreadsheet cell
+ * hold this?" and "can a form collect this?" -- and the taxonomy references are
+ * exactly where they diverge: the grid has no picker and the plan keeps them
+ * out of it (PLAN_METAOBJECT_TAXONOMY_CREATE §3), while the form has one.
+ * Collapsing them again would either drop the create feature or grow a
+ * spreadsheet column that stores raw GIDs.
+ *
+ * Adding the two taxonomy types is THE switch of Phase 2: on a live shop it
+ * unblocks `shopify--color-pattern` plus nine sibling definitions whose single
+ * required field is a taxonomy reference (§1.3).
  */
 export const EDITABLE_METAOBJECT_FIELD_TYPES = [
   "single_line_text_field",
   "multi_line_text_field",
   "list.single_line_text_field",
+  "product_taxonomy_value_reference",
+  "list.product_taxonomy_value_reference",
 ] as const;
 
 export interface MetaobjectFieldDefinition {
@@ -321,6 +372,9 @@ export interface MetaobjectFieldDefinition {
   /** Added by the Phase-0 sync. ABSENT on definitions cached before it —
    *  absent is NOT false, see the schema comment on MetaobjectDefinition. */
   required?: boolean;
+  /** Added by the same sync. Carries the taxonomy attribute handle and the
+   *  list bounds; the create form reads the bounds, the route reads the handle. */
+  validations?: Array<{ name: string; value?: string | null }>;
 }
 
 function fieldTypeName(def: MetaobjectFieldDefinition): string {
@@ -369,6 +423,25 @@ export function metaobjectFieldDefs(fieldDefinitions: MetaobjectFieldDefinition[
     .filter((f) => (EDITABLE_METAOBJECT_FIELD_TYPES as readonly string[]).includes(fieldTypeName(f)))
     .map((f) => {
       const type = fieldTypeName(f);
+      if (metaobjectFieldRole(type) === "taxonomyValue") {
+        const isList = isMetaobjectTaxonomyListType(type);
+        return {
+          key: `field.${f.key}`,
+          kind: "taxonomyValue" as const,
+          required: f.required === true,
+          labelKey: f.name || f.key,
+          // NOT `listValue`: that flag means "the form collected it
+          // comma-separated, serialise it here". The taxonomy picker hands
+          // over the value ALREADY serialised the way Shopify stores it —
+          // exactly like the entry editor, so both write the same bytes.
+          taxonomy: {
+            fieldKey: f.key,
+            fieldType: type,
+            isList,
+            ...taxonomyValueBounds(type, f.validations),
+          },
+        };
+      }
       const isList = type === "list.single_line_text_field";
       return {
         key: `field.${f.key}`,
@@ -399,6 +472,15 @@ export function metaobjectFieldsPayload(
   const payload: Array<{ key: string; value: string }> = [];
   for (const field of fields) {
     const raw = (values[field.key] ?? "").trim();
+    if (field.taxonomy) {
+      // Already serialised the way Shopify stores it — a JSON array of GIDs
+      // for the list flavour, a bare GID otherwise — because the picker speaks
+      // the stored form end to end. Re-serialising here would be a second
+      // opinion on the same bytes, and the entry editor holds the first.
+      if (raw.length === 0) continue;
+      payload.push({ key: field.key.replace(/^field\./, ""), value: raw });
+      continue;
+    }
     if (field.listValue) {
       // Stored as a JSON array; the form collects it comma-separated.
       const items = raw.split(",").map((v) => v.trim()).filter(Boolean);
@@ -418,7 +500,14 @@ export function metaobjectFieldsPayload(
 
 export interface CreateValidationError {
   field: string;
-  code: "required" | "tooLong" | "unknownField" | "invalidOption" | "invalidHandle" | "invalidMoney";
+  code:
+    | "required"
+    | "tooLong"
+    | "unknownField"
+    | "invalidOption"
+    | "invalidHandle"
+    | "invalidMoney"
+    | "invalidTaxonomyValue";
   detail?: string;
 }
 
@@ -473,6 +562,29 @@ export function validateCreatePayload(
     }
     if (field.kind === "select" && field.options && !field.options.some((o) => o.value === value)) {
       errors.push({ field: field.key, code: "invalidOption", detail: value });
+    }
+    if (field.taxonomy) {
+      // The SERVER's own check, and it is not a formality: a value that is not
+      // a TaxonomyValue GID fails at the GraphQL SCHEMA level — a top-level
+      // `errors` array with `data: null` that never reaches `userErrors`, so
+      // forwarding it would make the whole create read as a success while
+      // nothing was written. Same trap the merchandising enums documented.
+      const ids = parseMetaobjectTaxonomyValues(field.taxonomy.fieldType, value);
+      if (ids.length === 0 || ids.some((id) => !TAXONOMY_VALUE_GID_PATTERN.test(id))) {
+        errors.push({ field: field.key, code: "invalidTaxonomyValue", detail: value });
+      } else if (field.taxonomy.max !== null && ids.length > field.taxonomy.max) {
+        errors.push({
+          field: field.key,
+          code: "invalidTaxonomyValue",
+          detail: `${ids.length}/${field.taxonomy.max}`,
+        });
+      } else if (field.taxonomy.min !== null && ids.length < field.taxonomy.min) {
+        errors.push({
+          field: field.key,
+          code: "invalidTaxonomyValue",
+          detail: `${ids.length}/${field.taxonomy.min}`,
+        });
+      }
     }
   }
 
