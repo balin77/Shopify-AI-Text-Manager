@@ -645,6 +645,63 @@ export function extractAppJsonLdTypes($: cheerio.CheerioAPI): string[] {
   return typesFromScripts($, 'script[type="application/ld+json"][data-contentpilot]');
 }
 
+/** Cap per page, same purpose as MAX_JSON_LD_TYPES_PER_PAGE: a hostile or
+ *  broken page must not be able to grow one DB row without bound. */
+const MAX_SOCIAL_TAGS_PER_PAGE = 60;
+const MAX_SOCIAL_TAG_LENGTH = 64;
+
+export interface SocialTagExtract {
+  /** Every `og:*` property served, in document order, REPEATS INCLUDED. */
+  og: string[];
+  /** Every `twitter:*` name served, same rule. */
+  twitter: string[];
+  /** …of both, the subset THIS app emitted (data-contentpilot). */
+  app: string[];
+}
+
+/**
+ * Open Graph / Twitter Card property names served by the page — the social
+ * half of the same question `extractJsonLdTypes` answers for schema.org, and
+ * for the same reason: most themes set `og:title` and `og:image` themselves,
+ * and two `og:image` tags on one page are for Facebook and LinkedIn exactly
+ * what two `Product` nodes are for Google.
+ *
+ * REPEATS ARE KEPT. Collapsing them would throw away the only thing this
+ * measurement exists for.
+ *
+ * Both attribute spellings are read. Open Graph is defined on `property=` and
+ * Twitter on `name=`, but real themes mix the two constantly (and both work in
+ * practice), so keying off the attribute would report a shop's tags as absent
+ * on the basis of a spelling nobody notices. The NAMESPACE decides which
+ * bucket a tag lands in, never the attribute it arrived on.
+ */
+export function extractSocialTags($: cheerio.CheerioAPI): SocialTagExtract {
+  const og: string[] = [];
+  const twitter: string[] = [];
+  const app: string[] = [];
+
+  $("meta[property], meta[name]").each((_, el) => {
+    if (og.length + twitter.length >= MAX_SOCIAL_TAGS_PER_PAGE) return;
+    const el$ = $(el);
+    const raw = (el$.attr("property") || el$.attr("name") || "").trim().toLowerCase();
+    if (!raw) return;
+    const isOg = raw.startsWith("og:");
+    const isTwitter = raw.startsWith("twitter:");
+    if (!isOg && !isTwitter) return;
+    // A tag with no content is not a delivered tag — an empty `og:image` gives
+    // a scraper nothing, and counting it would report a card that never renders
+    // as covered. It is also how a theme leaves a placeholder behind.
+    if (!(el$.attr("content") || "").trim()) return;
+    const clean = raw.slice(0, MAX_SOCIAL_TAG_LENGTH);
+    (isOg ? og : twitter).push(clean);
+    if (el$.attr("data-contentpilot") !== undefined && app.length < MAX_SOCIAL_TAGS_PER_PAGE) {
+      app.push(clean);
+    }
+  });
+
+  return { og, twitter, app };
+}
+
 function typesFromScripts($: cheerio.CheerioAPI, selector: string): string[] {
   const out: string[] = [];
   $(selector).each((_, el) => {
@@ -1232,6 +1289,17 @@ interface PageRecord {
   imgMissingAlt: number;
   /** §2.4 — hops the redirect chain took (0 = no redirect). */
   redirectHops: number;
+  /** PLAN_MARKUP_ACTIVATION §2.2 — og:* / twitter:* served, repeats included. */
+  ogTags: string[];
+  twitterTags: string[];
+  /** …of which this app's social-meta block emitted (data-contentpilot). */
+  ogAppTags: string[];
+  /**
+   * Whether this crawl actually LOOKED. "" in the three lists above otherwise
+   * means either "nothing served" or "row written before the columns existed",
+   * which are opposite findings — same discriminator as indexabilityKnown.
+   */
+  socialKnown: boolean;
 }
 
 export interface RunCrawlDeps {
@@ -1671,6 +1739,12 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       imgMissingAlt: 0,
       // §2.4 — `hops` always includes the start URL, so a plain 200 is 0 hops.
       redirectHops: Math.max(0, outcome.hops.length - 1),
+      // PLAN_MARKUP_ACTIVATION §2.2 — flipped to true only once a body is
+      // parsed below, for the same reason as indexabilityKnown above.
+      ogTags: [],
+      twitterTags: [],
+      ogAppTags: [],
+      socialKnown: false,
     };
     pages.set(url, record);
 
@@ -1702,6 +1776,12 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
         // section otherwise only validates what the app WOULD emit.
         record.jsonLdTypes = extractJsonLdTypes($);
         record.jsonLdAppTypes = extractAppJsonLdTypes($);
+        // The social half of the same question, off the same parsed HTML.
+        const social = extractSocialTags($);
+        record.ogTags = social.og;
+        record.twitterTags = social.twitter;
+        record.ogAppTags = social.app;
+        record.socialKnown = true;
 
         $("a[href]").each((_, el) => {
           const href = $(el).attr("href");
@@ -1871,6 +1951,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
     outboundCount: number;
     jsonLdTypes: string;
     jsonLdAppTypes: string;
+    ogTags: string;
+    twitterTags: string;
+    ogAppTags: string;
+    socialKnown: boolean;
     metaRobots: string;
     xRobotsTag: string;
     indexabilityKnown: boolean;
@@ -1914,6 +1998,10 @@ export async function runCrawl(snapshotId: string, deps: RunCrawlDeps): Promise<
       outboundCount: outboundCounts.get(url) ?? 0,
       jsonLdTypes: page.jsonLdTypes.join(","),
       jsonLdAppTypes: page.jsonLdAppTypes.join(","),
+      ogTags: page.ogTags.join(","),
+      twitterTags: page.twitterTags.join(","),
+      ogAppTags: page.ogAppTags.join(","),
+      socialKnown: page.socialKnown,
       metaRobots: page.metaRobots,
       xRobotsTag: page.xRobotsTag,
       indexabilityKnown: page.indexabilityKnown,

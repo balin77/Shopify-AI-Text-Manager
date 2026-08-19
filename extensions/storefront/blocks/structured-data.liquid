@@ -487,6 +487,15 @@
   {%- endif -%}
   {%- assign v_upload_map = product.metafields.custom.video_upload_dates.value -%}
   {%- assign v_printed = 0 -%}
+  {%- comment -%}
+    Dedup set for the gallery pass below, keyed by "<host>|<id>" and NOT by the
+    URL: the same YouTube video reaches this block as a watch link, a youtu.be
+    short link or a native external_video, and three spellings of one video
+    would print three VideoObjects - the exact double markup this section is
+    otherwise about. Comma-joined with a leading comma so a `,needle,` check
+    cannot match a partial id.
+  {%- endcomment -%}
+  {%- assign v_seen_ids = ',' -%}
   {%- for v_media in product.media -%}
     {%- if v_printed >= 5 -%}{%- break -%}{%- endif -%}
     {%- if v_media.media_type == 'video' or v_media.media_type == 'external_video' -%}
@@ -570,9 +579,106 @@
 }
 </script>
         {%- assign v_printed = v_printed | plus: 1 -%}
+        {%- if v_media.media_type == 'external_video' -%}
+          {%- assign v_seen_ids = v_seen_ids | append: v_media.host | append: '|' | append: v_media.external_id | append: ',' -%}
+        {%- endif -%}
       {%- endif -%}
     {%- endif -%}
   {%- endfor -%}
+
+  {%- comment -%}
+    PLAN_MARKUP_ACTIVATION Phase 3 - videos that are NOT in product.media.
+
+    Measured on a live shop (patis-universe.com, 2026-08): across all 41
+    products not one had a native product.media video, while the YouTube video
+    the shop actually shows sat in two VARIANT metafields that the variant
+    gallery block reads. The VideoObject feature therefore had zero coverage
+    there. The two sources, both per variant:
+
+      custom.variant_gallery_order  - JSON [{kind, value}], the merchant's
+                                      drag order; entries with kind == 'url'
+      custom.variant_external_videos - list.url, appended after the files
+
+    Both are collected into ONE url-encoded, comma-joined string first and
+    emitted by ONE loop afterwards. Two emission bodies for two sources is how
+    the URL parser in variant-gallery-embed.liquid came to exist three times
+    and then drift apart; one accumulation pass is cheaper than that in every
+    sense, budget included. url_encode is what makes the comma join safe - a
+    Vimeo privacy hash or a ?list=a,b,c would otherwise split into fragments.
+
+    Deduplicated PRODUCT-WIDE, because the same video typically hangs on every
+    variant: one VideoObject per variant would be precisely the duplicate
+    markup Phase 1 exists to prevent.
+
+    uploadDate: a URL entry has no `File` record, so `File.createdAt` - and
+    with it the whole custom.video_upload_dates map the product sync writes -
+    does not apply here. That leaves the merchant's own
+    custom.video_upload_date, and when that is unset the property is OMITTED,
+    never estimated. A YouTube video does have a public publication date, but
+    it is reachable only through the YouTube Data API (own provider, own key,
+    own quota) and is an explicit non-goal. Invariant 3 above governs: nothing
+    in this entity may be invented.
+
+    Vimeo entries print nothing on purpose. thumbnailUrl is required for the
+    rich result and Vimeo exposes no thumbnail URL derivable from the id;
+    substituting the product image would answer "what does this video look
+    like" with a picture of something else.
+  {%- endcomment -%}
+  {%- assign v_gallery_urls = '' -%}
+  {%- liquid
+    for v_variant in product.variants
+      assign v_order_mf = v_variant.metafields.custom.variant_gallery_order
+      if v_order_mf != blank and v_order_mf.value != blank
+        for v_entry in v_order_mf.value
+          if v_entry.kind == 'url'
+            assign v_tok = v_entry.value | append: '' | strip | url_encode
+            if v_tok != blank
+              assign v_gallery_urls = v_gallery_urls | append: v_tok | append: ','
+            endif
+          endif
+        endfor
+      endif
+      assign v_extvid_mf = v_variant.metafields.custom.variant_external_videos
+      if v_extvid_mf != blank and v_extvid_mf.value != blank
+        for v_extvid in v_extvid_mf.value
+          assign v_tok = v_extvid | append: '' | strip | url_encode
+          if v_tok != blank
+            assign v_gallery_urls = v_gallery_urls | append: v_tok | append: ','
+          endif
+        endfor
+      endif
+    endfor
+  -%}
+  {%- if v_gallery_urls != blank -%}
+    {%- assign v_gallery_toks = v_gallery_urls | split: ',' -%}
+    {%- for v_tok in v_gallery_toks -%}
+      {%- if v_printed >= 5 -%}{%- break -%}{%- endif -%}
+      {%- assign v_gurl = v_tok | url_decode -%}
+      {%- comment -%} host+id via snippets/cp-external-video (render is scope-isolated, so the answer comes back as captured text; the strip is mandatory - capture keeps every whitespace byte) {%- endcomment -%}
+      {%- capture v_pair -%}{%- render 'cp-external-video', url: v_gurl -%}{%- endcapture -%}
+      {%- assign v_pair = v_pair | strip -%}
+      {%- assign v_ghost = v_pair | split: '|' | first | default: '' -%}
+      {%- assign v_gid = v_pair | split: '|' | last | default: '' -%}
+      {%- if v_ghost == 'youtube' and v_gid != blank -%}
+        {%- assign v_needle = ',' | append: v_pair | append: ',' -%}
+        {%- unless v_seen_ids contains v_needle -%}
+          {%- assign v_seen_ids = v_seen_ids | append: v_pair | append: ',' -%}
+<script type="application/ld+json" data-contentpilot="video">
+{
+  "@context": "https://schema.org",
+  "@type": "VideoObject",
+  "name": {{ product.title | json }},
+  "thumbnailUrl": [{{ 'https://img.youtube.com/vi/' | append: v_gid | append: '/hqdefault.jpg' | json }}],
+  "embedUrl": {{ 'https://www.youtube.com/embed/' | append: v_gid | json }}
+  {%- if v_desc != blank -%}, "description": {{ v_desc | json }}{%- endif -%}
+  {%- if v_upload_override != blank -%}, "uploadDate": {{ v_upload_override | json }}{%- endif -%}
+}
+</script>
+          {%- assign v_printed = v_printed | plus: 1 -%}
+        {%- endunless -%}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endif -%}
 {%- endif -%}
 
 {%- comment -%}
@@ -648,7 +754,7 @@
   "settings": [
     {
       "type": "paragraph",
-      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, Video, FAQ) for Google rich results. Enable once - markup is generated automatically per page."
+      "content": "Adds schema.org JSON-LD (Product, Collection, Article, Organization, Breadcrumb, Video, FAQ) for Google rich results. Enable once - markup is generated automatically per page. Your theme may already emit some of these types itself; the app's Structured data section, step 3, measures which ones and tells you what is safe to switch on."
     },
     {
       "type": "checkbox",
@@ -660,7 +766,7 @@
       "type": "checkbox",
       "id": "enable_product",
       "label": "Product (product pages)",
-      "info": "Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
+      "info": "Most themes emit their own product markup. Both at once is not merely duplicated but INVALID: this block uses the same @id as the theme on purpose, because it is meant to replace it, so Google merges the two into one node and every field both sides deliver ends up twice. Check step 3 of the app's Structured data section before switching this on. Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
       "default": true
     },
     {
@@ -684,8 +790,8 @@
     {
       "type": "checkbox",
       "id": "enable_video",
-      "label": "Video (product pages, from your product media)",
-      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos on a product. The upload date Google asks for is filled in automatically from the product sync; to state a different one, set the product metafield \"custom.video_upload_date\" (type date) and it wins.",
+      "label": "Video (product pages)",
+      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos in your product media, and for YouTube links that only live in a variant gallery - deduplicated, so one video shared by twelve variants stays one entry. The upload date Google asks for is filled in automatically from the product sync; to state a different one, set the product metafield \"custom.video_upload_date\" (type date) and it wins. A gallery link has no file behind it and therefore no automatic date: without that metafield the property is omitted rather than guessed, and the video rich result stays incomplete. Vimeo gallery links are skipped entirely - the rich result needs a thumbnail and none can be derived from a Vimeo link.",
       "default": true
     },
     {

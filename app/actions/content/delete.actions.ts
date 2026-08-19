@@ -118,36 +118,28 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
     );
   }
 
-  // A metaobject entry that a product still uses as an option value is the one
-  // delete in this app whose blast radius reaches OTHER objects: depending on
-  // what PLAN_METAOBJECTS_EDITOR V5 measures, Shopify either refuses it, drops
-  // the option value (taking its variants, and their stock and prices, with it)
-  // or leaves a dead reference. Until that is measured the UI assumes the worst
-  // and so does this: the entry is only deletable when the usage is KNOWN and
-  // zero. "Unknown" is refused as firmly as "in use" -- a delete whose
-  // consequences nobody can name is exactly what the rule is for.
+  // MEASURED (PLAN_METAOBJECTS_EDITOR V5, 2026-08-19, live shop): Shopify
+  // REFUSES to delete a metaobject "while it is referenced by another
+  // resource". That is the best of the three outcomes the plan named -- no
+  // option value disappears, no variant is destroyed, and the platform itself
+  // is the guard. So this check is no longer the thing standing between a
+  // merchant and lost variants; it is a courtesy that names the reason in the
+  // app's own words before Shopify says it in its own.
   //
-  // The card disables the button for the same reason; this is not a duplicate
-  // of that check but its only real one, because `deleteContent` takes a direct
-  // POST and a client-side lock is not a lock.
+  // Which is why "unknown" is no longer refused. It used to be, on the
+  // assumption that a delete whose consequences nobody can name is unsafe --
+  // true while V5 was open, and a dead end afterwards: a shop whose products
+  // are not cached could never delete an entry, however often it synced. A
+  // KNOWN usage still stops here, because the message is better than Shopify's.
   if (resource === "metaobject") {
+    // No live product count here on purpose: it exists to turn "the cache is
+    // empty" into a KNOWN zero, and both of those now take the same branch
+    // below. Spending an Admin API call on a distinction nothing reads is the
+    // kind of round trip that only shows up as latency. The usage ROUTE still
+    // asks it, because the card SHOWS the difference.
     const { countLinkedOptionUsage } = await import("~/services/metaobject-usage.server");
-    const { liveProductCountForUsage } = await import("~/services/metaobject-usage.server");
-    const usage = (
-      await countLinkedOptionUsage(db, session.shop, [gid], () => liveProductCountForUsage(admin))
-    )[gid];
-    if (!usage || !usage.known) {
-      return json(
-        {
-          success: false,
-          errorKey: "metaobjectDeleteUsageUnknown" as const,
-          error:
-            "We cannot tell whether this entry is used as a product option value — sync your products and try again.",
-        },
-        { status: 409 },
-      );
-    }
-    if (usage.products > 0) {
+    const usage = (await countLinkedOptionUsage(db, session.shop, [gid]))[gid];
+    if (usage?.known && usage.products > 0) {
       return json(
         {
           success: false,

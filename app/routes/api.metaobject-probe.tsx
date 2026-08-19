@@ -207,6 +207,8 @@ export interface MetaobjectProbeReport {
     nodeSelection?: string;
     error?: string;
   };
+  /** Results of the leftover cleanup step, when it was asked for. */
+  cleanup?: StepOutcome[];
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
   linkTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
   verdicts: string[];
@@ -247,6 +249,12 @@ export async function action({ request }: ActionFunctionArgs) {
     .filter(Boolean);
   const sampleType = String(formData?.get("sampleType") ?? "").trim();
   const writeType = String(formData?.get("writeType") ?? STANDARD_COLOUR_TYPE).trim();
+  /** GIDs an earlier run left behind, to be removed now. */
+  const cleanupIds = String(formData?.get("cleanupIds") ?? "")
+    .split(/[\s,]+/)
+    .map((v) => v.trim())
+    .filter((v) => v.startsWith("gid://shopify/"))
+    .slice(0, 25);
 
   /** One Admin GraphQL call that never throws. */
   const call = async (query: string, variables?: Record<string, unknown>): Promise<GraphQLCallResult> => {
@@ -568,46 +576,86 @@ export async function action({ request }: ActionFunctionArgs) {
       } else if (!sampleId) {
         noteError(`no entry of type "${sampleType || STANDARD_COLOUR_TYPE}" to run it against`);
       } else {
-        // `nodes` first, `edges` only if the SELECTION was rejected. Shopify
-        // connections expose both, so any other failure (throttling, network)
-        // must not be recorded as "this connection uses edges" -- that would be
-        // a shape conclusion drawn from an outage.
-        const viaNodes = await call(
-          `#graphql
-            query MetaobjectProbeReferencedByNodes($id: ID!) {
-              metaobject(id: $id) {
-                id
-                ${field}(first: 5) { nodes { ${nodeSelection} } }
+        // Selections in DECREASING ambition, run against `nodes` and, if the
+        // connection rejects that field itself, against `edges`.
+        //
+        // Run 3 measured why the ladder is needed: the widest selection
+        // ("__typename key name namespace referencer { __typename }
+        // target { __typename }") came back "Metafield reference target could
+        // not be retrieved" -- a RESOLVER failure on ONE field, not a statement
+        // about the shape -- while a bare `__typename` run had worked in the
+        // run before. Giving up there reported "the form does not exist" about
+        // a connection that demonstrably does. Each composite is therefore also
+        // tried on its own, so one unresolvable field cannot hide the rest:
+        // `referencer` is the one the usage question actually needs.
+        const composites = nodeSelection.match(/\w+ \{ __typename \}/g) ?? [];
+        const scalarsOnly = ["__typename", ...(nodeSelection.match(/(?:^|\s)(\w+)(?=\s|$)/g) ?? [])
+          .map((v) => v.trim())
+          .filter((v) => v && v !== "__typename")]
+          .join(" ");
+        const candidates = [
+          nodeSelection,
+          ...(composites.length > 0 ? [scalarsOnly] : []),
+          ...composites.map((composite) => `__typename ${composite}`),
+          "__typename",
+        ].filter((c, i, all) => all.indexOf(c) === i);
+
+        /** Why the WIDEST selection failed — kept separate, because a later
+         *  candidate's throttle must not be reported as its reason. */
+        let widestFailure: string | null = null;
+
+        const runLadder = async (via: "nodes" | "edges"): Promise<GraphQLCallResult | null> => {
+          let last: GraphQLCallResult | null = null;
+          for (const candidate of candidates) {
+            const body = via === "nodes" ? `nodes { ${candidate} }` : `edges { node { ${candidate} } }`;
+            const attempt = await call(
+              `#graphql
+                query MetaobjectProbeReferencedBy($id: ID!) {
+                  metaobject(id: $id) {
+                    id
+                    ${field}(first: 5) { ${body} }
+                  }
+                }`,
+              { id: sampleId },
+            );
+            if (attempt.ok) {
+              shape.liveShape = via;
+              shape.nodeSelection = candidate;
+              shape.liveSample = JSON.stringify(attempt.data?.metaobject ?? null).slice(0, 600);
+              if (candidate !== nodeSelection && widestFailure) {
+                noteError(`the full selection "${nodeSelection}" failed (${widestFailure}); "${candidate}" answered instead`);
               }
-            }`,
-          { id: sampleId },
-        );
-        if (viaNodes.ok) {
-          shape.liveShape = "nodes";
-          shape.liveSample = JSON.stringify(viaNodes.data?.metaobject ?? null).slice(0, 600);
-        } else if (isSelectionError(viaNodes)) {
-          const viaEdges = await call(
-            `#graphql
-              query MetaobjectProbeReferencedByEdges($id: ID!) {
-                metaobject(id: $id) {
-                  id
-                  ${field}(first: 5) { edges { node { ${nodeSelection} } } }
-                }
-              }`,
-            { id: sampleId },
-          );
-          if (viaEdges.ok) {
-            shape.liveShape = "edges";
-            shape.liveSample = JSON.stringify(viaEdges.data?.metaobject ?? null).slice(0, 600);
-          } else {
-            noteError(`nodes: ${describeFailure(viaNodes)} | edges: ${describeFailure(viaEdges)}`);
+              return attempt;
+            }
+            if (candidate === nodeSelection) widestFailure = describeFailure(attempt);
+            last = attempt;
           }
-        } else {
-          noteError(`live run: ${describeFailure(viaNodes)}`);
+          return last;
+        };
+
+        const nodesResult = await runLadder("nodes");
+        if (!shape.liveShape) {
+          // Only a rejected SELECTION justifies trying the other carrier. Any
+          // other failure (throttling, network) says nothing about whether this
+          // connection uses `nodes` -- concluding "edges" from an outage would
+          // record the outage as a shape.
+          if (nodesResult && isSelectionError(nodesResult)) {
+            const edgesResult = await runLadder("edges");
+            if (!shape.liveShape) {
+              noteError(
+                `nodes: ${describeFailure(nodesResult)} | edges: ${edgesResult ? describeFailure(edgesResult) : "not attempted"}`,
+              );
+            }
+          } else if (nodesResult) {
+            noteError(`live run: ${describeFailure(nodesResult)}`);
+          }
         }
       }
 
-      shape.nodeSelection = nodeSelection;
+      // Whatever actually answered — not what was attempted first. The link
+      // test reuses this, and reusing a selection that is known to fail would
+      // waste the one run with a self-created referencing product.
+      shape.nodeSelection ??= nodeSelection;
       report.reverseRelation = shape;
       report.verdicts.push(
         shape.liveShape
@@ -689,6 +737,66 @@ export async function action({ request }: ActionFunctionArgs) {
           : `M2/§6.6 INCONCLUSIVE for "${type}": no sampled entry reported a translatable key. Check whether the sampled entries have any primary values at all before concluding anything.`,
       );
     }
+  }
+
+  // ---- Cleanup: remove objects an earlier run could not ------------------
+  // A leftover GID is reported so somebody can go and remove it -- but a
+  // Shopify STANDARD definition (`shopify--...`) is not listed under Content >
+  // Metaobjects at all, so "go and remove it" is advice the merchant cannot
+  // follow. Measured the hard way in run 3: the entry survived because the
+  // referencing product still existed at cleanup time, and then could not be
+  // found in the admin. Reporting an id nobody can act on is half a report.
+  if (wants("cleanup")) {
+    const outcomes: StepOutcome[] = [];
+    for (const gid of cleanupIds) {
+      if (gid.includes("/Metaobject/")) {
+        const res = await call(
+          `#graphql
+            mutation MetaobjectProbeManualCleanup($id: ID!) {
+              metaobjectDelete(id: $id) { deletedId userErrors { field message code } }
+            }`,
+          { id: gid },
+        );
+        const gone = res.data?.metaobjectDelete?.deletedId;
+        outcomes.push({
+          step: `metaobjectDelete ${gid}`,
+          ok: !!gone,
+          detail: gone
+            ? `deletedId=${gone}`
+            : describeFailure(res, res.data?.metaobjectDelete?.userErrors),
+        });
+      } else if (gid.includes("/Product/")) {
+        const res = await call(
+          `#graphql
+            mutation MetaobjectProbeManualCleanupProduct($input: ProductDeleteInput!) {
+              productDelete(input: $input) { deletedProductId userErrors { field message } }
+            }`,
+          { input: { id: gid } },
+        );
+        const gone = res.data?.productDelete?.deletedProductId;
+        outcomes.push({
+          step: `productDelete ${gid}`,
+          ok: !!gone,
+          detail: gone ? `deletedProductId=${gone}` : describeFailure(res, res.data?.productDelete?.userErrors),
+        });
+      } else {
+        // Deliberately narrow: this step deletes things, so it only accepts the
+        // two id shapes THIS probe can create. Anything else is refused by name
+        // rather than forwarded to a mutation.
+        outcomes.push({
+          step: `skipped ${gid}`,
+          ok: false,
+          detail: "not a Metaobject or Product GID — this step only removes what the probe itself creates",
+        });
+      }
+    }
+    report.cleanup = outcomes;
+    const removed = outcomes.filter((o) => o.ok).length;
+    report.verdicts.push(
+      `CLEANUP: removed ${removed} of ${outcomes.length} listed object(s).${
+        removed < outcomes.length ? " The rest are still there — see the step details." : ""
+      }`,
+    );
   }
 
   // ---- Step 3: write test on a definition (destructive, self-cleaning) -----
@@ -1305,16 +1413,12 @@ async function runLinkTest(
       verdict: `${v3} || V5 INCONCLUSIVE: the delete produced neither a deletedId nor a userError. Treat as unmeasured.`,
     };
   } finally {
-    if (entryId) {
-      const cleanup = await call(
-        `#graphql
-          mutation MetaobjectProbeCleanupEntry($id: ID!) {
-            metaobjectDelete(id: $id) { deletedId userErrors { message } }
-          }`,
-        { id: entryId },
-      );
-      if (!cleanup.data?.metaobjectDelete?.deletedId) leftovers.push(entryId);
-    }
+    // PRODUCT FIRST, then the entry. Measured (run 3): Shopify REFUSES to
+    // delete a metaobject "while it is referenced by another resource" -- which
+    // is the V5 answer and also means the entry cannot go while the throwaway
+    // product still points at it. Cleaning up in the other order left a
+    // throwaway colour entry in the merchant's shop on every run that measured
+    // V5 successfully, i.e. on exactly the runs that worked.
     if (productId) {
       const cleanup = await call(
         `#graphql
@@ -1330,6 +1434,24 @@ async function runLinkTest(
         detail: gone ? `deletedProductId=${gone}` : describeFailure(cleanup, cleanup.data?.productDelete?.userErrors),
       });
       if (!gone) leftovers.push(productId);
+    }
+    if (entryId) {
+      const cleanup = await call(
+        `#graphql
+          mutation MetaobjectProbeCleanupEntry($id: ID!) {
+            metaobjectDelete(id: $id) { deletedId userErrors { message } }
+          }`,
+        { id: entryId },
+      );
+      const gone = cleanup.data?.metaobjectDelete?.deletedId;
+      steps.push({
+        step: "metaobjectDelete (cleanup)",
+        ok: !!gone,
+        detail: gone
+          ? `deletedId=${gone}`
+          : describeFailure(cleanup, cleanup.data?.metaobjectDelete?.userErrors),
+      });
+      if (!gone) leftovers.push(entryId);
     }
   }
 }

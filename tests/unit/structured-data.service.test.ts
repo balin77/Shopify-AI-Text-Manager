@@ -506,12 +506,53 @@ describe("storefront Liquid block: VideoObject", () => {
     expect(liquid).not.toMatch(/v_upload\s*=\s*product\.created_at/);
   });
 
-  it("guards the uploadDate emission with a non-empty check", () => {
+  it("guards every uploadDate emission with a non-empty check", () => {
+    // Two emission sites since PLAN_MARKUP_ACTIVATION Phase 3: the product-media
+    // loop and the variant-gallery loop. Both must be guarded — an unguarded one
+    // would print `"uploadDate": ""`, which is a claim, not an omission.
     const emissions = liquid.split("\n").filter((l) => l.includes('"uploadDate":'));
-    expect(emissions).toHaveLength(1);
+    expect(emissions).toHaveLength(2);
     for (const line of emissions) {
-      expect(line).toMatch(/\{%-?\s*if v_upload != blank/);
+      expect(line).toMatch(/\{%-?\s*if v_upload(_override)? != blank/);
     }
+  });
+
+  it("uses ONLY the merchant override for a gallery video's upload date", () => {
+    // A URL entry has no `File` record, so `File.createdAt` — and with it the
+    // whole custom.video_upload_dates map the product sync writes — cannot
+    // apply. Reading the map there would date a gallery video by some other
+    // video's file, which is worse than omitting the property.
+    const galleryEmission = liquid
+      .split("\n")
+      .filter((l) => l.includes('"uploadDate":'))
+      .find((l) => l.includes("v_upload_override"));
+    expect(galleryEmission).toBeDefined();
+    expect(galleryEmission).not.toContain("v_upload_map");
+  });
+
+  it("deduplicates gallery videos by host+id, product-wide", () => {
+    // The same video arrives as a watch link, a youtu.be short link and a native
+    // external_video; deduplicating on the raw URL would print three
+    // VideoObjects for one video — the duplicate markup this whole plan is
+    // about. The seen-set is comma-fenced so a `,needle,` check cannot match a
+    // partial id.
+    expect(liquid).toContain("assign v_seen_ids = ','");
+    expect(liquid).toMatch(/v_seen_ids \| append: v_media\.host \| append: '\|' \| append: v_media\.external_id/);
+    expect(liquid).toMatch(/assign v_needle = ',' \| append: v_pair \| append: ','/);
+    expect(liquid).toContain("{%- unless v_seen_ids contains v_needle -%}");
+  });
+
+  it("reads both variant metafields that can hold an external video URL", () => {
+    expect(liquid).toContain("v_variant.metafields.custom.variant_gallery_order");
+    expect(liquid).toContain("v_variant.metafields.custom.variant_external_videos");
+  });
+
+  it("captures the shared parser's answer and strips it", () => {
+    // `{% render %}` is scope-isolated, so the answer travels as printed text —
+    // and `capture` keeps every whitespace byte, so an id with a leading newline
+    // would build a broken embed URL.
+    expect(liquid).toContain("{%- render 'cp-external-video', url: v_gurl -%}");
+    expect(liquid).toContain("{%- assign v_pair = v_pair | strip -%}");
   });
 
   it("covers external videos, not just Shopify-hosted ones", () => {
