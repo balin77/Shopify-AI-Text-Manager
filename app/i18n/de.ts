@@ -530,6 +530,7 @@ export const de = {
       deleting: "Wird gelöscht \u2026",
       consequenceMetaobjectUsage: "Shopify verweigert das L\u00f6schen, solange ein Produkt den Eintrag als Optionswert benutzt \u2014 dort zuerst entfernen.",
       consequenceMetaobjectDefinitionEntries: "Jeder Eintrag dieses Typs wird mitgel\u00f6scht \u2014 hier bekannt: {count}. Shopify fragt nicht nach ihnen.",
+      consequenceMetaobjectDefinitionOptions: "Eintr\u00e4ge dieses Typs k\u00f6nnen Produktoptionswerte mit Storefront-Farbfeldern sein. Was noch einen benutzt, wird abgelehnt \u2014 entferne es zuerst dort.",
     },
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplizieren",

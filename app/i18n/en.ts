@@ -531,6 +531,7 @@ export const en: Translation = {
       deleting: "Deleting \u2026",
       consequenceMetaobjectUsage: "Shopify refuses to delete an entry that a product still uses as an option value \u2014 remove it there first.",
       consequenceMetaobjectDefinitionEntries: "Every entry of this type is deleted with it \u2014 {count} known here. Shopify does not ask about them.",
+      consequenceMetaobjectDefinitionOptions: "Entries of this type can be product option values with storefront swatches. Anything still using one is refused \u2014 remove it there first.",
     },
     // ── Duplicating (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicate",

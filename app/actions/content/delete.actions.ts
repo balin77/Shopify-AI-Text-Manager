@@ -36,7 +36,9 @@ import {
   DELETE_PRODUCT,
 } from "~/graphql/content.mutations";
 import { purgeContentFromCache, type DeletableResource } from "~/services/content-delete.server";
-import { GID_TYPE_BY_RESOURCE, isGidOfResource } from "~/config/create-fields.config";
+import { GID_TYPE_BY_RESOURCE, isGidOfResource, planContentTypeForDelete } from "~/config/create-fields.config";
+import { canAccessContentType, type Plan } from "~/utils/planUtils";
+import type { ContentType } from "~/config/plans";
 import { isValidShopifyGID } from "~/utils/validation";
 
 const DELETABLE: DeletableResource[] = [
@@ -139,6 +141,19 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
     );
   }
 
+  // The PLAN gate, server-side. `handleUnifiedContentActions` applies none, and
+  // this action is directly POST-reachable — the same class as the `/api/ai`
+  // handlers, except that this one is now the most destructive thing the app
+  // can do. The create path has gated on exactly this since it shipped.
+  const plan = (ctx.aiSettings?.subscriptionPlan || "free") as Plan;
+  const planContentType = planContentTypeForDelete(resource);
+  if (!canAccessContentType(plan, planContentType as ContentType)) {
+    return json(
+      { success: false, errorCode: "planContentType", error: `Your plan does not include ${planContentType}.` },
+      { status: 403 },
+    );
+  }
+
   // MEASURED (PLAN_METAOBJECTS_EDITOR V5, 2026-08-19, live shop): Shopify
   // REFUSES to delete a metaobject "while it is referenced by another
   // resource". That is the best of the three outcomes the plan named -- no
@@ -196,6 +211,52 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
     }
   }
 
+  // A DEFINITION delete takes every entry of the type with it, so the same
+  // question the per-entry path asks has to be asked for all of them: is any
+  // of these still an option value on a product? The per-entry path refuses a
+  // KNOWN usage because the message is better than Shopify's, and there is no
+  // reading under which that matters less when the count is sixty instead of
+  // one. Unknown does NOT refuse, exactly as there — a shop with no cached
+  // products would otherwise be locked out for good.
+  if (resource === "metaobjectDefinition") {
+    const definition = await db.metaobjectDefinition.findFirst({
+      where: { shop: session.shop, id: gid },
+      select: { type: true },
+    });
+    if (definition) {
+      const entries = await db.metaobject.findMany({
+        where: { shop: session.shop, type: definition.type },
+        select: { id: true },
+      });
+      if (entries.length > 0) {
+        const { countLinkedOptionUsage } = await import("~/services/metaobject-usage.server");
+        const usage = await countLinkedOptionUsage(
+          db,
+          session.shop,
+          entries.map((e) => e.id),
+        );
+        // The cache only, and deliberately: `liveMetaobjectUsage` is one paged
+        // query PER ENTRY, which for a type with hundreds of them is a sweep
+        // nobody should pay for behind a button. A cached zero is not proof,
+        // which is why Shopify's own refusal still travels back verbatim.
+        const used = Object.values(usage).flatMap((u) => (u.known && u.products > 0 ? [u] : []));
+        const products = used.reduce((sum, u) => sum + u.products, 0);
+        if (used.length > 0) {
+          return json(
+            {
+              success: false,
+              errorKey: "metaobjectDefinitionInUse" as const,
+              usageEntries: used.length,
+              usageProducts: products,
+              error: `${used.length} entr(ies) of this type are still used as product option values (${products} product references). Remove them there first.`,
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
+  }
+
   try {
     const plan = deletePlan(resource, gid);
     const response = (await admin
@@ -228,7 +289,28 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
 
     // Only now. See the header: purging first would make the app blind to an
     // object the shop still has.
-    const { counts } = await purgeContentFromCache(db, session.shop, resource, gid);
+    //
+    // And it can no longer report the DELETE as failed. The purge is
+    // bookkeeping AFTER an irreversible act: if it throws, the object is gone
+    // from the shop either way, and answering "could not delete" sent the
+    // merchant into a retry that then said "Shopify did not confirm the
+    // deletion -- nothing was removed locally" about a thing that no longer
+    // existed. The stale cache self-heals on the next sync; a false failure
+    // does not.
+    let counts: Record<string, number> = {};
+    let purgeError: string | null = null;
+    try {
+      ({ counts } = await purgeContentFromCache(db, session.shop, resource, gid));
+    } catch (error) {
+      purgeError = error instanceof Error ? error.message : String(error);
+      logger.error("[DeleteContent] Deleted on Shopify, cache purge failed", {
+        context: "DeleteContent",
+        shop: session.shop,
+        resource,
+        gid,
+        error: purgeError,
+      });
+    }
 
     logger.info("[DeleteContent] Deleted", { context: "DeleteContent", shop: session.shop, resource, gid, counts });
 
@@ -248,6 +330,8 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
        * number the merchant agreed to is the number they are told about.
        */
       cascadedEntries: resource === "metaobjectDefinition" ? counts.metaobject ?? 0 : 0,
+      /** The object IS gone; only this app's copy of it may still linger. */
+      cachePurgeFailed: purgeError,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

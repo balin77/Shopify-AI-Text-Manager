@@ -181,6 +181,21 @@ interface UnifiedContentEditorProps {
   isFieldsLoading?: boolean;
 
   /**
+   * An action on the CONTAINER the listed items belong to — today the
+   * metaobject DEFINITION whose entries fill the page.
+   *
+   * A prop rather than a config flag because only the route knows the
+   * container's id, and `disabledReason` is a string rather than a boolean so
+   * a refusal always arrives with its cause: "why is this greyed out" is the
+   * question a bare disabled button never answers.
+   */
+  containerAction?: {
+    label: string;
+    onAction: () => void;
+    disabledReason?: string | null;
+  } | null;
+
+  /**
    * Optional: wrap each GROUP of dynamic fields in the page's own chrome.
    *
    * Fields carrying the same `groupId` are handed over together, in order, and
@@ -196,21 +211,6 @@ interface UnifiedContentEditorProps {
    * has to be able to pick it out BY KEY rather than by position, and to paint
    * the live value beside it while the merchant is still typing.
    */
-  /**
-   * An action on the CONTAINER the listed items belong to — today the
-   * metaobject DEFINITION whose entries fill the page.
-   *
-   * A prop rather than a config flag because only the route knows the
-   * container's id, and `disabledReason` is a string rather than a boolean so
-   * a refusal always arrives with its cause: "why is this greyed out" is the
-   * question a bare disabled button never answers.
-   */
-  containerAction?: {
-    label: string;
-    onAction: () => void;
-    disabledReason?: string | null;
-  } | null;
-
   renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
 
   /**
@@ -344,7 +344,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
-    containerAction,
+  containerAction,
   renderFieldGroup,
     createPrefill,
     fieldsReadOnly = false,

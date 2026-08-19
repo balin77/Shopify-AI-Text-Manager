@@ -67,6 +67,19 @@ export const GID_TYPE_BY_RESOURCE: Record<DeletableResource, string> = {
   metaobjectDefinition: "MetaobjectDefinition",
 };
 
+/**
+ * The plan's ContentType a DELETE of this resource belongs to.
+ *
+ * Derived from the create spec wherever there is one, so the two gates cannot
+ * disagree about which plan may touch a type. A metaobject DEFINITION has no
+ * create spec — this app deliberately offers no form for one — and belongs to
+ * the same "metaobjects" content type as its entries.
+ */
+export function planContentTypeForDelete(resource: DeletableResource): string {
+  if (resource === "metaobjectDefinition") return "metaobjects";
+  return CREATE_SPECS[resource].planContentType;
+}
+
 /** True when `gid` is an id of `resource` (and not, say, a pseudo item id). */
 export function isGidOfResource(gid: string, resource: DeletableResource): boolean {
   return gid.includes(`/${GID_TYPE_BY_RESOURCE[resource]}/`);
