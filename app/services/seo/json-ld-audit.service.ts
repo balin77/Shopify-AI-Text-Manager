@@ -434,6 +434,12 @@ export interface LiveJsonLdSummary {
    * merchant reads.
    */
   typeStats: LiveJsonLdTypeStat[];
+  /**
+   * Judged pages per resourceType. A switch whose scope is missing here was
+   * never measured, which is NOT the same as "nothing serves it" — see the
+   * tally's comment in the builder and `activationGate`'s `scopeCovered`.
+   */
+  scopePages: Record<string, number>;
   duplicates: LiveJsonLdDuplicateRow[];
   /**
    * Whether this app's storefront block was seen emitting anything at all.
@@ -492,9 +498,19 @@ export async function summarizeLiveJsonLd(
   /** Pages carrying a canonical type at all, and pages where WE carry it. */
   const canonicalPages = new Map<string, number>();
   const canonicalAppPages = new Map<string, number>();
+  /**
+   * Pages the crawl actually judged, per resourceType. This is the
+   * discriminator between "the theme serves nothing here" and "we never looked
+   * here" — without it a shop whose article pages were not crawled reads as a
+   * clean zero, and the activation gate hands out a green "safe to switch on"
+   * for a page kind it has no measurement of. Same rule as `indexabilityKnown`
+   * and `attributesSyncedAt`: an empty column is never evidence.
+   */
+  const scopePages = new Map<string, number>();
 
   for (const row of judged) {
     const rt = row.resourceType || "unknown";
+    scopePages.set(rt, (scopePages.get(rt) ?? 0) + 1);
     const types = row.jsonLdTypes ? row.jsonLdTypes.split(",").filter(Boolean) : [];
     // typeCounts keep the RAW names (a merchant wants to see "BlogPosting"
     // when that is what the page carries); only the duplicate tally collapses
@@ -592,6 +608,7 @@ export async function summarizeLiveJsonLd(
       .map(([type, pages]) => ({ type, pages }))
       .sort((a, b) => b.pages - a.pages || a.type.localeCompare(b.type)),
     typeStats,
+    scopePages: Object.fromEntries(scopePages),
     duplicates: [...duplicateTotals.entries()]
       .map(([type, acc]) => ({
         type,

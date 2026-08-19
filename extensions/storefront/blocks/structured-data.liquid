@@ -791,7 +791,7 @@
       "type": "checkbox",
       "id": "enable_video",
       "label": "Video (product pages)",
-      "info": "Emits VideoObject for Shopify-hosted and YouTube/Vimeo videos in your product media, and for YouTube links that only live in a variant gallery - deduplicated, so one video shared by twelve variants stays one entry. The upload date Google asks for is filled in automatically from the product sync; to state a different one, set the product metafield \"custom.video_upload_date\" (type date) and it wins. A gallery link has no file behind it and therefore no automatic date: without that metafield the property is omitted rather than guessed, and the video rich result stays incomplete. Vimeo gallery links are skipped entirely - the rich result needs a thumbnail and none can be derived from a Vimeo link.",
+      "info": "Emits VideoObject for videos in your product media AND for YouTube links that only live in a variant gallery, deduplicated per product. Google requires an upload date: for product media the app fills it in automatically during the sync, but a gallery link has no file behind it, so without the product metafield \"custom.video_upload_date\" (type date) that video gets no rich result - the property is omitted rather than guessed. The same metafield also overrides the automatic date. Vimeo gallery links are skipped: the rich result needs a thumbnail and none can be derived from a Vimeo link.",
       "default": true
     },
     {

@@ -587,6 +587,12 @@ export default function SeoStructuredData() {
     gate: activationGate(statForSwitch(liveJsonLd?.typeStats, sw.type, sw.scopes), {
       measured: jsonLdMeasured,
       originKnown: jsonLdOriginKnown,
+      // "No bucket" is ambiguous — it is what an untouched page kind and an
+      // UNCRAWLED one look like alike. A switch is only judged where the crawl
+      // actually saw at least one page of its scope.
+      scopeCovered: (sw.scopes ?? []).some(
+        (rt) => (liveJsonLd?.scopePages?.[rt] ?? 0) > 0,
+      ),
     }),
   }));
 
@@ -1232,9 +1238,25 @@ export default function SeoStructuredData() {
                 {/* Both of these come from native media / a metafield on the
                     storefront, so they have no counterpart in the preview
                     below — which is built from the DB cache. Saying so beats
-                    letting a merchant conclude the video markup is missing. */}
+                    letting a merchant conclude the video markup is missing.
+                    Three separate lines, not one paragraph: the middle one is
+                    the only thing here a merchant has to ACT on, and glued to
+                    the other two it read as background. */}
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {(s as any).schemaVideoNote as string}
+                  {emphasize((s as any).schemaVideoNote as string)}
+                </Text>
+                {/* A gallery video without custom.video_upload_date produces a
+                    VideoObject Google reports as invalid and never turns into a
+                    rich result — and the app cannot fill the date for it, since
+                    a URL entry has no File record. The one-metafield fix is the
+                    whole point of saying it here. */}
+                <Banner tone="info">
+                  <Text as="p" variant="bodySm">
+                    {emphasize((s as any).schemaVideoDateNote as string)}
+                  </Text>
+                </Banner>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {emphasize((s as any).schemaFaqNote as string)}
                 </Text>
               </BlockStack>
             </BlockStack>

@@ -145,10 +145,17 @@ export const UNMARKED_COUNTS_AS_FOREIGN = true;
  */
 export function activationGate(
   stat: MarkupTypeStat | undefined,
-  opts: { measured: boolean; originKnown: boolean },
+  opts: { measured: boolean; originKnown: boolean; scopeCovered?: boolean },
 ): ActivationGate {
   const empty = { pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false };
   if (!opts.measured) return { verdict: "unknown", ...empty };
+  // A crawl that ran is not a crawl that looked HERE. With no page of this
+  // switch's scope judged, `pages === 0` below would read as "nothing serves
+  // it" and hand out the green "safe to switch on" — for a page kind we have
+  // no measurement of, which is exactly the duplicate damage the gate exists
+  // to prevent. Absent flag = covered, so callers that cannot answer the
+  // question keep the previous behaviour rather than turning grey by accident.
+  if (opts.scopeCovered === false) return { verdict: "unknown", ...empty };
 
   const s: MarkupTypeStat = stat ?? { type: "", resourceType: "", ...empty };
   const base = {
@@ -402,8 +409,10 @@ export const JSON_LD_SWITCHES: MarkupSwitch[] = [
  * judged on. A page has exactly one `resourceType`, so the buckets are disjoint
  * and summing them is exact rather than an approximation.
  *
- * Returns undefined when no bucket matches — which `activationGate` reads as
- * "nothing serves it", the same as an explicit zero.
+ * Returns undefined when no bucket matches. That alone does NOT mean "nothing
+ * serves it": no bucket is also what an uncrawled page kind looks like, which
+ * is why the caller passes `scopeCovered` to `activationGate` separately —
+ * this function cannot tell the two apart and must not pretend to.
  */
 export function statForSwitch(
   stats: MarkupTypeStat[] | undefined,
