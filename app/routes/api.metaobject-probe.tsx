@@ -92,18 +92,29 @@ function leafKindOf(ref: any): string | undefined {
  * hard error that `isSelectionError` does not recognise, so a single such
  * field would make a working connection read as "shape not measured".
  */
-function liveNodeSelection(fields: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>): string {
-  const parts = ["__typename"];
+function liveNodeSelection(
+  fields: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>,
+): { full: string; scalars: string; composites: string[] } {
+  const scalars: string[] = [];
+  const composites: string[] = [];
   for (const field of fields) {
     const needsArgument = (field.args ?? []).some((a) => leafKindOf(a.type) !== undefined && isRequiredArg(a.type));
     if (needsArgument) continue;
     const kind = leafKindOf(field.type);
-    if (kind === "SCALAR" || kind === "ENUM") parts.push(field.name);
+    if (kind === "SCALAR" || kind === "ENUM") scalars.push(field.name);
     else if (kind === "OBJECT" || kind === "UNION" || kind === "INTERFACE") {
-      parts.push(`${field.name} { __typename }`);
+      composites.push(`${field.name} { __typename }`);
     }
   }
-  return parts.join(" ");
+  // The pieces are returned SEPARATELY, not re-derived from `full` by regex.
+  // They were, and the pattern that split them treated `referencer` (a name
+  // followed by a space, then a brace) as a scalar -- so the scalars-only
+  // candidate selected a composite field bare and could only ever error.
+  return {
+    full: ["__typename", ...scalars, ...composites].join(" "),
+    scalars: ["__typename", ...scalars].join(" "),
+    composites,
+  };
 }
 
 /** NON_NULL at the OUTERMOST level means the argument has to be supplied. */
@@ -410,9 +421,13 @@ export async function action({ request }: ActionFunctionArgs) {
   // `steps=references` alone must not silently measure nothing.
   if (wants("references")) {
     const shape: NonNullable<MetaobjectProbeReport["reverseRelation"]> = {};
-    /** The selection the live run asks the node for. `__typename` alone until
-     *  the node type has been introspected. */
-    let nodeSelection = "__typename";
+    /** The selections the live run may ask the node for, widest first.
+     *  `__typename` alone until the node type has been introspected. */
+    let selections: { full: string; scalars: string; composites: string[] } = {
+      full: "__typename",
+      scalars: "__typename",
+      composites: [],
+    };
     /** Appends rather than overwrites: an early failure explains a later one. */
     const noteError = (message: string) => {
       shape.error = shape.error ? `${shape.error} | ${message}` : message;
@@ -552,7 +567,7 @@ export async function action({ request }: ActionFunctionArgs) {
           // What the live run may ask for. Run 2 selected only `__typename` and
           // therefore could not say whether a relation names the PRODUCT that
           // uses the entry — which is the only thing a usage count needs.
-          if (fields.length > 0) nodeSelection = liveNodeSelection(fields);
+          if (fields.length > 0) selections = liveNodeSelection(fields);
         } else {
           // A failed call is not "this type has no fields" -- without this the
           // report simply omits the line and "not measured" reads as "none".
@@ -588,15 +603,16 @@ export async function action({ request }: ActionFunctionArgs) {
         // a connection that demonstrably does. Each composite is therefore also
         // tried on its own, so one unresolvable field cannot hide the rest:
         // `referencer` is the one the usage question actually needs.
-        const composites = nodeSelection.match(/\w+ \{ __typename \}/g) ?? [];
-        const scalarsOnly = ["__typename", ...(nodeSelection.match(/(?:^|\s)(\w+)(?=\s|$)/g) ?? [])
-          .map((v) => v.trim())
-          .filter((v) => v && v !== "__typename")]
-          .join(" ");
+        // Ordered by what each candidate ANSWERS, not by how much it asks. The
+        // composites come before the scalars-only fallback: `referencer` is the
+        // whole point of the step, and a scalars-only candidate that resolves
+        // would otherwise stop the ladder one rung short and report "V4 SHAPE
+        // MEASURED" without the field V4 is about — and hand that same
+        // selection to the expensive link test.
         const candidates = [
-          nodeSelection,
-          ...(composites.length > 0 ? [scalarsOnly] : []),
-          ...composites.map((composite) => `__typename ${composite}`),
+          selections.full,
+          ...selections.composites.map((composite) => `__typename ${composite}`),
+          ...(selections.composites.length > 0 ? [selections.scalars] : []),
           "__typename",
         ].filter((c, i, all) => all.indexOf(c) === i);
 
@@ -622,12 +638,12 @@ export async function action({ request }: ActionFunctionArgs) {
               shape.liveShape = via;
               shape.nodeSelection = candidate;
               shape.liveSample = JSON.stringify(attempt.data?.metaobject ?? null).slice(0, 600);
-              if (candidate !== nodeSelection && widestFailure) {
-                noteError(`the full selection "${nodeSelection}" failed (${widestFailure}); "${candidate}" answered instead`);
+              if (candidate !== selections.full && widestFailure) {
+                noteError(`the full selection "${selections.full}" failed (${widestFailure}); "${candidate}" answered instead`);
               }
               return attempt;
             }
-            if (candidate === nodeSelection) widestFailure = describeFailure(attempt);
+            if (candidate === selections.full) widestFailure = describeFailure(attempt);
             last = attempt;
           }
           return last;
@@ -655,7 +671,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // Whatever actually answered — not what was attempted first. The link
       // test reuses this, and reusing a selection that is known to fail would
       // waste the one run with a self-created referencing product.
-      shape.nodeSelection ??= nodeSelection;
+      shape.nodeSelection ??= selections.full;
       report.reverseRelation = shape;
       report.verdicts.push(
         shape.liveShape

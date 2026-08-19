@@ -1,6 +1,6 @@
 # Metaobjekt-Editor — Plan (Phasen 0–5)
 
-**Status:** Phasen 0–5 umgesetzt, **drei Messläufe gefahren** (§2.1, §2.2, §2.3). **V1, V2, V3, V5 und M2 sind beantwortet** — Standard-Definitionen sind schreibbar, der Storefront-Swatch folgt dem Farbfeld, und Shopify verweigert das Löschen eines noch verwendeten Eintrags von selbst. Offen ist nur noch, ob `referencedBy` das verwendende **Produkt** benennt (§2.3). Die verbleibenden vorsichtigen Lesarten:
+**Status:** Phasen 0–5 umgesetzt, **drei Messläufe gefahren** (§2.1, §2.2, §2.3). **V1, V2, V3, V5 und M2 sind beantwortet** — Standard-Definitionen sind schreibbar, der Storefront-Swatch folgt dem Farbfeld, und Shopify verweigert das Löschen eines noch verwendeten Eintrags von selbst. **V4 ist mit Lauf 4 vollständig** (§2.4): `referencedBy` nennt das Produkt, und die Live-Gegenprobe aus §5.1 ist gebaut. Damit sind alle Fragen aus §2 beantwortet. Die verbleibenden vorsichtigen Lesarten:
 - Eintrag löschen stoppt vorab nur bei **bekannter** Verwendung > 0 (§5.4). „Unbekannt" läuft durch — Shopify verweigert es selbst, gemessen in §2.3.
 - Der Lesemodus (§7.2) bleibt verkabelt, greift aber auf Standard-Definitionen nicht: `access.admin` ist dort `PUBLIC_READ_WRITE` und V1 ist positiv. `null` heißt weiter **unbekannt** und sperrt nichts.
 **Ziel:** `/app/metaobjects` vom reinen Übersetzungs-Fenster zu einer Arbeitsfläche machen — Einträge **anlegen und entfernen**, **alle** editierbaren Felder eines Eintrags bearbeiten (nicht nur das Label), und für Farb-Metaobjekte den **Swatch** (Farbwert und/oder Bild) sehen und setzen.
@@ -140,7 +140,7 @@ Dieser Abschnitt trennt drei Sorten Aussage sauber, weil ein Plan, der eine unge
 | **V1** | Darf eine Dritt-App Einträge einer Shopify-STANDARD-Definition schreiben? | ✅ **JA.** Anlegen und Farbfeld-Update auf `shopify--color-pattern` durch einen frischen Lesevorgang bestätigt, anschließend wieder gelöscht. Der Lesemodus-Zweig aus §7.2 greift auf Standard-Definitionen **nicht** — er bleibt für den Fall verkabelt, dass eine Definition ihn doch verlangt. |
 | **V3** | Leitet Shopify den Storefront-Swatch aus dem Farbfeld ab? | ✅ **JA.** Nach `metaobjectUpdate` auf `color` las der verknüpfte Optionswert `swatch = {"color":"#0a7f5f"}`. Die Oberfläche darf also sagen, dass Farbe ändern den Swatch bewegt. |
 | **V5** | Was passiert beim Löschen eines verlinkten Eintrags? | ✅ **(a) VERWEIGERUNG** — der beste der drei möglichen Ausgänge. `metaobjectDelete` antwortete `The metaobject cannot be deleted while it is referenced by another resource.` Es gibt **keinen** Variantenverlust, und die Plattform selbst ist der Riegel. |
-| **V4** | Nennt eine `MetafieldRelation` das verwendende Produkt? | ⏳ **weiterhin offen.** Knotenfelder sind `key, name, namespace, referencer, target` — `referencer` ist das interessante. Der Live-Lauf scheiterte an `Metafield reference target could not be retrieved`, einem RESOLVER-Fehler auf einem Feld, nicht an der Form. |
+| **V4** | Nennt eine `MetafieldRelation` das verwendende Produkt? | ✅ **JA**, beantwortet in Lauf 4 (§2.4). |
 
 **Was §5.4 damit ändert — und es ist eine Lockerung, keine Verschärfung.** Der Löschen-Riegel stand auf „nur bei bekannt 0 Verwendungen, und *unbekannt* zählt wie *in Benutzung*". Das war richtig, **solange V5 offen war**: ein Löschen, dessen Folgen niemand benennen kann, ist genau das, wovor die Regel schützt. Jetzt ist die Folge gemessen und sie ist harmlos, also fällt die Sperre auf „unbekannt" weg — sie wäre nur noch eine Sackgasse für Shops ohne Produkt-Cache, an der kein Sync etwas ändert. Eine **bekannte** Verwendung stoppt weiterhin vorab, weil „3 Produkte benutzen das" nützlicher ist als Shopifys Satz. Und die Konsequenzzeile im Dialog nennt jetzt die gemessene Wahrheit statt des früheren Worst Case: ein erfundener Schaden ist keine vorsichtigere Warnung, sondern eine falsche.
 
@@ -148,6 +148,23 @@ Dieser Abschnitt trennt drei Sorten Aussage sauber, weil ein Plan, der eine unge
 - **Der Wegwerf-Eintrag blieb im Shop liegen.** Das Aufräumen löschte erst den Eintrag, dann das Produkt — und genau V5 sagt, dass der Eintrag nicht gehen kann, solange das Produkt auf ihn zeigt. Also gerade auf den Läufen, die V5 erfolgreich messen, blieb Müll zurück. Reihenfolge umgedreht: **Produkt zuerst**.
 - **Ein gemeldetes GID, das niemand entfernen kann.** Einträge einer Standard-Definition erscheinen im Shopify-Admin **nicht** unter Content → Metaobjekte. Die Probe hat deshalb jetzt einen eigenen Aufräum-Knopf, der genannte GIDs löscht; der gelbe Banner füllt das Feld auf Klick.
 - **Der Live-Lauf gab zu früh auf.** Die breite Auswahl scheiterte an einem einzelnen Feld und wurde als „Form nicht messbar" berichtet, obwohl die schmale Auswahl im Lauf davor funktioniert hatte. Er stuft jetzt ab — voll, dann nur Skalare, dann jedes zusammengesetzte Feld **einzeln** — und berichtet, welche Auswahl geantwortet hat. Damit klärt Lauf 4 gezielt, ob `referencer` auflösbar ist.
+
+### 2.4 Messergebnis — Lauf 4 (2026-08-19, schreibfrei). **V4 ist vollständig beantwortet.**
+
+Der Abstieg hat getan, wofür er gebaut wurde:
+
+- `__typename key name namespace referencer { __typename } target { __typename }` → **scheiterte** an `Metafield reference target could not be retrieved`.
+- `__typename referencer { __typename }` → **antwortete**, mit fünf Knoten, jeder `referencer: { __typename: "Product" }`.
+
+Damit ist die offene Hälfte von V4 beantwortet: **`referencedBy` nennt das verwendende PRODUKT.** Der kaputte Teil ist `target`, nicht `referencer` — und weil ein einziges unauflösbares Feld die ganze Abfrage kippt, selektiert der Produktionscode `target` nirgends.
+
+**Was daraus gebaut wurde: die Live-Gegenprobe aus §5.1.** `liveMetaobjectUsage` fragt Shopify direkt und **schlägt den Cache**, wo es eine Antwort gibt:
+
+- Sie ist das, was Shopifys **Verweigerung vorhersagt**. Die Plattform lehnt ab, solange *irgendetwas* den Eintrag referenziert (V5) — der Cache zählt nur Optionswerte und kann deshalb null melden, wo die Löschung trotzdem scheitert. Die Live-Abfrage kann das nicht.
+- Sie ist **keine billige Listenspalte**. Die Connection hat kein Count-Feld, Zählen heißt blättern. Also **ein** Aufruf für den **einen** Eintrag, der gelöscht werden soll; die Kartenliste liest weiter den Cache.
+- Eine volle Seite meldet „n oder mehr" statt einer erfundenen Gesamtzahl, und ein Fehlschlag ist `known: false` — nie null. Dann entscheidet wieder der Cache.
+
+**Ein Messfehler behoben:** der Kandidat „nur Skalare" wurde per Regex aus dem erzeugten Selection-String zurückgerechnet, und das Muster hielt `referencer` (Name, Leerzeichen, Klammer) für ein Skalar — dieser Kandidat konnte also nur scheitern. Die Kandidaten kommen jetzt aus der Feldstruktur, nicht aus dem eigenen Ausgabestring.
 
 **Vermutung, ausdrücklich als solche markiert (Phase 0 misst sie):**
 - **V1:** Eine Dritt-App mit `write_metaobjects` darf Einträge einer **Shopify-STANDARD-Definition** (`shopify--…`) anlegen/ändern/löschen. Plausibel, weil Merchants dasselbe im Admin tun — aber Standard-Definitionen tragen ein `access { admin storefront }`-Regime, und ob unsere App darunter fällt, ist nicht dokumentierbar entscheidbar.
