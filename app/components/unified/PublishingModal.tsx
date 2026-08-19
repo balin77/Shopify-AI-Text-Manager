@@ -30,6 +30,8 @@ export interface PublishingModalTexts {
   scheduled: string;
   noChannels: string;
   truncated: string;
+  /** Shown when the market/B2B connections could not be asked for. */
+  catalogsUnknown: string;
 }
 
 interface PublishingModalProps {
@@ -38,6 +40,20 @@ interface PublishingModalProps {
   channels: CommerceChannelView[];
   /** True ⇒ the loaded window was cut off; the lists are not the whole shop. */
   truncated: boolean;
+  /**
+   * False ⇒ the market and B2B connections could not be asked for. Their
+   * ABSENCE below is then not evidence, and saying so beats a dialog that
+   * quietly looks like a shop without regions.
+   */
+  catalogsKnown: boolean;
+  /**
+   * False while a load is in flight, and whenever the window was cut off.
+   * "This shop has no sales channels installed" is a claim about the WHOLE
+   * shop — the dialog outlives a reload (it is deliberately mounted outside
+   * the loaded branch), so without this it would make that claim every time
+   * the merchant saves.
+   */
+  channelsComplete: boolean;
   channelState: Record<string, boolean>;
   setChannelState: (updater: (prev: Record<string, boolean>) => Record<string, boolean>) => void;
   /** A save is in flight — the toggles must not move under it. */
@@ -50,6 +66,8 @@ export function PublishingModal({
   onClose,
   channels,
   truncated,
+  catalogsKnown,
+  channelsComplete,
   channelState,
   setChannelState,
   saving,
@@ -70,6 +88,10 @@ export function PublishingModal({
             <Text as="p" variant="bodySm" tone="subdued">{t.truncated}</Text>
           )}
 
+          {!catalogsKnown && (
+            <Text as="p" variant="bodySm" tone="subdued">{t.catalogsUnknown}</Text>
+          )}
+
           {groups.map((group) => (
             <BlockStack gap="200" key={group.id}>
               <Text as="h3" variant="headingSm">{t.headings[group.id]}</Text>
@@ -79,7 +101,9 @@ export function PublishingModal({
               )}
 
               {group.rows.length === 0 ? (
-                <Text as="p" variant="bodySm" tone="subdued">{t.noChannels}</Text>
+                channelsComplete ? (
+                  <Text as="p" variant="bodySm" tone="subdued">{t.noChannels}</Text>
+                ) : null
               ) : (
                 <BlockStack gap="200">
                   {group.rows.map((channel) => (

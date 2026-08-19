@@ -33,12 +33,16 @@
  * missed warning, never a wrong one — the same direction the redirect-chain
  * and crawl rules take.
  *
- * That rule is also why the publication window is PAGED. `resourcePublicationsV2`
- * returns every kind of publication in one list — sales channels, markets and
- * B2B catalogs together — so on a shop with many channels or many company
- * locations the market rows are exactly the ones that fall off the end of a
- * single page, and the warning would then be silent on the shops most likely
- * to need it. Truncation is the LAST resort here, not the first answer.
+ * ── `catalogType: MARKET` is the whole query ────────────────────────────────
+ * `resourcePublicationsV2` DEFAULTS to `catalogType: APP`, silently. Without
+ * this argument the answer holds sales channels and nothing else, every market
+ * reads as unscoped, and this banner can never fire — which is exactly what it
+ * did when it first shipped. The argument also keeps the window honest: asking
+ * for markets ONLY means the 50 per page are markets, instead of markets
+ * competing with every channel and B2B catalog for the same slots.
+ *
+ * It is still PAGED, because a shop may run more region catalogs than fit on
+ * one page, and truncation here means the banner says nothing at all.
  */
 
 import { data as json, type LoaderFunctionArgs } from "react-router";
@@ -107,7 +111,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         `#graphql
           query productMarketPublications($id: ID!, $after: String) {
             product(id: $id) {
-              resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false, after: $after) {
+              resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false, catalogType: MARKET, after: $after) {
                 pageInfo { hasNextPage endCursor }
                 nodes {
                   isPublished
@@ -165,7 +169,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       }
 
       nodes.push(...(connection.nodes ?? []));
-      if (connection.pageInfo?.hasNextPage !== true || !connection.pageInfo?.endCursor) break;
+      if (connection.pageInfo?.hasNextPage !== true) break;
+      // More pages exist. Without a cursor we cannot reach them — that is
+      // truncation, not the end of the list, and dropping the flag here would
+      // let the banner make a claim over a partial answer.
+      if (!connection.pageInfo.endCursor) { truncated = true; break; }
       cursor = connection.pageInfo.endCursor;
       // Ran out of pages before Shopify ran out of publications.
       if (page === MAX_PUBLICATION_PAGES - 1) truncated = true;

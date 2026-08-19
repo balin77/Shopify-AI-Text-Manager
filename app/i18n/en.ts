@@ -645,6 +645,7 @@ export const en: Translation = {
       marketsHint: "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
       b2bHeading: "B2B catalogs",
       b2bHint: "B2B catalogs decide which business customers can see the product.",
+      catalogsUnknown: "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin.",
       noChannel: "On no channel — invisible",
       noChannels: "This shop has no sales channels installed.",
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",

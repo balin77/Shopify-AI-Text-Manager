@@ -638,6 +638,7 @@ export const es: Translation = {
       marketsHint: "Las regiones deciden quién puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
       b2bHeading: "Catálogos B2B",
       b2bHint: "Los catálogos B2B deciden qué clientes empresariales pueden ver el producto.",
+      catalogsUnknown: "No se pudieron leer las regiones ni los catálogos B2B, por eso no aparecen aquí — gestiónalos en tu panel de Shopify.",
       noChannel: "En ningún canal: invisible",
       noChannels: "Esta tienda no tiene canales de venta instalados.",
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",

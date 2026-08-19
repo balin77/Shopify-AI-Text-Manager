@@ -40,6 +40,7 @@ import {
   VARIANT_COMMERCE_PAGE_SIZE,
   VARIANT_COMMERCE_SELECTION,
   PRODUCT_PUBLICATIONS_SELECTION,
+  PRODUCT_CATALOG_PUBLICATIONS_SELECTION,
   inventoryLevelRows,
   productPublicationRows,
   type PublicationCatalogKind,
@@ -212,6 +213,84 @@ function committedByLocation(node: Record<string, unknown>): Map<string, number 
   return out;
 }
 
+/**
+ * Every publication of one product, across all three catalog types.
+ *
+ * Its OWN query, not nested in the variant one, for the reason the locations
+ * query is also separate: a per-product list multiplied by a paged variant
+ * window is cost paid for the same rows over and over, and this one is now
+ * three connections wide.
+ *
+ * `catalogsKnown: false` is the discriminator this whole read exists for.
+ * `catalogType` is an ENUM — an unknown value fails at the SCHEMA level, which
+ * Shopify returns as a top-level `errors` array with `data: null` — so the
+ * market and B2B connections are asked for in a query that can be RETRIED
+ * without them. What comes back then is the sales channels alone, reported as
+ * "we could not ask" rather than as "this shop has no regions": the second is
+ * a claim, and it is the exact claim this app made for months.
+ */
+async function loadProductPublications(
+  admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  shop: string,
+  productId: string,
+): Promise<{ connection: { pageInfo: { hasNextPage: boolean }; nodes: unknown[] } | null; catalogsKnown: boolean }> {
+  type Connection = { pageInfo?: { hasNextPage?: boolean } | null; nodes?: unknown[] | null } | null | undefined;
+
+  const run = async (withCatalogs: boolean) => {
+    const response = await admin.graphql(
+      `#graphql
+        query productPublications($id: ID!) {
+          product(id: $id) {
+            ${PRODUCT_PUBLICATIONS_SELECTION}
+            ${withCatalogs ? PRODUCT_CATALOG_PUBLICATIONS_SELECTION : ""}
+          }
+        }`,
+      { variables: { id: productId } },
+    );
+    return (await response.json()) as {
+      data?: {
+        product?: {
+          resourcePublicationsV2?: Connection;
+          marketPublications?: Connection;
+          companyLocationPublications?: Connection;
+        } | null;
+      };
+      errors?: Array<{ message?: string }>;
+    };
+  };
+
+  let catalogsKnown = true;
+  let body = await run(true);
+  if (body.errors?.length) {
+    logger.warn("[Commerce] Catalog-typed publications refused — retrying without them", {
+      context: "Commerce", shop, error: body.errors[0]?.message,
+    });
+    catalogsKnown = false;
+    body = await run(false);
+  }
+  if (body.errors?.length || !body.data?.product) {
+    logger.warn("[Commerce] Publications could not be read", {
+      context: "Commerce", shop, error: body.errors?.[0]?.message,
+    });
+    // `null`, NOT an empty connection. An empty list would read as "published
+    // nowhere" — the alarming state this panel exists to reveal — and it would
+    // also reach `productPublicationRows` as a real answer, whose caller then
+    // deletes the whole mirror. Nothing is claimed at all.
+    return { connection: null, catalogsKnown: false };
+  }
+
+  const product = body.data.product;
+  const parts = [product.resourcePublicationsV2, product.marketPublications, product.companyLocationPublications];
+  return {
+    connection: {
+      // ANY window cut off means the merged list is not the whole answer.
+      pageInfo: { hasNextPage: parts.some((part) => part?.pageInfo?.hasNextPage === true) },
+      nodes: parts.flatMap((part) => part?.nodes ?? []),
+    },
+    catalogsKnown,
+  };
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -245,13 +324,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     for (let page = 0; page < 10; page++) {
     // The product-level block is read from the FIRST page only (`product =
     // product ?? pageProduct` below), so asking for it again on every further
-    // page is cost paid for an answer that is thrown away — and publications
-    // are the expensive half of it: `first: 50` of them, each an object,
-    // against the same 1000-point ceiling the variant window is budgeted from.
-    // A 400-variant product asked for the shop's whole channel list ten times.
+    // page is cost paid for an answer that is thrown away.
     const productLevelSelection = page === 0
-      ? `${PRODUCT_PUBLICATIONS_SELECTION}
-            featuredMedia { preview { image { url altText } } }`
+      ? `featuredMedia { preview { image { url altText } } }`
       : "";
     const response = await admin.graphql(
       `#graphql
@@ -502,12 +577,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
         .catch(() => undefined);
     }
 
-    const publications = productPublicationRows(
+    const { connection: publicationConnection, catalogsKnown } = await loadProductPublications(
+      admin,
       session.shop,
       productId,
-      product.resourcePublicationsV2 as never,
     );
-    if (publications) {
+    const publications = productPublicationRows(session.shop, productId, publicationConnection as never);
+    // Rebuilt only from a COMPLETE answer. `productPublicationRows` returns
+    // null for a response that carried nothing, and `catalogsKnown` is false
+    // when only the app catalogs were re-read — rebuilding from that would
+    // delete every market and B2B row the mirror already had, which is the
+    // "wipe on a partial response" rule one level up.
+    if (publications && catalogsKnown) {
       await db.productPublication.deleteMany({ where: { shop: session.shop, productId } }).catch(() => undefined);
       if (publications.rows.length > 0) {
         await db.productPublication.createMany({ data: publications.rows, skipDuplicates: true }).catch(() => undefined);
@@ -531,6 +612,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
         publishDate: row.publishDate ? row.publishDate.toISOString() : null,
       })) satisfies CommerceChannelView[],
       channelsTruncated: publications?.hasMore === true,
+      // False ⇒ the market and B2B connections could not be asked for, so
+      // their absence below is not evidence that the shop has none.
+      catalogsKnown,
       limits: { levelsPerVariant: INVENTORY_LEVEL_PAGE_SIZE, channels: PUBLICATION_PAGE_SIZE },
     });
   } catch (error) {

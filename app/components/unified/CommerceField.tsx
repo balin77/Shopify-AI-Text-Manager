@@ -210,11 +210,13 @@ export function CommerceField({ label }: { label: string }) {
           a save or a reload with the dialog open would unmount it — it would
           blink shut under the merchant's hands and drop focus. It renders the
           rows it has and comes back with the rest. */}
-          <PublishingModal
+      <PublishingModal
         open={manageOpen}
         onClose={() => setManageOpen(false)}
         channels={data?.channels ?? []}
         truncated={data?.channelsTruncated === true}
+        catalogsKnown={data?.catalogsKnown !== false}
+        channelsComplete={channelsAreComplete}
         channelState={channelState}
         setChannelState={setChannelState}
         saving={saving}
@@ -226,9 +228,9 @@ export function CommerceField({ label }: { label: string }) {
             market: (t.marketsHeading as string) || "Regions",
             companyLocation: (t.b2bHeading as string) || "B2B catalogs",
           },
-          // Regions and B2B catalogs answer "who may see it", not "where is
-          // it sold" — merchants reliably read them as channels, which is
-          // the whole reason they sit apart and carry a line each.
+          // Regions and B2B catalogs answer "who may see it", not "where is it
+          // sold" — merchants reliably read them as channels, which is the
+          // whole reason they sit apart and carry a line each.
           hints: {
             market:
               (t.marketsHint as string) ||
@@ -241,6 +243,9 @@ export function CommerceField({ label }: { label: string }) {
           truncated:
             (t.channelsTruncated as string) ||
             "More channels exist than were loaded. Manage the rest in the Shopify admin.",
+          catalogsUnknown:
+            (t.catalogsUnknown as string) ||
+            "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin.",
         }}
       />
     </BlockStack>

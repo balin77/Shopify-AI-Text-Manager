@@ -647,6 +647,7 @@ export const de = {
       marketsHint: "Regionen entscheiden, wer das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
       b2bHeading: "B2B-Kataloge",
       b2bHint: "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen.",
+      catalogsUnknown: "Regionen und B2B-Kataloge konnten nicht gelesen werden und fehlen deshalb hier — verwalte sie im Shopify-Admin.",
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",

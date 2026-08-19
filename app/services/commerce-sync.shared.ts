@@ -90,23 +90,50 @@ export const VARIANT_COMMERCE_SELECTION = `
                       }
                       taxable`;
 
-/**
- * Every sales channel of the shop, with this product's state in each.
- *
- * `onlyPublished: false` is the load-bearing argument. It DEFAULTS to true,
- * which returns only the channels the product is already on — so the picker
- * could untick channels but never add one, and the "on no channel — invisible"
- * badge would sit above an empty list with nothing to tick. The feature would
- * diagnose the trap and withhold the cure.
- */
-export const PRODUCT_PUBLICATIONS_SELECTION = `
-                  resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false) {
+/** The node shape every publication connection below returns. */
+const PUBLICATION_NODE_SELECTION = `
                     pageInfo { hasNextPage }
                     nodes {
                       isPublished
                       publishDate
                       publication { id name catalog { __typename } }
-                    }
+                    }`;
+
+/**
+ * Every publication of this product — and `catalogType` is why there are THREE
+ * connections instead of one.
+ *
+ * Two arguments carry this selection, and both are easy to get wrong:
+ *
+ * `onlyPublished: false` DEFAULTS to true, which returns only the channels the
+ * product is already on — the picker could untick channels but never add one,
+ * and the "on no channel — invisible" badge would sit above an empty list with
+ * nothing to tick. The feature would diagnose the trap and withhold the cure.
+ *
+ * `catalogType` DEFAULTS to APP, and that default is silent: a shop with three
+ * region catalogs and a B2B catalog gets an answer that mentions none of them,
+ * indistinguishable from a shop that has none. This app shipped exactly that —
+ * it grouped publications by catalog type over a list that could only ever
+ * contain one. Markets and B2B locations have to be ASKED FOR, by name, in
+ * their own connection.
+ */
+export const PRODUCT_PUBLICATIONS_SELECTION = `
+                  resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false) {${PUBLICATION_NODE_SELECTION}
+                  }`;
+
+/**
+ * The two connections the default hides. Kept SEPARATE from the one above so a
+ * caller can drop them and still work: `CatalogType` is an enum, an unknown
+ * value fails at the SCHEMA level (a top-level `errors` array with `data: null`
+ * that never reaches `userErrors`), and that would take the whole query — sales
+ * channels included — down with it on any API version that does not know these
+ * names. Every caller therefore falls back to the app-catalog selection alone
+ * and reports the rest as unknown rather than as absent.
+ */
+export const PRODUCT_CATALOG_PUBLICATIONS_SELECTION = `
+                  marketPublications: resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false, catalogType: MARKET) {${PUBLICATION_NODE_SELECTION}
+                  }
+                  companyLocationPublications: resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false, catalogType: COMPANY_LOCATION) {${PUBLICATION_NODE_SELECTION}
                   }`;
 
 /**
