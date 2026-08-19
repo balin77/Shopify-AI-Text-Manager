@@ -648,6 +648,9 @@ export const de = {
       priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
       priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
     },
+    // Überschrift der Karte mit SEO-Titel, Meta-Beschreibung und URL-Handle.
+    // Shopifys eigener Abschnitt im Admin heißt genauso.
+    searchEngineListing: "Suchmaschinen-Eintrag",
     attributesCardTitle: "Details",
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",

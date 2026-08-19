@@ -651,6 +651,7 @@ export const en: Translation = {
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.",
       priceFailed: "The price could not be saved. Everything else was saved.",
     },
+    searchEngineListing: "Search engine listing",
     attributesCardTitle: "Details",
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
