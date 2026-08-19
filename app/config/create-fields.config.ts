@@ -23,6 +23,8 @@
 // GIDs serialised" is how the create form and the editor would come to write
 // different bytes into the same field.
 import {
+  METAOBJECT_HEX_PATTERN,
+  METAOBJECT_TYPE_COLOR,
   isMetaobjectTaxonomyListType,
   metaobjectFieldRole,
   parseMetaobjectTaxonomyValues,
@@ -38,7 +40,7 @@ export type CreatableResource = "product" | "collection" | "page" | "article" | 
  * fixed set of six, theme content is not a resource), and it has no delete API
  * for those either. Aliased rather than re-listed so the two cannot drift.
  */
-export type DeletableResource = CreatableResource;
+export type DeletableResource = CreatableResource | "metaobjectDefinition";
 
 /**
  * The GID type segment each resource's ids carry.
@@ -58,6 +60,11 @@ export const GID_TYPE_BY_RESOURCE: Record<DeletableResource, string> = {
   article: "Article",
   blog: "Blog",
   metaobject: "Metaobject",
+  // The TYPE itself, and a separate kind on purpose. Reusing "metaobject" is
+  // exactly how the old page grew a Delete button that 400ed: a
+  // `metaobject_type_<type>` row is not a Metaobject GID, and the id check
+  // below is what catches a client that confuses them.
+  metaobjectDefinition: "MetaobjectDefinition",
 };
 
 /** True when `gid` is an id of `resource` (and not, say, a pseudo item id). */
@@ -92,7 +99,15 @@ export type CreateFieldKind =
    * attribute by handle and the values hang off a taxonomy CATEGORY, neither
    * of which the form could know by itself.
    */
-  | "taxonomyValue";
+  | "taxonomyValue"
+  /**
+   * A metaobject `color` field: a hex value with a native picker beside it.
+   *
+   * At creation time this is not a nicety. A new colour entry without its
+   * colour is an entry the merchant has to open and edit straight afterwards,
+   * and the swatch the storefront derives from it stays empty until they do.
+   */
+  | "color";
 
 export interface CreateFieldDef {
   key: string;
@@ -363,6 +378,7 @@ export const EDITABLE_METAOBJECT_FIELD_TYPES = [
   "list.single_line_text_field",
   "product_taxonomy_value_reference",
   "list.product_taxonomy_value_reference",
+  "color",
 ] as const;
 
 export interface MetaobjectFieldDefinition {
@@ -442,6 +458,14 @@ export function metaobjectFieldDefs(fieldDefinitions: MetaobjectFieldDefinition[
           },
         };
       }
+      if (type === METAOBJECT_TYPE_COLOR) {
+        return {
+          key: `field.${f.key}`,
+          kind: "color" as const,
+          required: f.required === true,
+          labelKey: f.name || f.key,
+        };
+      }
       const isList = type === "list.single_line_text_field";
       return {
         key: `field.${f.key}`,
@@ -472,6 +496,15 @@ export function metaobjectFieldsPayload(
   const payload: Array<{ key: string; value: string }> = [];
   for (const field of fields) {
     const raw = (values[field.key] ?? "").trim();
+    if (field.kind === "color") {
+      // Merchants type "ff0000"; the "#" is added rather than refused, exactly
+      // as `parseMetaobjectFieldInput` does on the entry-editor path. Both
+      // write the same bytes.
+      if (raw.length === 0) continue;
+      const withHash = raw.startsWith("#") ? raw : `#${raw}`;
+      payload.push({ key: field.key.replace(/^field\./, ""), value: withHash });
+      continue;
+    }
     if (field.taxonomy) {
       // Already serialised the way Shopify stores it — a JSON array of GIDs
       // for the list flavour, a bare GID otherwise — because the picker speaks
@@ -507,6 +540,7 @@ export interface CreateValidationError {
     | "invalidOption"
     | "invalidHandle"
     | "invalidMoney"
+    | "invalidColor"
     | "invalidTaxonomyValue"
     // Split from `invalidTaxonomyValue` because ONE code cannot carry three
     // sentences: "that is not a taxonomy value", "that is too many" and "that
@@ -565,6 +599,15 @@ export function validateCreatePayload(
     }
     if (field.kind === "money" && !MONEY_PATTERN.test(value)) {
       errors.push({ field: field.key, code: "invalidMoney" });
+    }
+    if (field.kind === "color") {
+      // The SAME shape `resolveSwatch` accepts, re-checked here because this
+      // action takes a direct POST. A value the preview cannot paint is one
+      // the merchant would have to fix from the entry editor afterwards.
+      const withHash = value.startsWith("#") ? value : `#${value}`;
+      if (!METAOBJECT_HEX_PATTERN.test(withHash)) {
+        errors.push({ field: field.key, code: "invalidColor", detail: value });
+      }
     }
     if (field.kind === "select" && field.options && !field.options.some((o) => o.value === value)) {
       errors.push({ field: field.key, code: "invalidOption", detail: value });

@@ -502,6 +502,8 @@ export const de = {
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — Inhalte anlegen ──────────────────
     createButtonLabel: "Neu anlegen",
     createEntryButtonLabel: "Eintrag hinzuf\u00fcgen",
+    deleteContainerButtonLabel: "Typ l\u00f6schen",
+    deleteContainerNotLoaded: "Dieser Typ wird noch geladen.",
     createChooserTitle: "Was möchtest du anlegen?",
     // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
     // denselben Text bekommen (§1.2).
@@ -527,8 +529,8 @@ export const de = {
       confirm: "Endgültig löschen",
       deleting: "Wird gelöscht \u2026",
       consequenceMetaobjectUsage: "Shopify verweigert das L\u00f6schen, solange ein Produkt den Eintrag als Optionswert benutzt \u2014 dort zuerst entfernen.",
+      consequenceMetaobjectDefinitionEntries: "Jeder Eintrag dieses Typs wird mitgel\u00f6scht \u2014 hier bekannt: {count}. Shopify fragt nicht nach ihnen.",
     },
-    undoCreate: "Anlegen rückgängig machen",
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplizieren",
     duplicatePending: "Die Kopie wird erstellt. Lade gleich neu, um sie zu sehen.",
@@ -795,6 +797,7 @@ export const de = {
         invalidOption: "\u201e{detail}\u201c ist keine der Auswahlm\u00f6glichkeiten.",
         invalidHandle: "Nur Kleinbuchstaben, Zahlen und Bindestriche.",
         invalidMoney: "Bitte einen Betrag angeben, z. B. 19.90",
+        invalidColor: "Bitte einen Hex-Farbwert angeben, z. B. #A1B2C3.",
         invalidTaxonomyValue: "Bitte einen Wert aus der angebotenen Liste w\u00e4hlen.",
         tooManyTaxonomyValues: "H\u00f6chstens {detail} Wert(e).",
         tooFewTaxonomyValues: "Mindestens {detail} Wert(e).",

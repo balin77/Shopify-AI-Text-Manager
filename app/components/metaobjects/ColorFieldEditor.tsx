@@ -15,22 +15,9 @@
  * value -- a save that looks like a translation and changes something else.
  */
 
-import { useMemo } from "react";
-import { BlockStack, InlineStack, Text, TextField } from "@shopify/polaris";
-import { METAOBJECT_HEX_PATTERN } from "~/services/metaobject-fields.shared";
+import { BlockStack, Text } from "@shopify/polaris";
+import { HexColorInput } from "./HexColorInput";
 import type { FieldRenderProps } from "~/types/content-editor.types";
-
-/** The value the native `<input type="color">` can show: it accepts #rrggbb
- *  only, so #rgb is expanded and #rrggbbaa has its alpha dropped for the
- *  PICKER — the text field keeps the merchant's exact value either way. */
-function pickerValue(raw: string): string {
-  const trimmed = raw.trim();
-  const withHash = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
-  if (!METAOBJECT_HEX_PATTERN.test(withHash)) return "#000000";
-  const body = withHash.slice(1);
-  if (body.length === 3) return `#${body[0]}${body[0]}${body[1]}${body[1]}${body[2]}${body[2]}`;
-  return `#${body.slice(0, 6)}`;
-}
 
 export function ColorFieldEditor({
   field,
@@ -44,12 +31,6 @@ export function ColorFieldEditor({
   // per shop) and the editor's own verdict (§7.2 — the definition refuses our
   // writes). Either is enough.
   const readOnly = !isPrimaryLocale || editorReadOnly;
-  const invalid = useMemo(() => {
-    if (value.trim() === "") return false;
-    const withHash = value.trim().startsWith("#") ? value.trim() : `#${value.trim()}`;
-    return !METAOBJECT_HEX_PATTERN.test(withHash);
-  }, [value]);
-
   const content = (t as { content?: Record<string, string> } | undefined)?.content ?? {};
 
   return (
@@ -57,37 +38,13 @@ export function ColorFieldEditor({
       <Text as="span" variant="bodyMd" fontWeight="medium">
         {field.label}
       </Text>
-      <InlineStack gap="200" blockAlign="center" wrap={false}>
-        <input
-          type="color"
-          aria-label={field.label}
-          value={pickerValue(value)}
-          disabled={readOnly}
-          onChange={(e) => onChange(e.target.value)}
-          style={{
-            width: "40px",
-            height: "34px",
-            padding: 0,
-            border: "1px solid var(--p-color-border)",
-            borderRadius: "6px",
-            background: "none",
-            cursor: readOnly ? "not-allowed" : "pointer",
-            flexShrink: 0,
-          }}
-        />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <TextField
-            label={field.label}
-            labelHidden
-            value={value}
-            onChange={onChange}
-            autoComplete="off"
-            disabled={readOnly}
-            placeholder="#A1B2C3"
-            error={invalid ? content.metaobjectEntryColorInvalid || "Enter a hex colour, e.g. #A1B2C3." : undefined}
-          />
-        </div>
-      </InlineStack>
+      <HexColorInput
+        label={field.label}
+        value={value}
+        onChange={onChange}
+        disabled={readOnly}
+        invalidMessage={content.metaobjectEntryColorInvalid || "Enter a hex colour, e.g. #A1B2C3."}
+      />
       {readOnly && (
         <Text as="span" variant="bodySm" tone="subdued">
           {/* Two causes, two different sentences. "Exists once per shop" is

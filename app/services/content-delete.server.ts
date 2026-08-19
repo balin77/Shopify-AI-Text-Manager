@@ -110,6 +110,41 @@ export async function purgeContentFromCache(
           await tx.metaobjectTranslation.deleteMany({ where: { shop, metaobjectId: gid } })
         ).count;
         break;
+
+      case "metaobjectDefinition": {
+        // The definition takes its ENTRIES with it on Shopify's side, so the
+        // cache has to follow -- otherwise the page keeps listing entries of a
+        // type that no longer exists and every save against them fails.
+        //
+        // The entries are read BEFORE they are deleted: their translations are
+        // keyed by `metaobjectId`, not by the definition, so a delete-first
+        // order would leave a table of rows nothing can ever reach again.
+        const definition = await tx.metaobjectDefinition.findFirst({
+          where: { shop, id: gid },
+          select: { type: true },
+        });
+        if (definition) {
+          const entries = await tx.metaobject.findMany({
+            where: { shop, type: definition.type },
+            select: { id: true },
+          });
+          const entryIds = entries.map((e) => e.id);
+          if (entryIds.length > 0) {
+            counts.metaobjectTranslation = (
+              await tx.metaobjectTranslation.deleteMany({
+                where: { shop, metaobjectId: { in: entryIds } },
+              })
+            ).count;
+          }
+          counts.metaobject = (
+            await tx.metaobject.deleteMany({ where: { shop, type: definition.type } })
+          ).count;
+        }
+        counts.metaobjectDefinition = (
+          await tx.metaobjectDefinition.deleteMany({ where: { shop, id: gid } })
+        ).count;
+        break;
+      }
     }
   });
 

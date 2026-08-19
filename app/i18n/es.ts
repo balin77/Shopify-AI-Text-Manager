@@ -499,6 +499,8 @@ export const es: Translation = {
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — crear contenido ──────────────────
     createButtonLabel: "Crear",
     createEntryButtonLabel: "A\u00f1adir entrada",
+    deleteContainerButtonLabel: "Eliminar tipo",
+    deleteContainerNotLoaded: "Este tipo se est\u00e1 cargando todav\u00eda.",
     createChooserTitle: "¿Qué quieres crear?",
     // Dos rechazos DISTINTOS con soluciones distintas — nunca deben compartir
     // el mismo texto (§1.2).
@@ -524,8 +526,8 @@ export const es: Translation = {
       confirm: "Eliminar definitivamente",
       deleting: "Eliminando \u2026",
       consequenceMetaobjectUsage: "Shopify rechaza eliminar una entrada que un producto todav\u00eda usa como valor de opci\u00f3n \u2014 qu\u00edtala all\u00ed primero.",
+      consequenceMetaobjectDefinitionEntries: "Cada entrada de este tipo se elimina con \u00e9l \u2014 {count} conocidas aqu\u00ed. Shopify no pregunta por ellas.",
     },
-    undoCreate: "Deshacer la creación",
     // ── Duplicar (§1.9) ───────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicar",
     duplicatePending: "Se está creando la copia. Recarga en un momento para verla.",
@@ -783,6 +785,7 @@ export const es: Translation = {
         invalidOption: "\u201c{detail}\u201d no es una de las opciones.",
         invalidHandle: "Solo min\u00fasculas, n\u00fameros y guiones.",
         invalidMoney: "Introduce un importe, p. ej. 19.90",
+        invalidColor: "Introduce un color hexadecimal, p. ej. #A1B2C3.",
         invalidTaxonomyValue: "Elige un valor de la lista ofrecida.",
         tooManyTaxonomyValues: "Como m\u00e1ximo {detail} valor(es).",
         tooFewTaxonomyValues: "Al menos {detail} valor(es).",

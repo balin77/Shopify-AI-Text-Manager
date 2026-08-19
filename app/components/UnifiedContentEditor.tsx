@@ -41,7 +41,7 @@ import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "rea
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
@@ -196,6 +196,21 @@ interface UnifiedContentEditorProps {
    * has to be able to pick it out BY KEY rather than by position, and to paint
    * the live value beside it while the merchant is still typing.
    */
+  /**
+   * An action on the CONTAINER the listed items belong to — today the
+   * metaobject DEFINITION whose entries fill the page.
+   *
+   * A prop rather than a config flag because only the route knows the
+   * container's id, and `disabledReason` is a string rather than a boolean so
+   * a refusal always arrives with its cause: "why is this greyed out" is the
+   * question a bare disabled button never answers.
+   */
+  containerAction?: {
+    label: string;
+    onAction: () => void;
+    disabledReason?: string | null;
+  } | null;
+
   renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
 
   /**
@@ -329,7 +344,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
-    renderFieldGroup,
+    containerAction,
+  renderFieldGroup,
     createPrefill,
     fieldsReadOnly = false,
     onItemCreated,
@@ -983,6 +999,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     },
     [unifiedItems, duplicateItem, createItem],
   );
+
 
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
@@ -1716,6 +1733,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           t={(t.content?.statusToggle ?? {}) as Record<string, string>}
                         />
                       )}
+                      {selectedItem && resourceOfItem(selectedItem.id) !== null && (
+                        <>
+                          <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
+                            {t.content?.duplicateButtonLabel || "Duplicate"}
+                          </Button>
+                          <Button size="slim" tone="critical" onClick={() => handleDeleteItem(selectedItem.id)}>
+                            {t.content?.deleteButtonLabel || "Delete"}
+                          </Button>
+                        </>
+                      )}
+                    </InlineStack>
+
+                    {/* Right: Reload Button (Save/Discard handled by the native
+                        Shopify save bar — see AppSaveBar above) */}
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
                       {/* Create, where the item list does not list what gets
                           created — see `createSupport.fromActionBar`. It calls
                           the SAME `handleAddItem` as the "+" above the list, so
@@ -1734,21 +1766,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           </Button>
                         </DisabledActionTooltip>
                       )}
-                      {selectedItem && resourceOfItem(selectedItem.id) !== null && (
-                        <>
-                          <Button size="slim" onClick={() => handleDuplicateItem(selectedItem.id)}>
-                            {t.content?.duplicateButtonLabel || "Duplicate"}
+                      {/* Deleting the CONTAINER the entries live in — a
+                          metaobject definition. Supplied by the route, and
+                          DISABLED WITH ITS REASON rather than hidden wherever
+                          it cannot be done. */}
+                      {containerAction && (
+                        <DisabledActionTooltip hint={containerAction.disabledReason ?? undefined}>
+                          <Button
+                            size="slim"
+                            tone="critical"
+                            icon={DeleteIcon}
+                            disabled={!!containerAction.disabledReason}
+                            onClick={containerAction.onAction}
+                          >
+                            {containerAction.label}
                           </Button>
-                          <Button size="slim" tone="critical" onClick={() => handleDeleteItem(selectedItem.id)}>
-                            {t.content?.deleteButtonLabel || "Delete"}
-                          </Button>
-                        </>
+                        </DisabledActionTooltip>
                       )}
-                    </InlineStack>
-
-                    {/* Right: Reload Button (Save/Discard handled by the native
-                        Shopify save bar — see AppSaveBar above) */}
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
                       <ReloadButton
                         resourceId={selectedItem.id}
                         resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -2361,20 +2395,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           <CreateResultBanner
             info={createItem.created}
             onDismiss={createItem.dismissCreated}
-            // §1.8 — undo is the SAME delete path and the same confirmation.
-            // Letting it skip the dialog was tempting (they just made the
-            // thing), but "clicked undo by mistake" destroys work where
-            // "clicked create by mistake" only makes some.
-            onUndo={() => {
-              const created = createItem.created!;
-              deleteItem.request({
-                id: created.id,
-                title: created.title || created.id,
-                resource: created.resource,
-                isUndo: true,
-              });
-            }}
-            undoLabel={t.content?.undoCreate}
+            // No undo. It was the §1.8 idea and it earned its removal: the
+            // thing that was just created is deletable from its own card, with
+            // the same confirmation, so a second path to the same delete only
+            // added a destructive button to a SUCCESS banner.
             translating={createItem.translating}
             onReload={
               createItem.created.synced
@@ -2437,6 +2461,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           dynamicOptions={createItem.dynamicOptions}
           extraFieldsByOption={createItem.extraFieldsByOption}
           extraFieldsKey={createItem.openResource === "metaobject" ? "type" : undefined}
+          // Opened from a type's own page, the type is fixed by the page. It
+          // still travels in `initialValues` and is still submitted.
+          lockedFieldKeys={
+            createItem.openResource === "metaobject" && createItem.initialValues?.type ? ["type"] : undefined
+          }
           blocked={
             createItem.openResource === "article" && createItem.needsBlogFirst
               ? {
@@ -2463,9 +2492,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // the config's own slug, which is an English word on every locale;
             // the chooser already carries translated resource names, so the
             // title reads from the SAME block rather than a second one.
-            resourceLabel: (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
-              createItem.openResource
-            ],
+            // With the type LOCKED, the dialog no longer shows which definition
+            // the entry lands in — so the title says it instead of the generic
+            // "Metaobject entry". Otherwise the resource's own name, as the
+            // chooser already translates it.
+            resourceLabel:
+              createItem.openResource === "metaobject" && createItem.initialValues?.type && selectedItem
+                ? selectedItem.title
+                : (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
+                    createItem.openResource
+                  ],
             // The metaobject field controls (the taxonomy picker) live under
             // `content`, not under `createModal`: the ENTRY editor renders the
             // same controls and the strings must not exist twice.
