@@ -96,7 +96,7 @@ const PUBLICATION_NODE_SELECTION = `
                     nodes {
                       isPublished
                       publishDate
-                      publication { id name catalog { __typename } }
+                      publication { id name catalog { __typename title } }
                     }`;
 
 /**
@@ -229,7 +229,7 @@ export interface ShopifyResourcePublications {
     publication?: {
       id?: string | null;
       name?: string | null;
-      catalog?: { __typename?: string | null } | null;
+      catalog?: { __typename?: string | null; title?: string | null } | null;
     } | null;
   }> | null;
 }
@@ -562,7 +562,14 @@ export function productPublicationRows(
       shop,
       productId,
       publicationId,
-      publicationName: node?.publication?.name ?? "",
+      // A NAME, through a chain, because only the first link is reliable.
+      // MEASURED on a live shop (2026-08, Settings → Probes → Publications):
+      // a market catalog's `Publication.name` comes back EMPTY, so a channel
+      // list built on it alone rendered three regions as raw GIDs. The
+      // catalog's own `title` is `String!` and is what the merchant named it.
+      publicationName: nullableText(node?.publication?.name)
+        ?? nullableText(node?.publication?.catalog?.title)
+        ?? "",
       catalogType: publicationCatalogKind(node?.publication?.catalog?.__typename),
       // Shopify's own `isPublished` already accounts for a future publish
       // date, so it is taken verbatim rather than recomputed from the date —

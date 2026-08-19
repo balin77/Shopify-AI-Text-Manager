@@ -56,6 +56,58 @@ describe("productPublicationRows", () => {
     expect(result!.rows.map((r) => r.catalogType)).toEqual(["app", "market", "companyLocation"]);
   });
 
+  it("names a market catalog by its TITLE when the publication has no name", () => {
+    // MEASURED on a live shop: `Publication.name` is empty for a market
+    // catalog, so a list built on it alone rendered regions as raw GIDs.
+    const result = productPublicationRows("s.myshopify.com", "gid://shopify/Product/1", {
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        {
+          isPublished: false,
+          publishDate: null,
+          publication: {
+            id: "gid://shopify/Publication/218693173580",
+            name: "",
+            catalog: { __typename: "MarketCatalog", title: "Schweiz" },
+          },
+        },
+      ],
+    } as never);
+
+    expect(result!.rows[0].publicationName).toBe("Schweiz");
+    expect(result!.rows[0].catalogType).toBe("market");
+  });
+
+  it("prefers the publication's own name where it has one", () => {
+    const result = productPublicationRows("s.myshopify.com", "gid://shopify/Product/1", {
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        {
+          isPublished: true,
+          publishDate: null,
+          publication: {
+            id: "gid://shopify/Publication/1",
+            name: "Online Store",
+            catalog: { __typename: "AppCatalog", title: "Online Store catalog" },
+          },
+        },
+      ],
+    } as never);
+
+    expect(result!.rows[0].publicationName).toBe("Online Store");
+  });
+
+  it("falls back to an empty name rather than inventing one", () => {
+    const result = productPublicationRows("s.myshopify.com", "gid://shopify/Product/1", {
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        { isPublished: false, publishDate: null, publication: { id: "gid://shopify/Publication/9" } },
+      ],
+    } as never);
+
+    expect(result!.rows[0].publicationName).toBe("");
+  });
+
   it("stores an absent catalog as unknown rather than dropping the row", () => {
     const result = productPublicationRows("s.myshopify.com", "gid://shopify/Product/1", {
       pageInfo: { hasNextPage: false },
