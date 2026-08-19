@@ -120,6 +120,19 @@ export async function handleUpdateContent(
         return foreignLocalesCache!;
       };
 
+      // Stale-translation purge switch, memoized for this request (the update
+      // loop below runs once per changed metaobject).
+      let purgeEnabledCache: boolean | null = null;
+      const purgeEnabled = async (): Promise<boolean> => {
+        if (purgeEnabledCache === null) {
+          const { isPurgeOnPrimaryChangeEnabled } = await import(
+            "~/services/translations/translation-change-policy.server"
+          );
+          purgeEnabledCache = await isPurgeOnPrimaryChangeEnabled(session.shop, db);
+        }
+        return purgeEnabledCache;
+      };
+
       // Collect changed metaobject fields from formData
       const metaobjectUpdates: Array<{ id: string; value: string }> = [];
       for (const [key, value] of formData.entries()) {
@@ -237,7 +250,9 @@ export async function handleUpdateContent(
               // Remove them on Shopify AND locally, mirroring the products /
               // collections / templates routes. Without this, outdated translations
               // linger in every foreign locale until the merchant re-translates.
-              const foreignLocales = await getForeignLocales();
+              // Merchant-switchable (Settings → Übersetzungen); the lookup
+              // fails OPEN, so an error keeps the historic behaviour.
+              const foreignLocales = (await purgeEnabled()) ? await getForeignLocales() : [];
               if (foreignLocales.length > 0) {
                 try {
                   const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {

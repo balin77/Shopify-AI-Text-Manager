@@ -7,7 +7,7 @@
 
 import { ShopifyApiGateway } from './shopify-api-gateway.service';
 import { logger } from '~/utils/logger.server';
-import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback } from './sync-types';
+import type { ShopifyGraphQLClient, ShopLocale, ShopifyTranslation, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers, marketLayersForLocale } from './sync-utils';
 import { extractThemeIdFromResourceId } from '~/utils/theme-id';
@@ -452,8 +452,14 @@ export class BackgroundSyncService {
     const nonPrimaryLocales = locales.filter((l) => !l.primary);
     const markets = await this.getMarkets();
 
-    // Sync the page
-    await this.syncSinglePageInternal(pageData, nonPrimaryLocales, markets);
+    // Sync the page. `reconcileTranslations` — this is the explicit per-page
+    // reload, i.e. "tell me what changed in Shopify", so stale foreign
+    // translations of a primary text that changed there are repaired too
+    // (services/translations/stale-translation-sync.server.ts). syncAllPages
+    // deliberately does NOT pass it.
+    await this.syncSinglePageInternal(pageData, nonPrimaryLocales, markets, {
+      reconcileTranslations: true,
+    });
 
     // Return fresh data from database
     const page = await db.page.findUnique({
@@ -483,17 +489,24 @@ export class BackgroundSyncService {
    * Sync a single page with translations (internal method)
    * Uses a transaction to ensure data consistency
    */
-  private async syncSinglePageInternal(pageData: ShopifyPageData, nonPrimaryLocales: ShopLocale[], markets: MarketInfo[] = []): Promise<void> {
+  private async syncSinglePageInternal(
+    pageData: ShopifyPageData,
+    nonPrimaryLocales: ShopLocale[],
+    markets: MarketInfo[] = [],
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
     const failedMarketIds = new Set<string>();
+    const primaryContent: PrimaryContentMap = {};
     const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       pageData.id,
       nonPrimaryLocales,
       "Page",
       markets,
-      failedMarketIds
+      failedMarketIds,
+      primaryContent
     );
 
     // Prepare current keys for cleanup (marketId is part of the row identity)
@@ -591,6 +604,22 @@ export class BackgroundSyncService {
         });
       }
     });
+
+    // Stale-translation reconciliation (explicit per-page reload only) —
+    // best-effort, never fails the sync.
+    if (options.reconcileTranslations) {
+      const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+      await reconcileStaleTranslations({
+        client: this.gateway,
+        shop: this.shop,
+        resourceId: pageData.id,
+        resourceType: "Page",
+        contentType: "page",
+        resourceTitle: pageData.title,
+        translations: allTranslations,
+        primaryContent,
+      });
+    }
   }
 
   // ============================================

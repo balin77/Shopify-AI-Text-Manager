@@ -6,7 +6,7 @@
  */
 
 import { logger } from '~/utils/logger.server';
-import type { GraphQLFunction, ShopLocale, ResolvedTranslation } from './sync-types';
+import type { GraphQLFunction, ShopLocale, ResolvedTranslation, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 
 /**
@@ -121,6 +121,11 @@ export function fetchedMarketLayers(markets: MarketInfo[]): string[] {
  *   fetch errored for at least one locale. Callers doing delete-then-recreate
  *   must exclude these markets from their delete scope, otherwise a transient
  *   API error would wipe that market's rows without recreating them.
+ * @param primaryContentOut - OUT param: filled with the resource's CURRENT
+ *   primary values + digests (`translatableContent`). Shopify only lists keys
+ *   that HAVE a value, so an absent key means the merchant cleared that field
+ *   — which is what the stale-translation reconciliation reads it for
+ *   (services/translations/stale-translations.shared.ts).
  */
 export async function fetchAllTranslations(
   graphqlFn: GraphQLFunction,
@@ -128,7 +133,8 @@ export async function fetchAllTranslations(
   locales: ShopLocale[],
   resourceType: string,
   markets: MarketInfo[] = [],
-  failedMarketIds?: Set<string>
+  failedMarketIds?: Set<string>,
+  primaryContentOut?: PrimaryContentMap
 ): Promise<ResolvedTranslation[]> {
   const allTranslationsMap = new Map<string, ResolvedTranslation>();
 
@@ -151,6 +157,7 @@ export async function fetchAllTranslations(
                   key
                   value
                   locale
+                  outdated
                 }
               }
             }`,
@@ -180,6 +187,9 @@ export async function fetchAllTranslations(
         if (resource.translatableContent) {
           for (const content of resource.translatableContent) {
             digestMap.set(content.key, content.digest);
+            if (primaryContentOut) {
+              primaryContentOut[content.key] = { value: content.value ?? "", digest: content.digest };
+            }
           }
         }
 
@@ -196,6 +206,7 @@ export async function fetchAllTranslations(
                 digest: digestMap.get(translation.key),
                 resourceType,
                 marketId,
+                outdated: translation.outdated,
               });
             }
           }

@@ -154,6 +154,12 @@ interface PersistDeps {
    * write SUB-RESOURCE translations (metafield "value", option/value "name").
    * Loaded in ONE pass by applyBulkDiff, together with their digests. */
   subResourceCaches: Map<string, ProductSubResourceCache>;
+  /** Merchant switch (Settings → Übersetzungen): may a changed/cleared PRIMARY
+   * value delete its foreign translations at all? Resolved once per run and
+   * checked by every §6.6 invalidation entry point; `false` makes them no-op
+   * exactly like an empty `foreignLocales`. Fails OPEN — see
+   * services/translations/translation-change-policy.server.ts. */
+  purgeStaleTranslations: boolean;
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -265,7 +271,7 @@ async function invalidateStaleForeignTranslations(
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
   const keys = [...new Set(translationKeys.filter(Boolean))];
-  if (keys.length === 0 || foreignLocales.length === 0) return;
+  if (!deps.purgeStaleTranslations || keys.length === 0 || foreignLocales.length === 0) return;
 
   const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
   const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
@@ -349,7 +355,7 @@ async function invalidateStaleForeignTranslations(
  */
 async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: string): Promise<void> {
   const { db, gateway, foreignLocales } = deps;
-  if (foreignLocales.length === 0) return;
+  if (!deps.purgeStaleTranslations || foreignLocales.length === 0) return;
   try {
     // Two stores, one rule: product media mirror into
     // ProductImageAltTranslation, every other image into
@@ -1419,7 +1425,7 @@ async function invalidateStaleFeaturedImageAltTranslations(
   parentId: string,
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
-  if (foreignLocales.length === 0) return;
+  if (!deps.purgeStaleTranslations || foreignLocales.length === 0) return;
   const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
   try {
     // Only touch Shopify when there is actually something to invalidate — the
@@ -2587,6 +2593,14 @@ export async function applyBulkDiff(
   // Published foreign locales for the Phase-4b invalidation come from the
   // caller (which already loaded them) — no extra fetch here.
   const foreignLocales = ctx.foreignLocales ?? [];
+  // One lookup per run for the §6.6 invalidation switch (Settings →
+  // Übersetzungen). Skipped entirely when there is nothing to invalidate
+  // against, so a test context without locales makes no DB call.
+  const { isPurgeOnPrimaryChangeEnabled } = await import(
+    "../translations/translation-change-policy.server"
+  );
+  const purgeStaleTranslations =
+    foreignLocales.length > 0 ? await isPurgeOnPrimaryChangeEnabled(shop, db) : false;
 
   // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
   // only digests are bündelbar — the register itself is per resource).
@@ -2675,6 +2689,7 @@ export async function applyBulkDiff(
     featuredImageIds: new Map(),
     foreignLocales,
     subResourceCaches,
+    purgeStaleTranslations,
   };
   const failures: BulkFailure[] = [];
   let saved = 0;

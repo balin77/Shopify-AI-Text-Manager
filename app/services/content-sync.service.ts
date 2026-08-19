@@ -10,7 +10,7 @@
 import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
-import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback } from './sync-types';
+import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
 
@@ -86,8 +86,17 @@ export class ContentSyncService {
 
   /**
    * Sync a single collection with all its translations
+   *
+   * @param options.reconcileTranslations  Opt-in: after the cache is written,
+   *   repair foreign translations whose PRIMARY text changed outside this app
+   *   (see services/translations/stale-translation-sync.server.ts). Only change
+   *   events pass `true` — a full sync (syncAll*) must never mass-purge.
    */
-  async syncCollection(collectionId: string, forceSync = false): Promise<void> {
+  async syncCollection(
+    collectionId: string,
+    forceSync = false,
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for collection: ${collectionId}`);
 
     try {
@@ -106,13 +115,20 @@ export class ContentSyncService {
 
       // 3. Fetch translations for all non-primary locales (global + market layers)
       const failedMarketIds = new Set<string>();
+      const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         collectionId,
         locales.filter((l) => !l.primary),
         "Collection",
         markets,
-        failedMarketIds
+        failedMarketIds,
+        primaryContent
       );
+      // The collection's OWN translations — captured before the image block
+      // below appends the remapped `image_alt_text` rows, which live on the
+      // CollectionImage resource and must not be removed from (or looked up
+      // on) the collection's translatableResource.
+      const ownTranslations = [...allTranslations];
       logger.debug(`[ContentSync] Fetched ${allTranslations.length} translations`);
 
       // 3b. Fetch collection image alt-text translations (separate Shopify resource type).
@@ -147,6 +163,21 @@ export class ContentSyncService {
       // unique-key collisions with the un-deleted rows).
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
       await this.saveCollectionToDatabase(collectionData, allTranslations, forceSync, effectiveMarkets);
+
+      // 5. Stale-translation reconciliation (change events only) — best-effort.
+      if (options.reconcileTranslations) {
+        const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+        await reconcileStaleTranslations({
+          client: this.admin,
+          shop: this.shop,
+          resourceId: collectionId,
+          resourceType: "Collection",
+          contentType: "collection",
+          resourceTitle: collectionData.title,
+          translations: ownTranslations,
+          primaryContent,
+        });
+      }
 
       logger.debug(`[ContentSync] Successfully synced collection: ${collectionId}`);
     } catch (error) {
@@ -183,8 +214,17 @@ export class ContentSyncService {
 
   /**
    * Sync a single article with all its translations
+   *
+   * @param options.reconcileTranslations  Opt-in: after the cache is written,
+   *   repair foreign translations whose PRIMARY text changed outside this app
+   *   (see services/translations/stale-translation-sync.server.ts). Only change
+   *   events pass `true` — a full sync (syncAll*) must never mass-purge.
    */
-  async syncArticle(articleId: string, forceSync = false): Promise<void> {
+  async syncArticle(
+    articleId: string,
+    forceSync = false,
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     logger.debug(`[ContentSync] Starting sync for article: ${articleId}`);
 
     try {
@@ -202,13 +242,18 @@ export class ContentSyncService {
 
       // 3. Fetch translations (global + market layers)
       const failedMarketIds = new Set<string>();
+      const primaryContent: PrimaryContentMap = {};
       const allTranslations = await fetchAllTranslations(this.graphqlFn(),
         articleId,
         locales.filter((l) => !l.primary),
         "Article",
         markets,
-        failedMarketIds
+        failedMarketIds,
+        primaryContent
       );
+      // See syncCollection: the article's own rows, before the ArticleImage
+      // alt-text rows are remapped into the list below.
+      const ownTranslations = [...allTranslations];
 
       // 3b. Fetch article image alt-text translations (separate Shopify resource type).
       // The ArticleImage GID uses the image's OWN id, not the parent article id.
@@ -239,6 +284,21 @@ export class ContentSyncService {
       // 4. Save to database — failed markets excluded (see syncCollection).
       const effectiveMarkets = markets.filter((m) => !failedMarketIds.has(m.id));
       await this.saveArticleToDatabase(articleData, allTranslations, forceSync, effectiveMarkets);
+
+      // 5. Stale-translation reconciliation (change events only) — best-effort.
+      if (options.reconcileTranslations) {
+        const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+        await reconcileStaleTranslations({
+          client: this.admin,
+          shop: this.shop,
+          resourceId: articleId,
+          resourceType: "Article",
+          contentType: "article",
+          resourceTitle: articleData.title,
+          translations: ownTranslations,
+          primaryContent,
+        });
+      }
 
       logger.debug(`[ContentSync] Successfully synced article: ${articleId}`);
     } catch (error) {
@@ -940,7 +1000,7 @@ export class ContentSyncService {
       ? collectionId
       : `gid://shopify/Collection/${collectionId}`;
 
-    await this.syncCollection(gid, /* forceSync */ true);
+    await this.syncCollection(gid, /* forceSync */ true, { reconcileTranslations: true });
 
     const { db } = await import("../db.server");
     const collection = await db.collection.findUnique({
@@ -974,7 +1034,7 @@ export class ContentSyncService {
       ? articleId
       : `gid://shopify/Article/${articleId}`;
 
-    await this.syncArticle(gid, /* forceSync */ true);
+    await this.syncArticle(gid, /* forceSync */ true, { reconcileTranslations: true });
 
     const { db } = await import("../db.server");
     const article = await db.article.findUnique({

@@ -874,8 +874,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // Only invalidate translations for fields whose primary value actually
     // changed on Shopify — a field that failed to save still has matching
     // primary content, so its translations must not be dropped.
+    // Merchant-switchable (Settings → Übersetzungen), failing OPEN.
+    const { isPurgeOnPrimaryChangeEnabled } = await import(
+      "~/services/translations/translation-change-policy.server"
+    );
     const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k));
-    if (savedChangedFields.length > 0) {
+    if (savedChangedFields.length > 0 && (await isPurgeOnPrimaryChangeEnabled(session.shop, db))) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
         keysToDelete: savedChangedFields,

@@ -873,11 +873,20 @@ export async function handleSavePrimarySubResources(
       }
     }
 
-    // 4. Delete translations for changed fields in all foreign languages
+    // 4. Delete translations for changed fields in all foreign languages.
+    // Merchant-switchable (Settings → Übersetzungen); the lookup fails OPEN so
+    // an error keeps the historic purge behaviour.
     const changedOptionIds = [...new Set([...savedOptions, ...Object.keys(optionsChanges)])];
     const changedMetafieldIds = [...new Set([...savedMetafields, ...Object.keys(metafieldChanges)])];
+    const { isPurgeOnPrimaryChangeEnabled } = await import(
+      "~/services/translations/translation-change-policy.server"
+    );
+    const purgeStaleTranslations =
+      changedOptionIds.length > 0 || changedMetafieldIds.length > 0
+        ? await isPurgeOnPrimaryChangeEnabled(session.shop, db)
+        : false;
 
-    if (changedOptionIds.length > 0 || changedMetafieldIds.length > 0) {
+    if (purgeStaleTranslations && (changedOptionIds.length > 0 || changedMetafieldIds.length > 0)) {
       try {
         // Get all shop locales
         const localesResponse = await gateway.graphql(

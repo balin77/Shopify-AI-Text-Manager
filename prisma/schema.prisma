@@ -166,6 +166,26 @@ model AISettings {
   // (legal copy, regulated product text).
   keywordAwareTranslation Boolean @default(true)
 
+  // Stale-translation purge switch ("Übersetzungen bei Änderung löschen").
+  // When a PRIMARY value changes (or is cleared), its foreign translations no
+  // longer describe the source text, so every write path in this app removes
+  // them on Shopify AND locally. That is the historic, hard-coded behaviour —
+  // this column makes it a merchant decision. Default TRUE = unchanged
+  // behaviour; FALSE keeps the old translations in place (Shopify then shows
+  // them flagged "outdated" in its own translation editor).
+  // Read through services/translations/translation-change-policy.server.ts,
+  // which fails OPEN (true) so a lookup error can never silently start
+  // preserving stale translations.
+  translationPurgeOnPrimaryChange Boolean @default(true)
+
+  // Max plan: when a primary text changes OUTSIDE this app (Shopify admin,
+  // another app, an import) and the sync sees Shopify's `outdated` flag, do
+  // not just delete the now-stale translation — re-translate the NEW primary
+  // value into that locale right away. Off by default: it spends the
+  // merchant's AI budget without them being present. Plan-gated to "max" at
+  // every read (the column may hold `true` from a period on a higher plan).
+  autoTranslateExternalChanges Boolean @default(false)
+
   // Translation length policy. "exact" (default) preserves source length —
   // legal/rechts pages must not shrink. "seo_optimized" appends per-field
   // character constraints to the translate prompt for SEO-critical fields

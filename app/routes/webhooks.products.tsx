@@ -142,7 +142,11 @@ async function processWebhookAsync(
       // Snapshot first: the sync is what erases the previous status/handle,
       // and both decide what IndexNow should hear about.
       const before = await loadIndexNowSnapshot(db, shop, productId);
-      await syncService.syncProduct(productId);
+      // A products/update webhook IS the "the primary text changed" event, so
+      // the sync also reconciles now-stale foreign translations (delete, or
+      // re-translate on Max) — see
+      // services/translations/stale-translation-sync.server.ts.
+      await syncService.syncProduct(productId, false, { reconcileTranslations: true });
       await enqueueProductForIndexNow(db, shop, productId, before);
     } else if (topic === "PRODUCTS_DELETE") {
       // IndexNow is meant to be told about removed URLs too, so we must

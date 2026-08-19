@@ -418,9 +418,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
           // Remove them on Shopify AND locally, mirroring the products /
           // collections / templates routes. Without this, outdated translations
           // linger in every foreign locale until the merchant re-translates.
-          const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
-          const localesData = (await localesResponse.json()) as any;
-          const foreignLocales: string[] = (localesData.data?.shopLocales || [])
+          // Merchant-switchable (Settings → Übersetzungen), failing OPEN.
+          const { isPurgeOnPrimaryChangeEnabled } = await import(
+            "~/services/translations/translation-change-policy.server"
+          );
+          const localesResponse = (await isPurgeOnPrimaryChangeEnabled(session.shop, db))
+            ? await admin.graphql(GET_SHOP_LOCALES)
+            : null;
+          const localesData = (await localesResponse?.json()) as any;
+          const foreignLocales: string[] = (localesData?.data?.shopLocales || [])
             .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
             .map((l: { locale: string }) => l.locale);
 

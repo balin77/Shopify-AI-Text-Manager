@@ -1122,8 +1122,15 @@ export class ShopifyContentService {
         throw new Error(`Unsupported resource type for primary locale update: ${resourceType}`);
       }
 
-      // Delete translations for changed fields across ALL foreign locales
-      if (changedFields && changedFields.length > 0) {
+      // Delete translations for changed fields across ALL foreign locales.
+      // Merchant-switchable (Settings → Übersetzungen): with the purge off the
+      // old translations stay and Shopify flags them "outdated" in its own
+      // editor instead. The lookup fails OPEN — see
+      // services/translations/translation-change-policy.server.ts.
+      const { isPurgeOnPrimaryChangeEnabled } = await import(
+        "../../app/services/translations/translation-change-policy.server"
+      );
+      if (changedFields && changedFields.length > 0 && (await isPurgeOnPrimaryChangeEnabled(shop, db))) {
         // Map UI field names to Shopify translation keys — the ONE canonical
         // map (FIELD_TO_TRANSLATION_KEY, top of this file).
         const keyMapping = fieldTranslationKeyMap(resourceType);

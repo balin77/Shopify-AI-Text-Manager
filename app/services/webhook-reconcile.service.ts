@@ -86,7 +86,9 @@ async function reconcileProducts(admin: ShopifyGraphQLClient, shop: string, maxI
     const localUpdated = localMap.get(id);
     if (!localUpdated || new Date(updatedAt) > localUpdated) {
       try {
-        await svc.syncProduct(id);
+        // Only reached when Shopify's updatedAt is NEWER than our cache —
+        // i.e. a change event this app missed, so it reconciles like a webhook.
+        await svc.syncProduct(id, false, { reconcileTranslations: true });
         repaired++;
       } catch (e) {
         logger.warn(`[Reconcile] product sync failed ${id}`, { shop, error: e instanceof Error ? e.message : String(e) });
@@ -127,7 +129,7 @@ async function reconcileCollections(admin: ShopifyGraphQLClient, shop: string, m
     const localUpdated = localMap.get(id);
     if (!localUpdated || new Date(updatedAt) > localUpdated) {
       try {
-        await svc.syncCollection(id);
+        await svc.syncCollection(id, false, { reconcileTranslations: true });
         repaired++;
       } catch (e) {
         logger.warn(`[Reconcile] collection sync failed ${id}`, { shop, error: e instanceof Error ? e.message : String(e) });
