@@ -415,3 +415,56 @@ describe("repeatable types are judged where the count proves it", () => {
     );
   });
 });
+
+describe("statForSwitch carries every field into the gate", () => {
+  // The defect this exists for: the function REBUILDS MarkupTypeStat field by
+  // field, appAllCopiesPages was left out, and because the page feeds the gate
+  // exclusively through here, the branch it unlocks was dead in the app while
+  // the gate's own unit tests — which build the stat by hand — stayed green.
+  const bucket = (over: Record<string, unknown> = {}) => ({
+    type: "VideoObject",
+    resourceType: "product",
+    pages: 1,
+    appPages: 1,
+    duplicatePages: 0,
+    appIsOneCopy: 0,
+    repeatable: true,
+    appAllCopiesPages: 1,
+    ...over,
+  }) as any;
+
+  it("loses no key on the way through — the generic guard against this bug", () => {
+    // Names every field rather than one of them: the next field added to the
+    // interface fails HERE instead of silently arriving as undefined.
+    const input = bucket();
+    const merged = statForSwitch([input], "VideoObject", ["product"])!;
+    for (const k of Object.keys(input)) {
+      expect(merged, `statForSwitch dropped "${k}"`).toHaveProperty(k);
+    }
+  });
+
+  it("sums it across buckets and lets the gate reach appOnly", () => {
+    const merged = statForSwitch(
+      [bucket(), bucket({ resourceType: "collection" })],
+      "VideoObject",
+      ["product", "collection"],
+    )!;
+    expect(merged.appAllCopiesPages).toBe(2);
+    expect(
+      activationGate(merged, { measured: true, originKnown: true }).verdict,
+    ).toBe("appOnly");
+  });
+
+  it("keeps it undefined while no bucket could answer", () => {
+    // "cannot tell" must not turn into a measured zero on the way here.
+    const merged = statForSwitch(
+      [bucket({ appAllCopiesPages: undefined })],
+      "VideoObject",
+      ["product"],
+    )!;
+    expect(merged.appAllCopiesPages).toBeUndefined();
+    expect(
+      activationGate(merged, { measured: true, originKnown: true }).verdict,
+    ).toBe("repeatableUnjudged");
+  });
+});

@@ -489,6 +489,13 @@ export function statForSwitch(
     (s) => s.type === type && (scopes === null || scopes.includes(s.resourceType)),
   );
   if (matching.length === 0) return undefined;
+  // Every field of MarkupTypeStat has to be carried here, and forgetting one
+  // is silent: this function REBUILDS the object rather than spreading it, so
+  // a field left out simply arrives as undefined at the gate. That already
+  // happened once — appAllCopiesPages was dropped, and because the page feeds
+  // the gate exclusively through this function, the branch it unlocks was
+  // dead in the app while its own unit tests (which build the stat by hand)
+  // stayed green. Add a field to the interface ⇒ add it here.
   return matching.reduce<MarkupTypeStat>(
     (acc, s) => ({
       type,
@@ -498,6 +505,12 @@ export function statForSwitch(
       duplicatePages: acc.duplicatePages + s.duplicatePages,
       appIsOneCopy: acc.appIsOneCopy + s.appIsOneCopy,
       repeatable: acc.repeatable || s.repeatable,
+      // Stays undefined while NO contributing bucket could answer, so
+      // "the producer cannot tell" does not turn into a measured zero.
+      appAllCopiesPages:
+        acc.appAllCopiesPages === undefined && s.appAllCopiesPages === undefined
+          ? undefined
+          : (acc.appAllCopiesPages ?? 0) + (s.appAllCopiesPages ?? 0),
     }),
     { type, resourceType: "", pages: 0, appPages: 0, duplicatePages: 0, appIsOneCopy: 0, repeatable: false },
   );

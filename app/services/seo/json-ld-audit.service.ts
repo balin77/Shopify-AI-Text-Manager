@@ -537,6 +537,15 @@ export async function summarizeLiveJsonLd(
       canonicalJsonLdType,
     );
     const appTypes = new Set(appList);
+    // The crawl caps the COLLECTED LIST per page, not the count per type
+    // (collectJsonLdTypes stops at MAX_JSON_LD_TYPES_PER_PAGE entries), so
+    // the truncation guard has to measure the list. Comparing a per-type
+    // count against that cap could practically never fire, and a page with
+    // more than 50 types whose foreign copies fell off the end would then
+    // count as proof that all of its markup is ours. Either list reaching
+    // the cap disqualifies the whole page as evidence.
+    const pageTruncated =
+      types.length >= MAX_JSON_LD_TYPES_PER_PAGE || appList.length >= MAX_JSON_LD_TYPES_PER_PAGE;
     // Counted, not just seen: for a REPEATABLE type only an equal count can
     // show that nothing else emits it too. The crawl preserves repeats in both
     // columns for exactly this.
@@ -551,11 +560,8 @@ export async function summarizeLiveJsonLd(
       const k = key(t, rt);
       canonicalPages.set(k, (canonicalPages.get(k) ?? 0) + 1);
       if (appTypes.has(t)) canonicalAppPages.set(k, (canonicalAppPages.get(k) ?? 0) + 1);
-      // A page whose list hit the per-page cap may be truncated on either side,
-      // and two truncated lists can be equal without meaning it. Such a page is
-      // simply not counted as proof.
       const appN = appCanonical.get(t) ?? 0;
-      if (appN >= n && n < MAX_JSON_LD_TYPES_PER_PAGE) {
+      if (appN >= n && !pageTruncated) {
         canonicalAppAllPages.set(k, (canonicalAppAllPages.get(k) ?? 0) + 1);
       }
       if (n <= 1 || REPEATABLE_JSON_LD_TYPES.has(t)) continue;
