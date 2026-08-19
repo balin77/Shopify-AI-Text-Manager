@@ -541,6 +541,13 @@ export const de = {
       none: "Nicht gesetzt",
       clear: "Entfernen",
       broad: "(allgemein)",
+      // Durch den Baum klicken. Die Zurueck-Zeile NENNT ihr Ziel: ein blosses
+      // "Zurueck" laesst den Haendler drei Ebenen tief Klicks zaehlen.
+      backTo: "Zurück zu {name}",
+      backToAll: "Zurück zu allen",
+      chooseThis: "diese Kategorie wählen",
+      noChildren: "Diese Kategorie hat keine Unterkategorien.",
+      levelTruncated: "Diese Ebene hat mehr Unterkategorien, als geladen wurden — nutze die Suche oben.",
     },
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {

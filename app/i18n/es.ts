@@ -539,6 +539,13 @@ export const es: Translation = {
       none: "Sin definir",
       clear: "Quitar",
       broad: "(general)",
+      // Navegar por el árbol. La fila de vuelta NOMBRA su destino: un simple
+      // "atrás" obliga a contar clics tres niveles más abajo.
+      backTo: "Volver a {name}",
+      backToAll: "Volver a todas",
+      chooseThis: "elegir esta categoría",
+      noChildren: "Esta categoría no tiene subcategorías.",
+      levelTruncated: "Este nivel tiene más subcategorías de las que se cargaron — usa la búsqueda de arriba.",
     },
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {

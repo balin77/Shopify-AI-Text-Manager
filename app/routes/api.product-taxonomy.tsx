@@ -2,6 +2,17 @@
  * PLAN_CONTENT_CREATION §Phase 3.1 — the two lookups the product attribute tab
  * cannot answer from the cache.
  *
+ * ── Two shapes, one taxonomy ────────────────────────────────────────────────
+ * `kind=taxonomy` SEARCHES (a flat list of full paths) and
+ * `kind=taxonomy-children` BROWSES (one level at a time, `parent` empty for the
+ * top-level verticals). Shopify's own picker is exactly these two over one
+ * popover, and the browse half is what makes the taxonomy usable by someone
+ * who does not already know the word Shopify filed their product under.
+ *
+ * `childrenOf` is the whole reason browsing is possible at all; it sits next
+ * to `descendantsOf` in the schema, which is what makes it ONE level rather
+ * than everything below (measured in Settings → Probes → Taxonomy).
+ *
  * ── Why the taxonomy is not cached ──────────────────────────────────────────
  * Shopify's product taxonomy is ~10 000 categories, it is Shopify's data
  * rather than the shop's, and a merchant touches it once per product. Mirroring
@@ -29,6 +40,14 @@ import { logger } from "~/utils/logger.server";
 
 /** Enough to choose from, few enough to render in a popover. */
 const TAXONOMY_PAGE_SIZE = 20;
+/**
+ * One LEVEL of the tree, not one screenful. The deepest Shopify branch has
+ * well under a hundred direct children, and a level that arrived truncated
+ * would hide categories behind a "load more" nobody would press — the browse
+ * half has to be complete to be trustworthy, unlike the search half where 20
+ * best matches are the point.
+ */
+const TAXONOMY_LEVEL_SIZE = 250;
 /** The membership picker filters client-side over what it already has. */
 const COLLECTION_PAGE_SIZE = 250;
 /** A search this short matches most of the taxonomy — a useless list. */
@@ -47,6 +66,17 @@ export interface TaxonomyOption {
    * marketplace listing later.
    */
   isLeaf: boolean;
+}
+
+/** One browsed level. `parentId` echoes what was asked for, so a late response
+ *  for a level the merchant already left can be dropped rather than rendered
+ *  under the wrong heading. */
+export interface TaxonomyLevel {
+  parentId: string;
+  categories: TaxonomyOption[];
+  /** The level did not fit in one page. Shown, never swallowed: a browse list
+   *  that silently ends is indistinguishable from a branch that has no more. */
+  truncated: boolean;
 }
 
 export interface CollectionOption {
@@ -117,6 +147,83 @@ export async function loader({ request }: LoaderFunctionArgs) {
           name: n.name,
           isLeaf: n.isLeaf !== false,
         })) satisfies TaxonomyOption[],
+      });
+    }
+
+    if (kind === "taxonomy-children") {
+      // Empty parent = the top level. `categories(first:)` with no filter
+      // returns the verticals in Shopify's canonical order (English-sorted,
+      // localized labels), which is the order the admin's own picker shows —
+      // so nothing is re-sorted here. Sorting alphabetically by the LOCALIZED
+      // name would silently reorder the first screen per language.
+      const parent = (url.searchParams.get("parent") || "").trim();
+      if (parent && !parent.startsWith("gid://shopify/TaxonomyCategory/")) {
+        return json({ success: false, error: "A TaxonomyCategory GID is required." }, { status: 400 });
+      }
+
+      // Two documents rather than one with an optional argument: a null
+      // `childrenOf` is not the same as an absent one, and passing null where
+      // Shopify expects a category would filter to nothing rather than to the
+      // top level.
+      const response = parent
+        ? await admin.graphql(
+            `#graphql
+              query browseProductTaxonomyChildren($parent: ID!, $first: Int!) {
+                taxonomy {
+                  categories(childrenOf: $parent, first: $first) {
+                    nodes { id name fullName isLeaf }
+                    pageInfo { hasNextPage }
+                  }
+                }
+              }`,
+            { variables: { parent, first: TAXONOMY_LEVEL_SIZE } },
+          )
+        : await admin.graphql(
+            `#graphql
+              query browseProductTaxonomyRoots($first: Int!) {
+                taxonomy {
+                  categories(first: $first) {
+                    nodes { id name fullName isLeaf }
+                    pageInfo { hasNextPage }
+                  }
+                }
+              }`,
+            { variables: { first: TAXONOMY_LEVEL_SIZE } },
+          );
+
+      const body = (await response.json()) as {
+        data?: {
+          taxonomy?: {
+            categories?: { nodes?: TaxonomyOption[]; pageInfo?: { hasNextPage?: boolean } };
+          };
+        };
+        errors?: Array<{ message?: string }>;
+      };
+
+      // Same rule as the search half: a schema-level error arrives as a
+      // top-level `errors` array with `data: null` and never reaches
+      // `userErrors`. Rendered as an empty level it would tell the merchant
+      // this branch has no subcategories.
+      if (body.errors?.length) {
+        logger.warn("[Taxonomy] Schema-level error while browsing", {
+          context: "Taxonomy", shop: session.shop, parent, error: body.errors[0]?.message,
+        });
+        return json({ success: false, error: "The product taxonomy could not be opened." }, { status: 502 });
+      }
+
+      const nodes = body.data?.taxonomy?.categories?.nodes ?? [];
+      return json({
+        success: true,
+        level: {
+          parentId: parent,
+          categories: nodes.map((n) => ({
+            id: n.id,
+            fullName: n.fullName || n.name,
+            name: n.name,
+            isLeaf: n.isLeaf !== false,
+          })),
+          truncated: body.data?.taxonomy?.categories?.pageInfo?.hasNextPage === true,
+        } satisfies TaxonomyLevel,
       });
     }
 

@@ -544,6 +544,13 @@ export const en: Translation = {
       none: "Not set",
       clear: "Clear",
       broad: "(broad)",
+      // Browsing the tree. The back row NAMES where it goes: "back" alone
+      // makes a merchant three levels deep count clicks.
+      backTo: "Back to {name}",
+      backToAll: "Back to all",
+      chooseThis: "choose this category",
+      noChildren: "This category has no subcategories.",
+      levelTruncated: "This level has more subcategories than were loaded — use the search above.",
     },
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
