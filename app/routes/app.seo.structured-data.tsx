@@ -1325,7 +1325,7 @@ export default function SeoStructuredData() {
                           .replace("{missing}", String(galleryVideos.missingDate))}
                       </Text>
                       {galleryVideos.missingDate > 0 && (
-                        <Text as="p" variant="bodySm">{emphasize(gv.fix as string)}</Text>
+                        <Text as="p" variant="bodySm">{emphasize(gv.externalNote as string)}</Text>
                       )}
                       {/* The other half, and a different remedy: a video in the
                           product's OWN media gets its date from the sync, so a

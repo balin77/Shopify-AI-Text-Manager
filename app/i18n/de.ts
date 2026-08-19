@@ -2156,7 +2156,7 @@ export const de = {
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "Video entsteht erst auf der Storefront — aus deinen Produkt-Medien **und** aus YouTube-Links, die nur in einer Varianten-Galerie liegen. Deshalb taucht es in der Vorschau unten nicht auf. Produktweit dedupliziert: ein Video an zwölf Varianten bleibt ein Eintrag.",
-      schemaVideoDateNote: "**Videos aus einer Galerie brauchen ein Datum von dir.** Google zeigt ein Video nur mit Upload-Datum an. Bei Videos in den Produktmedien holt die App es automatisch; ein verlinktes Video (YouTube) hat keine Datei bei Shopify, also keine Quelle dafür. Trag am Produkt das Metafeld **custom.video_upload_date** ein, sonst bleibt das Video ohne Rich Result.",
+      schemaVideoDateNote: "**Videos aus einer Galerie werden ohne Datum ausgeliefert.** Google zeigt ein Video nur mit Upload-Datum an. Bei Videos in deinen Produktmedien holt die App es automatisch; ein verlinktes Video (YouTube) hat keine Datei bei Shopify und damit keine Quelle dafür — es bleibt deshalb ohne Rich Result.",
       severityLabels: {
         error: "Fehler",
         warning: "Warnung",
@@ -2216,7 +2216,7 @@ export const de = {
         failed: "Die Prüfung der Galerie-Videos konnte diesmal nicht durchgeführt werden (Shopify hat die Abfrage abgelehnt). Der nächste Durchlauf versucht es erneut.",
         none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
         found: "Produkte mit Videos ohne Datum: {products} — davon aus einer Galerie ohne Datum: {missing}.",
-        fix: "Videos aus **externen Quellen** (YouTube-Link in einer Galerie) haben keine Datei bei Shopify und damit kein Datum — Google akzeptiert das Video-Rich-Result dann unter Umständen nicht. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum“), dann zählt das Video.",
+        externalNote: "Videos aus **externen Quellen** (YouTube-Link in einer Galerie) können nicht mit Datum ausgeliefert werden — sie haben keine Datei bei Shopify. Google akzeptiert das Video dann unter Umständen nicht als Rich Result.",
         vimeo: "Bei {count} davon liegt mindestens ein Vimeo-Video — dafür wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
         capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",

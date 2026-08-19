@@ -2141,7 +2141,7 @@ export const es: Translation = {
       schemaVideo: "Vídeo (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "El vídeo se genera en la tienda — a partir de tus medios de producto **y** de enlaces de YouTube que solo están en una galería de variantes. Por eso no aparece en la vista previa de abajo. Deduplicado por producto: un vídeo en doce variantes sigue siendo una entrada.",
-      schemaVideoDateNote: "**Los vídeos de una galería necesitan una fecha tuya.** Google solo muestra un vídeo con fecha de subida. Para los vídeos en los medios del producto la app la obtiene automáticamente; un vídeo enlazado (YouTube) no tiene archivo en Shopify y por tanto no hay de dónde sacarla. Configura el metacampo **custom.video_upload_date** en el producto, o el vídeo se queda sin rich result.",
+      schemaVideoDateNote: "**Los vídeos de una galería se entregan sin fecha.** Google solo muestra un vídeo con fecha de subida. Para los vídeos en tus medios de producto la app la obtiene automáticamente; un vídeo enlazado (YouTube) no tiene archivo en Shopify y por tanto no hay de dónde sacarla, así que se queda sin rich result.",
       severityLabels: {
         error: "Error",
         warning: "Advertencia",
@@ -2200,7 +2200,7 @@ export const es: Translation = {
         failed: "La comprobación de vídeos de galería no pudo ejecutarse esta vez (Shopify rechazó la consulta). La próxima ejecución lo intenta de nuevo.",
         none: "No se encontraron vídeos de galería ({variants} variantes comprobadas).",
         found: "Productos con vídeos sin fecha: {products} — de ellos, desde una galería sin fecha: {missing}.",
-        fix: "Los vídeos de **fuentes externas** (un enlace de YouTube en una galería) no tienen archivo en Shopify y por tanto no tienen fecha — Google puede entonces no aceptar el rich result de vídeo. Configura el metacampo **custom.video_upload_date** (tipo «fecha») en el producto y el vídeo contará.",
+        externalNote: "Los vídeos de **fuentes externas** (un enlace de YouTube en una galería) no pueden entregarse con fecha: no tienen archivo en Shopify. Google puede entonces no aceptar el vídeo como rich result.",
         vimeo: "{count} de ellos tienen al menos un vídeo de Vimeo — para esos no se genera ningún marcado, y una fecha no cambia nada.",
         capped: "La comprobación no alcanzó todo el catálogo — puede haber más.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · fecha definida",

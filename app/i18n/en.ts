@@ -2150,7 +2150,7 @@ export const en: Translation = {
       schemaVideo: "Video (VideoObject)",
       schemaFaq: "FAQ (FAQPage)",
       schemaVideoNote: "Video is produced on the storefront — from your product media **and** from YouTube links that only live in a variant gallery. That is why it does not appear in the preview below. Deduplicated per product: one video on twelve variants stays one entry.",
-      schemaVideoDateNote: "**Videos from a gallery need a date from you.** Google only shows a video with an upload date. For videos in the product media the app fetches it automatically; a linked video (YouTube) has no file at Shopify and therefore no source for it. Set the product metafield **custom.video_upload_date**, or the video stays without a rich result.",
+      schemaVideoDateNote: "**Videos from a gallery are delivered without a date.** Google only shows a video with an upload date. For videos in your product media the app fetches it automatically; a linked video (YouTube) has no file at Shopify and therefore no source for it — so it stays without a rich result.",
       severityLabels: {
         error: "Error",
         warning: "Warning",
@@ -2209,7 +2209,7 @@ export const en: Translation = {
         failed: "The gallery-video check could not run this time (Shopify refused the query). The next run tries again.",
         none: "No gallery videos found ({variants} variants checked).",
         found: "Products with dateless videos: {products} — of those from a gallery without a date: {missing}.",
-        fix: "Videos from **external sources** (a YouTube link in a gallery) have no file at Shopify and therefore no date — Google may then not accept the video rich result. Set the product metafield **custom.video_upload_date** (type \"date\") and the video counts.",
+        externalNote: "Videos from **external sources** (a YouTube link in a gallery) cannot be delivered with a date — they have no file at Shopify. Google may then not accept the video as a rich result.",
         vimeo: "{count} of them carry at least one Vimeo video — no markup is produced for those at all, and a date changes nothing.",
         capped: "The check did not reach the whole catalog — there may be more.",
         rowOk: "{youtube} YouTube, {vimeo} Vimeo · date set",
