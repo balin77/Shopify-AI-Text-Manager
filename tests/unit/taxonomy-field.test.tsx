@@ -69,6 +69,17 @@ function ui(props: Partial<React.ComponentProps<typeof TaxonomyField>> = {}) {
   );
 }
 
+/** The popover's scrolling list — the one box the scroll lock lets through.
+ *  Found by the property that makes it that box. */
+const listBox = () => document.querySelector("[style*='overscroll-behavior']") as HTMLElement;
+
+/** A wheel the page would scroll on, if anything let it. */
+function wheelOn(target: EventTarget): boolean {
+  const event = new WheelEvent("wheel", { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 /** The activator carries the current value, or "Not set". */
 const openPicker = async () => {
   fireEvent.click(screen.getByRole("button", { name: /not set/i }));
@@ -171,5 +182,58 @@ describe("TaxonomyField — browsing", () => {
     );
     expect(screen.getByRole("button", { name: /Apparel & Accessories > Jewelry/ })).toBeTruthy();
     expect(screen.queryByText(/gid:\/\//)).toBeNull();
+  });
+});
+
+/**
+ * The two rules that are about the BOX rather than about the taxonomy.
+ *
+ * A Polaris popover is positioned once against its activator and re-measures
+ * only on scrolls it can see — and the pages here scroll inside a plain
+ * container, not a Polaris `Scrollable`. So an open picker over a scrolling
+ * page hangs over nothing, which is why the page is frozen while it is open —
+ * everywhere except the popover's own list, which still has to scroll.
+ */
+describe("TaxonomyField — the page behind the popover", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("lets the page scroll while the picker is closed", () => {
+    render(ui());
+    expect(wheelOn(document.body)).toBe(false);
+  });
+
+  it("freezes the page while the picker is open and thaws it again on close", async () => {
+    render(ui());
+    await openPicker();
+
+    expect(wheelOn(document.body)).toBe(true);
+
+    // Choosing closes the popover — and the lock has to go with it, or the
+    // page stays frozen for good. A LEAF is what chooses; a branch descends.
+    fireEvent.click(screen.getByText("Apparel & Accessories"));
+    await waitFor(() => expect(screen.getByText("Jewelry")).toBeTruthy());
+    fireEvent.click(screen.getByText("Jewelry"));
+    await waitFor(() => expect(screen.queryByText("Jewelry")).toBeNull());
+    expect(wheelOn(document.body)).toBe(false);
+  });
+
+  it("still lets the popover's own list scroll", async () => {
+    render(ui());
+    await openPicker();
+
+    const list = listBox();
+    expect(list).toBeTruthy();
+    expect(wheelOn(list)).toBe(false);
+  });
+
+  it("does not freeze anything for a disabled field that cannot open", () => {
+    render(ui({ disabled: true }));
+    expect(wheelOn(document.body)).toBe(false);
   });
 });

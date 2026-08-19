@@ -52,6 +52,19 @@
  * should try different words. The browse half carries the same rule: an empty
  * level and an unreachable one are separate states.
  *
+ * ── The panel is a fixed box, and the content lives inside it ───────────────
+ * Every row is `minWidth: 0` with a reserved trailing slot: a flex item does
+ * not shrink below its own content by default, so one long path would set the
+ * width of the whole list, and the popover would scroll sideways with the
+ * chevrons pushed out of sight. The reserved slot is also what puts every
+ * chevron on ONE vertical edge instead of wherever each label happens to end.
+ *
+ * ── The page behind it holds still ─────────────────────────────────────────
+ * `useScrollLock` — the popover is positioned once against its activator and
+ * the pages here scroll INSIDE a container Polaris cannot see, so a scroll
+ * while it is open leaves it hanging over nothing. See the hook for why the
+ * lock cancels the event instead of hiding the overflow.
+ *
  * ── The label ───────────────────────────────────────────────────────────────
  * The stored `categoryName` is Shopify's `fullName` — the whole path. Showing
  * only the leaf would make two different categories called "Shirts" look
@@ -72,6 +85,7 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { ArrowLeftIcon, ChevronRightIcon, SearchIcon } from "@shopify/polaris-icons";
+import { useScrollLock } from "../../hooks/useScrollLock";
 import type { TaxonomyOption } from "../../routes/api.product-taxonomy";
 
 export interface TaxonomyFieldProps {
@@ -132,6 +146,11 @@ export interface TaxonomyFieldProps {
  *  list feels live. The route additionally refuses searches under 2 chars. */
 const DEBOUNCE_MS = 300;
 
+/** The width every row keeps free at its right edge. A Polaris `Icon` is 20px,
+ *  so the chevron fills the slot exactly and the rows that have none still end
+ *  their text where the ones that do end theirs. */
+const TRAILING_SLOT = "1.25rem";
+
 /** One entry of the browse stack: what was clicked to get here. The root level
  *  is the empty stack, so it needs no entry of its own. */
 interface Crumb {
@@ -184,6 +203,14 @@ export function TaxonomyField({
    */
   const searchToken = useRef(0);
   const levelToken = useRef(0);
+
+  /**
+   * The one element inside the popover that may still scroll while the page
+   * behind it is frozen. The panel around it is deliberately NOT allowed — see
+   * `useScrollLock`.
+   */
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useScrollLock(open && !disabled, listRef);
 
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length > 0;
@@ -334,8 +361,25 @@ export function TaxonomyField({
     );
   }
 
-  /** One tappable row of the popover. Full width, so the whole strip is the
-   *  target rather than the few pixels the text happens to occupy. */
+  /**
+   * One tappable row of the popover. Full width, so the whole strip is the
+   * target rather than the few pixels the text happens to occupy.
+   *
+   * Three rules keep the list inside the panel instead of setting its width:
+   *
+   *   - The label column is `minWidth: 0` and breaks anywhere. A flex item
+   *     refuses by default to shrink below its own content, so ONE long path
+   *     ("Apparel & Accessories > Clothing > Shirts & Tops") would widen every
+   *     row, the panel would scroll sideways, and the chevrons would sit off
+   *     screen. `overflow-wrap` is inherited, so the `InlineStack`s inside it
+   *     need nothing of their own.
+   *   - `boxSizing: border-box`, so the padding is spent INSIDE the width the
+   *     panel gave the row rather than added to it.
+   *   - The trailing slot is reserved on EVERY row, chevron or not, and is the
+   *     last thing in the row. That is what lines the arrows up on one vertical
+   *     edge — with the slot rendered only where there is an arrow, each one
+   *     landed wherever its own label happened to end.
+   */
   const row = (
     key: string,
     content: React.ReactNode,
@@ -349,10 +393,11 @@ export function TaxonomyField({
       style={{
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: "0.75rem",
+        gap: "0.5rem",
         width: "100%",
-        padding: "0.5rem 0.75rem",
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        padding: "0.5rem",
         background: "none",
         border: "none",
         borderRadius: "6px",
@@ -363,8 +408,18 @@ export function TaxonomyField({
       onMouseEnter={(e) => { e.currentTarget.style.background = "#f1f1f1"; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
     >
-      {content}
-      {trailing}
+      <span style={{ flex: "1 1 auto", minWidth: 0, overflowWrap: "anywhere" }}>{content}</span>
+      <span
+        style={{
+          flex: "0 0 auto",
+          width: TRAILING_SLOT,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+        }}
+      >
+        {trailing}
+      </span>
     </button>
   );
 
@@ -374,203 +429,245 @@ export function TaxonomyField({
     <BlockStack gap="200">
       <Text as="p" variant="bodyMd">{label}</Text>
 
-      <InlineStack gap="200" blockAlign="center">
-        <Popover
-          active={open && !disabled}
-          onClose={() => setOpen(false)}
-          preferredAlignment="left"
-          activator={
-            <Button
-              disclosure
-              disabled={disabled}
-              onClick={() => setOpen((v) => !v)}
-              // The whole path, because that is what identifies a category —
-              // and the button is the only place it shows once the popover is
-              // closed.
-              textAlign="left"
-              fullWidth
+      <InlineStack gap="200" blockAlign="center" wrap={false}>
+        {/* The activator takes the row, the Clear button takes what it needs.
+            `minWidth: 0` is the half that matters: the button carries a whole
+            category PATH, and without it that string would set the width of the
+            field and push Clear out of the row. The path then wraps inside the
+            button (Polaris sets no `nowrap`), and `overflowWrap` — inherited,
+            so it reaches Polaris' own text span — is what keeps a single long
+            word from doing the widening the wrapping otherwise prevents. */}
+        <div style={{ flex: "1 1 auto", minWidth: 0, overflowWrap: "anywhere" }}>
+          <Popover
+            active={open && !disabled}
+            onClose={() => setOpen(false)}
+            preferredAlignment="left"
+            // The panel is exactly as wide as the control it belongs to, never
+            // wider. A fixed 30rem panel hanging off a narrower field is the
+            // "it does not fit" report — and on a small screen it left the
+            // frame entirely. Polaris measures the activator for us, so there
+            // is no width in here to keep in step with the layout.
+            fullWidth
+            activator={
+              <Button
+                disclosure
+                disabled={disabled}
+                onClick={() => setOpen((v) => !v)}
+                // The whole path, because that is what identifies a category —
+                // and the button is the only place it shows once the popover is
+                // closed.
+                textAlign="left"
+                fullWidth
+              >
+                {/* A stored id with no cached label is possible on a row that has
+                    not been attribute-synced since the category was set. The id
+                    is not a name, so the field says "not set" rather than
+                    printing a GID at the merchant. */}
+                {(value && shownLabel) || t.none || "Not set"}
+              </Button>
+            }
+          >
+            {/* The box everything else has to fit into. It takes the width
+                Polaris gave the popover (the activator's) instead of naming one
+                of its own — a second number here is what would make the content
+                wider than the panel again — and counts its padding INSIDE that
+                width rather than adding to it. */}
+            <div
+              style={{
+                width: "100%",
+                maxWidth: "100%",
+                boxSizing: "border-box",
+                padding: "0.5rem",
+              }}
             >
-              {/* A stored id with no cached label is possible on a row that has
-                  not been attribute-synced since the category was set. The id
-                  is not a name, so the field says "not set" rather than
-                  printing a GID at the merchant. */}
-              {(value && shownLabel) || t.none || "Not set"}
-            </Button>
-          }
-        >
-          <div style={{ width: "min(30rem, 80vw)", padding: "0.5rem" }}>
-            <BlockStack gap="200">
-              {/* Always at the top, at every depth — see the header. */}
-              <TextField
-                label=""
-                labelHidden
-                value={query}
-                onChange={setQuery}
-                autoComplete="off"
-                prefix={<Icon source={SearchIcon} tone="subdued" />}
-                placeholder={t.search || "Search categories…"}
-                clearButton
-                onClearButtonClick={() => setQuery("")}
-              />
+              <BlockStack gap="200">
+                {/* Always at the top, at every depth — see the header. */}
+                <TextField
+                  label=""
+                  labelHidden
+                  value={query}
+                  onChange={setQuery}
+                  autoComplete="off"
+                  prefix={<Icon source={SearchIcon} tone="subdued" />}
+                  placeholder={t.search || "Search categories…"}
+                  clearButton
+                  onClearButtonClick={() => setQuery("")}
+                />
 
-              <div style={{ maxHeight: "22rem", overflowY: "auto" }}>
-                {searching ? (
-                  <BlockStack gap="050">
-                    {state === "loading" && (
-                      <Box padding="200">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Spinner size="small" />
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {t.searching || "Searching…"}
-                          </Text>
-                        </InlineStack>
-                      </Box>
-                    )}
-
-                    {state === "tooShort" && (
-                      <Box padding="200">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.keepTyping || "Type at least two characters."}
-                        </Text>
-                      </Box>
-                    )}
-
-                    {state === "failed" && (
-                      <Banner tone="warning">
-                        <p>{t.lookupFailed || "The category list could not be loaded. Try again in a moment."}</p>
-                      </Banner>
-                    )}
-
-                    {state === "idle" && results !== null && results.length === 0 && (
-                      <Box padding="200">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.noMatches || "No category matches that."}
-                        </Text>
-                      </Box>
-                    )}
-
-                    {state === "idle" &&
-                      results !== null &&
-                      results.map((option) =>
-                        row(
-                          option.id,
-                          <InlineStack gap="200" blockAlign="center" wrap>
-                            {/* The whole path: a search for "shirt" returns
-                                several, and only the path tells them apart. */}
-                            <Text as="span" variant="bodyMd">{option.fullName}</Text>
-                            {/* A branch IS a valid value on Shopify's side, so
-                                this is a note and not a refusal — but a product
-                                filed under a branch shows up wrong in
-                                marketplace listings, and nothing else would say
-                                so until then. */}
-                            {!option.isLeaf && (
-                              <Text as="span" variant="bodySm" tone="subdued">{t.broad || "(broad)"}</Text>
-                            )}
-                          </InlineStack>,
-                          () => choose(option),
-                        ),
-                      )}
-                  </BlockStack>
-                ) : (
-                  <BlockStack gap="050">
-                    {here &&
-                      row(
-                        "__back",
-                        <InlineStack gap="200" blockAlign="center">
-                          <Icon source={ArrowLeftIcon} tone="subdued" />
-                          <Text as="span" variant="bodyMd" tone="subdued">
-                            {path.length > 1
-                              ? (t.backTo || "Back to {name}").replace("{name}", path[path.length - 2].name)
-                              : t.backToAll || "Back to all"}
-                          </Text>
-                        </InlineStack>,
-                        ascend,
+                {/* The ONE element that still scrolls while the page behind
+                    the popover is frozen — hence the ref. `overscrollBehavior:
+                    contain` stops a wheel at the end of the list from chaining
+                    through to that page, which is the movement the lock exists
+                    to prevent; `overflowX: hidden` makes a row that still manages
+                    to overflow wrap or clip rather than turn the panel into a
+                    horizontal scroller. */}
+                <div
+                  ref={listRef}
+                  style={{
+                    maxHeight: "22rem",
+                    overflowY: "auto",
+                    overflowX: "hidden",
+                    overscrollBehavior: "contain",
+                  }}
+                >
+                  {searching ? (
+                    <BlockStack gap="050">
+                      {state === "loading" && (
+                        <Box padding="200">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Spinner size="small" />
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {t.searching || "Searching…"}
+                            </Text>
+                          </InlineStack>
+                        </Box>
                       )}
 
-                    {/* The branch you are standing in — the ONE way to choose
-                        it, so that opening a row and picking it stay separate
-                        actions. */}
-                    {here &&
-                      row(
-                        "__self",
-                        <InlineStack gap="200" blockAlign="center" wrap>
-                          <Text as="span" variant="bodyMd" fontWeight="semibold">{here.name}</Text>
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {t.chooseThis || "choose this category"}
+                      {state === "tooShort" && (
+                        <Box padding="200">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.keepTyping || "Type at least two characters."}
                           </Text>
-                        </InlineStack>,
-                        () =>
-                          choose({
-                            id: here.id,
-                            name: here.name,
-                            fullName: here.fullName,
-                            isLeaf: here.isLeaf,
-                          }),
+                        </Box>
                       )}
 
-                    {levelState === "loading" && (
-                      <Box padding="200">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Spinner size="small" />
-                          <Text as="span" variant="bodySm" tone="subdued">
-                            {t.searching || "Searching…"}
-                          </Text>
-                        </InlineStack>
-                      </Box>
-                    )}
-
-                    {levelState === "failed" && (
-                      <Banner tone="warning">
-                        <BlockStack gap="200">
+                      {state === "failed" && (
+                        <Banner tone="warning">
                           <p>{t.lookupFailed || "The category list could not be loaded. Try again in a moment."}</p>
-                          {/* The way out, spelled out. Closing and reopening
-                              also retries now, but nothing on screen says so. */}
-                          <Box>
-                            <Button onClick={() => loadLevel(here?.id ?? "")}>
-                              {t.reload || "Reload"}
-                            </Button>
-                          </Box>
-                        </BlockStack>
-                      </Banner>
-                    )}
-
-                    {levelState === "idle" && level !== null && level.length === 0 && (
-                      <Box padding="200">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.noChildren || "This category has no subcategories."}
-                        </Text>
-                      </Box>
-                    )}
-
-                    {levelState === "idle" &&
-                      level !== null &&
-                      level.map((option) =>
-                        // A row DESCENDS while it has children and CHOOSES
-                        // when it does not. A leaf has no level to open, and
-                        // making it descend into an empty screen would be a
-                        // dead end at exactly the moment the merchant is done.
-                        row(
-                          option.id,
-                          <Text as="span" variant="bodyMd">{option.name}</Text>,
-                          () => (option.isLeaf ? choose(option) : descend(option)),
-                          option.isLeaf ? undefined : chevron,
-                        ),
+                        </Banner>
                       )}
 
-                    {levelTruncated && (
-                      <Box padding="200">
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {t.levelTruncated ||
-                            "This level has more subcategories than were loaded — use the search above."}
-                        </Text>
-                      </Box>
-                    )}
-                  </BlockStack>
-                )}
-              </div>
-            </BlockStack>
-          </div>
-        </Popover>
+                      {state === "idle" && results !== null && results.length === 0 && (
+                        <Box padding="200">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.noMatches || "No category matches that."}
+                          </Text>
+                        </Box>
+                      )}
+
+                      {state === "idle" &&
+                        results !== null &&
+                        results.map((option) =>
+                          row(
+                            option.id,
+                            <InlineStack gap="200" blockAlign="center" wrap>
+                              {/* The whole path: a search for "shirt" returns
+                                  several, and only the path tells them apart. */}
+                              <Text as="span" variant="bodyMd">{option.fullName}</Text>
+                              {/* A branch IS a valid value on Shopify's side, so
+                                  this is a note and not a refusal — but a product
+                                  filed under a branch shows up wrong in
+                                  marketplace listings, and nothing else would say
+                                  so until then. */}
+                              {!option.isLeaf && (
+                                <Text as="span" variant="bodySm" tone="subdued">{t.broad || "(broad)"}</Text>
+                              )}
+                            </InlineStack>,
+                            () => choose(option),
+                          ),
+                        )}
+                    </BlockStack>
+                  ) : (
+                    <BlockStack gap="050">
+                      {here &&
+                        row(
+                          "__back",
+                          <InlineStack gap="200" blockAlign="center">
+                            <Icon source={ArrowLeftIcon} tone="subdued" />
+                            <Text as="span" variant="bodyMd" tone="subdued">
+                              {path.length > 1
+                                ? (t.backTo || "Back to {name}").replace("{name}", path[path.length - 2].name)
+                                : t.backToAll || "Back to all"}
+                            </Text>
+                          </InlineStack>,
+                          ascend,
+                        )}
+
+                      {/* The branch you are standing in — the ONE way to choose
+                          it, so that opening a row and picking it stay separate
+                          actions. */}
+                      {here &&
+                        row(
+                          "__self",
+                          <InlineStack gap="200" blockAlign="center" wrap>
+                            <Text as="span" variant="bodyMd" fontWeight="semibold">{here.name}</Text>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {t.chooseThis || "choose this category"}
+                            </Text>
+                          </InlineStack>,
+                          () =>
+                            choose({
+                              id: here.id,
+                              name: here.name,
+                              fullName: here.fullName,
+                              isLeaf: here.isLeaf,
+                            }),
+                        )}
+
+                      {levelState === "loading" && (
+                        <Box padding="200">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Spinner size="small" />
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {t.searching || "Searching…"}
+                            </Text>
+                          </InlineStack>
+                        </Box>
+                      )}
+
+                      {levelState === "failed" && (
+                        <Banner tone="warning">
+                          <BlockStack gap="200">
+                            <p>{t.lookupFailed || "The category list could not be loaded. Try again in a moment."}</p>
+                            {/* The way out, spelled out. Closing and reopening
+                                also retries now, but nothing on screen says so. */}
+                            <Box>
+                              <Button onClick={() => loadLevel(here?.id ?? "")}>
+                                {t.reload || "Reload"}
+                              </Button>
+                            </Box>
+                          </BlockStack>
+                        </Banner>
+                      )}
+
+                      {levelState === "idle" && level !== null && level.length === 0 && (
+                        <Box padding="200">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.noChildren || "This category has no subcategories."}
+                          </Text>
+                        </Box>
+                      )}
+
+                      {levelState === "idle" &&
+                        level !== null &&
+                        level.map((option) =>
+                          // A row DESCENDS while it has children and CHOOSES
+                          // when it does not. A leaf has no level to open, and
+                          // making it descend into an empty screen would be a
+                          // dead end at exactly the moment the merchant is done.
+                          row(
+                            option.id,
+                            <Text as="span" variant="bodyMd">{option.name}</Text>,
+                            () => (option.isLeaf ? choose(option) : descend(option)),
+                            option.isLeaf ? undefined : chevron,
+                          ),
+                        )}
+
+                      {levelTruncated && (
+                        <Box padding="200">
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.levelTruncated ||
+                              "This level has more subcategories than were loaded — use the search above."}
+                          </Text>
+                        </Box>
+                      )}
+                    </BlockStack>
+                  )}
+                </div>
+              </BlockStack>
+            </div>
+          </Popover>
+        </div>
 
         {value && !disabled && (
           <Button variant="plain" tone="critical" onClick={() => onChange("")}>
