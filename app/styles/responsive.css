@@ -115,6 +115,43 @@
      with a drag handle but has no handle of its own. */
   --app-drag-handle-width: 20px;
 
+  /* ── FIELD CHROME ─────────────────────────────────────────────────────────
+     How an input BOX looks, in one place, for the same reason the widths above
+     are in one place: a page whose fields disagree about their border and
+     their label weight reads as assembled from parts, and "make the frames
+     lighter" turns into a hunt through components.
+
+     The frame itself is drawn by the rule further down this file, on Polaris'
+     Backdrop elements. That is where the two greys came from: the fields
+     inside `.ai-editable-field-wrapper` carried a hand-written light border
+     while every plain Polaris control next to them kept Polaris' much darker
+     default — including a `border-top-color` Polaris hardcodes one shade
+     darker again.
+
+     --app-field-border-color        the resting frame. The light grey the
+                                     AI-editable fields already used.
+     --app-field-border-radius       the corner, spent by AIEditableField.css.
+                                     Polaris' own inputs are already 8px.
+     --app-field-label-weight        every field label, everywhere. The
+                                     AI-editable fields printed a semibold
+                                     label and the merchandising controls a
+                                     regular one, in the same card.
+
+     --app-attribute-grid-min-width  the Details card's auto-fit column. The
+                                     compact one is for a run of SHORT fields
+                                     that is meant to stay on ONE line
+                                     (vendor / product type / collections /
+                                     tags): with the wide minimum only three of
+                                     the four fit on a normal screen, so the
+                                     last one dropped onto a line of its own
+                                     and the two comboboxes stretched to half
+                                     the card. */
+  --app-field-border-color: #c9cccf;
+  --app-field-border-radius: 8px;
+  --app-field-label-weight: 600;
+  --app-attribute-grid-min-width: 260px;
+  --app-attribute-grid-min-width-compact: 170px;
+
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
      100vh shell is taller than what is actually visible and its last rows can
@@ -138,6 +175,53 @@
   :root {
     --app-shell-height: 100dvh;
   }
+}
+
+/* The frame of every input BOX. Polaris draws it on a Backdrop element behind
+   the control — the input itself has `border: none` — and hardcodes a darker
+   `border-top-color` on top of the token, so both have to be named here.
+
+   Deliberately the two BOX controls only. Polaris spends the same
+   `--p-color-input-border` on checkboxes, radio buttons and the drop zone, so
+   re-pointing that variable would have lightened every tick box in the app;
+   those are not what "the outline of the input boxes" means, and a checkbox
+   needs its stronger edge to read as one.
+
+   Hover and focus are left to Polaris on purpose: the resting frame is a style,
+   a border that darkens under the pointer is an affordance. This file loads
+   AFTER Polaris' stylesheet (app.tsx), so equal specificity resolves our way.
+
+   The value lives with the widths in the :root block above. */
+.Polaris-TextField__Backdrop,
+.Polaris-Select__Backdrop {
+  border-color: var(--app-field-border-color);
+  border-top-color: var(--app-field-border-color);
+}
+
+/* The other half of the field chrome: one weight for every field LABEL.
+   Polaris renders a label as `.Polaris-Label__Text` wrapping a `Text` span, so
+   the weight has to be set on the wrapper and inherited into the span — the
+   span's own `.Polaris-Text--bodyMd` rule would otherwise win. Two classes beat
+   Polaris' one, which is why no `!important` is needed here.
+
+   App-wide on purpose. The mix was never a per-page decision: `AIEditableField`
+   hand-wrote `fontWeight: 600` into the label it passes Polaris, and every
+   control that did not go through it (vendor, tags, collections, the category
+   picker, the whole Settings form) kept the regular weight. */
+.Polaris-Label__Text {
+  font-weight: var(--app-field-label-weight);
+}
+
+.Polaris-Label__Text > .Polaris-Text--root {
+  font-weight: inherit;
+}
+
+/* A label this app draws ITSELF — the pickers that are not a Polaris field and
+   render their own heading line (ChipCombobox, TaxonomyField, CollectionsField).
+   They go through `FieldLabel`, which spends this class rather than restating
+   the weight. */
+.app-field-label {
+  font-weight: var(--app-field-label-weight);
 }
 
 @media (max-width: 899px) {
@@ -329,6 +413,12 @@ html {
   .field-clear-overlay ~ * .Polaris-Labelled__LabelWrapper {
     min-height: 34px;
     align-items: flex-start;
+  }
+
+  /* Same reserve for a label this app draws itself (FieldLabel) — a picker
+     that is not a Polaris field has no LabelWrapper for the rule above. */
+  .field-clear-overlay ~ * .app-field-label-row {
+    min-height: 34px;
   }
 }
 

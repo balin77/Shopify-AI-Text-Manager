@@ -28,6 +28,24 @@
 /** The subcards the Details card can split into, in render order. */
 export type DetailsSectionId = "publishing" | "organization" | "theme";
 
+/**
+ * Sections that are rendered WITHOUT a heading and without a subcard.
+ *
+ * "Organisation" is a word that says nothing its own fields do not already
+ * say: a vendor, a product type, collections and tags ARE how an item is
+ * organized, and the heading only cost the row above them. The fields still
+ * fold into a section — that is what keeps them consecutive and lets them share
+ * one compact grid — they just do not get a box drawn around them.
+ *
+ * The set is consulted in TWO places and must not be inlined at either: the
+ * editor decides whether to draw the frame, and `shouldRenderDetailsSections`
+ * counts how many frames there would be. A section that draws none must not be
+ * counted, or the last titled section gets a subcard with nothing to be
+ * separated FROM — the "titled box inside a titled box" this guard exists to
+ * prevent.
+ */
+export const HEADLESS_DETAILS_SECTIONS = new Set<DetailsSectionId>(["organization"]);
+
 /** One rendered block: a subcard (`id` set) or a run of unsectioned fields. */
 export interface DetailsSection<F> {
   /** null = render the fields bare, without a subcard. */
@@ -69,15 +87,29 @@ export function groupDetailsFields<F extends { detailsSection?: DetailsSectionId
 }
 
 /**
- * Are the subcards worth drawing? Counted over the SECTIONED blocks only: one
- * of them IS the whole card, so a subcard around it just repeats the frame the
- * "Details" heading already draws — that is a page or a blog, whose only
- * attribute is the theme template. Unsectioned blocks render bare either way,
- * so letting them push the count over the line would draw exactly the box this
- * guard exists to prevent.
+ * Are the subcards worth drawing? Counted over the blocks that would actually
+ * DRAW one — sectioned, and not in `HEADLESS_DETAILS_SECTIONS`. One of them IS
+ * the whole card, so a subcard around it just repeats the frame the "Details"
+ * heading already draws — that is a page or a blog, whose only attribute is the
+ * theme template. Blocks that render bare either way must not push the count
+ * over the line, or they draw exactly the box this guard exists to prevent.
  */
 export function shouldRenderDetailsSections<F>(blocks: DetailsSection<F>[]): boolean {
-  return blocks.filter((block) => block.id !== null).length > 1;
+  return blocks.filter((block) => block.id !== null && !HEADLESS_DETAILS_SECTIONS.has(block.id)).length > 1;
+}
+
+/**
+ * Does this section's own content draw the heading, so the subcard must not?
+ *
+ * "publishing" does: its field lays the sales channels, regions and B2B
+ * catalogs out as side-by-side columns, and the column titles only line up
+ * when the section's title IS the first column's heading instead of a line
+ * above the grid. It also carries the help bubble and the "on no channel"
+ * alarm, both of which belong beside the name they are about. A subcard title
+ * on top of that is how the word came to stand twice.
+ */
+export function ownsItsSectionTitle(id: DetailsSectionId): boolean {
+  return id === "publishing";
 }
 
 /** Resolve a section's heading from the i18n bundle, with an English fallback. */

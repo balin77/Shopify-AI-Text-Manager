@@ -168,24 +168,14 @@ export function UnifiedFieldRenderer(
   const translatedFieldLabel = fieldLabelMap[field.key] || field.label;
   const label = `${translatedFieldLabel} (${localeName})`;
 
-  // Per-field help that is a fixed SENTENCE gets translated here rather than in
-  // the config: the config is imported by the server and by the bulk grid,
-  // neither of which has a language. `templateSuffix` is the only one today.
-  const staticHelpText: Record<string, string | undefined> = {
-    templateSuffix: t.content?.templateSuffixHelp as string | undefined,
-    // The pair merchants take for one field. Each line names the OTHER, which
-    // is the only thing that tells them apart at a glance — and the category's
-    // note had nowhere to render before: `attributeNote` is drawn by
-    // `AttributeField`, and the taxonomy picker has its own branch above it, so
-    // the sentence in the config was dead text.
-    category: t.content?.categoryHelp as string | undefined,
-    productType: t.content?.productTypeHelp as string | undefined,
-  };
-
-  let helpText = staticHelpText[field.key] ?? "";
-  if (helpText) {
-    // already resolved
-  } else if (typeof field.helpText === "function") {
+  // What a field IS FOR lives in its question mark (`helpKeyMap` below), not as
+  // a paragraph under the box. There used to be a map of translated sentences
+  // here — the category's, the product type's, the theme template's — each of
+  // them an explanation a merchant reads once and then re-reads on every item.
+  // What is left under a field is a hint that changes WITH the value: a
+  // character count, a per-field note from the config.
+  let helpText = "";
+  if (typeof field.helpText === "function") {
     helpText = field.helpText(value);
   } else if (field.helpText) {
     helpText = field.helpText;
@@ -215,6 +205,10 @@ export function UnifiedFieldRenderer(
     }
   }
 
+  // Which `t.help` entry a field's question mark opens. Every editable field on
+  // a content page names one — `HelpTooltip` renders nothing for a key the
+  // language bundle does not carry, so an entry may be written later without
+  // touching this map, and a field never shows an empty circle in the meantime.
   const helpKeyMap: Record<string, string> = {
     title: "title",
     description: "description",
@@ -223,7 +217,15 @@ export function UnifiedFieldRenderer(
     seoTitle: "seoTitle",
     metaDescription: "metaDescription",
     altText: "altText",
+    // The Details card. `category` and `productType` are the pair merchants
+    // take for one field, and each entry names the other.
+    category: "category",
     productType: "productType",
+    vendor: "vendor",
+    collections: "collections",
+    tags: "tags",
+    templateSuffix: "templateSuffix",
+    sortOrder: "sortOrder",
   };
   const helpKey = helpKeyMap[field.key];
 
@@ -363,7 +365,7 @@ export function UnifiedFieldRenderer(
         // fields correctly saying "not loaded yet".
         known={attributesKnown !== false}
         onReload={onReloadAttributes}
-        helpText={staticHelpText.category}
+        helpKey={helpKey}
         t={(t.content?.taxonomy ?? {}) as Record<string, string>}
       />
     );
@@ -393,6 +395,7 @@ export function UnifiedFieldRenderer(
         // say "in no collections", which the save would then act on.
         known={Array.isArray(selectedItem?.collections)}
         label={translatedFieldLabel}
+        helpKey={helpKey}
         disabled={!isPrimaryLocale}
         t={{
           ...((t.content?.collectionsField ?? {}) as Record<string, string>),
@@ -416,11 +419,12 @@ export function UnifiedFieldRenderer(
       // moved into the variants card and the two share one load, one set of
       // pending edits and one registration with the save bar.
       //
-      // No `label`: the Details card's "publishing" subcard is already titled
-      // "Vertriebskanäle", and the field printed the same word again directly
-      // under it. The help bubble and the §2.3 alarm moved up onto that title
-      // as `CommerceChannelsHeaderExtras`.
-      <CommerceField />
+      // `label` is the SECTION's title here, not a field label: the subcard
+      // draws none (`ownsItsSectionTitle`), because the panel lays its three
+      // lists out as columns and their headings only line up when this one is
+      // the first column's heading. It carries the help bubble and the §2.3
+      // alarm with it.
+      <CommerceField label={translatedFieldLabel} />
     );
   }
 
@@ -495,7 +499,7 @@ export function UnifiedFieldRenderer(
         // Translated per field key; the config's own English string is the
         // fallback for a note nobody has translated yet.
         attributeNote={((t.content?.attributeNotes ?? {}) as Record<string, string>)[field.key]}
-        helpText={staticHelpText[field.key]}
+        helpKey={helpKey}
         t={{
           notTranslatable: t.content?.attributesForeignLocale,
           addTag: t.content?.addTag,

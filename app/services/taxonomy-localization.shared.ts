@@ -55,6 +55,26 @@ const GID_PREFIX = "gid://shopify/TaxonomyCategory/";
 const PATH_SEPARATOR = ">";
 
 /**
+ * The last segment of a category path — "Vasen" out of "Heim & Garten >
+ * Dekoration > Vasen".
+ *
+ * Exported because TWO places need it and a second copy is how a splitter
+ * drifts: the import below, and the picker's closed control, which shows the
+ * chosen category rather than the whole path. A path with no separator IS its
+ * own leaf, and a trailing separator yields the segment before it rather than
+ * an empty label.
+ */
+export function leafNameOf(fullName: string): string {
+  const path = (fullName || "").trim();
+  if (!path) return "";
+  const segments = path
+    .split(PATH_SEPARATOR)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return segments.length ? segments[segments.length - 1] : path;
+}
+
+/**
  * Which of these categories have children — read off the GIDs themselves.
  *
  * Shopify's taxonomy ids ARE the hierarchy: `hg-3-66-1` sits under `hg-3-66`
@@ -104,8 +124,7 @@ export function parseTaxonomyCategoriesFile(text: string): ParsedTaxonomyFile {
     const fullName = line.slice(separator + 3).trim();
     if (!gid || !fullName) continue;
 
-    const lastSegment = fullName.lastIndexOf(PATH_SEPARATOR);
-    const name = lastSegment >= 0 ? fullName.slice(lastSegment + 1).trim() : fullName;
+    const name = leafNameOf(fullName);
     if (!name) continue;
 
     entries.push({ gid, fullName, name });

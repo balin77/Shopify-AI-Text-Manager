@@ -1,5 +1,10 @@
 /* AI Editable Field Styling - Background colors for translation states */
 
+/* The BACKGROUND is this file's job — it is what says "untranslated", "AI
+   suggestion", "fallback". The frame is not: border colour and radius come from
+   the field-chrome tokens in responsive.css, so these fields and the plain
+   Polaris controls beside them cannot drift apart again. */
+
 /* Smooth transition for background colors to prevent flashing */
 .ai-editable-field-wrapper input,
 .ai-editable-field-wrapper textarea {
@@ -15,32 +20,28 @@
 .ai-editable-field-wrapper.bg-white input,
 .ai-editable-field-wrapper.bg-white textarea {
   background-color: white !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
+  border-radius: var(--app-field-border-radius) !important;
 }
 
 /* Orange background for untranslated fields */
 .ai-editable-field-wrapper.bg-untranslated input,
 .ai-editable-field-wrapper.bg-untranslated textarea {
   background-color: #fff4e5 !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
+  border-radius: var(--app-field-border-radius) !important;
 }
 
 /* Light blue background when AI suggestion is active */
 .ai-editable-field-wrapper.bg-suggestion input,
 .ai-editable-field-wrapper.bg-suggestion textarea {
   background-color: #f0f9ff !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
+  border-radius: var(--app-field-border-radius) !important;
 }
 
 /* Blue background when primary locale has content but foreign translation is missing */
 .ai-editable-field-wrapper.bg-missing-translation input,
 .ai-editable-field-wrapper.bg-missing-translation textarea {
   background-color: #e0f2fe !important;
-  border: 1px solid #c9cccf !important;
-  border-radius: 8px !important;
+  border-radius: var(--app-field-border-radius) !important;
 }
 
 /* Gray background for fallback values (using primary locale value when no translation exists) */
@@ -48,8 +49,7 @@
 .ai-editable-field-wrapper.bg-fallback input,
 .ai-editable-field-wrapper.bg-fallback textarea {
   background-color: #f3f4f6 !important;
-  border: 1px solid #d1d5db !important;
-  border-radius: 8px !important;
+  border-radius: var(--app-field-border-radius) !important;
   color: #5a5e62 !important; /* Improved from #6b7280 for better contrast */
   font-style: italic !important;
 }
@@ -252,37 +252,37 @@
 .ai-editable-html-field textarea,
 .ai-editable-html-field [contenteditable] {
   background-color: white;
-  border-radius: 8px;
+  border-radius: var(--app-field-border-radius);
 }
 
 .ai-editable-html-field.bg-white textarea,
 .ai-editable-html-field.bg-white [contenteditable] {
   background-color: white !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-untranslated textarea,
 .ai-editable-html-field.bg-untranslated [contenteditable] {
   background-color: #fff4e5 !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-suggestion textarea,
 .ai-editable-html-field.bg-suggestion [contenteditable] {
   background-color: #f0f9ff !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-missing-translation textarea,
 .ai-editable-html-field.bg-missing-translation [contenteditable] {
   background-color: #e0f2fe !important;
-  border-color: #c9cccf !important;
+  border-color: var(--app-field-border-color) !important;
 }
 
 .ai-editable-html-field.bg-fallback textarea,
 .ai-editable-html-field.bg-fallback [contenteditable] {
   background-color: #f3f4f6 !important;
-  border-color: #d1d5db !important;
+  border-color: var(--app-field-border-color) !important;
   color: #5a5e62 !important; /* WCAG AA compliant contrast */
   font-style: italic !important;
 }

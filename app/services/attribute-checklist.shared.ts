@@ -79,11 +79,25 @@ export interface AttributeInput {
    *  attribute block, so it is NOT gated on attributesSyncedAt. */
   hasKeyword?: boolean | null;
   /**
-   * Sales channels. There is no cache and no scope for this before Phase 4,
-   * so it is `undefined` today and renders as "unknown" with an admin link —
-   * NOT as a red finding for something we simply cannot see (§2.3).
+   * How many SALES CHANNELS the product is published on — markets and B2B
+   * catalogs deliberately excluded, because a product that sits in a market
+   * catalog but on no channel is invisible exactly as if it sat nowhere.
+   *
+   * Two sources answer it (Phase 4): the live commerce load, which is what the
+   * merchant is looking at while the panel is open, and the `ProductPublication`
+   * mirror it writes, which is what answers on a foreign locale and before the
+   * live call lands. `null` from BOTH ⇒ "unknown" with an admin link, never a
+   * red finding for something we simply cannot see (§2.3).
    */
   publicationCount?: number | null;
+  /**
+   * The publication window was cut off, so the count is a FLOOR.
+   *
+   * Load-bearing in one direction only: a truncated `0` cannot claim "on no
+   * channel" — the one row that would have said otherwise may be exactly the
+   * one that did not arrive. The same rule the panel's "invisible" badge keeps.
+   */
+  publicationCountTruncated?: boolean;
 }
 
 /** The Phase-0 discriminator, in the one place readers should ask. */
@@ -114,11 +128,20 @@ export function buildAttributeChecklist(input: AttributeInput): AttributeRow[] {
     // §2.3 — status and channels are SEPARATE rows on purpose. ACTIVE alone
     // does not make a product visible; that needs a publication. Merging them
     // into one "published" line is exactly the confusion the plan warns about.
+    const channelCount = input.publicationCount ?? null;
+    const channelsTruncated = input.publicationCountTruncated === true;
+    // A truncated window that found nothing has found nothing YET — it is the
+    // one case where a number exists and still may not be judged.
+    const channelsUnknown = channelCount == null || (channelCount === 0 && channelsTruncated);
     rows.push({
       key: "channels",
-      status: input.publicationCount == null ? "unknown" : input.publicationCount > 0 ? "ok" : "warning",
-      value: input.publicationCount == null ? undefined : String(input.publicationCount),
-      adminOnly: input.publicationCount == null,
+      status: channelsUnknown ? "unknown" : channelCount > 0 ? "ok" : "warning",
+      value: channelsUnknown
+        ? undefined
+        : channelsTruncated
+          ? `${channelCount}+`
+          : String(channelCount),
+      adminOnly: channelsUnknown,
     });
 
     rows.push({

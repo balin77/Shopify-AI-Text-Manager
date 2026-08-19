@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { TextField, Button, InlineStack } from "@shopify/polaris";
+import { TextField, Button } from "@shopify/polaris";
 import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
-import { HelpTooltip } from "./HelpTooltip";
+import { FieldClearOverlay, FieldLabel } from "./unified/FieldChrome";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ActionTooltip } from "./ActionTooltip";
 import { aiActionTooltip } from "../utils/ai-action-tooltip";
@@ -150,49 +150,30 @@ export function AIEditableField({
 
   return (
     <div>
-      <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`} style={{ position: "relative" }}>
-        {onClear && (
-          /* The wrapper stays mounted even with no value: responsive.css
-             reserves the label row for it on mobile, and a row that only
-             appeared once the field had content would shove the input down on
-             the first keystroke. */
-          <div className="field-clear-overlay" style={{ position: "absolute", top: "0", right: "0", zIndex: 10 }}>
-            {value && (
-              <Button
-                size="slim"
-                onClick={onClear}
-                tone="critical"
-                variant="plain"
-              >
-                {t.common?.clear || "Clear"}
-              </Button>
-            )}
-          </div>
-        )}
-        <TextField
-          label={
-            <InlineStack gap="100" blockAlign="center">
-              <span style={{ fontWeight: 600 }}>
-                {label}{requiredIndicator && <span style={{ color: 'var(--p-color-text-critical)' }}> *</span>}
-              </span>
-              {helpKey && <HelpTooltip helpKey={helpKey} />}
-            </InlineStack>
-          }
-          value={value}
-          onChange={onChange}
-          disabled={readOnly}
-          autoComplete="off"
-          helpText={helpText}
-          multiline={multiline}
-          maxLength={maxLength}
-          placeholder={placeholder}
-          showCharacterCount={!!maxLength}
-          error={error}
-          suffix={seoSuffix ? (
-            <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
-          ) : undefined}
-        />
-      </div>
+      {/* The clear button and the bold, question-marked label are the SHARED
+          field chrome now (FieldChrome.tsx) — this component drew both by hand,
+          and every control that did not go through it looked different in the
+          same card. */}
+      <FieldClearOverlay onClear={onClear} hasValue={!!value}>
+        <div className={`ai-editable-field-wrapper ${getBackgroundClass()}`}>
+          <TextField
+            label={<FieldLabel label={label} helpKey={helpKey} requiredIndicator={requiredIndicator} />}
+            value={value}
+            onChange={onChange}
+            disabled={readOnly}
+            autoComplete="off"
+            helpText={helpText}
+            multiline={multiline}
+            maxLength={maxLength}
+            placeholder={placeholder}
+            showCharacterCount={!!maxLength}
+            error={error}
+            suffix={seoSuffix ? (
+              <span style={{ color: "#6d7175", whiteSpace: "nowrap" }}>{seoSuffix}</span>
+            ) : undefined}
+          />
+        </div>
+      </FieldClearOverlay>
 
       {instructionPromptOpen && onGenerateAI && (
         <AIInstructionPrompt

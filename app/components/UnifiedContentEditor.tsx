@@ -11,17 +11,24 @@ import {
   groupDetailsFields,
   shouldRenderDetailsSections,
   detailsSectionLabel,
+  HEADLESS_DETAILS_SECTIONS,
+  ownsItsSectionTitle,
 } from "~/config/details-sections";
 
 /**
  * Attribute field types that need the editor's full width.
  *
  * Everything else is a short answer — a vendor, a status, a template name — and
- * shares a row. These four are lists or panels: a tag combobox with chips, a
- * membership picker, the rule builder and the stock panel all grow downwards
- * and would be squeezed into a column half their useful width.
+ * shares a row. These two are PANELS: the rule builder and the stock panel both
+ * grow downwards and carry rows of their own.
+ *
+ * Tags and collection memberships were in here and are not any more. Both are
+ * `ChipCombobox`es — one line plus the chips that are set — and at full width
+ * each of them took a row of the card to show a single input, which is what
+ * pushed the four organization fields onto three lines. They read fine in a
+ * column.
  */
-const WIDE_ATTRIBUTE_FIELDS = new Set(["tags", "collections", "collectionRules", "commerce"]);
+const WIDE_ATTRIBUTE_FIELDS = new Set(["collectionRules", "commerce"]);
 import { useCommerceSaveRegistry } from "../contexts/CommerceSaveContext";
 import { getReloadResourceType } from "~/utils/reload-resource-type";
 import { useCreateItem } from "../hooks/useCreateItem";
@@ -34,7 +41,7 @@ import { DeleteItemModal } from "./create/DeleteItemModal";
 import { useDuplicateItem } from "../hooks/useDuplicateItem";
 import { useRouteLoaderData } from "react-router";
 import { rulesAvailableOn, RULES_MIN_API_VERSION } from "../config/collection-rules.shared";
-import { buildAttributeChecklist, needsAttributeSync } from "../services/attribute-checklist.shared";
+import type { AttributeInput } from "../services/attribute-checklist.shared";
 import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -83,7 +90,6 @@ import {
 import { useI18n } from "../contexts/I18nContext";
 import { CommerceDataProvider } from "../contexts/CommerceDataContext";
 import { CommerceVariantsSection } from "./unified/CommerceVariantsSection";
-import { CommerceChannelsHeaderExtras } from "./unified/CommerceField";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ENABLE_THEME_PRIMARY_EDIT } from "../config/constants";
@@ -772,17 +778,26 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
 
   /**
-   * The Details card's field grid: two columns where a field does not need a
-   * line of its own. A vendor is one word and a status is one dropdown; giving
-   * each the full width of the editor turned eight short answers into eight
-   * rows of mostly empty space. The wide ones keep the full width — a tag list,
-   * a membership picker and the stock panel all use it.
+   * The Details card's field grid: as many columns as fit, where a field does
+   * not need a line of its own. A vendor is one word and a status is one
+   * dropdown; giving each the full width of the editor turned eight short
+   * answers into eight rows of mostly empty space. The wide ones keep the full
+   * width — the rule builder and the stock panel.
+   *
+   * `compact` narrows the column minimum so a short RUN of fields stays on one
+   * line: the four organization fields (vendor, product type, collections,
+   * tags) are meant to be read across, and at the default minimum only three of
+   * them fitted on a normal screen. Both numbers live in responsive.css with
+   * every other width in this app — auto-fit never makes more columns than
+   * there are items, so the narrow minimum only decides WHEN the row wraps.
    */
-  const renderAttributeGrid = (fields: FieldDefinition[]) => (
+  const renderAttributeGrid = (fields: FieldDefinition[], compact = false) => (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gridTemplateColumns: `repeat(auto-fit, minmax(var(${
+          compact ? "--app-attribute-grid-min-width-compact" : "--app-attribute-grid-min-width"
+        }), 1fr))`,
         gap: "1rem",
         alignItems: "start",
       }}
@@ -1232,7 +1247,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     const attributes = attributeResource
       ? (() => {
           const row = item as unknown as Record<string, unknown>;
-          const checklistRows = buildAttributeChecklist({
+          const checklistInput: AttributeInput = {
             resource: attributeResource,
             // THE gate. Absent on an item the route does not carry it on,
             // which is the honest "we have not fetched this" rather than a
@@ -1251,11 +1266,20 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             isPublished: (row.isPublished as boolean | null | undefined) ?? null,
             featuredImageUrl: (row.featuredImageUrl as string | null | undefined) ?? primaryImageUrl ?? null,
             templateSuffix: (row.templateSuffix as string | null | undefined) ?? null,
-            hasKeyword: null,
-          });
+            // §2.3 — the sales-channel mirror `/api/product-commerce` writes.
+            // Named in Phase 4 as what a "completeness check" would read, and
+            // this is that check. Absent (`null`) until the panel has run once
+            // for this product, which is the honest unknown; the LIVE count
+            // supersedes it inside the sidebar the moment the panel loads.
+            publicationCount: (row.publishedChannelCount as number | null | undefined) ?? null,
+            // The three rows the item alone cannot answer — the sales-channel
+            // count, the price and the keyword — are filled in by the sidebar,
+            // which sits inside the commerce context and already loads the
+            // item's keywords for its own tab. Handing it the INPUT rather
+            // than finished rows keeps one place that turns data into status.
+          };
           return {
-            rows: checklistRows,
-            needsSync: needsAttributeSync(checklistRows),
+            input: checklistInput,
             onReload: () => { void handleSyncAll(); },
             // §2.4 — tags, vendor and category are not translatable, so acting
             // on a finding here while a translation is selected would edit the
@@ -2224,24 +2248,33 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           // blocks, and two siblings keyed "organization" would
                           // collide and reconcile into each other's subcard.
                           const key = `${section.id ?? "unsectioned"}-${section.fields[0].key}`;
-                          if (!renderDetailsSections || !section.id) {
-                            return <Fragment key={key}>{renderAttributeGrid(section.fields)}</Fragment>;
+                          // A HEADLESS section drops both the heading and the
+                          // box: "Organisation" says nothing its own fields do
+                          // not already say, and it reads as one compact row of
+                          // short fields instead. The set lives in
+                          // details-sections.ts, because the counting rule
+                          // above has to agree with it.
+                          const headless = !!section.id && HEADLESS_DETAILS_SECTIONS.has(section.id);
+                          if (!renderDetailsSections || !section.id || headless) {
+                            return (
+                              <Fragment key={key}>{renderAttributeGrid(section.fields, headless)}</Fragment>
+                            );
                           }
                           return (
                             <Card key={key} background="bg-surface-secondary" padding="300">
                               <BlockStack gap="300">
-                                {/* The title row is where a section's help
-                                    bubble and its alarm belong — beside the
-                                    name they are about, not repeated on a
-                                    second heading inside the subcard. So far
-                                    only "publishing" has any; the field below
-                                    it stopped printing its own label. */}
-                                <InlineStack gap="200" blockAlign="center" wrap>
+                                {/* "publishing" draws its OWN title, and must:
+                                    its field lays the sales channels, regions
+                                    and B2B catalogs out as columns, and their
+                                    headings only line up when the section's
+                                    title is the first column's heading rather
+                                    than a line above the grid. A title here as
+                                    well is how the word came to stand twice. */}
+                                {!ownsItsSectionTitle(section.id) && (
                                   <Text as="h3" variant="bodyMd" fontWeight="semibold">
                                     {detailsSectionLabel(t, section.id)}
                                   </Text>
-                                  {section.id === "publishing" && <CommerceChannelsHeaderExtras />}
-                                </InlineStack>
+                                )}
                                 {renderAttributeGrid(section.fields)}
                               </BlockStack>
                             </Card>

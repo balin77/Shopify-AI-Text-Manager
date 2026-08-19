@@ -36,16 +36,16 @@
  * everywhere else — a publication is on or off, which is what a switch says
  * and what a checkbox in a wrapping row did not.
  *
- * -- The subcard's title is the ONLY title -----------------------------------
- * This field sits in the Details card's "publishing" subcard, whose heading
- * already reads "Vertriebskanäle". The field then printed its own label under
- * it, so the word stood twice with nothing between them. The heading stays,
- * the label is gone, and the two things that belong BESIDE a title — the help
- * bubble and the §2.3 alarm — moved up onto it as
- * `CommerceChannelsHeaderExtras`. That heading is drawn by `UnifiedContentEditor`
- * and only once there are at least two sections (`shouldRenderDetailsSections`);
- * a product always has more (organization, theme), which is the assumption this
- * field now rests on.
+ * -- One heading row, and this field draws ALL of it -------------------------
+ * The lists sit side by side wherever the card is wide enough, so their titles
+ * belong on ONE line. The publishing subcard therefore draws no title of its
+ * own (`ownsItsSectionTitle` in `UnifiedContentEditor`): a title one row above
+ * the grid put "Vertriebskanäle" a line higher than "Regionen", which is the
+ * misalignment this arrangement fixes — and printing it in BOTH places is how
+ * the word came to stand twice before.
+ *
+ * So `label` is the section's title, not a field label: it carries the help
+ * bubble and the §2.3 alarm, and it is the first column's heading.
  */
 
 import { Badge, Banner, BlockStack, Box, Button, InlineStack, Spinner, Text } from "@shopify/polaris";
@@ -55,104 +55,105 @@ import { useCommerceData } from "../../contexts/CommerceDataContext";
 import { groupPublications, type PublicationGroupId } from "../../services/commerce-sync.shared";
 import type { CommerceChannelView } from "../../routes/api.product-commerce";
 
-/**
- * The alarm and the "no channels installed" line are CLAIMS about the whole
- * shop, and a cut-off window cannot support either: the channel this product
- * is on may be one of the rows that did not arrive. With the window truncated
- * the panel shows the rows it has and says nothing beyond them — the
- * truncation line already tells the merchant why.
- *
- * Module scope because the panel and its heading both ask, and two copies of
- * "may we make a claim" is exactly the drift this file keeps closing.
- */
-function channelsAreComplete(data: { channelsTruncated?: boolean } | null | undefined): boolean {
-  return !!data && !data.channelsTruncated;
-}
-
-/**
- * The §2.3 alarm, beside the subcard's own title.
- *
- * Counts SALES CHANNELS only — a product that sits in a market catalog but on
- * no channel is invisible exactly as if it sat nowhere, and counting the market
- * row would have hidden that. Taken from the GROUPED list so there is one rule
- * for which row is a channel, and read off `channelState` rather than off the
- * loaded rows: an untick has to raise the alarm before the save, because the
- * merchant is looking at what the save bar is about to write.
- */
-export function CommerceChannelsHeaderExtras() {
-  const commerce = useCommerceData();
-  // No provider ⇒ not a product. Nothing to say.
-  if (!commerce) return null;
-
-  const { data, isPrimaryLocale, planBlocked, t, channelState } = commerce;
-
-  // Without the panel there is no measurement behind the badge — but the help
-  // bubble still answers what this section is, which is the question a merchant
-  // in a foreign locale is most likely to have.
-  const showAlarm = isPrimaryLocale && !planBlocked && channelsAreComplete(data);
-  const channelRows = data ? groupPublications(data.channels).find((g) => g.id === "channels")?.rows ?? [] : [];
-  const publishedChannelCount = channelRows.filter((c) => channelState[c.publicationId] === true).length;
-
+/** Every column title, so the row reads as one line of headings. */
+function GroupHeading({ text, helpKey, children }: { text: string; helpKey?: string; children?: React.ReactNode }) {
   return (
-    <InlineStack gap="200" blockAlign="center" wrap={false}>
-      <HelpTooltip helpKey="commerceChannels" />
-      {/* §2.3 — the trap this feature exists for. Not a subtle hint: a product
-          on no channel is invisible everywhere. */}
-      {showAlarm && publishedChannelCount === 0 && (
-        <Badge tone="critical">{(t.noChannel as string) || "On no channel — invisible"}</Badge>
-      )}
+    <InlineStack gap="200" blockAlign="center" wrap>
+      <Text as="h3" variant="bodyMd" fontWeight="semibold">{text}</Text>
+      {helpKey && <HelpTooltip helpKey={helpKey} />}
+      {children}
     </InlineStack>
   );
 }
 
-export function CommerceField() {
+export function CommerceField({ label }: { label: string }) {
   const commerce = useCommerceData();
   // No provider ⇒ not a product. Nothing to say.
   if (!commerce) return null;
 
-  const { data, loadError, planBlocked, notices, setNotices, load, isPrimaryLocale, t, channelState, setChannelState, saving } =
-    commerce;
+  const {
+    data, loadError, planBlocked, notices, setNotices, load, isPrimaryLocale, t,
+    channelState, setChannelState, saving, salesChannelSummary,
+  } = commerce;
 
-  if (!isPrimaryLocale) {
-    return (
-      <Banner tone="info">
-        <p>{(t.foreignLocale as string) || "Stock and sales channels exist once per product, not per language."}</p>
-      </Banner>
-    );
-  }
-
-  if (planBlocked) {
-    return (
-      <Banner tone="info">
-        <p>{(t.planRequired as string) || "Stock and sales channels are part of the Pro plan."}</p>
-        {/* The one case where the bulk editor is still the answer: without this
-            panel there is nowhere else to price a multi-variant product. */}
-        <p>{(t.variantPricesHint as string) || "Prices of several variants are edited in the bulk editor."}</p>
-      </Banner>
-    );
-  }
-
-  const complete = channelsAreComplete(data);
+  /**
+   * The alarm and the "no channels installed" line are CLAIMS about the whole
+   * shop, and a cut-off window cannot support either: the channel this product
+   * is on may be one of the rows that did not arrive. With the window truncated
+   * the panel shows the rows it has and says nothing beyond them — the
+   * truncation line already tells the merchant why.
+   */
+  const complete = !!data && !data.channelsTruncated;
 
   /** The three lists, always in the admin's order. */
   const groups = data ? groupPublications(data.channels) : [];
 
   /**
-   * `heading` is OPTIONAL, and the sales-channel group deliberately has none:
-   * the subcard's own title already says "Vertriebskanäle". The other two
-   * groups need theirs — nothing else on the card names them.
+   * The alarm counts SALES CHANNELS only — a product that sits in a market
+   * catalog but on no channel is invisible exactly as if it sat nowhere, and
+   * counting the market row would have hidden that.
    *
-   * Their explanations ride in a help bubble rather than as a paragraph over
-   * the switches: regions and B2B catalogs answer "who may see it", not "where
-   * is it sold", and merchants reliably read them as channels — but two
-   * sentences of prose above a list of toggles is what pushed the list itself
-   * off the screen. The bubble keeps the answer one click away for whoever
-   * wants it and out of the way of whoever does not.
+   * Comes from the context (`salesChannelSummary`) rather than being counted
+   * here: the sidebar's completeness checklist asks the same question one
+   * column over, and two counts of "how many channels" would eventually
+   * disagree on which row is a channel.
    */
-  const GROUP_TEXT: Record<PublicationGroupId, { heading?: string; helpKey?: string }> = {
-    channels: {},
-    market: { heading: (t.marketsHeading as string) || "Regions", helpKey: "commerceRegions" },
-    companyLocation: { heading: (t.b2bHeading as string) || "B2B catalogs", helpKey: "commerceB2b" },
+  const publishedChannelCount = salesChannelSummary?.publishedCount ?? 0;
+
+  /**
+   * The section's title. It is drawn in every branch below — a subcard that
+   * shows only a banner still has to say what it is about, and the subcard
+   * itself no longer prints a title.
+   */
+  const channelsHeading = (
+    <GroupHeading text={label} helpKey="commerceChannels">
+      {/* §2.3 — the trap this feature exists for. Not a subtle hint: a product
+          on no channel is invisible everywhere. Silent when the window was cut
+          off: that is a claim about the whole shop, and a partial answer cannot
+          carry it. */}
+      {isPrimaryLocale && !planBlocked && complete && publishedChannelCount === 0 && (
+        <Badge tone="critical">{(t.noChannel as string) || "On no channel — invisible"}</Badge>
+      )}
+    </GroupHeading>
+  );
+
+  if (!isPrimaryLocale) {
+    return (
+      <BlockStack gap="300">
+        {channelsHeading}
+        <Banner tone="info">
+          <p>{(t.foreignLocale as string) || "Stock and sales channels exist once per product, not per language."}</p>
+        </Banner>
+      </BlockStack>
+    );
+  }
+
+  if (planBlocked) {
+    return (
+      <BlockStack gap="300">
+        {channelsHeading}
+        <Banner tone="info">
+          <p>{(t.planRequired as string) || "Stock and sales channels are part of the Pro plan."}</p>
+          {/* The one case where the bulk editor is still the answer: without
+              this panel there is nowhere else to price a multi-variant product. */}
+          <p>{(t.variantPricesHint as string) || "Prices of several variants are edited in the bulk editor."}</p>
+        </Banner>
+      </BlockStack>
+    );
+  }
+
+  /**
+   * The other two groups' explanations ride in a help bubble rather than as a
+   * paragraph over the switches: regions and B2B catalogs answer "who may see
+   * it", not "where is it sold", and merchants reliably read them as channels
+   * — but two sentences of prose above a list of toggles is what pushed the
+   * list itself off the screen. The bubble keeps the answer one click away for
+   * whoever wants it and out of the way of whoever does not.
+   */
+  const GROUP_HEADING: Record<PublicationGroupId, React.ReactNode> = {
+    channels: channelsHeading,
+    market: <GroupHeading text={(t.marketsHeading as string) || "Regions"} helpKey="commerceRegions" />,
+    companyLocation: <GroupHeading text={(t.b2bHeading as string) || "B2B catalogs"} helpKey="commerceB2b" />,
   };
 
   /**
@@ -208,16 +209,23 @@ export function CommerceField() {
 
   return (
     <BlockStack gap="300">
-      {loadError && (
-        <Banner tone="warning">
-          <BlockStack gap="200">
-            <Text as="p">{loadError}</Text>
-            <Box><Button onClick={() => load()}>{(t.retry as string) || "Try again"}</Button></Box>
-          </BlockStack>
-        </Banner>
+      {/* Before the grid, because it belongs to the whole panel and not to one
+          column: a load that failed produced no lists at all. */}
+      {!data && (
+        <BlockStack gap="300">
+          {channelsHeading}
+          {loadError ? (
+            <Banner tone="warning">
+              <BlockStack gap="200">
+                <Text as="p">{loadError}</Text>
+                <Box><Button onClick={() => load()}>{(t.retry as string) || "Try again"}</Button></Box>
+              </BlockStack>
+            </Banner>
+          ) : (
+            <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />
+          )}
+        </BlockStack>
       )}
-
-      {!data && !loadError && <Spinner size="small" accessibilityLabel={(t.loading as string) || "Loading"} />}
 
       {/* The notices belong to whichever half produced them, and a save writes
           both — so they are rendered here, where the panel has always shown
@@ -249,9 +257,10 @@ export function CommerceField() {
 
           {/* The lists sit SIDE BY SIDE wherever the card is wide enough — the
               same `auto-fit` grid the Details card uses for its short fields.
-              Stacked, a shop with regions and B2B catalogs scrolled through
-              three lists to see whether the last one had anything in it; with
-              one list (the ordinary shop) `auto-fit` collapses to a single
+              Every column opens with its heading, so the titles line up across
+              the row; that is why the section's own title is in here as the
+              first column's heading rather than on a line above the grid.
+              With one list (the ordinary shop) `auto-fit` collapses to a single
               full-width column, so nothing changes there. `start` alignment
               keeps a short list from stretching to the tallest one. */}
           <div
@@ -264,14 +273,7 @@ export function CommerceField() {
           >
             {groups.map((group) => (
               <BlockStack gap="300" key={group.id}>
-                {GROUP_TEXT[group.id].heading && (
-                  <InlineStack gap="100" blockAlign="center" wrap={false}>
-                    <Text as="h3" variant="headingSm">{GROUP_TEXT[group.id].heading}</Text>
-                    {GROUP_TEXT[group.id].helpKey && (
-                      <HelpTooltip helpKey={GROUP_TEXT[group.id].helpKey as string} />
-                    )}
-                  </InlineStack>
-                )}
+                {GROUP_HEADING[group.id]}
 
                 {/* Only the SALES CHANNEL group survives empty (groupPublications
                     drops the other two), so this line is always about channels. */}

@@ -30,6 +30,7 @@ import {
   Text,
   Tooltip,
 } from "@shopify/polaris";
+import { FieldClearOverlay, FieldLabel } from "./FieldChrome";
 
 export interface ChipOption {
   value: string;
@@ -40,6 +41,8 @@ export interface ChipOption {
 
 export interface ChipComboboxProps {
   label: string;
+  /** Key into `t.help` — the question mark beside the label. */
+  helpKey?: string;
   /** Currently chosen values. */
   selected: string[];
   /** Everything selectable. May be empty — free-text entry still works. */
@@ -74,6 +77,7 @@ export interface ChipComboboxProps {
 
 export function ChipCombobox({
   label,
+  helpKey,
   selected,
   options,
   onChange,
@@ -142,6 +146,19 @@ export function ChipCombobox({
     onChange(selected.filter((v) => v !== value));
   };
 
+  /**
+   * Empty the field — the locked entries EXCEPTED.
+   *
+   * A locked value is one the merchant may not remove one at a time (a
+   * rule-based collection membership), and a button that removed it in bulk
+   * would be the same refused write with a different label on it. So "clear"
+   * means "remove everything that is mine to remove", and it disappears once
+   * nothing is left that qualifies — a button that visibly does nothing reads
+   * as a bug.
+   */
+  const removable = selected.filter((v) => !byValue.get(v)?.lockedReason);
+  const clearAll = () => onChange(selected.filter((v) => byValue.get(v)?.lockedReason));
+
   const chips = selected.map((value) => {
     const option = byValue.get(value);
     const chip = (
@@ -161,48 +178,53 @@ export function ChipCombobox({
   });
 
   return (
-    <BlockStack gap="200">
-      <Text as="p" variant="bodyMd">{label}</Text>
+    <FieldClearOverlay
+      onClear={readOnly ? undefined : clearAll}
+      hasValue={removable.length > 0}
+    >
+      <BlockStack gap="200">
+        <FieldLabel label={label} helpKey={helpKey} />
 
-      {selected.length > 0 && (
-        <InlineStack gap="100" wrap>{chips}</InlineStack>
-      )}
+        {selected.length > 0 && (
+          <InlineStack gap="100" wrap>{chips}</InlineStack>
+        )}
 
-      {readOnly ? (
-        selected.length === 0 && emptyText ? (
-          <Text as="p" variant="bodySm" tone="subdued">{emptyText}</Text>
-        ) : null
-      ) : (
-        // Enter is how anyone types a list, and Polaris' TextField exposes no
-        // key handler — so it is caught on the wrapper, the same way the old
-        // tag field did it. It commits only what was TYPED: a half-typed word
-        // must not become a value just because focus moved on.
-        <div
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            if (allowFreeText) add(input);
-            else if (suggestions.length === 1) add(suggestions[0].value);
-          }}
-        >
-          <Autocomplete
-            options={suggestions}
-            selected={[]}
-            onSelect={(picked) => picked.forEach(add)}
-            textField={
-              <Autocomplete.TextField
-                label={label}
-                labelHidden
-                value={input}
-                onChange={setInput}
-                placeholder={placeholder}
-                helpText={helpText}
-                autoComplete="off"
-              />
-            }
-          />
-        </div>
-      )}
-    </BlockStack>
+        {readOnly ? (
+          selected.length === 0 && emptyText ? (
+            <Text as="p" variant="bodySm" tone="subdued">{emptyText}</Text>
+          ) : null
+        ) : (
+          // Enter is how anyone types a list, and Polaris' TextField exposes no
+          // key handler — so it is caught on the wrapper, the same way the old
+          // tag field did it. It commits only what was TYPED: a half-typed word
+          // must not become a value just because focus moved on.
+          <div
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              if (allowFreeText) add(input);
+              else if (suggestions.length === 1) add(suggestions[0].value);
+            }}
+          >
+            <Autocomplete
+              options={suggestions}
+              selected={[]}
+              onSelect={(picked) => picked.forEach(add)}
+              textField={
+                <Autocomplete.TextField
+                  label={label}
+                  labelHidden
+                  value={input}
+                  onChange={setInput}
+                  placeholder={placeholder}
+                  helpText={helpText}
+                  autoComplete="off"
+                />
+              }
+            />
+          </div>
+        )}
+      </BlockStack>
+    </FieldClearOverlay>
   );
 }

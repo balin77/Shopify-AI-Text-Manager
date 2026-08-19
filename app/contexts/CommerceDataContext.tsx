@@ -36,6 +36,7 @@ import {
   type ReactNode,
 } from "react";
 import { useCommerceReloadNonce, useRegisterCommerceSave } from "./CommerceSaveContext";
+import { groupPublications } from "../services/commerce-sync.shared";
 import type { CommerceChannelView, CommerceVariantView } from "../routes/api.product-commerce";
 
 /** Shopify's `WeightUnit` enum — an unknown value fails at the SCHEMA level. */
@@ -84,6 +85,26 @@ export interface CommerceDataValue {
   setChannelState: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
 
   loadedOnHand: (variantId: string, locationId: string) => number | null;
+  /**
+   * How many SALES CHANNELS the product would be on if the save bar fired now.
+   *
+   * `null` means UNKNOWN — nothing loaded (foreign locale, plan refusal, a
+   * failed load), which is a different answer from `0` and must stay one: `0`
+   * is the "invisible everywhere" alarm, and showing it for a panel that never
+   * asked would raise that alarm about nothing.
+   *
+   * Derived here rather than in the two readers — the channels field's badge
+   * and the sidebar's attribute checklist — because "what counts as a channel"
+   * is one rule (markets and B2B catalogs are not channels), and two copies of
+   * it drift.
+   */
+  salesChannelSummary: { publishedCount: number; truncated: boolean } | null;
+  /**
+   * The selling price(s) of the loaded variants, for the completeness
+   * checklist. `null` while nothing is loaded — the checklist then falls back
+   * to the cached price rather than reading "not loaded" as "free".
+   */
+  priceSummary: { display: string; pricedVariants: number; totalVariants: number } | null;
   hasChanges: boolean;
   /**
    * The same function the editor's save bar drives.
@@ -680,6 +701,47 @@ export function CommerceDataProvider({
     return () => registerCommerceSave(null);
   }, [registerCommerceSave, hasChanges, save, discard, isPrimaryLocale, planBlocked]);
 
+  /**
+   * Read off `channelState`, not off the loaded rows: an untick has to move
+   * the answer BEFORE the save, because the merchant is looking at what the
+   * save bar is about to write. `undefined` means the seed has not landed and
+   * is NOT "off" — the same trap `dirtyChannels` guards above.
+   */
+  const salesChannelSummary = useMemo(() => {
+    if (!data) return null;
+    const channels = groupPublications(data.channels).find((group) => group.id === "channels")?.rows ?? [];
+    const publishedCount = channels.filter((channel) => {
+      const next = channelState[channel.publicationId];
+      return next === undefined ? channel.isPublished : next;
+    }).length;
+    return { publishedCount, truncated: data.channelsTruncated };
+  }, [data, channelState]);
+
+  /**
+   * A price range, not a single number: the checklist's row asks "is this
+   * priced", and on a product with variants the honest display of that is the
+   * span. Edits count, for the same reason the channel count reads
+   * `channelState` — the merchant is looking at what the save will write.
+   */
+  const priceSummary = useMemo(() => {
+    if (!data) return null;
+    const values = data.variants.map((variant) => {
+      const edited = priceEdits[`${variant.id}::price`];
+      const raw = edited !== undefined && edited.trim() !== "" ? edited.trim() : variant.price;
+      return raw != null && raw.trim() !== "" ? raw.trim() : null;
+    });
+    const priced = values.filter((v): v is string => v !== null);
+    if (priced.length === 0) return { display: "", pricedVariants: 0, totalVariants: values.length };
+    const numeric = priced.map((v) => Number.parseFloat(v)).filter((n) => Number.isFinite(n));
+    const low = numeric.length > 0 ? Math.min(...numeric) : null;
+    const high = numeric.length > 0 ? Math.max(...numeric) : null;
+    const display =
+      low !== null && high !== null && low !== high
+        ? `${low.toFixed(2)}–${high.toFixed(2)}`
+        : priced[0];
+    return { display, pricedVariants: priced.length, totalVariants: values.length };
+  }, [data, priceEdits]);
+
   const value: CommerceDataValue = {
     data,
     loadError,
@@ -699,6 +761,8 @@ export function CommerceDataProvider({
     channelState,
     setChannelState,
     loadedOnHand,
+    salesChannelSummary,
+    priceSummary,
     hasChanges,
     save,
   };

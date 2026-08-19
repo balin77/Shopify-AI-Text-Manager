@@ -93,9 +93,10 @@ describe("status and channels are separate rows (§2.3)", () => {
     expect(statusOf(rows, "channels")).toBe("unknown");
   });
 
-  it("marks channels UNKNOWN and admin-only while there is no scope for them", () => {
-    // Before Phase 4 there is no cache and no scope. "0 channels" would be a
-    // red finding for something the app simply cannot see.
+  it("marks channels UNKNOWN and admin-only while nobody has counted them", () => {
+    // Neither the live commerce load nor the ProductPublication mirror has an
+    // answer. "0 channels" would be a red finding for something the app simply
+    // has not looked at.
     const row = buildAttributeChecklist(product()).find((r) => r.key === "channels")!;
     expect(row.status).toBe("unknown");
     expect(row.adminOnly).toBe(true);
@@ -104,6 +105,28 @@ describe("status and channels are separate rows (§2.3)", () => {
   it("judges channels once a count IS available", () => {
     expect(statusOf(buildAttributeChecklist(product({ publicationCount: 0 })), "channels")).toBe("warning");
     expect(statusOf(buildAttributeChecklist(product({ publicationCount: 2 })), "channels")).toBe("ok");
+    // A count that CAN be judged stops sending the merchant to the admin.
+    expect(
+      buildAttributeChecklist(product({ publicationCount: 2 })).find((r) => r.key === "channels")!.adminOnly,
+    ).toBe(false);
+  });
+
+  it("refuses to call a TRUNCATED zero 'on no channel'", () => {
+    // The one row that would have said otherwise may be exactly the one that
+    // did not arrive — the same rule the panel's "invisible" badge keeps.
+    const row = buildAttributeChecklist(
+      product({ publicationCount: 0, publicationCountTruncated: true }),
+    ).find((r) => r.key === "channels")!;
+    expect(row.status).toBe("unknown");
+    expect(row.value).toBeUndefined();
+  });
+
+  it("reports a truncated non-zero count as a floor", () => {
+    const row = buildAttributeChecklist(
+      product({ publicationCount: 2, publicationCountTruncated: true }),
+    ).find((r) => r.key === "channels")!;
+    expect(row.status).toBe("ok");
+    expect(row.value).toBe("2+");
   });
 });
 

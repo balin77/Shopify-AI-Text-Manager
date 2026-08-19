@@ -18,7 +18,12 @@ import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { SidebarTabBar } from "./SidebarTabBar";
 import { HelpTooltip } from "./HelpTooltip";
 import { AttributeChecklist } from "./sidebar/AttributeChecklist";
-import type { AttributeRow } from "../services/attribute-checklist.shared";
+import {
+  buildAttributeChecklist,
+  needsAttributeSync,
+  type AttributeInput,
+} from "../services/attribute-checklist.shared";
+import { useCommerceData } from "../contexts/CommerceDataContext";
 import { ActionTooltip } from "./ActionTooltip";
 import { analyzeReadability } from "../utils/readability";
 import {
@@ -70,8 +75,17 @@ interface ItemSidebarProps {
    * attributes (product, collection, article, page) and for nothing else.
    */
   attributes?: {
-    rows: AttributeRow[];
-    needsSync: boolean;
+    /**
+     * What the CALLER knows — the item's own columns plus the Phase-0
+     * discriminator. The three answers it cannot hold are filled in here,
+     * where they live: the sales-channel count and the price come from the
+     * commerce context this sidebar renders inside, and the keyword row from
+     * the list this sidebar already loads for its own Keywords tab.
+     *
+     * The rows are built from it HERE rather than being passed in, so there
+     * stays exactly one place that turns data into a status.
+     */
+    input: AttributeInput;
     onReload?: () => void;
     /** Set in a foreign locale — the tab goes read-only with this reason. */
     readOnlyReason?: string | null;
@@ -198,6 +212,17 @@ export function ItemSidebar({
   // tracks up to MAX_KEYWORDS_PER_ITEM keywords: 1 primary + secondaries.
   const keywordTrackingEnabled = !!resourceId && !!resourceType;
   const [keywords, setKeywords] = useState<SidebarKeywordEntry[]>([]);
+  /**
+   * Whether `keywords` is an ANSWER for the current (item, locale) yet.
+   *
+   * The attribute checklist's keyword row reads it, and an empty list before
+   * the load lands is not "no keyword" — it is the cleared state the effect
+   * below sets on purpose. Reporting that as a red finding would flag every
+   * item for the fraction of a second between selecting it and its keywords
+   * arriving, which is exactly the "unknown is not missing" rule the rest of
+   * the tab keeps.
+   */
+  const [keywordsLoaded, setKeywordsLoaded] = useState(false);
   const [keywordInput, setKeywordInput] = useState("");
   const keywordLoadFetcher = useFetcher<{ keywords: SidebarKeywordEntry[] }>();
   const keywordOpFetcher = useFetcher<{
@@ -233,6 +258,7 @@ export function ItemSidebar({
     setCannibalizationWarning(null);
     setKeywordOpError(null);
     pendingAddRef.current = null;
+    setKeywordsLoaded(false);
     if (!resourceId || !resourceType) {
       setKeywords([]);
       setKeywordInput("");
@@ -254,6 +280,7 @@ export function ItemSidebar({
   useEffect(() => {
     if (keywordLoadFetcher.state === "idle" && keywordLoadFetcher.data) {
       setKeywords(keywordLoadFetcher.data.keywords ?? []);
+      setKeywordsLoaded(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keywordLoadFetcher.state, keywordLoadFetcher.data]);
@@ -266,6 +293,7 @@ export function ItemSidebar({
     if (keywordOpTargetRef.current !== keywordScope) return;
     if (keywordOpFetcher.data.ok && keywordOpFetcher.data.keywords) {
       setKeywords(keywordOpFetcher.data.keywords);
+      setKeywordsLoaded(true);
       setKeywordInput("");
       setCannibalizationWarning(null);
       setKeywordOpError(null);
@@ -405,6 +433,32 @@ export function ItemSidebar({
     return { score: result.score, issues, recommendations };
   }, [title, description, seoTitle, metaDescription, imagesWithAlt, totalImages, excludeDescription, excludeImages, t, effectiveSeoTitleLimit, seoLimits]);
 
+  // ── The attribute checklist's three live answers ─────────────────────────
+  // `null` when this sidebar is not inside a CommerceDataProvider (every
+  // resource type that is not a product) — the checklist then keeps whatever
+  // the caller could supply from the cache.
+  const commerce = useCommerceData();
+  const attributeRows = useMemo(() => {
+    if (!attributes) return [];
+    const channels = commerce?.salesChannelSummary ?? null;
+    const price = commerce?.priceSummary ?? null;
+    return buildAttributeChecklist({
+      ...attributes.input,
+      // LIVE beats the mirror, and the mirror beats nothing: the panel's own
+      // load is what the merchant is looking at, the cached count is what
+      // answers on a foreign locale (where the panel deliberately does not
+      // fetch) and in the moment before the fetch lands.
+      publicationCount: channels ? channels.publishedCount : attributes.input.publicationCount ?? null,
+      publicationCountTruncated: channels ? channels.truncated : attributes.input.publicationCountTruncated,
+      // A loaded panel that found NO priced variant is a real "missing" (""),
+      // not an "unknown" (null) — which is why the empty display travels
+      // instead of falling back to the cache.
+      defaultVariantPrice: price ? price.display : attributes.input.defaultVariantPrice ?? null,
+      // Only once the list is an answer for THIS item and locale.
+      hasKeyword: keywordTrackingEnabled && keywordsLoaded ? keywords.length > 0 : null,
+    });
+  }, [attributes, commerce?.salesChannelSummary, commerce?.priceSummary, keywordTrackingEnabled, keywordsLoaded, keywords]);
+
   const getScoreColor = scoreTone;
 
   const getScoreLabel = (scoreValue: number): string =>
@@ -458,8 +512,8 @@ export function ItemSidebar({
 
         {currentTab === "attributes" && attributes && (
           <AttributeChecklist
-            rows={attributes.rows}
-            needsSync={attributes.needsSync}
+            rows={attributeRows}
+            needsSync={needsAttributeSync(attributeRows)}
             onReload={attributes.onReload}
             readOnlyReason={attributes.readOnlyReason}
             onJumpToField={attributes.onJumpToField}

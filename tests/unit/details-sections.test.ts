@@ -66,8 +66,26 @@ describe("groupDetailsFields", () => {
 });
 
 describe("shouldRenderDetailsSections", () => {
-  it("draws subcards from two blocks up", () => {
+  it("draws subcards from two FRAMED blocks up", () => {
     expect(shouldRenderDetailsSections(groupDetailsFields([
+      field("commerce", "publishing"),
+      field("templateSuffix", "theme"),
+    ]))).toBe(true);
+  });
+
+  it("does not count a headless section — it draws no frame to separate", () => {
+    // "organization" renders bare: no heading, no subcard. Counting it would
+    // put a lone titled box next to it with nothing to be separated FROM,
+    // which is the box-in-a-box this guard exists to prevent. That is exactly
+    // the collection's Details card (rules + sort order, then the theme
+    // template).
+    expect(shouldRenderDetailsSections(groupDetailsFields([
+      field("vendor", "organization"),
+      field("templateSuffix", "theme"),
+    ]))).toBe(false);
+    // Two framed ones still win, headless section or not.
+    expect(shouldRenderDetailsSections(groupDetailsFields([
+      field("commerce", "publishing"),
       field("vendor", "organization"),
       field("templateSuffix", "theme"),
     ]))).toBe(true);
