@@ -101,6 +101,15 @@ export function useCommerceData(): CommerceDataValue | null {
   return useContext(CommerceDataContext);
 }
 
+/** The four fields of ONE measurement. Named once: the save, the diff and the
+ *  panel all walk them, and a list that drifts writes a partial Grundpreis. */
+const UNIT_FIELDS = [
+  "unitQuantityValue",
+  "unitQuantityUnit",
+  "unitReferenceValue",
+  "unitReferenceUnit",
+] as const;
+
 export function CommerceDataProvider({
   productId,
   isPrimaryLocale,
@@ -329,6 +338,7 @@ export function CommerceDataProvider({
    * variant, so "" cannot mean anything else. The compare-at price is the
    * opposite — "" there is how a merchant ends a sale, so it IS a change.
    */
+  /** The measurement's four boxes, in the order the write path expects. */
   const dirtyPrices = useMemo(() => {
     const byVariant = new Map<
       string,
@@ -338,6 +348,11 @@ export function CommerceDataProvider({
         barcode?: string;
         inventoryPolicy?: string;
         taxable?: string;
+        unitQuantityValue?: string;
+        unitQuantityUnit?: string;
+        unitReferenceValue?: string;
+        unitReferenceUnit?: string;
+        showUnitPrice?: string;
       }
     >();
     for (const [key, value] of Object.entries(priceEdits)) {
@@ -360,7 +375,41 @@ export function CommerceDataProvider({
       } else if (field === "taxable") {
         if (value === String(variant.taxable ?? "")) continue;
         byVariant.set(variantId, { ...byVariant.get(variantId), taxable: value });
+      } else if (field === "showUnitPrice") {
+        if (value === String(variant.showUnitPrice ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), showUnitPrice: value });
       }
+      // The four measurement fields are handled below, as a unit.
+    }
+
+    /**
+     * The Grundpreis, gathered per variant AFTER the loop.
+     *
+     * It is one value in four boxes: Shopify replaces the measurement object
+     * rather than merging into it, so sending only the field that changed
+     * would write a measurement with three fields missing. Any difference in
+     * any of the four therefore emits ALL four — from the edit where there is
+     * one, from what was loaded where there is not.
+     */
+    for (const variant of data?.variants ?? []) {
+      const current = UNIT_FIELDS.map((field) => {
+        const edited = priceEdits[`${variant.id}::${field}`];
+        if (edited !== undefined) return edited;
+        const loaded = (variant as unknown as Record<string, unknown>)[field];
+        return loaded == null ? "" : String(loaded);
+      });
+      const loaded = UNIT_FIELDS.map((field) => {
+        const value = (variant as unknown as Record<string, unknown>)[field];
+        return value == null ? "" : String(value);
+      });
+      if (current.every((value, index) => value === loaded[index])) continue;
+      byVariant.set(variant.id, {
+        ...byVariant.get(variant.id),
+        unitQuantityValue: current[0],
+        unitQuantityUnit: current[1],
+        unitReferenceValue: current[2],
+        unitReferenceUnit: current[3],
+      });
     }
     return [...byVariant.entries()];
   }, [priceEdits, data]);
@@ -409,6 +458,17 @@ export function CommerceDataProvider({
             ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
             ...(fields.inventoryPolicy !== undefined ? { inventoryPolicy: fields.inventoryPolicy } : {}),
             ...(fields.taxable !== undefined ? { taxable: fields.taxable } : {}),
+            // All four or none — the route refuses a partial set, because
+            // three of them describe a measurement nobody typed.
+            ...(fields.unitQuantityValue !== undefined
+              ? {
+                  unitQuantityValue: fields.unitQuantityValue,
+                  unitQuantityUnit: fields.unitQuantityUnit ?? "",
+                  unitReferenceValue: fields.unitReferenceValue ?? "",
+                  unitReferenceUnit: fields.unitReferenceUnit ?? "",
+                }
+              : {}),
+            ...(fields.showUnitPrice !== undefined ? { showUnitPrice: fields.showUnitPrice } : {}),
           },
           "priceFailed",
         );

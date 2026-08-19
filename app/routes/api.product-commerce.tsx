@@ -56,6 +56,7 @@ import {
   applyVariantPrices,
   type VariantPriceFields,
 } from "~/services/commerce-write.server";
+import { unitPriceColumns } from "~/services/unit-price.shared";
 
 /** Stock and channels are a Pro feature, like the other commerce surfaces. */
 const REQUIRED_PLAN = "pro" as const;
@@ -78,6 +79,26 @@ export interface CommerceVariantView {
    *  merchant pays and is the field that used to be alone in this panel. */
   price: string | null;
   compareAtPrice: string | null;
+  /**
+   * The Grundpreis, FLATTENED into four scalars.
+   *
+   * Not kept as the nested object Shopify answers with, because the panel's
+   * whole bulk machinery — the value a group agrees on, the "different values"
+   * placeholder, the rule that "" means untouched on a mixed field — works per
+   * SCALAR field. A nested object would need its own copy of all three, and
+   * the copy is where they drift.
+   *
+   * All four `null` together means no Grundpreis. Read live like `price`, and
+   * mirrored nowhere: there is no cache column for it, so there is nothing
+   * that can go stale.
+   */
+  unitQuantityValue: string | null;
+  unitQuantityUnit: string | null;
+  unitReferenceValue: string | null;
+  unitReferenceUnit: string | null;
+  /** Whether the storefront shows it. Independent of the measurement —
+   *  measured: writing one does not switch this on. */
+  showUnitPrice: boolean | null;
   inventoryItemId: string | null;
   /** null ⇒ never synced. false ⇒ Shopify keeps no count for this variant. */
   inventoryTracked: boolean | null;
@@ -231,6 +252,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
                 sku
                 image { url altText }
                 barcode
+                unitPriceMeasurement {
+                  quantityValue
+                  quantityUnit
+                  referenceValue
+                  referenceUnit
+                }
+                showUnitPrice
                 selectedOptions { name value }
                 ${VARIANT_COMMERCE_SELECTION}
               }
@@ -401,6 +429,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
         // all-or-nothing presence rule.
         price: (node.price as string | null) ?? null,
         compareAtPrice: (node.compareAtPrice as string | null) ?? null,
+        // Off the node like `price`, for the same reason: it is not part of
+        // the commerce block and folding it in would tie it to that block's
+        // all-or-nothing presence rule. An EMPTY measurement is reported as
+        // four nulls, never as zeros — Shopify answers a zeroed struct for a
+        // variant that has none, and rendering that as "0" would show every
+        // variant in the shop a Grundpreis of nothing per nothing.
+        ...unitPriceColumns(node.unitPriceMeasurement),
+        showUnitPrice: (node.showUnitPrice as boolean | null) ?? null,
         inventoryItemId: columns.inventoryItemId ?? null,
         inventoryTracked: columns.inventoryTracked ?? null,
         cost: columns.cost ?? null,
@@ -610,6 +646,36 @@ export async function action({ request }: ActionFunctionArgs) {
       const raw = getFormString(formData, "taxable");
       if (raw === "true") fields.taxable = true;
       else if (raw === "false") fields.taxable = false;
+      else warnings.push("priceInvalid");
+    }
+    // The four Grundpreis fields travel together or not at all: they are ONE
+    // value on Shopify's side, and a client that sent three of them would be
+    // describing a measurement nobody typed. All four present or none — a
+    // partial set is refused here rather than half-applied, because this route
+    // is directly POST-reachable.
+    const unitKeys = [
+      "unitQuantityValue",
+      "unitQuantityUnit",
+      "unitReferenceValue",
+      "unitReferenceUnit",
+    ] as const;
+    const presentUnitKeys = unitKeys.filter((key) => formData.has(key));
+    if (presentUnitKeys.length === unitKeys.length) {
+      fields.unitPrice = {
+        quantityValue: getFormString(formData, "unitQuantityValue"),
+        quantityUnit: getFormString(formData, "unitQuantityUnit"),
+        referenceValue: getFormString(formData, "unitReferenceValue"),
+        referenceUnit: getFormString(formData, "unitReferenceUnit"),
+      };
+    } else if (presentUnitKeys.length > 0) {
+      return json({ success: false, error: "An incomplete unit price was sent." }, { status: 400 });
+    }
+    if (formData.has("showUnitPrice")) {
+      // Drop-and-report, like `taxable`: anything unrecognised would otherwise
+      // mean "do not show it".
+      const raw = getFormString(formData, "showUnitPrice");
+      if (raw === "true") fields.showUnitPrice = true;
+      else if (raw === "false") fields.showUnitPrice = false;
       else warnings.push("priceInvalid");
     }
 

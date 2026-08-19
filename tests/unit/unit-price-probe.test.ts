@@ -49,7 +49,7 @@ const PROBE_VALUE = {
   referenceUnit: "KG",
 };
 
-type Strategy = "null" | "showUnitPrice" | "both";
+type Strategy = "null" | "showUnitPrice" | "both" | "spelled-out" | "empty-object";
 
 interface FakeShop {
   /** What the variant holds; the zeroed struct means "nothing". */
@@ -59,6 +59,10 @@ interface FakeShop {
   clearedBy: Strategy[];
   /** `false` models an API version where the field cannot be selected. */
   readsShowUnitPrice: boolean;
+  /** The switch is accepted and never moves. */
+  stuckSwitch: boolean;
+  /** The switch turns on and refuses to turn back off. */
+  oneWaySwitch: boolean;
   inputFields: string[];
   /** Replaces the next mutation response wholesale. */
   mutationAnswers: unknown[];
@@ -74,6 +78,8 @@ function fakeShop(overrides: Partial<FakeShop> = {}) {
     clearedBy: [],
     readsShowUnitPrice: true,
     inputFields: ["price", "unitPriceMeasurement", "showUnitPrice"],
+    stuckSwitch: false,
+    oneWaySwitch: false,
     mutationAnswers: [],
     ...overrides,
   };
@@ -118,23 +124,34 @@ function fakeShop(overrides: Partial<FakeShop> = {}) {
       if (shop.mutationAnswers.length) return answer(shop.mutationAnswers.shift());
 
       const input = (options?.variables?.variants as Array<Record<string, unknown>>)[0];
-      const setsMeasurement = "unitPriceMeasurement" in input;
       const setsShow = "showUnitPrice" in input;
-      const strategy: Strategy | null =
-        setsMeasurement && input.unitPriceMeasurement === null && setsShow
-          ? "both"
-          : setsMeasurement && input.unitPriceMeasurement === null
-            ? "null"
-            : setsShow
-              ? "showUnitPrice"
-              : null;
+      const measurement = input.unitPriceMeasurement as Record<string, unknown> | null | undefined;
+      const setsMeasurement = "unitPriceMeasurement" in input;
+      const emptyShaped =
+        !!measurement && (Object.keys(measurement).length === 0 || measurement.quantityUnit == null);
+      const strategy: Strategy | null = !setsMeasurement
+        ? setsShow
+          ? "showUnitPrice"
+          : null
+        : measurement === null
+          ? setsShow
+            ? "both"
+            : "null"
+          : emptyShaped
+            ? Object.keys(measurement).length === 0
+              ? "empty-object"
+              : "spelled-out"
+            : null;
 
-      if (setsMeasurement && input.unitPriceMeasurement !== null) {
-        shop.measurement = { measuredType: "WEIGHT", ...(input.unitPriceMeasurement as object) };
+      if (setsMeasurement && measurement && !emptyShaped) {
+        shop.measurement = { measuredType: "WEIGHT", ...measurement };
       } else if (strategy && shop.clearedBy.includes(strategy)) {
         shop.measurement = { ...EMPTY };
       }
-      if (setsShow) shop.showUnitPrice = input.showUnitPrice as boolean;
+      if (setsShow && !shop.stuckSwitch) {
+        const wanted = input.showUnitPrice as boolean;
+        if (!(shop.oneWaySwitch && shop.showUnitPrice && !wanted)) shop.showUnitPrice = wanted;
+      }
 
       return answer({
         data: {
@@ -320,6 +337,8 @@ describe("the unit-price probe", () => {
 
     expect(results.clear.ok).toBe(true);
     expect(results.clear.detail?.worked).toBe("both at once");
+    // Stopped at the one that worked; the two empty-shaped rungs below it were
+    // never needed.
     expect(results.clear.detail?.attempts).toHaveLength(3);
   });
 
@@ -328,12 +347,79 @@ describe("the unit-price probe", () => {
     // shippable feature — with a different off-switch. Folding the two into
     // one verdict would either overstate what the API does or throw away a
     // usable answer.
-    fakeShop({ clearedBy: [] });
+    fakeShop({ clearedBy: [], showUnitPrice: true });
     const results = await run();
 
     expect(results.clear.ok).toBe(false);
     expect(results.clear.missing).toBe(true);
     expect(results.hide.ok).toBe(true);
+  });
+
+  it("measures the switch by MOVING it, and puts it back", async () => {
+    // The first live run reported "hide: yes" off a variant whose
+    // `showUnitPrice` was false before anything was written — the untouched
+    // state read as an effect of our own call. A value that does not change
+    // measures nothing, so the switch is flipped away from where it was.
+    const { shop, graphql } = fakeShop({ clearedBy: ["null"], showUnitPrice: false });
+    const results = await run();
+
+    expect(results.hide.ok).toBe(true);
+    const sent = graphql.mock.calls
+      .map((call) => (call[1]?.variables?.variants as Array<Record<string, unknown>>)?.[0])
+      .filter((input) => input && "showUnitPrice" in input)
+      .map((input) => input.showUnitPrice);
+    // Away from false, then back to it. (The restore at the end sets it once
+    // more, belt and braces, in case a clear strategy moved it.)
+    expect(sent.slice(0, 2)).toEqual([true, false]);
+    expect(shop.showUnitPrice).toBe(false);
+  });
+
+  it("calls a switch that will not move a real negative", async () => {
+    const { graphql } = fakeShop({ clearedBy: ["null"], showUnitPrice: false, stuckSwitch: true });
+    const results = await run();
+
+    expect(results.hide.ok).toBe(false);
+    expect(results.hide.missing).toBe(true);
+    expect(graphql).toHaveBeenCalled();
+  });
+
+  it("says so loudly when the switch turns ON and will not turn back", async () => {
+    // Worse than a switch that does nothing: the storefront is left showing
+    // something the probe turned on.
+    fakeShop({ clearedBy: ["null"], showUnitPrice: false, oneWaySwitch: true });
+    const results = await run();
+
+    expect(results.hide.ok).toBe(false);
+    expect(results.hide.missing).toBeUndefined();
+    expect(results.hide.error).toMatch(/would not go back/i);
+  });
+
+  it("does not report a removal on a variant that was already empty", async () => {
+    // Pressing "remove" twice, or after a cleanup in the admin. The ladder
+    // would echo an empty measurement back from the FIRST input and credit
+    // that one — which is how a run reported `null` as working right after
+    // another run had proved it does not.
+    const { graphql } = fakeShop({ clearedBy: [] });
+    const results = await run("clear");
+
+    expect(results.clear.ok).toBe(false);
+    expect(results.clear.error).toMatch(/nothing to remove/i);
+    // …and it wrote nothing at all.
+    const mutated = graphql.mock.calls.some((call) =>
+      call[0].includes("productVariantsBulkUpdate"),
+    );
+    expect(mutated).toBe(false);
+  });
+
+  it("tries the empty-shaped inputs once null has been refused", async () => {
+    // A variant with no Grundpreis reads back as a zeroed struct, so writing
+    // that shape is a different request from writing `null` — and `null` is
+    // measured not to work.
+    fakeShop({ clearedBy: ["spelled-out"] });
+    const results = await run();
+
+    expect(results.clear.ok).toBe(true);
+    expect(results.clear.detail?.worked).toBe("the empty measurement, spelled out");
   });
 
   it("admits it left the measurement behind when nothing could remove it", async () => {

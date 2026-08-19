@@ -168,7 +168,19 @@ interface DefinitionShape {
   access?: { admin?: string | null; storefront?: string | null } | null;
   capabilities?: Record<string, unknown> | null;
   createdByApp?: string | null;
-  fieldDefinitions: Array<{ key: string; name?: string; type: string; required?: boolean }>;
+  fieldDefinitions: Array<{
+    key: string;
+    name?: string;
+    type: string;
+    required?: boolean;
+    /**
+     * PLAN_METAOBJECT_TAXONOMY_CREATE T2. The sync has queried and stored these
+     * since Phase 0 of the content-creation plan and nothing has ever read
+     * them; a `product_taxonomy_value_reference` presumably names the ATTRIBUTE
+     * whose values it accepts right here. Printing them costs one selection.
+     */
+    validations?: Array<{ name: string; value: string | null }>;
+  }>;
 }
 
 interface SampleEntry {
@@ -218,6 +230,28 @@ export interface MetaobjectProbeReport {
     nodeSelection?: string;
     error?: string;
   };
+  /** PLAN_METAOBJECT_TAXONOMY_CREATE Phase 0 (T1-T3). */
+  taxonomy?: {
+    /** What the `Taxonomy` root offers, if the type exists at all. */
+    taxonomyFields?: string[];
+    /** Shape of the value type the metaobject fields reference. */
+    valueTypeFields?: string[];
+    /** GIDs read off real entries, resolved to a __typename and a name. */
+    resolvedValues?: Array<{ gid: string; typename?: string; label?: string; error?: string }>;
+    /** The attribute HANDLE each taxonomy field names in its validations. */
+    attributeHandles?: Array<{ fieldKey: string; handle: string; min?: string; max?: string }>;
+    /** What a category offers — the only door the Taxonomy root has. */
+    categoryFields?: string[];
+    attributeTypeFields?: string[];
+    /** Where the permitted values were found, and how many there are. */
+    valueSource?: string;
+    valueCount?: number;
+    valueSample?: string[];
+    /** A full page — the true count is "this or more", never invented. */
+    valuesTruncated?: boolean;
+    steps: StepOutcome[];
+  };
+
   /** Results of the leftover cleanup step, when it was asked for. */
   cleanup?: StepOutcome[];
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
@@ -239,7 +273,95 @@ function flattenFieldDefinitions(nodes: any[]): DefinitionShape["fieldDefinition
     name: f?.name ?? undefined,
     type: f?.type?.name ?? "",
     required: typeof f?.required === "boolean" ? f.required : undefined,
+    validations: Array.isArray(f?.validations)
+      ? f.validations.map((v: any) => ({ name: v?.name ?? "", value: v?.value ?? null }))
+      : undefined,
   }));
+}
+
+
+/**
+ * The NODE type behind a connection type name.
+ *
+ * `nodes` is `[T!]!` and `edges` is `[Edge!]!` with the node one hop further
+ * in, so reading either without unwrapping reports the connection or the edge
+ * as the node. Both mistakes have already been made in this file once each.
+ * Returns `null` when the question could not be answered — never a guess.
+ */
+async function connectionNodeType(
+  call: (query: string, variables?: Record<string, unknown>) => Promise<GraphQLCallResult>,
+  connectionType: string,
+): Promise<{ nodeType: string | null; carrier: "nodes" | "edges" | null; error?: string }> {
+  const res = await call(
+    `#graphql
+      query MetaobjectProbeConnectionNode($name: String!) {
+        __type(name: $name) { fields(includeDeprecated: true) { name type { ...TypeRef } } }
+      }
+      ${TYPE_REF_FRAGMENT}`,
+    { name: connectionType },
+  );
+  if (!res.ok) return { nodeType: null, carrier: null, error: describeFailure(res) };
+  const fields = res.data?.__type?.fields;
+  if (!fields) return { nodeType: null, carrier: null, error: "the API answered and the type is not there" };
+
+  const nodesField = fields.find((f: any) => f.name === "nodes");
+  if (nodesField) return { nodeType: namedTypeOf(nodesField.type) ?? null, carrier: "nodes" };
+
+  const edgeType = namedTypeOf(fields.find((f: any) => f.name === "edges")?.type);
+  if (!edgeType) return { nodeType: null, carrier: null, error: "connection carries neither nodes nor edges" };
+  const edgeRes = await call(
+    `#graphql
+      query MetaobjectProbeEdgeNode($name: String!) {
+        __type(name: $name) { fields(includeDeprecated: true) { name type { ...TypeRef } } }
+      }
+      ${TYPE_REF_FRAGMENT}`,
+    { name: edgeType },
+  );
+  if (!edgeRes.ok) return { nodeType: null, carrier: "edges", error: describeFailure(edgeRes) };
+  const nodeField = (edgeRes.data?.__type?.fields ?? []).find((f: any) => f.name === "node");
+  return { nodeType: namedTypeOf(nodeField?.type) ?? null, carrier: "edges" };
+}
+
+/**
+ * A selection over a possibly-POLYMORPHIC node.
+ *
+ * An object type contributes its own selectable fields; a union or interface
+ * contributes one inline fragment per member, each with that member's own
+ * fields. Nothing is hardcoded: a member name or a field this probe invented
+ * would be rejected as a whole document, and the step that can answer T1 would
+ * report "no such API" about one that works.
+ */
+function polymorphicSelection(
+  shape: { kind?: string; fields?: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>; possibleTypes?: Array<{ name: string; fields?: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }> }> },
+  /**
+   * Field names to leave OUT.
+   *
+   * A connection field selected without arguments is refused by Shopify at
+   * runtime ("provide first or last"), and selecting the same field twice with
+   * different arguments is refused by GraphQL's field-merging rule before that
+   * — so an expensive sub-connection is not squeezed in here. It is fetched by
+   * its own id in a second call instead, which is also the only way to stay
+   * inside the query-cost budget.
+   */
+  omit: string[] = [],
+): string {
+  const forFields = (fields: Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>) =>
+    liveNodeSelection(fields.filter((f) => !omit.includes(f.name))).full;
+
+  if (shape.possibleTypes?.length) {
+    const members = shape.possibleTypes
+      .filter((m) => m.fields?.length)
+      .map((m) => `... on ${m.name} { ${forFields(m.fields!)} }`);
+    return ["__typename", ...members].join(" ");
+  }
+  return forFields(shape.fields ?? []);
+}
+
+/** Wraps a node selection in whatever carrier the connection was measured to
+ *  have. Hardcoding `nodes` would generate a document the schema rejects on an
+ *  edges-only connection, and report that as "no such path". */
+function carrierSelection(carrier: "nodes" | "edges" | null, selection: string): string {
+  return carrier === "edges" ? `edges { node { ${selection} } }` : `nodes { ${selection} }`;
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -295,7 +417,7 @@ export async function action({ request }: ActionFunctionArgs) {
   // reduced query is recorded (`definitionsFullSelection: false`) so an absent
   // `access` block cannot be read as "this shop's definitions have none".
   let definitions: DefinitionShape[] = [];
-  if (wants("definitions") || wants("samples") || wants("write") || wants("link")) {
+  if (wants("definitions") || wants("samples") || wants("write") || wants("link") || wants("taxonomy")) {
     const full = await call(
       `#graphql
         query MetaobjectProbeDefinitionsFull($first: Int!) {
@@ -307,7 +429,7 @@ export async function action({ request }: ActionFunctionArgs) {
               access { admin storefront }
               capabilities { translatable { enabled } publishable { enabled } }
               createdByApp { handle }
-              fieldDefinitions { key name required type { name } }
+              fieldDefinitions { key name required type { name } validations { name value } }
             }
           }
         }`,
@@ -751,6 +873,487 @@ export async function action({ request }: ActionFunctionArgs) {
               new Set(withKeys.flatMap((e) => e.translatableKeys!)),
             ).join(", ")}. Keys NOT listed may simply have no primary value -- never read the absence as "not translatable".`
           : `M2/§6.6 INCONCLUSIVE for "${type}": no sampled entry reported a translatable key. Check whether the sampled entries have any primary values at all before concluding anything.`,
+      );
+    }
+  }
+
+  // ---- Taxonomy: can the permitted values be reached at all? (T1-T3) ------
+  // PLAN_METAOBJECT_TAXONOMY_CREATE Phase 0. `shopify--color-pattern` cannot be
+  // CREATED from this app because two of its required fields are
+  // `product_taxonomy_value_reference`, and there is no editor for that type.
+  // Whether one can be BUILT hangs on a question nobody has asked: is there an
+  // API that lists the permitted values? Everything here is read-only.
+  //
+  // The chain is data-driven, not guessed: the definition's own `validations`
+  // say which attribute a field accepts, a real entry's stored GIDs say what a
+  // value looks like, and introspection says what can be selected on it. A
+  // guessed field name would answer "no such API" about one that exists.
+  if (wants("taxonomy")) {
+    const steps: StepOutcome[] = [];
+    const tax: NonNullable<MetaobjectProbeReport["taxonomy"]> = { steps };
+    const definition = definitions.find((d) => d.type === (sampleType || STANDARD_COLOUR_TYPE));
+
+    // 1. What does the Taxonomy root offer? MISSING and ERROR stay apart: a
+    //    throttled introspection must not be read as "there is no taxonomy".
+    const root = await call(
+      `#graphql
+        query MetaobjectProbeTaxonomyRoot {
+          __type(name: "Taxonomy") { fields(includeDeprecated: true) { name args { name } } }
+        }`,
+    );
+    if (root.ok) {
+      const fields = root.data?.__type?.fields;
+      if (!fields) {
+        steps.push({ step: "__type(Taxonomy)", ok: false, detail: "the API answered and the type is not there" });
+      } else {
+        const named = fields.map((f: any) => `${f.name}(${(f.args ?? []).map((a: any) => a.name).join(",")})`);
+        tax.taxonomyFields = named;
+        steps.push({ step: "__type(Taxonomy)", ok: true, detail: named.join(" | ") });
+      }
+    } else {
+      steps.push({ step: "__type(Taxonomy)", ok: false, detail: describeFailure(root) });
+    }
+
+    // 2. The validations of the taxonomy-reference fields — T2, out of data
+    //    the sync has stored all along and nothing has ever read.
+    const taxonomyFieldDefs = (definition?.fieldDefinitions ?? []).filter((f) =>
+      f.type.includes("product_taxonomy_value_reference"),
+    );
+    steps.push({
+      step: "field validations (T2)",
+      ok: taxonomyFieldDefs.length > 0,
+      detail:
+        taxonomyFieldDefs.length > 0
+          ? taxonomyFieldDefs
+              .map((f) => `${f.key}: ${JSON.stringify(f.validations ?? "none reported")}`)
+              .join(" | ")
+          : `no taxonomy-reference field on "${sampleType || STANDARD_COLOUR_TYPE}"`,
+    });
+
+    // 3. Resolve the GIDs a real ENTRY holds. Only that source: the validations
+    //    name the attribute by a HANDLE (measured, see above), so there is no
+    //    GID in them to resolve. Reading a stored value back is what proves a
+    //    picker could ever display the current value instead of a raw GID.
+    // MEASURED (run 5): the validation names the attribute by a stable HANDLE
+    // -- `product_taxonomy_attribute_handle = "color"` -- not by a GID. The
+    // first cut looked for a GID and therefore reported "the validations
+    // carried none" about a validation that carried exactly the right thing,
+    // in a better form: a handle survives a shop, a GID would not have to.
+    // `list.min` / `list.max` come along because they are a REQUIREMENT of the
+    // create form (colour accepts 1 to 4 values), not decoration.
+    tax.attributeHandles = taxonomyFieldDefs.map((f) => {
+      const byName = (name: string) => f.validations?.find((v) => v.name === name)?.value ?? undefined;
+      return {
+        fieldKey: f.key,
+        handle: byName("product_taxonomy_attribute_handle") ?? "",
+        min: byName("list.min"),
+        max: byName("list.max"),
+      };
+    });
+    steps.push({
+      step: "attribute handles (T2)",
+      ok: tax.attributeHandles.some((h) => h.handle !== ""),
+      detail: tax.attributeHandles
+        .map((h) => `${h.fieldKey} -> ${h.handle || "(none)"}${h.min || h.max ? ` [${h.min ?? "?"}..${h.max ?? "?"}]` : ""}`)
+        .join(" | "),
+    });
+
+    const entries = await call(
+      `#graphql
+        query MetaobjectProbeTaxonomySample($type: String!, $first: Int!) {
+          metaobjects(type: $type, first: $first) { nodes { fields { key value } } }
+        }`,
+      { type: sampleType || STANDARD_COLOUR_TYPE, first: 10 },
+    );
+    const gidsFromEntries = entries.ok
+      ? ((entries.data?.metaobjects?.nodes ?? []) as Array<{ fields?: Array<{ key: string; value: string | null }> }>)
+          .flatMap((n) => n.fields ?? [])
+          .filter((f) => taxonomyFieldDefs.some((t) => t.key === f.key))
+          .flatMap((f) => {
+            const raw = f.value ?? "";
+            try {
+              const parsed: unknown = JSON.parse(raw);
+              return Array.isArray(parsed) ? parsed.map(String) : [raw];
+            } catch {
+              return [raw];
+            }
+          })
+          .filter((v) => v.startsWith("gid://shopify/"))
+      : [];
+    if (!entries.ok) steps.push({ step: "read stored values", ok: false, detail: describeFailure(entries) });
+
+    const gids = [...new Set(gidsFromEntries)].slice(0, 10);
+    if (gids.length > 0) {
+      // `nodes(ids:)` with __typename only: the concrete type is the ANSWER,
+      // and asking for a name before knowing the type is how a probe reports
+      // "does not exist" about a field on a type it guessed wrong.
+      const typed = await call(
+        `#graphql
+          query MetaobjectProbeTaxonomyTypes($ids: [ID!]!) {
+            nodes(ids: $ids) { __typename id }
+          }`,
+        { ids: gids },
+      );
+      if (!typed.ok) {
+        tax.resolvedValues = gids.map((gid) => ({ gid, error: describeFailure(typed) }));
+        steps.push({ step: "nodes(ids:) __typename", ok: false, detail: describeFailure(typed) });
+      } else {
+        const nodes = (typed.data?.nodes ?? []) as Array<{ __typename?: string; id?: string } | null>;
+        tax.resolvedValues = gids.map((gid) => ({
+          gid,
+          typename: nodes.find((n) => n?.id === gid)?.__typename,
+        }));
+        steps.push({
+          step: "nodes(ids:) __typename",
+          ok: true,
+          detail: JSON.stringify(tax.resolvedValues),
+        });
+
+        // 4. What can be SELECTED on that type — the picker's label problem.
+        const valueType = tax.resolvedValues.find((r) => r.typename)?.typename;
+        if (valueType) {
+          const shape = await call(
+            `#graphql
+              query MetaobjectProbeTaxonomyValueShape($name: String!) {
+                __type(name: $name) {
+                  fields(includeDeprecated: true) { name type { ...TypeRef } args { name type { ...TypeRef } } }
+                }
+              }
+              ${TYPE_REF_FRAGMENT}`,
+            { name: valueType },
+          );
+          if (shape.ok && shape.data?.__type?.fields) {
+            const fields = shape.data.__type.fields as Array<{ name: string; type: unknown; args?: Array<{ name: string; type: unknown }> }>;
+            tax.valueTypeFields = fields.map((f) => f.name);
+            steps.push({ step: `__type(${valueType})`, ok: true, detail: tax.valueTypeFields.join(", ") });
+
+            // Read the LABEL of one value. Same descent as the referencedBy
+            // step: a selection the server rejects is a shape answer, anything
+            // else is an outage and must not be reported as one.
+            const selection = liveNodeSelection(fields);
+            const labelCandidates = [selection.full, selection.scalars, "__typename id"].filter(
+              (c, i, all) => all.indexOf(c) === i,
+            );
+            let labelled = false;
+            for (const candidate of labelCandidates) {
+              const attempt = await call(
+                `#graphql
+                  query MetaobjectProbeTaxonomyLabels($ids: [ID!]!) {
+                    nodes(ids: $ids) { __typename ... on ${valueType} { ${candidate} } }
+                  }`,
+                { ids: gids },
+              );
+              if (attempt.ok) {
+                labelled = true;
+                steps.push({
+                  step: `resolve labels (${candidate === selection.full ? "full" : "reduced"})`,
+                  ok: true,
+                  detail: JSON.stringify(attempt.data?.nodes ?? null).slice(0, 600),
+                });
+                break;
+              }
+              // Only a rejected SELECTION justifies trying a narrower one. Any
+              // other failure is an outage, and walking past it would let a
+              // throttle be reported as "this type has no such fields".
+              if (!isSelectionError(attempt)) {
+                steps.push({ step: "resolve labels", ok: false, detail: describeFailure(attempt) });
+                labelled = true;
+                break;
+              }
+              steps.push({ step: `resolve labels (${candidate})`, ok: false, detail: describeFailure(attempt) });
+            }
+            if (!labelled) {
+              steps.push({
+                step: "resolve labels",
+                ok: false,
+                detail: "every selection was rejected — a picker could not show a name for a stored value",
+              });
+            }
+          } else {
+            steps.push({
+              step: `__type(${valueType})`,
+              ok: false,
+              detail: shape.ok ? "the API answered and the type is not there" : describeFailure(shape),
+            });
+          }
+        }
+      }
+    } else {
+      steps.push({
+        step: "collect taxonomy GIDs",
+        ok: false,
+        detail: "no stored entry value carried a taxonomy GID — nothing to resolve",
+      });
+    }
+
+    // 5. T1/T3 — where do the permitted values live, and how many are there?
+    //
+    // MEASURED (run 5): the `Taxonomy` root offers ONLY `categories(...)`.
+    // There is no attributes entry point and no shop-wide value list, and
+    // `TaxonomyValue` carries only `id` and `name` -- so it cannot be walked
+    // backwards to its attribute either. The only remaining door is a
+    // CATEGORY, and whether it has one is what this measures.
+    //
+    // EVERY type and field name below is introspected first and built from
+    // what came back. The previous cut hardcoded three attribute type names
+    // and a `name` field on one of them: a single wrong name rejects the whole
+    // document, and the only step that can answer T1 would then publish
+    // "no such API" about an API that works.
+    const wantedHandles = (tax.attributeHandles ?? []).map((h) => h.handle).filter(Boolean);
+    const VALUES_PAGE = 250;
+    const ATTRIBUTES_PAGE = 50;
+
+    // Which carrier each connection uses is MEASURED, not assumed: a generated
+    // `nodes { … }` against an edges-only connection is a document the schema
+    // rejects, and that rejection would be reported as "no path exists".
+    let categoryCarrier: "nodes" | "edges" | null = null;
+    const taxonomyShape = await call(
+      `#graphql
+        query MetaobjectProbeTaxonomyShape {
+          __type(name: "Taxonomy") {
+            fields(includeDeprecated: true) { name type { ...TypeRef } }
+          }
+        }
+        ${TYPE_REF_FRAGMENT}`,
+    );
+    const categoriesConnection = taxonomyShape.ok
+      ? namedTypeOf((taxonomyShape.data?.__type?.fields ?? []).find((f: any) => f.name === "categories")?.type)
+      : undefined;
+    if (categoriesConnection) {
+      const resolved = await connectionNodeType(call, categoriesConnection);
+      categoryCarrier = resolved.carrier;
+      steps.push({
+        step: `carrier of ${categoriesConnection}`,
+        ok: !!resolved.carrier,
+        detail: resolved.carrier ?? resolved.error ?? "not resolved",
+      });
+    }
+
+    const categoryShape = await call(
+      `#graphql
+        query MetaobjectProbeCategoryShape {
+          __type(name: "TaxonomyCategory") {
+            fields(includeDeprecated: true) { name args { name } type { ...TypeRef } }
+          }
+        }
+        ${TYPE_REF_FRAGMENT}`,
+    );
+    let attributesConnection: string | undefined;
+    if (!categoryShape.ok) {
+      steps.push({ step: "__type(TaxonomyCategory)", ok: false, detail: describeFailure(categoryShape) });
+    } else if (!categoryShape.data?.__type?.fields) {
+      steps.push({ step: "__type(TaxonomyCategory)", ok: false, detail: "the API answered and the type is not there" });
+    } else {
+      const fields = categoryShape.data.__type.fields as Array<{ name: string; type: unknown }>;
+      tax.categoryFields = fields.map((f) => f.name);
+      attributesConnection = namedTypeOf(fields.find((f) => f.name === "attributes")?.type);
+      steps.push({
+        step: "__type(TaxonomyCategory)",
+        ok: true,
+        detail: `${tax.categoryFields.join(", ")}${attributesConnection ? ` -- attributes: ${attributesConnection}` : " -- NO attributes field"}`,
+      });
+    }
+
+    // The attributes field yields a CONNECTION, so the attribute itself is two
+    // hops in. Reading the connection as the attribute is what made the last
+    // report print "Attribute type: edges | nodes | pageInfo" as though it had
+    // measured what an attribute is.
+    let attributeNode: string | null = null;
+    let attributeCarrier: "nodes" | "edges" | null = null;
+    if (attributesConnection) {
+      const resolved = await connectionNodeType(call, attributesConnection);
+      attributeNode = resolved.nodeType;
+      attributeCarrier = resolved.carrier;
+      steps.push({
+        step: `node of ${attributesConnection}`,
+        ok: !!attributeNode,
+        detail: attributeNode ? `${attributeNode} (via ${resolved.carrier})` : resolved.error ?? "not resolved",
+      });
+    }
+
+    let attributeSelection: string | null = null;
+    if (attributeNode) {
+      const attrShape = await call(
+        `#graphql
+          query MetaobjectProbeAttributeShape($name: String!) {
+            __type(name: $name) {
+              kind
+              fields(includeDeprecated: true) { name type { ...TypeRef } args { name type { ...TypeRef } } }
+              possibleTypes {
+                name
+                fields(includeDeprecated: true) { name type { ...TypeRef } args { name type { ...TypeRef } } }
+              }
+            }
+          }
+          ${TYPE_REF_FRAGMENT}`,
+        { name: attributeNode },
+      );
+      const shape = attrShape.ok ? attrShape.data?.__type : null;
+      if (!shape) {
+        steps.push({
+          step: `__type(${attributeNode})`,
+          ok: false,
+          detail: attrShape.ok ? "the API answered and the type is not there" : describeFailure(attrShape),
+        });
+      } else {
+        const members = (shape.possibleTypes ?? []).map(
+          (m: any) => `${m.name}{${(m.fields ?? []).map((f: any) => f.name).join(",")}}`,
+        );
+        const described: string[] =
+          members.length > 0 ? members : (shape.fields ?? []).map((f: any) => f.name);
+        tax.attributeTypeFields = described;
+        steps.push({
+          step: `__type(${attributeNode})`,
+          ok: true,
+          detail: `kind=${shape.kind} ${described.join(" | ")}`,
+        });
+        // `values` is deliberately LEFT OUT here — see polymorphicSelection.
+        // It is a connection, it is expensive, and round B fetches it by id.
+        attributeSelection = polymorphicSelection(shape, ["values"]);
+      }
+    }
+
+    if (attributeSelection) {
+      // Round A: which attributes exist, and what are they called. CHEAP on
+      // purpose: `categories(10) x attributes(50)` is 500 cost points, and the
+      // Admin API refuses a single query over 1000. The first cut asked for
+      // `categories(25) x attributes(50) x values(250)` — roughly 300 000 —
+      // so every round would have come back MAX_COST_EXCEEDED and the report
+      // would have called that "no path exists".
+      const CATEGORY_PAGE = 10;
+      const readCategories = async (extraArg: string, variables: Record<string, unknown>) =>
+        call(
+          `#graphql
+            query MetaobjectProbeCategoryAttributes(${extraArg}$first: Int!) {
+              taxonomy {
+                categories(${Object.keys(variables)
+                  .map((k) => `${k}: $${k}`)
+                  .join(", ")}) {
+                  ${carrierSelection(
+                    categoryCarrier,
+                    `id name attributes(first: ${ATTRIBUTES_PAGE}) { ${carrierSelection(attributeCarrier, attributeSelection)} }`,
+                  )}
+                }
+              }
+            }`,
+          variables,
+        );
+
+      const unwrap = (connection: any): any[] =>
+        ((connection?.nodes ?? connection?.edges?.map((e: any) => e?.node) ?? []) as any[]).filter(Boolean);
+      const attributesOf = (data: any): any[] =>
+        unwrap(data?.taxonomy?.categories).flatMap((c) => unwrap(c?.attributes));
+
+      const matchesWanted = (a: any) =>
+        wantedHandles.some(
+          (h) => String(a?.name ?? "").toLowerCase().replace(/\s+/g, "-") === h.toLowerCase(),
+        );
+
+      // Top-level verticals first, then the DESCENDANTS of the first one: a
+      // colour attribute plausibly hangs off a leaf rather than off "Apparel",
+      // and sampling only the top level would miss it structurally and report
+      // T1 unanswered rather than measured.
+      const rounds: Array<{ label: string; run: () => Promise<GraphQLCallResult> }> = [
+        { label: "top-level categories", run: () => readCategories("", { first: CATEGORY_PAGE }) },
+      ];
+
+      let match: any = null;
+      let sampled = 0;
+      for (const round of rounds) {
+        const res = await round.run();
+        if (!res.ok) {
+          steps.push({ step: round.label, ok: false, detail: describeFailure(res) });
+          continue;
+        }
+        const attributes = attributesOf(res.data);
+        sampled += attributes.length;
+        steps.push({
+          step: round.label,
+          ok: attributes.length > 0,
+          detail:
+            attributes.length > 0
+              ? `${attributes.length} attributes: ${attributes.slice(0, 20).map((a: any) => a?.name ?? a?.__typename).join(", ")}`
+              : "answered with no attributes here — not proof that none exist, only that these carry none",
+        });
+        match = match ?? attributes.find(matchesWanted) ?? null;
+        if (match) break;
+
+        const firstCategory = unwrap(res.data?.taxonomy?.categories)[0]?.id;
+        if (firstCategory && rounds.length === 1) {
+          rounds.push({
+            label: "descendants of the first category",
+            run: () =>
+              readCategories("$descendantsOf: ID!, ", { descendantsOf: firstCategory, first: 50 }),
+          });
+        }
+      }
+
+      // Round B: the values of THAT attribute, by its own id. One connection,
+      // one page, and the only call in this step that is allowed to be big.
+      if (!match?.id) {
+        steps.push({
+          step: "find the wanted attribute",
+          ok: false,
+          detail: `none of the ${sampled} sampled attributes matched ${wantedHandles.join("/") || "(no handle known)"}`,
+        });
+      } else {
+        const valuesRes = await call(
+          `#graphql
+            query MetaobjectProbeAttributeValues($ids: [ID!]!, $first: Int!) {
+              nodes(ids: $ids) {
+                __typename
+                ... on ${match.__typename} { values(first: $first) { nodes { id name } } }
+              }
+            }`,
+          { ids: [match.id], first: VALUES_PAGE },
+        );
+        const values = valuesRes.ok
+          ? (((valuesRes.data?.nodes ?? []) as any[]).flatMap((n) => n?.values?.nodes ?? []).filter(Boolean))
+          : [];
+        if (!valuesRes.ok) {
+          steps.push({ step: `values of "${match.name}"`, ok: false, detail: describeFailure(valuesRes) });
+        } else if (values.length === 0) {
+          steps.push({
+            step: `values of "${match.name}"`,
+            ok: false,
+            detail: "the query answered with an EMPTY list — that is not a count, it is a path that carried nothing",
+          });
+        } else {
+          tax.valueSource = `${match.__typename}.values (found via TaxonomyCategory.attributes)`;
+          tax.valueCount = values.length;
+          // From the page size the query ACTUALLY asked for — a second literal
+          // would drift and flip the T3 verdict between list and search.
+          tax.valuesTruncated = values.length >= VALUES_PAGE;
+          tax.valueSample = values.slice(0, 12).map((v: any) => v?.name ?? v?.id).filter(Boolean);
+          steps.push({
+            step: `values of "${match.name}"`,
+            ok: true,
+            detail: `${values.length}${tax.valuesTruncated ? "+" : ""} — ${tax.valueSample.join(", ")}`,
+          });
+        }
+      }
+    }
+
+    report.taxonomy = tax;
+    const reachable = tax.valueCount !== undefined;
+    report.verdicts.push(
+      reachable
+        ? `T1 POSITIVE: the permitted values are reachable via ${tax.valueSource} — ${tax.valueCount}${
+            tax.valuesTruncated ? " or more" : ""
+          } of them. T3 says the editor should be ${
+            tax.valuesTruncated || (tax.valueCount ?? 0) > 60 ? "a SEARCH picker" : "a plain list"
+          }.`
+        : `T1 NOT ANSWERED: no path to the permitted values worked. See the step details — a failed call is not proof that no such API exists, and PLAN_METAOBJECT_TAXONOMY_CREATE §5 (deep link into the Shopify admin) is the fallback only once this has been RE-RUN and still fails.`,
+    );
+    // T2 is answered whatever happens to T1, and it is answered from data that
+    // was already in the cache — worth saying on its own so a negative T1 does
+    // not bury it.
+    if ((tax.attributeHandles ?? []).some((h) => h.handle)) {
+      report.verdicts.push(
+        `T2 POSITIVE: the definition names its attribute by a stable HANDLE, not a GID — ${(tax.attributeHandles ?? [])
+          .filter((h) => h.handle)
+          .map((h) => `${h.fieldKey}=${h.handle}${h.min || h.max ? ` (${h.min ?? "?"}..${h.max ?? "?"} values)` : ""}`)
+          .join(", ")}. A create form has to honour those bounds.`,
       );
     }
   }

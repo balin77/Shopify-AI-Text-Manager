@@ -42,6 +42,12 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { parseMoney } from "./bulk-editor/columns.shared";
+import {
+  EMPTY_MEASUREMENT_INPUT,
+  decideUnitPrice,
+  isEmptyMeasurement,
+  type UnitPriceFieldValues,
+} from "./unit-price.shared";
 import { logger } from "~/utils/logger.server";
 
 /** Codes resolved to sentences by the client (`t.content.commerceWarnings`). */
@@ -60,7 +66,11 @@ export type CommerceWarning =
   | "priceInvalid"
   | "priceAmbiguous"
   | "priceNotConfirmed"
-  | "priceFailed";
+  | "priceFailed"
+  | "unitPriceIncomplete"
+  | "unitPriceInvalid"
+  | "unitPriceNotConfirmed"
+  | "unitPriceNotShown";
 
 export interface StockChange {
   /** gid://shopify/InventoryItem/... */
@@ -692,6 +702,27 @@ export interface VariantPriceFields {
    * save that reads as a success while nothing was written. Validated here.
    */
   inventoryPolicy?: string;
+  /**
+   * The Grundpreis, as the four raw strings the merchant typed.
+   *
+   * Passed as a quartet rather than as a parsed measurement because the four
+   * are ONE value: Shopify replaces the measurement object instead of merging
+   * into it, so "change only the unit" is not a thing that exists. Parsed and
+   * judged in one place by `decideUnitPrice` — all four empty CLEARS, all four
+   * filled SETS, and anything between is refused rather than half-written.
+   */
+  unitPrice?: UnitPriceFieldValues;
+  /**
+   * Whether the storefront shows it.
+   *
+   * Its own field on the variant, independent of the measurement: writing a
+   * measurement does NOT switch it on (measured — it stayed false through
+   * every probe write). So it is the merchant's own control, and a mismatch
+   * on it gets its OWN warning: the measurement may well have been stored
+   * while only the switch refused, and one code for both would send a merchant
+   * looking for a price that is saved.
+   */
+  showUnitPrice?: boolean;
 }
 
 /** Shopify's `ProductVariantInventoryPolicy`. */
@@ -786,6 +817,35 @@ export async function applyVariantPrices(
     mirror.inventoryPolicy = policy;
   }
 
+  /** What the echo must show, once the four fields have been judged. */
+  let wantedMeasurement: {
+    quantityValue: number;
+    quantityUnit: string;
+    referenceValue: number;
+    referenceUnit: string;
+  } | null = null;
+  if (params.fields.unitPrice !== undefined) {
+    const decision = decideUnitPrice(params.fields.unitPrice);
+    if (decision.kind === "invalid") {
+      // Refused whole, and the price in the same call with it. Writing the
+      // half that parsed would leave the merchant with a Grundpreis they did
+      // not describe, which is worse than a save that says what is wrong.
+      return decision.reason === "incomplete" ? "unitPriceIncomplete" : "unitPriceInvalid";
+    }
+    if (decision.kind === "clear") {
+      // NOT `null`: measured to be accepted and ignored. See the shared
+      // module's header.
+      input.unitPriceMeasurement = EMPTY_MEASUREMENT_INPUT;
+      wantedMeasurement = null;
+    } else {
+      input.unitPriceMeasurement = decision.measurement;
+      wantedMeasurement = decision.measurement;
+    }
+  }
+  if (params.fields.showUnitPrice !== undefined) {
+    input.showUnitPrice = params.fields.showUnitPrice;
+  }
+
   if (Object.keys(input).length <= 1) return undefined;
 
   try {
@@ -800,6 +860,13 @@ export async function applyVariantPrices(
               barcode
               inventoryPolicy
               taxable
+              unitPriceMeasurement {
+                quantityValue
+                quantityUnit
+                referenceValue
+                referenceUnit
+              }
+              showUnitPrice
             }
             userErrors { field message }
           }
@@ -817,6 +884,13 @@ export async function applyVariantPrices(
             barcode?: string | null;
             inventoryPolicy?: string | null;
             taxable?: boolean | null;
+            unitPriceMeasurement?: {
+              quantityValue?: number | null;
+              quantityUnit?: string | null;
+              referenceValue?: number | null;
+              referenceUnit?: string | null;
+            } | null;
+            showUnitPrice?: boolean | null;
           }> | null;
           userErrors?: Array<{ message: string }>;
         };
@@ -863,6 +937,30 @@ export async function applyVariantPrices(
       return "priceNotConfirmed";
     }
     if (input.taxable !== undefined && echoed.taxable !== input.taxable) return "priceNotConfirmed";
+
+    // The Grundpreis has the strictest echo of the lot, because its failure
+    // mode is the quiet one: `unitPriceMeasurement: null` is ACCEPTED and
+    // ignored, so a removal that reported success is exactly what a merchant
+    // would discover from their own storefront weeks later.
+    if (input.unitPriceMeasurement !== undefined) {
+      const got = echoed.unitPriceMeasurement ?? null;
+      const stored = isEmptyMeasurement(got) ? null : got;
+      const same =
+        wantedMeasurement === null
+          ? stored === null
+          : !!stored &&
+            Number(stored.quantityValue) === wantedMeasurement.quantityValue &&
+            stored.quantityUnit === wantedMeasurement.quantityUnit &&
+            Number(stored.referenceValue) === wantedMeasurement.referenceValue &&
+            stored.referenceUnit === wantedMeasurement.referenceUnit;
+      if (!same) return "unitPriceNotConfirmed";
+    }
+    // Its OWN code, and deliberately checked LAST: everything above has
+    // already been confirmed by this point, so a switch that would not move
+    // reports only itself instead of casting doubt on a price that is stored.
+    if (input.showUnitPrice !== undefined && echoed.showUnitPrice !== input.showUnitPrice) {
+      return "unitPriceNotShown";
+    }
 
     // Mirror what Shopify STORED, not what was sent — the same rule the theme
     // path follows for normalised richtext.

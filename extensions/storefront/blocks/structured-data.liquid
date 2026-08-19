@@ -766,7 +766,7 @@
       "type": "checkbox",
       "id": "enable_product",
       "label": "Product (product pages)",
-      "info": "Most themes emit their own product markup. Both at once is not merely duplicated but INVALID: this block uses the same @id as the theme on purpose, because it is meant to replace it, so Google merges the two into one node and every field both sides deliver ends up twice. Check step 3 of the app's Structured data section before switching this on. Optional: set the product metafield \"custom.price_valid_until\" (type date) on a product whose price you actually guarantee until a fixed day, and it is published as priceValidUntil. Left unset, the property is omitted - the app never invents a price-guarantee date.",
+      "info": "Most themes emit their own product markup. Both at once is not just duplicated but INVALID: this block uses the theme's @id on purpose, because it is meant to REPLACE it, so Google merges the two and every field both sides deliver appears twice. Check step 3 of the app's Structured data section first. Optional: the product metafield \"custom.price_valid_until\" (type date) is published as priceValidUntil; left unset the property is omitted - the app never invents a price-guarantee date.",
       "default": true
     },
     {
@@ -791,7 +791,7 @@
       "type": "checkbox",
       "id": "enable_video",
       "label": "Video (product pages)",
-      "info": "Emits VideoObject for videos in your product media AND for YouTube links that only live in a variant gallery, deduplicated per product. Google requires an upload date: for product media the app fills it in automatically during the sync, but a gallery link has no file behind it, so without the product metafield \"custom.video_upload_date\" (type date) that video gets no rich result - the property is omitted rather than guessed. The same metafield also overrides the automatic date. Vimeo gallery links are skipped: the rich result needs a thumbnail and none can be derived from a Vimeo link.",
+      "info": "Emits VideoObject for videos in your product media AND for YouTube links that only live in a variant gallery, deduplicated per product. Google requires an upload date: for product media the sync fills it in automatically. A gallery link has no file behind it, so without the product metafield \"custom.video_upload_date\" (type date) that video gets no rich result - omitted, never guessed. The same metafield overrides the automatic date. Vimeo gallery links are skipped: no thumbnail can be derived.",
       "default": true
     },
     {

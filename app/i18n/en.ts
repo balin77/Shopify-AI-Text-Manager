@@ -564,6 +564,13 @@ export const en: Translation = {
     // volatile number carried in the editor's value map would be stale by the
     // time the merchant pressed save.
     commerce: {
+      unitPriceHeading: "Unit price",
+      unitPriceHint: "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then prints “CHF 45.80 / kg”.",
+      unitPriceUnitLabel: "Unit",
+      unitPriceContent: "Total quantity",
+      unitPriceReference: "Reference quantity",
+      unitPriceShow: "Show on the storefront",
+      unitPriceClearHint: "Clearing all four fields removes the unit price.",
       customsDetails: "More details",
       taxableSwitch: "Charge tax on this variant",
       inventoryHeading: "Inventory",
@@ -629,6 +636,10 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
+      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. Nothing was saved.",
+      unitPriceInvalid: "The unit price was not a valid quantity. Nothing was saved.",
+      unitPriceNotConfirmed: "Shopify did not confirm the unit price. Reload to see what it holds.",
+      unitPriceNotShown: "The unit price was saved, but Shopify did not take the display switch.",
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Nothing was saved.",
       priceInvalid: "A price was not a number, so it was not saved.",
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
@@ -648,6 +659,10 @@ export const en: Translation = {
       channelsFailed: "The sales channels could not be changed.",
     },
     priceWarnings: {
+      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. Everything else was saved.",
+      unitPriceInvalid: "The unit price was not a valid quantity. Everything else was saved.",
+      unitPriceNotConfirmed: "Shopify did not confirm the unit price. Everything else was saved.",
+      unitPriceNotShown: "The unit price was saved, but the display switch was not.",
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
       priceInvalid: "The price could not be read as an amount. Everything else was saved.",
       priceEmpty: "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.",
@@ -669,6 +684,13 @@ export const en: Translation = {
     // status column still carry their own. Folding those in is worth doing,
     // and until it happens this comment says so rather than claiming it.
     enumLabels: {
+      "unitPriceUnit.ITEM": "item",
+      "unitPriceUnit.UNKNOWN": "unknown",
+      "unitPriceGroup.volume": "Volume",
+      "unitPriceGroup.weight": "Weight",
+      "unitPriceGroup.length": "Length",
+      "unitPriceGroup.area": "Area",
+      "unitPriceGroup.count": "Count",
       "status.DRAFT": "Draft", "status.ACTIVE": "Active",
       "status.UNLISTED": "Unlisted", "status.ARCHIVED": "Archived",
       "sortOrder.MANUAL": "Manual", "sortOrder.BEST_SELLING": "Best selling",
