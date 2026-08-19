@@ -656,9 +656,7 @@ export const de = {
       // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
       // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
       marketsHeading: "Regionen",
-      marketsHint: "Regionen entscheiden, wer das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
       b2bHeading: "B2B-Kataloge",
-      b2bHint: "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen.",
       catalogsUnknown: "Regionen und B2B-Kataloge konnten nicht gelesen werden und fehlen deshalb hier — verwalte sie im Shopify-Admin.",
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
@@ -4068,6 +4066,29 @@ export const de = {
         "Online Store ist der Kanal, den dein eigener Shop liest",
         "Einen Kanal abwählen versteckt das Produkt dort, ohne den Status zu ändern",
         "Ein geplanter Kanal zeigt sein Datum und ist noch nicht live",
+      ],
+    },
+    // Die beiden Listen, die Merchants zuverlässig für Kanäle halten. Der
+    // Text stand früher als Absatz über den Schaltern und schob die Liste
+    // selbst aus dem Bild — er beantwortet eine Frage, die man einmal hat.
+    commerceRegions: {
+      title: "Regionen",
+      summary:
+        "Regionen entscheiden, WER das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
+      tips: [
+        "Eine Region ist ein Markt-Katalog, kein Vertriebskanal",
+        "Gezählt werden Kataloge — ein Katalog kann mehrere Märkte abdecken",
+        "Ohne Regions-Einträge schränkt nichts das Produkt regional ein",
+      ],
+    },
+    commerceB2b: {
+      title: "B2B-Kataloge",
+      summary:
+        "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen. Sie hängen an einem Firmenstandort, nicht an einem Vertriebskanal.",
+      tips: [
+        "Nur sichtbar, wenn dein Shop B2B nutzt",
+        "Aus heisst: dieser Firmenstandort sieht das Produkt nicht",
+        "Der Online Store bleibt davon unberührt",
       ],
     },
     // Keywords section

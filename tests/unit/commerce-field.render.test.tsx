@@ -57,7 +57,7 @@ function ui(props: { isPrimaryLocale?: boolean } = {}) {
   return (
     <AppProvider i18n={en}>
       <CommerceDataProvider productId={PRODUCT} isPrimaryLocale={props.isPrimaryLocale ?? true} t={{}}>
-        <CommerceField label="Stock and sales channels" />
+        <CommerceField />
         <CommerceVariantsSection />
       </CommerceDataProvider>
     </AppProvider>

@@ -415,7 +415,12 @@ export function UnifiedFieldRenderer(
       // come from `CommerceDataProvider` now — the variant half of this panel
       // moved into the variants card and the two share one load, one set of
       // pending edits and one registration with the save bar.
-      <CommerceField label={translatedFieldLabel} />
+      //
+      // No `label`: the Details card's "publishing" subcard is already titled
+      // "Vertriebskanäle", and the field printed the same word again directly
+      // under it. The help bubble and the §2.3 alarm moved up onto that title
+      // as `CommerceChannelsHeaderExtras`.
+      <CommerceField />
     );
   }
 
