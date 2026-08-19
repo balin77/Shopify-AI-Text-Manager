@@ -654,9 +654,7 @@ export const en: Translation = {
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       marketsHeading: "Regions",
-      marketsHint: "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
       b2bHeading: "B2B catalogs",
-      b2bHint: "B2B catalogs decide which business customers can see the product.",
       catalogsUnknown: "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin.",
       noChannel: "On no channel — invisible",
       noChannels: "This shop has no sales channels installed.",
@@ -4058,6 +4056,29 @@ export const en: Translation = {
         "Online Store is the channel your own shop reads",
         "Unticking a channel hides the product there without changing its status",
         "A scheduled channel shows its date and is not live yet",
+      ],
+    },
+    // The two lists merchants reliably read as channels. The text used to sit
+    // as a paragraph above the switches and pushed the list itself off screen
+    // — it answers a question you have once.
+    commerceRegions: {
+      title: "Regions",
+      summary:
+        "Regions decide WHO may see the product, not where it is sold. Off means it is hidden in that region.",
+      tips: [
+        "A region is a market catalog, not a sales channel",
+        "Catalogs are counted — one catalog can cover several markets",
+        "With no region entries, nothing restricts the product regionally",
+      ],
+    },
+    commerceB2b: {
+      title: "B2B catalogs",
+      summary:
+        "B2B catalogs decide which business customers can see the product. They hang off a company location, not off a sales channel.",
+      tips: [
+        "Only visible if your shop uses B2B",
+        "Off means this company location does not see the product",
+        "The Online Store is unaffected by it",
       ],
     },
     // Keywords section

@@ -872,6 +872,44 @@ model GroupedFieldTranslation {
   @@index([shop, fieldKey, sourceLocale])
 }
 
+/// Shopify's product taxonomy, in the merchant's language.
+///
+/// The Admin API answers `taxonomy.categories` in ENGLISH and offers no way to
+/// ask otherwise -- measured twice on a live shop (Settings -> Probes ->
+/// Taxonomy): `@inContext` is not defined in the Admin schema at all, and an
+/// `Accept-Language` header is accepted and changes nothing, for every locale
+/// of the shop including its primary one. The German names the admin renders
+/// come from Shopify's OPEN DATA instead, keyed by the very same GIDs, and
+/// this table is that file after import.
+///
+/// NOT scoped by shop, and that is the one deliberate exception to the
+/// multi-tenant rule: these rows are Shopify's public taxonomy, identical for
+/// every merchant on the platform, and hold nothing a shop owns. Scoping them
+/// would store 14 608 rows per locale PER SHOP for data that cannot differ.
+model TaxonomyCategoryName {
+  id       String @id @default(cuid())
+  /// The dist folder of Shopify's taxonomy repo: "de", "pt-BR".
+  locale   String
+  /// "gid://shopify/TaxonomyCategory/hg-3-72" -- the id the Admin API returns.
+  gid      String
+  /// The whole path, which is what identifies a category to a human.
+  fullName String
+  /// The last segment, split at import so no read has to do it. This is what a
+  /// derived product type is built from.
+  name     String
+  /// Has no children. DERIVED from the GID hierarchy at import (the file does
+  /// not carry it) — the picker marks a non-leaf "(broad)", and a search hit
+  /// with no answer here would be marked broad whether it is or not.
+  isLeaf   Boolean
+  /// The taxonomy release these rows came from ("2026-05"). Diagnostic: the
+  /// import is triggered by an unknown GID, not by comparing versions.
+  version  String   @default("")
+  updatedAt DateTime @updatedAt
+
+  @@unique([locale, gid])
+  @@index([locale])
+}
+
 model ImageManagerSettings {
   id            String   @id @default(cuid())
   shopId        String   @unique

@@ -237,3 +237,69 @@ describe("TaxonomyField — the page behind the popover", () => {
     expect(wheelOn(document.body)).toBe(false);
   });
 });
+
+/**
+ * How wide the two boxes get — and that it is ONE width, not two.
+ *
+ * Both failure modes were shipped once: a panel with a width of its own hung
+ * out past a narrower control, and a panel that simply took the control's width
+ * (Polaris' `fullWidth`) spanned the whole page — this field is as wide as the
+ * editor column. The ceiling therefore sits on the CONTROL, and the panel is
+ * whatever the control measured, so the closed box and the open one cannot come
+ * to disagree.
+ */
+describe("TaxonomyField — how wide the boxes get", () => {
+  /** The panel is the box that carries the width; the list sits inside it. */
+  const panelStyle = () =>
+    (document.querySelector("[style*='overscroll-behavior']")?.parentElement?.parentElement
+      ?.getAttribute("style") ?? "");
+
+  /** The control the panel hangs off — the box the ceiling is spent on. */
+  const controlStyle = () =>
+    document.querySelector("[style*='--app-dropdown-panel-max-width']")?.getAttribute("style") ?? "";
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("caps the control itself, so the closed box cannot span the page", () => {
+    render(ui());
+
+    // The ONE ceiling, spent as a max-width — and as the token, never as a
+    // number this component made up.
+    expect(controlStyle()).toContain("max-width: var(--app-dropdown-panel-max-width)");
+  });
+
+  it("opens a panel exactly as wide as the control", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 420 } as DOMRect);
+
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("width: 420px");
+  });
+
+  it("follows a narrower control just as well", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 260 } as DOMRect);
+
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("width: 260px");
+  });
+
+  it("falls back to the bare ceiling when there is nothing to measure", async () => {
+    // jsdom reports 0 for every box. `width: 0px` would be a panel with no
+    // content in it, which is the one thing the measurement may not produce.
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("var(--app-dropdown-panel-max-width)");
+    expect(panelStyle()).not.toContain("width: 0px");
+  });
+});

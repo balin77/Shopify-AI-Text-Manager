@@ -645,9 +645,7 @@ export const es: Translation = {
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
       marketsHeading: "Regiones",
-      marketsHint: "Las regiones deciden quién puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
       b2bHeading: "Catálogos B2B",
-      b2bHint: "Los catálogos B2B deciden qué clientes empresariales pueden ver el producto.",
       catalogsUnknown: "No se pudieron leer las regiones ni los catálogos B2B, por eso no aparecen aquí — gestiónalos en tu panel de Shopify.",
       noChannel: "En ningún canal: invisible",
       noChannels: "Esta tienda no tiene canales de venta instalados.",
@@ -4046,6 +4044,29 @@ export const es: Translation = {
         "Online Store es el canal que lee tu propia tienda",
         "Desmarcar un canal lo oculta allí sin cambiar su estado",
         "Un canal programado muestra su fecha y todavía no está activo",
+      ],
+    },
+    // Las dos listas que los comerciantes leen como canales. El texto estaba
+    // como párrafo sobre los interruptores y empujaba la lista fuera de la
+    // pantalla — responde una pregunta que se tiene una vez.
+    commerceRegions: {
+      title: "Regiones",
+      summary:
+        "Las regiones deciden QUIÉN puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
+      tips: [
+        "Una región es un catálogo de mercado, no un canal de venta",
+        "Se cuentan catálogos — un catálogo puede cubrir varios mercados",
+        "Sin entradas de región, nada restringe el producto regionalmente",
+      ],
+    },
+    commerceB2b: {
+      title: "Catálogos B2B",
+      summary:
+        "Los catálogos B2B deciden qué clientes empresariales pueden ver el producto. Dependen de una ubicación de empresa, no de un canal de venta.",
+      tips: [
+        "Solo visible si tu tienda usa B2B",
+        "Desactivado significa que esa ubicación no ve el producto",
+        "El Online Store no se ve afectado",
       ],
     },
     // Keywords section

@@ -86,13 +86,25 @@
                               lay out horizontally and wrap, the way Shopify
                               shows them, so each one needs a width of its own
                               — a row that stretched would put three colours on
-                              three screen-wide lines. */
+                              three screen-wide lines.
+     --app-dropdown-panel-max-width
+                              the CEILING for a picker that is a full-width
+                              control plus a popover (the product category
+                              field). It is spent ONCE, as the max-width of the
+                              CONTROL; the panel measures the control and takes
+                              exactly that, so the closed box and the open one
+                              are one width and cannot come to disagree. A max,
+                              not a width: inside a narrow column both still
+                              shrink with it. Without it the control is as wide
+                              as the editor column, and a list of short labels
+                              spanned the whole screen. */
   --app-list-column-width: 330px;
   --app-editor-sidebar-width: 320px;
   --app-editor-sidebar-min-width: 200px;
   --app-editor-sidebar-max-width: 600px;
   --app-short-field-width: 380px;
   --app-value-chip-width: 230px;
+  --app-dropdown-panel-max-width: 480px;
   /* Polaris' Icon box. Spent where a row has to line up with one that starts
      with a drag handle but has no handle of its own. */
   --app-drag-handle-width: 20px;

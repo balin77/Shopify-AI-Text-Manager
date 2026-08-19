@@ -52,6 +52,16 @@
  * should try different words. The browse half carries the same rule: an empty
  * level and an unreachable one are separate states.
  *
+ * ── The control and its panel are ONE width ────────────────────────────────
+ * Both failure modes were shipped: a panel with a width of its own hangs out
+ * past a narrower control, and a panel that simply takes the control's width
+ * spans the whole page, because this field is as wide as the editor column.
+ * So the CEILING sits on the control (`--app-dropdown-panel-max-width`, in
+ * responsive.css with every other width in this app — never a number in here),
+ * and the panel MEASURES the control when it opens and takes exactly that.
+ * One ceiling, in one place: the closed box and the open one cannot come to
+ * disagree, and there is no second clamp to keep in step with the first.
+ *
  * ── The panel is a fixed box, and the content lives inside it ───────────────
  * Every row is `minWidth: 0` with a reserved trailing slot: a flex item does
  * not shrink below its own content by default, so one long path would set the
@@ -151,6 +161,11 @@ const DEBOUNCE_MS = 300;
  *  their text where the ones that do end theirs. */
 const TRAILING_SLOT = "1.25rem";
 
+/** The ceiling for BOTH boxes — spent as the control's max-width, inherited by
+ *  the panel through the measurement. The VALUE lives in responsive.css with
+ *  every other width in this app; this is only its name. */
+const PANEL_MAX_TOKEN = "--app-dropdown-panel-max-width";
+
 /** One entry of the browse stack: what was clicked to get here. The root level
  *  is the empty stack, so it needs no entry of its own. */
 interface Crumb {
@@ -211,6 +226,39 @@ export function TaxonomyField({
    */
   const listRef = useRef<HTMLDivElement | null>(null);
   useScrollLock(open && !disabled, listRef);
+
+  /**
+   * The control the panel hangs off, and how wide it was when the panel opened.
+   *
+   * Measured rather than declared, for the same reason the editor's sidebar
+   * measures its own default instead of restating it: the field's width is the
+   * page layout's business, and a copy of it here would be the thing that
+   * drifts. `null` until the first open — and a non-positive measurement (a
+   * detached node, a test without layout) falls back to the ceiling alone
+   * rather than collapsing the panel to nothing.
+   */
+  const activatorRef = useRef<HTMLDivElement | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number | null>(null);
+
+  /**
+   * What the control actually rendered as, in px — the panel's width.
+   *
+   * Measured rather than declared, the same way the editor sidebar measures the
+   * default it opened at instead of restating it: the ceiling is spent ONCE, as
+   * a max-width on the control below, so reading it a second time here would be
+   * the copy that drifts. A non-positive measurement (nothing laid out yet, a
+   * detached node) yields null and the panel falls back to the bare token —
+   * `width: 0px` would be a panel with nothing in it.
+   */
+  const measurePanel = useCallback((): number | null => {
+    const width = activatorRef.current?.getBoundingClientRect().width ?? 0;
+    return width > 0 ? width : null;
+  }, []);
+
+  const toggle = useCallback(() => {
+    setPanelWidth(measurePanel());
+    setOpen((v) => !v);
+  }, [measurePanel]);
 
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length > 0;
@@ -430,29 +478,35 @@ export function TaxonomyField({
       <Text as="p" variant="bodyMd">{label}</Text>
 
       <InlineStack gap="200" blockAlign="center" wrap={false}>
-        {/* The activator takes the row, the Clear button takes what it needs.
-            `minWidth: 0` is the half that matters: the button carries a whole
-            category PATH, and without it that string would set the width of the
-            field and push Clear out of the row. The path then wraps inside the
-            button (Polaris sets no `nowrap`), and `overflowWrap` — inherited,
-            so it reaches Polaris' own text span — is what keeps a single long
-            word from doing the widening the wrapping otherwise prevents. */}
-        <div style={{ flex: "1 1 auto", minWidth: 0, overflowWrap: "anywhere" }}>
+        {/* The control: it takes the row up to the ceiling, the Clear button
+            takes what it needs. THE max-width of this picker lives here — the
+            panel below measures this box, so the open list is exactly as wide
+            as the closed one.
+
+            `minWidth: 0` is the other half: the button carries a whole category
+            PATH, and without it that string would set the width of the field
+            and push Clear out of the row. The path then wraps inside the button
+            (Polaris sets no `nowrap`), and `overflowWrap` — inherited, so it
+            reaches Polaris' own text span — is what keeps a single long word
+            from doing the widening the wrapping otherwise prevents. */}
+        <div
+          ref={activatorRef}
+          style={{
+            flex: "1 1 auto",
+            minWidth: 0,
+            maxWidth: `var(${PANEL_MAX_TOKEN})`,
+            overflowWrap: "anywhere",
+          }}
+        >
           <Popover
             active={open && !disabled}
             onClose={() => setOpen(false)}
             preferredAlignment="left"
-            // The panel is exactly as wide as the control it belongs to, never
-            // wider. A fixed 30rem panel hanging off a narrower field is the
-            // "it does not fit" report — and on a small screen it left the
-            // frame entirely. Polaris measures the activator for us, so there
-            // is no width in here to keep in step with the layout.
-            fullWidth
             activator={
               <Button
                 disclosure
                 disabled={disabled}
-                onClick={() => setOpen((v) => !v)}
+                onClick={toggle}
                 // The whole path, because that is what identifies a category —
                 // and the button is the only place it shows once the popover is
                 // closed.
@@ -467,14 +521,14 @@ export function TaxonomyField({
               </Button>
             }
           >
-            {/* The box everything else has to fit into. It takes the width
-                Polaris gave the popover (the activator's) instead of naming one
-                of its own — a second number here is what would make the content
-                wider than the panel again — and counts its padding INSIDE that
-                width rather than adding to it. */}
+            {/* The box everything else has to fit into: exactly what the
+                control measured, which already carries the ceiling. Polaris'
+                own `fullWidth` did the first half only — never wider than the
+                control, but then as wide as the whole editor column. The
+                padding is counted INSIDE that width. */}
             <div
               style={{
-                width: "100%",
+                width: panelWidth ? `${panelWidth}px` : `var(${PANEL_MAX_TOKEN})`,
                 maxWidth: "100%",
                 boxSizing: "border-box",
                 padding: "0.5rem",
