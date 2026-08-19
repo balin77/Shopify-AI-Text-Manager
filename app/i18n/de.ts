@@ -213,6 +213,8 @@ export const de = {
     metaobjectsNoEntries: "Dieser Metaobjekt-Typ hat keine Einträge zum Anzeigen.",
     // PLAN_METAOBJECTS_EDITOR — die Eintragskarte
     metaobjectDeleteInUse: "Etwas in Ihrem Shop verweist noch auf diesen Eintrag, deshalb l\u00f6scht Shopify ihn nicht. Entfernen Sie den Verweis zuerst dort.",
+    metaobjectEntryEditColor: "Farbe \u00e4ndern",
+    metaobjectEntryColorStorefrontNote: "Diese Farbe ist auch der Swatch, den Ihr Shop bei Produkten mit diesem Optionswert anzeigt \u2014 gemessen, nicht angenommen.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Kein Feld dieses Eintrags kann hier bearbeitet werden.",
     metaobjectEntryUnsupportedTitle: "Nicht hier bearbeitbar",
