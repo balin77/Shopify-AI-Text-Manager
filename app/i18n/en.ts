@@ -229,6 +229,7 @@ export const en: Translation = {
     metaobjectEntryColorStorefrontNote: "This colour is also the swatch your storefront shows on products using this option value \u2014 measured, not assumed.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "None of this entry's fields can be edited here.",
+    metaobjectEntryNoTranslatableFields: "This entry has no translatable fields.",
     metaobjectEntryUnsupportedTitle: "Not editable here",
     metaobjectEntryUnsupportedHint: "This app has no editor for these field types. Edit them in the Shopify admin.",
     metaobjectEntryRichTextHint: "Rich text is shown only — edit it in the Shopify admin.",
