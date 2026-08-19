@@ -654,9 +654,7 @@ export const en: Translation = {
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       marketsHeading: "Regions",
-      marketsHint: "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
       b2bHeading: "B2B catalogs",
-      b2bHint: "B2B catalogs decide which business customers can see the product.",
       catalogsUnknown: "Regions and B2B catalogs could not be read, so they are not listed here — manage them in your Shopify admin.",
       noChannel: "On no channel — invisible",
       noChannels: "This shop has no sales channels installed.",
@@ -988,9 +986,10 @@ export const en: Translation = {
     translationChangeHeading: "When the primary language changes",
     translationPurgeOnPrimaryChange: "Delete translations when the primary-language text is changed or cleared",
     translationPurgeOnPrimaryChangeHelp: "Applies everywhere: the editor, the bulk editor, and a sync that notices the text was changed outside the app. Off: the old translations stay and Shopify flags them as outdated in its own translation editor. Market-specific translations are always kept.",
-    autoTranslateExternalChanges: "Automatically re-translate texts changed outside the app",
-    autoTranslateExternalChangesHelp: "When a text is edited in the Shopify admin, in another app or by an import, the AI re-translates it on the next sync instead of only deleting the outdated translation. This spends AI credit without you being present. URL handles are excluded and are still only deleted.",
+    autoTranslateExternalChanges: "Automatically re-translate texts when the source text changes",
+    autoTranslateExternalChangesHelp: "When a primary-language text changes — in the Shopify admin, in another app, through an import, or here in ContentPilot — the AI re-translates it on the next sync instead of only deleting the outdated translation. This spends AI credit without you being present. URL handles are excluded and are still only deleted.",
     autoTranslateExternalChangesPlanHint: "Available from the {plan} plan.",
+    translationPurgeSupersededNote: "Not needed while texts are re-translated automatically: the outdated text is replaced rather than deleted. Turn the automatic re-translation off to decide this yourself again.",
     translationsDescription: "Manage translations for grouping fields (e.g. product type). All products that share a source value must share exactly one translation per target language — otherwise a single category fragments into several in Google Merchant Center.",
     translationsProductType: "Product Type",
     translationsSearchLabel: "Search",
@@ -4057,6 +4056,29 @@ export const en: Translation = {
         "Online Store is the channel your own shop reads",
         "Unticking a channel hides the product there without changing its status",
         "A scheduled channel shows its date and is not live yet",
+      ],
+    },
+    // The two lists merchants reliably read as channels. The text used to sit
+    // as a paragraph above the switches and pushed the list itself off screen
+    // — it answers a question you have once.
+    commerceRegions: {
+      title: "Regions",
+      summary:
+        "Regions decide WHO may see the product, not where it is sold. Off means it is hidden in that region.",
+      tips: [
+        "A region is a market catalog, not a sales channel",
+        "Catalogs are counted — one catalog can cover several markets",
+        "With no region entries, nothing restricts the product regionally",
+      ],
+    },
+    commerceB2b: {
+      title: "B2B catalogs",
+      summary:
+        "B2B catalogs decide which business customers can see the product. They hang off a company location, not off a sales channel.",
+      tips: [
+        "Only visible if your shop uses B2B",
+        "Off means this company location does not see the product",
+        "The Online Store is unaffected by it",
       ],
     },
     // Keywords section

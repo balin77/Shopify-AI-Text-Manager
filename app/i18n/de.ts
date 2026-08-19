@@ -656,9 +656,7 @@ export const de = {
       // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
       // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
       marketsHeading: "Regionen",
-      marketsHint: "Regionen entscheiden, wer das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
       b2bHeading: "B2B-Kataloge",
-      b2bHint: "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen.",
       catalogsUnknown: "Regionen und B2B-Kataloge konnten nicht gelesen werden und fehlen deshalb hier — verwalte sie im Shopify-Admin.",
       noChannel: "Auf keinem Kanal — unsichtbar",
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
@@ -986,9 +984,10 @@ export const de = {
     translationChangeHeading: "Bei Änderung der Hauptsprache",
     translationPurgeOnPrimaryChange: "Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird",
     translationPurgeOnPrimaryChangeHelp: "Gilt überall: im Editor, im Bulk-Editor und beim Sync, wenn der Text ausserhalb der App geändert wurde. Aus: Die alten Übersetzungen bleiben stehen — Shopify markiert sie in seinem eigenen Übersetzungs-Editor als veraltet. Marktspezifische Übersetzungen bleiben immer erhalten.",
-    autoTranslateExternalChanges: "Texte automatisch neu übersetzen, wenn sie ausserhalb der App geändert werden",
-    autoTranslateExternalChangesHelp: "Wird ein Text im Shopify-Admin, in einer anderen App oder per Import geändert, übersetzt die KI ihn beim nächsten Sync sofort neu — statt die veraltete Übersetzung nur zu löschen. Verbraucht KI-Guthaben ohne dein Zutun. URL-Handles bleiben ausgenommen und werden weiterhin nur gelöscht.",
+    autoTranslateExternalChanges: "Texte automatisch neu übersetzen, wenn sich der Originaltext ändert",
+    autoTranslateExternalChangesHelp: "Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn beim nächsten Sync automatisch neu, statt die veraltete Übersetzung nur zu löschen. Verbraucht KI-Guthaben ohne dein Zutun. URL-Handles bleiben ausgenommen und werden weiterhin nur gelöscht.",
     autoTranslateExternalChangesPlanHint: "Ab dem {plan}-Plan verfügbar.",
+    translationPurgeSupersededNote: "Nicht nötig, solange automatisch neu übersetzt wird: Der veraltete Text wird ersetzt statt gelöscht. Schalte die automatische Neuübersetzung aus, um wieder selbst zu entscheiden.",
     translationsDescription: "Verwalte Übersetzungen für Felder mit Gruppierungs-Charakter (z. B. Produkttyp). Mehrere Produkte mit demselben Quellwert müssen pro Zielsprache exakt eine gemeinsame Übersetzung haben, sonst zerfällt eine Kategorie in Google Merchant Center in mehrere.",
     translationsProductType: "Produkttyp",
     translationsSearchLabel: "Suchen",
@@ -4067,6 +4066,29 @@ export const de = {
         "Online Store ist der Kanal, den dein eigener Shop liest",
         "Einen Kanal abwählen versteckt das Produkt dort, ohne den Status zu ändern",
         "Ein geplanter Kanal zeigt sein Datum und ist noch nicht live",
+      ],
+    },
+    // Die beiden Listen, die Merchants zuverlässig für Kanäle halten. Der
+    // Text stand früher als Absatz über den Schaltern und schob die Liste
+    // selbst aus dem Bild — er beantwortet eine Frage, die man einmal hat.
+    commerceRegions: {
+      title: "Regionen",
+      summary:
+        "Regionen entscheiden, WER das Produkt sehen darf — nicht, wo es verkauft wird. Aus heisst: in dieser Region ausgeblendet.",
+      tips: [
+        "Eine Region ist ein Markt-Katalog, kein Vertriebskanal",
+        "Gezählt werden Kataloge — ein Katalog kann mehrere Märkte abdecken",
+        "Ohne Regions-Einträge schränkt nichts das Produkt regional ein",
+      ],
+    },
+    commerceB2b: {
+      title: "B2B-Kataloge",
+      summary:
+        "B2B-Kataloge entscheiden, welche Geschäftskunden das Produkt sehen. Sie hängen an einem Firmenstandort, nicht an einem Vertriebskanal.",
+      tips: [
+        "Nur sichtbar, wenn dein Shop B2B nutzt",
+        "Aus heisst: dieser Firmenstandort sieht das Produkt nicht",
+        "Der Online Store bleibt davon unberührt",
       ],
     },
     // Keywords section

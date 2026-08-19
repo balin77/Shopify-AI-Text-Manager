@@ -69,6 +69,17 @@ function ui(props: Partial<React.ComponentProps<typeof TaxonomyField>> = {}) {
   );
 }
 
+/** The popover's scrolling list — the one box the scroll lock lets through.
+ *  Found by the property that makes it that box. */
+const listBox = () => document.querySelector("[style*='overscroll-behavior']") as HTMLElement;
+
+/** A wheel the page would scroll on, if anything let it. */
+function wheelOn(target: EventTarget): boolean {
+  const event = new WheelEvent("wheel", { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 /** The activator carries the current value, or "Not set". */
 const openPicker = async () => {
   fireEvent.click(screen.getByRole("button", { name: /not set/i }));
@@ -171,5 +182,136 @@ describe("TaxonomyField — browsing", () => {
     );
     expect(screen.getByRole("button", { name: /Apparel & Accessories > Jewelry/ })).toBeTruthy();
     expect(screen.queryByText(/gid:\/\//)).toBeNull();
+  });
+});
+
+/**
+ * The two rules that are about the BOX rather than about the taxonomy.
+ *
+ * A Polaris popover is positioned once against its activator and re-measures
+ * only on scrolls it can see — and the pages here scroll inside a plain
+ * container, not a Polaris `Scrollable`. So an open picker over a scrolling
+ * page hangs over nothing, which is why the page is frozen while it is open —
+ * everywhere except the popover's own list, which still has to scroll.
+ */
+describe("TaxonomyField — the page behind the popover", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("lets the page scroll while the picker is closed", () => {
+    render(ui());
+    expect(wheelOn(document.body)).toBe(false);
+  });
+
+  it("freezes the page while the picker is open and thaws it again on close", async () => {
+    render(ui());
+    await openPicker();
+
+    expect(wheelOn(document.body)).toBe(true);
+
+    // Choosing closes the popover — and the lock has to go with it, or the
+    // page stays frozen for good. A LEAF is what chooses; a branch descends.
+    fireEvent.click(screen.getByText("Apparel & Accessories"));
+    await waitFor(() => expect(screen.getByText("Jewelry")).toBeTruthy());
+    fireEvent.click(screen.getByText("Jewelry"));
+    await waitFor(() => expect(screen.queryByText("Jewelry")).toBeNull());
+    expect(wheelOn(document.body)).toBe(false);
+  });
+
+  it("still lets the popover's own list scroll", async () => {
+    render(ui());
+    await openPicker();
+
+    const list = listBox();
+    expect(list).toBeTruthy();
+    expect(wheelOn(list)).toBe(false);
+  });
+
+  it("does not freeze anything for a disabled field that cannot open", () => {
+    render(ui({ disabled: true }));
+    expect(wheelOn(document.body)).toBe(false);
+  });
+});
+
+/**
+ * How wide the panel gets.
+ *
+ * Both failure modes were shipped once: a panel with a width of its own hung
+ * out past a narrower field, and a panel that simply took the field's width
+ * (Polaris' `fullWidth`) spanned the whole page — this field is as wide as the
+ * editor column. The rule is the SMALLER of the measured field and the app's
+ * ceiling, and each half has to be able to drop out alone: a NaN in there is a
+ * panel with no width.
+ */
+describe("TaxonomyField — how wide the panel gets", () => {
+  /** The panel is the box that carries the width; the list sits inside it. */
+  const panelStyle = () =>
+    (document.querySelector("[style*='overscroll-behavior']")?.parentElement?.parentElement
+      ?.getAttribute("style") ?? "");
+
+  /** jsdom resolves no custom properties, so the ceiling is stubbed where a
+   *  test needs one. */
+  const withCeiling = (value: string) => {
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation(((node: Element) => {
+      const style = real(node);
+      return { ...style, getPropertyValue: () => value } as CSSStyleDeclaration;
+    }) as typeof window.getComputedStyle);
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("clamps a wide field down to the ceiling", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 1400 } as DOMRect);
+    withCeiling("480px");
+
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("width: 480px");
+  });
+
+  it("follows a field that is narrower than the ceiling", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 300 } as DOMRect);
+    withCeiling("480px");
+
+    render(ui());
+    await openPicker();
+
+    // Never wider than the control it hangs off — the other half of the rule.
+    expect(panelStyle()).toContain("width: 300px");
+  });
+
+  it("keeps the measured width when the ceiling does not parse as px", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 300 } as DOMRect);
+    withCeiling("");
+
+    render(ui());
+    await openPicker();
+
+    // Half a clamp, not a NaN.
+    expect(panelStyle()).toContain("width: 300px");
+  });
+
+  it("falls back to the bare token when there is nothing to measure at all", async () => {
+    // jsdom reports 0 for every box. `width: 0px` would be a panel with no
+    // content in it, which is why neither half may reach Math.min as a zero.
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("var(--app-dropdown-panel-max-width)");
+    expect(panelStyle()).not.toContain("width: 0px");
   });
 });

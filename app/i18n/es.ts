@@ -645,9 +645,7 @@ export const es: Translation = {
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
       marketsHeading: "Regiones",
-      marketsHint: "Las regiones deciden quién puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
       b2bHeading: "Catálogos B2B",
-      b2bHint: "Los catálogos B2B deciden qué clientes empresariales pueden ver el producto.",
       catalogsUnknown: "No se pudieron leer las regiones ni los catálogos B2B, por eso no aparecen aquí — gestiónalos en tu panel de Shopify.",
       noChannel: "En ningún canal: invisible",
       noChannels: "Esta tienda no tiene canales de venta instalados.",
@@ -973,9 +971,10 @@ export const es: Translation = {
     translationChangeHeading: "Al cambiar el idioma principal",
     translationPurgeOnPrimaryChange: "Eliminar las traducciones cuando el texto del idioma principal se modifica o se borra",
     translationPurgeOnPrimaryChangeHelp: "Se aplica en todas partes: el editor, el editor masivo y la sincronización que detecta un cambio hecho fuera de la app. Desactivado: las traducciones antiguas se mantienen y Shopify las marca como desactualizadas en su propio editor de traducciones. Las traducciones específicas de un mercado siempre se conservan.",
-    autoTranslateExternalChanges: "Volver a traducir automáticamente los textos modificados fuera de la app",
-    autoTranslateExternalChangesHelp: "Si un texto se edita en el admin de Shopify, en otra app o mediante una importación, la IA lo vuelve a traducir en la siguiente sincronización en lugar de solo eliminar la traducción desactualizada. Consume crédito de IA sin que estés presente. Los handles de URL quedan excluidos y solo se eliminan.",
+    autoTranslateExternalChanges: "Volver a traducir automáticamente los textos cuando cambia el texto original",
+    autoTranslateExternalChangesHelp: "Cuando un texto del idioma principal cambia — en el admin de Shopify, en otra app, mediante una importación o aquí en ContentPilot —, la IA lo vuelve a traducir en la siguiente sincronización en lugar de solo eliminar la traducción desactualizada. Consume crédito de IA sin que estés presente. Los handles de URL quedan excluidos y solo se eliminan.",
     autoTranslateExternalChangesPlanHint: "Disponible a partir del plan {plan}.",
+    translationPurgeSupersededNote: "No hace falta mientras los textos se vuelvan a traducir automáticamente: el texto desactualizado se reemplaza en lugar de eliminarse. Desactiva la retraducción automática para volver a decidirlo tú.",
     translationsDescription: "Gestiona las traducciones de los campos de agrupación (p. ej. tipo de producto). Todos los productos que comparten un mismo valor de origen deben compartir exactamente una traducción por idioma de destino; de lo contrario, una sola categoría se divide en varias en Google Merchant Center.",
     translationsProductType: "Tipo de producto",
     translationsSearchLabel: "Buscar",
@@ -4045,6 +4044,29 @@ export const es: Translation = {
         "Online Store es el canal que lee tu propia tienda",
         "Desmarcar un canal lo oculta allí sin cambiar su estado",
         "Un canal programado muestra su fecha y todavía no está activo",
+      ],
+    },
+    // Las dos listas que los comerciantes leen como canales. El texto estaba
+    // como párrafo sobre los interruptores y empujaba la lista fuera de la
+    // pantalla — responde una pregunta que se tiene una vez.
+    commerceRegions: {
+      title: "Regiones",
+      summary:
+        "Las regiones deciden QUIÉN puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
+      tips: [
+        "Una región es un catálogo de mercado, no un canal de venta",
+        "Se cuentan catálogos — un catálogo puede cubrir varios mercados",
+        "Sin entradas de región, nada restringe el producto regionalmente",
+      ],
+    },
+    commerceB2b: {
+      title: "Catálogos B2B",
+      summary:
+        "Los catálogos B2B deciden qué clientes empresariales pueden ver el producto. Dependen de una ubicación de empresa, no de un canal de venta.",
+      tips: [
+        "Solo visible si tu tienda usa B2B",
+        "Desactivado significa que esa ubicación no ve el producto",
+        "El Online Store no se ve afectado",
       ],
     },
     // Keywords section

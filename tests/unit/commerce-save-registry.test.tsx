@@ -18,7 +18,7 @@ import { useEffect, useState } from "react";
 import { fireEvent, render, screen, waitFor, cleanup } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
-import { CommerceField } from "~/components/unified/CommerceField";
+import { CommerceChannelsHeaderExtras, CommerceField } from "~/components/unified/CommerceField";
 import { CommerceVariantsSection } from "~/components/unified/CommerceVariantsSection";
 import { CommerceDataProvider } from "~/contexts/CommerceDataContext";
 import { useCommerceSaveRegistry } from "~/contexts/CommerceSaveContext";
@@ -76,7 +76,11 @@ function Editor() {
         isPrimaryLocale
         t={{ warnings: {}, enumLabels: {} }}
       >
-        <CommerceField label="Stock" />
+        {/* The alarm badge lives on the subcard's TITLE now, not inside the
+            field — mounted here too, or the "no badge" assertion below would
+            pass for the wrong reason. */}
+        <CommerceChannelsHeaderExtras />
+        <CommerceField />
         <CommerceVariantsSection />
       </CommerceDataProvider>
     </commerceSave.Provider>

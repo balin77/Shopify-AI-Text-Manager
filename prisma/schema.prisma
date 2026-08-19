@@ -213,12 +213,15 @@ model AISettings {
   // preserving stale translations.
   translationPurgeOnPrimaryChange Boolean @default(true)
 
-  // Max plan: when a primary text changes OUTSIDE this app (Shopify admin,
-  // another app, an import) and the sync sees Shopify's `outdated` flag, do
-  // not just delete the now-stale translation — re-translate the NEW primary
-  // value into that locale right away. Off by default: it spends the
-  // merchant's AI budget without them being present. Plan-gated to "max" at
-  // every read (the column may hold `true` from a period on a higher plan).
+  // Max plan: when a sync sees that a primary text moved, do not just delete
+  // the now-stale translation — re-translate the NEW value into that locale.
+  // The name says "External" for historic reasons and the column is NOT
+  // renamed for a label: it SUPERSEDES translationPurgeOnPrimaryChange (the two
+  // are alternatives, resolved in translation-change-policy.server.ts), so it
+  // covers a change made in the Shopify admin, another app, an import AND one
+  // made in this app. Off by default: it spends the merchant's AI budget
+  // without them being present. Plan-gated to "max" at every read (the column
+  // may hold `true` from a period on a higher plan).
   autoTranslateExternalChanges Boolean @default(false)
 
   // Translation length policy. "exact" (default) preserves source length —
