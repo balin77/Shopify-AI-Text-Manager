@@ -237,3 +237,81 @@ describe("TaxonomyField — the page behind the popover", () => {
     expect(wheelOn(document.body)).toBe(false);
   });
 });
+
+/**
+ * How wide the panel gets.
+ *
+ * Both failure modes were shipped once: a panel with a width of its own hung
+ * out past a narrower field, and a panel that simply took the field's width
+ * (Polaris' `fullWidth`) spanned the whole page — this field is as wide as the
+ * editor column. The rule is the SMALLER of the measured field and the app's
+ * ceiling, and each half has to be able to drop out alone: a NaN in there is a
+ * panel with no width.
+ */
+describe("TaxonomyField — how wide the panel gets", () => {
+  /** The panel is the box that carries the width; the list sits inside it. */
+  const panelStyle = () =>
+    (document.querySelector("[style*='overscroll-behavior']")?.parentElement?.parentElement
+      ?.getAttribute("style") ?? "");
+
+  /** jsdom resolves no custom properties, so the ceiling is stubbed where a
+   *  test needs one. */
+  const withCeiling = (value: string) => {
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation(((node: Element) => {
+      const style = real(node);
+      return { ...style, getPropertyValue: () => value } as CSSStyleDeclaration;
+    }) as typeof window.getComputedStyle);
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", mockFetch());
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("clamps a wide field down to the ceiling", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 1400 } as DOMRect);
+    withCeiling("480px");
+
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("width: 480px");
+  });
+
+  it("follows a field that is narrower than the ceiling", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 300 } as DOMRect);
+    withCeiling("480px");
+
+    render(ui());
+    await openPicker();
+
+    // Never wider than the control it hangs off — the other half of the rule.
+    expect(panelStyle()).toContain("width: 300px");
+  });
+
+  it("keeps the measured width when the ceiling does not parse as px", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({ width: 300 } as DOMRect);
+    withCeiling("");
+
+    render(ui());
+    await openPicker();
+
+    // Half a clamp, not a NaN.
+    expect(panelStyle()).toContain("width: 300px");
+  });
+
+  it("falls back to the bare token when there is nothing to measure at all", async () => {
+    // jsdom reports 0 for every box. `width: 0px` would be a panel with no
+    // content in it, which is why neither half may reach Math.min as a zero.
+    render(ui());
+    await openPicker();
+
+    expect(panelStyle()).toContain("var(--app-dropdown-panel-max-width)");
+    expect(panelStyle()).not.toContain("width: 0px");
+  });
+});

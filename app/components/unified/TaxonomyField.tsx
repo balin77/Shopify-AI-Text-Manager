@@ -52,6 +52,15 @@
  * should try different words. The browse half carries the same rule: an empty
  * level and an unreachable one are separate states.
  *
+ * ── The panel is as wide as the field, up to a ceiling ─────────────────────
+ * Two failure modes, one rule. A panel with a width of its own sticks out past
+ * a narrower field; a panel that simply takes the field's width spans the whole
+ * page, because this field is as wide as the editor column. So the activator is
+ * MEASURED when it opens and the panel takes the smaller of that and
+ * `--app-dropdown-panel-max-width` — the ceiling lives in responsive.css with
+ * every other width in this app, never as a number in here, and is read back
+ * per open the way the editor sidebar reads its drag bounds.
+ *
  * ── The panel is a fixed box, and the content lives inside it ───────────────
  * Every row is `minWidth: 0` with a reserved trailing slot: a flex item does
  * not shrink below its own content by default, so one long path would set the
@@ -151,6 +160,10 @@ const DEBOUNCE_MS = 300;
  *  their text where the ones that do end theirs. */
 const TRAILING_SLOT = "1.25rem";
 
+/** The ceiling the panel is clamped to. The VALUE lives in responsive.css with
+ *  every other width in this app; this is only its name. */
+const PANEL_MAX_TOKEN = "--app-dropdown-panel-max-width";
+
 /** One entry of the browse stack: what was clicked to get here. The root level
  *  is the empty stack, so it needs no entry of its own. */
 interface Crumb {
@@ -211,6 +224,43 @@ export function TaxonomyField({
    */
   const listRef = useRef<HTMLDivElement | null>(null);
   useScrollLock(open && !disabled, listRef);
+
+  /**
+   * The control the panel hangs off, and how wide it was when the panel opened.
+   *
+   * Measured rather than declared, for the same reason the editor's sidebar
+   * measures its own default instead of restating it: the field's width is the
+   * page layout's business, and a copy of it here would be the thing that
+   * drifts. `null` until the first open — and a non-positive measurement (a
+   * detached node, a test without layout) falls back to the ceiling alone
+   * rather than collapsing the panel to nothing.
+   */
+  const activatorRef = useRef<HTMLDivElement | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number | null>(null);
+
+  /**
+   * The smaller of the field and the ceiling, in px — or null when neither can
+   * be established, in which case the panel falls back to the bare token.
+   *
+   * Each half drops out on its OWN rather than poisoning the other: a ceiling
+   * that does not parse as px still leaves the measured field, an unmeasurable
+   * activator still leaves the ceiling, and `Math.min` never sees a NaN. That
+   * is the same rule the editor sidebar's drag bounds follow, for the same
+   * reason — a width that comes out NaN is a panel with no width at all.
+   */
+  const measurePanel = useCallback((): number | null => {
+    const node = activatorRef.current;
+    if (!node || typeof window === "undefined") return null;
+    const raw = window.getComputedStyle(node).getPropertyValue(PANEL_MAX_TOKEN).trim();
+    const bounds = [node.getBoundingClientRect().width, raw.endsWith("px") ? parseFloat(raw) : NaN]
+      .filter((n) => Number.isFinite(n) && n > 0);
+    return bounds.length ? Math.min(...bounds) : null;
+  }, []);
+
+  const toggle = useCallback(() => {
+    setPanelWidth(measurePanel());
+    setOpen((v) => !v);
+  }, [measurePanel]);
 
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length > 0;
@@ -437,22 +487,16 @@ export function TaxonomyField({
             button (Polaris sets no `nowrap`), and `overflowWrap` — inherited,
             so it reaches Polaris' own text span — is what keeps a single long
             word from doing the widening the wrapping otherwise prevents. */}
-        <div style={{ flex: "1 1 auto", minWidth: 0, overflowWrap: "anywhere" }}>
+        <div ref={activatorRef} style={{ flex: "1 1 auto", minWidth: 0, overflowWrap: "anywhere" }}>
           <Popover
             active={open && !disabled}
             onClose={() => setOpen(false)}
             preferredAlignment="left"
-            // The panel is exactly as wide as the control it belongs to, never
-            // wider. A fixed 30rem panel hanging off a narrower field is the
-            // "it does not fit" report — and on a small screen it left the
-            // frame entirely. Polaris measures the activator for us, so there
-            // is no width in here to keep in step with the layout.
-            fullWidth
             activator={
               <Button
                 disclosure
                 disabled={disabled}
-                onClick={() => setOpen((v) => !v)}
+                onClick={toggle}
                 // The whole path, because that is what identifies a category —
                 // and the button is the only place it shows once the popover is
                 // closed.
@@ -467,14 +511,14 @@ export function TaxonomyField({
               </Button>
             }
           >
-            {/* The box everything else has to fit into. It takes the width
-                Polaris gave the popover (the activator's) instead of naming one
-                of its own — a second number here is what would make the content
-                wider than the panel again — and counts its padding INSIDE that
-                width rather than adding to it. */}
+            {/* The box everything else has to fit into: the field's width up
+                to the app's ceiling — never sticking out past the control, and
+                never spanning a wide screen either. Polaris' own `fullWidth`
+                does the first half only, which is how this became a page-wide
+                list. The padding is counted INSIDE that width. */}
             <div
               style={{
-                width: "100%",
+                width: panelWidth ? `${panelWidth}px` : `var(${PANEL_MAX_TOKEN})`,
                 maxWidth: "100%",
                 boxSizing: "border-box",
                 padding: "0.5rem",
