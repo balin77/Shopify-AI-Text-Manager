@@ -37,9 +37,15 @@ export { AUTO_TRANSLATE_MIN_PLAN };
 export interface TranslationChangePolicy {
   /**
    * Delete a foreign translation when its primary value changed or was
-   * cleared, ON A SURFACE THE SYNC-SIDE RE-TRANSLATION REACHES — the resource's
-   * own translatable fields on Product / Collection / Article / Page / Blog /
-   * ShopPolicy.
+   * cleared, ON A SURFACE THE SYNC-SIDE RE-TRANSLATION REACHES BY ITSELF — the
+   * resource's own translatable fields on **Product and Collection**, the two
+   * types Shopify sends an update webhook for.
+   *
+   * Pages, articles, blogs and policies are reconciled by the same code, but
+   * only when the merchant presses reload on that item (CLAUDE.md: they have no
+   * webhook). Suppressing their deletion would trade a certain repair for one
+   * that depends on a button nobody knows to press, so they count as
+   * UNRECONCILED here.
    *
    * FALSE while `autoTranslateExternalChanges` is in force: there the deletion
    * would only throw away the row the re-translation is about to refresh. A
@@ -49,12 +55,12 @@ export interface TranslationChangePolicy {
    */
   purgeOnPrimaryChange: boolean;
   /**
-   * The same question for a surface the reconciliation does NOT reach:
-   * metaobject fields, theme content, product options / option values /
-   * metafields, image alt-texts. Auto-translate does NOT suppress the deletion
-   * there — nothing would ever refresh those translations, so suppressing it
-   * would leave a translation of text that no longer exists on the storefront
-   * for good. This is the merchant's stored choice, unmodified.
+   * The same question for a surface no automatic event repairs: metaobject
+   * fields, theme content, product options / option values / metafields, image
+   * alt-texts — and the webhook-less content types above. Auto-translate does
+   * NOT suppress the deletion there, because nothing would refresh those
+   * translations and a translation of text that no longer exists would stay on
+   * the storefront for good. This is the merchant's stored choice, unmodified.
    */
   purgeUnreconciledSurfaces: boolean;
   /**
@@ -125,11 +131,11 @@ export async function loadTranslationChangePolicy(
  * The one question every in-app purge site asks before deleting a foreign
  * translation for a changed/cleared primary value.
  *
- * @param opts.reconciled  Does the sync-side re-translation reach THIS surface?
- *   `true` only for the resource's own translatable fields on the types
- *   reconcileStaleTranslations is wired into (Product, Collection, Article,
- *   Page, Blog, ShopPolicy). Everything else — metaobject fields, theme
- *   content, options, option values, metafields, alt-texts — leaves it unset,
+ * @param opts.reconciled  Will an automatic event re-translate THIS surface?
+ *   `true` only for the resource's own translatable fields on **Product and
+ *   Collection** — the types with an update webhook. Everything else — the
+ *   webhook-less content types, metaobject fields, theme content, options,
+ *   option values, metafields, alt-texts — leaves it unset,
  *   and then auto-translate does NOT switch the deletion off: nothing would
  *   refresh those translations afterwards, so the stale text would simply stay
  *   live. Defaults to the safe answer, so a new purge site that forgets the

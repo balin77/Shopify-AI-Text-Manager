@@ -246,18 +246,22 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
     const inFlightKey = `${shop}${IN_FLIGHT_SEP}${resourceId}`;
     const startRetranslation = retranslate.length > 0;
     if (startRetranslation) {
-      // "Has someone written since I started?" — a TIMESTAMP, not the boolean.
-      // The purge above marked this very resource, and a run that reads that as
-      // a merchant save abandons itself: the entries end up in neither list, so
-      // nothing re-translates and nothing removes them, permanently, because
-      // the sync has already advanced their digest baseline.
-      const savedAtStart = translationSavedAt(resourceId);
-      const supersededByMerchant = () => {
-        const now = translationSavedAt(resourceId);
-        return now !== null && now !== savedAtStart;
-      };
-
       const runWork = async () => {
+        // "Has someone written since I started?" — a TIMESTAMP, not the
+        // boolean, and captured HERE rather than at spawn. The boolean cannot
+        // tell a merchant save from this module's own mark (the purge above
+        // marks the resource, and so does a finishing run), and a snapshot
+        // taken at spawn is already minutes stale for a run that was QUEUED
+        // behind another — the run it waited for marks the resource on its way
+        // out, and the queued one then abandons itself before touching a
+        // single locale. Its entries end up in neither list, so nothing
+        // re-translates and nothing removes them, permanently, because the
+        // sync has already advanced their digest baseline.
+        const savedAtStart = translationSavedAt(resourceId);
+        const supersededByMerchant = () => {
+          const now = translationSavedAt(resourceId);
+          return now !== null && now !== savedAtStart;
+        };
         try {
           const outcome = await retranslateStaleEntries(
             gateway,
@@ -272,7 +276,12 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
           // hand-written value is newer than everything decided here, and
           // deleting it would be the one unrecoverable outcome. The next change
           // event repairs whatever is genuinely still stale.
-          if (mayPurge && outcome.failed.length > 0 && !supersededByMerchant()) {
+          if (
+            mayPurge &&
+            !outcome.startFailed &&
+            outcome.failed.length > 0 &&
+            !supersededByMerchant()
+          ) {
             await purgeStaleEntries(gateway, shop, resourceId, resourceType, outcome.failed);
           }
           if (outcome.registered.length > 0) markTranslationSaved(resourceId);
@@ -377,8 +386,14 @@ async function purgeStaleEntries(
 
 interface RetranslateOutcome {
   registered: StaleTranslation[];
-  /** Entries that could not be re-translated — they must still be purged. */
+  /** Entries the AI could not deliver — they must still be purged. */
   failed: StaleTranslation[];
+  /**
+   * The run could not START (a DB error on the settings read or the Task row).
+   * NOT the same as "the AI failed": the entries are untouched and the fallback
+   * purge must be skipped — see the wrapper.
+   */
+  startFailed?: boolean;
 }
 
 /**
@@ -389,11 +404,15 @@ interface RetranslateOutcome {
  *
  * NOTHING may escape this function. Its SETUP — the dynamic imports, the AI
  * settings read, creating the Task row — sits outside the inner try, and a
- * throw there (a DB blip on `task.create` is the realistic one) used to skip
- * the caller's "remove what the AI could not deliver" rule entirely: no
- * `failed` list existed, so the entries were neither translated nor removed,
- * permanently, because the sync had already advanced their digest baseline.
- * Every failure now comes back AS a failure.
+ * throw there used to travel up as an unhandled run failure.
+ *
+ * It comes back as `startFailed`, deliberately NOT as `failed`. The realistic
+ * trigger is a DATABASE error (`task.create`), and answering it with the purge
+ * would remove the translations on Shopify while the local mirror delete fails
+ * for the very same reason — storefront content gone because our own database
+ * blinked, which is the exact rule the mirror-write below is built on, in
+ * reverse. A stale text left standing is visible and repairable on the next
+ * change event; a deleted one is neither.
  */
 async function retranslateStaleEntries(
   gateway: ShopifyApiGateway,
@@ -405,13 +424,14 @@ async function retranslateStaleEntries(
   try {
     return await runRetranslation(gateway, params, entries, supersededByMerchant);
   } catch (error: unknown) {
-    logger.warn("[StaleTranslations] Re-translation could not start — falling back to removal", {
+    logger.warn("[StaleTranslations] Re-translation could not start — stale rows kept", {
       context: "StaleTranslations",
       shop: params.shop,
       resourceId: params.resourceId,
+      entries: entries.length,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { registered: [], failed: [...entries] };
+    return { registered: [], failed: [], startFailed: true };
   }
 }
 

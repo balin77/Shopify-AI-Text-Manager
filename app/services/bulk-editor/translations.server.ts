@@ -760,15 +760,18 @@ async function translatedKeysForLocale(
   return present;
 }
 
-/** Separator for a confirmed `${locale} ${key}` pair (NUL can't occur in a
- * locale or a translation key). */
-export const LOCALE_KEY_SEP = " ";
+/** Separator for a confirmed `${locale}\u0000${key}` pair (NUL can't occur in a
+ * locale or a translation key). Written as an ESCAPE, never as a literal
+ * control byte: a raw NUL makes git classify this file as binary, and the
+ * module that owns every echo-verified translation write and removal would be
+ * unreviewable in a diff. */
+export const LOCALE_KEY_SEP = "\u0000";
 
 /**
  * translationsRemove for ONE resource across SEVERAL locales in a single call,
  * with per-(locale, key) echo verification — the multi-locale generalization
  * of removeAndVerify used by the primary-save stale-translation invalidation
- * (Plan §6.6 / Phase 4b). Returns the set of CONFIRMED `${locale} ${key}`
+ * (Plan §6.6 / Phase 4b). Returns the set of CONFIRMED `${locale}\u0000${key}`
  * pairs Shopify echoed back; ONLY those may be deleted locally (an unconfirmed
  * removal keeps the local row — CLAUDE.md). Throws on transport/GraphQL errors.
  */
