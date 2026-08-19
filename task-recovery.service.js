@@ -6,6 +6,12 @@
 
 import { PrismaClient } from "@prisma/client";
 import { refundImageOperations } from "./image-op-refund.js";
+import {
+  HEARTBEAT_TASK_TYPES,
+  HEARTBEAT_STALL_MS,
+  recoverOrphanedRuns,
+  reconcileOrphanCrawlSnapshots,
+} from "./orphan-run-recovery.js";
 
 // Reuse the global PrismaClient shared with the Remix app (db.server.ts)
 // instead of creating a separate instance with its own connection pool.
@@ -75,18 +81,18 @@ const LONG_RUNNING_TASK_TYPES = [
   // scan shape as seoAudit, so it needs the same generous stuck-task
   // threshold rather than the short default cutoff.
   'seoJsonLdAudit',
-  // Storefront crawler / site audit (PLAN_SEO_SUITE_COMPLETION.md §3.5,
-  // Phase 1, seo-crawl.handler.ts) — a live BFS crawl of up to 2000 pages
-  // (5 parallel requests, ~200ms spacing, 10s timeout + one retry on
-  // 5xx/timeout) can legitimately run for many minutes on a large shop, so it
-  // needs the same generous stuck-task threshold as the other detached scans.
-  'seoCrawl',
   // Internal-linking suggestions (PLAN_SEO_SUITE_COMPLETION.md §4.3, Phase 2,
   // internal-links.handler.ts) — a synonym LLM call per target product/
   // collection (up to a few hundred) followed by an LLM-free cheerio match
   // loop over every article/page/product body, same fan-out shape as
   // seoBulkFix, so it needs the same generous stuck-task threshold.
   'seoInternalLinks',
+  // Deliberately NOT here: 'seoCrawl'. It is a HEARTBEAT type
+  // (orphan-run-recovery.js) and is reaped on the much shorter heartbeat
+  // threshold instead — a crawl writes Task.progress at least every 10s through
+  // every phase, so silence means the runner died. Until it is reaped,
+  // single-flight refuses every new crawl and the crawl page shows a scan that
+  // never finishes: 45 minutes of that is the hang a redeploy used to produce.
 ];
 
 // R4-H2 (core): cap how many rows a single reaper pass flips per statement
@@ -117,7 +123,7 @@ export class TaskRecoveryService {
       return;
     }
 
-    console.log(`[TaskRecovery] Starting stuck task monitoring (every ${Math.round(STUCK_CHECK_INTERVAL_MS / 60000)} min; stuck threshold ${Math.round(STUCK_TASK_TIMEOUT_MS / 60000)} min)`);
+    console.log(`[TaskRecovery] Starting stuck task monitoring (every ${Math.round(STUCK_CHECK_INTERVAL_MS / 60000)} min; stuck threshold ${Math.round(STUCK_TASK_TIMEOUT_MS / 60000)} min, heartbeat types ${Math.round(HEARTBEAT_STALL_MS / 60000)} min)`);
 
     this.stuckCheckInterval = setInterval(async () => {
       try {
@@ -155,6 +161,14 @@ export class TaskRecoveryService {
     // is safe to retry or must be flagged for manual review.
     const webpRecovered = await this.recoverRunningWebpTasks();
 
+    // A detached runner cannot outlive its process, so every `running`
+    // heartbeat-type row we find while booting belongs to a process that is
+    // gone — no age check here (orphan-run-recovery.js, rule 2). This is what
+    // makes a crawl interrupted by a redeploy restartable immediately instead
+    // of after the reaper's timeout, and it closes the SeoCrawlSnapshot the
+    // reaper never touched.
+    const orphaned = await this.recoverOrphanedDetachedRuns();
+
     // Mark stuck tasks as failed
     const stuckCount = await this.markStuckTasksAsFailed();
 
@@ -170,9 +184,43 @@ export class TaskRecoveryService {
     // user interaction instead.
     const resetCount = await this.resetPendingTasks();
 
-    console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
+    console.log(`[TaskRecovery] Recovery complete: ${resetCount} reset to queued, ${stuckCount} marked as failed, ${orphaned.tasks} orphaned run(s) + ${orphaned.snapshots} crawl snapshot(s) closed, ${webpRecovered.retried} WebP retried, ${webpRecovered.failed} WebP flagged`);
 
-    return { recovered: resetCount, failed: stuckCount, webpRetried: webpRecovered.retried, webpFailed: webpRecovered.failed };
+    return {
+      recovered: resetCount,
+      failed: stuckCount,
+      orphaned: orphaned.tasks,
+      orphanedSnapshots: orphaned.snapshots,
+      webpRetried: webpRecovered.retried,
+      webpFailed: webpRecovered.failed,
+    };
+  }
+
+  /**
+   * Boot-time half of the orphan rule: fail heartbeat-type runs regardless of
+   * age and close the crawl snapshots behind them.
+   *
+   * Multi-instance caveat (same class as the R4-C2 note in server.js): with
+   * more than one replica, a booting instance would reap a run that is alive on
+   * another one. The app is deployed as a single web process; a run that IS
+   * still alive elsewhere is a run whose container is being replaced anyway,
+   * and its own finalizer keeps writing its own terminal state.
+   */
+  async recoverOrphanedDetachedRuns() {
+    // Never let this abort the rest of the boot recovery (and with it the
+    // monitoring interval that would clean up later): a failure here costs one
+    // delayed reap, a thrown one costs the reaper.
+    const result = await recoverOrphanedRuns(prisma, { olderThan: null }).catch((error) => {
+      console.error('[TaskRecovery] Orphaned-run recovery failed:', error);
+      return { tasks: 0, snapshots: 0, shops: [] };
+    });
+    if (result.tasks > 0 || result.snapshots > 0) {
+      console.log(
+        `[TaskRecovery] Orphaned detached runs: ${result.tasks} task(s) failed, ` +
+          `${result.snapshots} crawl snapshot(s) closed`,
+      );
+    }
+    return result;
   }
 
   /**
@@ -254,6 +302,7 @@ export class TaskRecoveryService {
     const now = Date.now();
     const defaultCutoff = new Date(now - STUCK_TASK_TIMEOUT_MS);
     const longCutoff = new Date(now - LONG_TASK_TIMEOUT_MS);
+    const heartbeatCutoff = new Date(now - HEARTBEAT_STALL_MS);
 
     // R3-C4: each stuck imageWebpConversion task consumed an image op at
     // batch creation, so we must refund it when WE flip it to 'failed'.
@@ -295,19 +344,42 @@ export class TaskRecoveryService {
       }
     };
 
+    // Pass 0: heartbeat types (orphan-run-recovery.js) — their runner reports
+    // progress at a bounded interval, so a gap this long is evidence the
+    // process is gone rather than of a long-running job. Reaped here rather
+    // than in pass 1 because a 45-minute wait IS the hang for a task whose
+    // single-flight blocks the merchant from starting a new one.
+    await reapBatched({
+      type: { in: HEARTBEAT_TASK_TYPES },
+      status: { in: NON_TERMINAL },
+      updatedAt: { lt: heartbeatCutoff },
+    });
+
     // Pass 1: legitimately-long types — only stuck after the LONG cutoff.
     await reapBatched({
-      type: { in: LONG_RUNNING_TASK_TYPES },
+      type: { in: LONG_RUNNING_TASK_TYPES, notIn: HEARTBEAT_TASK_TYPES },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: longCutoff },
     });
 
     // Pass 2: everything else (incl. imageWebpConversion) — default cutoff.
     await reapBatched({
-      type: { notIn: LONG_RUNNING_TASK_TYPES },
+      type: { notIn: [...LONG_RUNNING_TASK_TYPES, ...HEARTBEAT_TASK_TYPES] },
       status: { in: NON_TERMINAL },
       updatedAt: { lt: defaultCutoff },
     });
+
+    // The snapshot half of a reaped crawl. Runs on every pass, not just at
+    // boot: a crawl that times out here leaves the same open SeoCrawlSnapshot
+    // as one killed by a redeploy, and an open snapshot is what makes the
+    // newest crawl read as zero pages.
+    const closedSnapshots = await reconcileOrphanCrawlSnapshots(prisma).catch((err) => {
+      console.error('[TaskRecovery] Failed to close orphaned crawl snapshots:', err);
+      return 0;
+    });
+    if (closedSnapshots > 0) {
+      console.log(`[TaskRecovery] Closed ${closedSnapshots} orphaned crawl snapshot(s)`);
+    }
 
     if (total > 0) {
       console.log(`[TaskRecovery] Marked ${total} stuck task(s) as failed`);

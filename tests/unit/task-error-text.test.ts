@@ -18,6 +18,19 @@ describe("taskErrorText", () => {
     }
   });
 
+  it("translates the orphan recovery's interruption code in every locale", () => {
+    for (const t of [de, en, es] as any[]) {
+      // Written when the process that owned a detached run is gone (a redeploy).
+      const task = taskErrorText("task_interrupted", t);
+      expect(task).toBe(t.tasks.taskInterrupted);
+      expect(task).not.toContain("task_interrupted");
+      // The snapshot half of the same event, off SeoCrawlSnapshot.error.
+      const snapshot = taskErrorText("interrupted", t);
+      expect(snapshot).toBe(t.seo.crawlPage.errorInterrupted);
+      expect(snapshot).not.toBe("interrupted");
+    }
+  });
+
   it("translates crawl failures", () => {
     const crawl = (de as any).seo.crawlPage;
     expect(taskErrorText("bot_blocked", de)).toBe(crawl.errorBotBlocked);

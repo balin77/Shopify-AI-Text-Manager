@@ -28,6 +28,13 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
   switch (raw.split(":")[0]) {
     case "task_timed_out":
       return t?.tasks?.taskTimedOut || "Task timed out — no progress within the allowed time.";
+    // Written by the orphan recovery (orphan-run-recovery.js) when the process
+    // that owned a detached run is gone — a redeploy, an OOM kill. A different
+    // code from `task_timed_out` on purpose: "we restarted under it" is
+    // actionable ("start it again"), "it stopped reporting progress" invites the
+    // merchant to look for a fault in their own shop.
+    case "task_interrupted":
+      return t?.tasks?.taskInterrupted || "Interrupted by a server restart. Please start it again.";
     case "bot_blocked": {
       const base = crawl.errorBotBlocked || null;
       // Without the attribution the merchant only sees "something blocked the
@@ -42,6 +49,9 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
     case "invalid_domain":
     case "crawl_failed":
       return crawl.errorGeneric || null;
+    // The snapshot half of the same event, as written to SeoCrawlSnapshot.error.
+    case "interrupted":
+      return crawl.errorInterrupted || null;
     default:
       return raw;
   }
