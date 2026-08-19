@@ -484,6 +484,11 @@ export function CommerceVariantsSection() {
                       : (t.unitPriceHeading as string) || "Unit price"}
                   </Button>
                   <Collapsible open={unitPriceOpen} id="commerce-unit-price">
+                    {/* The breathing room sits INSIDE the collapsible, not as
+                        a gap under the button: a gap would hold its space while
+                        the panel is shut and leave a dead strip at the bottom
+                        of the card. */}
+                    <Box paddingBlockStart="300">
                     <BlockStack gap="300">
                       <Text as="p" variant="bodySm" tone="subdued">
                         {(t.unitPriceHint as string) ||
@@ -541,6 +546,7 @@ export function CommerceVariantsSection() {
                           "Clear all four fields to remove the unit price."}
                       </Text>
                     </BlockStack>
+                    </Box>
                   </Collapsible>
                   </div>
         </div>
@@ -629,6 +635,7 @@ export function CommerceVariantsSection() {
                       {(t.customsDetails as string) || "More details"}
                     </Button>
                     <Collapsible open={customsOpen && isPhysical} id="commerce-customs">
+                      <Box paddingBlockStart="300">
                       <BlockStack gap="300">
                         <TextField
                           label={(t.countryOfOrigin as string) || "Country of origin"}
@@ -648,6 +655,7 @@ export function CommerceVariantsSection() {
                           disabled={saving || !isPhysical}
                         />
                       </BlockStack>
+                      </Box>
                     </Collapsible>
                     </div>
                     </>
