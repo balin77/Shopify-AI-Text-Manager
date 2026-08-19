@@ -24,6 +24,7 @@
 
 import type { ReactNode } from "react";
 import { Button, InlineStack, Text } from "@shopify/polaris";
+import { DeleteIcon } from "@shopify/polaris-icons";
 import { HelpTooltip } from "../HelpTooltip";
 import { useI18n } from "../../contexts/I18nContext";
 
@@ -88,11 +89,11 @@ export interface FieldClearOverlayProps {
   /**
    * The field this button empties, for its accessible NAME.
    *
-   * Four of these sit in one Details row — vendor, product type, collections,
-   * tags — and with the bare word "Leeren" a screen reader announces four
-   * identical buttons with nothing to tell them apart. The visible label stays
-   * the bare word: sighted users have the field beside it, which is exactly
-   * what the accessible name is missing.
+   * The button shows a bin and no words, so the accessible name is the ONLY
+   * name it has — and four of these sit in one Details row (vendor, product
+   * type, collections, tags), where four buttons called "Leeren" tell a screen
+   * reader nothing apart. Sighted users have the field the icon sits in, which
+   * is exactly what the accessible name was missing.
    */
   fieldLabel?: string;
   children: ReactNode;
@@ -105,6 +106,13 @@ export interface FieldClearOverlayProps {
  * Absolutely positioned rather than laid out beside the label: the label is
  * inside a Polaris control for most fields, and a button in there would be part
  * of the `<label>` element, i.e. a click target that also focuses the input.
+ *
+ * A red BIN and no word. "Leeren" / "Clear" / "Vaciar" is up to seven
+ * characters of button sitting on the label's line, and since every field in
+ * the Details card became its own card there are up to six of them on one
+ * screen — each eating the width its own label wanted. The bin is the symbol
+ * this app already uses for deleting, and the word moves into the accessible
+ * name, where it is worth more anyway (see `fieldLabel`).
  */
 export function FieldClearOverlay({ onClear, hasValue, fieldLabel, children }: FieldClearOverlayProps) {
   const { t } = useI18n();
@@ -118,11 +126,16 @@ export function FieldClearOverlay({ onClear, hasValue, fieldLabel, children }: F
               size="slim"
               onClick={onClear}
               tone="critical"
+              // `plain` is what makes it borderless — a bin in a bordered box
+              // reads as a second control beside the field rather than as an
+              // affordance of it.
               variant="plain"
-              accessibilityLabel={fieldLabel ? `${clearWord}: ${fieldLabel}` : undefined}
-            >
-              {clearWord}
-            </Button>
+              icon={DeleteIcon}
+              // Never undefined: with no text inside the button, an absent
+              // accessible name leaves a control a screen reader can only call
+              // "button".
+              accessibilityLabel={fieldLabel ? `${clearWord}: ${fieldLabel}` : clearWord}
+            />
           )}
         </div>
       )}

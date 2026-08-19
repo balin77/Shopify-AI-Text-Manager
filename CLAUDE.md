@@ -188,6 +188,14 @@ button of its own.**
   `ChipCombobox`, `CollectionsField`, `TaxonomyField`. A label is a `span`, never
   a second `label` element: it is passed INTO the Polaris `label` prop, and a
   nested label is invalid markup that also breaks click-to-focus.
+- **The clear button is a red BIN with no word.** "Leeren" / "Clear" / "Vaciar"
+  is up to seven characters sitting on the label's own line, and since every
+  Details field became its own card there are up to six of them on one screen,
+  each eating the width its own label wanted. The word moves into
+  `accessibilityLabel`, which is where it was worth more anyway: the button has
+  no text of its own now, so that name is the ONLY one it has — and four of
+  these in one row all called "Leeren" tell a screen reader nothing apart, which
+  is what `fieldLabel` is for.
 - **The clear button is drawn only where `""` is a value the field can HOLD.** A
   select and a toggle are enums — Shopify stores one of their options, never
   nothing — so a Clear there would either write a value the API rejects at the

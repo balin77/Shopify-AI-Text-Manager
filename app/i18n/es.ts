@@ -580,7 +580,7 @@ export const es: Translation = {
     // PLAN §Phase 3.1 — el selector de pertenencia a colecciones.
     collectionsField: {
       reload: "Recargar",
-      automatedUnknown: "Aún no se ha cargado desde Shopify: recarga las colecciones para cambiarlo.",
+      automatedUnknown: "No se sabe si esta colección elige sus miembros por regla — sincroniza la pestaña Colecciones para averiguarlo.",
       listTruncated: "Esta tienda tiene más colecciones de las que se listan aquí. Usa el filtro o gestiona el resto en el admin de Shopify.",
       filter: "Filtrar colecciones …",
       loading: "Cargando colecciones",

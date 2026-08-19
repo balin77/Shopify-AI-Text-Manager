@@ -589,7 +589,7 @@ export const en: Translation = {
     // PLAN §Phase 3.1 — the membership picker.
     collectionsField: {
       reload: "Reload",
-      automatedUnknown: "Not loaded from Shopify yet — reload the collections to change this.",
+      automatedUnknown: "Unknown whether this collection picks its members by rule — sync the Collections tab to find out.",
       listTruncated: "This shop has more collections than are listed here. Use the filter, or manage the rest in the Shopify admin.",
       filter: "Filter collections …",
       loading: "Loading collections",

@@ -588,7 +588,7 @@ export const de = {
     // PLAN §Phase 3.1 — die Mitgliedschaftsauswahl.
     collectionsField: {
       reload: "Neu laden",
-      automatedUnknown: "Noch nicht von Shopify geladen — lade die Kollektionen neu, um das zu ändern.",
+      automatedUnknown: "Unbekannt, ob diese Kollektion ihre Mitglieder per Regel bestimmt — synchronisiere dafür den Tab „Kollektionen“.",
       listTruncated: "Dieser Shop hat mehr Kollektionen, als hier aufgelistet sind. Nutze den Filter, oder verwalte den Rest im Shopify-Admin.",
       filter: "Kollektionen filtern …",
       loading: "Kollektionen werden geladen",

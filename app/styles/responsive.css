@@ -191,13 +191,24 @@
   --app-details-field-min-width: 180px;
   --app-details-grid-gap: 1rem;
   --app-details-card-half-height: 5.5rem;
-  /* The two regions of the Details card, expressed in COLUMNS of the grid
-     above: the short fields want three of them side by side before the sales
-     channels are worth putting next to them, and the channel panel is the
-     "double width" one, i.e. two. Derived rather than typed, so moving the
-     field minimum moves the wrap point with it. */
+  /* How the Details row is split between the field cards and the sales-channel
+     card, and when the two stop fitting on one line.
+
+     The GROWS are the split: 3.4 : 1.6 out of 5, i.e. 68% / 32%. It was 3 : 2
+     — three columns against two — and the channel card was wider than three
+     lists of switch rows need while the boxes beside it sat at their minimum,
+     so a fifth of its width moved across. Kept as two numbers that add up to
+     five rather than as percentages, because the BASES below still count in
+     columns and the two have to be read together.
+
+     The BASES are the wrap point: how much each region wants before it is
+     worth putting them side by side at all. Derived from the field minimum, so
+     moving that moves the wrap point with it — the aside's 1.6 is its share of
+     the split, not a column count. */
+  --app-details-grid-grow: 3.4;
+  --app-details-aside-grow: 1.6;
   --app-details-grid-basis: calc(3 * var(--app-details-field-min-width) + 2 * var(--app-details-grid-gap));
-  --app-details-aside-basis: calc(2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
+  --app-details-aside-basis: calc(1.6 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
@@ -296,9 +307,14 @@
 }
 
 .app-details-layout__grid {
-  /* `min-width: 0` or a long tag chip inside a cell would push the whole
-     region past its share and force the aside onto its own line early. */
-  flex: 3 1 var(--app-details-grid-basis);
+  /* Longhand, not the `flex` shorthand: a custom property inside it is
+     substituted as one token list, and a browser that cannot parse the result
+     drops the whole declaration rather than the one part it did not like.
+     `min-width: 0` or a long tag chip inside a cell would push the whole region
+     past its share and force the aside onto its own line early. */
+  flex-grow: var(--app-details-grid-grow);
+  flex-shrink: 1;
+  flex-basis: var(--app-details-grid-basis);
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(var(--app-details-field-min-width), 1fr));
@@ -340,7 +356,9 @@
 }
 
 .app-details-layout__aside {
-  flex: 2 1 var(--app-details-aside-basis);
+  flex-grow: var(--app-details-aside-grow);
+  flex-shrink: 1;
+  flex-basis: var(--app-details-aside-basis);
   min-width: 0;
 }
 
