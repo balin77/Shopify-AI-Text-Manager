@@ -11,12 +11,9 @@
 
 import { data as json } from "react-router";
 import { AIService, toValidProvider } from "../../src/services/ai.service";
-import { TRANSLATE_CONTENT } from "../graphql/content.mutations";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getFormString } from "~/utils/form-data.utils";
-import { safeJsonParse } from "~/utils/validation";
 import { logger } from "~/utils/logger.server";
-import { extractThemeIdFromResourceId } from "~/utils/theme-id";
 import type { DataResponse } from "~/types/data-response";
 
 /**
@@ -308,96 +305,21 @@ IMPORTANT: Return ONLY the improved text, nothing else. No explanations, no opti
       return json({ success: true, translatedFields });
     }
 
-    case "updateContent": {
-      const locale = getFormString(formData, "locale");
-      const primaryLocale = getFormString(formData, "primaryLocale");
-      // Market scope (foreign locales only; primary theme content is always global).
-      const marketId = locale !== primaryLocale ? getFormString(formData, "marketId") : "";
-      const updatedFieldsJson = getFormString(formData, "updatedFields");
-      if (!locale || !primaryLocale || !updatedFieldsJson) {
-        return json({ success: false, error: "Missing required field: locale, primaryLocale, or updatedFields" }, { status: 400 });
-      }
-      const updatedFields = safeJsonParse<Record<string, string>>(updatedFieldsJson, {});
-
-      const changedFieldsStr = getFormString(formData, "changedFields");
-      const changedFields = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : [];
-
-      // STEP 1: Register foreign-locale translations with Shopify.
-      if (locale !== primaryLocale) {
-        const translationInputs = Object.entries(updatedFields).map(([key, value]) => ({
-          key,
-          value: value as string,
-          locale,
-          translatableContentDigest: "",
-          ...(marketId ? { marketId } : {}),
-        }));
-
-        if (translationInputs.length > 0) {
-          const response = await admin.graphql(TRANSLATE_CONTENT, {
-            variables: { resourceId, translations: translationInputs },
-          });
-          const data = await response.json();
-          if (data.data?.translationsRegister?.userErrors?.length > 0) {
-            const errors = data.data.translationsRegister.userErrors;
-            logger.error("Shopify translation errors", { context: "ThemeContent", domain, errors });
-            return json({ success: false, error: `Shopify error: ${errors[0].message}` }, { status: 500 });
-          }
-        }
-      }
-
-      // STEP 2: Local DB.
-      if (locale === primaryLocale) {
-        for (const group of themeGroups) {
-          const content = group.translatableContent as TranslatableField[];
-          let hasChanges = false;
-          for (const item of content) {
-            if (updatedFields[item.key] !== undefined) {
-              item.value = updatedFields[item.key];
-              hasChanges = true;
-            }
-          }
-          if (hasChanges) {
-            // updateMany: the unique key now carries themeId, but group.resourceId
-            // is already theme-specific, so (shop, resourceId, groupId) targets the
-            // right row(s) without needing it.
-            await db.themeContent.updateMany({
-              where: { shop: session.shop, resourceId: group.resourceId, groupId },
-              data: { translatableContent: content, lastSyncedAt: new Date() },
-            });
-          }
-        }
-
-        if (changedFields.length > 0) {
-          // Global-scoped to mirror the global-only Shopify removal (market
-          // overrides survive on both sides).
-          await db.themeTranslation.deleteMany({
-            where: { shop: session.shop, groupId, key: { in: changedFields }, domain, marketId: "", ...themeScope(selectedThemeId) },
-          });
-        }
-        return json({ success: true });
-      } else {
-        // The row's themeId is derived from its resourceId GID (mirrors sync).
-        const rowThemeId = extractThemeIdFromResourceId(resourceId) ?? "";
-        for (const [key, value] of Object.entries(updatedFields)) {
-          await db.themeTranslation.upsert({
-            where: {
-              shop_resourceId_groupId_key_locale_themeId_marketId: {
-                shop: session.shop,
-                resourceId,
-                groupId,
-                key,
-                locale,
-                themeId: rowThemeId,
-                marketId,
-              },
-            },
-            update: { value: value as string, updatedAt: new Date() },
-            create: { shop: session.shop, groupId, resourceId, themeId: rowThemeId, domain, locale, key, value: value as string, marketId },
-          });
-        }
-        return json({ success: true });
-      }
-    }
+    // NOTE — there is deliberately NO "updateContent" case here.
+    //
+    // This route used to carry a second theme-save implementation: it wrote
+    // the DB, deleted the changed keys' ThemeTranslation rows, and never
+    // touched Shopify — so a "successful" save left the storefront serving the
+    // old primary text and the translations gone locally but alive on Shopify.
+    // Two rules of this codebase forbid it: saves go through ONE handler
+    // (handleUpdateContent via makeThemeContentRouteAction, which resolves the
+    // theme filename, pushes to Shopify, and removes translations only after
+    // Shopify echoes the removal), and a stale-translation purge asks the
+    // merchant's setting first (services/translations/translation-change-policy).
+    // Nothing ever posted it — the editor page POSTs only "loadTranslations"
+    // here — so it was a directly reachable bypass with no user. Saving belongs
+    // to the host route's action; adding it back here would fork the write path
+    // again.
 
     default:
       return json({ success: false, error: "Unknown action" }, { status: 400 });

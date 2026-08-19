@@ -526,6 +526,16 @@ export class BackgroundSyncService {
       primaryContent
     );
 
+    // Stale-translation baseline, read BEFORE the transaction below overwrites
+    // the digests it is compared against (see ProductSyncService.syncProduct).
+    const previousDigests = options.reconcileTranslations
+      ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+          this.shop,
+          pageData.id,
+          "Page",
+        )
+      : {};
+
     // Prepare current keys for cleanup (marketId is part of the row identity)
     const currentKeys = allTranslations.map((t) => ({ key: t.key, locale: t.locale, marketId: t.marketId || "" }));
     // Cleanup is SCOPED to the layers this run SUCCESSFULLY fetched: when
@@ -638,10 +648,11 @@ export class BackgroundSyncService {
         shop: this.shop,
         resourceId: pageData.id,
         resourceType: "Page",
-        contentType: "page",
+        contentKind: "page",
         resourceTitle: pageData.title,
         translations: allTranslations,
         primaryContent,
+        previousDigests,
       });
     }
   }
@@ -818,7 +829,9 @@ export class BackgroundSyncService {
     const markets = await this.getMarkets();
 
     // Sync the policy
-    await this.syncSinglePolicyInternal(policyData, nonPrimaryLocales, markets);
+    await this.syncSinglePolicyInternal(policyData, nonPrimaryLocales, markets, {
+      reconcileTranslations: true,
+    });
 
     // Return fresh data from database
     const policy = await db.shopPolicy.findUnique({
@@ -848,18 +861,36 @@ export class BackgroundSyncService {
    * Sync a single policy with translations (internal method)
    * Uses a transaction to ensure data consistency
    */
-  private async syncSinglePolicyInternal(policyData: ShopifyPolicyData, nonPrimaryLocales: ShopLocale[], markets: MarketInfo[] = []): Promise<void> {
+  private async syncSinglePolicyInternal(
+    policyData: ShopifyPolicyData,
+    nonPrimaryLocales: ShopLocale[],
+    markets: MarketInfo[] = [],
+    options: { reconcileTranslations?: boolean } = {},
+  ): Promise<void> {
     const { db } = await import("../db.server");
 
     // Fetch translations for all non-primary locales (outside transaction - API calls)
     const failedMarketIds = new Set<string>();
+    const primaryContent: PrimaryContentMap = {};
     const allTranslations = await fetchAllTranslations(this.gateway.graphql.bind(this.gateway),
       policyData.id,
       nonPrimaryLocales,
       "ShopPolicy",
       markets,
-      failedMarketIds
+      failedMarketIds,
+      primaryContent
     );
+
+    // Policies have no webhook either — the explicit reload is the only event
+    // that can notice a primary text changed in the Shopify admin. Baseline
+    // read before the transaction rewrites the digests (see syncSinglePage).
+    const previousDigests = options.reconcileTranslations
+      ? await (await import("./translations/stale-translation-sync.server")).loadPreviousPrimaryDigests(
+          this.shop,
+          policyData.id,
+          "ShopPolicy",
+        )
+      : {};
 
     // Prepare current keys for cleanup (marketId is part of the row identity);
     // cleanup is scoped to the successfully fetched layers — see syncSinglePageInternal.
@@ -949,6 +980,25 @@ export class BackgroundSyncService {
         });
       }
     });
+
+    // Stale-translation reconciliation (explicit per-policy reload only) —
+    // best-effort, never fails the sync.
+    if (options.reconcileTranslations) {
+      const { reconcileStaleTranslations } = await import("./translations/stale-translation-sync.server");
+      await reconcileStaleTranslations({
+        client: this.gateway,
+        shop: this.shop,
+        resourceId: policyData.id,
+        resourceType: "ShopPolicy",
+        // A policy has no kind of its own in either vocabulary; "page" is the
+        // closest for the AI prompt and gives the Tasks tab a usable label.
+        contentKind: "page",
+        resourceTitle: policyData.title,
+        translations: allTranslations,
+        primaryContent,
+        previousDigests,
+      });
+    }
   }
 
   // ============================================

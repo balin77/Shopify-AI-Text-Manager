@@ -6,10 +6,13 @@ import {
   type SyncedTranslation,
 } from "../../app/services/translations/stale-translations.shared";
 
+const OLD = "digest-old";
+const NEW = "digest-new";
+
 /** A filled primary field, as `translatableContent` reports it. */
 function primary(
   entries: Record<string, string>,
-  digest = "digest-1",
+  digest: string = NEW,
 ): Record<string, PrimaryContentEntry> {
   const out: Record<string, PrimaryContentEntry> = {};
   for (const [key, value] of Object.entries(entries)) out[key] = { value, digest };
@@ -17,51 +20,80 @@ function primary(
 }
 
 function translation(over: Partial<SyncedTranslation> = {}): SyncedTranslation {
-  return { key: "title", value: "Titel", locale: "fr", marketId: "", ...over };
+  return { key: "title", value: "Titel", locale: "fr", marketId: "", outdated: true, ...over };
 }
 
-describe("findStaleTranslations", () => {
-  it("returns nothing when every translation matches a filled primary value", () => {
-    const stale = findStaleTranslations(
-      [translation({ outdated: false }), translation({ key: "body_html", outdated: false })],
-      primary({ title: "Box", body_html: "<p>Box</p>" }),
-    );
+/** The baseline a previous sync left behind: this key's source has since moved. */
+const moved = { title: OLD, body_html: OLD, meta_description: OLD, handle: OLD, some_theme_key: OLD };
+
+describe("findStaleTranslations — the digest gate", () => {
+  it("reports nothing when the source digest is unchanged since our last sync", () => {
+    // Shopify still flags the translation outdated (an edit long before this
+    // app was installed), but THIS sync saw no change — the case that would
+    // otherwise mass-delete a translating shop's history on any webhook.
+    const stale = findStaleTranslations([translation({ outdated: true })], primary({ title: "Box" }, OLD), {
+      title: OLD,
+    });
     expect(stale).toEqual([]);
   });
 
-  it("flags a translation Shopify itself reports as outdated", () => {
-    const stale = findStaleTranslations(
-      [translation({ outdated: true })],
-      primary({ title: "Box" }),
-    );
+  it("reports nothing when there is no previous digest at all (first sync)", () => {
+    const stale = findStaleTranslations([translation({ outdated: true })], primary({ title: "Box" }), {});
+    expect(stale).toEqual([]);
+  });
+
+  it("reports nothing when the stored digest is null (rows predating digest storage)", () => {
+    const stale = findStaleTranslations([translation({ outdated: true })], primary({ title: "Box" }), {
+      title: null,
+    });
+    expect(stale).toEqual([]);
+  });
+
+  it("flags a translation once the source digest moved AND Shopify calls it outdated", () => {
+    const stale = findStaleTranslations([translation({ outdated: true })], primary({ title: "Box" }), moved);
     expect(stale).toEqual([
-      { key: "title", locale: "fr", reason: "outdated", primaryValue: "Box", digest: "digest-1" },
+      { key: "title", locale: "fr", reason: "outdated", primaryValue: "Box", digest: NEW },
     ]);
+  });
+
+  it("leaves a translation alone that was re-registered against the NEW source", () => {
+    // Digest moved, but Shopify reports outdated:false — someone already
+    // translated the new text (another app, the Shopify admin). Deleting it
+    // would throw away the up-to-date translation.
+    const stale = findStaleTranslations([translation({ outdated: false })], primary({ title: "Box" }), moved);
+    expect(stale).toEqual([]);
   });
 
   it("flags a translation whose primary value was CLEARED — the key is then absent", () => {
     // Shopify's translatableContent only lists keys that HAVE a value, so
-    // "meta_description is missing" IS "the merchant deleted it".
+    // "meta_description is missing" IS "the merchant deleted it" — and the
+    // missing digest differs from the stored one, so the gate opens.
     const stale = findStaleTranslations(
       [translation({ key: "meta_description", outdated: false })],
       primary({ title: "Box" }),
+      moved,
     );
     expect(stale).toHaveLength(1);
-    expect(stale[0]).toMatchObject({ key: "meta_description", reason: "primary-empty" });
+    expect(stale[0]).toMatchObject({ key: "meta_description", reason: "primary-empty", primaryValue: "" });
   });
 
   it("treats a whitespace-only primary value as cleared", () => {
-    const stale = findStaleTranslations([translation({ key: "title" })], {
-      title: { value: "   ", digest: "d" },
-    });
+    const stale = findStaleTranslations(
+      [translation({ outdated: false })],
+      { title: { value: "   ", digest: NEW } },
+      moved,
+    );
     expect(stale).toHaveLength(1);
     expect(stale[0].reason).toBe("primary-empty");
   });
+});
 
+describe("findStaleTranslations — scope", () => {
   it("leaves market-specific overrides alone", () => {
     const stale = findStaleTranslations(
       [translation({ outdated: true, marketId: "gid://shopify/Market/1" })],
       primary({ title: "Box" }),
+      moved,
     );
     expect(stale).toEqual([]);
   });
@@ -70,6 +102,7 @@ describe("findStaleTranslations", () => {
     const stale = findStaleTranslations(
       [translation({ key: "some_theme_key", outdated: false })],
       primary({ title: "Box" }),
+      moved,
     );
     expect(stale).toEqual([]);
   });
@@ -78,31 +111,43 @@ describe("findStaleTranslations", () => {
     const stale = findStaleTranslations(
       [translation({ key: "some_theme_key", outdated: true })],
       primary({ title: "Box" }),
+      moved,
     );
     expect(stale).toHaveLength(1);
   });
 
   it("skips the cleared-primary rule entirely when NO primary content was fetched", () => {
     // An empty map is indistinguishable from a failed/partial fetch, and
-    // "every field is empty" must never be inferred from it.
+    // "every field is empty" must never be inferred from it. The outdated flag
+    // still stands on its own.
     const stale = findStaleTranslations(
-      [translation({ key: "title" }), translation({ key: "body_html" })],
+      [translation({ key: "body_html", outdated: false }), translation({ key: "title", outdated: false })],
       {},
+      moved,
     );
     expect(stale).toEqual([]);
-  });
-
-  it("reports one entry per (locale, key), not one per fetched layer", () => {
-    const stale = findStaleTranslations(
-      [translation({ outdated: true }), translation({ outdated: true })],
-      primary({ title: "Box" }),
-    );
-    expect(stale).toHaveLength(1);
   });
 
   it("treats a missing outdated flag as 'not asked', never as 'outdated'", () => {
-    const stale = findStaleTranslations([translation({})], primary({ title: "Box" }));
+    const stale = findStaleTranslations(
+      [translation({ outdated: undefined })],
+      primary({ title: "Box" }),
+      moved,
+    );
     expect(stale).toEqual([]);
+  });
+
+  it("reports one entry per (locale, key) even when a key repeats across locales", () => {
+    const stale = findStaleTranslations(
+      [
+        translation({ locale: "fr" }),
+        translation({ locale: "de" }),
+        translation({ locale: "fr" }), // duplicate global row
+      ],
+      primary({ title: "Box" }),
+      moved,
+    );
+    expect(stale.map((s) => s.locale).sort()).toEqual(["de", "fr"]);
   });
 });
 
@@ -112,7 +157,7 @@ describe("partitionStaleTranslations", () => {
     locale: "fr",
     reason: "outdated" as const,
     primaryValue: "Box",
-    digest: "d",
+    digest: NEW,
   };
 
   it("purges everything when auto-translation is off", () => {

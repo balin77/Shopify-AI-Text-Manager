@@ -84,7 +84,11 @@ describe("loadTranslationChangePolicy", () => {
     }
   });
 
-  it("treats a pre-migration row (columns absent) as the historic behaviour", async () => {
+  it("defaults both switches when the row carries neither field", async () => {
+    // Defensive only. The real pre-migration case does NOT reach here: Prisma
+    // raises P2022 for a `select` of a column the database does not have, so a
+    // container running ahead of its migration lands in the fail-open catch
+    // above — same outcome, different route.
     row.value = { subscriptionPlan: "max" };
     const policy = await loadTranslationChangePolicy("shop.myshopify.com");
     expect(policy.purgeOnPrimaryChange).toBe(true);
