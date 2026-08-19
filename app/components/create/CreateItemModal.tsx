@@ -174,6 +174,8 @@ export interface CreateItemModalProps {
    *  `sources[]` does not exist and only manual collections are creatable. */
   rulesAvailable?: boolean;
   rulesUnavailableReason?: string;
+  /** The shop's currency, for the rule builder's price conditions. */
+  currencyCode?: string;
   /** Options for `blogPicker` / `metaobjectType`, loaded by the caller. */
   dynamicOptions?: Record<
     string,
@@ -249,6 +251,7 @@ export function CreateItemModal({
   initialValues,
   rulesAvailable = false,
   rulesUnavailableReason,
+  currencyCode,
   dynamicOptions = {},
   onSubmit,
   submitting = false,
@@ -937,7 +940,9 @@ export function CreateItemModal({
                           title: t.defaultRuleSetName || "Rule set 1",
                           inclusion: {
                             matchType: "ALL",
-                            conditions: [newCondition("inclusion", conditionKinds("inclusion")[0].key, "c0")],
+                            conditions: [
+                              newCondition("inclusion", conditionKinds("inclusion")[0].key, "c0", { currencyCode }),
+                            ],
                           },
                         },
                       ]);
@@ -954,6 +959,7 @@ export function CreateItemModal({
                     errors={touched ? ruleErrors : []}
                     available={rulesAvailable}
                     unavailableReason={rulesUnavailableReason}
+                    currencyCode={currencyCode}
                     showAdvanced={rulesAdvanced}
                     onToggleAdvanced={() => setRulesAdvanced((v) => !v)}
                     t={t.rules}

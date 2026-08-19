@@ -109,32 +109,57 @@ export const COLLECTION_ATTRIBUTE_SELECTION = `
 /**
  * The `sources` sub-selection, on its own so every reader uses the SAME one.
  *
- * Load-bearing: `fromShopifySources` needs title, targetType and both sides'
- * conditions to tell a renderable source from one it must carry untouched.
- * A caller that selects a NARROWER shape — the rule mutation's echo did — and
- * mirrors it into `sourcesJson` turns every source into an empty renderable
- * one, which then reads as "the merchant deleted their rules" and lets the
- * next diff delete a real source the editor was never allowed to touch.
+ * Load-bearing: `fromShopifySources` needs the source's `__typename`, its
+ * `targetType` and both sides' conditions to tell a renderable source from one
+ * it must carry untouched. A caller that selects a NARROWER shape — the rule
+ * mutation's echo did — and mirrors it into `sourcesJson` turns every source
+ * into an empty renderable one, which then reads as "the merchant deleted
+ * their rules" and lets the next diff delete a real source the editor was
+ * never allowed to touch.
+ *
+ * MEASURED against the 2026-07 schema (2026-08-19, Shopify's public
+ * introspection proxy — PLAN_CONTENT_CREATION §1.2c). The first cut DERIVED
+ * this shape from the INPUT types §1.2a had probed and got three things wrong,
+ * each of which failed the WHOLE query rather than degrading:
+ * `CollectionSource` is an INTERFACE carrying only id/title/description/app,
+ * so `targetType`/`inclusion`/`exclusion` live behind
+ * `... on CollectionConditionsSource`; `selections` is a CONNECTION and needs
+ * a page size; and a shareable source is not a branch of its own but this very
+ * type with `shareable: true`. An unknown field is a schema-level error, so
+ * `getCollection` came back `data: null` and the collection sync failed for
+ * every collection on the shop.
  */
 export const COLLECTION_SOURCES_FIELDS = `sources {
+              __typename
               id
               title
               description
-              targetType
-              inclusion {
-                matchType
-                selections { __typename }
-                conditions {
-                  __typename
+              ... on CollectionConditionsSource {
+                targetType
+                shareable
+                inclusion {
+                  matchType
+                  selections(first: 1) {
+                    nodes {
+                      __typename
+                    }
+                  }
+                  conditions {
+                    __typename
 ${INCLUSION_CONDITION_FRAGMENTS}
+                  }
                 }
-              }
-              exclusion {
-                matchType
-                selections { __typename }
-                conditions {
-                  __typename
+                exclusion {
+                  matchType
+                  selections(first: 1) {
+                    nodes {
+                      __typename
+                    }
+                  }
+                  conditions {
+                    __typename
 ${EXCLUSION_CONDITION_FRAGMENTS}
+                  }
                 }
               }
             }`;

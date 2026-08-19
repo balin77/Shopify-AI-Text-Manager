@@ -79,6 +79,32 @@ export type ConditionValueShape =
   /** `{ relation, value | values, matchType?, definitionId }`. */
   | "metafield";
 
+/**
+ * How the READ side hands a kind's value back — MEASURED against the 2026-07
+ * schema (2026-08-19), and the half §1.2a never probed because it introspected
+ * the INPUT types only.
+ *
+ * Writing is flat: ids, strings and scalars. Reading is not — seven of the
+ * kinds answer with OBJECTS, and a selection that asks for a bare `value` on
+ * one of them is a schema-level error that fails the WHOLE query, which is how
+ * the collection sync came to fail for every collection on the shop.
+ */
+export type ConditionValueRead =
+  /** `values: [String!]` / `value: Int` — the value IS the payload. */
+  | "scalar"
+  /** `values { category { id } includeDescendants }` ↔ `{ categoryId, includeDescendants }`. */
+  | "category"
+  /** `value { amount currencyCode }` ↔ `MoneyInput`. */
+  | "money"
+  /** `value { value unit }` ↔ `WeightInput`. */
+  | "weight"
+  /** A node with an id — `Metaobject`, `Collection` — written back as that id. */
+  | "gid";
+
+/** `WeightInput.unit`, measured. */
+export const WEIGHT_UNITS = ["KILOGRAMS", "GRAMS", "POUNDS", "OUNCES"] as const;
+export type WeightUnit = (typeof WEIGHT_UNITS)[number];
+
 export interface ConditionKindSpec {
   /** The field name inside `CollectionSourceInclusionConditionInput`. */
   key: string;
@@ -87,6 +113,14 @@ export interface ConditionKindSpec {
   relations: readonly string[];
   /** `values` is a list ⇒ the condition carries its own matchType. */
   list: boolean;
+  /** How Shopify hands the value BACK. Defaults to `scalar`. */
+  read?: ConditionValueRead;
+  /**
+   * The one list kind whose INPUT has no `matchType`: an exclusion by
+   * collection takes `values: [ID!]` and nothing else. Sending the field the
+   * other list kinds require fails the mutation at the schema level.
+   */
+  omitMatchTypeOnWrite?: true;
   /** Scalar kinds name the input type so the UI can pick a control. */
   scalarType?: "Int" | "Decimal" | "Money" | "Weight" | "Boolean" | "ID" | "ProductStatus";
   /** Metafield kinds additionally require a definitionId. */
@@ -103,27 +137,28 @@ export const INCLUSION_CONDITIONS: readonly ConditionKindSpec[] = [
   { key: "productTitle", shape: "stringList", list: true, relations: TEXTY, labelKey: "productTitle" },
   { key: "productType", shape: "stringList", list: true, relations: TEXTY, labelKey: "productType" },
   { key: "productVendor", shape: "stringList", list: true, relations: TEXTY, labelKey: "productVendor" },
-  { key: "productCategory", shape: "stringList", list: true, relations: ["EQUALS", "NOT_EQUALS"], labelKey: "productCategory" },
+  { key: "productCategory", shape: "stringList", list: true, read: "category", relations: ["EQUALS", "NOT_EQUALS"], labelKey: "productCategory" },
   { key: "productStatus", shape: "stringList", list: true, relations: ["EQUALS", "NOT_EQUALS"], scalarType: "ProductStatus", labelKey: "productStatus" },
   { key: "variantTitle", shape: "stringList", list: true, relations: TEXTY, labelKey: "variantTitle" },
-  { key: "variantPrice", shape: "scalar", list: false, relations: ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Money", labelKey: "variantPrice" },
+  { key: "variantPrice", shape: "scalar", list: false, read: "money", relations: ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Money", labelKey: "variantPrice" },
   {
     key: "variantCompareAtPrice",
     shape: "scalar",
     list: false,
+    read: "money",
     relations: ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IS_SET", "IS_NOT_SET"],
     scalarType: "Money",
     labelKey: "variantCompareAtPrice",
   },
   { key: "variantInventory", shape: "scalar", list: false, relations: ["EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Int", labelKey: "variantInventory" },
-  { key: "variantWeight", shape: "scalar", list: false, relations: ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Weight", labelKey: "variantWeight" },
+  { key: "variantWeight", shape: "scalar", list: false, read: "weight", relations: ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Weight", labelKey: "variantWeight" },
   { key: "metafieldString", shape: "metafield", list: true, relations: ["EQUALS"], needsDefinition: true, labelKey: "metafieldString" },
   { key: "metafieldStringList", shape: "metafield", list: true, relations: ["INCLUDES"], needsDefinition: true, labelKey: "metafieldStringList" },
   { key: "metafieldInteger", shape: "metafield", list: false, relations: ["EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Int", needsDefinition: true, labelKey: "metafieldInteger" },
   { key: "metafieldDecimal", shape: "metafield", list: false, relations: ["EQUALS", "GREATER_THAN", "LESS_THAN"], scalarType: "Decimal", needsDefinition: true, labelKey: "metafieldDecimal" },
   { key: "metafieldBoolean", shape: "metafield", list: false, relations: ["EQUALS"], scalarType: "Boolean", needsDefinition: true, labelKey: "metafieldBoolean" },
-  { key: "metafieldMetaobject", shape: "metafield", list: false, relations: ["EQUALS"], scalarType: "ID", needsDefinition: true, labelKey: "metafieldMetaobject" },
-  { key: "metafieldMetaobjectList", shape: "metafield", list: true, relations: ["INCLUDES"], needsDefinition: true, labelKey: "metafieldMetaobjectList" },
+  { key: "metafieldMetaobject", shape: "metafield", list: false, read: "gid", relations: ["EQUALS"], scalarType: "ID", needsDefinition: true, labelKey: "metafieldMetaobject" },
+  { key: "metafieldMetaobjectList", shape: "metafield", list: true, read: "gid", relations: ["INCLUDES"], needsDefinition: true, labelKey: "metafieldMetaobjectList" },
 ];
 
 /**
@@ -136,9 +171,11 @@ export const EXCLUSION_CONDITIONS: readonly ConditionKindSpec[] = [
   { key: "productTag", shape: "stringList", list: true, relations: ["TAGGED_WITH"], labelKey: "productTag" },
   { key: "productType", shape: "stringList", list: true, relations: ["EQUALS", "CONTAINS"], labelKey: "productType" },
   { key: "productVendor", shape: "stringList", list: true, relations: ["EQUALS", "CONTAINS"], labelKey: "productVendor" },
-  { key: "productCategory", shape: "stringList", list: true, relations: ["EQUALS"], labelKey: "productCategory" },
-  // The odd one out: no relation at all, just a list of collection ids.
-  { key: "collection", shape: "stringList", list: true, relations: [], scalarType: "ID", labelKey: "collection" },
+  { key: "productCategory", shape: "stringList", list: true, read: "category", relations: ["EQUALS"], labelKey: "productCategory" },
+  // The odd one out: no relation at all, and no matchType on the input either
+  // — just a list of collection ids. It READS a matchType back, which is
+  // exactly why the write side has to name the exception rather than infer it.
+  { key: "collection", shape: "stringList", list: true, read: "gid", omitMatchTypeOnWrite: true, relations: [], scalarType: "ID", labelKey: "collection" },
 ];
 
 export const CONDITION_MATCH_TYPES = ["ALL", "ANY"] as const;
@@ -183,6 +220,19 @@ export interface RuleCondition {
   matchType?: (typeof CONDITION_MATCH_TYPES)[number];
   /** Metafield kinds only. */
   definitionId?: string;
+  /**
+   * `productCategory` only. Shopify stores it PER VALUE; the form holds one
+   * flag for the whole condition, so a condition whose values disagree is read
+   * as unrenderable rather than flattened onto the first value's answer — the
+   * §2.4 rule, at the one place this model is narrower than the API's.
+   */
+  includeDescendants?: boolean;
+  /** `variantWeight` only. `WeightInput` requires a unit; a bare number is a
+   *  schema error, and guessing the unit changes which products match. */
+  weightUnit?: WeightUnit;
+  /** The money kinds only. `MoneyInput` requires a currency; the value read
+   *  back carries the shop's, and a new condition is given it by the form. */
+  currencyCode?: string;
 }
 
 export interface RuleSide {
@@ -205,7 +255,10 @@ export interface RuleSource {
    * tree is kept so it can be displayed, and so nothing about it is lost by
    * having passed through this app.
    */
-  unrenderable?: { reason: "subCollections" | "shareableSource" | "unknownCondition"; raw?: unknown };
+  unrenderable?: {
+    reason: "subCollections" | "shareableSource" | "unknownCondition" | "unknownSource";
+    raw?: unknown;
+  };
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -293,13 +346,34 @@ export function toConditionInput(side: ConditionSide, condition: RuleCondition):
 
   const valueless = condition.relation === "IS_SET" || condition.relation === "IS_NOT_SET";
   if (!valueless) {
-    if (spec.list) {
+    // The three read shapes whose INPUT is an object too, measured
+    // (2026-08-19). Tested before `spec.list`, because `category` is a list
+    // and the two others are not. `gid` is deliberately absent: it reads as a
+    // node and writes as the bare id, so the plain branches below are right
+    // for it.
+    if (spec.read === "category") {
+      inner.values = splitList(condition.value).map((categoryId) => ({
+        categoryId,
+        includeDescendants: condition.includeDescendants === true,
+      }));
+      inner.matchType = condition.matchType ?? "ANY";
+    } else if (spec.read === "money") {
+      inner.value = {
+        amount: condition.value.replace(",", "."),
+        currencyCode: condition.currencyCode || "XXX",
+      };
+    } else if (spec.read === "weight") {
+      inner.value = {
+        value: Number.parseFloat(condition.value.replace(",", ".")),
+        unit: condition.weightUnit ?? "KILOGRAMS",
+      };
+    } else if (spec.list) {
       inner.values = splitList(condition.value);
       // The condition's OWN matchType — the level the legacy ruleSet
-      // projection silently drops.
-      inner.matchType = condition.matchType ?? "ANY";
-    } else if (spec.scalarType === "Money") {
-      inner.value = { amount: condition.value.replace(",", "."), currencyCode: "XXX" };
+      // projection silently drops. The one input that does not take it says so
+      // on its spec; inferring it from "is a list" is what made the exclusion
+      // by collection unsavable.
+      if (!spec.omitMatchTypeOnWrite) inner.matchType = condition.matchType ?? "ANY";
     } else if (spec.scalarType === "Int") {
       inner.value = Number.parseInt(condition.value, 10);
     } else if (spec.scalarType === "Decimal") {
@@ -357,8 +431,21 @@ export function toSourcesInput(sources: RuleSource[]): Array<Record<string, unkn
     });
 }
 
-/** A fresh, valid-by-construction condition for a kind. */
-export function newCondition(side: ConditionSide, kind: string, localId: string): RuleCondition {
+/**
+ * A fresh, valid-by-construction condition for a kind.
+ *
+ * `defaults.currencyCode` is the SHOP's currency, threaded down from the route
+ * — `MoneyInput` requires one, and a condition built without it falls back to
+ * `XXX` (the ISO placeholder for "no currency"), which is what this app sent
+ * before the shape was measured. Passing the real one is strictly better; not
+ * having it must not make the price kinds unusable.
+ */
+export function newCondition(
+  side: ConditionSide,
+  kind: string,
+  localId: string,
+  defaults?: { currencyCode?: string },
+): RuleCondition {
   const spec = conditionKind(side, kind);
   return {
     localId,
@@ -367,6 +454,8 @@ export function newCondition(side: ConditionSide, kind: string, localId: string)
     value: "",
     matchType: spec?.list ? "ANY" : undefined,
     definitionId: spec?.needsDefinition ? "" : undefined,
+    ...(spec?.read === "weight" ? { weightUnit: "KILOGRAMS" as WeightUnit } : {}),
+    ...(spec?.read === "money" ? { currencyCode: defaults?.currencyCode || undefined } : {}),
   };
 }
 
@@ -391,12 +480,64 @@ export function newCondition(side: ConditionSide, kind: string, localId: string)
  * source carried unchanged cannot lose a condition nobody could read.
  */
 
-/** `productTag` (inclusion) → `CollectionRuleProductTagCondition`. */
+/**
+ * `productTag` (inclusion) → `CollectionSourceInclusionConditionProductTag`.
+ *
+ * MEASURED (2026-08-19), not derived: the first cut guessed
+ * `CollectionRule<Kind>Condition` and every inline fragment on it was a
+ * schema error. Shopify additionally ships `…ConditionUnknown` on both sides,
+ * which this app deliberately never names — an unrecognised `__typename`
+ * makes the whole SOURCE unrenderable, which is §2.4 doing its job.
+ */
 export function readConditionTypename(side: ConditionSide, kind: string): string {
   const capitalized = kind.charAt(0).toUpperCase() + kind.slice(1);
-  return side === "inclusion"
-    ? `CollectionRule${capitalized}Condition`
-    : `CollectionRuleExclusion${capitalized}Condition`;
+  return `CollectionSource${side === "inclusion" ? "Inclusion" : "Exclusion"}Condition${capitalized}`;
+}
+
+/**
+ * Every field of a condition is read under a name of its OWN, and that is not
+ * cosmetic.
+ *
+ * Each kind has its own `relation` ENUM (`…ProductTagRelation` vs
+ * `…VariantPriceRelation`), its own `values` element type and, for seven of
+ * them, an object where the others have a scalar. GraphQL's overlapping-fields rule
+ * compares the RESPONSE SHAPE of fields that share a response name across
+ * sibling fragments — two different enums are two different shapes — so
+ * selecting a bare `relation` in all eighteen fragments is a validation error
+ * per PAIR of kinds, and the server refuses the document before it looks at
+ * anything else. Aliasing per kind is what makes one selection over an
+ * interface possible at all; the reader looks the values back up by the same
+ * rule (`aliasFor`), so the two cannot drift.
+ *
+ * `id` is the exception: it is declared on the INTERFACE, identical on every
+ * member, and it is what the diff keys on.
+ */
+function aliasFor(kind: string, field: string): string {
+  return `${kind}_${field}`;
+}
+
+/**
+ * What to select for one kind's value.
+ *
+ * MEASURED (2026-08-19): four of the five read shapes answer with an OBJECT,
+ * and asking for a bare `value` on one of them is a schema error — which takes
+ * the WHOLE query down rather than that one field.
+ */
+function readValueSelection(spec: ConditionKindSpec): string {
+  const name = spec.list ? "values" : "value";
+  const alias = `${aliasFor(spec.key, name)}: ${name}`;
+  switch (spec.read) {
+    case "category":
+      return `${alias} { category { id } includeDescendants }`;
+    case "money":
+      return `${alias} { amount currencyCode }`;
+    case "weight":
+      return `${alias} { value unit }`;
+    case "gid":
+      return `${alias} { id }`;
+    default:
+      return alias;
+  }
 }
 
 /** The inline fragments for one side, generated from the kind specs so the read
@@ -404,10 +545,15 @@ export function readConditionTypename(side: ConditionSide, kind: string): string
 export function readConditionFragments(side: ConditionSide): string {
   return conditionKinds(side)
     .map((spec) => {
-      const value = spec.list ? "values" : "value";
-      const matchType = spec.list ? "\n                    matchType" : "";
-      const relation = spec.relations.length > 0 ? "\n                    relation" : "";
-      const definition = spec.needsDefinition ? "\n                    definitionId" : "";
+      const value = readValueSelection(spec);
+      const matchType = spec.list ? `\n                    ${aliasFor(spec.key, "matchType")}: matchType` : "";
+      const relation =
+        spec.relations.length > 0 ? `\n                    ${aliasFor(spec.key, "relation")}: relation` : "";
+      // A metafield condition reports its DEFINITION as a node, while the
+      // input takes a bare `definitionId`: the id has to be dug out again.
+      const definition = spec.needsDefinition
+        ? `\n                    ${aliasFor(spec.key, "definition")}: definition { id }`
+        : "";
       // `id` first and unconditionally: without it an existing condition has
       // no identity, and every save would have to delete-and-recreate the
       // whole side — the replace this module exists to avoid.
@@ -419,38 +565,122 @@ export function readConditionFragments(side: ConditionSide): string {
     .join("\n");
 }
 
+/**
+ * One condition as the read selection delivers it: `__typename` and `id` under
+ * their own names, everything else under the per-kind ALIAS the selection had
+ * to use (`aliasFor`).
+ */
 interface RawCondition {
   __typename?: string;
   id?: string | null;
-  relation?: string | null;
-  value?: unknown;
-  values?: unknown;
-  matchType?: string | null;
-  definitionId?: string | null;
+  [alias: string]: unknown;
+}
+
+/** The aliased field of a condition, or `undefined`. */
+function aliased(condition: RawCondition, kind: string, field: string): unknown {
+  return condition[aliasFor(kind, field)];
 }
 
 interface RawSide {
   matchType?: string | null;
   conditions?: RawCondition[] | null;
   /** Hand-picked products/variants. The editor does not render these, and a
-   *  source that has any is carried unchanged rather than flattened. */
-  selections?: unknown[] | null;
+   *  source that has any is carried unchanged rather than flattened. It is a
+   *  CONNECTION — read with `first: 1`, because "are there any" is the whole
+   *  question. */
+  selections?: { nodes?: unknown[] | null } | null;
 }
 
+/**
+ * One entry of `Collection.sources`, as MEASURED (2026-08-19).
+ *
+ * `CollectionSource` is an interface with two members: `CollectionConditionsSource`
+ * (everything below `targetType`) and `CollectionSubCollectionsSource`. There is
+ * no `shareableSource` MEMBER — a shareable source is a conditions source with
+ * `shareable: true`, which is the branch the create input calls
+ * `shareableSource`.
+ */
 export interface RawSource {
+  __typename?: string;
   id?: string | null;
   title?: string | null;
   description?: string | null;
   targetType?: string | null;
+  /** True when this source is shared with other collections. */
+  shareable?: boolean | null;
   inclusion?: RawSide | null;
   exclusion?: RawSide | null;
-  /** The two target branches this editor deliberately does not render (§2.4). */
-  subCollections?: unknown;
-  shareableSource?: unknown;
 }
+
+/** The one source type this editor renders; anything else is carried untouched. */
+const CONDITIONS_SOURCE_TYPENAME = "CollectionConditionsSource";
+const SUB_COLLECTIONS_SOURCE_TYPENAME = "CollectionSubCollectionsSource";
 
 function matchTypeOf(raw: string | null | undefined): (typeof CONDITION_MATCH_TYPES)[number] {
   return raw === "ANY" ? "ANY" : "ALL";
+}
+
+/** The extra bits a kind's OBJECT value carries next to the text the form holds. */
+interface DecodedValue {
+  value: string;
+  includeDescendants?: boolean;
+  weightUnit?: WeightUnit;
+  currencyCode?: string;
+}
+
+function idsOf(values: unknown): string[] {
+  return Array.isArray(values)
+    ? values.map((v) => String((v as { id?: unknown })?.id ?? "")).filter(Boolean)
+    : [];
+}
+
+/**
+ * Shopify's value → the form's flat string, plus whatever does not fit in it.
+ *
+ * `null` means "this condition cannot be represented", which makes its whole
+ * SOURCE read-only (§2.4). It is returned for exactly one case that a joined
+ * string really cannot hold: a category condition whose values disagree about
+ * `includeDescendants`, where the form has one checkbox for the condition.
+ * Flattening that onto the first value's answer would change which products
+ * the collection contains on the next save.
+ */
+function decodeConditionValue(spec: ConditionKindSpec, condition: RawCondition): DecodedValue | null {
+  const rawValue = aliased(condition, spec.key, spec.list ? "values" : "value");
+  switch (spec.read) {
+    case "category": {
+      const entries = Array.isArray(rawValue) ? rawValue : [];
+      const ids = entries.map((e) => String((e as { category?: { id?: unknown } })?.category?.id ?? "")).filter(Boolean);
+      const flags = new Set(entries.map((e) => (e as { includeDescendants?: unknown })?.includeDescendants === true));
+      if (flags.size > 1) return null;
+      return { value: ids.join(", "), includeDescendants: flags.has(true) };
+    }
+    case "money": {
+      const money = rawValue as { amount?: unknown; currencyCode?: unknown } | null;
+      return {
+        value: money?.amount == null ? "" : String(money.amount),
+        ...(typeof money?.currencyCode === "string" ? { currencyCode: money.currencyCode } : {}),
+      };
+    }
+    case "weight": {
+      const weight = rawValue as { value?: unknown; unit?: unknown } | null;
+      // An unknown unit is not rounded to kilograms: the number would keep its
+      // digits and change its meaning, which is the one thing a rule editor
+      // may never do quietly.
+      if (weight?.unit != null && !WEIGHT_UNITS.includes(weight.unit as WeightUnit)) return null;
+      return {
+        value: weight?.value == null ? "" : String(weight.value),
+        ...(weight?.unit ? { weightUnit: weight.unit as WeightUnit } : {}),
+      };
+    }
+    case "gid":
+      return spec.list
+        ? { value: idsOf(rawValue).join(", ") }
+        : { value: String((rawValue as { id?: unknown })?.id ?? "") };
+    default: {
+      const values = Array.isArray(rawValue) ? rawValue.map((v) => String(v)) : null;
+      return { value: values ? values.join(", ") : String(rawValue ?? "") };
+    }
+  }
 }
 
 /** `__typename` → the kind key this module knows, or null. */
@@ -465,7 +695,7 @@ function readSide(side: ConditionSide, raw: RawSide | null | undefined): { parse
   // A hand-picked selection has no representation in this editor. Rendering
   // the conditions and dropping the selections would silently change which
   // products the collection contains — the §2.4 failure exactly.
-  if (Array.isArray(raw?.selections) && raw.selections.length > 0) readable = false;
+  if ((raw?.selections?.nodes?.length ?? 0) > 0) readable = false;
 
   for (const [index, condition] of (raw?.conditions ?? []).entries()) {
     const spec = kindForTypename(side, condition.__typename);
@@ -473,15 +703,23 @@ function readSide(side: ConditionSide, raw: RawSide | null | undefined): { parse
       readable = false;
       continue;
     }
-    const values = Array.isArray(condition.values) ? condition.values.map((v) => String(v)) : null;
+    const decoded = decodeConditionValue(spec, condition);
+    if (!decoded) {
+      readable = false;
+      continue;
+    }
+    const definitionId = (aliased(condition, spec.key, "definition") as { id?: string } | null)?.id;
     conditions.push({
       localId: `read-${side}-${index}`,
       ...(condition.id ? { id: condition.id } : {}),
       kind: spec.key,
-      relation: String(condition.relation ?? spec.relations[0] ?? ""),
-      value: values ? values.join(", ") : String(condition.value ?? ""),
-      ...(spec.list ? { matchType: matchTypeOf(condition.matchType) } : {}),
-      ...(spec.needsDefinition && condition.definitionId ? { definitionId: condition.definitionId } : {}),
+      relation: String(aliased(condition, spec.key, "relation") ?? spec.relations[0] ?? ""),
+      value: decoded.value,
+      ...(decoded.includeDescendants !== undefined ? { includeDescendants: decoded.includeDescendants } : {}),
+      ...(decoded.weightUnit ? { weightUnit: decoded.weightUnit } : {}),
+      ...(decoded.currencyCode ? { currencyCode: decoded.currencyCode } : {}),
+      ...(spec.list ? { matchType: matchTypeOf(aliased(condition, spec.key, "matchType") as string | null) } : {}),
+      ...(spec.needsDefinition && definitionId ? { definitionId } : {}),
     });
   }
 
@@ -505,13 +743,25 @@ export function fromShopifySources(raw: RawSource[] | null | undefined): RuleSou
       inclusion: { matchType: "ALL", conditions: [] },
     };
 
-    // The two target branches with no editor at all (§2.4). Checked first —
-    // their conditions are not the point, their SHAPE is.
-    if (source.subCollections) {
+    // The shapes with no editor at all (§2.4). Checked first — their
+    // conditions are not the point, their SHAPE is. All three are decided on
+    // the source's OWN typename and flag: `subCollections` and
+    // `shareableSource` are branches of the INPUT, and reading them back as
+    // fields (which the first cut did) finds nothing, so every source would
+    // have read as an ordinary one.
+    if (source.__typename === SUB_COLLECTIONS_SOURCE_TYPENAME) {
       return { ...base, unrenderable: { reason: "subCollections", raw: source } };
     }
-    if (source.shareableSource) {
+    // A shared source governs OTHER collections too, so editing it here would
+    // change memberships nobody looked at.
+    if (source.shareable === true) {
       return { ...base, unrenderable: { reason: "shareableSource", raw: source } };
+    }
+    // A member of the interface this app does not know — a type Shopify adds
+    // later. An absent typename is the same answer: the read selection always
+    // asks for it, so its absence means this tree did not come from that read.
+    if (source.__typename !== CONDITIONS_SOURCE_TYPENAME) {
+      return { ...base, unrenderable: { reason: "unknownSource", raw: source } };
     }
 
     const inclusion = readSide("inclusion", source.inclusion);
@@ -632,7 +882,11 @@ function diffSide(
     }
     keptIds.add(previous.id as string);
     if (!conditionInputsEqual(toConditionInput(side, previous), input)) {
-      conditionsToUpdate.push({ id: previous.id, ...input });
+      // `CollectionUpdateSourceInclusionConditionInput` is `{ id, condition }`
+      // — the kind key lives INSIDE `condition`, not beside the id. Measured
+      // 2026-08-19; spreading it next to the id is a schema-level error, which
+      // never reaches `userErrors` and would read as a successful save.
+      conditionsToUpdate.push({ id: previous.id, condition: input });
     }
   }
 

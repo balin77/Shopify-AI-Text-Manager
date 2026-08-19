@@ -42,6 +42,8 @@ export interface CollectionRulesFieldProps {
   isPrimaryLocale: boolean;
   apiVersion: string;
   adminUrlForCollection?: string;
+  /** The shop's currency — `MoneyInput` requires one on a price condition. */
+  currencyCode?: string;
   t: {
     collectionRules?: Record<string, unknown>;
     content?: Record<string, unknown>;
@@ -80,6 +82,7 @@ export function CollectionRulesField({
   isPrimaryLocale,
   apiVersion,
   adminUrlForCollection,
+  currencyCode,
   t,
 }: CollectionRulesFieldProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -139,6 +142,7 @@ export function CollectionRulesField({
               "Automatic collection rules need a newer Shopify API version than this app currently uses. Until then, manage them in the Shopify admin."
         }
         adminUrlForCollection={adminUrlForCollection}
+        currencyCode={currencyCode}
         showAdvanced={showAdvanced}
         onToggleAdvanced={() => setShowAdvanced((v) => !v)}
         t={strings as never}

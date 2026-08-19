@@ -22,21 +22,32 @@ import {
   fromShopifySources,
   readConditionFragments,
   readConditionTypename,
+  toSourcesInput,
   withoutRawTrees,
   type RuleSource,
 } from "~/config/collection-rules.shared";
 
+/**
+ * A condition exactly as the read selection delivers it: every field but `id`
+ * under a per-kind ALIAS, because the members of the condition interface
+ * disagree about the type of `relation`, `value` and `values` and GraphQL
+ * refuses a document that asks for them under one response name.
+ */
 const tagCondition = {
-  __typename: "CollectionRuleProductTagCondition",
-  relation: "TAGGED_WITH",
-  values: ["sale", "summer"],
-  matchType: "ANY",
+  __typename: "CollectionSourceInclusionConditionProductTag",
+  productTag_relation: "TAGGED_WITH",
+  productTag_values: ["sale", "summer"],
+  productTag_matchType: "ANY",
 };
+
+/** Every source Shopify returns names its type; the reader decides on it. */
+const CONDITIONS_SOURCE = "CollectionConditionsSource";
 
 describe("fromShopifySources", () => {
   it("reads a plain single-source collection", () => {
     const [source] = fromShopifySources([
       {
+        __typename: CONDITIONS_SOURCE,
         id: "gid://shopify/CollectionSource/1",
         title: "Sale items",
         inclusion: { matchType: "ALL", conditions: [tagCondition] },
@@ -61,15 +72,32 @@ describe("fromShopifySources", () => {
     // The editor has no control for this at all. Rendering the rest and
     // dropping this branch would change the collection's membership.
     const [source] = fromShopifySources([
-      { id: "s1", title: "Nested", subCollections: { ids: ["gid://shopify/Collection/9"] } },
+      { __typename: "CollectionSubCollectionsSource", id: "s1", title: "Nested" },
     ]);
     expect(source.unrenderable?.reason).toBe("subCollections");
     expect(source.unrenderable?.raw).toBeTruthy();
   });
 
   it("marks a shareable source unrenderable", () => {
-    const [source] = fromShopifySources([{ id: "s1", title: "Shared", shareableSource: { id: "x" } }]);
+    // A shareable source is not a type of its own: it is a conditions source
+    // with the flag set, and it governs OTHER collections too.
+    const [source] = fromShopifySources([
+      {
+        __typename: CONDITIONS_SOURCE,
+        id: "s1",
+        title: "Shared",
+        shareable: true,
+        inclusion: { matchType: "ALL", conditions: [tagCondition] },
+      },
+    ]);
     expect(source.unrenderable?.reason).toBe("shareableSource");
+  });
+
+  it("marks a source type it does not know unrenderable", () => {
+    // A member Shopify adds to the interface later. Reading it as an ordinary
+    // source would hand the merchant an empty builder over real rules.
+    const [source] = fromShopifySources([{ __typename: "CollectionFutureSource", id: "s1", title: "New" }]);
+    expect(source.unrenderable?.reason).toBe("unknownSource");
   });
 
   it("marks a source unrenderable when ONE condition is unknown", () => {
@@ -77,11 +105,12 @@ describe("fromShopifySources", () => {
     // unchanged. A rule this app cannot read is a rule it must not rewrite.
     const [source] = fromShopifySources([
       {
+        __typename: CONDITIONS_SOURCE,
         id: "s1",
         title: "Mixed",
         inclusion: {
           matchType: "ALL",
-          conditions: [tagCondition, { __typename: "CollectionRuleConditionUnknown", relation: "?" }],
+          conditions: [tagCondition, { __typename: "CollectionSourceInclusionConditionUnknown" }],
         },
       },
     ]);
@@ -93,12 +122,13 @@ describe("fromShopifySources", () => {
     // remove the picked products.
     const [source] = fromShopifySources([
       {
+        __typename: CONDITIONS_SOURCE,
         id: "s1",
         title: "Rules plus picks",
         inclusion: {
           matchType: "ALL",
           conditions: [tagCondition],
-          selections: [{ id: "gid://shopify/Product/1" }],
+          selections: { nodes: [{ __typename: "CollectionInclusionProductSelection" }] },
         },
       },
     ]);
@@ -108,13 +138,19 @@ describe("fromShopifySources", () => {
   it("reads an exclusion side, and omits it when empty", () => {
     const [withExclusion] = fromShopifySources([
       {
+        __typename: CONDITIONS_SOURCE,
         id: "s1",
         title: "With exclusion",
         inclusion: { matchType: "ALL", conditions: [tagCondition] },
         exclusion: {
           matchType: "ANY",
           conditions: [
-            { __typename: "CollectionRuleExclusionProductTagCondition", relation: "TAGGED_WITH", values: ["clearance"], matchType: "ALL" },
+            {
+              __typename: "CollectionSourceExclusionConditionProductTag",
+              productTag_relation: "TAGGED_WITH",
+              productTag_values: ["clearance"],
+              productTag_matchType: "ALL",
+            },
           ],
         },
       },
@@ -122,7 +158,13 @@ describe("fromShopifySources", () => {
     expect(withExclusion.exclusion?.conditions).toHaveLength(1);
 
     const [withoutExclusion] = fromShopifySources([
-      { id: "s2", title: "None", inclusion: { matchType: "ALL", conditions: [tagCondition] }, exclusion: { matchType: "ALL", conditions: [] } },
+      {
+        __typename: CONDITIONS_SOURCE,
+        id: "s2",
+        title: "None",
+        inclusion: { matchType: "ALL", conditions: [tagCondition] },
+        exclusion: { matchType: "ALL", conditions: [] },
+      },
     ]);
     expect(withoutExclusion.exclusion).toBeUndefined();
   });
@@ -140,28 +182,189 @@ describe("readConditionFragments", () => {
     // from the read side would make every collection using it "unrenderable"
     // for no reason.
     const inclusion = readConditionFragments("inclusion");
-    expect(inclusion).toContain("... on CollectionRuleProductTagCondition");
-    expect(inclusion).toContain("... on CollectionRuleVariantPriceCondition");
+    expect(inclusion).toContain("... on CollectionSourceInclusionConditionProductTag");
+    expect(inclusion).toContain("... on CollectionSourceInclusionConditionVariantPrice");
+    // Every field but `id` is ALIASED per kind: the members disagree about the
+    // type of `relation`/`value`/`values`, and one response name over
+    // conflicting shapes is a validation error on the WHOLE document.
+    expect(inclusion).toContain("productTag_relation: relation");
+    expect(inclusion).toContain("productTag_values: values");
+    expect(inclusion).toContain("productTag_matchType: matchType");
+    expect(inclusion).not.toMatch(/^\s+relation$/m);
     // A list kind carries its own matchType; a scalar one does not.
     expect(inclusion).toContain("values");
     expect(inclusion).toContain("matchType");
-    expect(inclusion).toContain("definitionId");
+    // A metafield condition reports a definition NODE, never a bare id.
+    expect(inclusion).toContain("metafieldString_definition: definition { id }");
+    expect(inclusion).not.toContain("definitionId");
+  });
+
+  it("selects the OBJECT shape for the kinds that have one", () => {
+    // Measured 2026-08-19. Asking for a bare value on any of these is a schema
+    // error, and a schema error fails the WHOLE query — which is exactly what
+    // broke the collection sync.
+    const inclusion = readConditionFragments("inclusion");
+    expect(inclusion).toContain("values { category { id } includeDescendants }");
+    expect(inclusion).toContain("value { amount currencyCode }");
+    expect(inclusion).toContain("value { value unit }");
+    expect(inclusion).toContain("value { id }");
+    expect(readConditionFragments("exclusion")).toContain("values { id }");
   });
 
   it("uses a distinct type name per side", () => {
     // Exclusion conditions are their OWN types, and `productTag` exists on
     // both sides with different relations — one shared name would read the
     // wrong one.
-    expect(readConditionTypename("inclusion", "productTag")).toBe("CollectionRuleProductTagCondition");
-    expect(readConditionTypename("exclusion", "productTag")).toBe("CollectionRuleExclusionProductTagCondition");
+    expect(readConditionTypename("inclusion", "productTag")).toBe("CollectionSourceInclusionConditionProductTag");
+    expect(readConditionTypename("exclusion", "productTag")).toBe("CollectionSourceExclusionConditionProductTag");
   });
 
   it("omits `relation` for the one kind that has none", () => {
     // The exclusion `collection` kind is a bare list of ids. Selecting a field
     // the type does not have fails the WHOLE query at the schema level.
     const exclusion = readConditionFragments("exclusion");
-    const collectionFragment = exclusion.slice(exclusion.indexOf("CollectionRuleExclusionCollectionCondition"));
+    const collectionFragment = exclusion.slice(exclusion.indexOf("CollectionSourceExclusionConditionCollection"));
     expect(collectionFragment.split("}")[0]).not.toContain("relation");
+  });
+});
+
+describe("the values that are not plain strings", () => {
+  const readOne = (side: "inclusion" | "exclusion", condition: Record<string, unknown>) =>
+    fromShopifySources([
+      {
+        __typename: CONDITIONS_SOURCE,
+        id: "s1",
+        title: "S",
+        inclusion:
+          side === "inclusion"
+            ? { matchType: "ALL", conditions: [condition] }
+            : { matchType: "ALL", conditions: [tagCondition] },
+        ...(side === "exclusion" ? { exclusion: { matchType: "ALL", conditions: [condition] } } : {}),
+      },
+    ])[0];
+
+  const conditionInputs = (source: RuleSource, side: "inclusion" | "exclusion") => {
+    const [created] = toSourcesInput([source]);
+    const block = (created.source as Record<string, unknown>)[side] as Record<string, unknown>;
+    return block.conditions as Array<Record<string, unknown>>;
+  };
+
+  it("round-trips a category condition through its id list and its flag", () => {
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionProductCategory",
+      id: "c1",
+      productCategory_relation: "EQUALS",
+      productCategory_matchType: "ANY",
+      productCategory_values: [
+        { category: { id: "gid://shopify/TaxonomyCategory/aa-1" }, includeDescendants: true },
+        { category: { id: "gid://shopify/TaxonomyCategory/aa-2" }, includeDescendants: true },
+      ],
+    });
+    expect(source.unrenderable).toBeUndefined();
+    expect(source.inclusion.conditions[0]).toMatchObject({
+      kind: "productCategory",
+      value: "gid://shopify/TaxonomyCategory/aa-1, gid://shopify/TaxonomyCategory/aa-2",
+      includeDescendants: true,
+    });
+    expect(conditionInputs(source, "inclusion")[0]).toEqual({
+      productCategory: {
+        relation: "EQUALS",
+        matchType: "ANY",
+        values: [
+          { categoryId: "gid://shopify/TaxonomyCategory/aa-1", includeDescendants: true },
+          { categoryId: "gid://shopify/TaxonomyCategory/aa-2", includeDescendants: true },
+        ],
+      },
+    });
+  });
+
+  it("refuses a category condition whose values disagree about descendants", () => {
+    // The form holds ONE checkbox for the condition. Flattening two answers
+    // into it would change which products the collection holds on the next
+    // save — so the whole source goes read-only instead.
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionProductCategory",
+      id: "c1",
+      productCategory_relation: "EQUALS",
+      productCategory_matchType: "ANY",
+      productCategory_values: [
+        { category: { id: "gid://shopify/TaxonomyCategory/aa-1" }, includeDescendants: true },
+        { category: { id: "gid://shopify/TaxonomyCategory/aa-2" }, includeDescendants: false },
+      ],
+    });
+    expect(source.unrenderable?.reason).toBe("unknownCondition");
+  });
+
+  it("keeps a price condition's own currency instead of inventing one", () => {
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionVariantPrice",
+      id: "c1",
+      variantPrice_relation: "GREATER_THAN",
+      variantPrice_value: { amount: "19.90", currencyCode: "CHF" },
+    });
+    expect(source.inclusion.conditions[0]).toMatchObject({ value: "19.90", currencyCode: "CHF" });
+    expect(conditionInputs(source, "inclusion")[0]).toEqual({
+      variantPrice: { relation: "GREATER_THAN", value: { amount: "19.90", currencyCode: "CHF" } },
+    });
+  });
+
+  it("keeps a weight condition's unit, and refuses one it does not know", () => {
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionVariantWeight",
+      id: "c1",
+      variantWeight_relation: "LESS_THAN",
+      variantWeight_value: { value: 2.5, unit: "POUNDS" },
+    });
+    expect(source.inclusion.conditions[0]).toMatchObject({ value: "2.5", weightUnit: "POUNDS" });
+    expect(conditionInputs(source, "inclusion")[0]).toEqual({
+      variantWeight: { relation: "LESS_THAN", value: { value: 2.5, unit: "POUNDS" } },
+    });
+
+    // A unit this app cannot render would keep its digits and change its
+    // meaning on the next save.
+    const unknownUnit = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionVariantWeight",
+      id: "c2",
+      variantWeight_relation: "LESS_THAN",
+      variantWeight_value: { value: 2.5, unit: "STONES" },
+    });
+    expect(unknownUnit.unrenderable?.reason).toBe("unknownCondition");
+  });
+
+  it("reads a node-valued condition as its id, and its definition as one too", () => {
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionMetafieldMetaobject",
+      id: "c1",
+      metafieldMetaobject_relation: "EQUALS",
+      metafieldMetaobject_definition: { id: "gid://shopify/MetafieldDefinition/7" },
+      metafieldMetaobject_value: { id: "gid://shopify/Metaobject/3" },
+    });
+    expect(source.inclusion.conditions[0]).toMatchObject({
+      kind: "metafieldMetaobject",
+      value: "gid://shopify/Metaobject/3",
+      definitionId: "gid://shopify/MetafieldDefinition/7",
+    });
+    expect(conditionInputs(source, "inclusion")[0]).toEqual({
+      metafieldMetaobject: {
+        relation: "EQUALS",
+        definitionId: "gid://shopify/MetafieldDefinition/7",
+        value: "gid://shopify/Metaobject/3",
+      },
+    });
+  });
+
+  it("writes an exclusion by collection WITHOUT a matchType", () => {
+    // It reads one back and its input has none. Sending it fails the mutation
+    // at the schema level, where no userError ever appears.
+    const source = readOne("exclusion", {
+      __typename: "CollectionSourceExclusionConditionCollection",
+      id: "c1",
+      collection_matchType: "ANY",
+      collection_values: [{ id: "gid://shopify/Collection/5" }],
+    });
+    expect(conditionInputs(source, "exclusion")[0]).toEqual({
+      collection: { values: ["gid://shopify/Collection/5"] },
+    });
   });
 });
 
@@ -215,8 +418,9 @@ describe("diffRuleSources", () => {
     const body = updateBody(diffRuleSources(before, after).sourcesToUpdate[0]);
     const inclusion = body.inclusion as Record<string, unknown>;
     expect(inclusion).not.toHaveProperty("conditions");
+    // `{ id, condition }` — the kind key lives INSIDE `condition`, measured.
     expect(inclusion.conditionsToUpdate).toEqual([
-      { id: "c1", productTag: { relation: "TAGGED_WITH", values: ["clearance"], matchType: "ANY" } },
+      { id: "c1", condition: { productTag: { relation: "TAGGED_WITH", values: ["clearance"], matchType: "ANY" } } },
     ]);
     expect(inclusion).not.toHaveProperty("conditionsToCreate");
     expect(inclusion).not.toHaveProperty("conditionsToDelete");

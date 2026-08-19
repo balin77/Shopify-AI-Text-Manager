@@ -29,6 +29,7 @@ import {
   BlockStack,
   InlineStack,
   Card,
+  Checkbox,
   Select,
   TextField,
   Button,
@@ -40,6 +41,7 @@ import {
 } from "@shopify/polaris";
 import {
   CONDITION_MATCH_TYPES,
+  WEIGHT_UNITS,
   conditionKind,
   conditionKinds,
   newCondition,
@@ -47,6 +49,7 @@ import {
   type RuleCondition,
   type RuleSource,
   type RuleValidationError,
+  type WeightUnit,
 } from "~/config/collection-rules.shared";
 
 export interface CollectionRuleBuilderTexts {
@@ -69,6 +72,8 @@ export interface CollectionRuleBuilderTexts {
   unavailable?: string;
   definitionPlaceholder?: string;
   commaSeparated?: string;
+  includeDescendants?: string;
+  weightUnits?: Record<string, string>;
   kinds?: Record<string, string>;
   relations?: Record<string, string>;
 }
@@ -83,6 +88,12 @@ export interface CollectionRuleBuilderProps {
   unavailableReason?: string;
   /** Link target for structures rendered read-only. */
   adminUrlForCollection?: string;
+  /**
+   * The SHOP's currency. `MoneyInput` requires one on every price condition,
+   * and the value is compared in the shop's currency — so a new condition is
+   * stamped with it here rather than each save picking a placeholder.
+   */
+  currencyCode?: string;
   showAdvanced: boolean;
   onToggleAdvanced: () => void;
   t?: CollectionRuleBuilderTexts;
@@ -101,6 +112,7 @@ export function CollectionRuleBuilder({
   available,
   unavailableReason,
   adminUrlForCollection,
+  currencyCode,
   showAdvanced,
   onToggleAdvanced,
   t = {},
@@ -155,7 +167,7 @@ export function CollectionRuleBuilder({
               // relation almost certainly does not exist on the new kind, and
               // keeping it would build a payload Shopify refuses.
               updateCondition(sourceIndex, side, condition.localId, {
-                ...newCondition(side, kind, condition.localId),
+                ...newCondition(side, kind, condition.localId, { currencyCode }),
               })
             }
           />
@@ -199,6 +211,36 @@ export function CollectionRuleBuilder({
               // discovering it by trying.
               helpText={spec?.list ? t.commaSeparated || "Comma-separated" : undefined}
               error={error?.code === "emptyValue"}
+            />
+          </Box>
+        )}
+
+        {/* `WeightInput` takes a unit, and the number means nothing without
+            it: 2 kilograms and 2 ounces are different rules. */}
+        {spec?.read === "weight" && !valueless && (
+          <Box minWidth="140px">
+            <Select
+              label=""
+              labelHidden
+              options={WEIGHT_UNITS.map((u) => ({ value: u, label: t.weightUnits?.[u] ?? u }))}
+              value={condition.weightUnit ?? "KILOGRAMS"}
+              onChange={(unit) =>
+                updateCondition(sourceIndex, side, condition.localId, { weightUnit: unit as WeightUnit })
+              }
+            />
+          </Box>
+        )}
+
+        {/* Shopify stores this per category value; the form holds one answer
+            for the condition, and a tree that disagrees is read-only instead. */}
+        {spec?.read === "category" && (
+          <Box minWidth="200px">
+            <Checkbox
+              label={t.includeDescendants || "Including subcategories"}
+              checked={condition.includeDescendants === true}
+              onChange={(includeDescendants) =>
+                updateCondition(sourceIndex, side, condition.localId, { includeDescendants })
+              }
             />
           </Box>
         )}
@@ -317,7 +359,7 @@ export function CollectionRuleBuilder({
                         ...source.inclusion,
                         conditions: [
                           ...source.inclusion.conditions,
-                          newCondition("inclusion", conditionKinds("inclusion")[0].key, nextLocalId()),
+                          newCondition("inclusion", conditionKinds("inclusion")[0].key, nextLocalId(), { currencyCode }),
                         ],
                       },
                     })
@@ -347,7 +389,7 @@ export function CollectionRuleBuilder({
                             matchType: source.exclusion?.matchType ?? "ANY",
                             conditions: [
                               ...(source.exclusion?.conditions ?? []),
-                              newCondition("exclusion", conditionKinds("exclusion")[0].key, nextLocalId()),
+                              newCondition("exclusion", conditionKinds("exclusion")[0].key, nextLocalId(), { currencyCode }),
                             ],
                           },
                         })
@@ -382,7 +424,7 @@ export function CollectionRuleBuilder({
                 title: `Rule set ${sources.length + 1}`,
                 inclusion: {
                   matchType: "ALL",
-                  conditions: [newCondition("inclusion", conditionKinds("inclusion")[0].key, nextLocalId())],
+                  conditions: [newCondition("inclusion", conditionKinds("inclusion")[0].key, nextLocalId(), { currencyCode })],
                 },
               },
             ])

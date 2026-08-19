@@ -152,12 +152,18 @@ export const loader = createContentLoader({
     };
   },
 
-  async extraData() {
+  async extraData(ctx) {
     // §3.1 — the rule editor is gated on the API VERSION, so the client has to
     // know it. Resolved from the same helper the server uses; importing
     // `apiVersion` from shopify.server would boot the whole embedded app.
     const { resolveApiVersionString } = await import("~/utils/api-version");
-    return { apiVersion: resolveApiVersionString() };
+    // A price condition writes a `MoneyInput`, which REQUIRES a currency, and
+    // Shopify compares variant prices in the shop's. Memoised per shop by the
+    // helper; an empty string means the lookup failed, and the builder then
+    // falls back to the ISO "no currency" placeholder rather than refusing.
+    const { getShopCurrencyCode } = await import("~/services/bulk-editor/load.server");
+    const currencyCode = await getShopCurrencyCode(ctx.admin as never, ctx.session.shop);
+    return { apiVersion: resolveApiVersionString(), currencyCode };
   },
 });
 
@@ -193,7 +199,8 @@ export const action = async (args: ActionFunctionArgs) => {
 // ============================================================================
 
 export default function CollectionsPage() {
-  const { collections, shopLocales, primaryLocale, markets, error, aiSettings, apiVersion } = useLoaderData<typeof loader>();
+  const { collections, shopLocales, primaryLocale, markets, error, aiSettings, apiVersion, currencyCode } =
+    useLoaderData<typeof loader>();
   const fetcher = useFetcher<FetcherData>();
   const revalidator = useRevalidator();
   const { t } = useI18n();
@@ -254,6 +261,7 @@ export default function CollectionsPage() {
         <UnifiedContentEditor
           config={COLLECTIONS_CONFIG}
           apiVersion={apiVersion}
+          currencyCode={currencyCode}
           items={collections as unknown as ContentItem[]}
           shopLocales={shopLocales}
           primaryLocale={primaryLocale}

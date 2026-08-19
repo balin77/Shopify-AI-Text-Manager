@@ -448,6 +448,7 @@ export function UnifiedFieldRenderer(
         adminUrlForCollection={
           selectedItem?.id ? `shopify://admin/collections/${String(selectedItem.id).split("/").pop()}` : undefined
         }
+        currencyCode={currencyCode}
         t={t}
       />
     );

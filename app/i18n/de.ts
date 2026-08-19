@@ -880,6 +880,13 @@ export const de = {
     advanced: "Erweitert",
     simple: "Weniger Optionen",
     commaSeparated: "Mit Komma getrennt",
+    includeDescendants: "Inklusive Unterkategorien",
+    weightUnits: {
+      KILOGRAMS: "kg",
+      GRAMS: "g",
+      POUNDS: "lb",
+      OUNCES: "oz",
+    },
     definitionPlaceholder: "ID der Metafeld-Definition",
     noPreview: "Welche Produkte passen, wird nach dem Speichern sichtbar.",
     unavailable: "Regeln sind noch nicht verfügbar",

@@ -863,6 +863,13 @@ export const es: Translation = {
     advanced: "Avanzado",
     simple: "Menos opciones",
     commaSeparated: "Separado por comas",
+    includeDescendants: "Incluidas las subcategorías",
+    weightUnits: {
+      KILOGRAMS: "kg",
+      GRAMS: "g",
+      POUNDS: "lb",
+      OUNCES: "oz",
+    },
     definitionPlaceholder: "ID de la definición del metacampo",
     noPreview: "Qué productos coinciden se verá después de guardar.",
     unavailable: "Las reglas aún no están disponibles",

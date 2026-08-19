@@ -253,6 +253,33 @@ Der Zuschnitt aus §2.4 ist vollständig durch die API gedeckt: `CollectionCreat
 
 ---
 
+### 1.2c Der LESEPFAD, gemessen (2026-08-19, öffentlicher Schema-Proxy)
+
+§1.2a hat ausschließlich die **Input**-Typen introspiziert. Der Lesepfad wurde daraus **abgeleitet** — und war an jeder Stelle falsch, die man nicht raten kann. Weil ein unbekanntes Feld ein Fehler auf **Schema**-Ebene ist (`data: null`, kein `userErrors`), ist `getCollection` damit für **jede** Collection gescheitert; im Log stand pro Collection ein `[ContentSync] Failed to sync collection …`.
+
+Gemessen ohne Shop und ohne Token über `https://shopify.dev/admin-graphql-direct-proxy/2026-07` — denselben Endpunkt, den `@shopify/api-codegen-preset` benutzt. Das ist der eigentliche Fund für kommende Arbeiten: **Schema-Fragen sind von überall aus messbar**, auch ohne Live-Session (vgl. „Kein Live-Admin-API von lokal"). Festgenagelt in [collection-sources-schema.live.test.ts](../../tests/unit/collection-sources-schema.live.test.ts), opt-in per `SHOPIFY_SCHEMA_CHECK=1`.
+
+| Angenommen (abgeleitet) | Gemessen (2026-07) |
+| --- | --- |
+| `CollectionSource` trägt `targetType`/`inclusion`/`exclusion` | `CollectionSource` ist ein **Interface** mit `id`/`title`/`description`/`app`; alles andere liegt hinter `... on CollectionConditionsSource` |
+| `shareableSource` ist ein Zweig beim Lesen | Es gibt nur zwei Member — `CollectionConditionsSource` und `CollectionSubCollectionsSource`; „geteilt" ist das Flag `shareable: Boolean!` auf dem ersten |
+| `selections` ist eine Liste | Eine **Connection** (`selections(first: 1) { nodes { __typename } }`) |
+| `CollectionRule<Kind>Condition` | `CollectionSource{Inclusion,Exclusion}Condition<Kind>`, plus `…ConditionUnknown` auf beiden Seiten |
+| `definitionId` am Metafeld-Condition | `definition { id }` (ein `MetafieldDefinition`-Knoten) |
+| `value`/`values` sind überall Skalare | Vier Formen sind **Objekte**: `productCategory` → `{ category { id }, includeDescendants }` je Wert, `variantPrice`/`variantCompareAtPrice` → `MoneyV2`, `variantWeight` → `{ value, unit }`, `metafieldMetaobject(List)`/`collection` → Knoten mit `id` |
+
+**Jedes Feld außer `id` wird unter einem Alias je Kind gelesen.** Nicht Kosmetik: die Member des Condition-Interfaces sind sich über den Typ von `relation`, `value` und `values` uneinig, und GraphQLs Overlapping-Fields-Regel vergleicht die **Antwortform** eines Antwortnamens über Geschwister-Fragmente hinweg. Zwei Enums sind zwei Formen — ein blankes `relation` in achtzehn Fragmenten ist also ein Validierungsfehler **je Paar** von Kinds, und der Server lehnt das Dokument ab, bevor er es ausführt. `aliasFor` erzeugt die Aliase, der Leser schlägt sie nach derselben Regel nach.
+
+**Drei Fehler auf der Schreibseite, dieselbe Klasse:**
+
+1. `conditionsToUpdate` nimmt `CollectionUpdateSource{Inclusion,Exclusion}ConditionInput { id: ID!, condition: …UpdateInput! }` — der Kind-Schlüssel steckt **in** `condition`, nicht neben der ID.
+2. `CollectionSourceExclusionConditionCollectionInput` hat **nur** `values: [ID!]!` — kein `matchType`, obwohl der Lesepfad eines zurückliefert. Die Regel „Liste ⇒ matchType" war eine Ableitung, jetzt sagt die Spec es selbst (`omitMatchTypeOnWrite`).
+3. `variantWeight` will `WeightInput { value: Float!, unit: WeightUnit! }` und `productCategory` `[{ categoryId, includeDescendants }]`. `MoneyInput` verlangt `currencyCode: CurrencyCode!` — die Shop-Währung wird deshalb bis in den Builder durchgereicht, eine gelesene Bedingung behält ihre eigene, und `XXX` bleibt nur noch der Notnagel für eine fehlgeschlagene Währungsabfrage.
+
+Was sich in dieses flache Formularmodell nicht abbilden lässt, bleibt §2.4-read-only statt geglättet zu werden: eine Kategorie-Bedingung, deren Werte sich über `includeDescendants` uneinig sind, eine Gewichtseinheit, die diese App nicht kennt, ein unbekannter `__typename` auf Quellen- oder Bedingungsebene.
+
+---
+
 ### 1.3 Page
 
 `PageCreateInput`: `title` (Pflicht), `handle`, `body`, `isPublished` (bzw. geplantes Datum), `templateSuffix`. Scope: `write_content` **oder** `write_online_store_pages` — beides vorhanden.

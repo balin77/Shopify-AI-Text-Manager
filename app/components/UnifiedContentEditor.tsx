@@ -2547,6 +2547,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           resource={createItem.openResource}
           initialValues={createItem.initialValues}
           rulesAvailable={rulesAvailable}
+          currencyCode={currencyCode}
           rulesUnavailableReason={
             rulesAvailable
               ? undefined

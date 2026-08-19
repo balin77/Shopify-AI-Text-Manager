@@ -876,6 +876,13 @@ export const en: Translation = {
     advanced: "Advanced",
     simple: "Fewer options",
     commaSeparated: "Comma-separated",
+    includeDescendants: "Including subcategories",
+    weightUnits: {
+      KILOGRAMS: "kg",
+      GRAMS: "g",
+      POUNDS: "lb",
+      OUNCES: "oz",
+    },
     definitionPlaceholder: "Metafield definition ID",
     noPreview: "Which products match becomes visible after saving.",
     unavailable: "Rules are not available yet",
