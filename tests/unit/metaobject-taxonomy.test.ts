@@ -515,3 +515,135 @@ describe("deleting a type — the plan gate and the content type", () => {
     expect(planContentTypeForDelete("blog")).toBe("blogs");
   });
 });
+
+describe("base colour suggestions", () => {
+  it("has no entry for Clear or Multicolor — neither is a colour", async () => {
+    // Inventing a hex would put a specific shade behind a name that denies
+    // having one.
+    const { baseColorFor } = await import("~/services/base-colors.shared");
+    expect(baseColorFor("Clear")).toBeNull();
+    expect(baseColorFor("Multicolor")).toBeNull();
+  });
+
+  it("matches a taxonomy value's name case-insensitively", async () => {
+    const { baseColorFor } = await import("~/services/base-colors.shared");
+    expect(baseColorFor("Gold")?.hex).toBe("#ffd700");
+    expect(baseColorFor("  rose GOLD ")?.hex).toBe("#b76e79");
+  });
+
+  it("marks only the values that have no CSS keyword as a convention", async () => {
+    // The distinction is the honesty of the tooltip: "the standard says
+    // #FFD700" and "we picked a bronze" are different claims.
+    const { BASE_COLOR_SUGGESTIONS } = await import("~/services/base-colors.shared");
+    const conventions = BASE_COLOR_SUGGESTIONS.filter((c) => c.convention).map((c) => c.name);
+    expect(conventions.sort()).toEqual(["Bronze", "Rose gold"]);
+  });
+
+  it("offers only values this app's own hex pattern accepts", async () => {
+    // A suggestion the swatch preview cannot paint would be a one-click way
+    // into an invalid field.
+    const { BASE_COLOR_SUGGESTIONS } = await import("~/services/base-colors.shared");
+    const { METAOBJECT_HEX_PATTERN } = await import("~/services/metaobject-fields.shared");
+    for (const colour of BASE_COLOR_SUGGESTIONS) {
+      expect(METAOBJECT_HEX_PATTERN.test(colour.hex), colour.name).toBe(true);
+    }
+  });
+
+  it("has no duplicate names", async () => {
+    const { BASE_COLOR_SUGGESTIONS } = await import("~/services/base-colors.shared");
+    const names = BASE_COLOR_SUGGESTIONS.map((c) => c.name.toLowerCase());
+    expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe("the pulsing language buttons — compound keys, not bare GIDs", () => {
+  const ENTRY = {
+    id: "gid://shopify/Metaobject/1",
+    displayName: "Gold",
+    fields: [
+      { key: "label", value: "Gold", type: "single_line_text_field" },
+      { key: "color", value: "#ffd700", type: "color" },
+      { key: "color_taxonomy_reference", value: JSON.stringify([COLOR_GID]), type: METAOBJECT_TYPE_TAXONOMY_VALUE_LIST },
+    ],
+  };
+  const DEFS = [LABEL_FIELD, { key: "color", name: "Colour", type: { name: "color" }, required: false }, COLOR_FIELD];
+
+  it("enumerates translatable fields under the COMPOUND key", async () => {
+    // The whole defect in one assertion: the language bar looked for a
+    // translation stored under the bare GID, which nothing has written since
+    // a field became `<gid>#<fieldKey>`. It therefore found none, ever.
+    const { metaobjectTranslatableFields } = await import("~/services/metaobject-fields.shared");
+    const fields = metaobjectTranslatableFields([ENTRY], DEFS);
+    expect(fields.map((f) => f.compoundKey)).toEqual(["gid://shopify/Metaobject/1#label"]);
+    expect(fields[0].compoundKey).not.toBe(ENTRY.id);
+  });
+
+  it("leaves out the fields that have no per-locale form at all", async () => {
+    // A colour and a taxonomy reference have one value per shop. Counting them
+    // as untranslated would keep the pulse permanent for a different reason.
+    const { metaobjectTranslatableFields } = await import("~/services/metaobject-fields.shared");
+    const keys = metaobjectTranslatableFields([ENTRY], DEFS).map((f) => f.compoundKey);
+    expect(keys.some((k) => k.endsWith("#color"))).toBe(false);
+    expect(keys.some((k) => k.endsWith("#color_taxonomy_reference"))).toBe(false);
+  });
+
+  it("reports a locale as complete once the compound key carries a translation", async () => {
+    const { hasLocaleMissingTranslations } = await import("~/utils/field-validation.utils");
+    const item = {
+      id: "metaobject_type_shopify--color-pattern",
+      metaobjects: [ENTRY],
+      fieldDefinitions: DEFS,
+      translations: [{ key: "gid://shopify/Metaobject/1#label", value: "Or", locale: "fr" }],
+    } as never;
+    expect(hasLocaleMissingTranslations(item, "fr", "de", "metaobjects")).toBe(false);
+    // And still reports a locale that genuinely has nothing.
+    expect(hasLocaleMissingTranslations(item, "es", "de", "metaobjects")).toBe(true);
+  });
+
+  it("does not call an entry EMPTY just because its definition names no label field", async () => {
+    const { hasPrimaryContentMissing } = await import("~/utils/field-validation.utils");
+    const item = {
+      id: "metaobject_type_x",
+      metaobjects: [{ id: "gid://shopify/Metaobject/2", fields: [{ key: "headline", value: "Hi" }] }],
+      fieldDefinitions: [],
+      translations: [],
+    } as never;
+    expect(hasPrimaryContentMissing(item, "metaobjects")).toBe(false);
+  });
+});
+
+describe("a type whose Translations capability is off", () => {
+  const item = (capability: boolean | null) =>
+    ({
+      id: "metaobject_type_x",
+      translatableCapability: capability,
+      metaobjects: [
+        { id: "gid://shopify/Metaobject/9", fields: [{ key: "label", value: "Gold", type: "single_line_text_field" }] },
+      ],
+      fieldDefinitions: [LABEL_FIELD],
+      translations: [],
+    }) as never;
+
+  it("stops counting once Shopify says the type does not translate", async () => {
+    // Otherwise the pulse is permanent for a different reason: the write path
+    // refuses the register for want of a digest, so the merchant cannot clear
+    // it either.
+    const { hasLocaleMissingTranslations } = await import("~/utils/field-validation.utils");
+    expect(hasLocaleMissingTranslations(item(false), "fr", "de", "metaobjects")).toBe(false);
+  });
+
+  it("keeps counting while the capability is UNKNOWN", async () => {
+    // Hiding a real missing translation behind a guess is the worse error, and
+    // a row cached before the column exists knows nothing.
+    const { hasLocaleMissingTranslations } = await import("~/utils/field-validation.utils");
+    expect(hasLocaleMissingTranslations(item(null), "fr", "de", "metaobjects")).toBe(true);
+    expect(hasLocaleMissingTranslations(item(true), "fr", "de", "metaobjects")).toBe(true);
+  });
+
+  it("names the missing fields by COMPOUND key, so the tooltip can split them", async () => {
+    const { getMissingLocaleTranslationFields } = await import("~/utils/field-validation.utils");
+    expect(getMissingLocaleTranslationFields(item(null), "fr", "de", "metaobjects")).toEqual([
+      "gid://shopify/Metaobject/9#label",
+    ]);
+  });
+});

@@ -88,6 +88,8 @@ export interface CreateItemModalTexts {
   /** Validation CODES from `validateCreatePayload`, phrased here. Without
    *  them the bare code reached the screen next to the field. */
   errors?: Record<string, string>;
+  /** Reasons a dynamic option is disabled, keyed by the code the server sent. */
+  optionReasons?: Record<string, string>;
   /**
    * The editor's `content` block, for controls this modal SHARES with the
    * entry editor (today: the taxonomy picker). Their strings belong where the
@@ -173,7 +175,19 @@ export interface CreateItemModalProps {
   rulesAvailable?: boolean;
   rulesUnavailableReason?: string;
   /** Options for `blogPicker` / `metaobjectType`, loaded by the caller. */
-  dynamicOptions?: Record<string, Array<{ value: string; label: string; disabled?: boolean; helpText?: string }>>;
+  dynamicOptions?: Record<
+    string,
+    Array<{
+      value: string;
+      label: string;
+      disabled?: boolean;
+      helpText?: string;
+      /** An i18n key the CLIENT phrases — the server does not know the
+       *  merchant's language, and this text explains a greyed-out option. */
+      helpTextCode?: string;
+      helpTextDetail?: string;
+    }>
+  >;
   /** Hands the payload to the caller. Fire-and-forget: the outcome arrives
    *  through `submitting` / `error` / `fieldErrors`, because the underlying
    *  fetcher is not promise-shaped. */
@@ -413,17 +427,31 @@ export function CreateItemModal({
    * option carries a reason to avoid. A field the merchant cannot see needs
    * its reason said somewhere they can.
    */
+  /** An option's reason, phrased here because the server sent a CODE. */
+  const optionReason = useCallback(
+    (option?: { helpText?: string; helpTextCode?: string; helpTextDetail?: string }): string | undefined => {
+      if (!option) return undefined;
+      if (option.helpTextCode) {
+        const phrased = t.optionReasons?.[option.helpTextCode];
+        if (phrased) return phrased.replace("{detail}", option.helpTextDetail ?? "");
+      }
+      return option.helpText;
+    },
+    [t],
+  );
+
   const lockedNotices = useMemo(() => {
     const notices: string[] = [];
     for (const key of locked) {
       const option = (dynamicOptions[key] ?? []).find((o) => o.value === values[key]);
-      if (option?.disabled && option.helpText) notices.push(option.helpText);
+      const reason = option?.disabled ? optionReason(option) : undefined;
+      if (reason) notices.push(reason);
       for (const error of localErrors.filter((e) => e.field === key)) {
         notices.push(t.errors?.[error.code] || `${error.code} ${error.detail ?? ""}`.trim());
       }
     }
     return notices;
-  }, [locked, dynamicOptions, values, localErrors, t]);
+  }, [locked, dynamicOptions, values, localErrors, t, optionReason]);
 
   /**
    * Drop `field.*` values belonging to a metaobject definition that is no
@@ -686,8 +714,8 @@ export function CreateItemModal({
             // visible cause is the same dead end as a silently missing option.
             // The reason is rendered ONCE — as the error when it explains a
             // refusal, as help text otherwise.
-            error={errorText || (selectedOption?.disabled ? selectedOption.helpText || true : undefined)}
-            helpText={selectedOption?.disabled ? undefined : selectedOption?.helpText}
+            error={errorText || (selectedOption?.disabled ? optionReason(selectedOption) || true : undefined)}
+            helpText={selectedOption?.disabled ? undefined : optionReason(selectedOption)}
           />
         );
       }
@@ -784,6 +812,9 @@ export function CreateItemModal({
               onChange={(v) => setValue(field.key, v)}
               error={errorText}
               invalidMessage={t.errors?.invalidColor}
+              showBaseColors
+              baseColorsLabel={t.content?.metaobjectColorBasePalette}
+              conventionHint={t.content?.metaobjectColorBaseConvention}
             />
           </BlockStack>
         );

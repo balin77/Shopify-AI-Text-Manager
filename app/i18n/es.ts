@@ -236,6 +236,8 @@ export const es: Translation = {
     metaobjectEntrySyncProducts: "Sincronizar productos",
     metaobjectEntryCreated: "Recién creada",
     metaobjectEntryColorInvalid: "Introduce un color hexadecimal, p. ej. #A1B2C3.",
+    metaobjectColorBasePalette: "Selecci\u00f3n r\u00e1pida",
+    metaobjectColorBaseConvention: "sugerencia de esta app, no un color est\u00e1ndar",
     metaobjectEntryPickImage: "Elegir imagen",
     metaobjectEntryImagesOnly: "En este campo solo se pueden usar im\u00e1genes.",
     metaobjectEntryClearImage: "Quitar imagen",
@@ -508,6 +510,10 @@ export const es: Translation = {
     deleteContainerButtonLabel: "Eliminar tipo",
     deleteContainerNotLoaded: "Este tipo se est\u00e1 cargando todav\u00eda.",
     createChooserTitle: "¿Qué quieres crear?",
+    createOptionsFailed: "No se han podido cargar las opciones de este formulario.",
+    createAlreadyRunning: "Esto ya se est\u00e1 creando \u2014 espera un momento en lugar de enviarlo otra vez.",
+    createTypeUnknownRequired: "Este tipo se guard\u00f3 antes de que esta app supiera cu\u00e1les de sus campos son obligatorios. Recarga la pesta\u00f1a de metaobjetos y vuelve a intentarlo.",
+    createTypeUnsupportedFields: "No se puede crear aqu\u00ed \u2014 requiere tipos de campo para los que esta app no tiene editor: {detail}",
     // Dos rechazos DISTINTOS con soluciones distintas — nunca deben compartir
     // el mismo texto (§1.2).
     createPlanContentType: "Tu plan no incluye este tipo de contenido.",

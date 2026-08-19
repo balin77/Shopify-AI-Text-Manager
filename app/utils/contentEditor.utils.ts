@@ -380,7 +380,8 @@ export const PULSE_SYNC_EPOCH = Date.now();
 /**
  * Hook: Get button style for locale navigation with memoization
  * Shows pulsing border animation when translations are missing
- * This hook provides better performance than getLocaleButtonStyle by memoizing the result
+ * Memoized, so the pulse is recomputed only when the item, the locale set
+ * or the overlays actually change
  */
 export function useLocaleButtonStyle(
   locale: ShopLocale,

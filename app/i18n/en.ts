@@ -241,6 +241,8 @@ export const en: Translation = {
     metaobjectEntrySyncProducts: "Sync products",
     metaobjectEntryCreated: "Just created",
     metaobjectEntryColorInvalid: "Enter a hex colour, e.g. #A1B2C3.",
+    metaobjectColorBasePalette: "Quick pick",
+    metaobjectColorBaseConvention: "this app's suggestion, not a standard colour",
     metaobjectEntryPickImage: "Choose image",
     metaobjectEntryImagesOnly: "Only images can be used in this field.",
     metaobjectEntryClearImage: "Remove image",
@@ -514,6 +516,10 @@ export const en: Translation = {
     deleteContainerButtonLabel: "Delete type",
     deleteContainerNotLoaded: "This type is still loading.",
     createChooserTitle: "What would you like to create?",
+    createOptionsFailed: "Could not load the options for this form.",
+    createAlreadyRunning: "This is already being created \u2014 please wait a moment rather than submitting again.",
+    createTypeUnknownRequired: "This type was cached before this app knew which of its fields are mandatory. Reload the metaobjects tab, then try again.",
+    createTypeUnsupportedFields: "Cannot be created here \u2014 it requires field types this app has no editor for: {detail}",
     // Two DIFFERENT refusals with different remedies — they must never share
     // the same text (§1.2).
     createPlanContentType: "Your plan does not include this content type.",
