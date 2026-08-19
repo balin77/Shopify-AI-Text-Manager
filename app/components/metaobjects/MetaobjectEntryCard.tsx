@@ -39,6 +39,7 @@ export type MetaobjectEntryUsage =
 export interface MetaobjectEntryCardTexts {
   handleLabel?: string;
   noEditableFields?: string;
+  noTranslatableFields?: string;
   unsupportedTitle?: string;
   unsupportedHint?: string;
   deleteLabel?: string;
@@ -88,6 +89,18 @@ interface Props {
   /** Sits under the colour control: what changing it actually does (V3). */
   colorNote?: string;
   /** Highlighted because it was just created. */
+  /**
+   * A FOREIGN locale: show the translatable fields and nothing else.
+   *
+   * Everything else on this card is primary-locale business. A colour, a file
+   * reference and a taxonomy value have ONE value per shop, so in a foreign
+   * locale they render read-only — a row of controls that cannot be used. The
+   * swatch, the handle, the usage line, the "not editable here" list and the
+   * delete button say the same thing on every language tab, and none of it is
+   * what the merchant came to this tab to do. Before the card existed, a
+   * foreign locale WAS just the input and its buttons, and that was right.
+   */
+  compact?: boolean;
   justCreated?: boolean;
   usage?: MetaobjectEntryUsage;
   onDelete?: () => void;
@@ -107,6 +120,7 @@ export function MetaobjectEntryCard({
   colorControl,
   colorValue,
   colorNote,
+  compact = false,
   justCreated = false,
   usage,
   onDelete,
@@ -188,7 +202,7 @@ export function MetaobjectEntryCard({
       <BlockStack gap="300">
         <InlineStack align="space-between" blockAlign="center" wrap={false} gap="200">
           <InlineStack gap="200" blockAlign="center" wrap={false}>
-            {colorControl ? (
+            {compact ? null : colorControl ? (
               // The dot IS the control. A Popover rather than an inline field:
               // the header is a title row, and a colour picker parked in it
               // permanently would push the name off a narrow screen.
@@ -248,17 +262,22 @@ export function MetaobjectEntryCard({
                 </Text>
                 {justCreated && <Badge tone="success">{t.createdBadge || "Just created"}</Badge>}
               </InlineStack>
-              <Text as="span" variant="bodySm" tone={colorInvalid ? "critical" : "subdued"}>
-                {colorInvalid
-                  ? t.colorInvalid || "That is not a valid hex colour."
-                  : handle
-                    ? `${t.handleLabel || "Handle"}: ${handle}`
-                    : entryId.split("/").pop()}
-              </Text>
+              {/* The handle and the colour warning are primary-locale facts;
+                  on a language tab they are the same line on every card and
+                  say nothing about the translation being written. */}
+              {!compact && (
+                <Text as="span" variant="bodySm" tone={colorInvalid ? "critical" : "subdued"}>
+                  {colorInvalid
+                    ? t.colorInvalid || "That is not a valid hex colour."
+                    : handle
+                      ? `${t.handleLabel || "Handle"}: ${handle}`
+                      : entryId.split("/").pop()}
+                </Text>
+              )}
             </BlockStack>
           </InlineStack>
 
-          {deleteButton && (
+          {!compact && deleteButton && (
             // A DISABLED control dispatches no pointer events, so a bare
             // Tooltip around it never opens — the wrapper span is what makes
             // the reason readable at all.
@@ -272,7 +291,7 @@ export function MetaobjectEntryCard({
           )}
         </InlineStack>
 
-        {readOnlyReason && (
+        {!compact && readOnlyReason && (
           <Text as="p" variant="bodySm" tone="subdued">
             {readOnlyReason === "refused"
               ? t.readOnlyDefinition || "This app cannot change entries of this definition."
@@ -309,13 +328,15 @@ export function MetaobjectEntryCard({
         {/* The COLOUR counts as an editable field even though it renders in the
             header — saying "nothing here can be edited" above a working colour
             picker is the kind of wrong that makes a merchant stop looking. */}
-        {children.length === 0 && !colorControl && (
+        {children.length === 0 && (compact || !colorControl) && (
           <Text as="p" variant="bodySm" tone="subdued">
-            {t.noEditableFields || "None of this entry's fields can be edited here."}
+            {compact
+              ? t.noTranslatableFields || "This entry has no translatable fields."
+              : t.noEditableFields || "None of this entry's fields can be edited here."}
           </Text>
         )}
 
-        {unsupportedFields.length > 0 && (
+        {!compact && unsupportedFields.length > 0 && (
           <BlockStack gap="050">
             <Text as="span" variant="bodySm" fontWeight="medium" tone="subdued">
               {t.unsupportedTitle || "Not editable here"}
@@ -329,16 +350,21 @@ export function MetaobjectEntryCard({
           </BlockStack>
         )}
 
-        <InlineStack gap="200" blockAlign="center">
-          <Text as="span" variant="bodySm" tone="subdued">
-            {usageLine}
-          </Text>
-          {usage?.state === "unknown" && onSyncProducts && (
-            <Button size="micro" variant="plain" onClick={onSyncProducts}>
-              {t.syncProducts || "Sync products"}
-            </Button>
-          )}
-        </InlineStack>
+        {/* Usage belongs to DELETING an entry, and deleting is a
+            primary-locale action. On a language tab it is one more line per
+            card that never changes with the language. */}
+        {!compact && (
+          <InlineStack gap="200" blockAlign="center">
+            <Text as="span" variant="bodySm" tone="subdued">
+              {usageLine}
+            </Text>
+            {usage?.state === "unknown" && onSyncProducts && (
+              <Button size="micro" variant="plain" onClick={onSyncProducts}>
+                {t.syncProducts || "Sync products"}
+              </Button>
+            )}
+          </InlineStack>
+        )}
       </BlockStack>
     </Card>
   );
