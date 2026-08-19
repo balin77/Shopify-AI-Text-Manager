@@ -503,7 +503,7 @@ export const de = {
     createButtonLabel: "Neu anlegen",
     createEntryButtonLabel: "Eintrag hinzuf\u00fcgen",
     deleteContainerButtonLabel: "Typ l\u00f6schen",
-    deleteContainerNotPermitted: "Einen ganzen Metaobjekt-Typ zu l\u00f6schen ist aus dieser App nicht m\u00f6glich: daf\u00fcr braucht es die Shopify-Berechtigung \u201ewrite_metaobject_definitions\u201c, die diese App bewusst nicht anfordert \u2014 jede zus\u00e4tzliche Berechtigung zwingt alle Merchants, die App neu zu best\u00e4tigen. L\u00f6sche den Typ stattdessen im Shopify-Adminbereich. Seine Eintr\u00e4ge lassen sich hier l\u00f6schen.",
+    deleteContainerNotLoaded: "Dieser Typ wird noch geladen.",
     createChooserTitle: "Was möchtest du anlegen?",
     // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
     // denselben Text bekommen (§1.2).
@@ -529,6 +529,7 @@ export const de = {
       confirm: "Endgültig löschen",
       deleting: "Wird gelöscht \u2026",
       consequenceMetaobjectUsage: "Shopify verweigert das L\u00f6schen, solange ein Produkt den Eintrag als Optionswert benutzt \u2014 dort zuerst entfernen.",
+      consequenceMetaobjectDefinitionEntries: "Jeder Eintrag dieses Typs wird mitgel\u00f6scht \u2014 hier bekannt: {count}. Shopify fragt nicht nach ihnen.",
     },
     // ── Duplizieren (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplizieren",
@@ -796,6 +797,7 @@ export const de = {
         invalidOption: "\u201e{detail}\u201c ist keine der Auswahlm\u00f6glichkeiten.",
         invalidHandle: "Nur Kleinbuchstaben, Zahlen und Bindestriche.",
         invalidMoney: "Bitte einen Betrag angeben, z. B. 19.90",
+        invalidColor: "Bitte einen Hex-Farbwert angeben, z. B. #A1B2C3.",
         invalidTaxonomyValue: "Bitte einen Wert aus der angebotenen Liste w\u00e4hlen.",
         tooManyTaxonomyValues: "H\u00f6chstens {detail} Wert(e).",
         tooFewTaxonomyValues: "Mindestens {detail} Wert(e).",

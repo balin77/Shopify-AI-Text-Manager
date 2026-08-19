@@ -504,7 +504,7 @@ export const en: Translation = {
     createButtonLabel: "Create",
     createEntryButtonLabel: "Add entry",
     deleteContainerButtonLabel: "Delete type",
-    deleteContainerNotPermitted: "Deleting a whole metaobject type is not possible from this app: it needs the Shopify permission \"write_metaobject_definitions\", which this app deliberately does not request \u2014 adding a permission forces every merchant to re-approve the app. Delete the type in the Shopify admin instead. Its entries can be deleted here.",
+    deleteContainerNotLoaded: "This type is still loading.",
     createChooserTitle: "What would you like to create?",
     // Two DIFFERENT refusals with different remedies — they must never share
     // the same text (§1.2).
@@ -530,6 +530,7 @@ export const en: Translation = {
       confirm: "Delete permanently",
       deleting: "Deleting \u2026",
       consequenceMetaobjectUsage: "Shopify refuses to delete an entry that a product still uses as an option value \u2014 remove it there first.",
+      consequenceMetaobjectDefinitionEntries: "Every entry of this type is deleted with it \u2014 {count} known here. Shopify does not ask about them.",
     },
     // ── Duplicating (§1.9) ────────────────────────────────────────────────
     duplicateButtonLabel: "Duplicate",
@@ -795,6 +796,7 @@ export const en: Translation = {
         invalidOption: "\u201c{detail}\u201d is not one of the options.",
         invalidHandle: "Only lowercase letters, numbers and dashes.",
         invalidMoney: "Enter an amount, e.g. 19.90",
+        invalidColor: "Enter a hex colour, e.g. #A1B2C3.",
         invalidTaxonomyValue: "Pick a value from the offered list.",
         tooManyTaxonomyValues: "At most {detail} value(s).",
         tooFewTaxonomyValues: "At least {detail} value(s).",

@@ -196,6 +196,21 @@ interface UnifiedContentEditorProps {
    * has to be able to pick it out BY KEY rather than by position, and to paint
    * the live value beside it while the merchant is still typing.
    */
+  /**
+   * An action on the CONTAINER the listed items belong to — today the
+   * metaobject DEFINITION whose entries fill the page.
+   *
+   * A prop rather than a config flag because only the route knows the
+   * container's id, and `disabledReason` is a string rather than a boolean so
+   * a refusal always arrives with its cause: "why is this greyed out" is the
+   * question a bare disabled button never answers.
+   */
+  containerAction?: {
+    label: string;
+    onAction: () => void;
+    disabledReason?: string | null;
+  } | null;
+
   renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
 
   /**
@@ -329,7 +344,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
-    renderFieldGroup,
+    containerAction,
+  renderFieldGroup,
     createPrefill,
     fieldsReadOnly = false,
     onItemCreated,
@@ -984,22 +1000,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     [unifiedItems, duplicateItem, createItem],
   );
 
-  /**
-   * Why the whole CONTAINER (a metaobject definition) cannot be deleted.
-   *
-   * A string, never a boolean, and never absent: the button is offered and
-   * explains itself. Deleting a definition needs `write_metaobject_definitions`,
-   * which this app deliberately does not request — every added scope forces a
-   * one-time re-consent of every installed merchant, and the two scope changes
-   * this app has already made are the reason that bar is high (CLAUDE.md,
-   * PLAN_METAOBJECTS_EDITOR §9). Shopify would allow it; this app does not ask
-   * to be allowed. When that changes, this becomes a real action rather than a
-   * new button.
-   */
-  const containerDeleteReason = config.createSupport?.fromActionBar
-    ? t.content?.deleteContainerNotPermitted ||
-      "Deleting a whole type is not possible from this app — it needs a Shopify permission this app does not request. Delete it in the Shopify admin."
-    : null;
 
   const handleAddItem = useCallback(() => {
     if (createResources.length === 0) return;
@@ -1767,14 +1767,19 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         </DisabledActionTooltip>
                       )}
                       {/* Deleting the CONTAINER the entries live in — a
-                          metaobject definition. Rendered wherever the config
-                          declares one, and DISABLED with the reason wherever
-                          it cannot be done, because "why is this greyed out"
-                          is the question a missing button never answers. */}
-                      {config.createSupport?.fromActionBar && containerDeleteReason && (
-                        <DisabledActionTooltip hint={containerDeleteReason}>
-                          <Button size="slim" tone="critical" icon={DeleteIcon} disabled>
-                            {t.content?.deleteContainerButtonLabel || "Delete type"}
+                          metaobject definition. Supplied by the route, and
+                          DISABLED WITH ITS REASON rather than hidden wherever
+                          it cannot be done. */}
+                      {containerAction && (
+                        <DisabledActionTooltip hint={containerAction.disabledReason ?? undefined}>
+                          <Button
+                            size="slim"
+                            tone="critical"
+                            icon={DeleteIcon}
+                            disabled={!!containerAction.disabledReason}
+                            onClick={containerAction.onAction}
+                          >
+                            {containerAction.label}
                           </Button>
                         </DisabledActionTooltip>
                       )}
@@ -2487,9 +2492,16 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // the config's own slug, which is an English word on every locale;
             // the chooser already carries translated resource names, so the
             // title reads from the SAME block rather than a second one.
-            resourceLabel: (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
-              createItem.openResource
-            ],
+            // With the type LOCKED, the dialog no longer shows which definition
+            // the entry lands in — so the title says it instead of the generic
+            // "Metaobject entry". Otherwise the resource's own name, as the
+            // chooser already translates it.
+            resourceLabel:
+              createItem.openResource === "metaobject" && createItem.initialValues?.type && selectedItem
+                ? selectedItem.title
+                : (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
+                    createItem.openResource
+                  ],
             // The metaobject field controls (the taxonomy picker) live under
             // `content`, not under `createModal`: the ENTRY editor renders the
             // same controls and the strings must not exist twice.

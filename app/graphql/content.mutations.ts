@@ -755,6 +755,24 @@ export const DELETE_METAOBJECT = `#graphql
   }
 `;
 
+/**
+ * Deletes a metaobject DEFINITION -- the type itself, and with it every entry
+ * of that type.
+ *
+ * Needs `write_metaobject_definitions`, which this app requests since the scope
+ * change of 2026-08. It is the most destructive call in this codebase: the
+ * entries are not asked about, they go with the container. The confirmation in
+ * front of it says so and names how many there are.
+ */
+export const DELETE_METAOBJECT_DEFINITION = `#graphql
+  mutation deleteMetaobjectDefinition($id: ID!) {
+    metaobjectDefinitionDelete(id: $id) {
+      deletedId
+      userErrors { field message code }
+    }
+  }
+`;
+
 /** Duplicate mutations — PLAN_CONTENT_CREATION §1.9 / §2.5f.
  *
  *  Both are ASYNCHRONOUS: they return a `job`, not a finished object. The

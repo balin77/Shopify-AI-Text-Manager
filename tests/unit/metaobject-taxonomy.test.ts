@@ -481,3 +481,23 @@ describe("taxonomy value lookup", () => {
     expect(await taxonomyValueNames(bad, [COLOR_GID])).toEqual({});
   });
 });
+
+describe("deleting a metaobject DEFINITION", () => {
+  it("is its own deletable resource, never reusing 'metaobject'", async () => {
+    // Reusing the entry kind is how this page once grew a Delete button that
+    // 400ed: a `metaobject_type_<type>` row is not a Metaobject GID, and the
+    // id check is what catches a client that confuses them.
+    const { GID_TYPE_BY_RESOURCE, isGidOfResource } = await import("~/config/create-fields.config");
+    expect(GID_TYPE_BY_RESOURCE.metaobjectDefinition).toBe("MetaobjectDefinition");
+    expect(isGidOfResource("gid://shopify/MetaobjectDefinition/9", "metaobjectDefinition")).toBe(true);
+    // The two must not be interchangeable in either direction.
+    expect(isGidOfResource("gid://shopify/Metaobject/9", "metaobjectDefinition")).toBe(false);
+    expect(isGidOfResource("gid://shopify/MetaobjectDefinition/9", "metaobject")).toBe(false);
+    expect(isGidOfResource("metaobject_type_shopify--color-pattern", "metaobjectDefinition")).toBe(false);
+  });
+
+  it("is NOT creatable — Shopify has a create API, this app deliberately has no form", async () => {
+    const { CREATE_SPECS } = await import("~/config/create-fields.config");
+    expect(Object.keys(CREATE_SPECS)).not.toContain("metaobjectDefinition");
+  });
+});

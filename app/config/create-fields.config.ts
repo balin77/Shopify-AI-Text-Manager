@@ -40,7 +40,7 @@ export type CreatableResource = "product" | "collection" | "page" | "article" | 
  * fixed set of six, theme content is not a resource), and it has no delete API
  * for those either. Aliased rather than re-listed so the two cannot drift.
  */
-export type DeletableResource = CreatableResource;
+export type DeletableResource = CreatableResource | "metaobjectDefinition";
 
 /**
  * The GID type segment each resource's ids carry.
@@ -60,6 +60,11 @@ export const GID_TYPE_BY_RESOURCE: Record<DeletableResource, string> = {
   article: "Article",
   blog: "Blog",
   metaobject: "Metaobject",
+  // The TYPE itself, and a separate kind on purpose. Reusing "metaobject" is
+  // exactly how the old page grew a Delete button that 400ed: a
+  // `metaobject_type_<type>` row is not a Metaobject GID, and the id check
+  // below is what catches a client that confuses them.
+  metaobjectDefinition: "MetaobjectDefinition",
 };
 
 /** True when `gid` is an id of `resource` (and not, say, a pseudo item id). */

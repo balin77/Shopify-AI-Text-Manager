@@ -4,7 +4,7 @@
  * The load-bearing case is the one that looks like a failure and is not: the
  * object EXISTS on Shopify but the cache sync did not pick it up. Reporting
  * that as an error is what produces a second click and therefore a duplicate —
- * and this app has no content delete to undo one with (§0.1). So it reads
+ * and the created thing is deletable from its own card (§0.1). So it reads
  * "created, will appear after a reload" with a reload button, never "failed".
  *
  * The handle shown is the one Shopify ACTUALLY assigned. On a collision it
@@ -93,11 +93,9 @@ export function CreateResultBanner({ info, onDismiss, onReload, translating = fa
           <Text as="p" key={code} tone="subdued">{t.warnings?.[code] || code}</Text>
         ))}
 
-        {onReload && (
+        {onReload && !info.synced && (
           <InlineStack gap="200">
-            {!info.synced && onReload && (
-              <Button onClick={onReload}>{t.reload || "Reload"}</Button>
-            )}
+            <Button onClick={onReload}>{t.reload || "Reload"}</Button>
           </InlineStack>
         )}
       </BlockStack>
