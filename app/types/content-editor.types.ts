@@ -267,6 +267,20 @@ export type FieldType =
   // the merchant pressed save.
   | 'commerce';
 
+/**
+ * One dynamic field handed to a page's `renderFieldGroup`.
+ *
+ * The rendered node alone would force the page to place controls by POSITION.
+ * The definition lets it pick one out by key, and the live value lets it paint
+ * something beside the control while the merchant is still typing.
+ */
+export interface RenderedGroupField {
+  field: FieldDefinition;
+  /** What the editor currently holds for it — not what the item stores. */
+  value: string;
+  node: React.ReactNode;
+}
+
 export interface FieldRenderProps {
   value: string;
   onChange: (value: string) => void;

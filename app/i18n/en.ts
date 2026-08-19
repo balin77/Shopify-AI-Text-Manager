@@ -216,6 +216,8 @@ export const en: Translation = {
     metaobjectsNoEntries: "This metaobject type has no entries to display.",
     // PLAN_METAOBJECTS_EDITOR — the entry card
     metaobjectDeleteInUse: "Something in your shop still references this entry, so Shopify will not delete it. Remove the reference there first.",
+    metaobjectEntryEditColor: "Change colour",
+    metaobjectEntryColorStorefrontNote: "This colour is also the swatch your storefront shows on products using this option value \u2014 measured, not assumed.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "None of this entry's fields can be edited here.",
     metaobjectEntryUnsupportedTitle: "Not editable here",

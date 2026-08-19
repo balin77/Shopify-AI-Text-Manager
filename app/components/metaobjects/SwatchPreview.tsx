@@ -16,11 +16,36 @@ interface Props {
   /** What the entry's own fields say: a colour value and/or an image URL. */
   swatch?: OptionValueSwatch | null;
   size?: number;
+  /**
+   * Draw an EMPTY placeholder where nothing resolves, instead of nothing.
+   *
+   * Off by default, because "no colour is known" is a real answer and a card
+   * that shows an invented dot states something the merchant did not. On when
+   * the dot is the CONTROL: an entry whose colour is unset is exactly the one
+   * somebody wants to click, and a control that is not there cannot be found.
+   */
+  showEmpty?: boolean;
 }
 
-export function SwatchPreview({ name, swatch, size = 20 }: Props) {
+export function SwatchPreview({ name, swatch, size = 20, showEmpty = false }: Props) {
   const resolved = resolveSwatch(name, swatch);
-  if (!resolved) return null;
+  if (!resolved) {
+    if (!showEmpty) return null;
+    return (
+      <span
+        aria-hidden="true"
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: "50%",
+          // Dashed, so "not set" cannot be mistaken for "set to white".
+          border: "1px dashed var(--p-color-border)",
+          background: "var(--p-color-bg-surface-secondary)",
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
 
   const common = {
     width: `${size}px`,

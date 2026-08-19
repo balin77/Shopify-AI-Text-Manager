@@ -34,6 +34,7 @@ import { DuplicateItemModal } from "./create/DuplicateItemModal";
 import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import type { ReactNode } from "react";
+import type { RenderedGroupField } from "../types/content-editor.types";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
@@ -168,8 +169,14 @@ interface UnifiedContentEditorProps {
    * entry's controls -- chrome the generic editor has no business knowing
    * about. Without this prop nothing changes: the fields render as a flat list
    * exactly as before.
+   *
+   * Each entry carries its DEFINITION and its current VALUE next to the
+   * rendered node, not just the node: a page that wants to put one control
+   * somewhere else (the metaobjects card lifts the colour into its header)
+   * has to be able to pick it out BY KEY rather than by position, and to paint
+   * the live value beside it while the merchant is still typing.
    */
-  renderFieldGroup?: (groupId: string, children: ReactNode[]) => ReactNode;
+  renderFieldGroup?: (groupId: string, children: RenderedGroupField[]) => ReactNode;
 
   /**
    * Optional: values the create form opens with.
@@ -1801,7 +1808,14 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     {!isFieldsLoading && renderFieldGroup &&
                       groupedContentFields.map(([groupId, fields]) => (
                         <Fragment key={groupId}>
-                          {renderFieldGroup(groupId, fields.map(renderContentField))}
+                          {renderFieldGroup(
+                            groupId,
+                            fields.map((field) => ({
+                              field,
+                              value: helpers.getEditableValue(field.key),
+                              node: renderContentField(field),
+                            })),
+                          )}
                         </Fragment>
                       ))}
 
