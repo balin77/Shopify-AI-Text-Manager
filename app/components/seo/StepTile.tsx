@@ -43,12 +43,12 @@ export function StepTile({
    * is a typed union: a computed `bg-surface-${x}` compiles to `string` and
    * would take a typo straight past the compiler into a silent no-op.
    */
-  accent?: "info" | "caution" | "magic";
+  accent?: "info" | "caution" | "success";
 }) {
   const ACCENT_BG = {
     info: "bg-surface-info",
     caution: "bg-surface-caution",
-    magic: "bg-surface-magic",
+    success: "bg-surface-success",
   } as const;
   return (
     <button
