@@ -4,8 +4,14 @@ import { SettingsTranslationProbeTab } from "./SettingsTranslationProbeTab";
 import { SettingsPageSpeedProbeTab } from "./SettingsPageSpeedProbeTab";
 import { SettingsCollectionModelProbeTab } from "./SettingsCollectionModelProbeTab";
 import { SettingsMetaobjectProbeTab } from "./SettingsMetaobjectProbeTab";
+import { SettingsUnitPriceProbeTab } from "./SettingsUnitPriceProbeTab";
 
-export type ProbeSubTab = "translationprobe" | "pagespeedprobe" | "collectionprobe" | "metaobjectprobe";
+export type ProbeSubTab =
+  | "translationprobe"
+  | "pagespeedprobe"
+  | "collectionprobe"
+  | "metaobjectprobe"
+  | "unitpriceprobe";
 
 interface Props {
   /** Same per-probe gates as before — one flag per sub-tab, not one for the group. */
@@ -13,6 +19,7 @@ interface Props {
   showPageSpeedProbe: boolean;
   showCollectionProbe: boolean;
   showMetaobjectProbe: boolean;
+  showUnitPriceProbe: boolean;
   initialSubTab?: ProbeSubTab;
 }
 
@@ -33,6 +40,7 @@ export function SettingsProbesTab({
   showPageSpeedProbe,
   showCollectionProbe,
   showMetaobjectProbe,
+  showUnitPriceProbe,
   initialSubTab,
 }: Props) {
   const subTabs: { id: ProbeSubTab; label: string }[] = [
@@ -40,6 +48,7 @@ export function SettingsProbesTab({
     ...(showPageSpeedProbe ? [{ id: "pagespeedprobe" as ProbeSubTab, label: "PageSpeed" }] : []),
     ...(showCollectionProbe ? [{ id: "collectionprobe" as ProbeSubTab, label: "Collection Model" }] : []),
     ...(showMetaobjectProbe ? [{ id: "metaobjectprobe" as ProbeSubTab, label: "Metaobjects" }] : []),
+    ...(showUnitPriceProbe ? [{ id: "unitpriceprobe" as ProbeSubTab, label: "Unit price" }] : []),
   ];
 
   // Hooks must run unconditionally, so the fallback tolerates an empty list and
@@ -100,6 +109,9 @@ export function SettingsProbesTab({
 
       {/* Metaobject Probe (PLAN_METAOBJECTS_EDITOR Phase 0 dev tool) */}
       {selected === "metaobjectprobe" && showMetaobjectProbe && <SettingsMetaobjectProbeTab />}
+
+      {/* Unit-price probe — is the Grundpreis writable at all? */}
+      {selected === "unitpriceprobe" && showUnitPriceProbe && <SettingsUnitPriceProbeTab />}
     </BlockStack>
   );
 }
