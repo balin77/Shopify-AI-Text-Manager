@@ -210,3 +210,120 @@ export async function liveProductCountForUsage(admin: {
     return null;
   }
 }
+
+
+// ─── The live cross-check (V4, measured 2026-08-19) ────────────────────────
+
+/** How many references one call looks at. Beyond this the answer is "n or
+ *  more", which is enough for every decision that hangs on it. */
+export const LIVE_REFERENCE_PAGE = 50;
+
+export type LiveMetaobjectUsage =
+  | {
+      known: true;
+      /**
+       * EVERY reference, whatever kind of resource holds it. This is the
+       * number that decides, because Shopify refuses on any of them.
+       */
+      references: number;
+      /** How many DISTINCT products are among them — for the message only. */
+      products: number;
+      /** The page was full, so the true count is "this or more". */
+      atLeast: boolean;
+    }
+  /** We never got an answer — NOT zero. */
+  | { known: false };
+
+/**
+ * Who references this entry, straight from Shopify.
+ *
+ * MEASURED (PLAN_METAOBJECTS_EDITOR V4, 2026-08-19): `Metaobject.referencedBy`
+ * is a `MetafieldRelationConnection`, it pages through `nodes`, and a node's
+ * `referencer` resolves to a **Product** on a real colour entry. Its sibling
+ * field `target` does NOT resolve on this shop ("Metafield reference target
+ * could not be retrieved"), which is why nothing here selects it: one
+ * unresolvable field fails the whole query.
+ *
+ * Two things this is and is not:
+ *
+ * - It is what predicts SHOPIFY'S refusal. The platform declines to delete an
+ *   entry "while it is referenced by another resource" (V5) — by ANY metafield
+ *   reference, not only by a product option. The cache counts option values
+ *   only, so it can say zero where Shopify still refuses; this cannot.
+ * - It is not a cheap list column. There is no count field on that connection,
+ *   so counting means paging. It is asked once, for the ONE entry being
+ *   deleted, and the card's list keeps reading the cache.
+ *
+ * A failure is `known: false`, never zero — the same rule the cached counter
+ * follows, for the same reason.
+ */
+export async function liveMetaobjectUsage(
+  admin: {
+    graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response>;
+  },
+  metaobjectId: string,
+): Promise<LiveMetaobjectUsage> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+        query metaobjectLiveUsage($id: ID!, $first: Int!) {
+          metaobject(id: $id) {
+            id
+            referencedBy(first: $first) {
+              nodes {
+                referencer {
+                  __typename
+                  ... on Product { id }
+                }
+              }
+            }
+          }
+        }`,
+      { variables: { id: metaobjectId, first: LIVE_REFERENCE_PAGE } },
+    );
+    const data = (await response.json()) as {
+      data?: {
+        metaobject?: {
+          referencedBy?: { nodes?: Array<{ referencer?: { __typename?: string; id?: string } | null }> } | null;
+        } | null;
+      };
+      errors?: Array<{ message: string }>;
+    };
+    if (data.errors?.length) {
+      logger.warn("[MetaobjectUsage] live referencedBy query failed", {
+        context: "MetaobjectUsage",
+        metaobjectId,
+        error: data.errors[0].message,
+      });
+      return { known: false };
+    }
+    // A metaobject that resolves to nothing is not an empty answer — it is a
+    // question that was not asked (deleted meanwhile, or another shop's id).
+    if (!data.data?.metaobject) return { known: false };
+
+    const nodes = data.data.metaobject.referencedBy?.nodes ?? [];
+    const productIds = new Set(
+      nodes
+        .map((n) => n.referencer)
+        .filter((r): r is { __typename?: string; id: string } => typeof r?.id === "string")
+        .map((r) => r.id),
+    );
+    // Both numbers, and they are not interchangeable: a reference held by
+    // something that is not a product still makes Shopify refuse the delete,
+    // so counting products alone would report "nothing uses this" about an
+    // entry that cannot be removed.
+    return {
+      known: true,
+      references: nodes.length,
+      products: productIds.size,
+      atLeast: nodes.length >= LIVE_REFERENCE_PAGE,
+    };
+  } catch (error: unknown) {
+    logger.warn("[MetaobjectUsage] live referencedBy query threw", {
+      context: "MetaobjectUsage",
+      metaobjectId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { known: false };
+  }
+}

@@ -212,6 +212,7 @@ export const de = {
     metaobjectsDescription: "Verwalten und übersetzen Sie benutzerdefinierte Metaobjekte",
     metaobjectsNoEntries: "Dieser Metaobjekt-Typ hat keine Einträge zum Anzeigen.",
     // PLAN_METAOBJECTS_EDITOR — die Eintragskarte
+    metaobjectDeleteInUse: "Etwas in Ihrem Shop verweist noch auf diesen Eintrag, deshalb l\u00f6scht Shopify ihn nicht. Entfernen Sie den Verweis zuerst dort.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Kein Feld dieses Eintrags kann hier bearbeitet werden.",
     metaobjectEntryUnsupportedTitle: "Nicht hier bearbeitbar",
@@ -1745,6 +1746,7 @@ export const de = {
     bulkEditorTranslateCompleted: "Bulk-Editor: Übersetzung abgeschlossen",
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
     taskTimedOut: "Zeitüberschreitung — die Aufgabe hat zu lange keinen Fortschritt gemeldet und wurde abgebrochen. Bitte erneut starten.",
+    taskInterrupted: "Unterbrochen — der Server wurde neu gestartet (z. B. durch ein Deploy), während die Aufgabe lief. Bitte erneut starten.",
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
     generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",
@@ -2478,6 +2480,7 @@ export const de = {
       errorStorefrontPassword: "Der Shop ist passwortgeschützt — der Crawl konnte die Storefront nicht erreichen. Entferne den Passwortschutz temporär oder teste auf einem öffentlichen Shop.",
       errorBotBlocked: "Ein Bot-Schutz hat den Crawl abgewiesen (mehrfach 403/429). Der Crawl hat mehrfach pausiert und es erneut versucht, kam aber nicht durch.",
       errorGeneric: "Der Crawl ist fehlgeschlagen. Bitte erneut versuchen.",
+      errorInterrupted: "Der Crawl wurde unterbrochen (Server-Neustart, z. B. durch ein Deploy) und ist unvollständig. Bitte erneut starten.",
       cappedBanner: "Der Crawl wurde bei {cap} Seiten gestoppt — insgesamt wurden {discovered} URLs gefunden. Die Waisen-Analyse ist bei einem gecappten Crawl nicht verlässlich.",
       tilePages: "Seiten gesamt",
       tileOk: "OK",

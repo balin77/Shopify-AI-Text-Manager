@@ -214,6 +214,7 @@ export const es: Translation = {
     metaobjectsDescription: "Gestiona y traduce metaobjetos personalizados",
     metaobjectsNoEntries: "Este tipo de metaobjeto no tiene entradas para mostrar.",
     // PLAN_METAOBJECTS_EDITOR — la tarjeta de entrada
+    metaobjectDeleteInUse: "Algo en tu tienda todav\u00eda hace referencia a esta entrada, por eso Shopify no la elimina. Quita la referencia all\u00ed primero.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Ningún campo de esta entrada se puede editar aquí.",
     metaobjectEntryUnsupportedTitle: "No editable aquí",
@@ -1743,6 +1744,7 @@ export const es: Translation = {
     bulkEditorTranslateCompleted: "Editor masivo: traducción finalizada",
     seoBulkFixCompleted: "Corrección SEO finalizada",
     taskTimedOut: "Tiempo agotado — la tarea no informó progreso durante demasiado tiempo y se canceló. Vuelve a iniciarla.",
+    taskInterrupted: "Interrumpida — el servidor se reinició (por ejemplo, un despliegue) mientras la tarea estaba en curso. Vuelve a iniciarla.",
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
     generationCompleted: "Generación de IA para {field} en \"{title}\" completada",
@@ -2472,6 +2474,7 @@ export const es: Translation = {
       errorStorefrontPassword: "La tienda está protegida con contraseña — el rastreo no pudo acceder a la tienda. Quita la protección temporalmente o pruébalo en una tienda pública.",
       errorBotBlocked: "Una protección antibots rechazó el rastreo (403/429 repetidos). El rastreo se pausó y reintentó varias veces, pero no logró pasar.",
       errorGeneric: "El rastreo falló. Inténtalo de nuevo.",
+      errorInterrupted: "El rastreo se interrumpió por un reinicio del servidor (por ejemplo, un despliegue) y está incompleto. Vuelve a iniciarlo.",
       cappedBanner: "El rastreo se detuvo en {cap} páginas — se encontraron {discovered} URLs en total. El análisis de páginas huérfanas no es fiable en un rastreo limitado.",
       tilePages: "Páginas totales",
       tileOk: "OK",

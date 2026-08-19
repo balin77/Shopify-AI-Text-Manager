@@ -377,6 +377,15 @@ export default function MetaobjectsPage() {
 
   // ── Delete one entry ────────────────────────────────────────────────────
   const deleteItem = useDeleteItem({
+    // The delete action refuses a still-referenced entry with a CODE; the
+    // sentence lives in the three i18n files, not in the server.
+    translateError: useCallback(
+      (key: string) => {
+        const value = (t.content as unknown as Record<string, unknown> | undefined)?.[key];
+        return typeof value === "string" ? value : undefined;
+      },
+      [t],
+    ),
     onDeleted: (target) => {
       showInfoBox(
         (t.content?.deletedMessage || "“{name}” was deleted.").replace("{name}", target.title || target.id),

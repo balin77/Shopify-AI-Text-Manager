@@ -67,6 +67,28 @@ const absent = (detail?: unknown): Finding => ({ ok: false, missing: true, detai
  *  absence nobody cross-checked. */
 const CANDIDATE_FIELDS = ["unitPriceMeasurement", "unitPrice", "measurement"];
 
+/** The field the write actually sends. */
+const FIELD_NAME = "unitPriceMeasurement";
+
+/**
+ * The units this field takes, MEASURED rather than assumed.
+ *
+ * `UnitPriceMeasurementInput` does NOT use `WeightUnit` - the probe's first
+ * run sent the long spelling every other weight field in this app uses, and
+ * Shopify refused it at the SCHEMA level, naming the valid set in the error:
+ * ML, CL, L, M3, FLOZ, PT, QT, GAL, MG, G, KG, OZ, LB, MM, CM, M, IN, FT, YD,
+ * M2, FT2, ITEM, UNKNOWN. That refusal arrived as a top-level `errors` array
+ * with `data: null`, i.e. the shape that never reaches `userErrors` - a caller
+ * checking only `userErrors` would have read it as a success.
+ *
+ * The probe uses the two mass units, which is the common Grundpreis case: a
+ * 500 g pack priced per kilogram.
+ */
+const UNIT_PRICE_UNITS = {
+  quantity: "G",
+  reference: "KG",
+} as const;
+
 /**
  * The products this shop has cached, with their variants.
  *
@@ -270,9 +292,9 @@ export const action = async (args: ActionFunctionArgs) => {
     } else {
       results.write = await tryWrite(admin, productGid, variantGid, {
         quantityValue: 500,
-        quantityUnit: "GRAMS",
+        quantityUnit: UNIT_PRICE_UNITS.quantity,
         referenceValue: 1,
-        referenceUnit: "KILOGRAMS",
+        referenceUnit: UNIT_PRICE_UNITS.reference,
       });
 
       // ── 4. Can it be CLEARED again? ─────────────────────────────────────
@@ -357,10 +379,19 @@ async function tryWrite(
     // A schema-level rejection is THE most likely answer here and the most
     // informative one: it names the field the input does not have. Reported as
     // `missing`, not as a failure, because it IS the answer to question 1.
+    //
+    // But only a rejection that says the field is NOT THERE. A rejection of
+    // the VALUE mentions the same field name while proving the opposite - the
+    // first run was refused with "invalid value for 0.unitPriceMeasurement
+    // .quantityUnit (Expected ... to be one of: ...)", which is the schema
+    // confirming the field exists and disagreeing about the unit. Matching on
+    // the field name alone would have turned that into "not supported" and
+    // closed the question with the answer inverted.
     if (body.errors?.length) {
       const message = body.errors[0]?.message ?? "";
-      const isSchema = /unitPriceMeasurement|Field .* is not defined|InputObject/i.test(message);
-      return isSchema ? absent({ schemaError: message }) : fail(message);
+      const undefinedField = /is not defined|doesn't exist|does not exist|unknown field|no field/i.test(message);
+      const namesTheField = new RegExp(FIELD_NAME, "i").test(message);
+      return undefinedField && namesTheField ? absent({ schemaError: message }) : fail(message);
     }
     const payload = body.data?.productVariantsBulkUpdate;
     if (payload?.userErrors?.length) {

@@ -132,20 +132,43 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
   // are not cached could never delete an entry, however often it synced. A
   // KNOWN usage still stops here, because the message is better than Shopify's.
   if (resource === "metaobject") {
-    // No live product count here on purpose: it exists to turn "the cache is
-    // empty" into a KNOWN zero, and both of those now take the same branch
-    // below. Spending an Admin API call on a distinction nothing reads is the
-    // kind of round trip that only shows up as latency. The usage ROUTE still
-    // asks it, because the card SHOWS the difference.
-    const { countLinkedOptionUsage } = await import("~/services/metaobject-usage.server");
-    const usage = (await countLinkedOptionUsage(db, session.shop, [gid]))[gid];
-    if (usage?.known && usage.products > 0) {
+    // Shopify is asked FIRST, because Shopify is what refuses. `referencedBy`
+    // counts every metafield reference, which is exactly the rule the platform
+    // applies (V5); the cache counts option VALUES only and can therefore read
+    // zero where the delete is still declined. The live answer wins wherever
+    // there is one — "the cache is a guess, Shopify is the truth" — and a
+    // failed query falls back to the cache rather than to an assumption.
+    //
+    // One call, for the ONE entry being deleted. The connection has no count
+    // field, so this pages; the card's list keeps reading the cache for its
+    // per-row display.
+    const { countLinkedOptionUsage, liveMetaobjectUsage } = await import(
+      "~/services/metaobject-usage.server"
+    );
+    const live = await liveMetaobjectUsage(admin, gid);
+    const cached = live.known ? null : (await countLinkedOptionUsage(db, session.shop, [gid]))[gid];
+    // ANY reference blocks, not just a product one: that is the rule Shopify
+    // applies, and counting products alone would let the delete through into a
+    // raw platform refusal for an entry some collection or metafield holds.
+    // The product count is for the SENTENCE, which is a different job.
+    const knownInUse = live.known ? live.references > 0 : !!cached?.known && cached.products > 0;
+    const products = live.known ? live.products : cached?.known ? cached.products : 0;
+
+    if (knownInUse) {
       return json(
         {
           success: false,
+          // The client phrases it: `useUnifiedContentEditor` resolves an
+          // errorKey against `t.content`, so the sentence exists in all three
+          // languages instead of being an English string from the server.
+          // `error` stays as the fallback for a client that has neither.
           errorKey: "metaobjectDeleteInUse" as const,
-          usageProducts: usage.products,
-          error: `${usage.products} product(s) still use this entry as an option value. Remove it there first.`,
+          usageProducts: products,
+          usageAtLeast: live.known && live.atLeast,
+          error:
+            products > 0
+              ? `${products}${live.known && live.atLeast ? "+" : ""} product(s) still reference this entry. Remove them there first.`
+              : "Something in your shop still references this entry, so Shopify will not delete it.",
         },
         { status: 409 },
       );

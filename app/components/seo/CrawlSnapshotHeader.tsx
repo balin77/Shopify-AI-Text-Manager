@@ -96,6 +96,16 @@ export function CrawlSnapshotHeader({
   }, [running, scanStarted]);
 
   const isCapped = snapshot?.status === "capped";
+  /**
+   * A run the orphan recovery closed because the process that owned it is gone
+   * (orphan-run-recovery.js) — a redeploy, an OOM kill. Stored as a `failed`
+   * snapshot, because that is what it is (it has no pages: they are written in
+   * one bulk insert at the very end), but shown as a WARNING and with its own
+   * text: nothing is wrong with the merchant's storefront, and a red banner
+   * telling them to "try again" over our own restart sends them looking for a
+   * fault they do not have.
+   */
+  const isInterrupted = snapshot?.status === "failed" && snapshot.errorCode === "interrupted";
   const blockSourceText = snapshot?.blockedBy ? c[BLOCK_SOURCE_TEXT_KEY[snapshot.blockedBy]] : null;
 
   return (
@@ -132,7 +142,10 @@ export function CrawlSnapshotHeader({
           </Banner>
         )}
 
-        {snapshot?.status === "failed" && !scanInProgress && (
+        {isInterrupted && !scanInProgress && (
+          <Banner tone="warning">{c.errorInterrupted}</Banner>
+        )}
+        {snapshot?.status === "failed" && !isInterrupted && !scanInProgress && (
           <Banner tone="critical">
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">

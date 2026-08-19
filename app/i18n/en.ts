@@ -215,6 +215,7 @@ export const en: Translation = {
     metaobjectsDescription: "Manage and translate custom metaobjects",
     metaobjectsNoEntries: "This metaobject type has no entries to display.",
     // PLAN_METAOBJECTS_EDITOR — the entry card
+    metaobjectDeleteInUse: "Something in your shop still references this entry, so Shopify will not delete it. Remove the reference there first.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "None of this entry's fields can be edited here.",
     metaobjectEntryUnsupportedTitle: "Not editable here",
@@ -1749,6 +1750,7 @@ export const en: Translation = {
     bulkEditorTranslateCompleted: "Bulk editor: translation finished",
     seoBulkFixCompleted: "SEO fix finished",
     taskTimedOut: "Timed out — the task reported no progress for too long and was cancelled. Please start it again.",
+    taskInterrupted: "Interrupted — the server restarted (a deploy, for example) while the task was running. Please start it again.",
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",
     generationCompleted: "AI generation for {field} in \"{title}\" completed",
@@ -2478,6 +2480,7 @@ export const en: Translation = {
       errorStorefrontPassword: "The store is password-protected — the crawl couldn't reach the storefront. Temporarily remove the password, or test on a public store.",
       errorBotBlocked: "Bot protection turned the crawl away (repeated 403/429). The crawl paused and retried several times but couldn't get through.",
       errorGeneric: "The crawl failed. Please try again.",
+      errorInterrupted: "The crawl was interrupted by a server restart (a deploy, for example) and is incomplete. Please start it again.",
       cappedBanner: "The crawl stopped at {cap} pages — {discovered} URLs were found in total. The orphan analysis isn't reliable on a capped crawl.",
       tilePages: "Total pages",
       tileOk: "OK",
