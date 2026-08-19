@@ -281,7 +281,11 @@ export async function applyOptionChange(
   // healthy one with the option unchanged, and without this check the save
   // reports success while the merchant's pick is simply gone.
   const echoed = outcome.options?.find((o) => o.id === params.optionId);
-  if (echoed) {
+  // NOT in the echo is not "nothing to check". The block below exists because
+  // `userErrors: []` is not the echo, and an option missing from a response
+  // that was supposed to carry it is the same silent no-op one level up.
+  if (!echoed) return "optionsNotConfirmed";
+  {
     const linkedValues = new Set(
       echoed.optionValues.map((v) => v.linkedMetafieldValue).filter((v): v is string => !!v),
     );

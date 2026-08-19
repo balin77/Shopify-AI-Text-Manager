@@ -448,6 +448,20 @@ export interface InventoryItemFields {
   weight?: { value: string; unit: string };
   harmonizedSystemCode?: string;
   countryCodeOfOrigin?: string;
+  /**
+   * Whether Shopify keeps a COUNT for this item.
+   *
+   * Off, there is no quantity at all — not zero, none — so the stock table has
+   * nothing to show and the "keep selling at zero" policy has no zero to apply
+   * to. Written here because `tracked` is a field of the InventoryItem, which
+   * is also where this app READS it from.
+   */
+  tracked?: boolean;
+  /**
+   * The stock-keeping unit. On `InventoryItem` in 2025-10, which is where this
+   * writes it; `ProductVariant.sku` is the same value read through the variant.
+   */
+  sku?: string;
 }
 
 /** Shopify's `WeightUnit` enum. A bad enum fails at the SCHEMA level. */
@@ -502,6 +516,17 @@ export async function applyInventoryItemFields(
     input.requiresShipping = params.fields.requiresShipping;
     mirror.requiresShipping = params.fields.requiresShipping;
   }
+  if (params.fields.tracked !== undefined) {
+    input.tracked = params.fields.tracked;
+    mirror.inventoryTracked = params.fields.tracked;
+  }
+  if (params.fields.sku !== undefined) {
+    // "" clears it. A SKU is a merchant's own reference and an empty one is a
+    // deliberate state, not a missing value.
+    const sku = params.fields.sku.trim();
+    input.sku = sku === "" ? null : sku;
+    mirror.sku = sku === "" ? null : sku;
+  }
   if (params.fields.weight !== undefined) {
     const value = parseDecimal(params.fields.weight.value);
     const unit = params.fields.weight.unit.trim().toUpperCase();
@@ -544,6 +569,7 @@ export async function applyInventoryItemFields(
             inventoryItem {
               id
               tracked
+              sku
               requiresShipping
               countryCodeOfOrigin
               harmonizedSystemCode
@@ -561,6 +587,8 @@ export async function applyInventoryItemFields(
         inventoryItemUpdate?: {
           inventoryItem?: {
             id?: string;
+            tracked?: boolean | null;
+            sku?: string | null;
             requiresShipping?: boolean | null;
             countryCodeOfOrigin?: string | null;
             harmonizedSystemCode?: string | null;
@@ -588,6 +616,12 @@ export async function applyInventoryItemFields(
     }
     const item = payload?.inventoryItem;
     if (!item?.id) return "itemFieldsNotConfirmed";
+    // `tracked` decides whether stock exists at all, so a write Shopify
+    // accepted and did not apply must not read as success.
+    if ("inventoryTracked" in mirror && item.tracked !== mirror.inventoryTracked) {
+      return "itemFieldsNotConfirmed";
+    }
+    if ("sku" in mirror && (item.sku ?? null) !== mirror.sku) return "itemFieldsNotConfirmed";
 
     // Mirror from the ECHO, not from `mirror` — Shopify normalises (a cost of
     // "4.5" comes back "4.50", a weight in grams may be rebased). Writing the
@@ -595,7 +629,13 @@ export async function applyInventoryItemFields(
     // hold, and the panel reads that cache.
     await db.productVariant
       .updateMany({
-        where: { id: params.variantId },
+        // SHOP-SCOPED, like every other mirror in this module. `variantId`
+        // arrives as an unvalidated form field on a directly POST-reachable
+        // route, so an unscoped write lets one shop's request overwrite
+        // another shop's cached variant row. Shopify ids are globally unique
+        // so it is safe in practice — but "safe because of an external
+        // invariant" is not the house rule, and the scope costs nothing.
+        where: { id: params.variantId, product: { shop } },
         data: {
           ...("cost" in mirror ? { cost: item.unitCost?.amount ?? null } : {}),
           ...("requiresShipping" in mirror ? { requiresShipping: item.requiresShipping ?? null } : {}),
@@ -607,6 +647,8 @@ export async function applyInventoryItemFields(
             : {}),
           ...("harmonizedSystemCode" in mirror ? { harmonizedSystemCode: item.harmonizedSystemCode ?? null } : {}),
           ...("countryCodeOfOrigin" in mirror ? { countryCodeOfOrigin: item.countryCodeOfOrigin ?? null } : {}),
+          ...("inventoryTracked" in mirror ? { inventoryTracked: item.tracked ?? null } : {}),
+          ...("sku" in mirror ? { sku: item.sku ?? null } : {}),
         },
       })
       .catch(() => undefined);
@@ -631,7 +673,20 @@ export async function applyInventoryItemFields(
 export interface VariantPriceFields {
   price?: string;
   compareAtPrice?: string;
+  /** ISBN, UPC, GTIN. "" CLEARS it — a wrong barcode is worse than none. */
+  barcode?: string;
+  /**
+   * `DENY` or `CONTINUE` — whether Shopify keeps selling at zero stock.
+   *
+   * A GraphQL ENUM, so a bad value fails at the SCHEMA level: a top-level
+   * `errors` array with `data: null` that never reaches `userErrors`, i.e. a
+   * save that reads as a success while nothing was written. Validated here.
+   */
+  inventoryPolicy?: string;
 }
+
+/** Shopify's `ProductVariantInventoryPolicy`. */
+const INVENTORY_POLICIES = new Set(["DENY", "CONTINUE"]);
 
 /**
  * Write the SELLING price of one variant.
@@ -701,6 +756,23 @@ export async function applyVariantPrices(
     }
   }
 
+  if (params.fields.barcode !== undefined) {
+    // "" clears it: an empty barcode field means the merchant removed a wrong
+    // one, and dropping that as "unchanged" would leave it in place.
+    const barcode = params.fields.barcode.trim();
+    input.barcode = barcode === "" ? null : barcode;
+    mirror.barcode = barcode === "" ? null : barcode;
+  }
+  if (params.fields.inventoryPolicy !== undefined) {
+    const policy = params.fields.inventoryPolicy.trim().toUpperCase();
+    // An unrecognised enum is DROPPED and reported, never forwarded: Shopify
+    // would reject the whole mutation at the schema level and the price in the
+    // same call would go down with it.
+    if (!INVENTORY_POLICIES.has(policy)) return "priceInvalid";
+    input.inventoryPolicy = policy;
+    mirror.inventoryPolicy = policy;
+  }
+
   if (Object.keys(input).length <= 1) return undefined;
 
   try {
@@ -712,6 +784,8 @@ export async function applyVariantPrices(
               id
               price
               compareAtPrice
+              barcode
+              inventoryPolicy
             }
             userErrors { field message }
           }
@@ -722,7 +796,13 @@ export async function applyVariantPrices(
     const body = (await response.json()) as {
       data?: {
         productVariantsBulkUpdate?: {
-          productVariants?: Array<{ id?: string; price?: string | null; compareAtPrice?: string | null }> | null;
+          productVariants?: Array<{
+            id?: string;
+            price?: string | null;
+            compareAtPrice?: string | null;
+            barcode?: string | null;
+            inventoryPolicy?: string | null;
+          }> | null;
           userErrors?: Array<{ message: string }>;
         };
       };
@@ -757,11 +837,23 @@ export async function applyVariantPrices(
     if (input.compareAtPrice !== undefined && !sameMoney(input.compareAtPrice, echoed.compareAtPrice)) {
       return "priceNotConfirmed";
     }
+    // The same rule for the two non-money fields. They were sent and mirrored
+    // without ever being asked back for, so Shopify accepting the call and
+    // storing nothing left the cache — and the merchant — believing a policy
+    // that was never applied.
+    if (input.barcode !== undefined && (echoed.barcode ?? null) !== input.barcode) {
+      return "priceNotConfirmed";
+    }
+    if (input.inventoryPolicy !== undefined && echoed.inventoryPolicy !== input.inventoryPolicy) {
+      return "priceNotConfirmed";
+    }
 
     // Mirror what Shopify STORED, not what was sent — the same rule the theme
     // path follows for normalised richtext.
     if (echoed.price != null) mirror.price = echoed.price;
     mirror.compareAtPrice = echoed.compareAtPrice ?? null;
+    if (input.barcode !== undefined) mirror.barcode = echoed.barcode ?? null;
+    if (input.inventoryPolicy !== undefined) mirror.inventoryPolicy = echoed.inventoryPolicy ?? null;
     await db.productVariant
       .updateMany({ where: { id: params.variantId, product: { shop } }, data: mirror as never })
       .catch(() => undefined);

@@ -559,6 +559,14 @@ export const de = {
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern
     // längst veraltet wäre.
     commerce: {
+      inventoryHeading: "Inventar",
+      identifiersHeading: "Mehr Details",
+      trackedLabel: "Inventar wird verfolgt",
+      trackedHint: "Shopify führt eine Anzahl und zieht sie bei jeder Bestellung ab. Aus gibt es gar keine Anzahl, und die Variante kann immer gekauft werden.",
+      continueSellingLabel: "Weiterverkaufen, auch wenn nicht vorrätig",
+      continueSellingHint: "Kundinnen können bei Bestand 0 bestellen. Aus zeigt Shopify die Variante als ausverkauft.",
+      skuLabel: "SKU (Artikelnummer)",
+      barcodeLabel: "Barcode (ISBN, UPC, GTIN usw.)",
       locationsColumn: "Standorte",
       unavailableColumn: "Nicht verfügbar",
       committedColumn: "Reserviert",
@@ -600,7 +608,6 @@ export const de = {
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
       variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
-      savingStock: "Bestand wird gespeichert…",
       notStockedHere: "hier nicht bestandsgeführt",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
@@ -612,7 +619,6 @@ export const de = {
       noLevels: "Kein Lagerort führt Bestand dieser Variante.",
       locationInactive: "inaktiv",
       onHand: "Vorhanden",
-      availableLabel: "verfügbar: {n}",
     },
     // Codes aus den Schreibpfaden für Bestand und Kanäle. Eine Menge ist Geld,
     // deshalb ist „nicht bestätigt" eine andere Antwort als „fehlgeschlagen":

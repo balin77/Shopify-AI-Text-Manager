@@ -67,8 +67,6 @@ export interface CommerceDataValue {
   isPrimaryLocale: boolean;
   t: CommerceTexts;
 
-  selectedVariantId: string | null;
-  setSelectedVariantId: (id: string | null) => void;
   priceEdits: Record<string, string>;
   setPriceEdits: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   edits: Record<string, string>;
@@ -80,6 +78,15 @@ export interface CommerceDataValue {
 
   loadedOnHand: (variantId: string, locationId: string) => number | null;
   hasChanges: boolean;
+  /**
+   * The same function the editor's save bar drives.
+   *
+   * Exposed rather than kept private to the registration: it is what the two
+   * views' edits end up in, so a test that wants to know what a bulk edit
+   * SENDS has to be able to run it — and that is the surface where a wrong
+   * answer destroys a merchant's data rather than merely looking wrong.
+   */
+  save: () => Promise<void>;
 }
 
 const CommerceDataContext = createContext<CommerceDataValue | null>(null);
@@ -116,17 +123,6 @@ export function CommerceDataProvider({
   const savingRef = useRef(false);
   const [notices, setNotices] = useState<string[]>([]);
 
-  /**
-   * Which variant's box is on screen.
-   *
-   * ONE box, not one per variant: a product with twenty variants produced
-   * twenty stacked boxes of identical fields, and the channel list plus the
-   * save button ended up a screen and a half below the first one. Switching is
-   * SAFE because every edit is keyed by variant id (`edits`, `itemEdits`) —
-   * changing the selection hides a box, it does not discard what was typed in
-   * it, and the save still writes every variant that was touched.
-   */
-  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null);
 
   /** Edited selling prices, keyed `variantId::price` / `::compareAtPrice`. */
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
@@ -334,7 +330,10 @@ export function CommerceDataProvider({
    * opposite — "" there is how a merchant ends a sale, so it IS a change.
    */
   const dirtyPrices = useMemo(() => {
-    const byVariant = new Map<string, { price?: string; compareAtPrice?: string }>();
+    const byVariant = new Map<
+      string,
+      { price?: string; compareAtPrice?: string; barcode?: string; inventoryPolicy?: string }
+    >();
     for (const [key, value] of Object.entries(priceEdits)) {
       const [variantId, field] = key.split("::");
       const variant = data?.variants.find((v) => v.id === variantId);
@@ -345,6 +344,13 @@ export function CommerceDataProvider({
       } else if (field === "compareAtPrice") {
         if (value.trim() === (variant.compareAtPrice ?? "")) continue;
         byVariant.set(variantId, { ...byVariant.get(variantId), compareAtPrice: value });
+      } else if (field === "barcode") {
+        // "" IS a change here — it clears a wrong barcode, unlike the price.
+        if (value.trim() === (variant.barcode ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), barcode: value });
+      } else if (field === "inventoryPolicy") {
+        if (value === (variant.inventoryPolicy ?? "")) continue;
+        byVariant.set(variantId, { ...byVariant.get(variantId), inventoryPolicy: value });
       }
     }
     return [...byVariant.entries()];
@@ -391,6 +397,8 @@ export function CommerceDataProvider({
             variantGid: variant.gid,
             ...(fields.price !== undefined ? { price: fields.price } : {}),
             ...(fields.compareAtPrice !== undefined ? { compareAtPrice: fields.compareAtPrice } : {}),
+            ...(fields.barcode !== undefined ? { barcode: fields.barcode } : {}),
+            ...(fields.inventoryPolicy !== undefined ? { inventoryPolicy: fields.inventoryPolicy } : {}),
           },
           "priceFailed",
         );
@@ -487,6 +495,10 @@ export function CommerceDataProvider({
           };
         } else if (field === "requiresShipping") {
           fields.requiresShipping = value === "true";
+        } else if (field === "inventoryTracked") {
+          // Keyed by the VIEW's field name so the dirty check compares against
+          // what was loaded; the write module's input calls it `tracked`.
+          fields.tracked = value === "true";
         } else {
           fields[field] = value;
         }
@@ -585,8 +597,6 @@ export function CommerceDataProvider({
     load,
     isPrimaryLocale,
     t,
-    selectedVariantId,
-    setSelectedVariantId,
     priceEdits,
     setPriceEdits,
     edits,
@@ -597,6 +607,7 @@ export function CommerceDataProvider({
     setChannelState,
     loadedOnHand,
     hasChanges,
+    save,
   };
 
   return <CommerceDataContext.Provider value={value}>{children}</CommerceDataContext.Provider>;

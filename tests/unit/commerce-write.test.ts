@@ -534,3 +534,142 @@ describe("applyStockChanges — the ledger the echo belongs to", () => {
     ).toBeUndefined();
   });
 });
+
+describe("the variant's own settings", () => {
+  const VARIANT_GID = "gid://shopify/ProductVariant/9";
+  const ITEM_ID = "gid://shopify/InventoryItem/1";
+
+  function recorder() {
+    const updates: Array<Record<string, unknown>> = [];
+    return {
+      updates,
+      db: {
+        productVariant: {
+          updateMany: vi.fn(async (args: Record<string, unknown>) => {
+            updates.push(args);
+            return { count: 1 };
+          }),
+        },
+      } as never,
+    };
+  }
+
+  const sentTo = (admin: never) =>
+    (admin as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+
+  it("clears a barcode on an empty field, unlike a price", async () => {
+    // A price cannot be cleared — Shopify requires one — so "" means "leave
+    // it". A wrong barcode is worse than none, so "" there is a real change.
+    const admin = adminWith({
+      data: {
+        productVariantsBulkUpdate: {
+          productVariants: [{ id: VARIANT_GID, price: "9.90", compareAtPrice: null, barcode: null }],
+          userErrors: [],
+        },
+      },
+    });
+    const { db } = recorder();
+
+    const warning = await applyVariantPrices(admin, db, "s", {
+      productId: "gid://shopify/Product/1",
+      variantId: "9",
+      variantGid: VARIANT_GID,
+      fields: { barcode: "" },
+    });
+
+    expect(warning).toBeUndefined();
+    expect(sentTo(admin).variants[0].barcode).toBeNull();
+  });
+
+  it("refuses a barcode or a policy the echo did not carry", async () => {
+    // Both were sent and MIRRORED without ever being asked back for, so
+    // Shopify accepting the call and storing nothing left the cache — and the
+    // merchant — believing a policy that was never applied.
+    const admin = adminWith({
+      data: {
+        productVariantsBulkUpdate: {
+          productVariants: [
+            { id: VARIANT_GID, price: "9.90", compareAtPrice: null, barcode: null, inventoryPolicy: "DENY" },
+          ],
+          userErrors: [],
+        },
+      },
+    });
+    const { db, updates } = recorder();
+
+    expect(
+      await applyVariantPrices(admin, db, "s", {
+        productId: "gid://shopify/Product/1",
+        variantId: "9",
+        variantGid: VARIANT_GID,
+        fields: { inventoryPolicy: "CONTINUE" },
+      }),
+    ).toBe("priceNotConfirmed");
+    // …and nothing is mirrored, so the cache does not claim the new policy.
+    expect(updates).toEqual([]);
+  });
+
+  it("refuses a stock policy that is not one of the two enums", async () => {
+    // A bad enum fails at the SCHEMA level — a top-level error that never
+    // reaches userErrors — and would take the price in the same call with it.
+    const admin = adminWith({ data: { productVariantsBulkUpdate: { productVariants: [], userErrors: [] } } });
+    const { db } = recorder();
+
+    expect(
+      await applyVariantPrices(admin, db, "s", {
+        productId: "gid://shopify/Product/1",
+        variantId: "9",
+        variantGid: VARIANT_GID,
+        fields: { inventoryPolicy: "MAYBE" },
+      }),
+    ).toBe("priceInvalid");
+    expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+  });
+
+  it("writes `tracked` and confirms it against the echo", async () => {
+    const admin = adminWith({
+      data: {
+        inventoryItemUpdate: {
+          inventoryItem: { id: ITEM_ID, tracked: false, sku: "BX-15" },
+          userErrors: [],
+        },
+      },
+    });
+    const { db, updates } = recorder();
+
+    const warning = await applyInventoryItemFields(admin, db, "s", {
+      variantId: "9",
+      inventoryItemId: ITEM_ID,
+      fields: { tracked: false, sku: "BX-15" },
+    });
+
+    expect(warning).toBeUndefined();
+    expect(sentTo(admin).input.tracked).toBe(false);
+    expect((updates[0] as { data: Record<string, unknown> }).data.inventoryTracked).toBe(false);
+    expect((updates[0] as { data: Record<string, unknown> }).data.sku).toBe("BX-15");
+  });
+
+  it("refuses a `tracked` write the echo did not take", async () => {
+    // `tracked` decides whether stock exists AT ALL. Accepted-and-ignored is
+    // the historic silent no-op, and here it would leave the merchant looking
+    // at a stock table for an item Shopify no longer counts.
+    const admin = adminWith({
+      data: {
+        inventoryItemUpdate: {
+          inventoryItem: { id: ITEM_ID, tracked: true },
+          userErrors: [],
+        },
+      },
+    });
+    const { db, updates } = recorder();
+
+    expect(
+      await applyInventoryItemFields(admin, db, "s", {
+        variantId: "9",
+        inventoryItemId: ITEM_ID,
+        fields: { tracked: false },
+      }),
+    ).toBe("itemFieldsNotConfirmed");
+    expect(updates).toEqual([]);
+  });
+});

@@ -558,6 +558,14 @@ export const es: Translation = {
     // un número volátil dentro del mapa de valores del editor estaría obsoleto
     // para cuando el comerciante pulsara guardar.
     commerce: {
+      inventoryHeading: "Inventario",
+      identifiersHeading: "Más detalles",
+      trackedLabel: "Hacer seguimiento del inventario",
+      trackedHint: "Shopify lleva una cantidad y la reduce con cada pedido. Desactivado no hay cantidad alguna y la variante siempre se puede comprar.",
+      continueSellingLabel: "Seguir vendiendo sin existencias",
+      continueSellingHint: "Los clientes pueden pedirlo con stock 0. Desactivado, Shopify lo muestra como agotado.",
+      skuLabel: "SKU (número de artículo)",
+      barcodeLabel: "Código de barras (ISBN, UPC, GTIN, etc.)",
       locationsColumn: "Ubicaciones",
       unavailableColumn: "No disponible",
       committedColumn: "Comprometido",
@@ -599,7 +607,6 @@ export const es: Translation = {
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
       variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
-      savingStock: "Guardando el stock…",
       notStockedHere: "sin stock aquí",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
@@ -611,7 +618,6 @@ export const es: Translation = {
       noLevels: "Ninguna ubicación tiene inventario de esta variante.",
       locationInactive: "inactiva",
       onHand: "Disponible físicamente",
-      availableLabel: "disponible: {n}",
     },
     // Códigos de los caminos de escritura de inventario y canales. Una cantidad
     // es dinero, así que "no confirmado" es una respuesta distinta de "falló":

@@ -55,6 +55,16 @@ interface ProbeReport {
   metaobjectTypeFields?: string[];
   metaobjectTypeFieldsError?: string;
   reverseRelationField?: string | null;
+  reverseRelation?: {
+    connectionType?: string;
+    connectionFields?: string[];
+    nodeType?: string;
+    nodeFields?: string[];
+    liveShape?: "nodes" | "edges";
+    liveSample?: string;
+    nodeSelection?: string;
+    error?: string;
+  };
   writeTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
   linkTest: { attempted: boolean; skippedReason?: string; steps?: StepOutcome[]; verdict?: string; leftovers?: string[] };
   verdicts: string[];
@@ -115,6 +125,26 @@ function formatMarkdown(r: ProbeReport): string {
     lines.push("");
   }
 
+  if (r.reverseRelation) {
+    const rr = r.reverseRelation;
+    lines.push("## Reverse relation shape (V4)");
+    lines.push("");
+    lines.push(`- Connection type: **${rr.connectionType ?? "unknown"}**`);
+    lines.push(`- Connection fields: ${(rr.connectionFields ?? []).join(", ") || "unknown"}`);
+    lines.push(`- Node type: **${rr.nodeType ?? "unknown"}**`);
+    if (rr.nodeFields?.length) lines.push(`- Node fields / members: ${rr.nodeFields.join(", ")}`);
+    lines.push(`- Live run: ${rr.liveShape ? `works via \`${rr.liveShape}\`` : "not proven"}`);
+    if (rr.nodeSelection) lines.push(`- Node selection used: \`${rr.nodeSelection}\``);
+    if (rr.liveSample) {
+      lines.push("");
+      lines.push("```json");
+      lines.push(rr.liveSample);
+      lines.push("```");
+    }
+    if (rr.error) lines.push(`> ${rr.error}`);
+    lines.push("");
+  }
+
   if (r.samples) {
     lines.push(`## Sample values -- ${r.samples.type}`);
     lines.push("");
@@ -168,6 +198,7 @@ export function SettingsMetaobjectProbeTab() {
   const [report, setReport] = useState<ProbeReport | null>(null);
 
   const [runSamples, setRunSamples] = useState(true);
+  const [runReferences, setRunReferences] = useState(true);
   const [runWrite, setRunWrite] = useState(false);
   const [runLink, setRunLink] = useState(false);
   const [sampleType, setSampleType] = useState("shopify--color-pattern");
@@ -177,7 +208,13 @@ export function SettingsMetaobjectProbeTab() {
     setRunning(true);
     setError(null);
     try {
-      const steps = ["definitions", ...(runSamples ? ["samples"] : []), ...(runWrite ? ["write"] : []), ...(runLink ? ["link"] : [])];
+      const steps = [
+        "definitions",
+        ...(runReferences ? ["references"] : []),
+        ...(runSamples ? ["samples"] : []),
+        ...(runWrite ? ["write"] : []),
+        ...(runLink ? ["link"] : []),
+      ];
       const body = new FormData();
       body.set("steps", steps.join(","));
       body.set("sampleType", sampleType);
@@ -195,7 +232,7 @@ export function SettingsMetaobjectProbeTab() {
     } finally {
       setRunning(false);
     }
-  }, [runSamples, runWrite, runLink, sampleType, writeType]);
+  }, [runSamples, runReferences, runWrite, runLink, sampleType, writeType]);
 
   const markdown = useMemo(() => (report ? formatMarkdown(report) : ""), [report]);
 
@@ -215,6 +252,11 @@ export function SettingsMetaobjectProbeTab() {
             label="Step 2: sample entry values and translatable keys (read-only)"
             checked={runSamples}
             onChange={setRunSamples}
+          />
+          <Checkbox
+            label="Step 2b: the shape of Metaobject.referencedBy — connection, node type, live run (read-only)"
+            checked={runReferences}
+            onChange={setRunReferences}
           />
           <TextField
             label="Sample / write definition type"

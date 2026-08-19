@@ -28,7 +28,6 @@ function catalogue(): ScopeVariant[] {
       out.push({
         id: `${colour}-${size}`,
         title: `${colour} / ${size}`,
-        sku: null,
         imageUrl: `https://cdn/${colour}.png`,
         imageAlt: colour,
         selectedOptions: [
@@ -108,9 +107,9 @@ describe("buildVariantScopes", () => {
     // A merchant writes "20 / 30 cm", and splitting the title on " / " would
     // invent two options out of one value.
     const variants: ScopeVariant[] = [
-      { id: "a", title: "20 / 30 cm", sku: null, imageUrl: null, imageAlt: null,
+      { id: "a", title: "20 / 30 cm", imageUrl: null, imageAlt: null,
         selectedOptions: [{ name: "Grösse", value: "20 / 30 cm" }] },
-      { id: "b", title: "20 / 30 cm", sku: null, imageUrl: null, imageAlt: null,
+      { id: "b", title: "20 / 30 cm", imageUrl: null, imageAlt: null,
         selectedOptions: [{ name: "Grösse", value: "20 / 30 cm" }] },
     ];
     // Both variants share the one value, so it covers everything and is not a
@@ -139,7 +138,7 @@ describe("pickScopeImages", () => {
 
   it("caps at four", () => {
     const many: ScopeVariant[] = Array.from({ length: 12 }, (_, i) => ({
-      id: `v${i}`, title: `v${i}`, sku: null,
+      id: `v${i}`, title: `v${i}`,
       imageUrl: `https://cdn/${i}.png`, imageAlt: `v${i}`, selectedOptions: [],
     }));
     expect(pickScopeImages(many)).toHaveLength(4);

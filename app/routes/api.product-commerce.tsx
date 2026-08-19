@@ -65,6 +65,15 @@ export interface CommerceVariantView {
   gid: string;
   title: string;
   sku: string | null;
+  /** ISBN, UPC, GTIN — Shopify's own label for the field. */
+  barcode: string | null;
+  /**
+   * `DENY` or `CONTINUE`: whether Shopify keeps selling at zero stock.
+   *
+   * Only meaningful while the item is TRACKED — untracked, Shopify keeps no
+   * count and there is no "out of stock" for the policy to apply to.
+   */
+  inventoryPolicy: string | null;
   /** The SELLING price — what a customer pays. Not `cost`, which is what the
    *  merchant pays and is the field that used to be alone in this panel. */
   price: string | null;
@@ -130,6 +139,23 @@ export interface CommerceChannelView {
   name: string;
   isPublished: boolean;
   publishDate: string | null;
+}
+
+/**
+ * Whether this shop's variant really carries that InventoryItem.
+ *
+ * Checked against the CACHE, which is the server's own state. A client that
+ * pairs its own variant id with someone else's inventory item is not a client
+ * this route has to serve.
+ */
+async function ownsInventoryItem(shop: string, variantId: string, inventoryItemId: string): Promise<boolean> {
+  const row = await db.productVariant.findFirst({
+    where: { id: variantId, product: { shop } },
+    select: { inventoryItemId: true },
+  });
+  // Unknown to the cache ⇒ refused. A variant this app has never synced is one
+  // it cannot vouch for, and the panel only ever offers ids it just loaded.
+  return !!row && row.inventoryItemId === inventoryItemId;
 }
 
 async function requirePlan(shop: string): Promise<boolean> {
@@ -204,6 +230,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
                 title
                 sku
                 image { url altText }
+                barcode
                 selectedOptions { name value }
                 ${VARIANT_COMMERCE_SELECTION}
               }
@@ -223,12 +250,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // a product that has stock.
     if (body.errors?.length) {
       logger.warn("[Commerce] Load schema-level error", {
-        context: "Commerce", shop: session.shop, error: body.errors[0]?.message,
+        context: "Commerce", shop: session.shop, page, error: body.errors[0]?.message,
       });
+      // A LATER page failing is not the same as the first one failing. Ten
+      // back-to-back pages of variants-with-inventory-levels can exhaust the
+      // cost bucket, and THROTTLED arrives exactly here — as a top-level
+      // `errors` array. Discarding the pages that did load would turn a
+      // partial answer into "could not be loaded" and nothing at all, on the
+      // big catalogues that need this panel most. What loaded is kept and
+      // flagged as incomplete, which is a state this UI already renders.
+      if (page > 0 && variantNodes.length > 0) {
+        moreVariants = true;
+        break;
+      }
       return json({ success: false, error: "The stock and channel data could not be loaded." }, { status: 502 });
     }
     const pageProduct = body.data?.product;
     if (!pageProduct) {
+      // Same rule: gone on page 1 is a deleted product; gone on page 5 is a
+      // failure mid-sweep, and what was read is still true.
+      if (page > 0 && variantNodes.length > 0) {
+        moreVariants = true;
+        break;
+      }
       return json({ success: false, error: "That product no longer exists in Shopify." }, { status: 404 });
     }
     // The first page carries the product-level fields; later ones only add
@@ -303,6 +347,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const productImageAlt = productPreview?.altText ?? null;
 
     const variants: CommerceVariantView[] = [];
+    /** Every location seen across the variants, deduped — see the loop below. */
+    const locationsToMirror = new Map<string, { id: string; shop: string; name: string; isActive: boolean; position: number }>();
     for (const node of variantNodes) {
       const gid = String(node.id ?? "");
       if (!gid) continue;
@@ -310,16 +356,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       const columns = variantCommerceColumns(node as never);
       const levels = inventoryLevelRows(session.shop, numericId, node as never);
 
-      // Locations come back with the levels, so they are mirrored here rather
-      // than fetched separately — same data, one call.
+      // Locations come back with the levels, so they are mirrored from here
+      // rather than fetched separately — same data, one call. COLLECTED, not
+      // written: a shop has a handful of locations and every variant reports
+      // the same ones, so upserting inside this loop meant 250 variants times
+      // N warehouses of identical writes on every panel open. They are written
+      // once, after the loop.
       for (const location of levels?.locations ?? []) {
-        await db.location
-          .upsert({
-            where: { shop_id: { shop: session.shop, id: location.id } },
-            create: location,
-            update: { name: location.name, isActive: location.isActive, position: location.position, syncedAt: new Date() },
-          })
-          .catch(() => undefined);
+        if (!locationsToMirror.has(location.id)) locationsToMirror.set(location.id, location);
       }
 
       // The cache is refreshed from this LIVE read, so a later throttled load
@@ -341,11 +385,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
       }
 
       const locationNames = new Map((levels?.locations ?? []).map((l) => [l.id, l] as const));
+      // Built ONCE per variant. It used to be rebuilt inside the row mapper,
+      // twice per level, for a result identical every time.
+      const committed = committedByLocation(node);
       variants.push({
         id: numericId,
         gid,
         title: String(node.title ?? ""),
         sku: (node.sku as string | null) ?? null,
+        barcode: (node.barcode as string | null) ?? null,
+        inventoryPolicy: columns.inventoryPolicy ?? null,
         // Read straight off the node, NOT through `variantCommerceColumns`:
         // price is not part of the commerce block (the regular product sync
         // owns it), and folding it in would tie it to that block's
@@ -380,15 +429,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
           locationActive: locationNames.get(row.locationId)?.isActive !== false,
           onHand: row.onHand,
           available: row.available,
-          committed: committedByLocation(node).get(row.locationId) ?? null,
+          committed: committed.get(row.locationId) ?? null,
           unavailable: (() => {
-            const committed = committedByLocation(node).get(row.locationId) ?? null;
-            if (row.onHand == null || row.available == null || committed == null) return null;
-            return row.onHand - row.available - committed;
+            const committedHere = committed.get(row.locationId) ?? null;
+            if (row.onHand == null || row.available == null || committedHere == null) return null;
+            return row.onHand - row.available - committedHere;
           })(),
         })),
         levelsTruncated: levels?.hasMore === true,
       });
+    }
+
+    // The deduped locations, once. See the collection point in the loop above.
+    for (const location of locationsToMirror.values()) {
+      await db.location
+        .upsert({
+          where: { shop_id: { shop: session.shop, id: location.id } },
+          create: location,
+          update: { name: location.name, isActive: location.isActive, position: location.position, syncedAt: new Date() },
+        })
+        .catch(() => undefined);
     }
 
     const publications = productPublicationRows(
@@ -542,6 +602,8 @@ export async function action({ request }: ActionFunctionArgs) {
     const fields: VariantPriceFields = {};
     if (formData.has("price")) fields.price = getFormString(formData, "price");
     if (formData.has("compareAtPrice")) fields.compareAtPrice = getFormString(formData, "compareAtPrice");
+    if (formData.has("barcode")) fields.barcode = getFormString(formData, "barcode");
+    if (formData.has("inventoryPolicy")) fields.inventoryPolicy = getFormString(formData, "inventoryPolicy");
 
     const warning = await applyVariantPrices(admin, db, session.shop, {
       productId,
@@ -625,6 +687,14 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!inventoryItemId.startsWith("gid://shopify/InventoryItem/")) {
       return json({ success: true, warnings: ["stockNoInventoryItem"] });
     }
+    // The two ids have to name the SAME variant, the rule the price intent
+    // already follows: the InventoryItem GID addresses Shopify and the numeric
+    // variant id addresses the cache mirror, so a crafted pair — this route is
+    // directly POST-reachable — writes one variant's SKU on Shopify and
+    // mirrors it onto another's row.
+    if (!(await ownsInventoryItem(session.shop, variantId, inventoryItemId))) {
+      return json({ success: false, error: "The ids do not match." }, { status: 400 });
+    }
 
     let parsed: unknown;
     try {
@@ -642,6 +712,15 @@ export async function action({ request }: ActionFunctionArgs) {
     if ("requiresShipping" in raw) fields.requiresShipping = raw.requiresShipping === true;
     if ("harmonizedSystemCode" in raw) fields.harmonizedSystemCode = String(raw.harmonizedSystemCode ?? "");
     if ("countryCodeOfOrigin" in raw) fields.countryCodeOfOrigin = String(raw.countryCodeOfOrigin ?? "");
+    // DROPPED rather than coerced: `raw.tracked === true || === "true"` read
+    // anything else — `1`, `"TRUE"` — as false and UNTRACKED the item, which
+    // is the destructive direction as the default.
+    if ("tracked" in raw) {
+      if (raw.tracked === true || raw.tracked === "true") fields.tracked = true;
+      else if (raw.tracked === false || raw.tracked === "false") fields.tracked = false;
+      else warnings.push("itemFieldsInvalid");
+    }
+    if ("sku" in raw) fields.sku = String(raw.sku ?? "");
     if ("weight" in raw && raw.weight && typeof raw.weight === "object") {
       const weight = raw.weight as Record<string, unknown>;
       fields.weight = { value: String(weight.value ?? ""), unit: String(weight.unit ?? "") };
