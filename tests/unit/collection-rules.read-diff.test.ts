@@ -331,6 +331,71 @@ describe("the values that are not plain strings", () => {
     expect(unknownUnit.unrenderable?.reason).toBe("unknownCondition");
   });
 
+  it("refuses a weight condition whose unit is missing, not only one it cannot name", () => {
+    // An absent unit is not the milder case: `toConditionInput` would write
+    // KILOGRAMS for it, so the number would keep its digits and change its
+    // meaning — the same damage an unknown unit does.
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionVariantWeight",
+      id: "c1",
+      variantWeight_relation: "LESS_THAN",
+      variantWeight_value: { value: 2.5 },
+    });
+    expect(source.unrenderable?.reason).toBe("unknownCondition");
+  });
+
+  it("refuses a status this app's vocabulary does not have", () => {
+    // The builder offers the three measured statuses as checkboxes, so it can
+    // only rebuild those three: a fourth one Shopify adds later would vanish
+    // on the first toggle. Refusing it in the VALIDATOR instead would block
+    // every rule edit on the collection, which is why this is the read side's
+    // answer and not the gate's.
+    const known = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionProductStatus",
+      id: "c1",
+      productStatus_relation: "EQUALS",
+      productStatus_matchType: "ANY",
+      productStatus_values: ["ACTIVE", "DRAFT"],
+    });
+    expect(known.unrenderable).toBeUndefined();
+    expect(known.inclusion.conditions[0]).toMatchObject({ kind: "productStatus", value: "ACTIVE, DRAFT" });
+
+    const unknown = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionProductStatus",
+      id: "c1",
+      productStatus_relation: "EQUALS",
+      productStatus_matchType: "ANY",
+      productStatus_values: ["ACTIVE", "SUPERSEDED"],
+    });
+    expect(unknown.unrenderable?.reason).toBe("unknownCondition");
+  });
+
+  it("refuses a node list with an entry it could not read, instead of shortening it", () => {
+    // Dropping the unreadable entry keeps the condition editable, and the next
+    // save writes the SHORTER list: one collection fewer excluded, silently.
+    const source = readOne("exclusion", {
+      __typename: "CollectionSourceExclusionConditionCollection",
+      id: "c1",
+      collection_matchType: "ANY",
+      collection_values: [{ id: "gid://shopify/Collection/5" }, {}],
+    });
+    expect(source.unrenderable?.reason).toBe("unknownCondition");
+  });
+
+  it("refuses a category list with an entry it could not read", () => {
+    const source = readOne("inclusion", {
+      __typename: "CollectionSourceInclusionConditionProductCategory",
+      id: "c1",
+      productCategory_relation: "EQUALS",
+      productCategory_matchType: "ANY",
+      productCategory_values: [
+        { category: { id: "gid://shopify/TaxonomyCategory/aa-1" }, includeDescendants: true },
+        { category: null, includeDescendants: true },
+      ],
+    });
+    expect(source.unrenderable?.reason).toBe("unknownCondition");
+  });
+
   it("reads a node-valued condition as its id, and its definition as one too", () => {
     const source = readOne("inclusion", {
       __typename: "CollectionSourceInclusionConditionMetafieldMetaobject",

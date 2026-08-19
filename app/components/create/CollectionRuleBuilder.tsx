@@ -41,9 +41,12 @@ import {
 } from "@shopify/polaris";
 import {
   CONDITION_MATCH_TYPES,
+  PRODUCT_STATUSES,
   WEIGHT_UNITS,
   conditionKind,
   conditionKinds,
+  joinListValues,
+  listValues,
   newCondition,
   type ConditionSide,
   type RuleCondition,
@@ -74,6 +77,7 @@ export interface CollectionRuleBuilderTexts {
   commaSeparated?: string;
   includeDescendants?: string;
   weightUnits?: Record<string, string>;
+  productStatuses?: Record<string, string>;
   kinds?: Record<string, string>;
   relations?: Record<string, string>;
 }
@@ -153,6 +157,8 @@ export function CollectionRuleBuilder({
     const spec = conditionKind(side, condition.kind);
     const error = errorFor(sourceIndex, condition.localId);
     const valueless = condition.relation === "IS_SET" || condition.relation === "IS_NOT_SET";
+    // The one comma serialization (`listValues`), never a second copy of it.
+    const selectedValues = listValues(condition.value);
 
     return (
       <InlineStack key={condition.localId} gap="200" blockAlign="start" wrap>
@@ -199,20 +205,52 @@ export function CollectionRuleBuilder({
           </Box>
         )}
 
-        {!valueless && (
-          <Box minWidth="200px">
-            <TextField
-              label=""
-              labelHidden
-              value={condition.value}
-              onChange={(value) => updateCondition(sourceIndex, side, condition.localId, { value })}
-              autoComplete="off"
-              // A list kind takes several values; saying so beats a merchant
-              // discovering it by trying.
-              helpText={spec?.list ? t.commaSeparated || "Comma-separated" : undefined}
-              error={error?.code === "emptyValue"}
-            />
+        {/* `productStatus` is an ENUM, and a free text field over an enum only
+            postpones the failure: a typo passes the form, fails the mutation
+            at the SCHEMA level — where no `userError` is ever produced — and
+            reaches the merchant as the generic "rules could not be saved".
+            The kind is list-valued (`values: [ProductStatus!]`), so the three
+            checkboxes stay a MULTIPLE choice, and they write the same comma
+            string every other list kind holds. */}
+        {!valueless && spec?.scalarType === "ProductStatus" ? (
+          <Box minWidth="260px">
+            <InlineStack gap="300">
+              {PRODUCT_STATUSES.map((status) => (
+                <Checkbox
+                  key={status}
+                  label={t.productStatuses?.[status] ?? status}
+                  checked={selectedValues.includes(status)}
+                  error={error?.code === "emptyValue" || error?.code === "invalidValue"}
+                  onChange={(checked) =>
+                    updateCondition(sourceIndex, side, condition.localId, {
+                      // Rebuilt from the vocabulary rather than from the click
+                      // order: the value stays in one stable order, and a
+                      // status the enum does not have cannot survive an edit.
+                      value: joinListValues(
+                        PRODUCT_STATUSES.filter((s) => (s === status ? checked : selectedValues.includes(s))),
+                      ),
+                    })
+                  }
+                />
+              ))}
+            </InlineStack>
           </Box>
+        ) : (
+          !valueless && (
+            <Box minWidth="200px">
+              <TextField
+                label=""
+                labelHidden
+                value={condition.value}
+                onChange={(value) => updateCondition(sourceIndex, side, condition.localId, { value })}
+                autoComplete="off"
+                // A list kind takes several values; saying so beats a merchant
+                // discovering it by trying.
+                helpText={spec?.list ? t.commaSeparated || "Comma-separated" : undefined}
+                error={error?.code === "emptyValue" || error?.code === "invalidValue"}
+              />
+            </Box>
+          )
         )}
 
         {/* `WeightInput` takes a unit, and the number means nothing without
@@ -246,8 +284,11 @@ export function CollectionRuleBuilder({
         )}
 
         {/* The condition's OWN matchType — the second level, and the one the
-            legacy ruleSet projection drops. Only meaningful with >1 value. */}
-        {spec?.list && showAdvanced && condition.value.includes(",") && (
+            legacy ruleSet projection drops. Only meaningful with >1 value, and
+            NOT for the exclusion by collection: its input has no `matchType`
+            (`omitMatchTypeOnWrite`), so the choice would be offered, saved
+            "successfully" and never sent. */}
+        {spec?.list && !spec.omitMatchTypeOnWrite && showAdvanced && selectedValues.length > 1 && (
           <Box minWidth="150px">
             <Select
               label=""

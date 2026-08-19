@@ -27,6 +27,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { buildClientSchema, getIntrospectionQuery, parse, validate, type IntrospectionQuery } from "graphql";
 import { COLLECTION_SOURCES_FIELDS, collectionAttributeSelection } from "~/services/attribute-sync.shared";
+import { CREATE_COLLECTION_WITH_SOURCES } from "~/graphql/content.mutations";
 import {
   conditionKinds,
   diffRuleSources,
@@ -190,6 +191,10 @@ describe.skipIf(!enabled)(`the collection rule model against the live ${API_VERS
     for (const [name, document] of [
       ["getCollection", getCollection],
       ["updateCollectionRules", updateRules],
+      // The create path is its OWN mutation with its OWN variable type
+      // (`CollectionCreateInput!`, not `CollectionUpdateInput!`) — validating
+      // only the update one leaves creating a collection WITH rules unchecked.
+      ["createCollectionWithSources", CREATE_COLLECTION_WITH_SOURCES],
     ] as const) {
       expect(
         validate(schema, parse(document)).map((e) => e.message),
@@ -199,14 +204,26 @@ describe.skipIf(!enabled)(`the collection rule model against the live ${API_VERS
   });
 
   it("builds a CREATE payload the input types accept, for every kind", () => {
-    const errors: string[] = [];
-    checkValue(
-      { kind: "NON_NULL", ofType: { kind: "INPUT_OBJECT", name: "CollectionUpdateInput" } },
-      { id: "gid://shopify/Collection/1", sourcesToCreate: toSourcesInput([everyKindSource()]) },
-      "collection",
-      errors,
-    );
-    expect(errors).toEqual([]);
+    // TWO input types take the same list, and the app writes to both: creating
+    // a collection with rules sends `CollectionCreateInput.sources`
+    // (`createCollection` in create.actions.ts), while turning an existing one
+    // into a rule-based collection sends `CollectionUpdateInput.sourcesToCreate`.
+    // Checking one and assuming the other is how this file's own subject —
+    // a shape derived instead of measured — got into the code.
+    //
+    // Scope: the rule half. The create input's other fields ride along from
+    // the manual create path and are not pinned here.
+    for (const [type, payload] of [
+      ["CollectionCreateInput", { title: "Everything", sources: toSourcesInput([everyKindSource()]) }],
+      [
+        "CollectionUpdateInput",
+        { id: "gid://shopify/Collection/1", sourcesToCreate: toSourcesInput([everyKindSource()]) },
+      ],
+    ] as const) {
+      const errors: string[] = [];
+      checkValue({ kind: "NON_NULL", ofType: { kind: "INPUT_OBJECT", name: type } }, payload, "collection", errors);
+      expect(errors, type).toEqual([]);
+    }
   });
 
   it("builds an UPDATE payload the input types accept, for every kind", () => {
@@ -219,16 +236,27 @@ describe.skipIf(!enabled)(`the collection rule model against the live ${API_VERS
         title: "Renamed",
         inclusion: {
           matchType: "ANY" as const,
-          conditions: everyKindSource("s1").inclusion.conditions.map((c) => ({
-            ...c,
-            value: c.kind === "productStatus" ? "DRAFT" : `${c.value}x`,
-          })),
+          conditions: [
+            // The FIRST condition is left out — it becomes a delete — and one
+            // without an id is added. All three lists have to be exercised:
+            // `conditionsToCreate`/`ToDelete` are field names of the update
+            // input just as much as `conditionsToUpdate` is, and a wrong one
+            // fails at the schema level where no userError appears.
+            ...everyKindSource("s1")
+              .inclusion.conditions.slice(1)
+              .map((c) => ({ ...c, value: c.kind === "productStatus" ? "DRAFT" : `${c.value}x` })),
+            sampleCondition("inclusion", "productTag", 900),
+          ],
         },
       },
     ];
 
     const diff = diffRuleSources(before, after);
     expect(diff.sourcesToUpdate).toHaveLength(1);
+    const inclusion = (diff.sourcesToUpdate[0] as any).condition.inclusion;
+    expect(inclusion.conditionsToCreate).toHaveLength(1);
+    expect(inclusion.conditionsToDelete).toEqual(["inc-0"]);
+    expect(inclusion.conditionsToUpdate.length).toBeGreaterThan(0);
 
     const errors: string[] = [];
     checkValue(

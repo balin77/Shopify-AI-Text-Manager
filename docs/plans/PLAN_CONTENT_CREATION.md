@@ -278,6 +278,21 @@ Gemessen ohne Shop und ohne Token über `https://shopify.dev/admin-graphql-direc
 
 Was sich in dieses flache Formularmodell nicht abbilden lässt, bleibt §2.4-read-only statt geglättet zu werden: eine Kategorie-Bedingung, deren Werte sich über `includeDescendants` uneinig sind, eine Gewichtseinheit, die diese App nicht kennt, ein unbekannter `__typename` auf Quellen- oder Bedingungsebene.
 
+#### Review-Durchlauf (2026-08-19, Working Agreement)
+
+Der Review über diesen Commit hat sechs Befunde ergeben, alle derselben Klasse und alle behoben — **eine falsche Eingabe scheitert erst bei Shopify, und zwar auf Schema-Ebene, wo dem Merchant nur „Regeln konnten nicht gespeichert werden" bleibt**:
+
+1. **Werte, die kein Freitext sind, prüft jetzt der Validator** (`invalidValueDetail`, also Formular *und* Server-Gate): Zahl, Enum, Gewichtseinheit, Währung. Zwei davon scheitern nicht einmal — `Number.parseFloat("etwa 2")` ist `NaN` und wird als `null` in ein `Float!` serialisiert, und `"ja" === "true"` ist `false`. Letzteres speichert sauber und bedeutet das Gegenteil.
+2. **`productStatus` ist eine Auswahl statt eines Textfelds** (unten, §Regel-Builder).
+3. **Die Bedingungs-`matchType`-Auswahl erscheint nicht mehr beim Ausschluss per `collection`** — dessen Input hat keinen (`omitMatchTypeOnWrite`), die Auswahl wäre also angeboten, „gespeichert" und nie gesendet worden.
+4. **Ein Wert, den der Lesepfad nicht vollständig zurückschreiben könnte, macht die Quelle read-only** statt ihn zu kürzen: ein Knoten einer Liste ohne `id`, eine Kategorie ohne `category.id`, eine Gewichtsangabe ohne (oder mit unbekannter) Einheit, ein Status außerhalb der gemessenen `ProductStatus`-Werte. Vorher wäre der unlesbare Eintrag stillschweigend entfallen und der nächste Save hätte die **kürzere** Liste geschrieben — dieselbe Klasse Schaden wie das Flachklopfen, nur eine Ebene tiefer.
+5. **Das Server-Gate wirft nicht mehr auf einem missgebildeten Payload**, sondern lehnt ihn ab. Beide Schreibpfade reichen Client-JSON direkt hinein und sind per POST erreichbar; ein `TypeError` dort wäre ein 500 auf einem Save, dessen Textänderungen bereits gelandet sind.
+6. **Der Schema-Test prüft den CREATE-Pfad, den er zu prüfen behauptete:** er validierte `CollectionUpdateInput.sourcesToCreate`, während `createCollection` `CollectionCreateInput.sources` sendet — zwei Typen, ein angenommener. Dazu jetzt das Create-Dokument selbst und die Feldnamen `conditionsToCreate`/`conditionsToDelete`.
+
+#### Regel-Builder: `productStatus` ist ein ENUM
+
+Die Bedingung war ein Freitextfeld über `ProductStatus`. Ein Tippfehler kommt durch das Formular, scheitert an der Mutation auf Schema-Ebene und erreicht den Merchant als generisches `rulesFailed`. Ersetzt durch die drei gemessenen Werte `ACTIVE`/`DRAFT`/`ARCHIVED` als Checkboxen — der Kind ist `list: true`, die Mehrfachauswahl bleibt also erhalten, und sie schreiben dieselbe Komma-Serialisierung wie jede andere Listen-Bedingung (`listValues`/`joinListValues`, ab jetzt an genau einer Stelle definiert). Labels in de/en/es.
+
 ---
 
 ### 1.3 Page

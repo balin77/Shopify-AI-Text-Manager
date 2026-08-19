@@ -105,6 +105,17 @@ export type ConditionValueRead =
 export const WEIGHT_UNITS = ["KILOGRAMS", "GRAMS", "POUNDS", "OUNCES"] as const;
 export type WeightUnit = (typeof WEIGHT_UNITS)[number];
 
+/**
+ * `ProductStatus`, measured — the whole vocabulary of the `productStatus`
+ * kind. It is an ENUM, so a typed value is not a value Shopify rejects with a
+ * `userError`: it fails the mutation at the SCHEMA level, where nothing but
+ * the generic "rules could not be saved" ever reaches the merchant. The
+ * builder therefore offers these three and never a text field, and the server
+ * gate below refuses anything else.
+ */
+export const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "ARCHIVED"] as const;
+export type ProductStatusValue = (typeof PRODUCT_STATUSES)[number];
+
 export interface ConditionKindSpec {
   /** The field name inside `CollectionSourceInclusionConditionInput`. */
   key: string;
@@ -268,28 +279,104 @@ export interface RuleSource {
 export interface RuleValidationError {
   sourceIndex: number;
   conditionId?: string;
-  code: "noConditions" | "unknownKind" | "unknownRelation" | "emptyValue" | "missingDefinition" | "noTitle" | "tooManySources";
+  code:
+    | "noConditions"
+    | "unknownKind"
+    | "unknownRelation"
+    | "emptyValue"
+    | "invalidValue"
+    | "missingDefinition"
+    | "noTitle"
+    | "tooManySources";
   detail?: string;
 }
 
 /** Shopify has no documented cap; this is ours, to keep a form usable. */
 export const MAX_SOURCES = 10;
 
+/** A condition's value as the rest of this module assumes it: a string. */
+function conditionValue(condition: RuleCondition): string {
+  return typeof condition.value === "string" ? condition.value : "";
+}
+
+/** A side's conditions as a list, whatever the payload actually put there. */
+function conditionsOf(block: RuleSide | undefined): RuleCondition[] {
+  return Array.isArray(block?.conditions) ? block.conditions : [];
+}
+
+/**
+ * The values a merchant can type that are not free text — a number, an enum, a
+ * unit, a currency.
+ *
+ * Every one of them fails at the SCHEMA level when it is wrong (`data: null`,
+ * no `userErrors`), so the merchant would be told only that the rules could
+ * not be saved, with nothing pointing at the field. Two of them are worse than
+ * that and are the reason this exists at all: `Number.parseFloat("about 2")`
+ * is `NaN`, which serialises to `null` into a `Float!`, and
+ * `"yes" === "true"` is `false` — a rule that saves fine and means the
+ * opposite of what was typed.
+ *
+ * Checked in the form AND in the server gate, because both call
+ * `validateRuleSources` and the action is reachable by POST.
+ */
+function invalidValueDetail(spec: ConditionKindSpec, condition: RuleCondition): string | null {
+  const value = conditionValue(condition).trim();
+  const where = (field: string) => `${condition.kind}.${field}`;
+
+  if (spec.scalarType === "ProductStatus") {
+    const values = listValues(conditionValue(condition));
+    return values.every((v) => (PRODUCT_STATUSES as readonly string[]).includes(v)) ? null : where("value");
+  }
+  // Present AND known: `toConditionInput` would otherwise write KILOGRAMS for
+  // a condition that never named a unit, which is the same silent
+  // re-measuring the read path refuses. Every path that builds a weight
+  // condition — `newCondition` and the read — sets one.
+  if (spec.read === "weight" && !(WEIGHT_UNITS as readonly string[]).includes(String(condition.weightUnit))) {
+    return where("weightUnit");
+  }
+  // `MoneyInput.currencyCode` is a `CurrencyCode` enum. The three-letter shape
+  // is as far as this module can check without carrying Shopify's whole list;
+  // a code of the right shape that Shopify does not know comes back as a
+  // userError, which the merchant does get to see.
+  if (spec.read === "money" && condition.currencyCode && !/^[A-Z]{3}$/.test(condition.currencyCode)) {
+    return where("currencyCode");
+  }
+  if (spec.scalarType === "Boolean") return value === "true" || value === "false" ? null : where("value");
+  // `Int` is checked as a whole number on purpose: `parseInt("2.5")` is `2`,
+  // and silently dropping the decimals changes which products match.
+  if (spec.scalarType === "Int") return /^-?\d+$/.test(value) ? null : where("value");
+  if (spec.read === "money" || spec.read === "weight" || spec.scalarType === "Decimal") {
+    return /^-?\d+([.,]\d+)?$/.test(value) ? null : where("value");
+  }
+  return null;
+}
+
 export function validateRuleSources(sources: RuleSource[]): RuleValidationError[] {
   const errors: RuleValidationError[] = [];
+
+  if (!Array.isArray(sources)) return [{ sourceIndex: -1, code: "noConditions", detail: "notASourceList" }];
 
   if (sources.length > MAX_SOURCES) {
     errors.push({ sourceIndex: -1, code: "tooManySources", detail: `${sources.length}/${MAX_SOURCES}` });
   }
 
   sources.forEach((source, sourceIndex) => {
+    // Both write paths hand this client JSON and are POST-reachable, so a tree
+    // that is not shaped like one has to be REFUSED here. Reaching into it and
+    // throwing would come back as a 500 on a save whose text edits already
+    // landed — the gate would be the thing that loses the merchant's work.
+    if (!source || typeof source !== "object") {
+      errors.push({ sourceIndex, code: "noConditions", detail: "notASource" });
+      return;
+    }
+
     // A source we cannot render is not validated — it is passed through
     // untouched, so holding it to this editor's rules would be wrong.
     if (source.unrenderable) return;
 
-    if (!source.title.trim()) errors.push({ sourceIndex, code: "noTitle" });
+    if (typeof source.title !== "string" || !source.title.trim()) errors.push({ sourceIndex, code: "noTitle" });
 
-    if (source.inclusion.conditions.length === 0) {
+    if (conditionsOf(source.inclusion).length === 0) {
       // A source with no inclusion matches nothing, which is never what
       // someone building one meant.
       errors.push({ sourceIndex, code: "noConditions" });
@@ -300,7 +387,11 @@ export function validateRuleSources(sources: RuleSource[]): RuleValidationError[
       ["exclusion", source.exclusion] as const,
     ]) {
       if (!block) continue;
-      for (const condition of block.conditions) {
+      for (const condition of conditionsOf(block)) {
+        if (!condition || typeof condition !== "object") {
+          errors.push({ sourceIndex, code: "unknownKind", detail: `${side}.notACondition` });
+          continue;
+        }
         const spec = conditionKind(side, condition.kind);
         if (!spec) {
           errors.push({ sourceIndex, conditionId: condition.localId, code: "unknownKind", detail: `${side}.${condition.kind}` });
@@ -317,8 +408,14 @@ export function validateRuleSources(sources: RuleSource[]): RuleValidationError[
         }
         // IS_SET / IS_NOT_SET are the only relations that carry no value.
         const valueless = condition.relation === "IS_SET" || condition.relation === "IS_NOT_SET";
-        if (!valueless && !condition.value.trim()) {
+        if (valueless) continue;
+        if (!conditionValue(condition).trim()) {
           errors.push({ sourceIndex, conditionId: condition.localId, code: "emptyValue" });
+          continue;
+        }
+        const invalid = invalidValueDetail(spec, condition);
+        if (invalid) {
+          errors.push({ sourceIndex, conditionId: condition.localId, code: "invalidValue", detail: invalid });
         }
       }
     }
@@ -331,8 +428,22 @@ export function validateRuleSources(sources: RuleSource[]): RuleValidationError[
 // Form value → Shopify input
 // ────────────────────────────────────────────────────────────────────────────
 
-function splitList(value: string): string[] {
+/**
+ * THE comma serialization of a list condition, in one place.
+ *
+ * The form holds every list kind as one string, and both ends of that — the
+ * read path joining Shopify's array and any control that offers fixed values
+ * instead of free text — have to agree with what the write path parses back.
+ * A second copy of "split on commas and trim" is how a value with a space
+ * after the comma becomes a value with a space IN it.
+ */
+export function listValues(value: string): string[] {
   return value.split(",").map((v) => v.trim()).filter(Boolean);
+}
+
+/** The inverse of `listValues`, for the same reason. */
+export function joinListValues(values: readonly string[]): string {
+  return values.join(", ");
 }
 
 /** One condition, in the nested shape `CollectionSourceInclusionConditionInput` wants. */
@@ -352,7 +463,7 @@ export function toConditionInput(side: ConditionSide, condition: RuleCondition):
     // node and writes as the bare id, so the plain branches below are right
     // for it.
     if (spec.read === "category") {
-      inner.values = splitList(condition.value).map((categoryId) => ({
+      inner.values = listValues(condition.value).map((categoryId) => ({
         categoryId,
         includeDescendants: condition.includeDescendants === true,
       }));
@@ -368,7 +479,7 @@ export function toConditionInput(side: ConditionSide, condition: RuleCondition):
         unit: condition.weightUnit ?? "KILOGRAMS",
       };
     } else if (spec.list) {
-      inner.values = splitList(condition.value);
+      inner.values = listValues(condition.value);
       // The condition's OWN matchType — the level the legacy ruleSet
       // projection silently drops. The one input that does not take it says so
       // on its spec; inferring it from "is a list" is what made the exclusion
@@ -403,8 +514,12 @@ export function toSourcesInput(sources: RuleSource[]): Array<Record<string, unkn
     .filter((source) => !source.unrenderable)
     .map((source) => {
       const inclusion: Record<string, unknown> = {
-        matchType: source.inclusion.matchType,
-        conditions: source.inclusion.conditions
+        matchType: source.inclusion?.matchType,
+        // `conditionsOf`, not `.conditions.map`: this runs on the payload the
+        // validator just accepted, and the validator normalises a malformed
+        // side to "no conditions" rather than throwing on it. Reaching in
+        // directly here would move the TypeError one function along.
+        conditions: conditionsOf(source.inclusion)
           .map((c) => toConditionInput("inclusion", c))
           .filter((c): c is Record<string, unknown> => c !== null),
       };
@@ -415,11 +530,11 @@ export function toSourcesInput(sources: RuleSource[]): Array<Record<string, unkn
           ...(source.description ? { description: source.description } : {}),
           ...(source.targetType ? { targetType: source.targetType } : {}),
           inclusion,
-          ...(source.exclusion && source.exclusion.conditions.length > 0
+          ...(conditionsOf(source.exclusion).length > 0
             ? {
                 exclusion: {
-                  matchType: source.exclusion.matchType,
-                  conditions: source.exclusion.conditions
+                  matchType: source.exclusion?.matchType,
+                  conditions: conditionsOf(source.exclusion)
                     .map((c) => toConditionInput("exclusion", c))
                     .filter((c): c is Record<string, unknown> => c !== null),
                 },
@@ -628,10 +743,19 @@ interface DecodedValue {
   currencyCode?: string;
 }
 
-function idsOf(values: unknown): string[] {
-  return Array.isArray(values)
-    ? values.map((v) => String((v as { id?: unknown })?.id ?? "")).filter(Boolean)
-    : [];
+/**
+ * The ids of a node list, or `null` when one of them did not come back.
+ *
+ * Dropping the entry that could not be read would be the quiet kind of wrong:
+ * the condition stays editable, and the next save writes the SHORTER list —
+ * one collection fewer excluded, one metaobject fewer matched, with nothing
+ * said. `null` makes the whole source read-only instead (§2.4), the same
+ * answer a disagreeing `includeDescendants` gets.
+ */
+function idsOf(values: unknown): string[] | null {
+  if (!Array.isArray(values)) return [];
+  const ids = values.map((v) => String((v as { id?: unknown })?.id ?? ""));
+  return ids.some((id) => !id) ? null : ids;
 }
 
 /**
@@ -649,10 +773,13 @@ function decodeConditionValue(spec: ConditionKindSpec, condition: RawCondition):
   switch (spec.read) {
     case "category": {
       const entries = Array.isArray(rawValue) ? rawValue : [];
-      const ids = entries.map((e) => String((e as { category?: { id?: unknown } })?.category?.id ?? "")).filter(Boolean);
+      const ids = entries.map((e) => String((e as { category?: { id?: unknown } })?.category?.id ?? ""));
+      // Same rule as `idsOf`: a category that did not come back would simply
+      // be missing from the list this editor writes again.
+      if (ids.some((id) => !id)) return null;
       const flags = new Set(entries.map((e) => (e as { includeDescendants?: unknown })?.includeDescendants === true));
       if (flags.size > 1) return null;
-      return { value: ids.join(", "), includeDescendants: flags.has(true) };
+      return { value: joinListValues(ids), includeDescendants: flags.has(true) };
     }
     case "money": {
       const money = rawValue as { amount?: unknown; currencyCode?: unknown } | null;
@@ -663,22 +790,48 @@ function decodeConditionValue(spec: ConditionKindSpec, condition: RawCondition):
     }
     case "weight": {
       const weight = rawValue as { value?: unknown; unit?: unknown } | null;
+      // Every relation this kind has requires a value, so no value at all is
+      // not "empty", it is a shape this editor cannot write back: it would
+      // have to invent both the number and the unit. Read-only, which also
+      // keeps the promise below — a weight condition in the form ALWAYS
+      // carries a unit, so the gate can insist on one.
+      if (weight == null) return null;
       // An unknown unit is not rounded to kilograms: the number would keep its
       // digits and change its meaning, which is the one thing a rule editor
-      // may never do quietly.
-      if (weight?.unit != null && !WEIGHT_UNITS.includes(weight.unit as WeightUnit)) return null;
+      // may never do quietly. A MISSING unit is the same case and not a
+      // milder one — `toConditionInput` would write kilograms for it.
+      if (!(WEIGHT_UNITS as readonly string[]).includes(String(weight.unit))) return null;
       return {
-        value: weight?.value == null ? "" : String(weight.value),
-        ...(weight?.unit ? { weightUnit: weight.unit as WeightUnit } : {}),
+        value: weight.value == null ? "" : String(weight.value),
+        weightUnit: weight.unit as WeightUnit,
       };
     }
-    case "gid":
-      return spec.list
-        ? { value: idsOf(rawValue).join(", ") }
-        : { value: String((rawValue as { id?: unknown })?.id ?? "") };
+    case "gid": {
+      if (spec.list) {
+        const ids = idsOf(rawValue);
+        return ids ? { value: joinListValues(ids) } : null;
+      }
+      // `EQUALS` is the only relation here, so a value is always required:
+      // an absent one and a node without an id are the same answer — nothing
+      // this editor could write back.
+      if (rawValue == null) return null;
+      const id = String((rawValue as { id?: unknown })?.id ?? "");
+      return id ? { value: id } : null;
+    }
     default: {
       const values = Array.isArray(rawValue) ? rawValue.map((v) => String(v)) : null;
-      return { value: values ? values.join(", ") : String(rawValue ?? "") };
+      const text = values ? joinListValues(values) : String(rawValue ?? "");
+      // A kind with a fixed vocabulary that answers OUTSIDE it is an enum
+      // value this app predates. Rendering it would be the shortening failure
+      // again — the checkbox group can only rebuild the statuses it knows, so
+      // the unknown one disappears on the first toggle — and refusing it in
+      // the validator instead would block every rule edit on the collection.
+      // §2.4, the same answer an unknown weight unit gets.
+      if (spec.scalarType === "ProductStatus") {
+        const statuses = values ?? listValues(text);
+        if (statuses.some((v) => !(PRODUCT_STATUSES as readonly string[]).includes(v))) return null;
+      }
+      return { value: text };
     }
   }
 }
@@ -862,14 +1015,14 @@ function diffSide(
   after: RuleSide | undefined,
 ): Record<string, unknown> | null {
   const beforeById = new Map(
-    (before?.conditions ?? []).filter((c) => c.id).map((c) => [c.id as string, c] as const),
+    conditionsOf(before).filter((c) => c.id).map((c) => [c.id as string, c] as const),
   );
 
   const conditionsToCreate: Array<Record<string, unknown>> = [];
   const conditionsToUpdate: Array<Record<string, unknown>> = [];
   const keptIds = new Set<string>();
 
-  for (const condition of after?.conditions ?? []) {
+  for (const condition of conditionsOf(after)) {
     const input = toConditionInput(side, condition);
     if (!input) continue;
     // An id the cache does not carry is a client CLAIM, not an identity. It is

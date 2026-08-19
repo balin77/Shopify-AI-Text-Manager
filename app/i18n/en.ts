@@ -883,6 +883,11 @@ export const en: Translation = {
       POUNDS: "lb",
       OUNCES: "oz",
     },
+    productStatuses: {
+      ACTIVE: "Active",
+      DRAFT: "Draft",
+      ARCHIVED: "Archived",
+    },
     definitionPlaceholder: "Metafield definition ID",
     noPreview: "Which products match becomes visible after saving.",
     unavailable: "Rules are not available yet",

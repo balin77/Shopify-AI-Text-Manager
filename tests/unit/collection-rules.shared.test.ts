@@ -177,6 +177,71 @@ describe("validateRuleSources", () => {
     expect(errors).toEqual([]);
   });
 
+  /**
+   * The values that are not free text. Every one of these fails at the SCHEMA
+   * level — `data: null`, no `userErrors` — so without this gate the merchant
+   * gets the generic "rules could not be saved" and no field to look at. Two
+   * of them do not even fail: `NaN` and a boolean that is not `"true"` save
+   * quietly and mean something else.
+   */
+  it("rejects a value the enum, the number or the unit does not have", () => {
+    const withCondition = (condition: Record<string, unknown>) =>
+      validateRuleSources([
+        source({
+          inclusion: {
+            matchType: "ALL",
+            conditions: [{ localId: "c1", relation: "EQUALS", ...condition } as never],
+          },
+        }),
+      ]);
+
+    const invalid = (detail: string) => ({ sourceIndex: 0, conditionId: "c1", code: "invalidValue", detail });
+
+    expect(withCondition({ kind: "productStatus", value: "ACTIVE, DRAFT" })).toEqual([]);
+    expect(withCondition({ kind: "productStatus", value: "ACTIV" })).toContainEqual(invalid("productStatus.value"));
+
+    // `Number.parseFloat("about 2")` is NaN, and NaN serialises to `null`
+    // into a `Float!`.
+    expect(withCondition({ kind: "variantWeight", value: "2.5", weightUnit: "GRAMS" })).toEqual([]);
+    expect(withCondition({ kind: "variantWeight", value: "about 2", weightUnit: "GRAMS" })).toContainEqual(
+      invalid("variantWeight.value"),
+    );
+    expect(withCondition({ kind: "variantWeight", value: "2", weightUnit: "STONES" })).toContainEqual(
+      invalid("variantWeight.weightUnit"),
+    );
+    // A MISSING unit is refused too: `toConditionInput` would write KILOGRAMS
+    // for it, and 2 kilograms is not 2 of whatever was meant.
+    expect(withCondition({ kind: "variantWeight", value: "2" })).toContainEqual(invalid("variantWeight.weightUnit"));
+
+    // A whole number, not a truncated one: `parseInt("2.5")` is 2, and the
+    // rule would silently match different products than the one typed.
+    expect(withCondition({ kind: "variantInventory", value: "2.5" })).toContainEqual(invalid("variantInventory.value"));
+
+    expect(withCondition({ kind: "variantPrice", value: "19.90", currencyCode: "CHF" })).toEqual([]);
+    expect(withCondition({ kind: "variantPrice", value: "19.90", currencyCode: "Swiss" })).toContainEqual(
+      invalid("variantPrice.currencyCode"),
+    );
+
+    // `"yes" === "true"` is false — this one saves and means the opposite.
+    expect(
+      withCondition({ kind: "metafieldBoolean", value: "yes", definitionId: "gid://shopify/MetafieldDefinition/1" }),
+    ).toContainEqual(invalid("metafieldBoolean.value"));
+  });
+
+  it("REFUSES a malformed payload instead of throwing on it", () => {
+    // Both write paths hand this client JSON and are POST-reachable. A
+    // TypeError in the gate would surface as a 500 on a save whose text edits
+    // had already landed — the gate would be what loses the merchant's work.
+    expect(validateRuleSources([{ title: "No sides" } as never]).some((e) => e.code === "noConditions")).toBe(true);
+    expect(validateRuleSources([null as never]).some((e) => e.code === "noConditions")).toBe(true);
+    expect(validateRuleSources(null as never)).toHaveLength(1);
+    expect(
+      validateRuleSources([
+        source({ inclusion: { matchType: "ALL", conditions: [{ localId: "c1", kind: "productTag", relation: "TAGGED_WITH" } as never] } }),
+      ]).some((e) => e.code === "emptyValue"),
+    ).toBe(true);
+  });
+
   it("caps the number of sources", () => {
     const many = Array.from({ length: MAX_SOURCES + 1 }, () => source());
     expect(validateRuleSources(many).some((e) => e.code === "tooManySources")).toBe(true);

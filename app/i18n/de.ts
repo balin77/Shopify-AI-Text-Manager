@@ -887,6 +887,11 @@ export const de = {
       POUNDS: "lb",
       OUNCES: "oz",
     },
+    productStatuses: {
+      ACTIVE: "Aktiv",
+      DRAFT: "Entwurf",
+      ARCHIVED: "Archiviert",
+    },
     definitionPlaceholder: "ID der Metafeld-Definition",
     noPreview: "Welche Produkte passen, wird nach dem Speichern sichtbar.",
     unavailable: "Regeln sind noch nicht verfügbar",

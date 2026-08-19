@@ -870,6 +870,11 @@ export const es: Translation = {
       POUNDS: "lb",
       OUNCES: "oz",
     },
+    productStatuses: {
+      ACTIVE: "Activo",
+      DRAFT: "Borrador",
+      ARCHIVED: "Archivado",
+    },
     definitionPlaceholder: "ID de la definición del metacampo",
     noPreview: "Qué productos coinciden se verá después de guardar.",
     unavailable: "Las reglas aún no están disponibles",
