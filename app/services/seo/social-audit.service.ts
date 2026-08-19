@@ -34,29 +34,12 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
-import type { MarkupTypeStat } from "./markup-activation.shared";
+// APP_SOCIAL_TAGS lives in the shared module because the activation section
+// renders it in component scope — see the comment on it there.
+import { APP_SOCIAL_TAGS, type MarkupTypeStat } from "./markup-activation.shared";
+export { APP_SOCIAL_TAGS };
 import { loadCrawlMarkupPages } from "./crawl-markup-rows.server";
 
-/**
- * The tags `social-meta.liquid` emits, in the order it emits them. Each one is
- * gated separately in step 3: a theme that sets `og:title` but no `twitter:*`
- * is the common case, and one verdict for the whole embed would hide it.
- *
- * Lower-case throughout — `extractSocialTags` normalizes, because themes mix
- * `og:image` and `OG:image` and a case-sensitive comparison would report a
- * served tag as missing.
- */
-export const APP_SOCIAL_TAGS = [
-  "og:title",
-  "og:description",
-  "og:url",
-  "og:type",
-  "og:image",
-  "twitter:card",
-  "twitter:title",
-  "twitter:description",
-  "twitter:image",
-] as const;
 
 // The coverage table reports `og:title` and `og:image` and nothing else on
 // purpose: `og:description` and the twitter:* family degrade gracefully

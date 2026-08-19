@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   activationGate,
   activationTone,
@@ -221,5 +223,41 @@ describe("verdict severity", () => {
   it("keeps the repeatable non-verdict mild — there is nothing to act on", () => {
     expect(worstActivationVerdict(["repeatableUnjudged", "unknown"])).toBe("unknown");
     expect(activationTone("repeatableUnjudged")).toBe("info");
+  });
+});
+
+describe("client-safety of the shared module", () => {
+  // The activation section renders APP_SOCIAL_TAGS and JSON_LD_SWITCHES in
+  // COMPONENT scope. Importing either from the audit services drags those — and
+  // through them crawl-markup-rows.server.ts — into the client bundle, which
+  // the build refuses with "Server-only module referenced by client". It broke
+  // exactly that way once; typecheck and vitest both stayed green, so the rule
+  // is pinned here rather than left to the next `npm run build`.
+  const shared = readFileSync(
+    join(__dirname, "../../app/services/seo/markup-activation.shared.ts"),
+    "utf8",
+  );
+
+  it("imports nothing at all — the values the UI needs must reach it unencumbered", () => {
+    expect(shared).not.toMatch(/^\s*import\s/m);
+  });
+
+  it("owns the two lists the section renders in component scope", () => {
+    expect(shared).toContain("export const APP_SOCIAL_TAGS");
+    expect(shared).toContain("export const JSON_LD_SWITCHES");
+  });
+
+  it("keeps the route off the audit services for anything but the loader", () => {
+    const route = readFileSync(
+      join(__dirname, "../../app/routes/app.seo.structured-data.tsx"),
+      "utf8",
+    );
+    // The only runtime imports from either audit service are the two summarize
+    // functions, which the loader calls; everything else is a type (erased) or
+    // comes from the shared module.
+    expect(route).toContain(
+      'import { summarizeLiveSocial } from "../services/seo/social-audit.service"',
+    );
+    expect(route).not.toMatch(/APP_SOCIAL_TAGS[^\n]*social-audit\.service/);
   });
 });

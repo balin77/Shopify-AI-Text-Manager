@@ -46,8 +46,9 @@ import {
 import { getMainThemeId, readThemeFile } from "../services/seo/aeo.service";
 import { summarizeLiveJsonLd } from "../services/seo/json-ld-audit.service";
 import type { JsonLdAuditAggregate, JsonLdAuditItemType } from "../services/seo/json-ld-audit.service";
-import { summarizeLiveSocial, APP_SOCIAL_TAGS } from "../services/seo/social-audit.service";
+import { summarizeLiveSocial } from "../services/seo/social-audit.service";
 import {
+  APP_SOCIAL_TAGS,
   activationGate,
   activationTone,
   statForSwitch,
