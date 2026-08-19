@@ -649,6 +649,34 @@ describe("the Grundpreis in the panel", () => {
     expect(await screen.findByText(/500 g \/ 1 kg/)).toBeTruthy();
   });
 
+  it("gives the two unit pickers DISTINCT names, without a visible caption", async () => {
+    // Two rules that pull against each other. A screen reader must be able to
+    // tell pack quantity from reference quantity — and from the shipping
+    // weight one card over, which is also called "Unit" — so the names differ.
+    // But a name that distinct wraps over a box two words wide, which stepped
+    // the number and its unit out of line, so it is hidden rather than shown.
+    withVariants([variant("Weiss", "20cm", WITH_UNIT)]);
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await openUnitPrice();
+
+    expect(await screen.findByLabelText("Total quantity unit")).toBeTruthy();
+    expect(await screen.findByLabelText("Reference unit")).toBeTruthy();
+    // Hidden, not absent: Polaris keeps the element and takes it out of the
+    // visual flow.
+    const labels = [...container.querySelectorAll("#commerce-unit-price label")];
+    const unitLabels = labels.filter((l) => /unit$/i.test(l.textContent ?? ""));
+    expect(unitLabels).toHaveLength(2);
+    for (const label of unitLabels) {
+      expect(label.closest(".Polaris-Labelled--hidden")).toBeTruthy();
+    }
+  });
+
   it("sends ALL FOUR fields when only ONE of them changed", async () => {
     // Shopify REPLACES the measurement object rather than merging into it, so
     // a save carrying only the field that moved would write a measurement

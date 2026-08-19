@@ -561,7 +561,7 @@ export const es: Translation = {
     // para cuando el comerciante pulsara guardar.
     commerce: {
       unitPriceHeading: "Precio por unidad",
-      unitPriceHint: "Para productos vendidos por peso o volumen: la cantidad total del paquete y la unidad a la que se refiere el precio. La tienda muestra entonces “CHF 45.80 / kg”.",
+      unitPriceHint: "Para productos vendidos por peso o volumen: la cantidad total del paquete y la unidad a la que se refiere el precio. La tienda muestra entonces también el precio por unidad, por ejemplo por kilogramo.",
       unitPriceContentUnit: "Unidad de la cantidad total",
       unitPriceReferenceUnit: "Unidad de referencia",
       unitPriceContent: "Cantidad total",

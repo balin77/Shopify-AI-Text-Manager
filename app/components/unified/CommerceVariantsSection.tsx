@@ -446,7 +446,7 @@ export function CommerceVariantsSection() {
                     <BlockStack gap="300">
                       <Text as="p" variant="bodySm" tone="subdued">
                         {(t.unitPriceHint as string) ||
-                          "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then prints \u201cCHF 45.80 / kg\u201d."}
+                          "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then also shows the price per unit \u2014 per kilogram, say."}
                       </Text>
                       {/* Two rows of number-plus-unit, in Shopify's order:
                           what is in the pack, then what the price refers to. */}
@@ -1101,7 +1101,11 @@ function UnitPriceRow({
 }) {
   const unitIsMixed = priceMixed(unitField);
   return (
-    <InlineStack gap="200" blockAlign="start" wrap={false}>
+    // Bottom-aligned, not top: the unit's label is hidden, so its box would
+    // otherwise sit level with the number's LABEL and the two controls would
+    // step down the row. Shopify puts the unit flush beside the number for the
+    // same reason.
+    <InlineStack gap="200" blockAlign="end" wrap={false}>
       <Box minWidth="96px" maxWidth="110px">
         <TextField
           label={label}
@@ -1116,13 +1120,15 @@ function UnitPriceRow({
       </Box>
       <Box minWidth="104px" maxWidth="124px">
         <Select
-          // Its OWN label, and one that names WHICH unit. Repeating the value
-          // field's label put two controls in one row under the identical
-          // accessible name; a bare "Unit" made it three on the page, since
-          // the shipping weight next door carries that word too. A screen
-          // reader then reads the same word for pack quantity, reference
-          // quantity and shipping weight.
+          // Its OWN label, naming WHICH unit — and HIDDEN. The name has to be
+          // distinct because a screen reader would otherwise read the same
+          // word for pack quantity, reference quantity and shipping weight;
+          // it has to be hidden because a name that distinct wraps to two
+          // lines over a box two words wide, which is what pushed the controls
+          // out of line with each other. Visually the unit belongs to the
+          // number beside it and needs no second caption.
           label={unitFieldLabel}
+          labelHidden
           options={[
             // An EMPTY first entry, unlike the weight unit next door. There a
             // variant always has a unit; here "no unit" is a real state - it

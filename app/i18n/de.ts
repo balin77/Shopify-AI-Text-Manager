@@ -562,7 +562,7 @@ export const de = {
     // längst veraltet wäre.
     commerce: {
       unitPriceHeading: "Grundpreis",
-      unitPriceHint: "Für Ware, die nach Gewicht oder Volumen verkauft wird: die Gesamtmenge der Packung und die Einheit, auf die sich der Preis bezieht. Die Storefront zeigt dann „CHF 45.80 / kg“.",
+      unitPriceHint: "Für Ware, die nach Gewicht oder Volumen verkauft wird: die Gesamtmenge der Packung und die Einheit, auf die sich der Preis bezieht. Die Storefront zeigt dann zusätzlich den Preis pro Einheit an, etwa pro Kilogramm.",
       unitPriceContentUnit: "Einheit der Gesamtmenge",
       unitPriceReferenceUnit: "Einheit der Bezugsmenge",
       unitPriceContent: "Gesamtmenge",
