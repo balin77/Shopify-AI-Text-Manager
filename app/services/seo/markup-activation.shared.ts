@@ -249,6 +249,81 @@ export interface MarkupSwitch {
 }
 
 /**
+ * What the merchant is supposed to DO about a verdict. Nine verdicts are the
+ * right resolution for judging one switch and the wrong one for a summary — a
+ * section headed "3 nicht einschalten, 1 ausschalten" is read in a second,
+ * nine sentences are not read at all.
+ *
+ * `hold` folds the three states whose answer is the same ("the type is already
+ * on the page, do not add ours"): the theme serves it, it is served unevenly,
+ * or nobody can say who serves it. They differ in WHY, which the per-switch row
+ * still says; they do not differ in what to do next.
+ */
+export type ActivationAction =
+  | "enable" // nothing serves it — free to switch on
+  | "running" // ours, exactly once — the intended end state
+  | "hold" // already served by someone: do not switch ours on
+  | "switchOff" // duplicated, one copy ours — our switch fixes it
+  | "themeFix" // duplicated, none of it ours — fixable only in the theme
+  | "noVerdict"; // not measured, or not judgeable (repeatable type)
+
+export const ACTION_BY_VERDICT: Record<ActivationVerdict, ActivationAction> = {
+  free: "enable",
+  appOnly: "running",
+  foreignOnly: "hold",
+  mixed: "hold",
+  originUnknown: "hold",
+  duplicateApp: "switchOff",
+  duplicateForeign: "themeFix",
+  unknown: "noVerdict",
+  repeatableUnjudged: "noVerdict",
+};
+
+/** Most urgent first — the order a summary line reads them in. */
+export const ACTION_ORDER: ActivationAction[] = [
+  "switchOff",
+  "themeFix",
+  "hold",
+  "running",
+  "enable",
+  "noVerdict",
+];
+
+/**
+ * Group one section's gates by what to do about them, keeping each bucket's
+ * member labels so the summary can name them instead of only counting.
+ */
+export function groupGatesByAction<T>(
+  gates: { label: string; verdict: ActivationVerdict; item?: T }[],
+): { action: ActivationAction; labels: string[] }[] {
+  const byAction = new Map<ActivationAction, string[]>();
+  for (const g of gates) {
+    const action = ACTION_BY_VERDICT[g.verdict];
+    byAction.set(action, [...(byAction.get(action) ?? []), g.label]);
+  }
+  return ACTION_ORDER.filter((a) => byAction.has(a)).map((action) => ({
+    action,
+    labels: byAction.get(action) ?? [],
+  }));
+}
+
+/** Polaris tone for the section's summary banner. */
+export function actionTone(action: ActivationAction): "critical" | "warning" | "success" | "info" {
+  switch (action) {
+    case "switchOff":
+    case "themeFix":
+      return "critical";
+    case "hold":
+      return "warning";
+    case "enable":
+    case "running":
+      return "success";
+    default:
+      return "info";
+  }
+}
+
+/**
  * The tags `social-meta.liquid` emits, in the order it emits them — the social
  * counterpart of JSON_LD_SWITCHES. Each is gated separately in step 3: a theme
  * that sets `og:title` but no `twitter:*` is the common case, and one verdict
