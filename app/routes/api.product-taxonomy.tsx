@@ -26,18 +26,6 @@
  * already in. Reading Shopify again would produce a list that disagrees with
  * the one the collections tab shows.
  *
- * ── The names come back in the APP's language ───────────────────────────────
- * Shopify translates the taxonomy itself, and the Admin API hands the
- * translation over through `@inContext(language:)`. Without it the names follow
- * the ADMIN SESSION's language, which is not the language the app is rendered
- * in: a German merchant on a shop that was set up in English gets a German UI
- * with an English category list, and cannot search it in either language. So
- * the caller names the language it is rendering in and it is spent here — but
- * a directive the schema refuses fails the WHOLE query, so a localized attempt
- * that comes back with errors is retried once WITHOUT it. An English label is
- * a small loss; a picker that reports "the taxonomy could not be searched"
- * because of a label is a broken feature.
- *
  * ── What "no results" means ─────────────────────────────────────────────────
  * Never "this shop has none". A failed lookup returns `success: false` with the
  * reason, because the pickers must be able to tell an empty answer apart from
@@ -48,7 +36,6 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
-import { translations } from "~/i18n";
 import { logger } from "~/utils/logger.server";
 
 /** Enough to choose from, few enough to render in a popover. */
@@ -65,77 +52,6 @@ const TAXONOMY_LEVEL_SIZE = 250;
 const COLLECTION_PAGE_SIZE = 250;
 /** A search this short matches most of the taxonomy — a useless list. */
 const MIN_SEARCH_LENGTH = 2;
-
-/**
- * The app's UI language as Shopify's `LanguageCode` enum spells it, or null.
- *
- * Validated against the app's OWN language list rather than against a second
- * copy of it: the enum value is interpolated into the query document (a
- * directive argument cannot be a variable without a second document for the
- * un-localized case), so what may reach it has to be a closed set — and a list
- * written out here would be the one that drifts when a language is added.
- */
-function taxonomyLanguage(raw: string | null): string | null {
-  const locale = (raw || "").trim().toLowerCase();
-  if (!locale || !Object.prototype.hasOwnProperty.call(translations, locale)) return null;
-  return locale.toUpperCase().replace(/-/g, "_");
-}
-
-/** A schema-level error arrives HERE, as a top-level `errors` array with
- *  `data: null` — never as a userError. Both halves below read it. */
-interface GraphqlBody<TData> {
-  data?: TData;
-  errors?: Array<{ message?: string; extensions?: { code?: string } }>;
-}
-
-/** Shopify's rate limit arrives in the SAME shape as a refused directive, and
- *  answering it with a second query is the one wrong response. */
-function isThrottled(body: GraphqlBody<unknown>): boolean {
-  return body.errors?.some((e) => e?.extensions?.code === "THROTTLED") === true;
-}
-
-/** What both taxonomy queries select. The search half asks for no `pageInfo`,
- *  so it is optional on the shared shape rather than a second one. */
-interface TaxonomyQueryData {
-  taxonomy?: {
-    categories?: { nodes?: TaxonomyOption[]; pageInfo?: { hasNextPage?: boolean } };
-  };
-}
-
-/**
- * Runs one taxonomy query, in the app's language when there is one.
- *
- * `build` receives the directive to splice in after the operation signature —
- * empty for the fallback. A localized attempt whose response carries top-level
- * `errors` (which is how an unknown directive, an unsupported language or a
- * schema change arrives — never as a userError) is retried once without it, so
- * the failure mode of LOCALIZATION is an English list and never a dead picker.
- *
- * Two things the retry deliberately does NOT do. It does not fire on a THROTTLE
- * — that error arrives in the same shape, and the answer to "you are asking too
- * often" cannot be asking again in the same breath; the lookup fails, which is
- * what it would have done anyway. And a refusal is not REMEMBERED across
- * requests: the same shape covers a transient error, so a sticky flag would let
- * one bad minute turn localization off for the life of the process.
- */
-async function taxonomyQuery(
-  admin: { graphql: (query: string, options?: any) => Promise<Response> },
-  build: (directive: string) => string,
-  variables: Record<string, unknown>,
-  language: string | null,
-  shop: string,
-): Promise<GraphqlBody<TaxonomyQueryData>> {
-  if (language) {
-    const localized = await admin.graphql(build(` @inContext(language: ${language})`), { variables });
-    const body = (await localized.json()) as GraphqlBody<TaxonomyQueryData>;
-    if (!body.errors?.length || isThrottled(body)) return body;
-    logger.warn("[Taxonomy] Localized lookup refused — retrying in the shop default", {
-      context: "Taxonomy", shop, language, error: body.errors[0]?.message,
-    });
-  }
-  const response = await admin.graphql(build(""), { variables });
-  return (await response.json()) as GraphqlBody<TaxonomyQueryData>;
-}
 
 export interface TaxonomyOption {
   id: string;
@@ -185,10 +101,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const kind = url.searchParams.get("kind") || "";
-  // The language the CLIENT is rendering in (I18nContext → AISettings
-  // .appLanguage). Unknown values fall back to no directive rather than to an
-  // error: a label is not worth refusing a lookup over.
-  const language = taxonomyLanguage(url.searchParams.get("lang"));
 
   try {
     if (kind === "taxonomy") {
@@ -199,20 +111,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
         return json({ success: true, tooShort: true, categories: [] as TaxonomyOption[] });
       }
 
-      const body = await taxonomyQuery(
-        admin,
-        (directive) => `#graphql
-          query searchProductTaxonomy($search: String!, $first: Int!)${directive} {
+      const response = await admin.graphql(
+        `#graphql
+          query searchProductTaxonomy($search: String!, $first: Int!) {
             taxonomy {
               categories(search: $search, first: $first) {
                 nodes { id name fullName isLeaf }
               }
             }
           }`,
-        { search, first: TAXONOMY_PAGE_SIZE },
-        language,
-        session.shop,
+        { variables: { search, first: TAXONOMY_PAGE_SIZE } },
       );
+      const body = (await response.json()) as {
+        data?: { taxonomy?: { categories?: { nodes?: TaxonomyOption[] } } };
+        errors?: Array<{ message?: string }>;
+      };
 
       // A schema-level error arrives as a top-level `errors` array with
       // `data: null` and never as a userError. Read as an empty result it
@@ -252,11 +165,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       // `childrenOf` is not the same as an absent one, and passing null where
       // Shopify expects a category would filter to nothing rather than to the
       // top level.
-      const body = parent
-        ? await taxonomyQuery(
-            admin,
-            (directive) => `#graphql
-              query browseProductTaxonomyChildren($parent: ID!, $first: Int!)${directive} {
+      const response = parent
+        ? await admin.graphql(
+            `#graphql
+              query browseProductTaxonomyChildren($parent: ID!, $first: Int!) {
                 taxonomy {
                   categories(childrenOf: $parent, first: $first) {
                     nodes { id name fullName isLeaf }
@@ -264,14 +176,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
                   }
                 }
               }`,
-            { parent, first: TAXONOMY_LEVEL_SIZE },
-            language,
-            session.shop,
+            { variables: { parent, first: TAXONOMY_LEVEL_SIZE } },
           )
-        : await taxonomyQuery(
-            admin,
-            (directive) => `#graphql
-              query browseProductTaxonomyRoots($first: Int!)${directive} {
+        : await admin.graphql(
+            `#graphql
+              query browseProductTaxonomyRoots($first: Int!) {
                 taxonomy {
                   categories(first: $first) {
                     nodes { id name fullName isLeaf }
@@ -279,10 +188,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
                   }
                 }
               }`,
-            { first: TAXONOMY_LEVEL_SIZE },
-            language,
-            session.shop,
+            { variables: { first: TAXONOMY_LEVEL_SIZE } },
           );
+
+      const body = (await response.json()) as {
+        data?: {
+          taxonomy?: {
+            categories?: { nodes?: TaxonomyOption[]; pageInfo?: { hasNextPage?: boolean } };
+          };
+        };
+        errors?: Array<{ message?: string }>;
+      };
 
       // Same rule as the search half: a schema-level error arrives as a
       // top-level `errors` array with `data: null` and never reaches

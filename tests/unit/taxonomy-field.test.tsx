@@ -22,9 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { AppProvider } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
-import { I18nProvider } from "~/contexts/I18nContext";
 import { TaxonomyField } from "~/components/unified/TaxonomyField";
-import type { Locale } from "~/i18n";
 
 const gid = (n: number) => `gid://shopify/TaxonomyCategory/${n}`;
 
@@ -56,22 +54,17 @@ function mockFetch() {
   });
 }
 
-function ui(
-  props: Partial<React.ComponentProps<typeof TaxonomyField>> = {},
-  appLocale: Locale = "en",
-) {
+function ui(props: Partial<React.ComponentProps<typeof TaxonomyField>> = {}) {
   return (
     <AppProvider i18n={en}>
-      <I18nProvider locale={appLocale}>
-        <TaxonomyField
-          value=""
-          onChange={() => {}}
-          currentLabel=""
-          label="Product category"
-          t={{}}
-          {...props}
-        />
-      </I18nProvider>
+      <TaxonomyField
+        value=""
+        onChange={() => {}}
+        currentLabel=""
+        label="Product category"
+        t={{}}
+        {...props}
+      />
     </AppProvider>
   );
 }
@@ -242,48 +235,5 @@ describe("TaxonomyField — the page behind the popover", () => {
   it("does not freeze anything for a disabled field that cannot open", () => {
     render(ui({ disabled: true }));
     expect(wheelOn(document.body)).toBe(false);
-  });
-});
-
-/**
- * Shopify translates its taxonomy itself. Which language it answers in is
- * decided by the request, so the lookup has to carry the language the APP is
- * rendered in — not the admin session's, which is a different setting and
- * routinely a different language.
- */
-describe("TaxonomyField — the language the names come back in", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", mockFetch());
-  });
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
-
-  const urls = () =>
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => String(c[0]));
-
-  it("asks for the level in the app's language", async () => {
-    render(ui({}, "de"));
-    await openPicker();
-
-    expect(urls().some((u) => u.includes("kind=taxonomy-children") && u.includes("lang=de"))).toBe(true);
-  });
-
-  it("carries the same language into the search half", async () => {
-    vi.useFakeTimers();
-    try {
-      render(ui({}, "es"));
-      fireEvent.click(screen.getByRole("button", { name: /not set/i }));
-      fireEvent.change(document.querySelector("input") as HTMLInputElement, {
-        target: { value: "shirt" },
-      });
-      // The search is debounced; without running the timer nothing is asked at all.
-      await vi.advanceTimersByTimeAsync(400);
-    } finally {
-      vi.useRealTimers();
-    }
-
-    expect(urls().some((u) => u.includes("kind=taxonomy&") && u.includes("lang=es"))).toBe(true);
   });
 });

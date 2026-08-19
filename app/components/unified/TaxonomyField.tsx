@@ -52,15 +52,6 @@
  * should try different words. The browse half carries the same rule: an empty
  * level and an unreachable one are separate states.
  *
- * ── The names are read in the APP's language ────────────────────────────────
- * Shopify translates the taxonomy itself and answers `@inContext(language:)`
- * with it, so the route is told which language the app is currently rendered
- * in ([I18nContext](../../contexts/I18nContext.tsx)) rather than left to the
- * admin session's. The two disagree often enough — an English admin with the
- * app set to German is the normal case for a German merchant on a shop set up
- * in English — and a picker whose entries are in a different language from the
- * label above it is a picker nobody can search in.
- *
  * ── The panel is a fixed box, and the content lives inside it ───────────────
  * Every row is `minWidth: 0` with a reserved trailing slot: a flex item does
  * not shrink below its own content by default, so one long path would set the
@@ -94,7 +85,6 @@ import {
   TextField,
 } from "@shopify/polaris";
 import { ArrowLeftIcon, ChevronRightIcon, SearchIcon } from "@shopify/polaris-icons";
-import { useI18n } from "../../contexts/I18nContext";
 import { useScrollLock } from "../../hooks/useScrollLock";
 import type { TaxonomyOption } from "../../routes/api.product-taxonomy";
 
@@ -222,14 +212,6 @@ export function TaxonomyField({
   const listRef = useRef<HTMLDivElement | null>(null);
   useScrollLock(open && !disabled, listRef);
 
-  /**
-   * The language the app is rendered in, forwarded to the lookup so Shopify's
-   * own taxonomy names come back in it. Read from the context rather than
-   * taken as a prop: every caller of this field is inside the provider, and a
-   * prop would let one of them pass a language the UI is not actually in.
-   */
-  const { locale: appLocale } = useI18n();
-
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length > 0;
 
@@ -243,9 +225,7 @@ export function TaxonomyField({
     const token = ++searchToken.current;
     setState("loading");
     const timer = setTimeout(() => {
-      fetch(
-        `/api/product-taxonomy?kind=taxonomy&q=${encodeURIComponent(trimmedQuery)}&lang=${encodeURIComponent(appLocale)}`,
-      )
+      fetch(`/api/product-taxonomy?kind=taxonomy&q=${encodeURIComponent(trimmedQuery)}`)
         .then((r) => r.json())
         .then((data) => {
           if (token !== searchToken.current) return;
@@ -273,7 +253,7 @@ export function TaxonomyField({
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [trimmedQuery, searching, appLocale]);
+  }, [trimmedQuery, searching]);
 
   /** Loads one level. `parentId` "" is the top level. */
   const loadLevel = useCallback((parentId: string) => {
@@ -281,9 +261,7 @@ export function TaxonomyField({
     setLevelState("loading");
     setLevel(null);
     setLevelTruncated(false);
-    fetch(
-      `/api/product-taxonomy?kind=taxonomy-children&parent=${encodeURIComponent(parentId)}&lang=${encodeURIComponent(appLocale)}`,
-    )
+    fetch(`/api/product-taxonomy?kind=taxonomy-children&parent=${encodeURIComponent(parentId)}`)
       .then((r) => r.json())
       .then((data) => {
         if (token !== levelToken.current) return;
@@ -299,7 +277,7 @@ export function TaxonomyField({
         if (token !== levelToken.current) return;
         setLevelState("failed");
       });
-  }, [appLocale]);
+  }, []);
 
   // The top level is fetched when the popover opens, not on mount: most
   // merchants never touch the category of most products, and a request per
