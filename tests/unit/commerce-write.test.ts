@@ -340,6 +340,87 @@ describe("applyVariantPrices", () => {
       expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
     });
 
+    it("still writes the price when the measurement is refused", async () => {
+      // The group case: the merchant edits the reference unit on a scope whose
+      // members disagree, so one member's quartet arrives three quarters
+      // empty — for a Grundpreis that member never showed. Refusing the whole
+      // call took their price, barcode and tax edits with it, and retrying did
+      // the same thing forever.
+      const admin = adminWith({
+        data: {
+          productVariantsBulkUpdate: {
+            productVariants: [{ id: VARIANT_GID, price: "24.90", compareAtPrice: null, unitPriceMeasurement: null, showUnitPrice: null }],
+            userErrors: [],
+          },
+        },
+      });
+      const { db, updates } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", {
+        ...params({}),
+        fields: { price: "24.90", ...unit("", "", "", "KG") },
+      });
+
+      expect(warning).toBe("unitPriceIncomplete");
+      const sent = (admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql.mock.calls[0][1].variables;
+      // The price went; no measurement was sent at all.
+      expect(sent.variants[0].price).toBe("24.90");
+      expect(sent.variants[0].unitPriceMeasurement).toBeUndefined();
+      expect((updates[0] as { data: { price: string } }).data.price).toBe("24.90");
+    });
+
+    it("mirrors the price Shopify DID store even when the switch refused", async () => {
+      // Returning on the first mismatch left the cache holding the old price
+      // while the warning said everything else was saved — and the bulk grid
+      // reads that cache.
+      const stored = { quantityValue: 500, quantityUnit: "G", referenceValue: 1, referenceUnit: "KG" };
+      const admin = adminWith({
+        data: {
+          productVariantsBulkUpdate: {
+            productVariants: [{ id: VARIANT_GID, price: "24.90", compareAtPrice: null, unitPriceMeasurement: stored, showUnitPrice: false }],
+            userErrors: [],
+          },
+        },
+      });
+      const { db, updates } = variantRecorder();
+
+      const warning = await applyVariantPrices(admin, db, "s", {
+        ...params({}),
+        fields: { price: "24.90", ...unit("500", "G", "1", "KG"), showUnitPrice: true },
+      });
+
+      expect(warning).toBe("unitPriceNotShown");
+      expect((updates[0] as { data: { price: string } }).data.price).toBe("24.90");
+    });
+
+    it("refuses a German thousands separator instead of reading 1.000 as 1", async () => {
+      // The money field two rows up has refused this since a review finding;
+      // read as 1 here it stores 1 ml per 1 l, the echo matches, the save
+      // reports success, and the storefront prints a Grundpreis a thousand
+      // times too high — on the field that exists to satisfy a price
+      // disclosure law.
+      const admin = adminWith(unitEcho(null));
+      const { db } = variantRecorder();
+
+      expect(await applyVariantPrices(admin, db, "s", params(unit("1.000", "ML", "1", "L")))).toBe(
+        "unitPriceAmbiguous",
+      );
+      expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+    });
+
+    it("refuses grams per litre", async () => {
+      // Two different questions, not one measurement. What Shopify does with a
+      // mismatched pair is unmeasured, so this refuses rather than finding out
+      // on a merchant's storefront.
+      const admin = adminWith(unitEcho(null));
+      const { db } = variantRecorder();
+
+      expect(await applyVariantPrices(admin, db, "s", params(unit("500", "G", "1", "L")))).toBe(
+        "unitPriceDimension",
+      );
+      expect((admin as never as { graphql: ReturnType<typeof vi.fn> }).graphql).not.toHaveBeenCalled();
+    });
+
     it("reports a switch that would not move on its OWN, not as a price failure", async () => {
       // The measurement may well be stored while only the switch refused. One
       // code for both sends a merchant looking for a price that is saved.

@@ -31,6 +31,8 @@
  * nothing here may reach for Prisma, the admin client or `process`.
  */
 
+import { parseDecimalInput } from "./bulk-editor/columns.shared";
+
 /**
  * Shopify's `UnitPriceMeasurementMeasuredUnit`, grouped the way a merchant
  * picks one.
@@ -48,17 +50,35 @@ export const UNIT_PRICE_UNIT_GROUPS: Array<{ key: string; units: readonly string
 ];
 
 /**
- * Every unit the schema accepts.
+ * Every unit the SCHEMA accepts, copied from Shopify's own refusal message.
  *
- * `UNKNOWN` is deliberately NOT offered: it is what Shopify answers for a
- * measurement it cannot classify, not something a merchant means. It stays
- * accepted on the way IN so a value written elsewhere round-trips instead of
- * being refused by us.
+ * Kept for the record and for the test that pins it; NOT what this app offers.
  */
-export const UNIT_PRICE_UNITS: readonly string[] = [
-  ...UNIT_PRICE_UNIT_GROUPS.flatMap((group) => group.units),
-  "UNKNOWN",
+export const SCHEMA_UNITS: readonly string[] = [
+  "ML", "CL", "L", "M3", "FLOZ", "PT", "QT", "GAL",
+  "MG", "G", "KG", "OZ", "LB",
+  "MM", "CM", "M", "IN", "FT", "YD",
+  "M2", "FT2", "ITEM", "UNKNOWN",
 ];
+
+/**
+ * The units this app offers AND accepts - the groups, and nothing else.
+ *
+ * `UNKNOWN` is in the schema and is deliberately outside this list, on BOTH
+ * sides. It is what Shopify answers for a measurement it cannot classify, not
+ * something a merchant means, and the picker is built from the groups — so a
+ * value that got past the validator would show an empty Select over a variant
+ * that HAS a unit, and the next edit would send `UNKNOWN` back. One list for
+ * "can be rendered" and "may be written" is what keeps those two honest.
+ */
+export const UNIT_PRICE_UNITS: readonly string[] = UNIT_PRICE_UNIT_GROUPS.flatMap(
+  (group) => group.units,
+);
+
+/** Which dimension a unit measures — grams and litres do not pair. */
+export function unitDimension(unit: string): string | null {
+  return UNIT_PRICE_UNIT_GROUPS.find((group) => group.units.includes(unit))?.key ?? null;
+}
 
 /** The symbol a label carries. Locale-independent for all but the last two,
  *  which the caller overrides from its own strings. */
@@ -93,26 +113,48 @@ export const EMPTY_MEASUREMENT_INPUT = {
  * as a failure.
  */
 export function isEmptyMeasurement(
-  measurement: { quantityUnit?: unknown; referenceUnit?: unknown } | null | undefined,
+  measurement:
+    | { quantityUnit?: unknown; referenceUnit?: unknown; quantityValue?: unknown; referenceValue?: unknown }
+    | null
+    | undefined,
 ): boolean {
-  return !measurement || !measurement.quantityUnit || !measurement.referenceUnit;
+  if (!measurement || !measurement.quantityUnit || !measurement.referenceUnit) return true;
+  // A unit with a ZERO beside it is not a Grundpreis either, and this app
+  // cannot write one: `parseUnitQuantity` refuses 0, so a measurement like
+  // `{0, "G", 0, "KG"}` rendered as a value would sit in the boxes refusing
+  // every save INCLUDING the one meant to correct it. Read as empty, the
+  // merchant simply types a real one over it.
+  return !(Number(measurement.quantityValue) > 0) || !(Number(measurement.referenceValue) > 0);
 }
 
 /**
- * A quantity: a positive number, comma or point.
+ * A quantity: a positive number, in whichever separator convention the
+ * merchant types.
  *
- * The comma is folded because a German merchant types one. Zero and negatives
- * are refused rather than passed on — "0 g per 1 kg" is not a Grundpreis, and
- * Shopify's rejection of it would arrive as a schema-level error that never
- * reaches `userErrors`.
+ * It borrows the money parser's separator rules (`parseDecimalInput`) rather
+ * than folding one comma, because this app is trilingual and the naive version
+ * has a specific, silent failure: a merchant typing `1.000` for a 1000 ml
+ * bottle gets `Number("1.000")` = **1**, the mutation stores 1 ml per 1 l, the
+ * echo matches, the save reports success, and the storefront prints a
+ * Grundpreis a thousand times too high — on the one field in this app that
+ * exists to satisfy a price-disclosure law. `1.000` is genuinely ambiguous
+ * (thousands to a German, three decimals to an American) and is REPORTED as
+ * such, exactly as `parseMoney` reports it two rows up in the same card.
+ *
+ * What it does NOT borrow is the rounding: `parseMoney` normalises to two
+ * fraction digits, which is right for francs and wrong for 0.125 kg.
+ *
+ * Zero and negatives are refused — "0 g per 1 kg" is not a Grundpreis, and
+ * Shopify's rejection would arrive as a schema-level error that never reaches
+ * `userErrors`.
  */
-export function parseUnitQuantity(raw: string): number | null {
-  const trimmed = raw.trim().replace(",", ".");
-  if (!trimmed) return null;
-  if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
+export function parseUnitQuantity(raw: string): number | "ambiguous" | null {
+  const parsed = parseDecimalInput(raw);
+  if (!parsed.ok) return parsed.error === "ambiguous" ? "ambiguous" : null;
+  if (parsed.value === null) return null;
+  const value = Number(parsed.value);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return value;
 }
 
 export interface UnitPriceFieldValues {
@@ -125,7 +167,7 @@ export interface UnitPriceFieldValues {
 export type UnitPriceDecision =
   | { kind: "clear" }
   | { kind: "set"; measurement: { quantityValue: number; quantityUnit: string; referenceValue: number; referenceUnit: string } }
-  | { kind: "invalid"; reason: "incomplete" | "value" | "unit" };
+  | { kind: "invalid"; reason: "incomplete" | "value" | "ambiguous" | "unit" | "dimension" };
 
 /**
  * The four fields turned into ONE decision.
@@ -149,9 +191,21 @@ export function decideUnitPrice(fields: UnitPriceFieldValues): UnitPriceDecision
 
   const quantityValue = parseUnitQuantity(raw[0]);
   const referenceValue = parseUnitQuantity(raw[1]);
+  // Ambiguous outranks invalid: the merchant wrote something meaningful that
+  // this app refuses to GUESS at, and telling them "not a number" would send
+  // them looking for a typo instead of a separator.
+  if (quantityValue === "ambiguous" || referenceValue === "ambiguous") {
+    return { kind: "invalid", reason: "ambiguous" };
+  }
   if (quantityValue === null || referenceValue === null) return { kind: "invalid", reason: "value" };
   if (!isUnitPriceUnit(units[0]) || !isUnitPriceUnit(units[1])) {
     return { kind: "invalid", reason: "unit" };
+  }
+  // 500 g per 1 litre is not a Grundpreis, it is two different questions.
+  // Shopify's own answer to a mismatched pair is unmeasured, so this refuses
+  // rather than finding out on a merchant's storefront.
+  if (unitDimension(units[0]) !== unitDimension(units[1])) {
+    return { kind: "invalid", reason: "dimension" };
   }
   return {
     kind: "set",

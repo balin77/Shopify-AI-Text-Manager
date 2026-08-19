@@ -566,7 +566,8 @@ export const en: Translation = {
     commerce: {
       unitPriceHeading: "Unit price",
       unitPriceHint: "For goods sold by weight or volume: the pack's total quantity and the unit the price refers to. The storefront then prints “CHF 45.80 / kg”.",
-      unitPriceUnitLabel: "Unit",
+      unitPriceContentUnit: "Total quantity unit",
+      unitPriceReferenceUnit: "Reference unit",
       unitPriceContent: "Total quantity",
       unitPriceReference: "Reference quantity",
       unitPriceShow: "Show on the storefront",
@@ -636,10 +637,12 @@ export const en: Translation = {
     // "not confirmed" is a distinct answer from "failed": only one of them
     // means the merchant should look again before retrying.
     commerceWarnings: {
-      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. Nothing was saved.",
-      unitPriceInvalid: "The unit price was not a valid quantity. Nothing was saved.",
+      unitPriceAmbiguous: "The quantity is ambiguous — write 1000 or 1,000.00 so the separator is unmistakable. The unit price was not saved.",
+      unitPriceDimension: "The two units measure different things (grams and litres, say). The unit price was not saved.",
+      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. The unit price was not saved; everything else was.",
+      unitPriceInvalid: "The unit price was not a valid quantity and was not saved; everything else was.",
       unitPriceNotConfirmed: "Shopify did not confirm the unit price. Reload to see what it holds.",
-      unitPriceNotShown: "The unit price was saved, but Shopify did not take the display switch.",
+      unitPriceNotShown: "Shopify did not take the unit price's display switch.",
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Nothing was saved.",
       priceInvalid: "A price was not a number, so it was not saved.",
       priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Reload to see what it holds.",
@@ -659,10 +662,6 @@ export const en: Translation = {
       channelsFailed: "The sales channels could not be changed.",
     },
     priceWarnings: {
-      unitPriceIncomplete: "A unit price needs all four entries — a quantity and a unit on both sides. Everything else was saved.",
-      unitPriceInvalid: "The unit price was not a valid quantity. Everything else was saved.",
-      unitPriceNotConfirmed: "Shopify did not confirm the unit price. Everything else was saved.",
-      unitPriceNotShown: "The unit price was saved, but the display switch was not.",
       priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
       priceInvalid: "The price could not be read as an amount. Everything else was saved.",
       priceEmpty: "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.",
@@ -685,7 +684,6 @@ export const en: Translation = {
     // and until it happens this comment says so rather than claiming it.
     enumLabels: {
       "unitPriceUnit.ITEM": "item",
-      "unitPriceUnit.UNKNOWN": "unknown",
       "unitPriceGroup.volume": "Volume",
       "unitPriceGroup.weight": "Weight",
       "unitPriceGroup.length": "Length",

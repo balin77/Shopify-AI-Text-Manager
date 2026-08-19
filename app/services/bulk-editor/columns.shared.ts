@@ -870,6 +870,26 @@ export type ParseMoneyResult =
  *    clears, §14).
  */
 export function parseMoney(input: string): ParseMoneyResult {
+  const parsed = parseDecimalInput(input);
+  if (!parsed.ok) return parsed;
+  if (parsed.value === null) return { ok: true, value: null };
+  return { ok: true, value: Number(parsed.value).toFixed(2) };
+}
+
+/**
+ * The SEPARATOR rules of `parseMoney`, without the money.
+ *
+ * Extracted because the unit-price quantity needs the identical
+ * de/es-vs-en decision - a merchant typing "1.000" for a 1000 ml bottle must
+ * not have it silently read as 1 - but must NOT be rounded to two decimals:
+ * 0.125 kg is a quantity, where 0.125 of a franc is not a price. Two copies of
+ * rule 3 is exactly how the ambiguity guard would come back missing from one
+ * of them.
+ *
+ * Returns the normalized value with its own precision intact, or the same
+ * three errors `parseMoney` reports.
+ */
+export function parseDecimalInput(input: string): ParseMoneyResult {
   const trimmed = input.trim();
   if (trimmed === "") return { ok: true, value: null };
 
@@ -902,7 +922,7 @@ export function parseMoney(input: string): ParseMoneyResult {
 
   const num = Number(normalized);
   if (!Number.isFinite(num)) return { ok: false, error: "invalid" };
-  return { ok: true, value: num.toFixed(2) };
+  return { ok: true, value: normalized };
 }
 
 /** Localized display form of a normalized money value (Plan §5.5): shown via

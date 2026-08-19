@@ -458,7 +458,7 @@ export function CommerceVariantsSection() {
                         priceMixed={priceMixed}
                         setPrice={setPrice}
                         mixedHint={mixedHint}
-                        unitFieldLabel={(t.unitPriceUnitLabel as string) || "Unit"}
+                        unitFieldLabel={(t.unitPriceContentUnit as string) || "Total quantity unit"}
                         unitLabel={unitLabel}
                         unitGroupLabel={unitGroupLabel}
                         disabled={saving}
@@ -471,7 +471,7 @@ export function CommerceVariantsSection() {
                         priceMixed={priceMixed}
                         setPrice={setPrice}
                         mixedHint={mixedHint}
-                        unitFieldLabel={(t.unitPriceUnitLabel as string) || "Unit"}
+                        unitFieldLabel={(t.unitPriceReferenceUnit as string) || "Reference unit"}
                         unitLabel={unitLabel}
                         unitGroupLabel={unitGroupLabel}
                         disabled={saving}
@@ -1116,10 +1116,12 @@ function UnitPriceRow({
       </Box>
       <Box minWidth="104px" maxWidth="124px">
         <Select
-          // Its OWN label, not the value field's repeated: two controls in one
-          // row carrying the identical accessible name is a screen reader
-          // reading the same words twice with no way to tell them apart. The
-          // weight row next door is laid out exactly this way.
+          // Its OWN label, and one that names WHICH unit. Repeating the value
+          // field's label put two controls in one row under the identical
+          // accessible name; a bare "Unit" made it three on the page, since
+          // the shipping weight next door carries that word too. A screen
+          // reader then reads the same word for pack quantity, reference
+          // quantity and shipping weight.
           label={unitFieldLabel}
           options={[
             // An EMPTY first entry, unlike the weight unit next door. There a

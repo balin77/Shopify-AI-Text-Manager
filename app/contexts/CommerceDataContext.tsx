@@ -475,7 +475,18 @@ export function CommerceDataProvider({
         // Phrased, like every other branch: pushing the raw code showed the
         // merchant the literal string `priceFailed`, and the two SPECIFIC
         // reasons (invalid, not confirmed) could never reach them at all.
-        collected.push(...warnings.map((code) => (t.warnings?.[code] as string) || code));
+        //
+        // NAMED, when more than one variant is being written. A bulk save that
+        // refuses one member produces a sentence with no subject — "a unit
+        // price needs all four entries" — and the merchant has no way to tell
+        // which of twelve variants it is about, or that it is about a variant
+        // at all rather than the whole save.
+        collected.push(
+          ...warnings.map((code) => {
+            const phrased = (t.warnings?.[code] as string) || code;
+            return dirtyPrices.length > 1 && variant.title ? `${variant.title}: ${phrased}` : phrased;
+          }),
+        );
       }
 
       // Grouped per VARIANT: `inventorySetQuantities` is atomic per call, so a
@@ -608,7 +619,10 @@ export function CommerceDataProvider({
       savingRef.current = false;
       setSaving(false);
     }
-    setNotices(collected);
+    // Deduped: an identical sentence repeated once per variant is a wall of
+    // the same line, and where the sentence is per-variant it now carries the
+    // title, so it is no longer identical.
+    setNotices([...new Set(collected)]);
     // Reload either way. On success it confirms; on a refused write it shows
     // the number that actually moved — and then KEEPS the merchant's input,
     // because that is exactly the case where they need it.

@@ -26,6 +26,13 @@ function SaveButton() {
   );
 }
 
+/** The notices the provider produced. They RENDER in `CommerceField`, one
+ *  component up, so a panel-only test has to read them from the context. */
+function Notices() {
+  const commerce = useCommerceData();
+  return <div data-testid="notices">{(commerce?.notices ?? []).join(" | ")}</div>;
+}
+
 const PRODUCT = "gid://shopify/Product/1";
 
 function variant(
@@ -657,7 +664,7 @@ describe("the Grundpreis in the panel", () => {
     );
     await openUnitPrice();
 
-    const quantity = (await screen.findByLabelText(/Total quantity/)) as HTMLInputElement;
+    const quantity = (await screen.findByLabelText(/Total quantity$/)) as HTMLInputElement;
     fireEvent.change(quantity, { target: { value: "250" } });
     fireEvent.click(container.querySelector("[data-testid=save]")!);
 
@@ -689,6 +696,100 @@ describe("the Grundpreis in the panel", () => {
     await waitFor(() => expect(posted().length).toBe(0));
   });
 
+  it("does not wipe a measurement the merchant never saw", async () => {
+    // The dangerous shape of this feature: on a group whose members DISAGREE
+    // the four boxes show "" — which means "unknown", not "empty". A merchant
+    // who types into one and deletes it again must send nothing.
+    withVariants([
+      variant("Weiss", "20cm", WITH_UNIT),
+      variant("Weiss", "30cm"),
+      variant("Rot", "20cm"),
+      variant("Rot", "30cm"),
+    ]);
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider productId={PRODUCT} isPrimaryLocale t={{}}>
+          <CommerceVariantsSection />
+          <SaveButton />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await pick("All Weiss");
+    await openUnitPrice();
+
+    const quantity = (await screen.findByLabelText(/Total quantity$/)) as HTMLInputElement;
+    expect(quantity.value).toBe("");
+    fireEvent.change(quantity, { target: { value: "9" } });
+    fireEvent.change(quantity, { target: { value: "" } });
+
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+    await waitFor(() => expect(posted().length).toBe(0));
+  });
+
+  it("names the variant when a group edit refuses for one member", async () => {
+    // The member with no measurement gets a partial quartet — for a
+    // Grundpreis the merchant never saw. The refusal is unavoidable; a
+    // sentence with no subject is not.
+    const list = [
+      variant("Weiss", "20cm", WITH_UNIT),
+      variant("Weiss", "30cm"),
+      variant("Rot", "20cm"),
+      variant("Rot", "30cm"),
+    ];
+    // The server's own rule, stubbed: a quartet that is neither wholly empty
+    // nor wholly filled is refused.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: { method?: string; body?: FormData }) => {
+        if (init?.method !== "POST") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true, variants: list, variantsTruncated: false,
+              channels: [], channelsTruncated: false, shopLocations: [],
+            }),
+          };
+        }
+        const sent = ["unitQuantityValue", "unitQuantityUnit", "unitReferenceValue", "unitReferenceUnit"]
+          .map((key) => String(init.body?.get(key) ?? ""));
+        const filled = sent.filter((value) => value !== "").length;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            warnings: filled > 0 && filled < 4 ? ["unitPriceIncomplete"] : [],
+          }),
+        };
+      }),
+    );
+    const { container } = render(
+      <AppProvider i18n={en}>
+        <CommerceDataProvider
+          productId={PRODUCT}
+          isPrimaryLocale
+          t={{ warnings: { unitPriceIncomplete: "needs all four" } }}
+        >
+          <CommerceVariantsSection />
+          <SaveButton />
+          <Notices />
+        </CommerceDataProvider>
+      </AppProvider>,
+    );
+    await pick("All Weiss");
+    await openUnitPrice();
+
+    // Only the reference VALUE is typed, so the member without a measurement
+    // sends one field of four.
+    fireEvent.change(await screen.findByLabelText(/Reference quantity$/), { target: { value: "2" } });
+    fireEvent.click(container.querySelector("[data-testid=save]")!);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("notices").textContent).toMatch(/Weiss \/ 30cm: needs all four/),
+    );
+  });
+
   it("clears all four when the merchant empties the boxes", async () => {
     withVariants([variant("Weiss", "20cm", WITH_UNIT)]);
     const { container } = render(
@@ -701,8 +802,8 @@ describe("the Grundpreis in the panel", () => {
     );
     await openUnitPrice();
 
-    fireEvent.change(await screen.findByLabelText(/Total quantity/), { target: { value: "" } });
-    fireEvent.change(await screen.findByLabelText(/Reference quantity/), { target: { value: "" } });
+    fireEvent.change(await screen.findByLabelText(/Total quantity$/), { target: { value: "" } });
+    fireEvent.change(await screen.findByLabelText(/Reference quantity$/), { target: { value: "" } });
     // Scoped to the disclosure: "Unit" is also the weight field's label one
     // card over, and picking by label alone reaches the wrong Select.
     const units = container.querySelectorAll("#commerce-unit-price select");
