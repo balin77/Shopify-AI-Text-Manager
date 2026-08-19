@@ -13,12 +13,19 @@
  * to `descendantsOf` in the schema, which is what makes it ONE level rather
  * than everything below (measured in Settings → Probes → Taxonomy).
  *
- * ── Why the taxonomy is not cached ──────────────────────────────────────────
- * Shopify's product taxonomy is ~10 000 categories, it is Shopify's data
- * rather than the shop's, and a merchant touches it once per product. Mirroring
- * it into Prisma would be a sync job, a staleness question and a migration for
- * something a search endpoint answers in one call. So this queries Shopify per
- * keystroke (debounced client-side) and caches nothing.
+ * ── The STRUCTURE is Shopify's, the NAMES come from a second source ─────────
+ * Which categories exist, and which sits under which, is asked live: it is
+ * Shopify's data, a merchant touches it once per product, and a search
+ * endpoint answers it in one call. What is NOT asked live is what they are
+ * CALLED, because this API only ever says it in English — measured, twice, in
+ * Settings → Probes → Taxonomy. The merchant's language comes out of
+ * `TaxonomyCategoryName`, which is Shopify's own published file after import;
+ * see [taxonomy-localization.server.ts](../services/taxonomy-localization.server.ts).
+ *
+ * A GID with no row is the signal that the table is behind, and it triggers a
+ * detached import. The response meanwhile carries the API's English name for
+ * that one entry — a real label rather than a blank, and per entry rather than
+ * per page.
  *
  * ── Why the collection list IS from the cache ───────────────────────────────
  * The opposite reasoning: it is the SHOP's data, this app already syncs it, and
@@ -37,6 +44,12 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { logger } from "~/utils/logger.server";
+import { getCachedShopLocales } from "~/utils/shop-locales-cache.server";
+import {
+  lookupLocalizedNames,
+  scheduleTaxonomyImport,
+  searchLocalizedNames,
+} from "~/services/taxonomy-localization.server";
 
 /** Enough to choose from, few enough to render in a popover. */
 const TAXONOMY_PAGE_SIZE = 20;
@@ -102,6 +115,39 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const kind = url.searchParams.get("kind") || "";
 
+  /**
+   * The language the picker speaks. The category field only ever renders in
+   * the PRIMARY locale (one value per product, so a foreign locale reads it
+   * only), which is why one locale is enough here.
+   *
+   * A FAILED lookup resolves to `[]` by contract, which reads as "no primary
+   * locale" and simply leaves everything in English — never as a wrong
+   * language. Not fatal to the request either way: the names are a layer over
+   * an answer that is already complete without them.
+   */
+  const primaryLocale = await getCachedShopLocales(admin, session.shop)
+    .then((locales) => locales.find((l) => l.primary)?.locale ?? "")
+    .catch(() => "");
+
+  /** Paint the merchant's language over what the API returned, per entry. */
+  const localize = async (nodes: TaxonomyOption[]): Promise<TaxonomyOption[]> => {
+    if (!primaryLocale || nodes.length === 0) return nodes;
+    const { byGid, missing, localized } = await lookupLocalizedNames(
+      db,
+      primaryLocale,
+      nodes.map((n) => n.id),
+    );
+    // A GID with no row means the table is behind this taxonomy release — or
+    // was never imported. That is THE trigger, and it costs nothing to notice
+    // because the query that localizes is the query that reveals it.
+    if (localized && missing.length > 0) scheduleTaxonomyImport(db, primaryLocale);
+    if (byGid.size === 0) return nodes;
+    return nodes.map((n) => {
+      const hit = byGid.get(n.id);
+      return hit ? { ...n, fullName: hit.fullName, name: hit.name } : n;
+    });
+  };
+
   try {
     if (kind === "taxonomy") {
       const search = (url.searchParams.get("q") || "").trim();
@@ -109,6 +155,33 @@ export async function loader({ request }: LoaderFunctionArgs) {
       // typing, which is a different thing from "nothing matches".
       if (search.length < MIN_SEARCH_LENGTH) {
         return json({ success: true, tooShort: true, categories: [] as TaxonomyOption[] });
+      }
+
+      // The localized search, first and by preference. Without it the search
+      // half was unusable for anyone not typing English: a German merchant
+      // types "Vasen", Shopify matches "Vases", and the answer is "no category
+      // matches that" for a category that is right there. `null` means this
+      // locale has no rows to search, which is a different thing from no
+      // matches — and then Shopify's own search below is the better answer.
+      if (primaryLocale) {
+        const localHits = await searchLocalizedNames(db, primaryLocale, search, TAXONOMY_PAGE_SIZE);
+        if (localHits) {
+          return json({
+            success: true,
+            tooShort: false,
+            categories: localHits.map((hit) => ({
+              id: hit.gid,
+              fullName: hit.fullName,
+              name: hit.name,
+              // The file carries no leaf flag. `isLeaf: false` would mark every
+              // hit "(broad)", and `true` would hide the warning where it is
+              // due — so the row DESCENDS on click and the level it opens says
+              // whether anything is below it. A search hit is a destination,
+              // not a verdict about the tree.
+              isLeaf: false,
+            })) satisfies TaxonomyOption[],
+          });
+        }
       }
 
       const response = await admin.graphql(
@@ -141,12 +214,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       return json({
         success: true,
         tooShort: false,
-        categories: nodes.map((n) => ({
-          id: n.id,
-          fullName: n.fullName || n.name,
-          name: n.name,
-          isLeaf: n.isLeaf !== false,
-        })) satisfies TaxonomyOption[],
+        categories: await localize(
+          nodes.map((n) => ({
+            id: n.id,
+            fullName: n.fullName || n.name,
+            name: n.name,
+            isLeaf: n.isLeaf !== false,
+          })),
+        ),
       });
     }
 
@@ -216,12 +291,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
         success: true,
         level: {
           parentId: parent,
-          categories: nodes.map((n) => ({
-            id: n.id,
-            fullName: n.fullName || n.name,
-            name: n.name,
-            isLeaf: n.isLeaf !== false,
-          })),
+          categories: await localize(
+            nodes.map((n) => ({
+              id: n.id,
+              fullName: n.fullName || n.name,
+              name: n.name,
+              isLeaf: n.isLeaf !== false,
+            })),
+          ),
           truncated: body.data?.taxonomy?.categories?.pageInfo?.hasNextPage === true,
         } satisfies TaxonomyLevel,
       });
