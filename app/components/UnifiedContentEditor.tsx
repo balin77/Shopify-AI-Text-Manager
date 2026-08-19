@@ -570,7 +570,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     });
   }, [fieldDefinitions, statusControl, config.contentType, selectedItem]);
 
-  const contentFields = useMemo(() => visibleFields.filter((f) => !isAttributeField(f)), [visibleFields]);
+  // Three splits, not two. The item's TEXT stays in the main card; the three
+  // fields Shopify's own admin groups under "Search engine listing" (SEO
+  // title, meta description, URL handle) get a card right below it; the
+  // merchandising attributes keep theirs at the bottom. The search-engine
+  // split is config-driven (`card: "searchEngine"`) rather than a key list,
+  // so a dynamic field that happens to be called `handle` cannot fall into
+  // it.
+  const contentFields = useMemo(
+    () => visibleFields.filter((f) => !isAttributeField(f) && f.card !== "searchEngine"),
+    [visibleFields]
+  );
+  const searchEngineFields = useMemo(
+    () => visibleFields.filter((f) => f.card === "searchEngine"),
+    [visibleFields]
+  );
   const attributeFields = useMemo(() => visibleFields.filter((f) => isAttributeField(f)), [visibleFields]);
 
   /**
@@ -1827,6 +1841,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     )}
                   </BlockStack>
                 </Card>
+
+                {/* Search engine listing — Shopify's own name for the trio of
+                    SEO title, meta description and URL handle. Directly below
+                    the text they summarise, and above the cards that describe
+                    the item rather than what it says. */}
+                {searchEngineFields.length > 0 && !isFieldsLoading && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <Card padding="400">
+                      <BlockStack gap="400">
+                        <Text as="h2" variant="headingMd">
+                          {t.content?.searchEngineListing || "Search engine listing"}
+                        </Text>
+                        {searchEngineFields.map((field) => renderEditorField(field))}
+                      </BlockStack>
+                    </Card>
+                  </div>
+                )}
 
                 {/* Variants card. No `options.length > 0` gate: a product with
                     only the default single variant has NO options (the loader

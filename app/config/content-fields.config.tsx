@@ -142,17 +142,6 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsTranslation: true,
       aiInstructionsKey: "productDescription",
     },
-    // Handle (URL slug)
-    {
-      key: "handle",
-      type: "slug",
-      label: "URL Handle",
-      translationKey: "handle",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "productHandle",
-    },
     // Product Type
     {
       key: "productType",
@@ -166,6 +155,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
     // SEO Title
     {
       key: "seoTitle",
+      card: "searchEngine",
       type: "text",
       label: "SEO Title",
       translationKey: "meta_title",
@@ -177,6 +167,7 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
     // Meta Description
     {
       key: "metaDescription",
+      card: "searchEngine",
       type: "textarea",
       label: "Meta Description",
       translationKey: "meta_description",
@@ -185,6 +176,18 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "productMetaDesc",
+    },
+    // Handle (URL slug)
+    {
+      key: "handle",
+      card: "searchEngine",
+      type: "slug",
+      label: "URL Handle",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "productHandle",
     },
     // ── §Phase 3 merchandising attributes ──────────────────────────────────
     {
@@ -320,17 +323,8 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       aiInstructionsKey: "collectionDescription",
     },
     {
-      key: "handle",
-      type: "slug",
-      label: "URL Slug",
-      translationKey: "handle",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "collectionHandle",
-    },
-    {
       key: "seoTitle",
+      card: "searchEngine",
       type: "text",
       label: "SEO Title",
       translationKey: "meta_title",
@@ -341,6 +335,7 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
     },
     {
       key: "metaDescription",
+      card: "searchEngine",
       type: "textarea",
       label: "Meta Description",
       translationKey: "meta_description",
@@ -349,6 +344,17 @@ export const COLLECTIONS_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "collectionMetaDesc",
+    },
+    {
+      key: "handle",
+      card: "searchEngine",
+      type: "slug",
+      label: "URL Slug",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "collectionHandle",
     },
     // ── §Phase 3 merchandising attributes ──────────────────────────────────
     {
@@ -397,17 +403,8 @@ const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
     aiInstructionsKey: "blogTitle",
   },
   {
-    key: "handle",
-    type: "slug",
-    label: "URL Slug",
-    translationKey: "handle",
-    supportsAI: true,
-    supportsFormatting: true,
-    supportsTranslation: true,
-    aiInstructionsKey: "blogHandle",
-  },
-  {
     key: "seoTitle",
+    card: "searchEngine",
     type: "text",
     label: "SEO Title",
     translationKey: "meta_title",
@@ -418,6 +415,7 @@ const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
   },
   {
     key: "metaDescription",
+    card: "searchEngine",
     type: "textarea",
     label: "Meta Description",
     translationKey: "meta_description",
@@ -426,6 +424,17 @@ const BLOG_CONTAINER_FIELDS: FieldDefinition[] = [
     supportsFormatting: true,
     supportsTranslation: true,
     aiInstructionsKey: "blogMetaDesc",
+  },
+  {
+    key: "handle",
+    card: "searchEngine",
+    type: "slug",
+    label: "URL Slug",
+    translationKey: "handle",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogHandle",
   },
   // A blog container's one merchandising attribute. Without it the write path
   // (`attributeInputFor("Blog", …)`) and the mutation's `templateSuffix` echo
@@ -476,17 +485,8 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
     aiInstructionsKey: "blogSummary",
   },
   {
-    key: "handle",
-    type: "slug",
-    label: "URL Slug",
-    translationKey: "handle",
-    supportsAI: true,
-    supportsFormatting: true,
-    supportsTranslation: true,
-    aiInstructionsKey: "blogHandle",
-  },
-  {
     key: "seoTitle",
+    card: "searchEngine",
     type: "text",
     label: "SEO Title",
     translationKey: "meta_title",
@@ -497,6 +497,7 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
   },
   {
     key: "metaDescription",
+    card: "searchEngine",
     type: "textarea",
     label: "Meta Description",
     translationKey: "meta_description",
@@ -505,6 +506,17 @@ const ARTICLE_FIELDS: FieldDefinition[] = [
     supportsFormatting: true,
     supportsTranslation: true,
     aiInstructionsKey: "blogMetaDesc",
+  },
+  {
+    key: "handle",
+    card: "searchEngine",
+    type: "slug",
+    label: "URL Slug",
+    translationKey: "handle",
+    supportsAI: true,
+    supportsFormatting: true,
+    supportsTranslation: true,
+    aiInstructionsKey: "blogHandle",
   },
   // ── §Phase 3 merchandising attributes ────────────────────────────────────
   {
@@ -592,17 +604,8 @@ export const PAGES_CONFIG: ContentEditorConfig = {
       aiInstructionsKey: "pageDescription",
     },
     {
-      key: "handle",
-      type: "slug",
-      label: "URL Slug",
-      translationKey: "handle",
-      supportsAI: true,
-      supportsFormatting: true,
-      supportsTranslation: true,
-      aiInstructionsKey: "pageHandle",
-    },
-    {
       key: "seoTitle",
+      card: "searchEngine",
       type: "text",
       label: "SEO Title",
       translationKey: "meta_title",
@@ -613,6 +616,7 @@ export const PAGES_CONFIG: ContentEditorConfig = {
     },
     {
       key: "metaDescription",
+      card: "searchEngine",
       type: "textarea",
       label: "Meta Description",
       translationKey: "meta_description",
@@ -621,6 +625,17 @@ export const PAGES_CONFIG: ContentEditorConfig = {
       supportsFormatting: true,
       supportsTranslation: true,
       aiInstructionsKey: "pageMetaDesc",
+    },
+    {
+      key: "handle",
+      card: "searchEngine",
+      type: "slug",
+      label: "URL Slug",
+      translationKey: "handle",
+      supportsAI: true,
+      supportsFormatting: true,
+      supportsTranslation: true,
+      aiInstructionsKey: "pageHandle",
     },
     // ── §Phase 3 merchandising attributes ──────────────────────────────────
     IS_PUBLISHED_FIELD,

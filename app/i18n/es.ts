@@ -648,6 +648,7 @@ export const es: Translation = {
       priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Todo lo demás se guardó.",
       priceFailed: "El precio no se pudo guardar. Todo lo demás se guardó.",
     },
+    searchEngineListing: "Listado en el motor de búsqueda",
     attributesCardTitle: "Detalles",
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",

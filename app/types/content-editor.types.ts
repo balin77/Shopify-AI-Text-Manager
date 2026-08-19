@@ -302,9 +302,23 @@ export interface FieldRenderProps {
   t?: TranslationStrings;
 }
 
+/**
+ * Which card a field renders in.
+ *
+ * `searchEngine` collects the three fields Shopify's own admin groups under
+ * "Search engine listing" (SEO title, meta description, URL handle) into a
+ * card of their own, below the item's text. Everything else defaults to the
+ * main content card; merchandising attributes are routed separately by
+ * `isAttributeField`, from their marks rather than from this one.
+ */
+export type FieldCard = 'main' | 'searchEngine';
+
 export interface FieldDefinition {
   /** Unique key for this field */
   key: string;
+
+  /** Which card this field renders in (default: "main") */
+  card?: FieldCard;
 
   /** Field type determines the UI component */
   type: FieldType;
