@@ -785,7 +785,11 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   // Which definitions are offered follows `metaobjectCreatability`: since
   // PLAN_METAOBJECT_TAXONOMY_CREATE Phase 2 that includes the ones whose
   // required fields are taxonomy references, not just plain text.
-  createSupport: { resources: ["metaobject"] },
+  // `fromActionBar` because the item list here holds TYPES while create makes
+  // an ENTRY: a "+" above a list of types reads as "add a type", which this app
+  // cannot do. The action bar sits above the entry cards, where the new entry
+  // actually turns up.
+  createSupport: { resources: ["metaobject"], fromActionBar: true },
   resourceType: "Metaobject",
   displayName: "Metaobjects",
   displayNameSingular: "Metaobject Type",

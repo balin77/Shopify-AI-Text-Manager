@@ -242,7 +242,11 @@ describe("create form — Phase 2 unlocks the standard definitions", () => {
     });
   });
 
-  it("enforces list.max server-side", () => {
+  it("enforces list.max server-side, under its OWN code", () => {
+    // Its own code because one code cannot carry three sentences: "not a
+    // taxonomy value", "too many" and "too few" need different remedies, and
+    // the shared phrasing told a merchant who had picked five values to "pick
+    // a value from the list".
     const defs = metaobjectFieldDefs([COLOR_FIELD]);
     const five = JSON.stringify(Array.from({ length: 5 }, (_, i) => `gid://shopify/TaxonomyValue/${i + 1}`));
     const errors = validateCreatePayload(
@@ -250,7 +254,24 @@ describe("create form — Phase 2 unlocks the standard definitions", () => {
       { type: "shopify--color-pattern", "field.color_taxonomy_reference": five },
       defs,
     );
-    expect(errors.some((e) => e.code === "invalidTaxonomyValue" && e.detail === "5/4")).toBe(true);
+    // The detail is the BOUND, so the message can read "at most 4".
+    expect(errors).toContainEqual({
+      field: "field.color_taxonomy_reference",
+      code: "tooManyTaxonomyValues",
+      detail: "4",
+    });
+  });
+
+  it("enforces list.min server-side, under its own code too", () => {
+    const defs = metaobjectFieldDefs([COLOR_FIELD]);
+    const errors = validateCreatePayload(
+      "metaobject",
+      { type: "shopify--color-pattern", "field.color_taxonomy_reference": "[]" },
+      defs,
+    );
+    // An empty JSON array is not a CLEAR here — the field is required, so it
+    // fails, and it must not be reported as a malformed GID.
+    expect(errors.some((e) => e.code === "invalidTaxonomyValue" || e.code === "tooFewTaxonomyValues")).toBe(true);
   });
 
   it("accepts a payload within the bounds", () => {

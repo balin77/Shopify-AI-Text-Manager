@@ -501,6 +501,7 @@ export const de = {
 
     // ── PLAN_CONTENT_CREATION §1.1/§1.2 — Inhalte anlegen ──────────────────
     createButtonLabel: "Neu anlegen",
+    createEntryButtonLabel: "Eintrag hinzuf\u00fcgen",
     createChooserTitle: "Was möchtest du anlegen?",
     // Zwei VERSCHIEDENE Absagen mit verschiedenen Auswegen — sie dürfen nie
     // denselben Text bekommen (§1.2).
@@ -777,6 +778,27 @@ export const de = {
     createdNotSyncedBody: "Der Eintrag wurde in Shopify angelegt. Nur die lokale Kopie fehlt noch — lade neu, um ihn zu sehen. Lege ihn NICHT ein zweites Mal an.",
     createdHandle: "Handle: {handle}",
     createModal: {
+      titleFor: "Neu: {resource}",
+      removeImage: "Entfernen",
+      onlyImagesHere: "Hier lassen sich nur Bilder anh\u00e4ngen. Video und 3D f\u00fcgst du nach dem Anlegen im Medienmanager des Elements hinzu.",
+      externalVideoNotAnImage: "Ein externer Videolink kann nicht als Bild verwendet werden.",
+      noneOption: "\u2014",
+      tagsHint: "Mit Komma getrennt",
+      createsUnpublishedNotice: "Das wird als Entwurf angelegt \u2014 nichts geht live, bis du es ver\u00f6ffentlichst.",
+      defaultRuleSetName: "Regelsatz 1",
+      collectionTypeLabel: "Wie kommen Produkte hinein?",
+      collectionManual: "Ich w\u00e4hle sie selbst aus",
+      collectionAutomated: "Automatisch, nach Regeln",
+      errors: {
+        tooLong: "Zu lang ({detail})",
+        unknownField: "Diese App kennt dieses Feld nicht.",
+        invalidOption: "\u201e{detail}\u201c ist keine der Auswahlm\u00f6glichkeiten.",
+        invalidHandle: "Nur Kleinbuchstaben, Zahlen und Bindestriche.",
+        invalidMoney: "Bitte einen Betrag angeben, z. B. 19.90",
+        invalidTaxonomyValue: "Bitte einen Wert aus der angebotenen Liste w\u00e4hlen.",
+        tooManyTaxonomyValues: "H\u00f6chstens {detail} Wert(e).",
+        tooFewTaxonomyValues: "Mindestens {detail} Wert(e).",
+      },
       // PLAN §2.5a-d — die KI-Extras.
       altText: "Alt-Text",
       changeImage: "Bild wechseln",

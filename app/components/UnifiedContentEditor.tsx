@@ -41,7 +41,7 @@ import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "rea
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
 import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
-import { SearchIcon, ChevronLeftIcon, ChevronRightIcon } from "@shopify/polaris-icons";
+import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
 import { UnifiedFieldRenderer } from "./UnifiedFieldRenderer";
@@ -1212,6 +1212,12 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // on the desktop list and creating is unreachable on a phone.
       onAddItem: createResources.length > 0 ? stableAddItem : null,
       addDisabledReason: createDisabledReason,
+      // The mobile mirror said `Add ${resourceName.singular}` in bare English,
+      // which on this tab named "Metaobject Type" -- the one object this app
+      // cannot create. It takes the same label the desktop bar shows.
+      addLabel: config.createSupport?.fromActionBar
+        ? t.content?.createEntryButtonLabel
+        : t.content?.createButtonLabel,
       t: {
         searchPlaceholder: t.content?.searchPlaceholder,
         noResults: t.content?.noResults || "No items found",
@@ -1351,7 +1357,11 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           showThumbnails={!hideItemListImages}
           showCategoryBadge={showItemListCategoryBadge}
           planLimit={finalPlanLimit}
-          showAddButton={createResources.length > 0}
+          // Suppressed where the ACTION BAR carries create: the config comment
+          // argues that a "+" over a list of TYPES reads as "add a type", and
+          // leaving it standing next to the new button would have left exactly
+          // the click that lands in the wrong form.
+          showAddButton={createResources.length > 0 && !config.createSupport?.fromActionBar}
           onAddItem={handleAddItem}
           // Visible-but-disabled with the reason, the same as the mobile path.
           // Labelling it without disabling it let a merchant fill in a whole
@@ -1705,6 +1715,24 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           optionLabels={(t.content?.enumLabels ?? {}) as Record<string, string>}
                           t={(t.content?.statusToggle ?? {}) as Record<string, string>}
                         />
+                      )}
+                      {/* Create, where the item list does not list what gets
+                          created — see `createSupport.fromActionBar`. It calls
+                          the SAME `handleAddItem` as the "+" above the list, so
+                          the resource chooser and the prefill still apply and
+                          there is no second create path. */}
+                      {config.createSupport?.fromActionBar && createResources.length > 0 && (
+                        <DisabledActionTooltip hint={createDisabledReason ?? undefined}>
+                          <Button
+                            size="slim"
+                            variant="primary"
+                            icon={PlusIcon}
+                            disabled={!!createDisabledReason}
+                            onClick={handleAddItem}
+                          >
+                            {t.content?.createEntryButtonLabel || "Add entry"}
+                          </Button>
+                        </DisabledActionTooltip>
                       )}
                       {selectedItem && resourceOfItem(selectedItem.id) !== null && (
                         <>
@@ -2431,6 +2459,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           t={{
             ...(t.content?.createModal ?? {}),
             rules: t.collectionRules,
+            // The modal titles itself "New {resource}". It used to interpolate
+            // the config's own slug, which is an English word on every locale;
+            // the chooser already carries translated resource names, so the
+            // title reads from the SAME block rather than a second one.
+            resourceLabel: (t.content?.createResourceLabels as Record<string, string> | undefined)?.[
+              createItem.openResource
+            ],
+            // The metaobject field controls (the taxonomy picker) live under
+            // `content`, not under `createModal`: the ENTRY editor renders the
+            // same controls and the strings must not exist twice.
+            content: t.content as unknown as Record<string, string>,
             // Same "one block, two surfaces" rule as the rule builder above:
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.
