@@ -224,7 +224,7 @@ export const es: Translation = {
     metaobjectEntryColorStorefrontNote: "Este color es tambi\u00e9n el swatch que tu tienda muestra en los productos que usan este valor de opci\u00f3n \u2014 medido, no supuesto.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Ningún campo de esta entrada se puede editar aquí.",
-    metaobjectEntryNoTranslatableFields: "Esta entrada no tiene campos traducibles.",
+    metaobjectEntryNoTranslatableFields: "Ning\u00fan campo de esta entrada se puede traducir aqu\u00ed \u2014 ed\u00edtalo en el panel de Shopify.",
     metaobjectEntryUnsupportedTitle: "No editable aquí",
     metaobjectEntryUnsupportedHint: "Esta aplicación no tiene editor para estos tipos de campo. Edítalos en el admin de Shopify.",
     metaobjectEntryRichTextHint: "El texto enriquecido solo se muestra — edítalo en el admin de Shopify.",

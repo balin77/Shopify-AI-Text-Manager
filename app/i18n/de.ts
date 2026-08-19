@@ -223,7 +223,7 @@ export const de = {
     metaobjectEntryColorStorefrontNote: "Diese Farbe ist auch der Swatch, den Ihr Shop bei Produkten mit diesem Optionswert anzeigt \u2014 gemessen, nicht angenommen.",
     metaobjectEntryHandle: "Handle",
     metaobjectEntryNoEditableFields: "Kein Feld dieses Eintrags kann hier bearbeitet werden.",
-    metaobjectEntryNoTranslatableFields: "Dieser Eintrag hat keine \u00fcbersetzbaren Felder.",
+    metaobjectEntryNoTranslatableFields: "Kein Feld dieses Eintrags l\u00e4sst sich hier \u00fcbersetzen \u2014 bearbeite es im Shopify-Adminbereich.",
     metaobjectEntryUnsupportedTitle: "Nicht hier bearbeitbar",
     metaobjectEntryUnsupportedHint: "Diese Felder haben in dieser App keinen Editor. Sie im Shopify-Admin bearbeiten.",
     metaobjectEntryRichTextHint: "Rich-Text wird nur angezeigt — im Shopify-Admin bearbeiten.",
