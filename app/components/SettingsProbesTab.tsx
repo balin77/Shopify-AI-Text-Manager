@@ -5,13 +5,15 @@ import { SettingsPageSpeedProbeTab } from "./SettingsPageSpeedProbeTab";
 import { SettingsCollectionModelProbeTab } from "./SettingsCollectionModelProbeTab";
 import { SettingsMetaobjectProbeTab } from "./SettingsMetaobjectProbeTab";
 import { SettingsUnitPriceProbeTab } from "./SettingsUnitPriceProbeTab";
+import { SettingsTaxonomyProbeTab } from "./SettingsTaxonomyProbeTab";
 
 export type ProbeSubTab =
   | "translationprobe"
   | "pagespeedprobe"
   | "collectionprobe"
   | "metaobjectprobe"
-  | "unitpriceprobe";
+  | "unitpriceprobe"
+  | "taxonomyprobe";
 
 interface Props {
   /** Same per-probe gates as before — one flag per sub-tab, not one for the group. */
@@ -20,6 +22,7 @@ interface Props {
   showCollectionProbe: boolean;
   showMetaobjectProbe: boolean;
   showUnitPriceProbe: boolean;
+  showTaxonomyProbe: boolean;
   initialSubTab?: ProbeSubTab;
 }
 
@@ -41,6 +44,7 @@ export function SettingsProbesTab({
   showCollectionProbe,
   showMetaobjectProbe,
   showUnitPriceProbe,
+  showTaxonomyProbe,
   initialSubTab,
 }: Props) {
   const subTabs: { id: ProbeSubTab; label: string }[] = [
@@ -49,6 +53,7 @@ export function SettingsProbesTab({
     ...(showCollectionProbe ? [{ id: "collectionprobe" as ProbeSubTab, label: "Collection Model" }] : []),
     ...(showMetaobjectProbe ? [{ id: "metaobjectprobe" as ProbeSubTab, label: "Metaobjects" }] : []),
     ...(showUnitPriceProbe ? [{ id: "unitpriceprobe" as ProbeSubTab, label: "Unit price" }] : []),
+    ...(showTaxonomyProbe ? [{ id: "taxonomyprobe" as ProbeSubTab, label: "Taxonomy" }] : []),
   ];
 
   // Hooks must run unconditionally, so the fallback tolerates an empty list and
@@ -112,6 +117,9 @@ export function SettingsProbesTab({
 
       {/* Unit-price probe — is the Grundpreis writable at all? */}
       {selected === "unitpriceprobe" && showUnitPriceProbe && <SettingsUnitPriceProbeTab />}
+
+      {/* Taxonomy probe — what the category picker can be built on. */}
+      {selected === "taxonomyprobe" && showTaxonomyProbe && <SettingsTaxonomyProbeTab />}
     </BlockStack>
   );
 }
