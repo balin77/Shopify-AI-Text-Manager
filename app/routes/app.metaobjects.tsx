@@ -8,7 +8,7 @@
  * entry, with every field this app can honestly edit, a delete button that says
  * what it would cost, and a swatch where the type describes a colour.
  *
- * Three defects this page carried are fixed here rather than worked around:
+ * Four defects this page carried are fixed here rather than worked around:
  *
  * - Only the first 25 entries of a type were ever shown while the header said
  *   how many there really are: the API accepted `page`/`limit`/`search` from the
@@ -20,6 +20,16 @@
  *   case jumping to it would land on nothing and the banner says so instead.
  * - The type row offered Delete and Duplicate. A type is not a deletable
  *   object; the buttons are gone from it and the delete lives per entry.
+ * - The entries stood in their cards and their COLOURS stood somewhere else:
+ *   a colour, a file reference and a taxonomy reference carry
+ *   `translationKey: "" + supportsTranslation: false` -- one value per SHOP,
+ *   not per locale -- which is the exact shape `isAttributeField` reads as a
+ *   merchandising attribute, so the editor routed them into the page-wide
+ *   "Details" card at the bottom. The page then showed the entries and, far
+ *   below them, a flat list of every entry's colour. `groupId` now vetoes that
+ *   routing (content-attributes.shared.ts): a field that names a group renders
+ *   in that group's card, and the header swatch below finally finds a control
+ *   to open.
  *
  * `?select=` accepts an ENTRY GID and resolves it to its type SERVER-side
  * (§8): the client list only holds types, so an entry id matched nothing and
@@ -484,7 +494,10 @@ export default function MetaobjectsPage() {
           : null;
 
       // The COLOUR control moves into the card header, where the dot already
-      // is. Picked out BY KEY, never by position: the field order follows the
+      // is. It is in `rendered` at all only because a grouped field is never
+      // read as a merchandising attribute -- while it was, this lookup found
+      // nothing on every entry and the dot was a picture with no control
+      // behind it. Picked out BY KEY, never by position: the field order follows the
       // definition and an index would silently grab the wrong control the
       // moment a merchant reorders their definition. It is only lifted while
       // it is actually editable — in a foreign locale or on a refused
@@ -565,8 +578,11 @@ export default function MetaobjectsPage() {
       totalCount: loaded.pagination.totalCount,
       totalPages: loaded.pagination.totalPages,
       search: loaded.pagination.search ?? entrySearch,
+      // The strip pages ENTRIES here. Its default noun is "fields", which on
+      // this page counted entries and named their parts.
+      noun: t.content?.metaobjectEntriesNoun,
     };
-  }, [loaded, entrySearch]);
+  }, [loaded, entrySearch, t]);
 
   // Show loader error
   useEffect(() => {
@@ -609,6 +625,7 @@ export default function MetaobjectsPage() {
           isFieldsLoading={entriesLoading}
           fieldsReadOnly={writeAccess === "readOnly"}
           fieldPagination={fieldPagination}
+          fieldSearchPlaceholder={t.content?.metaobjectsSearchEntries}
           onFieldPageChange={(page) => {
             // An explicit page change outranks a focus: the merchant is
             // browsing now, and re-snapping to the focused entry would make the

@@ -844,8 +844,6 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
     const metaobjectType = String((item as { type?: string }).type ?? "");
 
     return (item.metaobjects as MetaobjectEntry[]).flatMap((metaobj) => {
-      const entryTitle =
-        metaobj.displayName || metaobj.handle || metaobj.id.split("/").pop() || metaobj.id;
       return metaobjectFieldSpecs(metaobj as MetaobjectEntryLike, definitionFields)
         // `unsupported` fields get NO control — the card names them with their
         // type instead, because a field that silently disappears looks like a
@@ -862,12 +860,15 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
           supportsFormatting: false,
           supportsTranslation: isTranslatableMetaobjectFieldType(spec.fieldType),
           multiline: spec.role === "textarea" ? 4 : undefined,
-          helpText:
-            spec.role === "list"
-              ? `${entryTitle} — separate values with |`
-              : spec.role === "richText"
-                ? `${entryTitle} — rich text, read-only here`
-                : entryTitle,
+          // The entry's NAME is not a help text any more: every field of an
+          // entry renders inside that entry's card, which carries the name in
+          // its heading. Repeating it under each control was what made the
+          // fields findable while they were a flat wall of inputs — under the
+          // heading it only says the same thing twice. What stays is the one
+          // hint that is about the FIELD: how a list is separated. The rich
+          // text control writes its own note, and the other three controls
+          // never rendered a help text at all.
+          helpText: spec.role === "list" ? "separate values with |" : undefined,
           // Three types need their own control rather than a text box. The
           // closure is built HERE because this is the only place that has both
           // the field's Shopify type and the item's cached file previews.

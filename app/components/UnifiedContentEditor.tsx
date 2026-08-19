@@ -155,6 +155,17 @@ interface UnifiedContentEditorProps {
     totalCount: number;
     totalPages: number;
     search: string;
+    /**
+     * What is being paged, already translated and plural — "fields" when the
+     * caller says nothing.
+     *
+     * The theme pages really do page FIELDS. The metaobjects tab pages ENTRIES
+     * and each entry carries several fields, so the strip counted one thing and
+     * named another: "Showing 1-25 of 40 fields" over a list of forty entries,
+     * on the very page whose entries were already hard enough to tell from
+     * their details.
+     */
+    noun?: string;
   } | null;
 
   /** Optional: Handler for field page changes */
@@ -162,6 +173,9 @@ interface UnifiedContentEditorProps {
 
   /** Optional: Handler for field search */
   onFieldSearch?: (search: string) => void;
+
+  /** Placeholder for the search box above the fields — same reason as `noun`. */
+  fieldSearchPlaceholder?: string;
 
   /** Optional: Loading state for field pagination */
   isFieldsLoading?: boolean;
@@ -311,6 +325,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     apiVersion,
     planLimit,
     fieldPagination,
+    fieldSearchPlaceholder,
     onFieldPageChange,
     onFieldSearch,
     isFieldsLoading = false,
@@ -1778,7 +1793,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           onChange={(value) => {
                             setFieldSearchInput(value);
                           }}
-                          placeholder={t.content?.searchFields || "Search fields..."}
+                          placeholder={fieldSearchPlaceholder || t.content?.searchFields || "Search fields..."}
                           autoComplete="off"
                           prefix={<Icon source={SearchIcon} />}
                           clearButton
@@ -1809,7 +1824,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             <Text as="p" variant="bodySm" tone="subdued">
                               {t.content?.showingFields || "Showing"} {((fieldPagination.page - 1) * fieldPagination.limit) + 1}-
                               {Math.min(fieldPagination.page * fieldPagination.limit, fieldPagination.totalCount)} {t.content?.of || "of"}{" "}
-                              {fieldPagination.totalCount} {t.content?.fields || "fields"}
+                              {fieldPagination.totalCount} {fieldPagination.noun || t.content?.fields || "fields"}
                               {fieldPagination.search && (
                                 <> ({t.content?.filtered || "filtered"})</>
                               )}

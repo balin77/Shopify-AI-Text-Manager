@@ -33,13 +33,26 @@ export type AttributeResource = "Page" | "Blog" | "Article" | "Collection";
  * `templateSuffix` are `type: "text"` like a title is, and routing on type
  * would either miss them (leaving them without the not-synced lock and the
  * not-translatable notice the other four get) or swallow every text field in
- * the app. `translationKey: ""` plus `supportsTranslation: false` is true of
- * exactly these seven fields and of nothing else in the repo.
+ * the app.
+ *
+ * `groupId` is the third mark and it is a VETO, because the two above stopped
+ * being unique to these seven fields: a metaobject entry's colour, file
+ * reference and taxonomy reference carry `translationKey: ""` +
+ * `supportsTranslation: false` for a completely different reason — they hold
+ * one value per shop rather than one per locale. Read as attributes they were
+ * lifted out of their entry's card and stacked in the page-wide "Details" card
+ * at the bottom, so the metaobjects tab showed the entries and, far below them,
+ * a flat list of their colours with nothing but a help text saying which colour
+ * belonged to which entry. A field that names a group belongs to THAT group's
+ * card; where it renders is the group's business, and the merchandising
+ * attributes name no group.
  */
 export function isAttributeField(field: {
   translationKey?: string;
   supportsTranslation?: boolean;
+  groupId?: string;
 }): boolean {
+  if (field.groupId) return false;
   return field.supportsTranslation === false && !field.translationKey;
 }
 

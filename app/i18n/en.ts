@@ -214,6 +214,11 @@ export const en: Translation = {
     metaobjects: "Metaobjects",
     metaobjectsDescription: "Manage and translate custom metaobjects",
     metaobjectsNoEntries: "This metaobject type has no entries to display.",
+    // The editor's field strip pages ENTRIES here, not fields — one entry
+    // carries several of them, so counting entries and saying "fields" named
+    // the wrong thing on the one page where that distinction is the point.
+    metaobjectEntriesNoun: "entries",
+    metaobjectsSearchEntries: "Search entries...",
     // PLAN_METAOBJECTS_EDITOR — the entry card
     metaobjectDeleteInUse: "Something in your shop still references this entry, so Shopify will not delete it. Remove the reference there first.",
     metaobjectEntryEditColor: "Change colour",

@@ -211,6 +211,8 @@ export const de = {
     metaobjects: "Metaobjekte",
     metaobjectsDescription: "Verwalten und übersetzen Sie benutzerdefinierte Metaobjekte",
     metaobjectsNoEntries: "Dieser Metaobjekt-Typ hat keine Einträge zum Anzeigen.",
+    metaobjectEntriesNoun: "Einträge",
+    metaobjectsSearchEntries: "Einträge durchsuchen...",
     // PLAN_METAOBJECTS_EDITOR — die Eintragskarte
     metaobjectDeleteInUse: "Etwas in Ihrem Shop verweist noch auf diesen Eintrag, deshalb l\u00f6scht Shopify ihn nicht. Entfernen Sie den Verweis zuerst dort.",
     metaobjectEntryEditColor: "Farbe \u00e4ndern",
