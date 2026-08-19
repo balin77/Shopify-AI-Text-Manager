@@ -2166,6 +2166,18 @@ export const es: Translation = {
       // PLAN_MARKUP_ACTIVATION §1.2 — paso 3. Hasta 2026-08 la activación estaba
       // ARRIBA del todo en esta página, es decir, en el orden en el que se
       // comete el error antes de poder verlo.
+      // PLAN_MARKUP_ACTIVATION §3.2 — el hallazgo de los vídeos de galería.
+      // Aparece solo cuando la comprobación por lotes se ha ejecutado.
+      galleryVideos: {
+        failed: "La comprobación de vídeos de galería no pudo ejecutarse esta vez (Shopify rechazó la consulta). La próxima ejecución lo intenta de nuevo.",
+        none: "No se encontraron vídeos de galería ({variants} variantes comprobadas).",
+        found: "Productos con vídeos de galería: {products} — de ellos sin fecha: {missing}.",
+        fix: "Sin fecha no hay resultado enriquecido de vídeo. Define en el producto el metacampo **custom.video_upload_date** (tipo \"fecha\") y el vídeo cuenta.",
+        vimeo: "{count} de ellos tienen al menos un vídeo de Vimeo — para esos no se genera ningún marcado, y una fecha no cambia nada.",
+        capped: "La comprobación no alcanzó todo el catálogo — puede haber más.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · fecha definida",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · falta la fecha",
+      },
       activation: {
         openSwitches: "Abrir interruptores",
         summary: {

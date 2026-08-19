@@ -2172,6 +2172,18 @@ export const en: Translation = {
       // PLAN_MARKUP_ACTIVATION §1.2 — step 3. Activation sat at the very TOP of
       // this page until 2026-08, i.e. in the order in which the mistake is made
       // before it can be seen.
+      // PLAN_MARKUP_ACTIVATION §3.2 — the gallery-video finding. Appears only
+      // once the batch check has run; without it just the general note above.
+      galleryVideos: {
+        failed: "The gallery-video check could not run this time (Shopify refused the query). The next run tries again.",
+        none: "No gallery videos found ({variants} variants checked).",
+        found: "Products with gallery videos: {products} — of those without a date: {missing}.",
+        fix: "Without a date there is no video rich result. Set the product metafield **custom.video_upload_date** (type \"date\") and the video counts.",
+        vimeo: "{count} of them carry at least one Vimeo video — no markup is produced for those at all, and a date changes nothing.",
+        capped: "The check did not reach the whole catalog — there may be more.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · date set",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · date missing",
+      },
       activation: {
         openSwitches: "Open switches",
         summary: {

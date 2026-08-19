@@ -2172,6 +2172,19 @@ export const de = {
       // PLAN_MARKUP_ACTIVATION §1.2 — Schritt 3. Die Aktivierung stand bis
       // 2026-08 GANZ OBEN auf dieser Seite, also in der Reihenfolge, in der man
       // den Fehler macht, bevor man ihn sehen kann.
+      // PLAN_MARKUP_ACTIVATION §3.2 — der Befund zu den Galerie-Videos. Erscheint
+      // erst, wenn die Batch-Prüfung gelaufen ist; ohne sie steht nur der
+      // allgemeine Hinweis darüber.
+      galleryVideos: {
+        failed: "Die Prüfung der Galerie-Videos konnte diesmal nicht durchgeführt werden (Shopify hat die Abfrage abgelehnt). Der nächste Durchlauf versucht es erneut.",
+        none: "Keine Galerie-Videos gefunden ({variants} Varianten geprüft).",
+        found: "Produkte mit Galerie-Videos: {products} — davon ohne Datum: {missing}.",
+        fix: "Ohne Datum entsteht kein Video-Rich-Result. Setze am Produkt das Metafeld **custom.video_upload_date** (Typ „Datum\"), dann zählt das Video.",
+        vimeo: "Bei {count} davon liegt mindestens ein Vimeo-Video — dafür wird gar kein Markup erzeugt, ein Datum ändert daran nichts.",
+        capped: "Die Prüfung hat nicht den ganzen Katalog erreicht — es können mehr sein.",
+        rowOk: "{youtube} YouTube, {vimeo} Vimeo · Datum gesetzt",
+        rowMissing: "{youtube} YouTube, {vimeo} Vimeo · Datum fehlt",
+      },
       activation: {
         openSwitches: "Schalter öffnen",
         summary: {

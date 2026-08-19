@@ -572,6 +572,16 @@ export default function SeoStructuredData() {
   );
   const hintCopy = (s as any).hints as Record<string, string>;
   const act = (s as any).activation as Record<string, any>;
+  const gv = (s as any).galleryVideos as Record<string, string>;
+  /**
+   * The sweep that rode along on the batch check — see JsonLdAuditAggregate.
+   * `undefined` (never checked, or a task result from before it existed) and
+   * `null` (the sweep ran and was refused) are kept APART on purpose: the first
+   * is answered by pressing the button, the second is not, and a shop whose
+   * sweep throttles every time would otherwise see the pre-feature page forever
+   * with the failure only in a log line.
+   */
+  const galleryVideos = jsonLdAudit ? jsonLdAudit.galleryVideos : undefined;
 
   // §1.2 — the gate. `measured` is deliberately strict: no crawl at all AND a
   // snapshot whose jsonLdTypes column is empty everywhere both count as "not
@@ -1212,7 +1222,10 @@ export default function SeoStructuredData() {
         )}
 
         {/* Step 2 — whether the CATALOG carries the data a rich result needs.
-            Reads the DB cache, never a live page. */}
+            The JSON-LD half reads the DB cache; the gallery-video half of the
+            same batch check is a bounded live Admin sweep, because the two
+            metafields it needs are mirrored nowhere. Neither reads a live PAGE
+            — that is step 1's job. */}
         {step === "data" && (
           <BlockStack gap="400">
           {/* 3. What you see below (preview intro + schema types) */}
@@ -1249,13 +1262,101 @@ export default function SeoStructuredData() {
                     VideoObject Google reports as invalid and never turns into a
                     rich result — and the app cannot fill the date for it, since
                     a URL entry has no File record. The one-metafield fix is the
-                    whole point of saying it here. */}
-                <Banner tone="info">
-                  <Text as="p" variant="bodySm">
-                    {emphasize((s as any).schemaVideoDateNote as string)}
+                    whole point of saying it here.
+
+                    Three states, and the first two must not be confused: the
+                    check has never run (or its sweep failed) ⇒ the general note
+                    only; it ran and found none ⇒ say so and stop; it found some
+                    ⇒ name the products. `galleryVideos === undefined` is an old
+                    task result from before this existed, `null` a sweep that was
+                    throttled or refused — neither is "no gallery videos". */}
+                {!galleryVideos ? (
+                  <BlockStack gap="100">
+                    <Banner tone="info">
+                      <Text as="p" variant="bodySm">
+                        {emphasize((s as any).schemaVideoDateNote as string)}
+                      </Text>
+                    </Banner>
+                    {/* `null` means the sweep RAN and was refused — a state the
+                        button cannot fix by being pressed again, so it must not
+                        look like "never checked". */}
+                    {galleryVideos === null && (
+                      <Text as="p" variant="bodySm" tone="subdued">{gv.failed as string}</Text>
+                    )}
+                  </BlockStack>
+                ) : galleryVideos.totalProducts === 0 ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(gv.none as string).replace(
+                      "{variants}",
+                      String(galleryVideos.scannedVariants),
+                    )}
+                    {/* A sweep that broke off part-way found nothing SO FAR —
+                        which is not the same as nothing being there. */}
+                    {galleryVideos.capped ? ` ${gv.capped as string}` : ""}
                   </Text>
-                </Banner>
-                <Text as="p" variant="bodySm" tone="subdued">
+                ) : (
+                  <Banner tone={galleryVideos.missingDate > 0 ? "warning" : "info"}>
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodyMd" fontWeight="semibold">
+                        {(gv.found as string)
+                          .replace("{products}", String(galleryVideos.totalProducts))
+                          .replace("{missing}", String(galleryVideos.missingDate))}
+                      </Text>
+                      {galleryVideos.missingDate > 0 && (
+                        <Text as="p" variant="bodySm">{emphasize(gv.fix as string)}</Text>
+                      )}
+                      {/* A Vimeo gallery video produces no markup at all, so a
+                          date would not help it — said whenever one is present,
+                          not only when a product has nothing else, or a product
+                          with one YouTube and one Vimeo video reads as fine. */}
+                      {galleryVideos.withVimeo > 0 && (
+                        <Text as="p" variant="bodySm">
+                          {(gv.vimeo as string).replace(
+                            "{count}",
+                            String(galleryVideos.withVimeo),
+                          )}
+                        </Text>
+                      )}
+                      {galleryVideos.capped && (
+                        <Text as="p" variant="bodySm" tone="subdued">{gv.capped as string}</Text>
+                      )}
+                      <BlockStack gap="050">
+                        {galleryVideos.products.map((prod) => (
+                          <InlineStack key={prod.id} gap="200" blockAlign="center" wrap>
+                            <Button
+                              variant="plain"
+                              onClick={() => openBatchItemInEditor("product", prod.id)}
+                            >
+                              {prod.title}
+                            </Button>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              {(prod.hasUploadDate ? (gv.rowOk as string) : (gv.rowMissing as string))
+                                .replace("{youtube}", String(prod.youtube))
+                                .replace("{vimeo}", String(prod.vimeo))}
+                            </Text>
+                          </InlineStack>
+                        ))}
+                        {galleryVideos.totalProducts > galleryVideos.products.length && (
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {b.moreItems.replace(
+                              "{count}",
+                              String(galleryVideos.totalProducts - galleryVideos.products.length),
+                            )}
+                          </Text>
+                        )}
+                      </BlockStack>
+                      {/* A merchant who fixed the products and did not re-run
+                          the check would otherwise read a stale list as current. */}
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {b.lastChecked.replace(
+                          "{time}",
+                          new Date(galleryVideos.generatedAt).toLocaleString(),
+                        )}
+                      </Text>
+                    </BlockStack>
+                  </Banner>
+                )}
+                                <Text as="p" variant="bodySm" tone="subdued">
                   {emphasize((s as any).schemaFaqNote as string)}
                 </Text>
               </BlockStack>

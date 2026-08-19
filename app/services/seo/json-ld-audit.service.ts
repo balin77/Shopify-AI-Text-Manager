@@ -38,6 +38,7 @@ import {
   type JsonLdWarningCode,
 } from "../structured-data.service";
 import { MAX_AUDIT_ITEMS_PER_TYPE, MAX_PROBLEM_BUCKET_ITEMS } from "./audit.service";
+import type { GalleryVideoAudit } from "./gallery-video-audit.server";
 import type { MarkupTypeStat } from "./markup-activation.shared";
 import { loadCrawlMarkupPages } from "./crawl-markup-rows.server";
 
@@ -70,6 +71,17 @@ export interface JsonLdAuditAggregate {
    *  prefix of the catalog, not the whole thing. */
   capped: boolean;
   buckets: JsonLdAuditBucket[];
+  /**
+   * The variant-gallery video sweep, attached by the task handler — this
+   * service stays DB-only (see the module comment) and never runs it itself.
+   *
+   * OPTIONAL on purpose, and the distinction is load-bearing: a task result
+   * written before this existed carries no key at all, and `undefined` must
+   * read as "not checked", never as "no gallery videos found". `null` is the
+   * third state — the sweep ran and failed (throttled, refused), which is also
+   * not a finding. Same rule as `indexabilityKnown` / `attributesSyncedAt`.
+   */
+  galleryVideos?: GalleryVideoAudit | null;
 }
 
 export interface JsonLdAuditDeps {

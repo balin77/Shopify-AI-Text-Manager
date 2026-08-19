@@ -61,6 +61,19 @@
     assign cp_s_id = cp_s_tail | split: '?' | first | split: '/' | first | split: '#' | first
   endif
 
+  # A bare "https://youtu.be/" has NOTHING after the marker, and Liquid's split
+  # is Ruby's: it drops trailing empty strings, so `| last` hands back
+  # "https://" instead of "". The cut chain then reduces that to "https:", which
+  # is not blank - so the snippet used to answer "youtube|https:" and the caller
+  # built ".../embed/https:". A video id contains neither ":" nor "." nor a
+  # space, and checking that is the whole fix.
+  if cp_s_id contains ':'
+    assign cp_s_id = blank
+  endif
+  if cp_s_id contains '.'
+    assign cp_s_id = blank
+  endif
+
   if cp_s_host != blank and cp_s_id != blank
     echo cp_s_host
     echo '|'
