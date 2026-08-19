@@ -1,6 +1,6 @@
 # Taxonomie-Referenzfelder — Plan (damit Farb-Einträge anlegbar werden)
 
-**Status:** Entwurf, Umsetzung nicht begonnen.
+**Status:** Entwurf. **Phase 0 läuft** — T2 ist beantwortet (§1.1), T1 und T3 noch nicht; Lauf 2 misst die Kategorie-Tür.
 **Ziel:** Das eine Loch schließen, das [PLAN_METAOBJECTS_EDITOR](PLAN_METAOBJECTS_EDITOR.md) offen gelassen hat: **einen Eintrag einer Shopify-Standard-Definition anlegen** — allen voran eine Farbe.
 **Auslöser:** Gemessen in PLAN_METAOBJECTS_EDITOR §2.1: `shopify--color-pattern` hat **drei** Pflichtfelder, und zwei davon sind Taxonomie-Referenzen (`color_taxonomy_reference: list.product_taxonomy_value_reference*`, `pattern_taxonomy_reference: product_taxonomy_value_reference*`). Diese App hat dafür keinen Editor, also antwortet `metaobjectCreatability` mit `unsupportedRequiredType` und bietet den Typ ausgegraut an. Bearbeiten, Übersetzen und Löschen funktionieren; **Anlegen** nicht — ausgerechnet für den Typ, der den Editor-Plan ausgelöst hat.
 
@@ -31,9 +31,31 @@ Das sind zwei verschiedene Entitäten: eine Kategorie ist ein Knoten des Produkt
 - Alle fünf Stichproben tragen **denselben** `pattern_taxonomy_reference` (`…/2874`), während sich `color_taxonomy_reference` unterscheidet (`11, 1, 3, 9, 10`).
 - Standard-Definitionen sind für diese App schreibbar (V1), und `metaobjectCreate` verlangt die Pflichtfelder — die Ablehnung lautete wörtlich `Base color can't be blank; Base pattern can't be blank`.
 
+### 1.1 Messung — Lauf 1 (2026-08-19, `8c19f3-ce.myshopify.com`, API 2026-07, schreibfrei)
+
+**T2 ✅ beantwortet, und besser als erhofft.** Die Validierung nennt das Attribut über einen **stabilen Handle**, nicht über eine GID:
+
+| Feld | Validierungen |
+|---|---|
+| `color_taxonomy_reference` | `product_taxonomy_attribute_handle = "color"`, `list.min = "1"`, `list.max = "4"` |
+| `pattern_taxonomy_reference` | `product_taxonomy_attribute_handle = "pattern"` |
+| die neun anderen Standard-Definitionen | je ein `taxonomy_reference` mit dem Handle des eigenen Themas (`material`, `shape`, `vase-shape`, …) |
+
+Zwei Konsequenzen. Ein Handle überlebt einen Shop-Wechsel, eine GID müsste das nicht — die Zuordnung „welches Attribut gehört zu diesem Feld" ist damit **robust**. Und `list.min`/`list.max` sind keine Dekoration: das Farbfeld nimmt **1 bis 4** Werte, das muss ein Anlegen-Formular durchsetzen.
+
+**Nebenbei ebenfalls beantwortet:** eine gespeicherte GID lässt sich zu einem Namen auflösen — `TaxonomyValue/11 → "Pink"`, `/2874 → "Solid"`, `/1 → "Black"`. Ein Picker kann den aktuellen Wert also als Namen anzeigen statt als rohe GID; diese Hälfte von Phase 1 ist sicher.
+
+**T1 ⏳ weiterhin offen — aber die Tür ist jetzt bekannt.** Drei Messungen grenzen sie ein:
+
+- Der `Taxonomy`-Wurzeltyp bietet **ausschließlich** `categories(search, childrenOf, siblingsOf, descendantsOf, first, after, last, before)`. Es gibt **keinen** Attribut-Einstieg und keine shop-weite Werteliste.
+- `TaxonomyValue` trägt **nur** `id` und `name`. Er lässt sich also auch nicht rückwärts zu seinem Attribut laufen.
+- Damit bleibt als einzige Tür eine **Kategorie**. Ob eine Kategorie Attribute führt, war in Lauf 1 nicht gemessen — der Schritt hat vorher aufgehört.
+
+**Ein Messfehler, behoben:** der Schritt suchte in den Validierungen nach einer **GID** und meldete deshalb „die Validierungen trugen keine" über eine Validierung, die genau das Richtige trug, nur in besserer Form. Er liest jetzt `product_taxonomy_attribute_handle`, und Lauf 2 introspiziert `TaxonomyCategory` — introspektion zuerst, Versuche daraus gebaut, statt `taxonomy.attributes` und `TaxonomyAttribute` zu raten wie beim ersten Mal.
+
 **Vermutung, ausdrücklich als solche markiert (Phase 0 misst sie):**
 - **T1:** Es gibt eine Admin-API, über die sich die zulässigen `TaxonomyValue`s **auflisten oder suchen** lassen. Ohne sie ist dieser Plan nicht baubar, und der ehrliche Ausgang ist §5.
-- **T2:** Welche Werte für ein bestimmtes FELD zulässig sind, steht in `fieldDefinitions[].validations` der Definition — plausibel, weil der Sync sie längst speichert und Shopify Metafield-Validierungen genau so ausdrückt. Falls nicht: Phase 1 braucht eine andere Quelle für „welche Attribut-Werte gehören zu diesem Feld".
+- **T2 — ✅ beantwortet, siehe §1.1.** Die Validierung nennt das Attribut per Handle.
 - **T3:** Die Menge ist **klein** (Größenordnung Dutzende Basisfarben, ein Dutzend Muster), nicht zehntausend wie der Kategoriebaum. Die fünf Stichproben stützen das, fünf Stichproben sind aber kein Beweis. **Von T3 hängt die Bauform ab**: klein ⇒ zwei Auswahllisten; groß ⇒ ein Such-Picker nach dem Vorbild von `TaxonomyField`.
 - **T4:** Ob ein Wert für die Farbe frei wählbar ist oder Shopify Konsistenz zum `color`-Hexwert erzwingt (also ob man „Pink" mit `#000000` kombinieren darf). Betrifft nur, ob die Oberfläche warnen muss.
 
