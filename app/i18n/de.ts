@@ -437,7 +437,7 @@ export const de = {
     fieldLabels: {
       collectionRules: "Automatische Regeln",
       images: "Bilder",
-      commerce: "Bestand und Vertriebskanäle",
+      commerce: "Vertriebskanäle",
       category: "Produktkategorie",
       collections: "Kategorien",
       productTitle: "Produkttitel",
@@ -460,7 +460,6 @@ export const de = {
       sortOrder: "Sortierung",
       templateSuffix: "Theme-Template",
       isPublished: "Im Onlineshop sichtbar",
-      price: "Preis (Standardvariante)",
     },
     // Resource names
     resourceNames: {
@@ -635,6 +634,12 @@ export const de = {
       planRequired: "Bestand und Vertriebskanäle gehören zum Pro-Tarif.",
       foreignLocale: "Bestand und Vertriebskanäle gibt es einmal pro Produkt, nicht pro Sprache.",
       channelsHeading: "Vertriebskanäle",
+      manage: "Verwalten",
+      manageTitle: "Veröffentlichung verwalten",
+      done: "Fertig",
+      noneSelected: "Auf keinem Vertriebskanal veröffentlicht",
+      marketCount: "Regionen: {count}",
+      b2bCount: "B2B-Kataloge: {count}",
       // Shopify beantwortet drei verschiedene Fragen mit einem Mechanismus —
       // Kanal, Region, B2B-Katalog sind alle eine "Publication". Getrennte
       // Überschriften, weil Merchants Regionen sonst für Kanäle halten.
@@ -646,7 +651,7 @@ export const de = {
       noChannels: "Dieser Shop hat keine Vertriebskanäle installiert.",
       channelsTruncated: "Es gibt mehr Kanäle, als geladen wurden. Den Rest verwaltest du im Shopify-Admin.",
       scheduled: "Geplant für {date}",
-      variantPricesHint: "Preise mehrerer Varianten bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen).",
+      variantPricesHint: "Preise bearbeitest du im Bulk-Editor (Reiter Bulk, Varianten-Zeilen) oder im Shopify-Admin.",
       notStockedHere: "hier nicht bestandsgeführt",
       stockHeading: "Bestand",
       variantSelectLabel: "Variante",
@@ -687,14 +692,6 @@ export const de = {
       channelsNotConfirmed: "Shopify hat nicht jede Kanaländerung bestätigt. Lade neu, um zu sehen, welche angekommen sind.",
       channelsFailed: "Die Vertriebskanäle konnten nicht geändert werden.",
     },
-    priceWarnings: {
-      priceAmbiguous: "Der Preis ist mehrdeutig — schreibe 1299 oder 1.299,00, damit das Dezimaltrennzeichen eindeutig ist. Alles Übrige wurde gespeichert.",
-      priceInvalid: "Der Preis konnte nicht als Betrag gelesen werden. Alles Übrige wurde gespeichert.",
-      priceEmpty: "Der Preis war leer und wurde nicht gespeichert — Shopify verlangt für jede Variante einen Preis. Alles Übrige wurde gespeichert.",
-      priceNoVariant: "Der Preis konnte nicht gespeichert werden, weil die Varianten dieses Produkts noch nicht im lokalen Cache sind — lade das Produkt neu. Alles Übrige wurde gespeichert.",
-      priceNotConfirmed: "Shopify hat den neuen Preis nicht bestätigt, deshalb wurde er auch lokal nicht gespeichert. Alles Übrige wurde gespeichert.",
-      priceFailed: "Der Preis konnte nicht gespeichert werden. Alles Übrige wurde gespeichert.",
-    },
     // Überschrift der Karte mit SEO-Titel, Meta-Beschreibung und URL-Handle.
     // Shopifys eigener Abschnitt im Admin heißt genauso.
     searchEngineListing: "Suchmaschinen-Eintrag",
@@ -703,7 +700,7 @@ export const de = {
     // (config/details-sections.ts). Shopifys Admin teilt dieselben Angaben
     // genauso auf.
     detailsSections: {
-      commerce: "Preis und Bestand",
+      publishing: "Vertriebskanäle",
       organization: "Organisation",
       theme: "Theme-Vorlage",
     },
@@ -740,11 +737,9 @@ export const de = {
     // Die Erklärzeile unter einem Attributfeld. Bewusst ausführlich: jede
     // einzelne existiert, weil Merchants verlässlich das Gegenteil annehmen.
     attributeNotes: {
-      status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Kanäle verwaltest du im Shopify-Admin.",
-      price: "Gilt für die erste Variante. Produkte mit mehreren Varianten bepreist du im Bulk-Editor.",
+      status: "Aktiv heisst für sich genommen noch nicht sichtbar — ein Produkt braucht zusätzlich einen Vertriebskanal. Die verwaltest du gleich hier unter Vertriebskanäle.",
       category: "Shopify nutzt die Kategorie für Steuersätze und für Marktplatz-Listings. Ein konkreter Typ ist besser als ein breiter Ast.",
       collections: "Regelbasierte Kategorien werden von ihren eigenen Regeln verwaltet — das Produkt hier zu entfernen würde nicht halten.",
-      commerce: "Bestand und Kanäle werden eigenständig gespeichert — über die Buttons in diesem Bereich, nicht über das normale Speichern.",
     },
     templateSuffixHelp: "Leer = die Standardvorlage des Themes.",
     statusToggle: {

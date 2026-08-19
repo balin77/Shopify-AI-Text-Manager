@@ -438,7 +438,7 @@ export const en: Translation = {
     fieldLabels: {
       collectionRules: "Automated rules",
       images: "Images",
-      commerce: "Stock and sales channels",
+      commerce: "Sales channels",
       category: "Product category",
       collections: "Collections",
       productTitle: "Product Title",
@@ -461,7 +461,6 @@ export const en: Translation = {
       sortOrder: "Sort order",
       templateSuffix: "Theme template",
       isPublished: "Visible in the online store",
-      price: "Price (default variant)",
     },
     // Resource names
     resourceNames: {
@@ -636,6 +635,12 @@ export const en: Translation = {
       planRequired: "Stock and sales channels are part of the Pro plan.",
       foreignLocale: "Stock and sales channels exist once per product, not per language.",
       channelsHeading: "Sales channels",
+      manage: "Manage",
+      manageTitle: "Manage publishing",
+      done: "Done",
+      noneSelected: "Not published on any sales channel",
+      marketCount: "Regions: {count}",
+      b2bCount: "B2B catalogs: {count}",
       marketsHeading: "Regions",
       marketsHint: "Regions decide who may see the product, not where it is sold. Off means it is hidden in that region.",
       b2bHeading: "B2B catalogs",
@@ -644,7 +649,7 @@ export const en: Translation = {
       noChannels: "This shop has no sales channels installed.",
       channelsTruncated: "More channels exist than were loaded. Manage the rest in the Shopify admin.",
       scheduled: "Scheduled for {date}",
-      variantPricesHint: "Prices of several variants are edited in the bulk editor (Bulk tab, variant rows).",
+      variantPricesHint: "Prices are edited in the bulk editor (Bulk tab, variant rows) or in your Shopify admin.",
       notStockedHere: "not stocked here",
       stockHeading: "Stock",
       variantSelectLabel: "Variant",
@@ -685,20 +690,12 @@ export const en: Translation = {
       channelsNotConfirmed: "Shopify did not confirm every channel change. Reload to see which ones landed.",
       channelsFailed: "The sales channels could not be changed.",
     },
-    priceWarnings: {
-      priceAmbiguous: "The price is ambiguous — write 1299 or 1.299,00 so the decimal separator is unmistakable. Everything else was saved.",
-      priceInvalid: "The price could not be read as an amount. Everything else was saved.",
-      priceEmpty: "The price was left empty and not saved — Shopify requires a price on every variant. Everything else was saved.",
-      priceNoVariant: "The price could not be saved because this product's variants are not in the local cache yet — reload the product. Everything else was saved.",
-      priceNotConfirmed: "Shopify did not confirm the new price, so it was not saved locally either. Everything else was saved.",
-      priceFailed: "The price could not be saved. Everything else was saved.",
-    },
     searchEngineListing: "Search engine listing",
     attributesCardTitle: "Details",
     // Headings of the subcards INSIDE the Details card
     // (config/details-sections.ts).
     detailsSections: {
-      commerce: "Price and inventory",
+      publishing: "Sales channels",
       organization: "Organization",
       theme: "Theme template",
     },
@@ -735,11 +732,9 @@ export const en: Translation = {
     // The explanatory line under an attribute field. Long-form on purpose:
     // each one exists because merchants reliably assume the opposite.
     attributeNotes: {
-      status: "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
-      price: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
+      status: "Active does not by itself mean visible — a product also needs a sales channel. You manage those right here under Sales channels.",
       category: "Shopify uses the category for tax rates and for marketplace listings. Choosing a specific type beats a broad branch.",
       collections: "Rule-based collections are managed by their own rules — removing the product here would not stick.",
-      commerce: "Stock and channels are saved on their own — the buttons in this section, not the main save.",
     },
     templateSuffixHelp: "Empty = the theme's default template.",
     statusToggle: {

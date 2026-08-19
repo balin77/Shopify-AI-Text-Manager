@@ -434,7 +434,7 @@ export const es: Translation = {
     fieldLabels: {
       collectionRules: "Reglas automáticas",
       images: "Imágenes",
-      commerce: "Inventario y canales de venta",
+      commerce: "Canales de venta",
       category: "Categoría de producto",
       collections: "Colecciones",
       productTitle: "Título del producto",
@@ -457,7 +457,6 @@ export const es: Translation = {
       sortOrder: "Orden",
       templateSuffix: "Plantilla del tema",
       isPublished: "Visible en la tienda online",
-      price: "Precio (variante predeterminada)",
     },
     // Resource names
     resourceNames: {
@@ -629,6 +628,12 @@ export const es: Translation = {
       planRequired: "El inventario y los canales de venta forman parte del plan Pro.",
       foreignLocale: "El inventario y los canales existen una vez por producto, no por idioma.",
       channelsHeading: "Canales de venta",
+      manage: "Gestionar",
+      manageTitle: "Gestionar la publicación",
+      done: "Listo",
+      noneSelected: "No publicado en ningún canal de venta",
+      marketCount: "Regiones: {count}",
+      b2bCount: "Catálogos B2B: {count}",
       marketsHeading: "Regiones",
       marketsHint: "Las regiones deciden quién puede ver el producto, no dónde se vende. Desactivado significa oculto en esa región.",
       b2bHeading: "Catálogos B2B",
@@ -637,7 +642,7 @@ export const es: Translation = {
       noChannels: "Esta tienda no tiene canales de venta instalados.",
       channelsTruncated: "Hay más canales de los que se cargaron. Gestiona el resto en el admin de Shopify.",
       scheduled: "Programado para el {date}",
-      variantPricesHint: "Los precios de varias variantes se editan en el editor masivo (pestaña «Bulk», filas de variantes).",
+      variantPricesHint: "Los precios se editan en el editor masivo (pestaña «Bulk», filas de variantes) o en tu panel de Shopify.",
       notStockedHere: "sin stock aquí",
       stockHeading: "Inventario",
       variantSelectLabel: "Variante",
@@ -678,20 +683,12 @@ export const es: Translation = {
       channelsNotConfirmed: "Shopify no confirmó todos los cambios de canal. Recarga para ver cuáles se aplicaron.",
       channelsFailed: "No se pudieron cambiar los canales de venta.",
     },
-    priceWarnings: {
-      priceAmbiguous: "El precio es ambiguo — escribe 1299 o 1.299,00 para que el separador decimal sea inequívoco. Todo lo demás se guardó.",
-      priceInvalid: "El precio no se pudo interpretar como un importe. Todo lo demás se guardó.",
-      priceEmpty: "El precio se dejó vacío y no se guardó — Shopify exige un precio en cada variante. Todo lo demás se guardó.",
-      priceNoVariant: "El precio no se pudo guardar porque las variantes de este producto aún no están en la caché local — recarga el producto. Todo lo demás se guardó.",
-      priceNotConfirmed: "Shopify no confirmó el nuevo precio, así que tampoco se guardó localmente. Todo lo demás se guardó.",
-      priceFailed: "El precio no se pudo guardar. Todo lo demás se guardó.",
-    },
     searchEngineListing: "Listado en el motor de búsqueda",
     attributesCardTitle: "Detalles",
     // Encabezados de las subtarjetas DENTRO de la tarjeta Detalles
     // (config/details-sections.ts).
     detailsSections: {
-      commerce: "Precio e inventario",
+      publishing: "Canales de venta",
       organization: "Organización",
       theme: "Plantilla del tema",
     },
@@ -728,11 +725,9 @@ export const es: Translation = {
     // La línea explicativa bajo un campo de atributo. Larga a propósito: cada
     // una existe porque los comerciantes asumen de forma fiable lo contrario.
     attributeNotes: {
-      status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Gestiona los canales en el admin de Shopify.",
-      price: "Se aplica a la primera variante. Los productos con varias variantes se tarifican en el editor masivo.",
+      status: "Activo por sí solo no significa visible — un producto también necesita un canal de venta. Los gestionas aquí mismo, en Canales de venta.",
       category: "Shopify usa la categoría para los tipos impositivos y para los listados de marketplace. Un tipo concreto es mejor que una rama amplia.",
       collections: "Las colecciones basadas en reglas las gestionan sus propias reglas — quitar el producto aquí no se mantendría.",
-      commerce: "El stock y los canales se guardan por separado — con los botones de esta sección, no con el guardado normal.",
     },
     templateSuffixHelp: "Vacío = la plantilla predeterminada del tema.",
     statusToggle: {

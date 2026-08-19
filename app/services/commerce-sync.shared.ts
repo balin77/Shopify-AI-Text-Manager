@@ -368,6 +368,43 @@ export function inventoryLevelRows(
 }
 
 /**
+ * The three lists a publication can belong to, in the admin's own order.
+ *
+ * `channels` is not a catalog kind but a BUCKET: an AppCatalog belongs in it,
+ * and so does an UNKNOWN one — which is where an unknown publication has
+ * always rendered, and the conservative place to leave it (see
+ * `countsAsSalesChannel`).
+ */
+export const PUBLICATION_GROUP_ORDER = ["channels", "market", "companyLocation"] as const;
+
+export type PublicationGroupId = (typeof PUBLICATION_GROUP_ORDER)[number];
+
+export function publicationGroupOf(kind: PublicationCatalogKind): PublicationGroupId {
+  // `countsAsSalesChannel` already excluded everything else, but TypeScript
+  // cannot narrow through it — and naming the two explicitly is what makes a
+  // future fourth catalog type a compile error instead of a silent bucket.
+  if (kind === "market") return "market";
+  if (kind === "companyLocation") return "companyLocation";
+  return "channels";
+}
+
+/**
+ * Bucket publications into the three lists, keeping Shopify's order inside
+ * each. The SALES CHANNEL group is always present, even empty: that is the
+ * state the "on no channel — invisible" alarm exists for, and a shop whose
+ * only publications are market catalogs would otherwise drop the alarm
+ * together with its heading. The other two appear only if the shop has them.
+ */
+export function groupPublications<T extends { catalogType: PublicationCatalogKind }>(
+  rows: T[],
+): Array<{ id: PublicationGroupId; rows: T[] }> {
+  return PUBLICATION_GROUP_ORDER.map((id) => ({
+    id,
+    rows: rows.filter((row) => publicationGroupOf(row.catalogType) === id),
+  })).filter((group) => group.id === "channels" || group.rows.length > 0);
+}
+
+/**
  * Which MARKETS a product's publications scope it to — the mapper behind
  * `/api/product-market-publications`.
  *
@@ -430,10 +467,13 @@ export function marketPublicationView(
     const catalog = node?.publication?.catalog;
     if (publicationCatalogKind(catalog?.__typename) !== "market") continue;
     if (catalog?.markets?.pageInfo?.hasNextPage === true) truncated = true;
-    // Not live, but a date is set ⇒ a launch is scheduled. Shopify's
-    // `isPublished` already accounts for the date, so the two together are
-    // the whole answer.
-    const isScheduled = node?.isPublished !== true && !!node?.publishDate;
+    // Not live, and the date is still AHEAD ⇒ a launch is scheduled. The
+    // date has to be compared, not merely present: a publication that was
+    // unpublished again keeps its old date, and reading that as "scheduled"
+    // would suppress the warning forever on a product that really is missing
+    // from the market. An unparseable date is not a schedule either.
+    const publishAt = node?.publishDate ? Date.parse(node.publishDate) : NaN;
+    const isScheduled = node?.isPublished !== true && Number.isFinite(publishAt) && publishAt > Date.now();
     for (const market of catalog?.markets?.nodes ?? []) {
       const marketId = market?.id;
       if (!marketId) continue;

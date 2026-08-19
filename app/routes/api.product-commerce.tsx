@@ -243,13 +243,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
     let product: Record<string, unknown> | null = null;
 
     for (let page = 0; page < 10; page++) {
+    // The product-level block is read from the FIRST page only (`product =
+    // product ?? pageProduct` below), so asking for it again on every further
+    // page is cost paid for an answer that is thrown away — and publications
+    // are the expensive half of it: `first: 50` of them, each an object,
+    // against the same 1000-point ceiling the variant window is budgeted from.
+    // A 400-variant product asked for the shop's whole channel list ten times.
+    const productLevelSelection = page === 0
+      ? `${PRODUCT_PUBLICATIONS_SELECTION}
+            featuredMedia { preview { image { url altText } } }`
+      : "";
     const response = await admin.graphql(
       `#graphql
         query productCommerce($id: ID!, $after: String) {
           product(id: $id) {
             id
-            ${PRODUCT_PUBLICATIONS_SELECTION}
-            featuredMedia { preview { image { url altText } } }
+            ${productLevelSelection}
             variants(first: ${VARIANT_COMMERCE_PAGE_SIZE}, after: $after) {
               pageInfo { hasNextPage endCursor }
               nodes {

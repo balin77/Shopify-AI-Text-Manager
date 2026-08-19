@@ -54,7 +54,7 @@ const ATTRIBUTE_LABELS = {
   isPublished: "Visible in the online store",
   category: "Product category",
   collections: "Collections",
-  commerce: "Stock and sales channels",
+  commerce: "Sales channels",
 } as const;
 
 /** Shared by products and articles — same control, different suggestion pool. */
@@ -212,34 +212,24 @@ export const PRODUCTS_CONFIG: ContentEditorConfig = {
         "Active does not by itself mean visible — a product also needs a sales channel. Manage channels in the Shopify admin.",
     },
     {
-      // §2.3 — the price of the DEFAULT variant only. A product with several
-      // variants has several prices and one field cannot mean all of them, so
-      // the note says where the rest live rather than pretending otherwise.
-      key: "price",
-      type: "money",
-      label: "Price (default variant)",
-      detailsSection: "commerce",
-      translationKey: "",
-      supportsAI: false,
-      supportsFormatting: false,
-      supportsTranslation: false,
-      attributeNote: "Applies to the first variant. Products with several variants are priced in the bulk editor.",
-    },
-    {
-      // Phase 4 — stock per location and sales channels. NOT part of the
-      // content save: it loads live and writes through its own endpoint, so a
-      // volatile number never travels in the editor's flat value map where it
-      // would be stale by the time the merchant pressed save.
+      // Phase 4 — where the product is published. NOT part of the content
+      // save: it loads live and writes through its own endpoint, so a value
+      // another app may have moved never travels in the editor's flat value
+      // map where it would be stale by the time the merchant pressed save.
+      //
+      // Stock and prices used to live here too. They are per VARIANT, so they
+      // moved to the variants card where the options they belong to are — what
+      // is left is a property of the product itself.
       key: "commerce",
       type: "commerce",
       label: ATTRIBUTE_LABELS.commerce,
-      detailsSection: "commerce",
+      detailsSection: "publishing",
       translationKey: "",
       supportsAI: false,
       supportsFormatting: false,
       supportsTranslation: false,
       attributeNote:
-        "Stock and channels are saved on their own — the buttons in this section, not the main save.",
+        "Saved on its own — the button in this section, not the main save.",
     },
     {
       key: "vendor",

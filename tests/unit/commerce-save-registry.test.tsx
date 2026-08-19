@@ -83,6 +83,16 @@ function Editor() {
   );
 }
 
+/**
+ * The channel ticks live in the "Manage publishing" dialog now — the card
+ * states where the product is published, the dialog is where it is changed.
+ * Every assertion about a tick therefore has to open it first.
+ */
+async function openPublishingDialog() {
+  fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
+  return (await screen.findByLabelText("Online Store")) as HTMLInputElement;
+}
+
 /** The loader's answer, reused by the mid-reload test. */
 const loaded = () => ({
   ok: true,
@@ -168,7 +178,7 @@ describe("CommerceField + save registry", () => {
     render(<AppProvider i18n={en}><Editor /></AppProvider>);
     release?.(BODY);
 
-    const channel = (await screen.findByLabelText("Online Store")) as HTMLInputElement;
+    const channel = await openPublishingDialog();
     expect(channel.checked).toBe(true);
 
     // Something to save, so the POST runs and comes back with its warning.
@@ -182,6 +192,7 @@ describe("CommerceField + save registry", () => {
     release?.(BODY);
 
     await waitFor(() => expect((screen.getByLabelText("Online Store") as HTMLInputElement).checked).toBe(true));
+    // The dialog is still open from above, so the tick is still on screen.
     // The badge only appears when the panel believes the product is on NO
     // channel — its presence was the visible half of the bug.
     expect(screen.queryByText(/On no channel/i)).toBeNull();

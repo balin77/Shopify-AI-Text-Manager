@@ -27,11 +27,18 @@
  * the trap.
  *
  * ── Absence is never evidence ───────────────────────────────────────────────
- * The two windows below can cut off, and a market that fell off the end is
+ * The windows below can cut off, and a market that fell off the end is
  * indistinguishable from one the product is genuinely missing from. So the
  * response carries `truncated`, and the client says NOTHING when it is set. A
  * missed warning, never a wrong one — the same direction the redirect-chain
  * and crawl rules take.
+ *
+ * That rule is also why the publication window is PAGED. `resourcePublicationsV2`
+ * returns every kind of publication in one list — sales channels, markets and
+ * B2B catalogs together — so on a shop with many channels or many company
+ * locations the market rows are exactly the ones that fall off the end of a
+ * single page, and the warning would then be silent on the shops most likely
+ * to need it. Truncation is the LAST resort here, not the first answer.
  */
 
 import { data as json, type LoaderFunctionArgs } from "react-router";
@@ -67,6 +74,13 @@ import {
  */
 const MARKETS_PER_CATALOG = 3;
 
+/**
+ * How many pages of publications to walk. 3 × 50 = 150 publications is past
+ * every real shop; each page is its own query at ~300 points, so the pages
+ * cost the bucket sequentially rather than all at once.
+ */
+const MAX_PUBLICATION_PAGES = 3;
+
 /** The response body's data half — see `MarketPublicationView` for the rules. */
 export type ProductMarketPublicationsView = MarketPublicationView;
 
@@ -84,52 +98,80 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // `isPublished: false`, and without the date the banner would tell a
     // merchant to add a market they already added. (No comments inside the
     // document itself — see tests/unit/graphql-document-hygiene.test.ts.)
-    const response = await admin.graphql(
-      `#graphql
-        query productMarketPublications($id: ID!) {
-          product(id: $id) {
-            resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false) {
-              pageInfo { hasNextPage }
-              nodes {
-                isPublished
-                publishDate
-                publication {
-                  id
-                  catalog {
-                    __typename
-                    ... on MarketCatalog {
-                      markets(first: ${MARKETS_PER_CATALOG}) {
-                        pageInfo { hasNextPage }
-                        nodes { id }
+    const nodes: NonNullable<ShopifyMarketPublications["nodes"]> = [];
+    let cursor: string | null = null;
+    let truncated = false;
+
+    for (let page = 0; page < MAX_PUBLICATION_PAGES; page++) {
+      const response = await admin.graphql(
+        `#graphql
+          query productMarketPublications($id: ID!, $after: String) {
+            product(id: $id) {
+              resourcePublicationsV2(first: ${PUBLICATION_PAGE_SIZE}, onlyPublished: false, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  isPublished
+                  publishDate
+                  publication {
+                    id
+                    catalog {
+                      __typename
+                      ... on MarketCatalog {
+                        markets(first: ${MARKETS_PER_CATALOG}) {
+                          pageInfo { hasNextPage }
+                          nodes { id }
+                        }
                       }
                     }
                   }
                 }
               }
             }
-          }
-        }`,
-      { variables: { id: productId } },
-    );
+          }`,
+        { variables: { id: productId, after: cursor } },
+      );
 
-    const body = (await response.json()) as {
-      data?: { product?: { resourcePublicationsV2?: ShopifyMarketPublications | null } | null };
-      errors?: Array<{ message?: string }>;
-    };
+      const body = (await response.json()) as {
+        data?: {
+          product?: {
+            resourcePublicationsV2?:
+              | (ShopifyMarketPublications & { pageInfo?: { endCursor?: string | null } | null })
+              | null;
+          } | null;
+        };
+        errors?: Array<{ message?: string }>;
+      };
 
-    // A schema-level error arrives as a top-level `errors` array with
-    // `data: null`. Read as "no data" it would report every market as
-    // unscoped and silently drop the warning this route exists to give.
-    if (body.errors?.length) {
-      logger.warn("[MarketPublications] Schema-level error", {
-        context: "MarketPublications",
-        shop: session.shop,
-        error: body.errors[0]?.message,
-      });
-      return json({ success: false, error: "The market publication state could not be read." }, { status: 502 });
+      // A schema-level error arrives as a top-level `errors` array with
+      // `data: null`. Read as "no data" it would report every market as
+      // unscoped and silently drop the warning this route exists to give.
+      // A LATER page failing is different: what was read is still true, and
+      // the rest is reported as truncation rather than thrown away.
+      if (body.errors?.length) {
+        logger.warn("[MarketPublications] Schema-level error", {
+          context: "MarketPublications",
+          shop: session.shop,
+          page,
+          error: body.errors[0]?.message,
+        });
+        if (page > 0) { truncated = true; break; }
+        return json({ success: false, error: "The market publication state could not be read." }, { status: 502 });
+      }
+
+      const connection = body.data?.product?.resourcePublicationsV2;
+      if (!connection) {
+        if (page > 0) { truncated = true; break; }
+        return json({ success: false, error: "The market publication state could not be read." }, { status: 502 });
+      }
+
+      nodes.push(...(connection.nodes ?? []));
+      if (connection.pageInfo?.hasNextPage !== true || !connection.pageInfo?.endCursor) break;
+      cursor = connection.pageInfo.endCursor;
+      // Ran out of pages before Shopify ran out of publications.
+      if (page === MAX_PUBLICATION_PAGES - 1) truncated = true;
     }
 
-    const view = marketPublicationView(body.data?.product?.resourcePublicationsV2);
+    const view = marketPublicationView({ pageInfo: { hasNextPage: truncated }, nodes });
     if (!view) {
       return json({ success: false, error: "The market publication state could not be read." }, { status: 502 });
     }

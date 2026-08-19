@@ -150,7 +150,8 @@ export function buildAttributeChecklist(input: AttributeInput): AttributeRow[] {
       // "free".
       status: input.defaultVariantPrice == null ? "unknown" : input.defaultVariantPrice ? "ok" : "missing",
       value: input.defaultVariantPrice ?? undefined,
-      jumpToField: "price",
+      // No `jumpToField`: pricing is per VARIANT and lives in the variants
+      // card, not in a field of the Details card this checklist can point at.
     });
   }
 

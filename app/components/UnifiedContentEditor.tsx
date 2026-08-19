@@ -584,19 +584,9 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       // counts, and the answer ("both, they write the same field") is not one a
       // merchant should have to work out.
       if (statusControl && field.key === statusControl.fieldKey) return false;
-      // §2.3 — the default price means "the first variant" and says so. That is
-      // only true while there IS one: with several, the per-variant panel owns
-      // pricing. Exactly ONE is therefore the only case this field can
-      // describe. `0` is not "no variants" — every product has at least one on
-      // Shopify — it is a row whose variants were never cached, and an empty
-      // price there ends in a refused save.
-      if (field.key === "price" && config.contentType === "products") {
-        const count = (selectedItem as { variantCount?: number | null } | null)?.variantCount;
-        if (count !== 1) return false;
-      }
       return true;
     });
-  }, [fieldDefinitions, statusControl, config.contentType, selectedItem]);
+  }, [fieldDefinitions, statusControl]);
 
   // Three splits, not two. The item's TEXT stays in the main card; the three
   // fields Shopify's own admin groups under "Search engine listing" (SEO

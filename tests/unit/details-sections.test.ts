@@ -43,11 +43,11 @@ describe("groupDetailsFields", () => {
     // further up the card.
     const blocks = groupDetailsFields([
       field("vendor", "organization"),
-      field("price", "commerce"),
+      field("commerce", "publishing"),
       field("tags", "organization"),
     ]);
 
-    expect(blocks.map((b) => b.id)).toEqual(["organization", "commerce", "organization"]);
+    expect(blocks.map((b) => b.id)).toEqual(["organization", "publishing", "organization"]);
   });
 
   it("collects unsectioned fields into null blocks", () => {
@@ -85,7 +85,7 @@ describe("shouldRenderDetailsSections", () => {
 describe("content configs", () => {
   it("splits the product Details card into contiguous sections", () => {
     const blocks = groupDetailsFields(detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions));
-    expect(blocks.map((b) => b.id)).toEqual(["commerce", "organization", "theme"]);
+    expect(blocks.map((b) => b.id)).toEqual(["publishing", "organization", "theme"]);
     expect(blocks[1].fields.map((f) => f.key)).toEqual(["vendor", "category", "collections", "tags"]);
     expect(shouldRenderDetailsSections(blocks)).toBe(true);
   });
@@ -127,6 +127,6 @@ describe("detailsSectionLabel", () => {
 
   it("falls back to English when the bundle has no entry", () => {
     expect(detailsSectionLabel({}, "organization")).toBe(DETAILS_SECTION_FALLBACK_LABELS.organization);
-    expect(detailsSectionLabel({ content: {} }, "commerce")).toBe(DETAILS_SECTION_FALLBACK_LABELS.commerce);
+    expect(detailsSectionLabel({ content: {} }, "publishing")).toBe(DETAILS_SECTION_FALLBACK_LABELS.publishing);
   });
 });

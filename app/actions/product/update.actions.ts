@@ -25,7 +25,6 @@ import {
   parseCollectionIds,
   parseTagList,
 } from "~/services/content-attributes.shared";
-import { parseMoney } from "~/services/bulk-editor/columns.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import type { ActionContext } from "./shared/action-context";
@@ -59,10 +58,6 @@ interface UpdateProductParams {
    *  turned into a JOIN/LEAVE diff against the CACHE, never written as a list
    *  (see `diffCollectionMembership`). */
   collections?: string;
-  /** Price of the DEFAULT variant, as the merchant typed it. Parsed server-side
-   *  with the same `parseMoney` the bulk grid uses — locale-specific money
-   *  input is a minefield and one parser is the only way both surfaces agree. */
-  price?: string;
   imageAltTexts?: Record<number, string>;
   productId: string;
   /** Market scope ("" = global). Only applies to foreign-locale text saves. */
@@ -148,7 +143,6 @@ export async function handleUpdateProduct(
     templateSuffix: getFormStringOrNull(formData, "templateSuffix") ?? undefined,
     category: getFormStringOrNull(formData, "category") ?? undefined,
     collections: getFormStringOrNull(formData, "collections") ?? undefined,
-    price: getFormStringOrNull(formData, "price") ?? undefined,
     imageAltTexts: getFormJSON<Record<number, string>>(formData, "imageAltTexts") || {},
     productId,
     // Primary-locale saves are always global; only foreign locales carry a market.
@@ -1283,16 +1277,6 @@ async function updatePrimaryProduct(
     // Don't fail the entire request if DB update fails - Shopify is source of truth
   }
 
-  // ── §Phase 3.2 — the default variant's price ──────────────────────────────
-  // A SECOND mutation, because price does not live on the product: Shopify
-  // keeps it on ProductVariant and `productUpdate` has no field for it. It runs
-  // after the product write and reports as a warning rather than a failure —
-  // the text edits above already landed, and telling the merchant the whole
-  // save failed would invite them to make it twice.
-  let priceWarning: string | undefined; // a CODE under t.content.priceWarnings
-  if (params.price !== undefined && changedAttributeFields.includes("price")) {
-    priceWarning = await updateDefaultVariantPrice(gateway, db, productId, params.price, shop);
-  }
 
   // Delete translations for changed fields in all foreign languages
   if (changedFields.length > 0) {
@@ -1556,101 +1540,9 @@ async function updatePrimaryProduct(
   return json({
     success: true,
     product: data.data.productUpdate.product,
-    // A price that could not be written is a warning on a save that otherwise
-    // worked — never a silent drop, which for a money field is the worst
-    // possible outcome.
-    // A code, not a sentence — the client phrases it (see the helper below).
-    ...(priceWarning ? { priceWarning } : {}),
     // §Phase 3.1 — a rule-based membership the picker asked to remove was
     // kept. Reported rather than silent: the merchant unticked a box and the
     // product is still in the collection, and only this line explains why.
     ...(membershipNotes.length > 0 ? { attributeWarnings: membershipNotes } : {}),
   });
-}
-
-/**
- * Writes the DEFAULT variant's price (PLAN_CONTENT_CREATION §Phase 3.2).
- *
- * Returns a warning CODE (never prose) or undefined. The app ships in three
- * languages and only the client knows which one the merchant is reading, so the
- * wording lives in `t.content.priceWarnings.*`. Never throws: the product save
- * this accompanies has already landed, so a failure here must not be reported
- * as a failed save.
- *
- * ── Three rules worth stating ──────────────────────────────────────────────
- * 1. The variant is resolved SERVER-side, from the cache, scoped by shop. The
- *    client never names it — a variant GID from a request body is an invitation
- *    to write into another shop's catalogue.
- * 2. Money is parsed with the bulk editor's `parseMoney`, not `parseFloat`.
- *    "1.299,00" and "1,299.00" are the same amount to a merchant and wildly
- *    different to `parseFloat`, and a bare "1.299" is genuinely ambiguous — it
- *    is refused rather than silently rounded to 1.30.
- * 3. The echo rule, strictly: the mirror is written only from the price Shopify
- *    RETURNED. `userErrors: []` alone is not success, and a money value is the
- *    last place to guess.
- */
-async function updateDefaultVariantPrice(
-  gateway: ShopifyApiGateway,
-  db: PrismaClient,
-  productId: string,
-  rawPrice: string,
-  shop: string,
-): Promise<string | undefined> {
-  const parsed = parseMoney(rawPrice);
-  if (!parsed.ok) {
-    return parsed.error === "ambiguous" ? "priceAmbiguous" : "priceInvalid";
-  }
-  // Shopify's price is not nullable — an emptied field is not "remove the
-  // price", it is an unfinished edit.
-  if (parsed.value === null) return "priceEmpty";
-
-  try {
-    const variant = await db.productVariant.findFirst({
-      where: { productId, product: { shop } },
-      orderBy: { position: "asc" },
-      select: { id: true, shopifyGid: true },
-    });
-    if (!variant?.shopifyGid) return "priceNoVariant";
-
-    const response = await gateway.graphql(
-      `#graphql
-        mutation updateDefaultVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-          productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-            productVariants { id price }
-            userErrors { field message }
-          }
-        }`,
-      { variables: { productId, variants: [{ id: variant.shopifyGid, price: parsed.value }] } },
-    );
-    const body = (await response.json()) as {
-      data?: {
-        productVariantsBulkUpdate?: {
-          productVariants?: Array<{ id: string; price: string }> | null;
-          userErrors?: Array<{ message: string }>;
-        };
-      };
-      errors?: Array<{ message?: string }>;
-    };
-
-    // A SCHEMA-level error arrives as a top-level `errors` array with
-    // `data: null` and never reaches `userErrors` — checking only the latter
-    // would read this as a success and mirror a price Shopify never stored.
-    if (body.errors?.length) return "priceFailed";
-    const payload = body.data?.productVariantsBulkUpdate;
-    if (payload?.userErrors?.length) return "priceFailed";
-
-    const echoed = payload?.productVariants?.find((v) => v.id === variant.shopifyGid);
-    if (!echoed?.price) return "priceNotConfirmed";
-
-    await db.productVariant
-      .update({ where: { id: variant.id }, data: { price: echoed.price } })
-      .catch(() => undefined);
-    return undefined;
-  } catch (error) {
-    loggers.product("warn", "Variant price write failed", {
-      productId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return "priceFailed";
-  }
 }

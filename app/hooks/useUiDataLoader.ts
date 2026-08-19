@@ -260,9 +260,6 @@ export function getItemFieldValue(
     // `isPublished` defaults to TRUE in the schema, so a missing value must
     // read as published — the same rule as the column's own default.
     isPublished: row.isPublished === false ? "false" : "true",
-    // §2.3 — the default variant's price. NOT part of the attribute block (it
-    // lives on ProductVariant), so it is not gated on `attributesSyncedAt`.
-    price: row.defaultVariantPrice != null ? String(row.defaultVariantPrice) : "",
     // §3.1 — the rule sources, already parsed into the editor's model by the
     // loader. JSON because every editor value is a string and change detection
     // compares strings; an empty string means "no rules", which is a value the

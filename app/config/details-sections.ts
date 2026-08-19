@@ -26,7 +26,7 @@
  */
 
 /** The subcards the Details card can split into, in render order. */
-export type DetailsSectionId = "commerce" | "organization" | "theme";
+export type DetailsSectionId = "publishing" | "organization" | "theme";
 
 /** One rendered block: a subcard (`id` set) or a run of unsectioned fields. */
 export interface DetailsSection<F> {
@@ -40,7 +40,7 @@ export interface DetailsSection<F> {
  * entry — the same defensive pattern as every other label in the editor.
  */
 export const DETAILS_SECTION_FALLBACK_LABELS: Record<DetailsSectionId, string> = {
-  commerce: "Price and inventory",
+  publishing: "Sales channels",
   organization: "Organization",
   theme: "Theme template",
 };

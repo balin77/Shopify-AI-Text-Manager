@@ -4,6 +4,7 @@ import {
   countsAsSalesChannel,
   productPublicationRows,
   marketPublicationView,
+  groupPublications,
 } from "../../app/services/commerce-sync.shared";
 
 describe("publicationCatalogKind", () => {
@@ -160,6 +161,31 @@ describe("marketPublicationView", () => {
     });
   });
 
+  it("reads a PAST date as genuinely missing, not as a schedule", () => {
+    // An unpublished publication keeps its old date. Reading that as
+    // "scheduled" would suppress the warning forever on a product that really
+    // is missing from the market.
+    const view = marketPublicationView({
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        {
+          isPublished: false,
+          publishDate: "2020-01-01T00:00:00Z",
+          publication: {
+            id: "gid://shopify/Publication/1",
+            catalog: {
+              __typename: "MarketCatalog",
+              markets: { pageInfo: { hasNextPage: false }, nodes: [{ id: "gid://shopify/Market/1" }] },
+            },
+          },
+        },
+      ],
+    })!;
+
+    expect(view.scheduledMarketIds).toEqual([]);
+    expect(view.scopedMarketIds).toEqual(["gid://shopify/Market/1"]);
+  });
+
   it("reports a SCHEDULED market launch as scheduled, not as missing", () => {
     // Shopify answers `isPublished: false` for a future publish date. Read as
     // "not in the catalog" it would tell a merchant to add what they already
@@ -207,5 +233,40 @@ describe("marketPublicationView", () => {
     expect(view.scheduledMarketIds).toEqual([]);
     expect(view.publishedMarketIds).toEqual([]);
     expect(view.scopedMarketIds).toEqual(["gid://shopify/Market/1"]);
+  });
+});
+
+describe("groupPublications", () => {
+  const row = (id: string, catalogType: "app" | "market" | "companyLocation" | "") => ({ id, catalogType });
+
+  it("returns the three lists in the admin's order", () => {
+    const groups = groupPublications([
+      row("acme", "companyLocation"),
+      row("ch", "market"),
+      row("online", "app"),
+    ]);
+
+    expect(groups.map((g) => g.id)).toEqual(["channels", "market", "companyLocation"]);
+  });
+
+  it("keeps Shopify's order inside each list", () => {
+    const groups = groupPublications([row("b", "app"), row("a", "app")]);
+    expect(groups[0].rows.map((r) => r.id)).toEqual(["b", "a"]);
+  });
+
+  it("buckets an UNKNOWN catalog with the sales channels", () => {
+    const groups = groupPublications([row("mystery", "")]);
+    expect(groups.map((g) => g.id)).toEqual(["channels"]);
+    expect(groups[0].rows.map((r) => r.id)).toEqual(["mystery"]);
+  });
+
+  it("keeps the sales-channel list even when empty, drops the other two", () => {
+    // The empty channel list is the state the "on no channel — invisible"
+    // alarm exists for; dropping it would drop the alarm with it.
+    const groups = groupPublications([row("ch", "market")]);
+    expect(groups.map((g) => g.id)).toEqual(["channels", "market"]);
+    expect(groups[0].rows).toEqual([]);
+
+    expect(groupPublications([]).map((g) => g.id)).toEqual(["channels"]);
   });
 });
