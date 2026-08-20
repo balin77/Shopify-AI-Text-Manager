@@ -6,7 +6,7 @@
  */
 
 import { isThemeContentType } from "~/utils/content-type-groups";
-import { fieldCard } from "~/services/content-attributes.shared";
+import { detailsFieldsForLocale, fieldCard } from "~/services/content-attributes.shared";
 import {
   isFullWidthDetailsField,
   isHalfHeightDetailsField,
@@ -649,11 +649,25 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   );
   const attributeFields = useMemo(() => visibleFields.filter((f) => fieldCard(f) === "details"), [visibleFields]);
 
+  // …and of those, the ones THIS locale can act on. A merchandising attribute
+  // has one value per item, so a translation showed a card of greyed boxes
+  // around the single field in it that is translatable — see
+  // `detailsFieldsForLocale`, which also explains why the category is not part
+  // of this. On a product the card keeps the product type; on the other types
+  // nothing is left and the card itself drops out below.
+  const detailsFields = useMemo(
+    () => detailsFieldsForLocale(attributeFields, state.currentLanguage === primaryLocale),
+    [attributeFields, state.currentLanguage, primaryLocale],
+  );
+
+  /** True when the line above hid something — the card then says so, once. */
+  const detailsHasHiddenFields = detailsFields.length < attributeFields.length;
+
   // The Details card's two regions — the grid of boxes and the sales-channel
   // aside. Derived from the ALREADY filtered list, so a field the editor
-  // hoists elsewhere (the status control moved into the action bar) never
-  // reaches either of them.
-  const detailsLayout = useMemo(() => splitDetailsFields(attributeFields), [attributeFields]);
+  // hoists elsewhere (the status control moved into the action bar, the
+  // attributes a foreign locale cannot write) never reaches either of them.
+  const detailsLayout = useMemo(() => splitDetailsFields(detailsFields), [detailsFields]);
 
   /**
    * Primary-language editing writes to a theme file (themeFilesUpsert), which
@@ -2279,13 +2293,25 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     (status, vendor, tags, category, memberships, stock) rather
                     than things it says, and mixed into the text fields they
                     pushed the actual content off the first screen. */}
-                {attributeFields.length > 0 && !isFieldsLoading && (
+                {detailsFields.length > 0 && !isFieldsLoading && (
                   <div style={{ marginTop: "1rem" }}>
                     <Card padding="400">
                       <BlockStack gap="400">
                         <Text as="h2" variant="headingMd">
                           {t.content?.attributesCardTitle || "Details"}
                         </Text>
+                        {/* Said ONCE, in place of the boxes it replaces. A
+                            foreign locale no longer renders the attributes at
+                            all (`detailsFieldsForLocale`), and a card that
+                            simply got shorter between two language clicks
+                            reads as a bug or a plan gate — so the card names
+                            the reason where the fields were. */}
+                        {detailsHasHiddenFields && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {t.content?.attributesHiddenInTranslation ||
+                              "The other details here exist once per item, not per language — switch to the primary language to change them."}
+                          </Text>
+                        )}
                         {/* One grey card per field. It used to be a subcard
                             per SECTION, which put a heading reading
                             "Theme-Vorlage" directly above a field labelled

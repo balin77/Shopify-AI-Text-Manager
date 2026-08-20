@@ -721,6 +721,10 @@ export const en: Translation = {
     attributesCardTitle: "Details",
     attributesNotSyncedYet: "This item's details have not been loaded from Shopify yet — reload it to see and edit them.",
     attributesForeignLocale: "These details exist once per item, not per language. Switch to the primary language to change them.",
+    // Shown in a translation INSTEAD of the fields it no longer renders —
+    // a card that simply got shorter between two language clicks reads as a
+    // bug or a plan gate.
+    attributesHiddenInTranslation: "The other details here — vendor, tags, collections, theme template, sales channels — exist once per item, not per language. They live in the primary language.",
     // ONE enum vocabulary, at the top level because several surfaces render
     // the same values: the create modal, the editor's attribute fields, its
     // sidebar checklist and the commerce panel's weight unit. Keyed

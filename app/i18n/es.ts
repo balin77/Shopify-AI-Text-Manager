@@ -712,6 +712,10 @@ export const es: Translation = {
     attributesCardTitle: "Detalles",
     attributesNotSyncedYet: "Los datos de este elemento aún no se han cargado desde Shopify — recárgalo para verlos y editarlos.",
     attributesForeignLocale: "Estos datos existen una vez por elemento, no por idioma. Cambia al idioma principal para modificarlos.",
+    // Se muestra en una traducción EN LUGAR de los campos que ya no se
+    // renderizan: una tarjeta que simplemente se acorta entre dos clics de
+    // idioma parece un error o un bloqueo de plan.
+    attributesHiddenInTranslation: "Los demás datos —proveedor, etiquetas, colecciones, plantilla del tema, canales de venta— existen una vez por elemento, no por idioma. Se editan en el idioma principal.",
     // UN solo vocabulario de enums, en el nivel superior porque varias
     // superficies muestran los mismos valores: el modal de creación, los
     // campos de atributos del editor, su lista lateral y la unidad de peso del

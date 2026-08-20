@@ -18,11 +18,25 @@
 import { describe, it, expect } from "vitest";
 import {
   attributeInputFor,
+  detailsFieldsForLocale,
+  fieldCard,
   isAttributeField,
   isValidProductStatus,
   isValidSortOrder,
   parseTagList,
 } from "~/services/content-attributes.shared";
+import {
+  PRODUCTS_CONFIG,
+  COLLECTIONS_CONFIG,
+  PAGES_CONFIG,
+  BLOGS_CONFIG,
+} from "~/config/content-fields.config";
+import type { FieldDefinition } from "~/types/content-editor.types";
+
+/** What the Details card receives, minus the field the editor hoists into the
+ *  action bar (`statusControl` takes `status` / `isPublished`). */
+const detailsCardFields = (fields: FieldDefinition[]) =>
+  fields.filter((f) => fieldCard(f) === "details" && f.key !== "status" && f.key !== "isPublished");
 
 describe("isAttributeField", () => {
   it("needs BOTH marks, because three of the seven are plain text fields", () => {
@@ -201,5 +215,45 @@ describe("attributeInputFor", () => {
 
   it("returns nothing at all for a resource with no attribute block", () => {
     expect(attributeInputFor("ShopPolicy" as never, { isPublished: "false" }, touched("isPublished"))).toEqual({});
+  });
+});
+
+describe("detailsFieldsForLocale", () => {
+  const keys = (fields: FieldDefinition[]) => fields.map((f) => f.key);
+
+  it("changes nothing in the primary language", () => {
+    const fields = detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions);
+    expect(keys(detailsFieldsForLocale(fields, true))).toEqual(keys(fields));
+  });
+
+  it("leaves a translation with the product type and nothing else", () => {
+    // The card's whole point in a foreign locale: `productType` is the one
+    // field in it Shopify stores per LOCALE. Vendor, collections, tags, the
+    // theme template and the sales channels are one value per product, and as
+    // greyed boxes repeating one sentence they buried the field the merchant
+    // opened the card for.
+    const fields = detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions);
+    expect(keys(detailsFieldsForLocale(fields, false))).toEqual(["productType"]);
+  });
+
+  it("empties the card completely on the types with nothing translatable in it", () => {
+    // Collections, pages and blogs/articles carry only attributes here, so the
+    // caller's `length > 0` guard drops the card itself rather than drawing a
+    // heading over an explanation.
+    for (const config of [COLLECTIONS_CONFIG, PAGES_CONFIG, BLOGS_CONFIG]) {
+      const fields = detailsCardFields(config.fieldDefinitions);
+      expect(detailsFieldsForLocale(fields, false)).toEqual([]);
+    }
+  });
+
+  it("keeps a field that names a render GROUP, in every locale", () => {
+    // The `groupId` veto in `isAttributeField` carries through: a metaobject
+    // entry's colour holds one value per SHOP for a different reason, and it
+    // belongs to its entry's card — dropping it in a foreign locale would
+    // hollow out that card instead of this one.
+    const grouped = [
+      { key: "colour", type: "color", translationKey: "", supportsTranslation: false, groupId: "gid://shopify/Metaobject/1" },
+    ] as unknown as FieldDefinition[];
+    expect(detailsFieldsForLocale(grouped, false)).toEqual(grouped);
   });
 });

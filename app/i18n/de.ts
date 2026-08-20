@@ -728,6 +728,10 @@ export const de = {
     attributesCardTitle: "Details",
     attributesNotSyncedYet: "Die Details dieses Eintrags wurden noch nicht von Shopify geladen — lade ihn neu, um sie zu sehen und zu bearbeiten.",
     attributesForeignLocale: "Diese Angaben gibt es einmal pro Eintrag, nicht pro Sprache. Wechsle in die Hauptsprache, um sie zu ändern.",
+    // Steht in der Übersetzung ANSTELLE der Felder, die dort nicht mehr
+    // gezeigt werden — sonst wäre die Karte zwischen zwei Sprachklicks
+    // einfach kürzer, was wie ein Fehler oder eine Plan-Sperre aussieht.
+    attributesHiddenInTranslation: "Die übrigen Angaben — Hersteller, Tags, Kollektionen, Theme Vorlage, Verkaufskanäle — gibt es nur einmal pro Eintrag, nicht pro Sprache. Sie stehen in der Hauptsprache.",
     // EIN Enum-Vokabular, auf oberster Ebene, weil mehrere Oberflächen
     // dieselben Werte rendern: das Anlege-Modal, die Attributfelder im Editor,
     // dessen Sidebar-Checkliste und die Gewichtseinheit im Handelsbereich.

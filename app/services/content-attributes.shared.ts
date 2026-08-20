@@ -85,6 +85,44 @@ export function fieldCard(field: {
   return isAttributeField(field) ? "details" : "main";
 }
 
+/**
+ * Which of the Details card's fields a given LOCALE shows.
+ *
+ * The card's fields are merchandising attributes — one value per item, never
+ * one per locale — plus the single translatable exception the `card` override
+ * puts there (`productType`). In a foreign locale that meant six greyed boxes
+ * repeating one sentence around the one field the merchant came to edit, and
+ * on the other three content types it meant a whole card of them with nothing
+ * translatable left at all. A translation screen shows what a translation can
+ * change; everything else is read where it is written, in the primary language.
+ *
+ * The reason does not vanish with the boxes: the caller renders ONE line of it
+ * (`content.attributesHiddenInTranslation`) whenever this dropped something,
+ * because a field that disappears without a word reads as a bug or a plan gate.
+ *
+ * Deliberately about this CARD, not about "everything untranslatable": the
+ * category is an attribute that renders UP in the main card, where Shopify's
+ * own admin puts it, and it keeps its read-only box with the explanation the
+ * other attributes used to carry — hiding a field from the card a merchant
+ * navigates by is a different decision from thinning out a card of controls
+ * they cannot use.
+ *
+ * `isAttributeField` and not `supportsTranslation`, so the line this draws is
+ * the same one that decides the fields' SAVE semantics: what a foreign locale
+ * refuses to write is exactly what it now refuses to show.
+ */
+export function detailsFieldsForLocale<
+  F extends {
+    card?: string;
+    translationKey?: string;
+    supportsTranslation?: boolean;
+    groupId?: string;
+  },
+>(fields: F[], isPrimaryLocale: boolean): F[] {
+  if (isPrimaryLocale) return fields;
+  return fields.filter((field) => !isAttributeField(field));
+}
+
 /** Shaped for the four `*UpdateInput`s. `author` stays a plain name here — the
  *  service wraps it in Shopify's `AuthorInput` at the call. */
 export interface AttributeInput {
