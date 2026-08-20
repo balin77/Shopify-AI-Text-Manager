@@ -30,7 +30,7 @@ import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Banner, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
@@ -513,6 +513,17 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   // the empty-state distinguish "not synced yet" from "synced, genuinely empty"
   // (a theme can legitimately have 0 entries in a tab). Reset on theme switch.
   const [syncAttempted, setSyncAttempted] = useState(false);
+  /**
+   * What the last sync could NOT do.
+   *
+   * The sync services catch per item so one bad resource cannot stop the run,
+   * so an HTTP 200 says the route ran — not that anything was synced. This
+   * button used to check nothing but `res.ok`, which is how a run where every
+   * collection failed came back as a silent success: the merchant is told to
+   * sync, syncs, sees no error, and the editor still says the data is missing
+   * (the "unknown whether this collection picks its members by rule" case).
+   */
+  const [syncFailure, setSyncFailure] = useState<{ failed: number; error?: string } | null>(null);
   const handleSyncAll = useCallback(async () => {
     if (!revalidator) return;
     const ct = config.contentType;
@@ -527,16 +538,42 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       return;
     }
     setIsDiscovering(true);
+    setSyncFailure(null);
     try {
       const res = await fetch(endpoint, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json().catch(() => null)) as
+        | {
+            success?: boolean;
+            error?: string;
+            /** /api/sync-content — per content type. */
+            failures?: Record<string, { failed: number; error?: string }>;
+            /** /api/sync-products — its own per-product tally, on a 200. */
+            failed?: number;
+            errors?: string[];
+          }
+        | null;
+      // TWO endpoints, two shapes, and both report a partial failure with an
+      // HTTP 200 — the products route has always returned `failed`/`errors`
+      // and nothing ever read them.
+      const reported =
+        body?.success === false
+          ? { failed: -1, error: body.error }
+          : typeof body?.failed === "number" && body.failed > 0
+            ? { failed: body.failed, error: body.errors?.[0] }
+            : // The button syncs ONE content type, so the first entry is this tab's.
+              Object.values(body?.failures ?? {})[0];
+      if (reported) setSyncFailure(reported);
+      // "Not synced yet" may only become "genuinely empty" on the strength of
+      // a run that actually read something.
+      if (!reported) setSyncAttempted(true);
     } catch (err) {
       // Don't block the revalidate — the DB may still hold fresher data than the
       // current view even if the Shopify pull failed.
       console.error("[UnifiedContentEditor] sync-from-Shopify failed:", err);
+      setSyncFailure({ failed: -1, error: err instanceof Error ? err.message : String(err) });
     } finally {
       setIsDiscovering(false);
-      setSyncAttempted(true);
       revalidator.revalidate();
     }
   }, [revalidator, config.contentType]);
@@ -2495,6 +2532,32 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           error={deleteItem.error}
           t={t.content?.deleteModal}
         />
+      )}
+
+      {/* A sync that fixed nothing must not look like one that worked. The
+          count is what FAILED; `-1` means the run did not even get that far. */}
+      {syncFailure && (
+        <div style={{ padding: "0 1rem 1rem" }}>
+          <Banner
+            tone="warning"
+            title={t.content?.syncFailedTitle || "Not everything could be synced"}
+            onDismiss={() => setSyncFailure(null)}
+          >
+            <BlockStack gap="100">
+              <Text as="p">
+                {syncFailure.failed > 0
+                  ? (t.content?.syncFailedSome || "{count} item(s) could not be loaded from Shopify.").replace(
+                      "{count}",
+                      String(syncFailure.failed),
+                    )
+                  : t.content?.syncFailedAll || "The sync could not be completed."}
+              </Text>
+              {syncFailure.error && (
+                <Text as="p" variant="bodySm" tone="subdued">{syncFailure.error}</Text>
+              )}
+            </BlockStack>
+          </Banner>
+        </div>
       )}
 
       {createItem.created && (

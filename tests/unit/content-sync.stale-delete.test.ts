@@ -104,7 +104,9 @@ describe('syncAllArticles — R3 stale-delete', () => {
     expect(dbm.ctDeleteMany).toHaveBeenCalledWith({
       where: { shop, resourceType: 'Article', resourceId: { in: ['gid://shopify/Article/STALE'] } },
     });
-    expect(n).toBe(2);
+    // What the run ACHIEVED, not what it attempted: a run in which every
+    // article failed used to return the item count and read as a success.
+    expect(n).toEqual({ synced: 2, failed: 0 });
   });
 
   it('truncation guard: >=250 blogs → no stale-delete attempted', async () => {
@@ -117,7 +119,7 @@ describe('syncAllArticles — R3 stale-delete', () => {
     expect(dbm.transaction).not.toHaveBeenCalled();
     expect(dbm.articleCount).not.toHaveBeenCalled();
     expect(dbm.articleDeleteMany).not.toHaveBeenCalled();
-    expect(n).toBe(0);
+    expect(n).toEqual({ synced: 0, failed: 0 });
   });
 
   it('0-items health check: empty Shopify + local rows present → throws, deletes nothing', async () => {
@@ -134,7 +136,7 @@ describe('syncAllArticles — R3 stale-delete', () => {
     const graphql = vi.fn().mockResolvedValue(gql(blogsPayload([[]])));
     const svc = makeService(graphql);
 
-    await expect(svc.syncAllArticles()).resolves.toBe(0);
+    await expect(svc.syncAllArticles()).resolves.toEqual({ synced: 0, failed: 0 });
     expect(dbm.articleDeleteMany).not.toHaveBeenCalled();
   });
 
@@ -153,7 +155,41 @@ describe('syncAllArticles — R3 stale-delete', () => {
       where: { shop, id: { notIn: live } },
     });
     expect(syncArticleSpy).toHaveBeenCalledTimes(1); // cap applied to the sync loop
-    expect(n).toBe(1);
+    expect(n).toEqual({ synced: 1, failed: 0 });
+  });
+});
+
+describe('a bulk sync reports what it ACHIEVED', () => {
+  /**
+   * The per-item loop catches so one bad resource cannot stop the run. Its old
+   * return value was the number of items it TRIED — so a run in which every
+   * single one failed came back as "2 synced", the route reported success, and
+   * the merchant was left in front of an editor still asking them to sync.
+   */
+  it('counts the failures instead of the attempts, and names the first reason', async () => {
+    const live = ['gid://shopify/Article/1', 'gid://shopify/Article/2'];
+    const graphql = vi.fn().mockResolvedValue(gql(blogsPayload([live])));
+    const svc = makeService(graphql);
+    vi.spyOn(svc as any, 'syncArticle')
+      .mockRejectedValueOnce(new Error('Collection not found'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(svc.syncAllArticles()).resolves.toEqual({
+      synced: 1,
+      failed: 1,
+      firstError: 'Collection not found',
+    });
+  });
+
+  it('reports a run in which everything failed as zero synced', async () => {
+    const live = ['gid://shopify/Article/1', 'gid://shopify/Article/2'];
+    const graphql = vi.fn().mockResolvedValue(gql(blogsPayload([live])));
+    const svc = makeService(graphql);
+    vi.spyOn(svc as any, 'syncArticle').mockRejectedValue(new Error('schema-level error'));
+
+    const run = await svc.syncAllArticles();
+    expect(run.synced).toBe(0);
+    expect(run.failed).toBe(2);
   });
 });
 

@@ -87,6 +87,8 @@ export async function runInitialFullSync(
   // stay permanently uncached).
   let phaseFailed = false;
   let firstPhaseError: string | null = null;
+  /** Items to sync, and not one of them got through — see the emit sites. */
+  const totalFailure = (run: { synced: number; failed: number }) => run.failed > 0 && run.synced === 0;
   const recordPhaseFailure = (phase: string, err: unknown): string => {
     const msg = getSyncErrorMessage(phase, err);
     phaseFailed = true;
@@ -241,13 +243,29 @@ export async function runInitialFullSync(
     emit('collections', 0, 'Syncing collections...');
     try {
       const syncService = new ContentSyncService(admin, shop);
-      stats.collections = await syncService.syncAllCollections(scope.collections.max, (current, total, message) => {
+      // `synced`, not "attempted": a phase in which every collection failed
+      // used to report its item count and read as a success.
+      const collectionRun = await syncService.syncAllCollections(scope.collections.max, (current, total, message) => {
         assertNotAborted();
         emit('collections', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing collections...', {
           detailCurrent: current, detailTotal: total, detailMessage: message,
         });
       });
-      emit('collections', 100, `Synced ${stats.collections} collections`);
+      stats.collections = collectionRun.synced;
+      // A phase that synced NOTHING while it had items to sync is a failed
+      // phase, not a finished one: marking the initial sync complete here is
+      // exactly how pre-existing collections — which have no create/update
+      // webhook — would stay permanently uncached. A PARTIAL failure is
+      // reported but does not hold the setup open; the next sync retries it.
+      emit(
+        'collections',
+        100,
+        totalFailure(collectionRun)
+          ? recordPhaseFailure('collections', new Error(collectionRun.firstError || 'no collection could be synced'))
+          : collectionRun.failed > 0
+            ? `Synced ${collectionRun.synced} collections, ${collectionRun.failed} failed: ${collectionRun.firstError ?? ""}`
+            : `Synced ${stats.collections} collections`,
+      );
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       emit('collections', 100, recordPhaseFailure('collections', err));
@@ -264,13 +282,22 @@ export async function runInitialFullSync(
     emit('articles', 0, 'Syncing articles...');
     try {
       const syncService = new ContentSyncService(admin, shop);
-      stats.articles = await syncService.syncAllArticles(scope.articles.max, (current, total, message) => {
+      const articleRun = await syncService.syncAllArticles(scope.articles.max, (current, total, message) => {
         assertNotAborted();
         emit('articles', total > 0 ? Math.round((current / total) * 100) : 0, 'Syncing articles...', {
           detailCurrent: current, detailTotal: total, detailMessage: message,
         });
       });
-      emit('articles', 100, `Synced ${stats.articles} articles`);
+      stats.articles = articleRun.synced;
+      emit(
+        'articles',
+        100,
+        totalFailure(articleRun)
+          ? recordPhaseFailure('articles', new Error(articleRun.firstError || 'no article could be synced'))
+          : articleRun.failed > 0
+            ? `Synced ${articleRun.synced} articles, ${articleRun.failed} failed: ${articleRun.firstError ?? ""}`
+            : `Synced ${stats.articles} articles`,
+      );
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") throw err;
       emit('articles', 100, recordPhaseFailure('articles', err));

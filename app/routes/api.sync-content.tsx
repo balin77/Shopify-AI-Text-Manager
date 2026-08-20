@@ -44,6 +44,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const bgSyncService = new BackgroundSyncService(admin, session.shop);
 
     const results: Record<string, number> = {};
+    /**
+     * What did NOT work, per content type.
+     *
+     * The per-item loops in the sync services catch so one bad resource cannot
+     * stop the run — which means a run where every item failed returns a count
+     * and reads exactly like a run where every item worked. The merchant then
+     * presses "sync from Shopify", is told nothing, and the thing they synced
+     * for is still missing. This is the channel that says so; the client turns
+     * it into one banner.
+     */
+    const failures: Record<string, { failed: number; error?: string }> = {};
 
     // Sync requested content types in parallel
     const promises: Promise<void>[] = [];
@@ -51,10 +62,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (types.includes('collections')) {
       promises.push(
         syncService.syncAllCollections(planLimits.maxCollections)
-          .then(count => { results.collections = count; })
+          .then(run => {
+            results.collections = run.synced;
+            if (run.failed > 0) failures.collections = { failed: run.failed, error: run.firstError };
+          })
           .catch(err => {
             logger.error('[SYNC-CONTENT] Collections sync failed', { context: "SyncContent", error: err.message });
             results.collections = 0;
+            failures.collections = { failed: -1, error: err.message };
           })
       );
     }
@@ -62,10 +77,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (types.includes('articles')) {
       promises.push(
         syncService.syncAllArticles(planLimits.maxArticles)
-          .then(count => { results.articles = count; })
+          .then(run => {
+            results.articles = run.synced;
+            if (run.failed > 0) failures.articles = { failed: run.failed, error: run.firstError };
+          })
           .catch(err => {
             logger.error('[SYNC-CONTENT] Articles sync failed', { context: "SyncContent", error: err.message });
             results.articles = 0;
+            failures.articles = { failed: -1, error: err.message };
           })
       );
     }
@@ -77,6 +96,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Pages sync failed', { context: "SyncContent", error: err.message });
             results.pages = 0;
+            failures.pages = { failed: -1, error: err.message };
           })
       );
     }
@@ -88,6 +108,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Policies sync failed', { context: "SyncContent", error: err.message });
             results.policies = 0;
+            failures.policies = { failed: -1, error: err.message };
           })
       );
     }
@@ -99,6 +120,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Themes sync failed', { context: "SyncContent", error: err.message });
             results.themes = 0;
+            failures.themes = { failed: -1, error: err.message };
           })
       );
       // Phase C (PLAN_THEME_SELECTION_B_LITE): the full sync above enumerates ONLY
@@ -137,6 +159,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         })().catch(err => {
           logger.error('[SYNC-CONTENT] Metaobjects sync failed', { context: "SyncContent", error: err.message });
           results.metaobjects = 0;
+          failures.metaobjects = { failed: -1, error: err.message };
         })
       );
     }
@@ -148,6 +171,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Menus sync failed', { context: "SyncContent", error: err.message });
             results.menus = 0;
+            failures.menus = { failed: -1, error: err.message };
           })
       );
     }
@@ -159,6 +183,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] System sync failed', { context: "SyncContent", error: err.message });
             results.system = 0;
+            failures.system = { failed: -1, error: err.message };
           })
       );
     }
@@ -170,6 +195,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Delivery sync failed', { context: "SyncContent", error: err.message });
             results.delivery = 0;
+            failures.delivery = { failed: -1, error: err.message };
           })
       );
     }
@@ -181,6 +207,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Selling-Plans sync failed', { context: "SyncContent", error: err.message });
             results.sellingPlans = 0;
+            failures.sellingPlans = { failed: -1, error: err.message };
           })
       );
     }
@@ -193,6 +220,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Online-Store-Extras sync failed', { context: "SyncContent", error: err.message });
             results.onlineStoreExtras = 0;
+            failures.onlineStoreExtras = { failed: -1, error: err.message };
           })
       );
       // The Cookie-Banner tab's config.contentType is also "onlineStoreExtras",
@@ -206,6 +234,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           .catch(err => {
             logger.error('[SYNC-CONTENT] Cookie-Banner sync failed', { context: "SyncContent", error: err.message });
             results.cookieBanner = 0;
+            failures.cookieBanner = { failed: -1, error: err.message };
           })
       );
     }
@@ -224,6 +253,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...results,
         total,
       },
+      // Reported even on a 200: the HTTP status says the ROUTE ran, and the
+      // client used to read that as "everything was synced".
+      ...(Object.keys(failures).length > 0 ? { failures } : {}),
     });
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);

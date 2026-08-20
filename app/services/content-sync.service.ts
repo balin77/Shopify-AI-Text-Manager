@@ -75,6 +75,55 @@ interface ShopifyMenuData {
   items: unknown[];
 }
 
+/**
+ * What a bulk sync ACHIEVED — never what it attempted.
+ *
+ * Every bulk loop here catches per item, so one unsyncable resource cannot
+ * stop the run. The cost of that is a count that means nothing: a run in which
+ * all 37 collections failed used to return 37, and the route, the setup wizard
+ * and the "sync from Shopify" button all reported it as a success. The
+ * merchant then stands in front of an editor still saying "sync the
+ * Collections tab" with no way to learn that the sync did exactly nothing.
+ */
+export interface BulkSyncResult {
+  synced: number;
+  failed: number;
+  /** The FIRST failure's message — one summary line beats 37 log entries the
+   *  merchant never sees, and it is what the UI can actually show. */
+  firstError?: string;
+}
+
+/** The per-item bookkeeping behind `BulkSyncResult`, so no loop counts its own. */
+class BulkSyncTally {
+  private ok = 0;
+  private bad = 0;
+  private first?: string;
+
+  succeeded(): void {
+    this.ok += 1;
+  }
+
+  failed(error: unknown): void {
+    this.bad += 1;
+    if (this.first === undefined) {
+      this.first = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  report(kind: string, shop: string): BulkSyncResult {
+    if (this.bad > 0) {
+      logger.warn(`[ContentSync] ${kind} sync finished with failures`, {
+        context: "ContentSync",
+        shop,
+        synced: this.ok,
+        failed: this.bad,
+        error: this.first,
+      });
+    }
+    return { synced: this.ok, failed: this.bad, ...(this.first !== undefined ? { firstError: this.first } : {}) };
+  }
+}
+
 export class ContentSyncService {
   /** Markets memo — loaded once per service instance (one instance ≈ one sync run). */
   private marketsPromise: Promise<MarketInfo[]> | null = null;
@@ -807,9 +856,18 @@ export class ContentSyncService {
   // ============================================
 
   /**
-   * Sync all collections (respects plan limit if provided)
+   * Sync all collections (respects plan limit if provided).
+   *
+   * Returns what the run ACHIEVED, not what it attempted. The per-item loop
+   * catches so one bad collection cannot stop the rest — and reporting the
+   * number of items it tried then describes a run in which every single one
+   * failed as "37 synced". That false success is what makes "I synced and
+   * nothing changed" impossible to diagnose: the merchant is told the thing
+   * they were asked to do has been done, while `attributesSyncedAt` stays
+   * NULL and the editor keeps saying "unknown whether this collection picks
+   * its members by rule — sync the Collections tab".
    */
-  async syncAllCollections(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
+  async syncAllCollections(maxCount?: number, onProgress?: ProgressCallback): Promise<BulkSyncResult> {
     logger.debug(`[ContentSync] Syncing all collections...`);
     if (maxCount !== undefined) {
       logger.debug(`[ContentSync] Plan limit: ${maxCount} collections`);
@@ -843,6 +901,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Syncing ${collections.length} collections`);
 
     let index = 0;
+    const outcome = new BulkSyncTally();
     for (const collection of collections) {
       index++;
       if (onProgress) {
@@ -850,18 +909,20 @@ export class ContentSyncService {
       }
       try {
         await this.syncCollection(collection.id);
+        outcome.succeeded();
       } catch (error) {
+        outcome.failed(error);
         logger.error(`[ContentSync] Failed to sync collection ${collection.id}, continuing with next`, { error });
       }
     }
 
-    return collections.length;
+    return outcome.report("collections", this.shop);
   }
 
   /**
    * Sync all articles (respects plan limit if provided)
    */
-  async syncAllArticles(maxCount?: number, onProgress?: ProgressCallback): Promise<number> {
+  async syncAllArticles(maxCount?: number, onProgress?: ProgressCallback): Promise<BulkSyncResult> {
     logger.debug(`[ContentSync] Syncing all articles...`);
     if (maxCount !== undefined) {
       logger.debug(`[ContentSync] Plan limit: ${maxCount} articles`);
@@ -870,7 +931,7 @@ export class ContentSyncService {
     // If limit is 0, skip articles entirely
     if (maxCount === 0) {
       logger.debug(`[ContentSync] Articles disabled for this plan, skipping`);
-      return 0;
+      return { synced: 0, failed: 0 };
     }
 
     // First, get all blogs
@@ -959,6 +1020,7 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] Syncing ${allArticles.length} articles`);
 
     let index = 0;
+    const outcome = new BulkSyncTally();
     for (const article of allArticles) {
       index++;
       if (onProgress) {
@@ -966,12 +1028,14 @@ export class ContentSyncService {
       }
       try {
         await this.syncArticle(article.id);
+        outcome.succeeded();
       } catch (error) {
+        outcome.failed(error);
         logger.error(`[ContentSync] Failed to sync article ${article.id}, continuing with next`, { error });
       }
     }
 
-    return allArticles.length;
+    return outcome.report("articles", this.shop);
   }
 
   /**

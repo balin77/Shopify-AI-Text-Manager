@@ -36,7 +36,7 @@ vi.mock('~/db.server', () => ({
 }));
 
 // Articles + Menus run through ContentSyncService.
-const mockSyncAllArticles = vi.fn().mockResolvedValue(0);
+const mockSyncAllArticles = vi.fn().mockResolvedValue({ synced: 0, failed: 0 });
 const mockSyncAllMenus = vi.fn().mockResolvedValue(0);
 vi.mock('~/services/content-sync.service', () => ({
   ContentSyncService: class {
@@ -72,10 +72,13 @@ function spyAllMethods(
       ? vi.spyOn(service as any, name as any).mockRejectedValue(value)
       : vi.spyOn(service as any, name as any).mockResolvedValue(value);
   }
-  const setCs = (fn: ReturnType<typeof vi.fn>, value: SyncResult) =>
+  const setCs = (fn: ReturnType<typeof vi.fn>, value: SyncResult | { synced: number; failed: number }) =>
     value instanceof Error ? fn.mockRejectedValue(value) : fn.mockResolvedValue(value);
 
-  setCs(mockSyncAllArticles, articles);
+  // `syncAllArticles` reports {synced, failed} — the count it used to return
+  // was the number of items it TRIED, which read as a success even when every
+  // one of them failed. `syncAllMenus` still returns a plain number.
+  setCs(mockSyncAllArticles, articles instanceof Error ? articles : { synced: articles, failed: 0 });
   setCs(mockSyncAllMenus, menus);
   return {
     spyPages: mockMethod('syncAllPages', pages),

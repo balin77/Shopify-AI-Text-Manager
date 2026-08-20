@@ -2899,10 +2899,12 @@ export class BackgroundSyncService {
             })
           : Promise.resolve(0),
         scope.articles.enabled
-          ? contentSync.syncAllArticles(scope.articles.max).catch(err => {
-              logger.error('[BackgroundSync] Articles sync failed:', err);
-              return 0;
-            })
+          ? contentSync.syncAllArticles(scope.articles.max)
+              .then(r => r.synced)
+              .catch(err => {
+                logger.error('[BackgroundSync] Articles sync failed:', err);
+                return 0;
+              })
           : Promise.resolve(0),
         scope.menus.enabled
           ? contentSync.syncAllMenus().catch(err => {

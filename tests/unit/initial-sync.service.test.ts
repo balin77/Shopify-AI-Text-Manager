@@ -27,8 +27,10 @@ const m = vi.hoisted(() => ({
   productFindMany: vi.fn().mockResolvedValue([]),
   transaction: vi.fn().mockResolvedValue([]),
   syncAllProducts: vi.fn().mockResolvedValue(0),
-  syncAllCollections: vi.fn().mockResolvedValue(0),
-  syncAllArticles: vi.fn().mockResolvedValue(0),
+  // The bulk syncs report {synced, failed}: a count of ATTEMPTED items could
+  // not tell a run where everything failed from one where everything worked.
+  syncAllCollections: vi.fn().mockResolvedValue({ synced: 0, failed: 0 }),
+  syncAllArticles: vi.fn().mockResolvedValue({ synced: 0, failed: 0 }),
   syncAllMenus: vi.fn().mockResolvedValue(0),
   syncAllPages: vi.fn().mockResolvedValue(0),
   syncAllPolicies: vi.fn().mockResolvedValue(0),
@@ -133,7 +135,7 @@ beforeEach(() => {
 describe('runInitialFullSync — R1 completion marker', () => {
   it('full success (pro): completed:true, marker set, force flag cleared', async () => {
     m.syncAllProducts.mockResolvedValue(12);
-    m.syncAllCollections.mockResolvedValue(3);
+    m.syncAllCollections.mockResolvedValue({ synced: 3, failed: 0 });
 
     const res = await runInitialFullSync(admin, shop);
 
@@ -191,7 +193,7 @@ describe('runInitialFullSync — R1 completion marker', () => {
   it('disabled phases (free plan) are skipped — not called, not counted as failure', async () => {
     m.aiFindUnique.mockResolvedValue({ subscriptionPlan: 'free', appLanguage: 'en' });
     m.syncAllProducts.mockResolvedValue(7);
-    m.syncAllCollections.mockResolvedValue(2); // collections IS enabled on free
+    m.syncAllCollections.mockResolvedValue({ synced: 2, failed: 0 }); // collections IS enabled on free
 
     const res = await runInitialFullSync(admin, shop);
 

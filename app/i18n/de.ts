@@ -507,6 +507,9 @@ export const de = {
     altTextTranslatePartialImages: "Alt-Texte teilweise gespeichert. Bild(er) {failedImages} konnten nicht auf Shopify gespeichert werden. Bitte synchronisiere das Produkt erneut.",
     altTextTranslateAllSuccess: "Alt-Texte für {totalCount} Bild(er) in {languageCount} Sprache(n) übersetzt",
     // Setup
+    syncFailedTitle: "Es konnte nicht alles synchronisiert werden",
+    syncFailedSome: "{count} Eintrag/Einträge konnten nicht von Shopify geladen werden. Für sie hat sich nichts geändert — den Grund nennt das Log.",
+    syncFailedAll: "Die Synchronisierung konnte nicht abgeschlossen werden.",
     syncAllContent: "Alle Inhalte synchronisieren",
     syncDescription: "Dies synchronisiert alle Produkte, Kollektionen und Artikel von Shopify in die Datenbank. Auto-Updates über Webhooks.",
 

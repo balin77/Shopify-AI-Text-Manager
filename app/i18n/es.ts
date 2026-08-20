@@ -502,6 +502,9 @@ export const es: Translation = {
     altTextTranslatePartialImages: "Textos alt parcialmente guardados. Imagen(es) {failedImages} no pudieron guardarse en Shopify. Por favor, sincroniza el producto de nuevo.",
     altTextTranslateAllSuccess: "Textos alt para {totalCount} imagen(es) traducidos a {languageCount} idioma(s)",
     // Setup
+    syncFailedTitle: "No se pudo sincronizar todo",
+    syncFailedSome: "{count} elemento(s) no se pudieron cargar desde Shopify. Para ellos no cambió nada — el registro indica el motivo.",
+    syncFailedAll: "La sincronización no se pudo completar.",
     syncAllContent: "Sincronizar todo el contenido",
     syncDescription: "Esto sincronizará todos los productos, colecciones y artículos de Shopify a la base de datos. Auto-actualización mediante webhooks.",
 
