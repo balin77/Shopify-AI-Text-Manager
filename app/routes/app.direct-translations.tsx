@@ -29,10 +29,8 @@ import {
   Divider,
   Spinner,
   Collapsible,
-  Popover,
-  Icon,
 } from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
+import { HelpPopover } from "../components/HelpTrigger";
 import { ToggleSwitch } from "../components/ToggleSwitch";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
@@ -1100,39 +1098,16 @@ function SettingRow({
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
-  const [helpOpen, setHelpOpen] = useState(false);
-  const activator = (
-    <button
-      type="button"
-      onClick={() => setHelpOpen((v) => !v)}
-      aria-label={label}
-      style={{
-        background: "none",
-        border: 0,
-        padding: 0,
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-      }}
-    >
-      <Icon source={QuestionCircleIcon} tone="interactive" />
-    </button>
-  );
   return (
     <InlineStack align="space-between" blockAlign="center" gap="200">
       <InlineStack gap="100" blockAlign="center">
         <Text as="p" variant="bodyMd">{label}</Text>
-        <Popover
-          active={helpOpen}
-          activator={activator}
-          onClose={() => setHelpOpen(false)}
-          preferredPosition="below"
-          sectioned
-        >
-          <Box maxWidth="320px">
-            <Text as="p" variant="bodySm">{help}</Text>
-          </Box>
-        </Popover>
+        {/* The shared ❓ ([HelpTrigger.tsx](../components/HelpTrigger.tsx)) —
+            it owns the scroll lock this overlay needs, and the ~320px popover
+            width the other help panels use. */}
+        <HelpPopover label={label} preferredPosition="below">
+          <Text as="p" variant="bodySm">{help}</Text>
+        </HelpPopover>
       </InlineStack>
       <ToggleSwitch checked={checked} onChange={onChange} />
     </InlineStack>

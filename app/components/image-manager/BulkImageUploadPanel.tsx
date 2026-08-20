@@ -3,7 +3,6 @@ import {
   DropZone,
   Text,
   Button,
-  Icon,
   InlineStack,
   BlockStack,
   Badge,
@@ -14,8 +13,7 @@ import {
   Select,
   TextField,
 } from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
-import "../../styles/HelpTooltip.css";
+import { HelpTriggerButton } from "../HelpTrigger";
 import { useI18n } from "../../contexts/I18nContext";
 import { parseFilename, parseSku } from "../../utils/parseFilenames";
 import { ALL_UPLOADABLE_MIME_TYPES, classifyFile } from "../../utils/mediaKind";
@@ -560,15 +558,13 @@ export function BulkImageUploadPanel({
           <BlockStack gap="100">
             <InlineStack gap="100" blockAlign="center">
               <Text as="span" variant="bodySm" fontWeight="semibold">{t.imageManager.bulkMatchModeLabel}</Text>
-              <button
-                className="help-tooltip-trigger"
-                type="button"
+              {/* Reveals an inline Collapsible, not an overlay — the shared
+                  bare trigger, no scroll lock needed. */}
+              <HelpTriggerButton
+                label={t.imageManager.bulkDocsTitle}
                 style={{ marginLeft: 2 }}
-                aria-label={t.imageManager.bulkDocsTitle}
                 onClick={() => setDocsOpen(o => !o)}
-              >
-                <Icon source={QuestionCircleIcon} tone="interactive" />
-              </button>
+              />
             </InlineStack>
             <Select
               label={t.imageManager.bulkMatchModeLabel}
@@ -619,18 +615,14 @@ export function BulkImageUploadPanel({
               </Text>
               <Text as="span" variant="bodySm" tone="subdued">{generatorOpen ? "▲" : "▼"}</Text>
             </div>
-            <button
-              className="help-tooltip-trigger"
-              type="button"
+            <HelpTriggerButton
+              label={t.imageManager.bulkGeneratorDocsTitle}
               style={{ marginLeft: 0 }}
-              aria-label={t.imageManager.bulkGeneratorDocsTitle}
               onClick={() => {
                 if (!generatorOpen) setGeneratorOpen(true);
                 setGeneratorDocsOpen(o => !o);
               }}
-            >
-              <Icon source={QuestionCircleIcon} tone="interactive" />
-            </button>
+            />
           </InlineStack>
 
           <Collapsible open={generatorOpen} id="bulk-generator" transition={{ duration: "150ms" }}>

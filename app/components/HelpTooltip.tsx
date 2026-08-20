@@ -1,18 +1,18 @@
-import { useState, useCallback } from "react";
-import {
-  Popover,
-  Button,
-  Icon,
-  Text,
-  BlockStack,
-  InlineStack,
-  Modal,
-  List,
-} from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
+/**
+ * The field/tab-level ❓: a popover with the short explanation and, when the
+ * help entry has `details`, a "Mehr erfahren" modal behind it.
+ *
+ * Trigger, overlay and the scroll lock that keeps the overlay glued to the icon
+ * all come from [HelpTrigger.tsx](HelpTrigger.tsx) — see the module comment
+ * there for why an overlay opened inside this app's inner scroll containers has
+ * to freeze them.
+ */
+
+import { useCallback, useState } from "react";
+import { Button, Text, BlockStack, InlineStack, Modal, List } from "@shopify/polaris";
+import { HelpPopover } from "./HelpTrigger";
 import { useI18n } from "../contexts/I18nContext";
 import type { HelpContent } from "../types/content-editor.types";
-import "../styles/HelpTooltip.css";
 
 export type { HelpContent };
 
@@ -23,15 +23,7 @@ interface HelpTooltipProps {
 
 export function HelpTooltip({ helpKey, position = "above" }: HelpTooltipProps) {
   const { t } = useI18n();
-  const [popoverActive, setPopoverActive] = useState(false);
   const [modalActive, setModalActive] = useState(false);
-
-  const togglePopover = useCallback(() => setPopoverActive((active) => !active), []);
-  const closePopover = useCallback(() => setPopoverActive(false), []);
-  const openModal = useCallback(() => {
-    setPopoverActive(false);
-    setModalActive(true);
-  }, []);
   const closeModal = useCallback(() => setModalActive(false), []);
 
   // Get help content from translations
@@ -39,27 +31,14 @@ export function HelpTooltip({ helpKey, position = "above" }: HelpTooltipProps) {
   const helpContent = helpDict?.[helpKey];
   if (!helpContent) return null;
 
-  const activator = (
-    <button
-      className="help-tooltip-trigger"
-      onClick={togglePopover}
-      type="button"
-      aria-label={helpContent.title}
-    >
-      <Icon source={QuestionCircleIcon} tone="interactive" />
-    </button>
-  );
-
   return (
     <>
-      <Popover
-        active={popoverActive}
-        activator={activator}
-        onClose={closePopover}
+      <HelpPopover
+        label={helpContent.title}
         preferredPosition={position}
-        sectioned
+        keepScrollLocked={modalActive}
       >
-        <div className="help-tooltip-content">
+        {(closePopover) => (
           <BlockStack gap="200">
             <Text as="h4" variant="headingSm" fontWeight="semibold">
               {helpContent.title}
@@ -80,14 +59,21 @@ export function HelpTooltip({ helpKey, position = "above" }: HelpTooltipProps) {
             )}
             {helpContent.details && (
               <InlineStack align="end">
-                <Button size="slim" variant="plain" onClick={openModal}>
+                <Button
+                  size="slim"
+                  variant="plain"
+                  onClick={() => {
+                    closePopover();
+                    setModalActive(true);
+                  }}
+                >
                   {t.common?.learnMore || "Mehr erfahren"}
                 </Button>
               </InlineStack>
             )}
           </BlockStack>
-        </div>
-      </Popover>
+        )}
+      </HelpPopover>
 
       {helpContent.details && (
         <Modal

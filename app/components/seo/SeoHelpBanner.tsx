@@ -27,9 +27,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Banner, Icon, Tooltip } from "@shopify/polaris";
-import { QuestionCircleIcon } from "@shopify/polaris-icons";
-import "../../styles/HelpTooltip.css";
+import { Banner, Tooltip } from "@shopify/polaris";
+import { HelpTriggerButton } from "../HelpTrigger";
 import { useI18n } from "../../contexts/I18nContext";
 import { readSeoHelpHidden, writeSeoHelpHidden } from "../../utils/seo-help-visibility";
 
@@ -158,20 +157,15 @@ export function SeoHelpToggle() {
   const label = t.seo.sectionHelpShow;
   return (
     <Tooltip content={label}>
-      {/* Same trigger every other ❓ in the app uses (HelpTooltip, the image
-          manager's doc toggles): a bare button around an `interactive`-toned
-          icon, so this one is blue like the rest. A Polaris Button would render
-          it subdued and boxed. `marginLeft` is the stylesheet's, and the
-          surrounding InlineStack already provides the gap. */}
-      <button
-        className="help-tooltip-trigger"
-        type="button"
+      {/* The shared ❓ ([HelpTrigger.tsx](../HelpTrigger.tsx)). It reveals an
+          INLINE banner, not an overlay, so it needs no scroll lock — hence the
+          bare button rather than `HelpPopover`. The stylesheet's `marginLeft`
+          is dropped because the surrounding InlineStack already gaps. */}
+      <HelpTriggerButton
+        label={label}
         style={{ marginLeft: 0 }}
-        aria-label={label}
         onClick={() => hiddenIds.forEach((id) => ctx.setHidden(id, false))}
-      >
-        <Icon source={QuestionCircleIcon} tone="interactive" />
-      </button>
+      />
     </Tooltip>
   );
 }
