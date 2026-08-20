@@ -166,12 +166,15 @@
                                      a field — but a switch and a channel name
                                      are all that is in one, so every row ended
                                      in a hand's width of empty card. It now
-                                     measures the same as a field box below,
-                                     and the two stay SEPARATE tokens: they are
-                                     a list column and an input box that happen
-                                     to want the same width, not one
-                                     measurement spent twice, and either may
-                                     move without the other. The panel is the
+                                     sits just UNDER a field box below, which
+                                     is the shape of the thing: the widest
+                                     line in one of these columns is a switch
+                                     and a channel name, and that asks for
+                                     less than a text input a merchant types a
+                                     sentence into. The two stay separate
+                                     tokens whatever the numbers do — a list
+                                     column and an input box, not one
+                                     measurement spent twice. The panel is the
                                      ONE place this is spent, and it only
                                      decides when the lists sit side by side:
                                      `auto-fit` collapses to as many columns as
@@ -205,7 +208,7 @@
   --app-field-border-color: #c9cccf;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
-  --app-attribute-grid-min-width: 195px;
+  --app-attribute-grid-min-width: 180px;
   --app-details-field-min-width: 195px;
   --app-details-grid-gap: 1rem;
   --app-details-card-half-height: 5.5rem;
