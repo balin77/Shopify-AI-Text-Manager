@@ -47,6 +47,14 @@ interface SyncProbeReport {
     ruleBased: number;
     truncated: boolean;
     disagreements: Array<{ id: string; title: string; hasSources: boolean; hasRuleSet: boolean }>;
+    shapes: Array<{
+      title: string;
+      types: string[];
+      inclusionConditions: number;
+      exclusionConditions: number;
+      hasSelections: boolean;
+      shareable: boolean;
+    }>;
     error?: string;
     skipped?: string;
   };
@@ -99,10 +107,21 @@ function formatMarkdown(r: SyncProbeReport): string {
     if (r.projection.checked === 0) {
       lines.push("- nothing was measured, which is not the same as agreement");
     } else if (r.projection.disagreements.length === 0) {
-      lines.push("- every rule tree still projects into ruleSet");
+      lines.push("- every collection that carries conditions still projects into ruleSet");
     } else {
       for (const d of r.projection.disagreements) {
-        lines.push(`- **${d.title}**: sources=${d.hasSources}, ruleSet=${d.hasRuleSet} → the product sync stores this as ${d.hasRuleSet ? "rule-based" : "MANUAL"}`);
+        lines.push(`- **${d.title}**: has conditions, ruleSet=${d.hasRuleSet} → the product sync stores this as MANUAL`);
+      }
+    }
+    lines.push("");
+    lines.push("### What is inside those sources (the isSmart question)");
+    if (r.projection.shapes.length === 0) {
+      lines.push("- no collection on this shop carries a source");
+    } else {
+      for (const shape of r.projection.shapes) {
+        lines.push(
+          `- **${shape.title}**: ${shape.types.join("/")}, conditions ${shape.inclusionConditions}+${shape.exclusionConditions}, selections ${shape.hasSelections ? "yes" : "no"}${shape.shareable ? ", shareable" : ""}`,
+        );
       }
     }
   }

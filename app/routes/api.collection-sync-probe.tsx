@@ -382,12 +382,30 @@ export async function action({ request }: ActionFunctionArgs) {
       checked: number;
       ruleBased: number;
       disagreements: Array<{ id: string; title: string; hasSources: boolean; hasRuleSet: boolean }>;
+      /**
+       * What is actually IN those sources, per collection.
+       *
+       * The decisive question behind `isSmart`, which this app derives as
+       * "has any source at all". PLAN §1.2 point 2 warns that `selections`
+       * mixes manual and automatic in the new model — if a MANUAL collection
+       * carries a source whose picks live in `selections` and whose condition
+       * list is empty, then that derivation calls every collection on the shop
+       * rule-based, and the membership picker locks every row it should offer.
+       */
+      shapes: Array<{
+        title: string;
+        types: string[];
+        inclusionConditions: number;
+        exclusionConditions: number;
+        hasSelections: boolean;
+        shareable: boolean;
+      }>;
       /** The window ended before the shop did — "none found" then covers the
        *  first page only, and must not be reported shop-wide. */
       truncated: boolean;
       error?: string;
       skipped?: string;
-    } = { checked: 0, ruleBased: 0, disagreements: [], truncated: false };
+    } = { checked: 0, ruleBased: 0, disagreements: [], shapes: [], truncated: false };
 
     if (!rulesAvailableOn(apiVersion)) {
       projection.skipped = `${apiVersion} has no sources model, so there is nothing to project from.`;
@@ -404,6 +422,24 @@ export async function action({ request }: ActionFunctionArgs) {
                 title
                 sources {
                   __typename
+                  ... on CollectionConditionsSource {
+                    shareable
+                    inclusion {
+                      conditions {
+                        __typename
+                      }
+                      selections(first: 1) {
+                        nodes {
+                          __typename
+                        }
+                      }
+                    }
+                    exclusion {
+                      conditions {
+                        __typename
+                      }
+                    }
+                  }
                 }
                 ruleSet {
                   appliedDisjunctively
@@ -415,18 +451,51 @@ export async function action({ request }: ActionFunctionArgs) {
           data?: {
             collections?: {
               pageInfo?: { hasNextPage?: boolean };
-              nodes?: Array<{ id: string; title: string; sources?: unknown[] | null; ruleSet?: unknown | null }>;
+              nodes?: Array<{
+                id: string;
+                title: string;
+                sources?: Array<{
+                  __typename?: string;
+                  shareable?: boolean | null;
+                  inclusion?: {
+                    conditions?: unknown[] | null;
+                    selections?: { nodes?: unknown[] | null } | null;
+                  } | null;
+                  exclusion?: { conditions?: unknown[] | null } | null;
+                }> | null;
+                ruleSet?: unknown | null;
+              }>;
             };
           };
         };
         projection.truncated = body.data?.collections?.pageInfo?.hasNextPage === true;
         for (const node of body.data?.collections?.nodes ?? []) {
           projection.checked += 1;
-          const hasSources = (node.sources?.length ?? 0) > 0;
+          const sources = node.sources ?? [];
+          const hasSources = sources.length > 0;
           const hasRuleSet = !!node.ruleSet;
-          if (hasSources) projection.ruleBased += 1;
-          if (hasSources !== hasRuleSet) {
+          const conditions =
+            sources.reduce((n, src) => n + (src.inclusion?.conditions?.length ?? 0), 0) +
+            sources.reduce((n, src) => n + (src.exclusion?.conditions?.length ?? 0), 0);
+          // A CONDITION is what makes a collection rule-based. Counting
+          // sources instead is the derivation under test here, so it must not
+          // also be the yardstick that judges it.
+          if (conditions > 0) projection.ruleBased += 1;
+          // The mismatch that matters: a real rule tree that `ruleSet` does
+          // not show. A manual collection legitimately has no `ruleSet`, so
+          // comparing bare source PRESENCE would report every one of them.
+          if (conditions > 0 && !hasRuleSet) {
             projection.disagreements.push({ id: node.id, title: node.title, hasSources, hasRuleSet });
+          }
+          if (hasSources) {
+            projection.shapes.push({
+              title: node.title,
+              types: [...new Set(sources.map((src) => src.__typename ?? "(none)"))],
+              inclusionConditions: sources.reduce((n, src) => n + (src.inclusion?.conditions?.length ?? 0), 0),
+              exclusionConditions: sources.reduce((n, src) => n + (src.exclusion?.conditions?.length ?? 0), 0),
+              hasSelections: sources.some((src) => (src.inclusion?.selections?.nodes?.length ?? 0) > 0),
+              shareable: sources.some((src) => src.shareable === true),
+            });
           }
         }
       } catch (error) {
@@ -515,13 +584,23 @@ export async function action({ request }: ActionFunctionArgs) {
       // Zero collections looked at is not zero disagreements found — the same
       // rule this whole file is built on.
       verdicts.push("The projection check looked at NO collections, so it says nothing either way.");
-    } else if (projection.disagreements.length > 0) {
+    } else if (projection.shapes.length > 0 && projection.shapes.every((s) => s.inclusionConditions + s.exclusionConditions === 0)) {
+      // The one that changes a derivation rather than reporting a mismatch.
       verdicts.push(
-        `**${projection.disagreements.length} of ${projection.checked} collections do not project back into \`ruleSet\`** (${projection.disagreements.map((d) => d.title).join(", ")}). The PRODUCT sync reads exactly that field, so it stores those memberships as MANUAL — and a save that tries to leave one is refused by Shopify with the merchant's text edits in the same atomic mutation.`,
+        `**Every one of the ${projection.shapes.length} collections that HAS a source has NO condition in it** (${projection.shapes.filter((s) => s.hasSelections).length} carry hand-picked selections). In the 2026-07 model a MANUAL collection has a source too — so \`isSmart = sources.length > 0\` calls every collection on this shop rule-based, and the membership picker locks every row it should be offering. The condition count, not the source count, is the signal.`,
       );
-    } else {
+    } else if (projection.shapes.some((s) => s.inclusionConditions + s.exclusionConditions === 0)) {
       verdicts.push(
-        `All ${projection.ruleBased} rule-based collections of the ${projection.checked} checked still project into \`ruleSet\`, so the product sync's flag happens to agree today. It is still the lossy field to read.${projection.truncated ? " NOTE: the shop has more collections than the window — this covers the first 50 only." : ""}`,
+        `${projection.shapes.filter((s) => s.inclusionConditions + s.exclusionConditions === 0).length} of ${projection.shapes.length} collections have a source with NO conditions — those are manual collections that \`isSmart = sources.length > 0\` reports as rule-based.`,
+      );
+    }
+    if (projection.disagreements.length > 0) {
+      verdicts.push(
+        `**${projection.disagreements.length} of ${projection.checked} collections carry real CONDITIONS that do not project back into \`ruleSet\`** (${projection.disagreements.map((d) => d.title).join(", ")}). The PRODUCT sync reads exactly that field, so it stores those memberships as MANUAL — and a save that tries to leave one is refused by Shopify with the merchant's text edits in the same atomic mutation.`,
+      );
+    } else if (projection.checked > 0) {
+      verdicts.push(
+        `Of the ${projection.checked} collections checked, ${projection.ruleBased} carry conditions, and every one of those still projects into \`ruleSet\` — so the product sync's flag agrees today. It is still the lossy field to read.${projection.truncated ? " NOTE: the shop has more collections than the window — this covers the first 50 only." : ""}`,
       );
     }
 
