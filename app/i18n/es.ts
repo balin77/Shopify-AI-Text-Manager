@@ -2177,7 +2177,7 @@ export const es: Translation = {
       introStepBadge2: "Paso 2",
       introStep3: "Activa elementos concretos, pero solo los que aún no entrega nadie.",
       introStepBadge3: "Paso 3",
-      introCrawlNote: "**Los datos para esto vienen del rastreo del sitio.** Solo él ve lo que hay realmente en tus páginas. Sin un rastreo actual, los pasos 1 y 3 no dan un veredicto, solo «sin medir».",
+      introCrawlNote: "**Los datos para esto vienen del rastreo del sitio.** Solo él ve lo que hay realmente en tus páginas. Sin un rastreo actual, los pasos 1 y 3 no dan un veredicto fiable, solo «sin medir» — o cifras obsoletas del último rastreo.",
       activationTitle: "Activación en el editor de temas",
       activationBody: "Para enviar los datos realmente a Google y compañía, activas dos bloques de app en tu tema. Es una configuración única, sin tocar HTML/Liquid. Los bloques se rellenan automáticamente en cada página de producto, colección, blog y tema con los datos nativos de Shopify — sin sincronización por elemento.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) para Google",

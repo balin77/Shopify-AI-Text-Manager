@@ -2192,7 +2192,7 @@ export const en: Translation = {
       introStepBadge2: "Step 2",
       introStep3: "Switches on individual elements — but only those nobody delivers yet.",
       introStepBadge3: "Step 3",
-      introCrawlNote: "**The data for this comes from the website crawl.** Only it sees what is really on your pages. Without a current crawl, steps 1 and 3 give you no verdict, just \"not measured\".",
+      introCrawlNote: "**The data for this comes from the website crawl.** Only it sees what is really on your pages. Without a current crawl, steps 1 and 3 give you no reliable verdict, just \"not measured\" — or stale numbers from the last crawl.",
       activationTitle: "Activation in the theme editor",
       activationBody: "To actually ship the data to Google & Co. you enable two app blocks in your theme. One-time setup, no HTML/Liquid work required. The blocks then auto-populate on every product, collection, blog and theme page with the matching native Shopify data — no per-item sync.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) for Google",

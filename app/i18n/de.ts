@@ -2196,7 +2196,7 @@ export const de = {
       introStepBadge2: "Schritt 2",
       introStep3: "Schaltet einzelne Elemente zu — aber nur die, die noch niemand liefert.",
       introStepBadge3: "Schritt 3",
-      introCrawlNote: "**Die Daten dafür kommen aus dem Website-Crawl.** Nur er sieht, was wirklich auf deinen Seiten steht. Ohne aktuellen Crawl gibt es in Schritt 1 und 3 kein Urteil, sondern nur „nicht gemessen\".",
+      introCrawlNote: "**Die Daten dafür kommen aus dem Website-Crawl.** Nur er sieht, was wirklich auf deinen Seiten steht. Ohne aktuellen Crawl gibt es in Schritt 1 und 3 kein belastbares Urteil, sondern nur „nicht gemessen\" — oder veraltete Zahlen aus dem letzten Crawl.",
       activationTitle: "Aktivierung im Theme-Editor",
       activationBody: "Damit die Daten tatsächlich an Google & Co. ausgeliefert werden, aktivierst du zwei App-Blöcke in deinem Theme. Das ist einmalig und ohne Eingriffe in HTML/Liquid. Die Blöcke werden dann für jede Produkt-, Kollektions-, Blog- und Themeseite automatisch mit den passenden nativen Shopify-Daten befüllt — kein Sync pro Artikel nötig.",
       activationJsonLdTitle: "1. JSON-LD (schema.org) für Google",
