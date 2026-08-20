@@ -3,6 +3,7 @@ import { BlockStack, Card, InlineStack, Text } from "@shopify/polaris";
 import { SettingsTranslationProbeTab } from "./SettingsTranslationProbeTab";
 import { SettingsPageSpeedProbeTab } from "./SettingsPageSpeedProbeTab";
 import { SettingsCollectionModelProbeTab } from "./SettingsCollectionModelProbeTab";
+import { SettingsCollectionSyncProbeTab } from "./SettingsCollectionSyncProbeTab";
 import { SettingsMetaobjectProbeTab } from "./SettingsMetaobjectProbeTab";
 import { SettingsUnitPriceProbeTab } from "./SettingsUnitPriceProbeTab";
 import { SettingsPublicationProbeTab } from "./SettingsPublicationProbeTab";
@@ -54,7 +55,7 @@ export function SettingsProbesTab({
   const subTabs: { id: ProbeSubTab; label: string }[] = [
     ...(showTranslationProbe ? [{ id: "translationprobe" as ProbeSubTab, label: "Translation" }] : []),
     ...(showPageSpeedProbe ? [{ id: "pagespeedprobe" as ProbeSubTab, label: "PageSpeed" }] : []),
-    ...(showCollectionProbe ? [{ id: "collectionprobe" as ProbeSubTab, label: "Collection Model" }] : []),
+    ...(showCollectionProbe ? [{ id: "collectionprobe" as ProbeSubTab, label: "Collections" }] : []),
     ...(showMetaobjectProbe ? [{ id: "metaobjectprobe" as ProbeSubTab, label: "Metaobjects" }] : []),
     ...(showUnitPriceProbe ? [{ id: "unitpriceprobe" as ProbeSubTab, label: "Unit price" }] : []),
     ...(showPublicationProbe ? [{ id: "publicationprobe" as ProbeSubTab, label: "Publications" }] : []),
@@ -114,8 +115,17 @@ export function SettingsProbesTab({
       {/* PageSpeed raw-response probe (accessibility plan §3.3) */}
       {selected === "pagespeedprobe" && showPageSpeedProbe && <SettingsPageSpeedProbeTab />}
 
-      {/* Collection-Model Probe (PLAN_CONTENT_CREATION Phase 0 dev tool) */}
-      {selected === "collectionprobe" && showCollectionProbe && <SettingsCollectionModelProbeTab />}
+      {/* Two probes on ONE sub-tab, and the order is the order of the
+          questions: "why is my collection data missing" (the sync) comes
+          before "what does the rule model look like" (the schema). Same gate —
+          they are the same subject, and a second nav entry for a diagnostic
+          that is only ever opened together with this one buys nothing. */}
+      {selected === "collectionprobe" && showCollectionProbe && (
+        <BlockStack gap="500">
+          <SettingsCollectionSyncProbeTab />
+          <SettingsCollectionModelProbeTab />
+        </BlockStack>
+      )}
 
       {/* Metaobject Probe (PLAN_METAOBJECTS_EDITOR Phase 0 dev tool) */}
       {selected === "metaobjectprobe" && showMetaobjectProbe && <SettingsMetaobjectProbeTab />}
