@@ -112,6 +112,7 @@
 | **Third-Party-App-Übersetzung** ² | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Checkout-Übersetzung** ³ | ✅ | ✅ | ✅ | ✅ | ❌ |
 | **Bild-Übersetzung (OCR)** | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **Tag-Übersetzung** ⁶ | ⚠️ | ❌ | ⚠️ | ⚠️ (Legacy) | ❌ |
 
 > ¹ **Währungsumrechnung ist kein echter Gap** (Stand 2026-06): Shopify
 > rechnet seit Markets + Shopify Payments **nativ** mit aktuellen
@@ -146,6 +147,65 @@
 > Profi-Übersetzungen bestückten Sprachen ist die Override-Präzedenz noch
 > nicht abschließend verifiziert (Smoke-Test offen). Damit ist die letzte
 > große ❌-Zeile gegenüber Transcy/Weglot/LangShop geschlossen.
+>
+> ⁶ **Tag-Übersetzung — niemand kann es, und die ⚠️ sind allesamt Umgehungen**
+> (Web-Recherche 2026-08-20). Shopify dokumentiert die Grenze ausdrücklich:
+> *„A resource's `tags` field can't be translated"* — Produkt-, Artikel- und
+> Blog-Tags sind **kein `translatableResource`-Key** der Admin API. Jede App,
+> die über `translationsRegister` schreibt, endet dort; das ist keine
+> App-Schwäche, sondern die Plattform. Verschärfend an genau der Fläche, wo
+> Tags sichtbar werden: in **Search & Discovery** sind Filter-*Labels* und
+> *custom* Filter-*Werte* übersetzbar, tag- und vendor-basierte Filterwerte
+> aber nicht („*The only exception is tags, which cannot be translated*") —
+> sie erscheinen immer in der Shop-Standardsprache. Shopifys eigene Empfehlung
+> ist **Metafelder statt Tags** für Filter, weil Metafelder übersetzbar sind.
+>
+> Was die ⚠️ der Konkurrenz konkret bedeuten — drei Umgehungen, zwei davon
+> heute tot bzw. Legacy:
+> • **LangShop** = „LangShop Theme", ein *Duplikat* des Themes, in das Tags,
+>   Statiktext und Bilder hineingerendert werden. **Seit 08.08.2023 für
+>   Neukunden abgeschafft** (Shopify-Richtlinien); nur Shops mit einem vor
+>   diesem Datum angelegten localized theme haben es noch. Zusätzlich sind die
+>   Übersetzungen nur im LangShop-Theme sichtbar und die **Storefront-Suche
+>   funktioniert dann nicht mehr**.
+> • **langify** = ein „Polyfill"-JS, das der Händler **in den Theme-Code**
+>   einbaut und das gerenderten Text ersetzt (alternativ „Custom Content").
+>   Kein Tag wird übersetzt, nur seine Anzeige. Für Filter empfiehlt langify
+>   selbst den Metafeld-Weg.
+> • **Weglot / GTranslate** = **Proxy** vor der Storefront, der alles
+>   Gerenderte auf eigenen Sprach-URLs übersetzt — inklusive Tags und Filtern,
+>   aber ebenfalls nur die HTML-Ausgabe.
+> • **Transcy** und **T Lab** sagen es gar nicht erst zu; T Labs Doku nennt
+>   „products, articles, blog tags cannot be translated" explizit.
+>
+> Gemeinsamer Haken aller DOM-/Proxy-Ansätze: die **Filter-URL** bleibt
+> unübersetzt — `?filter.p.tag=chairs` läuft ins Leere, sobald der angezeigte
+> Wert ein anderer ist.
+>
+> **Unser ⚠️ ist derselbe Mechanismus, nur ohne Theme-Eingriff.** Die
+> **Direktübersetzungen** sind ein TreeWalker über alle Textknoten der
+> Storefront ([direct-translation.js](../../extensions/storefront/assets/direct-translation.js)) —
+> technisch dieselbe Klasse wie langifys Polyfill, aber als App-Embed, also
+> ohne Theme-Code. Ein Händler ersetzt damit heute schon sichtbare Tag-Texte
+> und tag-basierte Filterwerte pro Locale. Grenze: es ist ein **shop-weites
+> Wörterbuch** (ein Quellstring → eine Übersetzung je Locale), nicht pro
+> Produkt — für Tags ist das aber die richtige Granularität, weil ein Tag
+> ohnehin shop-weit derselbe String ist. Die Filter-URL-Parameter bleiben auch
+> bei uns unübersetzt.
+>
+> **Kein Gap, und die Modellierung im Code ist die richtige:** `field.tags` im
+> Bulk-Editor ist bewusst `translatable: false`
+> ([columns.shared.ts](../../app/services/bulk-editor/columns.shared.ts)), Tags
+> sind ein Merchandising-Attribut mit `translationKey: ""`. Auch die
+> Coverage-Aussage unten bleibt unberührt: Tags sind kein *Ressourcentyp*, den
+> man abdecken könnte. Ehrlicher Marketing-Satz wäre entsprechend nicht „wir
+> übersetzen Tags" (dieselbe Halbwahrheit wie bei Weglot/GTranslate), sondern:
+> *„Tags sind bei Shopify nicht übersetzbar — mit Direktübersetzungen ersetzt
+> du die angezeigten Tag-Texte trotzdem in jeder Sprache, ohne Theme-Code."*
+>
+> **Ungemessen** (nicht geraten, sondern offen): ob unser Embed die Tag-Chips
+> in einem konkreten Theme wirklich erwischt, und ob Transcy Tags still doch
+> über einen eigenen DOM-Layer abdeckt.
 
 #### Vollständige Übersetzungsabdeckung — T&A-Parität + 3 Flächen darüber hinaus
 
@@ -848,6 +908,18 @@ laden + in `vars`-Objekt reichen).
 - [T Lab AI Language Translate](https://apps.shopify.com/content-translation)
 - [Shopify Translate & Adapt](https://apps.shopify.com/translate-and-adapt)
 
+### Tag-Übersetzung (Recherche 2026-08, Fußnote ⁶)
+- [Shopify: Manage translations of merchant-provided content](https://shopify.dev/docs/apps/build/markets/manage-translated-content)
+- [Shopify Help: Localization and translation](https://help.shopify.com/en/manual/international/localization-and-translation)
+- [Shopify Help: Adding filters with Shopify Search & Discovery](https://help.shopify.com/en/manual/online-store/storefront-search/search-and-discovery-filters)
+- [LangShop: Translate resource tags](https://help.langshop.app/hc/en-us/articles/360018542080-Translate-resource-tags)
+- [LangShop: What is a localized theme?](https://help.langshop.app/hc/en-us/articles/360013653339-What-is-localized-theme-)
+- [langify: Product translations (Polyfill)](https://support.langify-app.com/support/solutions/articles/11000082051-product-translations)
+- [langify: Collection Filter Translation — Metafields vs. Custom Content](https://support.langify-app.com/support/solutions/articles/11000136165-collection-filter-translations)
+- [Weglot: Shopify Translate & Adapt limitations](https://www.weglot.com/blog/shopify-translate-adapt-limitations)
+- [FacetGuard: Translating Filter Values with Shopify Metafields](https://www.facetguard.com/blog/translating-filter-values-shopify-metafields)
+- [Shopify Community: Translation for filters content (Tags / Product option)](https://community.shopify.com/t/translation-for-filters-content-standard-from-tags-and-product-option-set-size/229788)
+
 ### SEO-Apps
 - [Yoast SEO for Shopify](https://apps.shopify.com/yoast-seo)
 - [SEOWILL (formerly SEOAnt)](https://apps.shopify.com/seo-master)
@@ -893,4 +965,4 @@ laden + in `vars`-Objekt reichen).
 | 2026-08-18 | **SEO-Teil ausgelagert und neu erhoben** — §2.2/§2.2.1 als veraltet markiert und auf [SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md) verwiesen: vollständige Feature-Matrix gegen `develop` verifiziert, Markt-Recherche 08/2026. Kernbefund: bei technischem On-Site-SEO auf oder über Wettbewerbsniveau; echte Lücken sind `agents.md` (löste llms.txt als kanonische KI-Discovery-Datei ab), Catalog-/Produktdaten-Readiness nach Shopify Spring '26, AI-Sichtbarkeits-Tracking, zeitgesteuerte Crawls, Bild-Dateinamen-SEO und Readability. |
 | 2026-08-19 | **SEO-Wettbewerbsanalyse abgeschlossen** — [SEO_COMPETITIVE_ANALYSIS_2026-08.md](SEO_COMPETITIVE_ANALYSIS_2026-08.md) §10. Alle P1- und P2.3/P2.4-Lücken sind umgesetzt, auf einem Live-Shop ausgeliefert und gegen Googles Rich Results Test gegengeprüft: `agents.md` (mit merchant-editierbarer Einleitung), Katalog-Bereitschaft, wöchentlicher Crawl, KI-Referral-Tracking, Readability, VideoObject inkl. `uploadDate`. Dabei gefunden: Theme- und App-Markup verschmelzen über dieselbe `@id` — Aktivierung ist deshalb jetzt der letzte Schritt und urteilt anhand der Crawl-Messung. Offen und bewusst offen: LocalBusiness (nur Opt-in), Bild-Dateinamen-SEO, Long-Form-Generator, echtes Prompt-Rank-Tracking, Theme-Eingriffe (⛔ Nicht-Ziel). Größte verbleibende Lücke ist kommunikativ, nicht funktional. |
 | 2026-07-19 | **Content-Templates ⛔ zurückgezogen** nach 2-Tages-Test auf `develop` (Merge `266b00a` → Rollback `69e7b8b`). Kritischer Nutzer-Review ergab: die `{{title}}`/`{{description}}`/`{{language}}`/`{{current_value}}`/`{{field_label}}`-Substitution lieferte der KI keine Info, die sie nicht bereits über die Handler-Prompt-Zeilen (`Context - Title:`, `Language:` etc.) bekam. Templates duplizierten damit die bestehenden per-Field-Custom-Instructions mit rein textueller Umpositionierung. Reverse-Migration `20260719130000_drop_content_template` räumt die DB-Tabelle beim nächsten Deploy weg. §2.3 Fußnote ⁵, §3.1 Punkt 5, §3.5 „Big Picture", §4 Phase 1.3 alle aktualisiert. **Bedingung für einen späteren Wiedereinstieg:** Variablen müssen Zusatz-Info liefern, die die KI heute nicht bekommt (`{{brand}}`/`{{price}}`/`{{tags}}`/`{{vendor}}`/`{{product_type}}`/`{{similar_products}}` aus Shopify). Ohne diese Bedingung deckt Custom-Instructions denselben Bedarf ohne zweite Konfigurationsfläche ab. |
-
+| 2026-08-20 | **§2.1 Tag-Übersetzung ergänzt** (Web-Recherche): neue Tabellenzeile + Fußnote ⁶. Kernbefund — **keine** App übersetzt Tags als Tags; `tags` ist kein `translatableResource`-Key der Admin API, und tag-/vendor-basierte Filterwerte sind auch in Search & Discovery ausgenommen. Die ⚠️ der Konkurrenz sind drei Umgehungen: LangShops Theme-Duplikat (für Neukunden seit 08.08.2023 abgeschafft, Storefront-Suche kaputt), langifys Polyfill im Theme-Code, Weglot/GTranslates Proxy — alle ersetzen nur die HTML-Ausgabe, alle lassen die Filter-URL (`?filter.p.tag=…`) unübersetzt. Transcy und T Lab sagen es gar nicht erst zu. **Kein Gap für uns:** die Direktübersetzungen sind derselbe DOM-Mechanismus ohne Theme-Eingriff (shop-weites Wörterbuch, für Tags die richtige Granularität), und `field.tags` als `translatable: false` ist die korrekte Modellierung der Plattform-Grenze. Shopifys eigene Empfehlung für übersetzbare Filter bleibt: Metafelder statt Tags. Offen/ungemessen: ob unser Embed Tag-Chips in einem konkreten Theme trifft, und ob Transcy still einen eigenen DOM-Layer hat. |
