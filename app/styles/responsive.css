@@ -161,12 +161,18 @@
 
      --app-attribute-grid-min-width  the auto-fit column of the sales-channel
                                      panel's three lists (channels / regions /
-                                     B2B). Still wider than a field — each
-                                     column is a list of switch rows — but a
-                                     switch and a channel name are all that is
-                                     in one, and at 260px every row ended in a
-                                     hand's width of empty card. The panel is
-                                     the ONE place this is spent, and it only
+                                     B2B). It used to be 260px, on the reasoning
+                                     that a list of switch rows wants more than
+                                     a field — but a switch and a channel name
+                                     are all that is in one, so every row ended
+                                     in a hand's width of empty card. It now
+                                     measures the same as a field box below,
+                                     and the two stay SEPARATE tokens: they are
+                                     a list column and an input box that happen
+                                     to want the same width, not one
+                                     measurement spent twice, and either may
+                                     move without the other. The panel is the
+                                     ONE place this is spent, and it only
                                      decides when the lists sit side by side:
                                      `auto-fit` collapses to as many columns as
                                      there are lists, so on the full-width row
@@ -199,8 +205,8 @@
   --app-field-border-color: #c9cccf;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
-  --app-attribute-grid-min-width: 200px;
-  --app-details-field-min-width: 210px;
+  --app-attribute-grid-min-width: 195px;
+  --app-details-field-min-width: 195px;
   --app-details-grid-gap: 1rem;
   --app-details-card-half-height: 5.5rem;
   /* How the Details row is split between the field cards and the sales-channel
@@ -217,7 +223,7 @@
 
      The BASES are the wrap point: how much each region wants before it is
      worth putting them side by side at all. Derived from the field minimum, so
-     moving that moves the wrap point with it — the aside's 1.6 is its share of
+     moving that moves the wrap point with it — the aside's 1.2 is its share of
      the split, not a column count. */
   --app-details-grid-grow: 3.8;
   --app-details-aside-grow: 1.2;
