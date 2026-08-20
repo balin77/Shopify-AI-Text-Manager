@@ -935,10 +935,16 @@ function StockTable({
 }) {
   // Roomier than the first cut, and the LAST column gets its own right-hand
   // padding: the "on hand" input sat flush against the table's border.
+  //
+  // The rule between two rows is the app's own field-frame grey, not Polaris'
+  // `border-secondary`. That token is #ebebeb, which is a hair away from the
+  // grey the card behind it already is: five columns of numbers had nothing
+  // separating them that you could actually see. One line weight for the whole
+  // app is the same rule the input boxes follow, one file up in responsive.css.
   const cell: CSSProperties = {
     padding: "10px 14px",
     textAlign: "right",
-    borderTop: "1px solid var(--p-color-border-secondary)",
+    borderTop: "1px solid var(--app-field-border-color)",
     whiteSpace: "nowrap",
   };
   const lastCell: CSSProperties = { ...cell, paddingRight: "20px" };
@@ -946,6 +952,17 @@ function StockTable({
   const headCell: CSSProperties = { ...cell, borderTop: "none" };
   const headFirst: CSSProperties = { ...firstCell, borderTop: "none" };
   const headLast: CSSProperties = { ...lastCell, borderTop: "none" };
+  /**
+   * The two rows that are the table's FRAME rather than its content: the
+   * column headings and the total. White, on a card that is grey — which is
+   * what tells them apart from the locations between them at a glance, and
+   * what makes the grey rows read as a block instead of as a list of lines.
+   *
+   * The background, never the type: the headings are already semibold, and a
+   * second emphasis on the same two rows would leave the numbers under them
+   * looking switched off.
+   */
+  const frameRow: CSSProperties = { background: "var(--p-color-bg-surface)" };
   const num = (value: number | null) => (value == null ? "—" : String(value));
 
   /**
@@ -978,25 +995,35 @@ function StockTable({
   })();
 
   return (
-    <Box
-      borderColor="border"
-      borderWidth="025"
-      borderRadius="200"
-      overflowX="scroll"
-      // Air around the table as well as inside it: pressed against the box's
-      // own edge it read as part of the border.
-      paddingBlock="200"
-      // Four number columns of two or three digits do not get better for being
-      // spread across a 4K editor: the table capped itself at nothing and put
-      // a warehouse name and its count a screen apart. The number is a token
-      // (responsive.css) like every other width in this app, and it is a MAX —
-      // narrower than that the table shrinks, and the scroll above still
-      // catches the screens where even the cap does not fit.
-      maxWidth="var(--app-stock-table-max-width)"
+    // A plain div rather than a Polaris `Box`, for the one reason that the
+    // frame has to be the same grey as the rules inside it: `Box` takes its
+    // border colour from Polaris' token names, and the app's own is not one of
+    // them. A frame LIGHTER than the lines it encloses reads as a table drawn
+    // twice. This file already spends raw tokens by hand for `cardSurface`.
+    //
+    // The vertical padding that used to sit here is gone with it. It was there
+    // because a grey row against the box's own edge read as part of the
+    // border; the first and last rows are white now, so the edge is the
+    // clearest line in the table and the padding only kept two white bands
+    // floating inside a grey box. `overflow-x` clips the corners for us, so
+    // the white does not square off the rounding.
+    <div
+      style={{
+        border: "1px solid var(--app-field-border-color)",
+        borderRadius: "var(--p-border-radius-200)",
+        overflowX: "auto",
+        // Four number columns of two or three digits do not get better for
+        // being spread across a 4K editor: the table capped itself at nothing
+        // and put a warehouse name and its count a screen apart. The number is
+        // a token (responsive.css) like every other width in this app, and it
+        // is a MAX — narrower than that the table shrinks, and the scroll
+        // above still catches the screens where even the cap does not fit.
+        maxWidth: "var(--app-stock-table-max-width)",
+      }}
     >
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr>
+          <tr style={frameRow}>
             <th style={headFirst}>
               {/* As heavy as the total row below, and not subdued: the two are
                   the table's frame, and a grey caption over a bold total read
@@ -1073,7 +1100,7 @@ function StockTable({
               the first ten of more, and their sum under the word "Total" is a
               number the merchant would decide against. */}
           {rows.length > 1 && !truncated && (
-            <tr>
+            <tr style={frameRow}>
               <td style={firstCell}>
                 <Text as="span" variant="bodySm" fontWeight="semibold">
                   {(t.totalRow as string) || "Total"}
@@ -1087,7 +1114,7 @@ function StockTable({
           )}
         </tbody>
       </table>
-    </Box>
+    </div>
   );
 }
 
