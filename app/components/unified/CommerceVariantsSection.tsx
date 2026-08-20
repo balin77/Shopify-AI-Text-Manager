@@ -986,6 +986,13 @@ function StockTable({
       // Air around the table as well as inside it: pressed against the box's
       // own edge it read as part of the border.
       paddingBlock="200"
+      // Four number columns of two or three digits do not get better for being
+      // spread across a 4K editor: the table capped itself at nothing and put
+      // a warehouse name and its count a screen apart. The number is a token
+      // (responsive.css) like every other width in this app, and it is a MAX —
+      // narrower than that the table shrinks, and the scroll above still
+      // catches the screens where even the cap does not fit.
+      maxWidth="var(--app-stock-table-max-width)"
     >
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>

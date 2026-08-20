@@ -100,7 +100,22 @@
                               not a width: inside a narrow column both still
                               shrink with it. Without it the control is as wide
                               as the editor column, and a list of short labels
-                              spanned the whole screen. */
+                              spanned the whole screen.
+     --app-stock-table-max-width
+                              the CEILING for the locations table in the
+                              variants card. Its four number columns hold two
+                              or three digits each and the fifth is an 86px
+                              input, so a table stretched to the full width of
+                              a wide editor put a warehouse name and its count
+                              a screen apart, and the total row stopped reading
+                              as the sum of anything above it. Measured against
+                              the widest row the table can hold — a location
+                              name with its "(inactive)" marker, four headed
+                              number columns and the input — so nothing wraps
+                              at the cap. A max, not a width: below it the
+                              table still shrinks, and the box keeps its own
+                              horizontal scroll for the narrow screens where
+                              even that is not enough. */
   --app-list-column-width: 330px;
   --app-editor-sidebar-width: 320px;
   --app-editor-sidebar-min-width: 200px;
@@ -133,6 +148,7 @@
   --app-entry-wide-field-max-width: calc(2 * var(--app-entry-field-min-width) + var(--app-entry-field-gap));
   --app-value-chip-width: 230px;
   --app-dropdown-panel-max-width: 480px;
+  --app-stock-table-max-width: 800px;
   /* Polaris' Icon box. Spent where a row has to line up with one that starts
      with a drag handle but has no handle of its own. */
   --app-drag-handle-width: 20px;
