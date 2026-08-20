@@ -29,13 +29,16 @@
  * which locks nothing here — so the page keeps scrolling behind it.
  *
  * `useOverlayScrollLock` therefore freezes the trigger's own scrollable
- * ancestors for as long as the overlay is open. It locks by MEASUREMENT, never
- * by a hardcoded selector list: a container that is not actually scrollable
- * (`scrollHeight <= clientHeight`) is skipped, so a ❓ that sits in a short,
- * non-scrolling tab — the editor sidebar's SEO score tab — locks nothing and
- * the page behaves exactly as before. That is also why no route has to opt in
- * or out: new scroll containers are picked up, and tabs that grow past their
- * box start locking on their own.
+ * ancestors for as long as the overlay is open. It picks them by MEASUREMENT,
+ * never by a hardcoded selector list: a container that cannot actually scroll
+ * (`scrollHeight <= clientHeight`) is skipped, so a ❓ in a short, non-scrolling
+ * tab — the editor sidebar's SEO score tab — locks nothing and the page behaves
+ * exactly as before. That is also why no route has to opt in or out: new scroll
+ * containers are picked up, and a tab that grows past its box starts locking on
+ * its own. The containers Polaris DOES handle (`[data-polaris-scrollable]`, the
+ * document) are excluded by name — see
+ * [overlay-scroll-lock.ts](../utils/overlay-scroll-lock.ts) for that list and
+ * for how a container is locked without a layout shift.
  */
 
 import {

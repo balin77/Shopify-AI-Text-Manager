@@ -4,17 +4,51 @@
  *
  * WHY this exists at all is in the module comment of
  * [HelpTrigger.tsx](../components/HelpTrigger.tsx), which is its main caller —
- * short version: this app's pages scroll an INNER container, not the document,
- * and neither Polaris' popover repositioning (`Scrollable.forNode`, which only
- * knows `[data-polaris-scrollable]` ancestors and otherwise falls back to the
- * document) nor `Modal`'s own `ScrollLock` (`document.body`) can see one. So an
- * open popover stays behind while its activator scrolls away.
+ * short version: this app's pages scroll an INNER container, which Polaris
+ * cannot see, so an open popover stays behind while its activator scrolls away.
  *
  * The DOM half lives here, apart from React, so the container selection is
  * unit-testable.
  */
 
 const SCROLLS = /^(auto|scroll)$/;
+
+/** Which axes of a container can scroll right now. */
+interface ScrollAxes {
+  x: boolean;
+  y: boolean;
+}
+
+/**
+ * Containers this lock must keep its hands off, no matter what they measure:
+ *
+ * - **Polaris' own scrollables.** `Scrollable.forNode` finds
+ *   `[data-polaris-scrollable]` ancestors and re-measures the popover when they
+ *   scroll, so the overlay follows its activator there and nothing is broken to
+ *   fix. Locking one anyway would make a Polaris `Modal` unscrollable for as
+ *   long as a help popover inside it is open (`AssignPanel` is exactly that).
+ * - **The document scroller.** Polaris handles it the same way for popovers,
+ *   and locks it itself for modals (`ScrollLock`); a second, competing document
+ *   lock would only fight that one. `<html>`/`<body>` have to be named rather
+ *   than measured away: [responsive.css](../styles/responsive.css) puts
+ *   `overflow-x: hidden` on both below 768px, which makes their computed
+ *   `overflow-y` `auto` — so on mobile they measure as scrollable containers.
+ */
+function isOffLimits(el: HTMLElement): boolean {
+  return (
+    el === document.documentElement ||
+    el === document.body ||
+    el.hasAttribute("data-polaris-scrollable")
+  );
+}
+
+function scrollingAxes(el: HTMLElement): ScrollAxes | null {
+  if (isOffLimits(el)) return null;
+  const style = window.getComputedStyle(el);
+  const y = SCROLLS.test(style.overflowY) && el.scrollHeight > el.clientHeight;
+  const x = SCROLLS.test(style.overflowX) && el.scrollWidth > el.clientWidth;
+  return x || y ? { x, y } : null;
+}
 
 /**
  * The scrollable ancestors of `node` — the only containers whose scrolling can
@@ -26,20 +60,11 @@ const SCROLLS = /^(auto|scroll)$/;
  * sidebar's SEO score tab — locks nothing. That is also why no route has to opt
  * in or out: new scroll containers are picked up on their own, and a panel that
  * grows past its box starts locking without an edit here.
- *
- * The document scroller is deliberately NOT included. On the plain (non
- * `.app-page-content`) routes it is what scrolls, but Polaris already handles
- * it on both counts — its popover follows the activator on document scroll, and
- * `Modal` locks the document through `ScrollLock`. A second, competing document
- * lock would only fight it.
  */
 export function scrollableAncestorsOf(node: HTMLElement): HTMLElement[] {
   const containers: HTMLElement[] = [];
   for (let el = node.parentElement; el; el = el.parentElement) {
-    const style = window.getComputedStyle(el);
-    const scrollsY = SCROLLS.test(style.overflowY) && el.scrollHeight > el.clientHeight;
-    const scrollsX = SCROLLS.test(style.overflowX) && el.scrollWidth > el.clientWidth;
-    if (scrollsY || scrollsX) containers.push(el);
+    if (scrollingAxes(el)) containers.push(el);
   }
   return containers;
 }
@@ -53,26 +78,45 @@ interface ContainerLock {
 
 /**
  * Ref-counted per container, so overlapping overlays (a help popover opened
- * inside an already-open modal shares that modal's scroll container) cannot
- * have the first one to close restore the LOCKED values as if they were the
- * original ones.
+ * inside an already-open one, sharing a scroll container) cannot have the first
+ * one to close restore the LOCKED values as if they were the original ones.
  */
 const containerLocks = new WeakMap<HTMLElement, ContainerLock>();
 
 /**
+ * A locked container no longer MEASURES as scrollable — that is the whole point
+ * of the lock — so a second overlay walking the same ancestors would skip it
+ * and the ref count could never leave 1. An already-locked ancestor is
+ * therefore claimed on the strength of its existing lock, not on a fresh
+ * measurement.
+ */
+function ancestorsToLock(anchor: HTMLElement): HTMLElement[] {
+  const containers: HTMLElement[] = [];
+  for (let el = anchor.parentElement; el; el = el.parentElement) {
+    if (containerLocks.has(el) || scrollingAxes(el)) containers.push(el);
+  }
+  return containers;
+}
+
+/**
  * Lock every scrollable ancestor of `anchor`; the returned function releases
- * this holder's claim on each of them.
+ * this holder's claim on each of them. Calling it twice is a no-op — a holder
+ * cannot release a claim it no longer has, and by extension not someone else's.
  *
- * The lock is `overflow: hidden` PLUS `scrollbar-gutter: stable`: hiding the
- * overflow removes a classic scrollbar, and without the reserved gutter every
- * locked container would jump by the scrollbar's width the moment the overlay
- * opens — the same shift `html { scrollbar-gutter: stable }` already prevents
- * app-wide. `overflow: hidden` keeps `scrollTop`, so nothing moves on release.
- * Releasing writes back the INLINE values, so a container that carried its own
- * inline overflow keeps it.
+ * Only the axes that actually scroll are hidden. A vertical lock also sets
+ * `scrollbar-gutter: stable`, because hiding the overflow removes a classic
+ * scrollbar and the container would otherwise jump by its width the moment the
+ * overlay opens — the same shift `html { scrollbar-gutter: stable }` already
+ * prevents app-wide. A horizontal-only lock must NOT set it: there the gutter
+ * would reserve inline space that was never there, which is the very jump it is
+ * meant to prevent, only in the other direction.
+ *
+ * `overflow: hidden` keeps `scrollTop`/`scrollLeft`, so nothing moves on
+ * release. Releasing writes back the INLINE values, so a container that carried
+ * its own inline overflow keeps it.
  */
 export function lockScrollContainers(anchor: HTMLElement): () => void {
-  const locked = scrollableAncestorsOf(anchor);
+  const locked = ancestorsToLock(anchor);
 
   for (const el of locked) {
     const existing = containerLocks.get(el);
@@ -80,15 +124,19 @@ export function lockScrollContainers(anchor: HTMLElement): () => void {
       existing.holders += 1;
       continue;
     }
+    const axes = scrollingAxes(el);
+    if (!axes) continue;
     containerLocks.set(el, {
       holders: 1,
       overflowX: el.style.overflowX,
       overflowY: el.style.overflowY,
       scrollbarGutter: el.style.scrollbarGutter,
     });
-    el.style.overflowX = "hidden";
-    el.style.overflowY = "hidden";
-    el.style.scrollbarGutter = "stable";
+    if (axes.x) el.style.overflowX = "hidden";
+    if (axes.y) {
+      el.style.overflowY = "hidden";
+      el.style.scrollbarGutter = "stable";
+    }
   }
 
   let released = false;
