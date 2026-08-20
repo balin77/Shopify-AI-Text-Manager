@@ -15,6 +15,7 @@
 import { describe, it, expect } from "vitest";
 import {
   diffCollectionMembership,
+  resolveMembershipAutomated,
   parseCollectionIds,
   parseCategoryId,
 } from "../../app/services/content-attributes.shared";
@@ -85,6 +86,41 @@ describe("diffCollectionMembership", () => {
     expect(diff.refusedAutomated).toEqual([]);
   });
 
+  it("takes a POSITIVE from either flag, and only then an explicit negative", () => {
+    // The two flags are stale in different directions: `isSmart` is fresher
+    // about the MODEL (it reads `sources`), the membership row is fresher
+    // about the COLLECTION (every products/update webhook rewrites it, from
+    // the lossy `ruleSet`). So neither simply outranks the other.
+    expect(resolveMembershipAutomated(true, false)).toBe(true);
+    expect(resolveMembershipAutomated(false, true)).toBe(true);
+    expect(resolveMembershipAutomated(false, null)).toBe(false);
+    expect(resolveMembershipAutomated(null, false)).toBe(false);
+    expect(resolveMembershipAutomated(null, null)).toBeNull();
+    expect(resolveMembershipAutomated(undefined, undefined)).toBeNull();
+  });
+
+  it("REFUSES to leave a collection whose MEMBERSHIP row saw a rule, even when the cache says manual", () => {
+    // The collection was converted manual -> smart in the admin: the product
+    // webhook rewrote the membership row, the collections cache is older.
+    // Sending `collectionsToLeave` for it is refused by Shopify, and
+    // `productUpdate` is atomic — the refusal takes the text edits with it.
+    const known = new Map<string, boolean | null>([[gid(1), false]]);
+    const diff = diffCollectionMembership([{ collectionId: gid(1), automated: true }], [], known);
+    expect(diff.toLeave).toEqual([]);
+    expect(diff.refusedAutomated).toEqual([gid(1)]);
+  });
+
+  it("still LEAVES a manual membership on a shop that was never attribute-synced", () => {
+    // `isSmart` unknown for every collection is exactly the state the sync
+    // probe exists to diagnose. Letting the unmeasured cache veto the row
+    // would mean no membership on such a shop could be removed at all.
+    const known = new Map<string, boolean | null>([[gid(1), null]]);
+    const diff = diffCollectionMembership([{ collectionId: gid(1), automated: false }], [], known);
+    expect(diff.toLeave).toEqual([gid(1)]);
+    expect(diff.refusedAutomated).toEqual([]);
+    expect(diff.refusedUnknown).toEqual([]);
+  });
+
   it("REFUSES to leave a collection the SHOP LIST calls rule-based, even when the row says manual", () => {
     // The row's flag comes from `ProductCollection`, which the product sync
     // fills from `Collection.ruleSet` — the LOSSY back-projection of
@@ -100,8 +136,7 @@ describe("diffCollectionMembership", () => {
   });
 
   it("LEAVES a collection the shop list measured as manual, even when the row is unknown", () => {
-    // The mirror image: `null` on the row is the migration default, and a
-    // measurement beats a default in both directions.
+    // Nobody says yes, and one side says a measured no — that is a no.
     const known = new Map<string, boolean | null>([[gid(1), false]]);
     const diff = diffCollectionMembership([{ collectionId: gid(1), automated: null }], [], known);
     expect(diff.toLeave).toEqual([gid(1)]);

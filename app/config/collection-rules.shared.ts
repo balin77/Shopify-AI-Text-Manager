@@ -727,8 +727,15 @@ export interface RawSource {
   exclusion?: RawSide | null;
 }
 
-/** The one source type this editor renders; anything else is carried untouched. */
-const CONDITIONS_SOURCE_TYPENAME = "CollectionConditionsSource";
+/**
+ * The one source type this editor renders; anything else is carried untouched.
+ *
+ * Exported because `attribute-sync.shared.ts` asks the same question of the
+ * same string when it decides whether a collection is rule-based. Two copies
+ * of a Shopify typename is how the rule editor and `isSmart` come to disagree
+ * about one collection.
+ */
+export const CONDITIONS_SOURCE_TYPENAME = "CollectionConditionsSource";
 const SUB_COLLECTIONS_SOURCE_TYPENAME = "CollectionSubCollectionsSource";
 
 function matchTypeOf(raw: string | null | undefined): (typeof CONDITION_MATCH_TYPES)[number] {

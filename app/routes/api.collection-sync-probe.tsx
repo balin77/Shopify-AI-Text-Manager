@@ -43,6 +43,7 @@ import {
   COLLECTION_SOURCES_FIELDS,
   collectionAttributeColumns,
   collectionAttributeSelection,
+  collectionSourcesAreRuleBased,
   hasCollectionAttributes,
 } from "~/services/attribute-sync.shared";
 import { readConditionFragments, rulesAvailableOn } from "~/config/collection-rules.shared";
@@ -474,17 +475,16 @@ export async function action({ request }: ActionFunctionArgs) {
           const sources = node.sources ?? [];
           const hasSources = sources.length > 0;
           const hasRuleSet = !!node.ruleSet;
-          const conditions =
-            sources.reduce((n, src) => n + (src.inclusion?.conditions?.length ?? 0), 0) +
-            sources.reduce((n, src) => n + (src.exclusion?.conditions?.length ?? 0), 0);
-          // A CONDITION is what makes a collection rule-based. Counting
-          // sources instead is the derivation under test here, so it must not
-          // also be the yardstick that judges it.
-          if (conditions > 0) projection.ruleBased += 1;
+          // PRODUCTION's own predicate, called rather than restated: a
+          // re-derivation here would judge the code by a rule the code does
+          // not use — and this one differs, because a sub-collections source
+          // is rule-based without carrying a single condition.
+          const ruleBased = collectionSourcesAreRuleBased(sources);
+          if (ruleBased) projection.ruleBased += 1;
           // The mismatch that matters: a real rule tree that `ruleSet` does
           // not show. A manual collection legitimately has no `ruleSet`, so
           // comparing bare source PRESENCE would report every one of them.
-          if (conditions > 0 && !hasRuleSet) {
+          if (ruleBased && !hasRuleSet) {
             projection.disagreements.push({ id: node.id, title: node.title, hasSources, hasRuleSet });
           }
           if (hasSources) {

@@ -27,6 +27,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChipCombobox } from "./ChipCombobox";
 import { FieldLabel } from "./FieldChrome";
 import { BlockStack, Banner, Box, Button, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
+import { resolveMembershipAutomated } from "../../services/content-attributes.shared";
 import type { CollectionOption } from "../../routes/api.product-taxonomy";
 
 export interface ProductMembership {
@@ -129,18 +130,11 @@ export function CollectionsField({
       byId.set(membership.collectionId, {
         id: membership.collectionId,
         title: existing?.title || membership.collectionTitle || membership.collectionId,
-        // The SHOP LIST wins where it knows, and that order is not arbitrary:
-        // its flag comes from `Collection.isSmart`, which the collection sync
-        // measures from `sources`, while the membership's own flag is filled
-        // from `Collection.ruleSet` — the lossy back-projection, which reports
-        // a rule tree it cannot express as no rule tree at all. The membership
-        // is the fallback for a collection this shop never cached (the cache
-        // is capped by the plan). PRESENCE decides, not truthiness: a shop
-        // list that carries the collection and answers `null` means UNKNOWN
-        // and must stay locked — `??` would skip past it to the membership's
-        // projected `false` and offer a leave the server then refuses
-        // (`diffCollectionMembership` reads the same map the same way).
-        automated: existing ? existing.automated : membership.automated ?? null,
+        // The SAME ladder the server runs (`resolveMembershipAutomated`),
+        // called rather than restated: the two flags are stale in different
+        // directions, a positive from either wins, and a picker that decides
+        // it differently offers exactly the change the save then refuses.
+        automated: resolveMembershipAutomated(existing?.automated, membership.automated),
       });
     }
     return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));

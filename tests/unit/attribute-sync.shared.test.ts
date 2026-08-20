@@ -314,6 +314,36 @@ describe("collectionAttributeColumns", () => {
     expect(columns.isSmart).toBe(true);
   });
 
+  it("REFUSES a source that does not even name its type", () => {
+    // `sources { id }`: the response cannot say what kind of source this is,
+    // so it cannot say whether the conditions are absent or merely unasked
+    // for. The first cut of the guard let exactly this through, because
+    // `undefined !== "CollectionConditionsSource"` is true.
+    expect(
+      collectionAttributeColumns(
+        { sortOrder: "MANUAL", templateSuffix: null, sources: [{}] },
+        "2026-07",
+        NOW,
+      ),
+    ).toEqual({});
+  });
+
+  it("REFUSES a source that carries only ONE of the two condition sides", () => {
+    // A collection whose only conditions are EXCLUSIONS would otherwise read
+    // as manual, which is the direction that costs a text edit.
+    expect(
+      collectionAttributeColumns(
+        {
+          sortOrder: "MANUAL",
+          templateSuffix: null,
+          sources: [{ __typename: "CollectionConditionsSource", inclusion: { conditions: [] } }],
+        },
+        "2026-07",
+        NOW,
+      ),
+    ).toEqual({});
+  });
+
   it("REFUSES a sources selection too narrow to answer the question", () => {
     // `sources { id }` would report "no conditions" for a real rule tree and
     // mark it MANUAL — the expensive direction: the picker then offers a join

@@ -234,6 +234,41 @@ export function attributeInputFor(
  *     membership is a merchant clicking again, the cost of adding it wrongly is
  *     a lost text edit.
  */
+/**
+ * Two flags, one answer — and the ladder is the whole correctness argument.
+ *
+ * A membership's "is this rule-based" comes from two places that can each be
+ * stale or blind in a different way:
+ *
+ *   - `measured` — `Collection.isSmart`, derived from `sources` (the real
+ *     model) but only as fresh as the last COLLECTION sync.
+ *   - `row` — `ProductCollection.automated`, rewritten on every
+ *     `products/update` webhook but derived from `Collection.ruleSet`, the
+ *     lossy back-projection: its `false` can mean "manual" OR "a rule tree
+ *     that does not project".
+ *
+ * So neither one may simply outrank the other. A positive from EITHER is a
+ * positive (one of them saw a rule; a collection converted manual→smart in the
+ * admin is exactly the case where the fresher row knows and the cache does
+ * not). Only when nobody says yes does an explicit `false` count. And when
+ * neither knows, the answer is UNKNOWN, which every caller treats as
+ * automated — the costs are not symmetric: refusing a change costs a click,
+ * allowing one Shopify refuses costs the merchant's text edits, because
+ * `productUpdate` is atomic.
+ *
+ * Exported and client-safe on purpose: the picker locks the rows this
+ * function calls automated, and a second copy of the ladder in the component
+ * is how the UI comes to offer what the server then refuses.
+ */
+export function resolveMembershipAutomated(
+  measured: boolean | null | undefined,
+  row: boolean | null | undefined,
+): boolean | null {
+  if (measured === true || row === true) return true;
+  if (measured === false || row === false) return false;
+  return null;
+}
+
 export interface MembershipDiff {
   toJoin: string[];
   toLeave: string[];
@@ -290,7 +325,11 @@ export function diffCollectionMembership(
     if (beforeById.has(id)) continue;
     // Not `=== true`: `null` (never attribute-synced) is refused too. See the
     // header — the asymmetry of the two costs is the whole argument.
-    if (known && known.has(id) && known.get(id) !== false) {
+    // The same ladder, with no row to consult: `before` has no entry for a
+    // collection the product is not in yet. `has()` stays load-bearing — a
+    // collection the cache does not carry at all (the cache is capped by the
+    // plan) is NOT screened, which is the documented pre-existing behaviour.
+    if (known?.has(id) && resolveMembershipAutomated(known.get(id), undefined) !== false) {
       refuse(id, known.get(id) ?? null);
       continue;
     }
@@ -300,11 +339,11 @@ export function diffCollectionMembership(
   const toLeave: string[] = [];
   for (const row of before) {
     if (after.has(row.collectionId)) continue;
-    // The MEASURED answer where there is one, the row's projected flag
-    // otherwise — see `known`. `null` in either of them is UNKNOWN and is
-    // refused, the same asymmetry as the join side.
-    const measured = known?.get(row.collectionId);
-    const automated = measured === undefined ? row.automated : measured;
+    // Both flags, one ladder (`resolveMembershipAutomated`) — the measured one
+    // is not simply "better": it is fresher about the MODEL and staler about
+    // the collection, so a positive from either side wins and an unmeasured
+    // shop still gets to remove a membership.
+    const automated = resolveMembershipAutomated(known?.get(row.collectionId), row.automated);
     if (automated !== false) {
       refuse(row.collectionId, automated);
       continue;

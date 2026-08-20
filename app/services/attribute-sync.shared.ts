@@ -73,7 +73,7 @@ export const PRODUCT_COLLECTIONS_SELECTION = `
  * When the API pin moves (PLAN Phase −1), add the `sources` selection here and
  * pass the new shape to `collectionAttributeColumns`; nothing else changes.
  */
-import { readConditionFragments, rulesAvailableOn } from "../config/collection-rules.shared";
+import { CONDITIONS_SOURCE_TYPENAME, readConditionFragments, rulesAvailableOn } from "../config/collection-rules.shared";
 
 /** Generated from the kind specs, never hand-written: a read selection that
  *  drifts from the write mapping makes collections read as "unrenderable" for
@@ -398,9 +398,6 @@ export function productCollectionRows(
   return { rows, hasMore: collections.pageInfo?.hasNextPage ?? false };
 }
 
-/** The one source type whose membership can be a hand-picked list. */
-const CONDITIONS_SOURCE = "CollectionConditionsSource";
-
 /**
  * Is this collection's membership decided by a RULE?
  *
@@ -424,7 +421,7 @@ const CONDITIONS_SOURCE = "CollectionConditionsSource";
  */
 export function collectionSourcesAreRuleBased(sources: ShopifyCollectionSource[] | null | undefined): boolean {
   return (sources ?? []).some((source) => {
-    if (source.__typename && source.__typename !== CONDITIONS_SOURCE) return true;
+    if (source.__typename && source.__typename !== CONDITIONS_SOURCE_TYPENAME) return true;
     return (
       (source.inclusion?.conditions?.length ?? 0) > 0 || (source.exclusion?.conditions?.length ?? 0) > 0
     );
@@ -442,9 +439,17 @@ export function collectionSourcesAreRuleBased(sources: ShopifyCollectionSource[]
  * follows: a half-delivered block is not written at all.
  */
 function collectionSourcesShapeComplete(sources: ShopifyCollectionSource[] | null | undefined): boolean {
-  return (sources ?? []).every(
-    (source) => source.__typename !== CONDITIONS_SOURCE || "inclusion" in source || "exclusion" in source,
-  );
+  return (sources ?? []).every((source) => {
+    // No `__typename` at all: the response cannot even say what kind of source
+    // this is, so it cannot say whether conditions were omitted or absent.
+    // The first cut let this through — `undefined !== "CollectionConditionsSource"`
+    // is true — and `sources { id }` sailed past the guard that exists for it.
+    if (typeof source?.__typename !== "string") return false;
+    if (source.__typename !== CONDITIONS_SOURCE_TYPENAME) return true;
+    // BOTH sides, not either: a collection whose only conditions are
+    // EXCLUSIONS reads as manual when the exclusion half was not selected.
+    return "inclusion" in source && "exclusion" in source;
+  });
 }
 
 /** The keys every version delivers. The rule tree is the version-dependent
