@@ -773,26 +773,37 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
    * so the minimum only decides WHEN the row wraps.
    *
    * The grid counts in HALF rows: a field that is one bare control spans one,
-   * everything else spans two, so a vendor and a theme template stack in the
-   * space one tag picker takes instead of each carrying a card's worth of empty
-   * grey.
+   * everything else spans two — and `splitDetailsFields` pairs two of those
+   * bare controls into ONE cell, stacked, so a vendor and a theme template sit
+   * under each other in the space one tag picker takes instead of opening two
+   * columns and leaving half of each empty.
    */
-  const detailsCardClass = (field: FieldDefinition) =>
-    [
-      isFullWidthDetailsField(field) ? "app-details-field--full" : "",
-      isHalfHeightDetailsField(field) ? "app-details-field--half" : "",
-    ]
-      .filter(Boolean)
-      .join(" ") || undefined;
+  const detailsCellClass = (cell: FieldDefinition[]) => {
+    // A stack is two half cards plus the grid's own gap between them, which is
+    // exactly one ordinary cell — so it takes the default two-row span and
+    // needs no span rule of its own, only the gap.
+    if (cell.length > 1) return "app-details-field--stack";
+    const [field] = cell;
+    return (
+      [
+        isFullWidthDetailsField(field) ? "app-details-field--full" : "",
+        isHalfHeightDetailsField(field) ? "app-details-field--half" : "",
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined
+    );
+  };
 
-  const renderDetailsFields = (layout: { grid: FieldDefinition[]; aside: FieldDefinition[] }) => (
+  const renderDetailsFields = (layout: { grid: FieldDefinition[][]; aside: FieldDefinition[] }) => (
     <div className="app-details-layout">
       <div className="app-details-layout__grid">
-        {layout.grid.map((field) => (
-          <div key={field.key} className={detailsCardClass(field)}>
-            <Card background="bg-surface-secondary" padding="300">
-              {renderEditorField(field)}
-            </Card>
+        {layout.grid.map((cell) => (
+          <div key={cell[0].key} className={detailsCellClass(cell)}>
+            {cell.map((field) => (
+              <Card key={field.key} background="bg-surface-secondary" padding="300">
+                {renderEditorField(field)}
+              </Card>
+            ))}
           </div>
         ))}
       </div>

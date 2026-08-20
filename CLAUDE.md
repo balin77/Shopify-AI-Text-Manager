@@ -221,11 +221,21 @@ button of its own.**
   information. [details-layout.ts](app/config/details-layout.ts) is what is left of that module, and it
   answers by field TYPE, never by key: a `commerce` field is the ASIDE, a
   `collectionRules` field spans the grid, everything else is a box.
-  **The grid counts in HALF rows.** An ordinary field spans two of them; a field
-  that is one bare control — a vendor name, a theme template — spans one, so two
-  of those stack in the space one tag picker takes instead of each carrying a
-  card's worth of empty grey. `isHalfHeightDetailsField` cannot key off the type
-  alone: `productType` is a `text` too, but it is translatable CONTENT, so it
+  **The grid counts in HALF rows, and the halves are PAIRED into one cell.** An
+  ordinary field spans two rows; a field that is one bare control — a vendor
+  name, a theme template — spans one, and `splitDetailsFields` puts two of those
+  into a single cell, stacked, so they sit under each other in the space one tag
+  picker takes instead of each carrying a card's worth of empty grey. Pairing is
+  by ORDER, not by proximity: the product's two halves are the FIRST and the
+  LAST field of the grid, and a rule that only paired neighbours would never
+  bring them together. The pair lands at the position of the first half, which
+  is the one place the config's order bends — a half JOINS the open stack ahead
+  of it, so the theme template moves up under the vendor and the row loses a
+  column, which is what makes every other box wider. A LEFTOVER half (an odd
+  number of them) keeps a half-height cell of its own rather than a full card
+  with a hole under it, and the stack itself needs no span rule — two halves
+  plus the grid's own gap is exactly one ordinary cell.
+  `isHalfHeightDetailsField` cannot key off the type alone: `productType` is a `text` too, but it is translatable CONTENT, so it
   renders through `AIEditableField` with the improve / translate / copy row
   underneath and needs the whole card. `isAttributeField` is the line, and it is
   the same predicate that decides how the field SAVES — so a new field cannot
@@ -240,9 +250,16 @@ button of its own.**
   bearing part: the sales-channel panel is a list of switch rows that wants
   roughly double the width and grows taller than anything beside it, and as a
   `span 2` cell inside the same auto-fit grid it can only land where
-  auto-placement puts it — with five boxes ahead of it, the middle of the last
+  auto-placement puts it — with the boxes ahead of it, the middle of the last
   row with a hole beside it. As its own region it sits flush RIGHT while there
-  is room and takes a full-width row of its own when there is not. It is
+  is room and takes a full-width row of its own when there is not. **It gets a
+  QUARTER of the row, not a third** (`--app-details-aside-grow` against
+  `--app-details-grid-grow`): two lists of switch rows do not fill more, and
+  every pixel the panel does not use goes to the boxes, which are what a
+  merchant types in. `--app-attribute-grid-min-width` is the other half of that
+  — it is only the panel's own column, and it decides nothing on the full-width
+  row, where `auto-fit` collapses to as many columns as there ARE lists and two
+  of them split it in half regardless. It is
   therefore LAST in the field config, so the reading order of the card and the
   order of the list are the same thing. It still draws its own heading, because
   that heading is the first COLUMN title of its three lists and only lines up

@@ -161,13 +161,25 @@
 
      --app-attribute-grid-min-width  the auto-fit column of the sales-channel
                                      panel's three lists (channels / regions /
-                                     B2B). Wider than a field, because each
-                                     column is a list of switch rows.
+                                     B2B). Still wider than a field — each
+                                     column is a list of switch rows — but a
+                                     switch and a channel name are all that is
+                                     in one, and at 260px every row ended in a
+                                     hand's width of empty card. The panel is
+                                     the ONE place this is spent, and it only
+                                     decides when the lists sit side by side:
+                                     `auto-fit` collapses to as many columns as
+                                     there are lists, so on the full-width row
+                                     two lists still split it in half.
 
      --app-details-field-min-width   one short field in the Details card's
                                      grid. It decides WHEN that row wraps and
                                      nothing else: auto-fit never makes more
-                                     columns than there are fields.
+                                     columns than there are CELLS, and pairing
+                                     the two half-height boxes into one stack
+                                     took a cell out of the product's row — so
+                                     the rest are wider before this number is
+                                     read at all.
 
      --app-details-grid-gap          the gap BETWEEN those fields — named
                                      rather than written as `1rem` at the two
@@ -187,28 +199,30 @@
   --app-field-border-color: #c9cccf;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
-  --app-attribute-grid-min-width: 260px;
-  --app-details-field-min-width: 180px;
+  --app-attribute-grid-min-width: 200px;
+  --app-details-field-min-width: 210px;
   --app-details-grid-gap: 1rem;
   --app-details-card-half-height: 5.5rem;
   /* How the Details row is split between the field cards and the sales-channel
      card, and when the two stop fitting on one line.
 
-     The GROWS are the split: 3.4 : 1.6 out of 5, i.e. 68% / 32%. It was 3 : 2
+     The GROWS are the split: 3.8 : 1.2 out of 5, i.e. 76% / 24%. It was 3 : 2
      — three columns against two — and the channel card was wider than three
      lists of switch rows need while the boxes beside it sat at their minimum,
-     so a fifth of its width moved across. Kept as two numbers that add up to
-     five rather than as percentages, because the BASES below still count in
-     columns and the two have to be read together.
+     so a fifth of its width moved across, and then another: two switch lists
+     do not fill a third of the editor, and every pixel the panel does not use
+     goes to the boxes, which are what a merchant types in. Kept as two numbers
+     that add up to five rather than as percentages, because the BASES below
+     still count in columns and the two have to be read together.
 
      The BASES are the wrap point: how much each region wants before it is
      worth putting them side by side at all. Derived from the field minimum, so
      moving that moves the wrap point with it — the aside's 1.6 is its share of
      the split, not a column count. */
-  --app-details-grid-grow: 3.4;
-  --app-details-aside-grow: 1.6;
+  --app-details-grid-grow: 3.8;
+  --app-details-aside-grow: 1.2;
   --app-details-grid-basis: calc(3 * var(--app-details-field-min-width) + 2 * var(--app-details-grid-gap));
-  --app-details-aside-basis: calc(1.6 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
+  --app-details-aside-basis: calc(1.2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
@@ -283,7 +297,9 @@
 }
 
 /* ── THE DETAILS CARD'S LAYOUT ──────────────────────────────────────────────
-   One grey card PER FIELD, laid out in a grid that counts in half rows. It was
+   One grey card PER FIELD, laid out in a grid that counts in half rows — and
+   the two cards that are only half a row tall share ONE cell, under each other,
+   so the row is one column shorter and every other card is wider for it. It was
    one panel around everything for a release, and before that a titled subcard
    per section — which put a heading reading "Theme-Vorlage" directly above a
    field already called "Theme-Template". The fields ARE the section names.
@@ -292,7 +308,7 @@
    the one field here that is a LIST rather than a box, so it wants roughly
    double width and grows taller than everything beside it. Placed as a
    double-wide cell inside one auto-fit grid it can only ever land where
-   auto-placement puts it — which, with five short fields ahead of it, is the
+   auto-placement puts it — which, with the short fields ahead of it, is the
    middle of the last row with a hole beside it. As its own flex region it sits
    flush RIGHT while there is room for it and drops to a full-width row of its
    own when there is not, and neither case leaves a gap.
@@ -318,10 +334,11 @@
   min-width: 0;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(var(--app-details-field-min-width), 1fr));
-  /* HALF rows. An ordinary field spans two and a bare control spans one, so the
-     short fields pair up instead of each taking a card's worth of grey. `auto`
-     as the maximum, never a fixed height: a collection picker that grew three
-     banners has to push its row taller, not clip them. */
+  /* HALF rows. An ordinary field spans two and a bare control spans one, which
+     is what lets two of those share one cell — stacked, under each other —
+     instead of each taking a card's worth of grey and a column of its own.
+     `auto` as the maximum, never a fixed height: a collection picker that grew
+     three banners has to push its row taller, not clip them. */
   grid-auto-rows: minmax(var(--app-details-card-half-height), auto);
   gap: var(--app-details-grid-gap);
 }
@@ -344,13 +361,27 @@
   flex: 1 1 auto;
 }
 
-/* One bare control — a label and a box — in half a card. */
+/* One bare control — a label and a box — in half a card. Only a LEFTOVER one
+   reaches this: the boxes are paired up into stacks first, and a stack is a
+   cell of ordinary height. */
 .app-details-layout__grid > .app-details-field--half {
   grid-row: span 1;
 }
 
-/* Everything else. Stated rather than left to the default, because the default
-   is ONE row and one row is now half a card. */
+/* Two of those bare controls in ONE cell, under each other. Half a card each
+   plus the grid's own gap is exactly one ordinary cell, so the stack keeps the
+   default two-row span and only needs the gap — stated here because the flex
+   column it sits in is shared with the single-card cells, which must not have
+   one. Side by side instead, the two would open two columns and leave the
+   lower half of each empty, and take that width off the boxes that are a
+   picker rather than a one-line answer. */
+.app-details-layout__grid > .app-details-field--stack {
+  gap: var(--app-details-grid-gap);
+}
+
+/* Everything else — a full field, and the stack of two halves. Stated rather
+   than left to the default, because the default is ONE row and one row is now
+   half a card. */
 .app-details-layout__grid > *:not(.app-details-field--half) {
   grid-row: span 2;
 }

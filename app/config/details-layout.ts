@@ -12,12 +12,13 @@
  * of two shapes a field has, and that is the whole of this module:
  *
  *  - a BOX — one label row and one control, the size of every other box. Five
- *    of the product's six fields.
+ *    of the product's six fields. Two boxes that are only HALF a card tall
+ *    share one cell, stacked, rather than each starting a column of their own.
  *  - the ASIDE — the sales-channel panel. It is a LIST, not a box: three
  *    columns of switch rows that want roughly double the width and grow taller
  *    than anything beside them. Placed as a double-wide cell inside the same
  *    auto-fit grid it can only land where auto-placement puts it, which with
- *    five boxes ahead of it is the middle of the last row with a hole beside
+ *    the boxes ahead of it is the middle of the last row with a hole beside
  *    it. As its own flex region (`.app-details-layout__aside`) it sits flush
  *    RIGHT while there is room and drops to a full-width row of its own when
  *    there is not — no hole in either case.
@@ -79,25 +80,65 @@ export function isHalfHeightDetailsField(field: DetailsLayoutField): boolean {
   return isAttributeField(field) && HALF_HEIGHT_FIELD_TYPES.has(field.type);
 }
 
+/**
+ * How many half-height fields share one cell.
+ *
+ * Two, because a cell is one ordinary card tall and a half-height field is
+ * half of one. A third would have to make its cell taller than the boxes
+ * beside it, which is the ragged row the half-row grid exists to avoid.
+ */
+const HALF_STACK_SIZE = 2;
+
 export interface DetailsLayout<F> {
-  /** The boxes, in config order — the auto-fit grid. */
-  grid: F[];
+  /**
+   * The grid's CELLS, in config order. A cell is normally one field; a cell
+   * with two is a stack of half-height boxes sharing one card's worth of
+   * height.
+   */
+  grid: F[][];
   /** The right-hand region, in config order. Empty for every type but products. */
   aside: F[];
 }
 
 /**
- * Split the Details card's fields into the two regions.
+ * Split the Details card's fields into the two regions, pairing up the boxes
+ * that are only half a card tall.
  *
- * Order inside each region is the CONFIG's, untouched: the config is the one
- * place that says a vendor comes before a product type, and a second ordering
- * rule here would be a second answer to the same question.
+ * Order is the CONFIG's, untouched: the config is the one place that says a
+ * vendor comes before a product type, and a second ordering rule here would be
+ * a second answer to the same question. Pairing bends it in exactly one way,
+ * and only for the fields it is about — a half-height box JOINS the open stack
+ * ahead of it instead of opening a cell of its own, so on a product the theme
+ * template moves up under the vendor. That is the whole point: the two are one
+ * bare control each, and side by side in separate columns they cost two full
+ * columns while leaving half of each empty.
+ *
+ * Pairing is by ORDER, not by proximity — the two halves of a product are the
+ * first and the last field of the grid. A cell keeps its stack open until a
+ * second half fills it, so a lone leftover half stays a half-height cell of its
+ * own rather than a full card with a hole under it.
  */
 export function splitDetailsFields<F extends DetailsLayoutField>(fields: F[]): DetailsLayout<F> {
-  const grid: F[] = [];
+  const grid: F[][] = [];
   const aside: F[] = [];
+  let openStack: F[] | null = null;
+
   for (const field of fields) {
-    (isDetailsAsideField(field) ? aside : grid).push(field);
+    if (isDetailsAsideField(field)) {
+      aside.push(field);
+      continue;
+    }
+    if (!isHalfHeightDetailsField(field)) {
+      grid.push([field]);
+      continue;
+    }
+    if (openStack && openStack.length < HALF_STACK_SIZE) {
+      openStack.push(field);
+      continue;
+    }
+    openStack = [field];
+    grid.push(openStack);
   }
+
   return { grid, aside };
 }

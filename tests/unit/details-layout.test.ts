@@ -27,15 +27,55 @@ import type { FieldDefinition } from "../../app/types/content-editor.types";
 const detailsCardFields = (fields: FieldDefinition[]) =>
   fields.filter((f) => fieldCard(f) === "details" && f.key !== "status" && f.key !== "isPublished");
 
+/** The grid's field keys, cell by cell — a nested cell reads as a stack. */
+const cellKeys = <F extends { key: string }>(grid: F[][]) => grid.map((cell) => cell.map((f) => f.key));
+
+/** One bare attribute control: half a card, so it pairs up with the next one. */
+const half = (key: string, type = "text") => ({
+  key,
+  type,
+  translationKey: "",
+  supportsTranslation: false,
+});
+
 describe("splitDetailsFields", () => {
   it("keeps the config order inside each region", () => {
     const layout = splitDetailsFields([
-      { key: "vendor", type: "text" },
+      half("vendor"),
       { key: "commerce", type: "commerce" },
       { key: "tags", type: "tags" },
     ]);
-    expect(layout.grid.map((f) => f.key)).toEqual(["vendor", "tags"]);
+    expect(cellKeys(layout.grid)).toEqual([["vendor"], ["tags"]]);
     expect(layout.aside.map((f) => f.key)).toEqual(["commerce"]);
+  });
+
+  it("stacks two half-height boxes into one cell, however far apart they sit", () => {
+    // The product's two are the FIRST and the LAST field of the grid. Pairing
+    // is by order, not by proximity — otherwise the one control this is about
+    // never meets the other one.
+    const layout = splitDetailsFields([
+      half("vendor"),
+      { key: "tags", type: "tags" },
+      half("templateSuffix", "themeTemplate"),
+    ]);
+    expect(cellKeys(layout.grid)).toEqual([["vendor", "templateSuffix"], ["tags"]]);
+  });
+
+  it("leaves a third half-height box to open a stack of its own", () => {
+    // Two per cell: a third would make its cell taller than the boxes beside
+    // it, which is the ragged row the half-row grid exists to avoid.
+    const layout = splitDetailsFields([half("a"), half("b"), half("c"), half("d"), half("e")]);
+    expect(cellKeys(layout.grid)).toEqual([["a", "b"], ["c", "d"], ["e"]]);
+  });
+
+  it("never stacks a full-height field", () => {
+    // A field carrying chips or an AI row under its box is a whole card; two of
+    // them in one cell would be two cards' worth of height in one cell's space.
+    const layout = splitDetailsFields([
+      { key: "collections", type: "collections" },
+      { key: "tags", type: "tags" },
+    ]);
+    expect(cellKeys(layout.grid)).toEqual([["collections"], ["tags"]]);
   });
 
   it("leaves the aside empty for a type that has no channel panel", () => {
@@ -106,7 +146,7 @@ describe("the two shape predicates", () => {
 describe("content configs", () => {
   it("halves exactly the vendor and the theme template on a product", () => {
     const layout = splitDetailsFields(detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions));
-    expect(layout.grid.filter(isHalfHeightDetailsField).map((f) => f.key)).toEqual([
+    expect(layout.grid.flat().filter(isHalfHeightDetailsField).map((f) => f.key)).toEqual([
       "vendor",
       "templateSuffix",
     ]);
@@ -114,15 +154,16 @@ describe("content configs", () => {
 
   it("reads the product card left to right, channels last", () => {
     // The order the merchant asked for: vendor, product type, collections,
-    // tags, theme template — and then the channel panel, which renders as the
-    // region on the RIGHT and is therefore last in the list.
+    // tags — and then the channel panel, which renders as the region on the
+    // RIGHT and is therefore last in the list. The theme template is the one
+    // field that moves: it is a bare control like the vendor, so the two share
+    // the vendor's cell rather than opening a fifth column between them.
     const layout = splitDetailsFields(detailsCardFields(PRODUCTS_CONFIG.fieldDefinitions));
-    expect(layout.grid.map((f) => f.key)).toEqual([
-      "vendor",
-      "productType",
-      "collections",
-      "tags",
-      "templateSuffix",
+    expect(cellKeys(layout.grid)).toEqual([
+      ["vendor", "templateSuffix"],
+      ["productType"],
+      ["collections"],
+      ["tags"],
     ]);
     expect(layout.aside.map((f) => f.key)).toEqual(["commerce"]);
   });
@@ -167,7 +208,7 @@ describe("content configs", () => {
     }
 
     const collections = splitDetailsFields(detailsCardFields(COLLECTIONS_CONFIG.fieldDefinitions));
-    expect(collections.grid.filter(isFullWidthDetailsField).map((f) => f.key)).toEqual([
+    expect(collections.grid.flat().filter(isFullWidthDetailsField).map((f) => f.key)).toEqual([
       "collectionRules",
     ]);
   });
