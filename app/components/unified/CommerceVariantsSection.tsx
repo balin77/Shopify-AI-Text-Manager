@@ -73,6 +73,28 @@ type VariantField =
   | "unitReferenceUnit"
   | "showUnitPrice";
 
+/**
+ * What one of this section's subcards looks like — prices, shipping, inventory.
+ *
+ * The same look as the grey field cards in the Details card above, and it has
+ * to be: they sit on the same product page and a framed box beside an unframed
+ * one reads as two different kinds of thing. Those ARE Polaris `Card`s, and
+ * what draws the outline the merchant sees is the bevel Polaris puts around
+ * one — `ShadowBevel`, i.e. `--p-shadow-bevel-100`. None of these three can be
+ * a `Card` (see `cardSubgrid`), so they spend the same token by hand rather
+ * than inventing a border of their own; it resolves to `none` in Polaris'
+ * mobile theme, which is exactly where a Card's outline disappears too.
+ *
+ * The other three values are what `background="bg-surface-secondary"`,
+ * `padding="300"` and `borderRadius="200"` resolve to.
+ */
+const cardSurface: CSSProperties = {
+  background: "var(--p-color-bg-surface-secondary)",
+  padding: "var(--p-space-300)",
+  borderRadius: "var(--p-border-radius-200)",
+  boxShadow: "var(--p-shadow-bevel-100)",
+};
+
 export function CommerceVariantsSection() {
   const commerce = useCommerceData();
   /** The chosen scope id, or null while none has been picked. */
@@ -242,17 +264,14 @@ export function CommerceVariantsSection() {
    * correlates — which is what a stacked layout should do anyway.
    *
    * The card is a plain div rather than a Polaris `Box` because it has to be a
-   * grid container as well as a grid item, and `Box` takes no style. The three
-   * tokens below are exactly what `background="bg-surface-secondary"`,
-   * `padding="300"` and `borderRadius="200"` resolve to.
+   * grid container as well as a grid item, and `Box` takes no style — the look
+   * it borrows by hand is `cardSurface`.
    */
   const cardSubgrid: CSSProperties = {
+    ...cardSurface,
     display: "grid",
     gridTemplateRows: "subgrid",
     gridRow: "span 2",
-    background: "var(--p-color-bg-surface-secondary)",
-    padding: "var(--p-space-300)",
-    borderRadius: "var(--p-border-radius-200)",
   };
   /** Everything above the disclosure. Its own column so the fields keep the
    *  spacing `BlockStack gap="300"` gave them. */
@@ -666,7 +685,7 @@ export function CommerceVariantsSection() {
       {/* Inventory keeps a card of its OWN and the full width: it holds a
           table, and squeezing that beside the prices would put four numeric
           columns into half a screen. */}
-      <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+      <div style={cardSurface}>
         <BlockStack gap="300">
                   {/* ── Inventory switches ──────────────────────────────────
                       Pill toggles rather than checkboxes: the row style this
@@ -870,7 +889,7 @@ export function CommerceVariantsSection() {
             </Box>
           </InlineStack>
         </BlockStack>
-      </Box>
+      </div>
     </BlockStack>
   );
 }
@@ -972,7 +991,10 @@ function StockTable({
         <thead>
           <tr>
             <th style={headFirst}>
-              <Text as="span" variant="bodySm" tone="subdued">
+              {/* As heavy as the total row below, and not subdued: the two are
+                  the table's frame, and a grey caption over a bold total read
+                  as if the columns were an afterthought. */}
+              <Text as="span" variant="bodySm" fontWeight="semibold">
                 {(t.locationsColumn as string) || "Locations"}
               </Text>
             </th>
@@ -983,7 +1005,7 @@ function StockTable({
               (t.onHandColumn as string) || "On hand",
             ].map((label, index, all) => (
               <th key={label} style={index === all.length - 1 ? headLast : headCell}>
-                <Text as="span" variant="bodySm" tone="subdued">{label}</Text>
+                <Text as="span" variant="bodySm" fontWeight="semibold">{label}</Text>
               </th>
             ))}
           </tr>
@@ -1002,8 +1024,14 @@ function StockTable({
                 {/* A location the item is not ACTIVATED at says so. In a table
                     of dashes it would otherwise be indistinguishable from a
                     location whose numbers merely could not be read — and the
-                    difference is what the whole row is here to show. */}
-                {!row.stocked && (
+                    difference is what the whole row is here to show.
+
+                    Not on a DEACTIVATED location though: "(inactive) not
+                    stocked here" is two answers to one question — an inactive
+                    location takes no writes either way, so "(inactive)" alone
+                    says it — and together they made the location column wider
+                    than the four number columns beside it. */}
+                {!row.stocked && row.active && (
                   <Text as="span" variant="bodySm" tone="subdued">
                     {" "}
                     {(t.notStockedHere as string) || "not stocked here"}
