@@ -363,6 +363,80 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     /**
+     * `sources` against its own back-projection.
+     *
+     * The PRODUCT sync learns whether a membership is rule-based from
+     * `Collection.ruleSet` (`PRODUCT_COLLECTIONS_SELECTION`), and `ruleSet` is
+     * a LOSSY projection of `sources` from 2026-07 on: what it cannot express
+     * — exclusions, several named sources, variant targeting — it simply
+     * leaves out, and the collection then reads as MANUAL. That is not a
+     * cosmetic mismatch: `collectionsToLeave` on a rule-based collection is
+     * refused by Shopify, and `productUpdate` is atomic, so the refusal takes
+     * the merchant's text edits with it.
+     *
+     * So this asks the shop for both, per collection, and reports where they
+     * disagree. A disagreement is a product save waiting to fail; none means
+     * every rule tree on this shop still projects.
+     */
+    const projection: {
+      checked: number;
+      ruleBased: number;
+      disagreements: Array<{ id: string; title: string; hasSources: boolean; hasRuleSet: boolean }>;
+      /** The window ended before the shop did — "none found" then covers the
+       *  first page only, and must not be reported shop-wide. */
+      truncated: boolean;
+      error?: string;
+      skipped?: string;
+    } = { checked: 0, ruleBased: 0, disagreements: [], truncated: false };
+
+    if (!rulesAvailableOn(apiVersion)) {
+      projection.skipped = `${apiVersion} has no sources model, so there is nothing to project from.`;
+    } else {
+      try {
+        const response = await admin.graphql(`#graphql
+          query probeProjection {
+            collections(first: 50) {
+              pageInfo {
+                hasNextPage
+              }
+              nodes {
+                id
+                title
+                sources {
+                  __typename
+                }
+                ruleSet {
+                  appliedDisjunctively
+                }
+              }
+            }
+          }`);
+        const body = (await response.json()) as {
+          data?: {
+            collections?: {
+              pageInfo?: { hasNextPage?: boolean };
+              nodes?: Array<{ id: string; title: string; sources?: unknown[] | null; ruleSet?: unknown | null }>;
+            };
+          };
+        };
+        projection.truncated = body.data?.collections?.pageInfo?.hasNextPage === true;
+        for (const node of body.data?.collections?.nodes ?? []) {
+          projection.checked += 1;
+          const hasSources = (node.sources?.length ?? 0) > 0;
+          const hasRuleSet = !!node.ruleSet;
+          if (hasSources) projection.ruleBased += 1;
+          if (hasSources !== hasRuleSet) {
+            projection.disagreements.push({ id: node.id, title: node.title, hasSources, hasRuleSet });
+          }
+        }
+      } catch (error) {
+        // A failed call is not "they agree" — the same rule as everywhere else
+        // in this file.
+        projection.error = decodeThrow(error).transportError ?? decodeThrow(error).errors.join(" | ");
+      }
+    }
+
+    /**
      * The other half of the sync.
      *
      * `fetchCollectionData` is only the first step: `syncCollection` also
@@ -433,6 +507,24 @@ export async function action({ request }: ActionFunctionArgs) {
       verdicts.push(`\`${sample.title}\`: the read half is fine — this collection WOULD be stamped. If it is not, the failure is later in \`syncCollection\` (locales, markets, translations, the upsert).`);
     }
 
+    if (projection.skipped) {
+      verdicts.push(`Projection check skipped: ${projection.skipped}`);
+    } else if (projection.error) {
+      verdicts.push(`The projection check could not be run (${projection.error}) — that proves nothing about it either way.`);
+    } else if (projection.checked === 0) {
+      // Zero collections looked at is not zero disagreements found — the same
+      // rule this whole file is built on.
+      verdicts.push("The projection check looked at NO collections, so it says nothing either way.");
+    } else if (projection.disagreements.length > 0) {
+      verdicts.push(
+        `**${projection.disagreements.length} of ${projection.checked} collections do not project back into \`ruleSet\`** (${projection.disagreements.map((d) => d.title).join(", ")}). The PRODUCT sync reads exactly that field, so it stores those memberships as MANUAL — and a save that tries to leave one is refused by Shopify with the merchant's text edits in the same atomic mutation.`,
+      );
+    } else {
+      verdicts.push(
+        `All ${projection.ruleBased} rule-based collections of the ${projection.checked} checked still project into \`ruleSet\`, so the product sync's flag happens to agree today. It is still the lossy field to read.${projection.truncated ? " NOTE: the shop has more collections than the window — this covers the first 50 only." : ""}`,
+      );
+    }
+
     if (realSync.ran) {
       verdicts.push(
         realSync.error
@@ -462,6 +554,7 @@ export async function action({ request }: ActionFunctionArgs) {
           newestSync: newestSync._max.lastSyncedAt?.toISOString() ?? null,
         },
         samples,
+        projection,
         realSync,
         verdicts,
       },

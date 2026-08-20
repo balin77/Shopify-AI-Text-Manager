@@ -129,10 +129,18 @@ export function CollectionsField({
       byId.set(membership.collectionId, {
         id: membership.collectionId,
         title: existing?.title || membership.collectionTitle || membership.collectionId,
-        // The MEMBERSHIP's own flag wins where it KNOWS; otherwise the shop
-        // list's answer. `null` from both stays null, which renders locked —
-        // unknown is not manual, and the server refuses it either way.
-        automated: membership.automated ?? existing?.automated ?? null,
+        // The SHOP LIST wins where it knows, and that order is not arbitrary:
+        // its flag comes from `Collection.isSmart`, which the collection sync
+        // measures from `sources`, while the membership's own flag is filled
+        // from `Collection.ruleSet` — the lossy back-projection, which reports
+        // a rule tree it cannot express as no rule tree at all. The membership
+        // is the fallback for a collection this shop never cached (the cache
+        // is capped by the plan). PRESENCE decides, not truthiness: a shop
+        // list that carries the collection and answers `null` means UNKNOWN
+        // and must stay locked — `??` would skip past it to the membership's
+        // projected `false` and offer a leave the server then refuses
+        // (`diffCollectionMembership` reads the same map the same way).
+        automated: existing ? existing.automated : membership.automated ?? null,
       });
     }
     return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));

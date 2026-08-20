@@ -613,6 +613,7 @@ export const de = {
     // App in drei Sprachen ausgeliefert wird.
     attributeWarnings: {
       collectionsAutomatedKept: "Eine regelbasierte Kollektion wurde beibehalten — ihre eigenen Regeln entscheiden, wer dazugehört. Alles andere wurde gespeichert.",
+      collectionsUnknownKept: "Eine Kollektion wurde beibehalten, weil noch nicht bekannt ist, ob ihre Mitglieder per Regel bestimmt werden — synchronisiere den Tab „Kollektionen“ und versuche es erneut. Alles andere wurde gespeichert.",
     },
     // PLAN Phase 4 — Bestand und Vertriebskanäle. Werden separat gespeichert,
     // weil eine flüchtige Zahl im Wertespeicher des Editors bis zum Speichern

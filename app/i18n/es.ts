@@ -602,6 +602,7 @@ export const es: Translation = {
     // la app se distribuye en tres idiomas.
     attributeWarnings: {
       collectionsAutomatedKept: "Se mantuvo una colección basada en reglas: sus propias reglas deciden quién pertenece a ella. Todo lo demás se guardó.",
+      collectionsUnknownKept: "Se mantuvo una colección porque aún no se sabe si sus miembros se eligen por una regla — sincroniza la pestaña Colecciones e inténtalo de nuevo. Todo lo demás se guardó.",
     },
     // PLAN Phase 4 — inventario y canales de venta. Se guardan aparte, porque
     // un número volátil dentro del mapa de valores del editor estaría obsoleto

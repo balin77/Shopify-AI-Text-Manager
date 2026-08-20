@@ -611,6 +611,7 @@ export const en: Translation = {
     // app ships in three languages.
     attributeWarnings: {
       collectionsAutomatedKept: "A rule-based collection was kept — its own rules decide who belongs to it. Everything else was saved.",
+      collectionsUnknownKept: "A collection was kept because this app does not know yet whether its members are picked by a rule — sync the Collections tab, then try again. Everything else was saved.",
     },
     // PLAN Phase 4 — stock and sales channels. Saved on their own, because a
     // volatile number carried in the editor's value map would be stale by the

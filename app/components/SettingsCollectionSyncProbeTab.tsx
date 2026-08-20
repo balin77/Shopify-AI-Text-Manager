@@ -42,6 +42,14 @@ interface SyncProbeReport {
     wouldStampAttributes: boolean;
     ladder: Array<{ level: string; what: string; outcome: CallOutcome }>;
   }>;
+  projection: {
+    checked: number;
+    ruleBased: number;
+    truncated: boolean;
+    disagreements: Array<{ id: string; title: string; hasSources: boolean; hasRuleSet: boolean }>;
+    error?: string;
+    skipped?: string;
+  };
   realSync: { ran: boolean; collectionId?: string; error?: string; attributesSyncedAtAfter?: string | null };
   verdicts: string[];
 }
@@ -79,6 +87,27 @@ function formatMarkdown(r: SyncProbeReport): string {
     }
     lines.push("");
   }
+  lines.push("## sources vs ruleSet (what the PRODUCT sync reads)");
+  if (r.projection.skipped) {
+    lines.push(`- skipped: ${r.projection.skipped}`);
+  } else if (r.projection.error) {
+    lines.push(`- could not be checked: ${r.projection.error}`);
+  } else {
+    lines.push(
+      `- checked ${r.projection.checked} collections${r.projection.truncated ? " (the window ended before the shop did — first 50 only)" : ""}, ${r.projection.ruleBased} of them rule-based`,
+    );
+    if (r.projection.checked === 0) {
+      lines.push("- nothing was measured, which is not the same as agreement");
+    } else if (r.projection.disagreements.length === 0) {
+      lines.push("- every rule tree still projects into ruleSet");
+    } else {
+      for (const d of r.projection.disagreements) {
+        lines.push(`- **${d.title}**: sources=${d.hasSources}, ruleSet=${d.hasRuleSet} → the product sync stores this as ${d.hasRuleSet ? "rule-based" : "MANUAL"}`);
+      }
+    }
+  }
+  lines.push("");
+
   if (r.realSync.ran) {
     lines.push("## Real syncCollection");
     lines.push(`- collection: ${r.realSync.collectionId}`);

@@ -237,18 +237,43 @@ export function attributeInputFor(
 export interface MembershipDiff {
   toJoin: string[];
   toLeave: string[];
-  /** Rule-based (or unknown) collections the payload tried to change. */
+  /** MEASURED rule-based collections the payload tried to change. */
   refusedAutomated: string[];
+  /**
+   * Refused because nobody has measured them yet — a collection row the
+   * attribute sync never reached.
+   *
+   * Separate from `refusedAutomated` because the two need different sentences:
+   * "its rules decide who belongs to it" is an explanation, while "we do not
+   * know yet, sync the collections" is an instruction. Telling a merchant
+   * their manual collection is rule-based sends them looking for a rule that
+   * does not exist — the same confusion the picker's own `automatedUnknown`
+   * text exists to avoid.
+   */
+  refusedUnknown: string[];
 }
 
 export function diffCollectionMembership(
   before: Array<{ collectionId: string; automated: boolean | null }>,
   afterIds: string[],
   /**
-   * How each collection in the SHOP reads — the picker's own list. Only
-   * consulted for a JOIN, where `before` by definition has no row to read.
-   * Omitted ⇒ joins are not screened, which is the pre-existing behaviour and
-   * the right one for a caller that has no list to screen against.
+   * How each collection in the SHOP reads — the picker's own list, derived
+   * from `Collection.isSmart`, which the collection sync measures from
+   * `sources` on 2026-07.
+   *
+   * Consulted for BOTH directions, and for the leave side that is a
+   * correction rather than a convenience: `before.automated` comes from
+   * `ProductCollection`, which the product sync fills from `Collection.ruleSet`
+   * — the LOSSY back-projection of `sources`. A rule tree that ruleSet cannot
+   * express (an exclusion, several named sources, variant targeting) projects
+   * to null, so the membership reads MANUAL, the leave is allowed, Shopify
+   * refuses `collectionsToLeave`, and because `productUpdate` is atomic the
+   * refusal takes the merchant's title, description and SEO edits with it.
+   * Where this map KNOWS, it therefore outranks the row's own flag; where it
+   * does not, the row is still the only answer there is.
+   *
+   * Omitted ⇒ neither direction is screened against it, which is the
+   * pre-existing behaviour and the right one for a caller with no list.
    */
   known?: Map<string, boolean | null>,
 ): MembershipDiff {
@@ -257,13 +282,16 @@ export function diffCollectionMembership(
 
   const toJoin: string[] = [];
   const refusedAutomated: string[] = [];
+  const refusedUnknown: string[] = [];
+  const refuse = (id: string, automated: boolean | null) =>
+    (automated === true ? refusedAutomated : refusedUnknown).push(id);
 
   for (const id of after) {
     if (beforeById.has(id)) continue;
     // Not `=== true`: `null` (never attribute-synced) is refused too. See the
     // header — the asymmetry of the two costs is the whole argument.
     if (known && known.has(id) && known.get(id) !== false) {
-      refusedAutomated.push(id);
+      refuse(id, known.get(id) ?? null);
       continue;
     }
     toJoin.push(id);
@@ -272,14 +300,19 @@ export function diffCollectionMembership(
   const toLeave: string[] = [];
   for (const row of before) {
     if (after.has(row.collectionId)) continue;
-    if (row.automated !== false) {
-      refusedAutomated.push(row.collectionId);
+    // The MEASURED answer where there is one, the row's projected flag
+    // otherwise — see `known`. `null` in either of them is UNKNOWN and is
+    // refused, the same asymmetry as the join side.
+    const measured = known?.get(row.collectionId);
+    const automated = measured === undefined ? row.automated : measured;
+    if (automated !== false) {
+      refuse(row.collectionId, automated);
       continue;
     }
     toLeave.push(row.collectionId);
   }
 
-  return { toJoin, toLeave, refusedAutomated };
+  return { toJoin, toLeave, refusedAutomated, refusedUnknown };
 }
 
 /**

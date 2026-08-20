@@ -1089,7 +1089,12 @@ async function updatePrimaryProduct(
     );
     if (diff.toJoin.length > 0) mutationInput.collectionsToJoin = diff.toJoin;
     if (diff.toLeave.length > 0) mutationInput.collectionsToLeave = diff.toLeave;
+    // Two refusals, two sentences: a MEASURED rule-based collection has an
+    // explanation ("its rules decide"), an unmeasured one has an instruction
+    // ("sync the collections"). One note for both told merchants their manual
+    // collection was rule-based.
     if (diff.refusedAutomated.length > 0) membershipNotes.push("collectionsAutomatedKept");
+    if (diff.refusedUnknown.length > 0) membershipNotes.push("collectionsUnknownKept");
   }
 
   // Which halves of §Phase 3.1 this save is actually writing. Used for BOTH

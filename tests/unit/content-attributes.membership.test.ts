@@ -60,7 +60,11 @@ describe("diffCollectionMembership", () => {
     const known = new Map<string, boolean | null>([[gid(9), null]]);
     const diff = diffCollectionMembership([], [gid(9)], known);
     expect(diff.toJoin).toEqual([]);
-    expect(diff.refusedAutomated).toEqual([gid(9)]);
+    // Refused, but in its OWN bucket: "we do not know yet" is an instruction
+    // to sync, while "it is rule-based" is an explanation. One note for both
+    // told merchants a manual collection was rule-based.
+    expect(diff.refusedUnknown).toEqual([gid(9)]);
+    expect(diff.refusedAutomated).toEqual([]);
   });
 
   it("joins a KNOWN-manual collection", () => {
@@ -76,6 +80,40 @@ describe("diffCollectionMembership", () => {
 
   it("refuses to leave a membership whose type is UNKNOWN", () => {
     const diff = diffCollectionMembership([{ collectionId: gid(1), automated: null }], []);
+    expect(diff.toLeave).toEqual([]);
+    expect(diff.refusedUnknown).toEqual([gid(1)]);
+    expect(diff.refusedAutomated).toEqual([]);
+  });
+
+  it("REFUSES to leave a collection the SHOP LIST calls rule-based, even when the row says manual", () => {
+    // The row's flag comes from `ProductCollection`, which the product sync
+    // fills from `Collection.ruleSet` — the LOSSY back-projection of
+    // `sources`: a rule tree it cannot express (an exclusion, several named
+    // sources, variant targeting) projects to null and the membership reads
+    // manual. Shopify still refuses `collectionsToLeave` on it, and
+    // `productUpdate` is atomic, so that refusal takes the merchant's text
+    // edits with it. The measured flag therefore outranks the projected one.
+    const known = new Map<string, boolean | null>([[gid(1), true]]);
+    const diff = diffCollectionMembership([{ collectionId: gid(1), automated: false }], [], known);
+    expect(diff.toLeave).toEqual([]);
+    expect(diff.refusedAutomated).toEqual([gid(1)]);
+  });
+
+  it("LEAVES a collection the shop list measured as manual, even when the row is unknown", () => {
+    // The mirror image: `null` on the row is the migration default, and a
+    // measurement beats a default in both directions.
+    const known = new Map<string, boolean | null>([[gid(1), false]]);
+    const diff = diffCollectionMembership([{ collectionId: gid(1), automated: null }], [], known);
+    expect(diff.toLeave).toEqual([gid(1)]);
+    expect(diff.refusedAutomated).toEqual([]);
+  });
+
+  it("falls back to the row's own flag for a collection the shop list does not carry", () => {
+    // The collection cache is capped by the plan, so a membership can point at
+    // a collection this shop never cached. Then the projected flag is the only
+    // answer there is — and an absent entry must not read as "manual".
+    const known = new Map<string, boolean | null>([[gid(2), false]]);
+    const diff = diffCollectionMembership([{ collectionId: gid(1), automated: true }], [], known);
     expect(diff.toLeave).toEqual([]);
     expect(diff.refusedAutomated).toEqual([gid(1)]);
   });
