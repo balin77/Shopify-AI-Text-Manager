@@ -289,6 +289,22 @@ Der Review über diesen Commit hat sechs Befunde ergeben, alle derselben Klasse 
 5. **Das Server-Gate wirft nicht mehr auf einem missgebildeten Payload**, sondern lehnt ihn ab. Beide Schreibpfade reichen Client-JSON direkt hinein und sind per POST erreichbar; ein `TypeError` dort wäre ein 500 auf einem Save, dessen Textänderungen bereits gelandet sind.
 6. **Der Schema-Test prüft den CREATE-Pfad, den er zu prüfen behauptete:** er validierte `CollectionUpdateInput.sourcesToCreate`, während `createCollection` `CollectionCreateInput.sources` sendet — zwei Typen, ein angenommener. Dazu jetzt das Create-Dokument selbst und die Feldnamen `conditionsToCreate`/`conditionsToDelete`.
 
+#### 1.2d Eine Quelle ist keine Regel (gemessen 2026-08-20, Live-Shop auf 2026-07)
+
+Aus der Frage eines Merchants: die Kollektionen-Auswahl im Produkt-Editor sperrte jede Zeile. Die Sonde (Settings → Probes → Collections, [api.collection-sync-probe.tsx](../../app/routes/api.collection-sync-probe.tsx)) hat es beantwortet, und die Antwort kippt eine Ableitung aus Phase 0:
+
+**Alle zwölf Kollektionen des Shops** — keine einzige davon eine Smart Collection — liefern je eine `CollectionConditionsSource` mit **null Bedingungen** und handverlesenen `selections`, und `ruleSet: null`. Eine MANUELLE Kollektion trägt in 2026-07 also ebenfalls eine Quelle; ihre Produktliste steckt in `selections`. §1.2 Punkt 2 hat genau das vorhergesagt ("`selections` mischt manuell und automatisch"), die Ableitung `isSmart = sources.length > 0` hat es trotzdem nicht berücksichtigt.
+
+Folgen, alle drei gemessen statt vermutet:
+
+- Jede Kollektion des Shops galt als regelbasiert. Die Auswahl sperrte jede Zeile mit "wird von den Regeln dieser Kollektion bestimmt" — neben Kollektionen, die keine haben.
+- `diffCollectionMembership` lehnte damit jeden Beitritt ab, und seit der Austritt ebenfalls gegen `isSmart` prüft auch jeden Austritt.
+- Der Projektionsvergleich `sources` vs. `ruleSet` meldete zwölf Abweichungen, die keine sind: eine manuelle Kollektion hat völlig zu Recht kein `ruleSet`.
+
+**Regel:** das Signal ist die BEDINGUNG. `collectionSourcesAreRuleBased` ist das eine Prädikat, eine Quelle, die gar keine `CollectionConditionsSource` ist (Sub-Collections), zählt als regelbasiert, und eine zu schmale `sources`-Auswahl schreibt gar nichts, statt "manuell" zu antworten — die falsche Richtung ist die teure, weil `productUpdate` atomar ist.
+
+**Offen:** `fromShopifySources` markiert eine Quelle mit `selections` als `unrenderable` (§2.4, richtig so). Auf einem Shop wie diesem heisst das: über JEDER Kollektion steht im Regel-Feld "Diese Regel nutzt etwas, das dieser Editor nicht zeigen kann". Sicher, aber irreführend — es gibt dort keine Regel, sondern eine Handauswahl. Eigener Text oder eigene Behandlung, noch nicht entschieden.
+
 #### Regel-Builder: `productStatus` ist ein ENUM
 
 Die Bedingung war ein Freitextfeld über `ProductStatus`. Ein Tippfehler kommt durch das Formular, scheitert an der Mutation auf Schema-Ebene und erreicht den Merchant als generisches `rulesFailed`. Ersetzt durch die drei gemessenen Werte `ACTIVE`/`DRAFT`/`ARCHIVED` als Checkboxen — der Kind ist `list: true`, die Mehrfachauswahl bleibt also erhalten, und sie schreiben dieselbe Komma-Serialisierung wie jede andere Listen-Bedingung (`listValues`/`joinListValues`, ab jetzt an genau einer Stelle definiert). Labels in de/en/es.

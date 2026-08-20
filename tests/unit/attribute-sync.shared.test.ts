@@ -223,11 +223,21 @@ describe("collectionAttributeColumns", () => {
   });
 
   it("reads 'is this rule-based' off the model the version actually delivers", () => {
-    // On 2026-07 a collection is rule-based when it HAS sources. Asking
-    // `ruleSet` there would answer "manual" for every collection using the new
-    // model, because the projection drops what it cannot express.
+    // On 2026-07 the signal is a CONDITION, not the presence of a source.
+    // Asking `ruleSet` there would answer "manual" for every collection whose
+    // tree the projection cannot express.
     const smart = collectionAttributeColumns(
-      { sortOrder: "MANUAL", templateSuffix: null, sources: [{ id: "s1" }] },
+      {
+        sortOrder: "MANUAL",
+        templateSuffix: null,
+        sources: [
+          {
+            __typename: "CollectionConditionsSource",
+            inclusion: { conditions: [{ __typename: "CollectionSourceInclusionConditionProductTag" }] },
+            exclusion: null,
+          },
+        ],
+      },
       "2026-07",
       NOW,
     );
@@ -239,6 +249,87 @@ describe("collectionAttributeColumns", () => {
       NOW,
     );
     expect(manual.isSmart).toBe(false);
+  });
+
+  it("reads a MANUAL collection's own source as manual", () => {
+    // MEASURED (2026-08-20, live 2026-07 shop): every collection of a shop
+    // with no smart collection at all came back with a
+    // `CollectionConditionsSource` carrying ZERO conditions and hand-picked
+    // `selections`. So a source is not evidence of a rule — it is evidence of
+    // a membership, which every collection has. Reading it the old way locked
+    // every row of the membership picker with "managed by this collection's
+    // rules" next to collections that have none.
+    const columns = collectionAttributeColumns(
+      {
+        sortOrder: "MANUAL",
+        templateSuffix: null,
+        sources: [
+          {
+            __typename: "CollectionConditionsSource",
+            inclusion: { conditions: [] },
+            exclusion: { conditions: [] },
+          },
+        ],
+      },
+      "2026-07",
+      NOW,
+    );
+    expect(columns.isSmart).toBe(false);
+    // The tree is still mirrored — the editor has to be able to hand back
+    // what it cannot render.
+    expect(columns.attributesSyncedAt).toBe(NOW);
+  });
+
+  it("counts an EXCLUSION-only source as rule-based", () => {
+    const columns = collectionAttributeColumns(
+      {
+        sortOrder: "MANUAL",
+        templateSuffix: null,
+        sources: [
+          {
+            __typename: "CollectionConditionsSource",
+            inclusion: { conditions: [] },
+            exclusion: { conditions: [{ __typename: "CollectionSourceExclusionConditionProductTag" }] },
+          },
+        ],
+      },
+      "2026-07",
+      NOW,
+    );
+    expect(columns.isSmart).toBe(true);
+  });
+
+  it("counts a SUB-COLLECTIONS source as rule-based", () => {
+    // Its members follow another collection, which is no more hand-picked
+    // than a tag rule is — and Shopify refuses a manual join either way.
+    const columns = collectionAttributeColumns(
+      {
+        sortOrder: "MANUAL",
+        templateSuffix: null,
+        sources: [{ __typename: "CollectionSubCollectionsSource" }],
+      },
+      "2026-07",
+      NOW,
+    );
+    expect(columns.isSmart).toBe(true);
+  });
+
+  it("REFUSES a sources selection too narrow to answer the question", () => {
+    // `sources { id }` would report "no conditions" for a real rule tree and
+    // mark it MANUAL — the expensive direction: the picker then offers a join
+    // Shopify refuses, and `productUpdate` is atomic, so the refusal takes the
+    // merchant's text edits with it. Nothing is written at all instead.
+    expect(
+      collectionAttributeColumns(
+        {
+          sortOrder: "MANUAL",
+          templateSuffix: null,
+          sources: [{ __typename: "CollectionConditionsSource" }],
+        },
+        "2026-07",
+        NOW,
+      ),
+    ).toEqual({});
   });
 
   it("requires EVERY key of the selection", () => {

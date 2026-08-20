@@ -223,10 +223,21 @@ export interface ShopifyCollectionRuleSet {
   rules?: Array<{ column: string; relation: string; condition: string }> | null;
 }
 
+/**
+ * One entry of `Collection.sources`, as far as "is this collection rule-based"
+ * needs to see it. The full tree is the rule editor's business
+ * (`collection-rules.shared.ts`); this is the shape of the QUESTION asked here.
+ */
+export interface ShopifyCollectionSource {
+  __typename?: string;
+  inclusion?: { conditions?: unknown[] | null } | null;
+  exclusion?: { conditions?: unknown[] | null } | null;
+}
+
 export interface ShopifyCollectionAttributes {
   /** 2026-07 and up. Mutually exclusive with `ruleSet` by selection, never by
    *  accident — see `collectionAttributeSelection`. */
-  sources?: unknown[] | null;
+  sources?: ShopifyCollectionSource[] | null;
   sortOrder?: string | null;
   templateSuffix?: string | null;
   ruleSet?: ShopifyCollectionRuleSet | null;
@@ -387,6 +398,55 @@ export function productCollectionRows(
   return { rows, hasMore: collections.pageInfo?.hasNextPage ?? false };
 }
 
+/** The one source type whose membership can be a hand-picked list. */
+const CONDITIONS_SOURCE = "CollectionConditionsSource";
+
+/**
+ * Is this collection's membership decided by a RULE?
+ *
+ * MEASURED on a live 2026-07 shop (2026-08-20, Settings → Probes →
+ * Collections): all twelve collections of a shop with no smart collection at
+ * all came back with a `CollectionConditionsSource` each — **zero conditions,
+ * hand-picked `selections`** — and with `ruleSet: null`. So in the 2026-07
+ * model a MANUAL collection carries a source too: its picks live in
+ * `selections`, exactly as PLAN §1.2 point 2 predicted ("selections mixes
+ * manual and automatic; the old sharp split is not what the new API models").
+ *
+ * `sources.length > 0` therefore does NOT mean "rule-based" — it means "has a
+ * membership", which every collection has. Reading it that way called every
+ * collection on that shop automated, and the membership picker locked every
+ * row it should have been offering: joins refused, leaves refused, and a
+ * "managed by this collection's rules" next to a collection that has none.
+ *
+ * The signal is a CONDITION. A source that is not a conditions source at all
+ * (sub-collections) counts as rule-based too: its members follow another
+ * collection, which is no more hand-picked than a tag rule is.
+ */
+export function collectionSourcesAreRuleBased(sources: ShopifyCollectionSource[] | null | undefined): boolean {
+  return (sources ?? []).some((source) => {
+    if (source.__typename && source.__typename !== CONDITIONS_SOURCE) return true;
+    return (
+      (source.inclusion?.conditions?.length ?? 0) > 0 || (source.exclusion?.conditions?.length ?? 0) > 0
+    );
+  });
+}
+
+/**
+ * Did the response carry the sources in the shape the question above needs?
+ *
+ * A narrower selection — one that asks for `sources { id }` — would answer
+ * "no conditions" for every source and mark a genuinely rule-based collection
+ * MANUAL, which is the expensive direction: the picker then offers a join
+ * Shopify refuses, and `productUpdate` is atomic, so that refusal takes the
+ * merchant's text edits with it. The same rule the rest of this module
+ * follows: a half-delivered block is not written at all.
+ */
+function collectionSourcesShapeComplete(sources: ShopifyCollectionSource[] | null | undefined): boolean {
+  return (sources ?? []).every(
+    (source) => source.__typename !== CONDITIONS_SOURCE || "inclusion" in source || "exclusion" in source,
+  );
+}
+
 /** The keys every version delivers. The rule tree is the version-dependent
  *  one and is checked separately. */
 const COLLECTION_ATTRIBUTE_KEYS: Array<keyof ShopifyCollectionAttributes> = [
@@ -410,9 +470,10 @@ export function hasCollectionAttributes(
   apiVersion?: string,
 ): boolean {
   if (!hasEveryKey(data, COLLECTION_ATTRIBUTE_KEYS)) return false;
-  const treeKey: keyof ShopifyCollectionAttributes =
-    apiVersion && rulesAvailableOn(apiVersion) ? "sources" : "ruleSet";
-  return hasEveryKey(data, [treeKey]);
+  if (apiVersion && rulesAvailableOn(apiVersion)) {
+    return hasEveryKey(data, ["sources"]) && collectionSourcesShapeComplete(data?.sources);
+  }
+  return hasEveryKey(data, ["ruleSet"]);
 }
 
 export function collectionAttributeColumns(
@@ -431,11 +492,12 @@ export function collectionAttributeColumns(
   return {
     sortOrder: nullableText(d.sortOrder),
     templateSuffix: nullableText(d.templateSuffix),
-    // From 2026-07 on a collection is rule-based when it HAS sources; below
-    // that `ruleSet` is the only signal. Reading `ruleSet` on the newer version
-    // would answer "manual" for every collection using the new model, because
-    // the projection drops what it cannot express (CLAUDE.md).
-    isSmart: hasSources ? (d.sources?.length ?? 0) > 0 : !!d.ruleSet,
+    // From 2026-07 on the signal is a CONDITION, never the presence of a
+    // source — a manual collection has one of those too (see
+    // `collectionSourcesAreRuleBased`, measured). Below that version `ruleSet`
+    // is the only signal there is; reading it on the newer one would answer
+    // "manual" for every collection whose tree the projection cannot express.
+    isSmart: hasSources ? collectionSourcesAreRuleBased(d.sources) : !!d.ruleSet,
     // Stored even when null-ish so a collection that STOPPED being rule-based
     // does not keep a stale tree. The envelope always names its shape, because
     // the two models are not interchangeable and a reader must never guess.

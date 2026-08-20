@@ -26,7 +26,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
 import { resolveApiVersionString } from "~/utils/api-version";
-import { COLLECTION_SOURCES_FIELDS } from "./attribute-sync.shared";
+import { COLLECTION_SOURCES_FIELDS, collectionSourcesAreRuleBased } from "./attribute-sync.shared";
 import {
   diffRuleSources,
   editableSourcesFromEnvelope,
@@ -125,7 +125,7 @@ export async function applyCollectionRuleChange(
     const body = (await response.json()) as {
       data?: {
         collectionUpdate?: {
-          collection?: { id: string; sources?: unknown[] | null } | null;
+          collection?: { id: string; sources?: Parameters<typeof collectionSourcesAreRuleBased>[0] } | null;
           userErrors?: Array<{ message: string }>;
         };
       };
@@ -158,7 +158,12 @@ export async function applyCollectionRuleChange(
       .update({
         where: { shop_id: { shop, id: params.collectionId } },
         data: {
-          isSmart: (payload.collection.sources?.length ?? 0) > 0,
+          // A CONDITION makes a collection rule-based, never the presence of
+          // a source: a manual collection carries one too, with its picks in
+          // `selections` (measured — see `collectionSourcesAreRuleBased`).
+          // The echo above uses the shared selection, so the shape is there to
+          // answer with.
+          isSmart: collectionSourcesAreRuleBased(payload.collection.sources),
           sourcesJson: {
             shape: "sources",
             apiVersion: resolveApiVersionString(),
