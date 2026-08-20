@@ -587,11 +587,11 @@ export async function action({ request }: ActionFunctionArgs) {
     } else if (projection.shapes.length > 0 && projection.shapes.every((s) => s.inclusionConditions + s.exclusionConditions === 0)) {
       // The one that changes a derivation rather than reporting a mismatch.
       verdicts.push(
-        `**Every one of the ${projection.shapes.length} collections that HAS a source has NO condition in it** (${projection.shapes.filter((s) => s.hasSelections).length} carry hand-picked selections). In the 2026-07 model a MANUAL collection has a source too — so \`isSmart = sources.length > 0\` calls every collection on this shop rule-based, and the membership picker locks every row it should be offering. The condition count, not the source count, is the signal.`,
+        `**Every one of the ${projection.shapes.length} collections that HAS a source has NO condition in it** (${projection.shapes.filter((s) => s.hasSelections).length} carry hand-picked selections). This shop therefore has no rule-based collection at all: in the 2026-07 model a MANUAL collection carries a source too, with its picks in \`selections\`. \`collectionSourcesAreRuleBased\` reads that correctly — counting SOURCES instead (what this app did until 2026-08-20) called every one of them rule-based and locked every row of the membership picker.`,
       );
     } else if (projection.shapes.some((s) => s.inclusionConditions + s.exclusionConditions === 0)) {
       verdicts.push(
-        `${projection.shapes.filter((s) => s.inclusionConditions + s.exclusionConditions === 0).length} of ${projection.shapes.length} collections have a source with NO conditions — those are manual collections that \`isSmart = sources.length > 0\` reports as rule-based.`,
+        `${projection.shapes.filter((s) => s.inclusionConditions + s.exclusionConditions === 0).length} of ${projection.shapes.length} collections have a source with NO conditions — those are MANUAL collections whose picks live in \`selections\`, and \`collectionSourcesAreRuleBased\` reads them as manual.`,
       );
     }
     if (projection.disagreements.length > 0) {
