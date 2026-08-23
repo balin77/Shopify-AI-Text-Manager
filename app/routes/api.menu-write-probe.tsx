@@ -175,54 +175,60 @@ const SAMPLE_RESOURCES_QUERY = `#graphql
 /**
  * One real sample per resource-bound MenuItemType.
  *
- * Written flat rather than nested: an articles connection inside blogs would
- * multiply the query cost by the parent page size, the same rule the gallery
- * video sweep follows. Every connection asks for ONE node, which is all a
- * "does this type bind at all" measurement needs.
+ * SPLIT into several small queries on purpose, and that is the finding rather
+ * than the tidiness: the first cut asked for everything at once, one field name
+ * was wrong (`Shop.privacyPolicy` does not exist in 2026-07 — policies are a
+ * plain LIST under `shop.shopPolicies`), and an unknown field is a SCHEMA-level
+ * error that fails the WHOLE document. So `data` came back null, no type got a
+ * sample, and all seven reported "not measured" — a failed call read as a
+ * negative answer, in a probe written to avoid exactly that.
  *
- * `metaobjects` requires a type argument, so it is asked separately once the
- * definition list is known — a metaobject sample cannot be selected blind.
+ * Each connection asks for ONE node; a nested articles-inside-blogs selection
+ * would multiply the cost by the parent page size, the rule the gallery video
+ * sweep follows.
  */
-const BOUND_SAMPLES_QUERY = `#graphql
-  query menuWriteProbeBoundSamples {
+const CONNECTION_SAMPLES_QUERY = `#graphql
+  query menuWriteProbeConnectionSamples {
     products(first: 1) {
       nodes {
         id
-        title
       }
     }
     collections(first: 1) {
       nodes {
         id
-        title
       }
     }
     pages(first: 1) {
       nodes {
         id
-        title
       }
     }
     blogs(first: 1) {
       nodes {
         id
-        title
       }
     }
     articles(first: 1) {
       nodes {
         id
-        title
       }
     }
+  }
+`;
+
+const POLICY_SAMPLE_QUERY = `#graphql
+  query menuWriteProbePolicySample {
     shop {
-      privacyPolicy {
-        id
-      }
-      refundPolicy {
+      shopPolicies {
         id
       }
     }
+  }
+`;
+
+const METAOBJECT_DEFINITION_QUERY = `#graphql
+  query menuWriteProbeMetaobjectDefinitions {
     metaobjectDefinitions(first: 1) {
       nodes {
         type
@@ -236,7 +242,6 @@ const METAOBJECT_SAMPLE_QUERY = `#graphql
     metaobjects(first: 1, type: $type) {
       nodes {
         id
-        displayName
       }
     }
   }
@@ -1411,31 +1416,46 @@ export async function action({ request }: ActionFunctionArgs) {
     // ENTIRE save, not the one item.
     try {
       report.resourceBound.attempted = true;
-      const boundSamples = await run(BOUND_SAMPLES_QUERY);
-      report.resourceBound.errors.push(...topLevelErrors(boundSamples));
-      const nodeId = (key: string) =>
-        (boundSamples.data?.[key] as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
-      const shopData = boundSamples.data?.shop as
-        | { privacyPolicy?: { id: string } | null; refundPolicy?: { id: string } | null }
-        | undefined;
-
+      // Each lookup on its own, so one that the schema refuses cannot take the
+      // other six with it — the exact failure this step shipped with once.
       const samples: Record<string, string | null> = {
-        PRODUCT: nodeId("products"),
-        COLLECTION: nodeId("collections"),
-        PAGE: nodeId("pages"),
-        BLOG: nodeId("blogs"),
-        ARTICLE: nodeId("articles"),
-        SHOP_POLICY: shopData?.privacyPolicy?.id ?? shopData?.refundPolicy?.id ?? null,
+        PRODUCT: null,
+        COLLECTION: null,
+        PAGE: null,
+        BLOG: null,
+        ARTICLE: null,
+        SHOP_POLICY: null,
         METAOBJECT: null,
       };
 
+      const connections = await run(CONNECTION_SAMPLES_QUERY);
+      report.resourceBound.errors.push(...topLevelErrors(connections));
+      const nodeId = (key: string) =>
+        (connections.data?.[key] as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
+      samples.PRODUCT = nodeId("products");
+      samples.COLLECTION = nodeId("collections");
+      samples.PAGE = nodeId("pages");
+      samples.BLOG = nodeId("blogs");
+      samples.ARTICLE = nodeId("articles");
+
+      // `shop.shopPolicies` is a plain LIST, not a connection, and there is no
+      // `Shop.privacyPolicy` — measured 2026-08-23 on 2026-07 by getting it
+      // wrong and reading the error.
+      const policies = await run(POLICY_SAMPLE_QUERY);
+      for (const e of topLevelErrors(policies)) report.resourceBound.errors.push(`SHOP_POLICY: ${e}`);
+      samples.SHOP_POLICY =
+        (policies.data?.shop as { shopPolicies?: Array<{ id: string }> } | undefined)?.shopPolicies?.[0]?.id ?? null;
+
       // Metaobjects need a type argument, so the definition list has to answer
       // first. No definitions ⇒ no sample ⇒ "not measured", never "refused".
+      const definitions = await run(METAOBJECT_DEFINITION_QUERY);
+      for (const e of topLevelErrors(definitions)) report.resourceBound.errors.push(`METAOBJECT: ${e}`);
       const definitionType = (
-        boundSamples.data?.metaobjectDefinitions as { nodes?: Array<{ type: string }> } | undefined
+        definitions.data?.metaobjectDefinitions as { nodes?: Array<{ type: string }> } | undefined
       )?.nodes?.[0]?.type;
       if (definitionType) {
         const metaSample = await run(METAOBJECT_SAMPLE_QUERY, { type: definitionType });
+        for (const e of topLevelErrors(metaSample)) report.resourceBound.errors.push(`METAOBJECT: ${e}`);
         samples.METAOBJECT =
           (metaSample.data?.metaobjects as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
       }
