@@ -36,6 +36,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
@@ -528,6 +529,7 @@ export default function SeoAeo() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const a = t.seo.aeoPage;
+  const { showInfoBox } = useInfoBox();
   // Deep links go through the app navigation hook so the embedded session
   // params survive — a bare <a> drops them and lands on a re-auth.
   const { handleNavigate } = useAppNavigation();
@@ -546,6 +548,20 @@ export default function SeoAeo() {
     setLlmsAutoDraft(data.llmsAutoUpdate);
   }, [data.llmsAutoUpdate]);
   const llmsAutoChanged = llmsAutoDraft !== data.llmsAutoUpdate;
+  /**
+   * A refusal puts the switch back.
+   *
+   * Without it the toggle goes on asserting a value nobody stored, the
+   * explanation under it says the opposite, and the save bar stays dirty for
+   * the rest of the page's life with nothing to tell the merchant why.
+   */
+  useEffect(() => {
+    if (autoFetcher.state !== "idle" || !autoFetcher.data) return;
+    if (autoFetcher.data.ok === false) {
+      setLlmsAutoDraft(data.llmsAutoUpdate);
+      showInfoBox(a.llmsAutoSaveFailed, "critical", t.common?.error || "Error");
+    }
+  }, [autoFetcher.state, autoFetcher.data, data.llmsAutoUpdate]);
   const removeFetcher = useFetcher<ActionResult>();
   const [step, setStep] = useState<AeoStep>("robots");
 

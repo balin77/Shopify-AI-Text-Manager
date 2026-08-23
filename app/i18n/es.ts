@@ -3577,6 +3577,7 @@ export const es: Translation = {
       llmsTitle: "Archivos de descubrimiento para IA",
       llmsStaleHint: "Al menos uno de los dos archivos de tu tema ya no coincide con tu catálogo: han cambiado productos, colecciones o políticas desde la última generación. Vuelve a generarlos para que los rastreadores de IA vean el estado actual.",
       llmsContents: "Estado actual: {products} productos, {collections} colecciones, {policies} políticas. Los elementos se incluyen ordenados por handle, hasta 50 por tipo.",
+      llmsAutoSaveFailed: "No se pudo guardar el ajuste.",
       llmsAutoLabel: "Mantener los archivos de descubrimiento actualizados automáticamente",
       llmsAutoDisabled: "Desactivado: los archivos solo cambian cuando pulsas \"Actualizar archivos\" abajo.",
       llmsAutoOn: "Activado: poco después de abrir la app, y cada media hora aproximadamente mientras siga abierta, comprobamos en segundo plano si tu catálogo difiere de los archivos y solo los reescribimos si hay una diferencia real. Los cambios que hagas directamente en Shopify se tienen en cuenta.",

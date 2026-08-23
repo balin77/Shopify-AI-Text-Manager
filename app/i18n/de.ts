@@ -3600,6 +3600,7 @@ export const de = {
       llmsTitle: "KI-Discovery-Dateien",
       llmsStaleHint: "Mindestens eine der beiden Dateien weicht im Theme vom aktuellen Stand deines Katalogs ab — seit der letzten Erzeugung haben sich Produkte, Kollektionen oder Richtlinien geändert. Erzeuge sie neu, damit KI-Crawler den aktuellen Stand sehen.",
       llmsContents: "Aktueller Stand: {products} Produkte, {collections} Kollektionen, {policies} Richtlinien. Aufgenommen werden die Einträge nach Handle sortiert, maximal 50 pro Typ.",
+      llmsAutoSaveFailed: "Die Einstellung konnte nicht gespeichert werden.",
       llmsAutoLabel: "Discovery-Dateien automatisch aktuell halten",
       llmsAutoDisabled: "Aus — die Dateien ändern sich nur, wenn du unten auf „Dateien aktualisieren“ klickst.",
       llmsAutoOn: "An — kurz nach jedem Öffnen der App und danach etwa halbstündlich, solange sie offen ist, prüfen wir im Hintergrund, ob dein Katalog von den Dateien abweicht, und schreiben sie nur bei einer echten Abweichung neu. Änderungen, die du direkt in Shopify machst, werden dabei mitberücksichtigt.",

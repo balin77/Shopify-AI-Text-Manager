@@ -261,10 +261,20 @@ button of its own.**
   first save dies silently), and a draft that changes what a BUTTON on the same
   page will do has to block that button until it is saved — the crawl reads the
   STORED `seoCrawlExternalLinks` when it starts, so "tick, then Scan now" would
-  otherwise run without the checks the box claims are on. What is NOT covered by this rule: a per-ROW edit in a
-  data table (the metafield definition list, a keyword's priority select). That
-  is record data edited in place, not a setting, and a draft over N rows is a
-  different interaction.
+  otherwise run without the checks the box claims are on. A draft also pulls the whole
+  unsaved-changes protocol onto its page: every navigation the page guards
+  (`confirmNavigation`) must RESET that draft once the merchant confirms
+  leaving, or the bar stays up over a change nothing clears and the dialog
+  greets every following click forever; a page whose nav chips did not guard at
+  all has to start (the SEO section chips now do); a refusal has to put the
+  control back and say so (both new drafts are plan-gated and answer 403); and
+  anything the page shows that depends on the STORED value keeps reading the
+  stored value, not the draft — the direct-translations "visit the storefront,
+  then look at what was found" workflow is only real once the collector is
+  actually on. What is NOT covered by this rule: a per-ROW edit in a data table
+  (the metafield definition list, a keyword's priority select). That is record
+  data edited in place, not a setting, and a draft over N rows is a different
+  interaction.
 - **NEVER a plain checkbox for a yes/no decision — it is a pill switch, and the
   row it sits in lives in [ToggleRow.tsx](app/components/ToggleRow.tsx).** The
   owner's standing instruction: do not reach for Polaris' `Checkbox` unless

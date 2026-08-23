@@ -3592,6 +3592,7 @@ export const en: Translation = {
       llmsTitle: "AI discovery files",
       llmsStaleHint: "At least one of the two files in your theme no longer matches your catalog — products, collections or policies have changed since it was last generated. Regenerate them so AI crawlers see the current state.",
       llmsContents: "Current state: {products} products, {collections} collections, {policies} policies. Items are included ordered by handle, up to 50 per type.",
+      llmsAutoSaveFailed: "The setting could not be saved.",
       llmsAutoLabel: "Keep discovery files up to date automatically",
       llmsAutoDisabled: "Off — the files only change when you press \"Update files\" below.",
       llmsAutoOn: "On — shortly after you open the app, and about every half hour while it stays open, we check in the background whether your catalog differs from the files and rewrite them only on a real difference. Changes you make directly in Shopify are included.",

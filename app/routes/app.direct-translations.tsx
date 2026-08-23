@@ -433,6 +433,22 @@ export default function DirectTranslationsPage() {
   useEffect(() => setCollectOn(collect), [collect]);
   useEffect(() => setIgnoreOn(ignoreTranslateNo), [ignoreTranslateNo]);
   useEffect(() => setFilterOn(filterByLanguage), [filterByLanguage]);
+  const resetCollectorDraft = useCallback(() => {
+    setCollectOn(collect);
+    setIgnoreOn(ignoreTranslateNo);
+    setFilterOn(filterByLanguage);
+  }, [collect, ignoreTranslateNo, filterByLanguage]);
+  /**
+   * The page's navigation guards ask the save bar before switching item,
+   * language or market — and that bar now also stands for the collector
+   * switches. Once the merchant has CONFIRMED leaving, this draft is what they
+   * chose to drop: without resetting it the bar stays up over a change nothing
+   * else clears, and the same dialog greets every following click, forever.
+   */
+  const leaveGuard = useCallback(async () => {
+    await confirmNavigation();
+    resetCollectorDraft();
+  }, [resetCollectorDraft]);
 
   const selectedItem = useMemo(
     () => (isNew ? null : items.find((i) => i.id === selectedId) || null),
@@ -475,7 +491,7 @@ export default function DirectTranslationsPage() {
     async (id: string) => {
       if (id === (isNew ? NEW_ID : selectedId)) return;
       // Guard unsaved edits (same as switching languages / the other tabs).
-      await confirmNavigation();
+      await leaveGuard();
       const item = items.find((i) => i.id === id) || null;
       setSelectedId(id);
       setIsNew(false);
@@ -485,7 +501,7 @@ export default function DirectTranslationsPage() {
   );
 
   const handleAddNew = useCallback(async () => {
-    await confirmNavigation();
+    await leaveGuard();
     setSelectedId(NEW_ID);
     setIsNew(true);
     setDraftSource("");
@@ -511,7 +527,7 @@ export default function DirectTranslationsPage() {
       if (language === currentLanguage) return;
       // Prompt via the native save bar if there are unsaved edits (resolves
       // immediately when nothing is dirty / App Bridge is unavailable).
-      await confirmNavigation();
+      await leaveGuard();
       setCurrentLanguage(language);
       // If the selected market does not serve the new locale, fall back to global
       // (a market-specific translation only makes sense for locales it offers).
@@ -535,7 +551,7 @@ export default function DirectTranslationsPage() {
   const handleMarketChange = useCallback(
     async (marketId: string) => {
       if (marketId === selectedMarketId) return;
-      await confirmNavigation();
+      await leaveGuard();
       setSelectedMarketId(marketId);
       // Re-resolve the editor for the new market (market override → global fallback).
       if (!isNew && selectedItem) {
@@ -940,7 +956,13 @@ export default function DirectTranslationsPage() {
                     </>
                   )}
 
-                  {collectOn && (
+                  {/* The workflow below follows the STORED setting, not the
+                      draft: nothing is being collected until the switch is
+                      saved, so offering "visit the storefront, then look at
+                      what was found" beforehand promises a list that cannot
+                      fill. The two switches above it are the opposite case —
+                      they are what is being configured. */}
+                  {collect && (
                     <>
                       <Divider />
 
@@ -1108,7 +1130,11 @@ export default function DirectTranslationsPage() {
           hasChanges={editorHasChanges || collectorChanged}
           onSave={handleSaveAll}
           onDiscard={handleDiscard}
-          loading={isBusy}
+          // BOTH fetchers: during a collector-only save the shared one is idle,
+          // so Save stayed enabled and a second click re-submitted — and
+          // `router.fetch` aborts the first request on that same key, which is
+          // exactly what the second fetcher exists to avoid.
+          loading={isBusy || collectorFetcher.state !== "idle"}
           saveText={t.content?.save}
           discardText={t.content?.discardChanges}
         />
