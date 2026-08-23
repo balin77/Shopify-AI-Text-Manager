@@ -12,7 +12,14 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_MENU_DEPTH,
+  appendNode,
   diffMenuTrees,
+  idsUnder,
+  moveNode,
+  projectDrop,
+  removeNode,
+  subtreeHeight,
+  updateNode,
   editorNodesFromRawTree,
   flattenEditorTree,
   itemsNeedingTranslationRepair,
@@ -200,5 +207,89 @@ describe("validateEditorTree", () => {
   it("refuses a duplicated id", () => {
     const bad = [node("gid://shopify/MenuItem/1", "A"), { ...node("gid://shopify/MenuItem/1", "B"), key: "other" }];
     expect(validateEditorTree(bad).map((p) => p.code)).toEqual(["duplicateId"]);
+  });
+});
+
+describe("projectDrop", () => {
+  const flat = () => flattenEditorTree(base);
+
+  it("nests under the item above when the pointer moves right", () => {
+    // Kontakt (last, depth 1) dragged one indent to the right lands under the
+    // item above it.
+    const projection = projectDrop(flat(), "gid://shopify/MenuItem/4", "gid://shopify/MenuItem/4", 40, 40);
+    expect(projection.depth).toBe(2);
+    expect(projection.parentKey).toBe("gid://shopify/MenuItem/1");
+  });
+
+  it("never goes past the measured maximum", () => {
+    // Holz already sits at depth 3; dragging it further right must not offer a
+    // fourth level, which Shopify refuses outright.
+    const projection = projectDrop(flat(), "gid://shopify/MenuItem/3", "gid://shopify/MenuItem/3", 400, 40);
+    expect(projection.depth).toBe(MAX_MENU_DEPTH);
+  });
+
+  it("clamps by the HEIGHT of what is being dragged", () => {
+    // A two-level branch dropped at depth 3 would put its child at depth 4.
+    // The canonical dnd-kit example has no such rule; without it the drop is
+    // accepted in the UI and refused by Shopify.
+    const projection = projectDrop(
+      flat(),
+      "gid://shopify/MenuItem/2",
+      "gid://shopify/MenuItem/2",
+      400,
+      40,
+      /* the branch spans two levels */ 2,
+    );
+    expect(projection.depth).toBe(MAX_MENU_DEPTH - 1);
+  });
+
+  it("stays at the top level for an unknown key rather than guessing", () => {
+    expect(projectDrop(flat(), "nope", "gid://shopify/MenuItem/1", 0, 40)).toEqual({
+      depth: 1,
+      parentKey: null,
+    });
+  });
+});
+
+describe("tree mutations", () => {
+  it("moves a node with its subtree", () => {
+    const moved = moveNode(base, "gid://shopify/MenuItem/2", null, 0);
+    expect(moved[0].key).toBe("gid://shopify/MenuItem/2");
+    expect(moved[0].children[0].key).toBe("gid://shopify/MenuItem/3");
+    expect(moved[1].children).toEqual([]);
+  });
+
+  it("refuses to move a node into its own descendant", () => {
+    // A branch that contains itself is not a tree; refusing here keeps the
+    // rule next to everything else that knows what a tree is.
+    expect(moveNode(base, "gid://shopify/MenuItem/1", "gid://shopify/MenuItem/3", 0)).toBe(base);
+    expect(moveNode(base, "gid://shopify/MenuItem/1", "gid://shopify/MenuItem/1", 0)).toBe(base);
+  });
+
+  it("updates one node without touching its children", () => {
+    const updated = updateNode(base, "gid://shopify/MenuItem/1", { title: "Sortiment" });
+    expect(updated[0].title).toBe("Sortiment");
+    expect(updated[0].children[0].title).toBe("Stifthalter");
+  });
+
+  it("removes a node with everything under it", () => {
+    expect(flattenEditorTree(removeNode(base, "gid://shopify/MenuItem/1"))).toHaveLength(1);
+  });
+
+  it("counts what a deletion would take", () => {
+    // The confirmation says "and the items under it" because of this number.
+    expect(idsUnder(base[0])).toEqual([
+      "gid://shopify/MenuItem/1",
+      "gid://shopify/MenuItem/2",
+      "gid://shopify/MenuItem/3",
+    ]);
+    expect(subtreeHeight(base[0])).toBe(3);
+    expect(subtreeHeight(base[1])).toBe(1);
+  });
+
+  it("appends a new node at the top level", () => {
+    const added = appendNode(base, node(null, "Neu"));
+    expect(added).toHaveLength(3);
+    expect(added[2].id).toBeNull();
   });
 });
