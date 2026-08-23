@@ -77,6 +77,8 @@ that route's separate alt-text `aiGeneration` task (L563), not to this one.
 | `translation` (direct-translations) | `{translated, total}` | Yes |
 | `translation` (stale-sync) | `{retranslated, purged}` | Yes |
 | `pageSpeed` | `{url, strategy}` | **NO — the job INPUT again** ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx) L640/L655, written identically at start and at finish). The route's own loader (L287) reads it to restore the active audit; it is state, not an outcome. |
+| `translation` / `bulkTranslation` (the editor + alt-text paths) | `{success, locales[], failedLocales[]}`, `{…, rejectedFields{}, skippedFields{}}`, `{…, targetLocale, translations}`, and the alt-text `{translatedAltTexts, imageIndex, targetLocales[], savedLocales[], failedLocales[]}` | **Yes — and this was MISSING from the first cut of this plan** (found by P2 while wiring the notifications). This is the single biggest task family in the app and the only one whose failures were already surfaced as a status (`completed_with_errors`) with no way to see WHAT failed. `failedLocales` is `string[]`; `rejectedFields`/`skippedFields` are `Record<locale, fieldKey[]>` ([shopify-content.service.ts](../../src/services/shopify-content.service.ts) L1377-1379). |
+| `bulkTranslation` (grouped-field sync) | `{synced, failed, total}` ([api.grouped-field-translations.tsx](../../app/routes/api.grouped-field-translations.tsx) L204) | Yes — a fourth blob under the same type. |
 | `imageWebpConversion` | `{sourceUrl, mediaId, productImageId, productId, altText, position}` | **NO — the job INPUT, not a result** ([api.convert-webp.tsx](../../app/routes/api.convert-webp.tsx) L132). A generic JSON dump would show a merchant an internal job spec. This is exactly why the renderer must be per type and never a `<pre>{result}</pre>`. |
 
 ---
@@ -241,6 +243,7 @@ hasTaskDetails({ type, hasPrompt, hasResult }): boolean
 | **P2** Notification path | `api.recently-completed-tasks.tsx`, `TaskCountContext.tsx`, `MainNavigation.tsx` | P1 |
 | **P3** Tasks page + hover card | `app.tasks.tsx`, `RunningTasksPreview.tsx`, `api.task-result.tsx` | P1 |
 | **P4** Unit tests | `tests/unit/task-labels.test.ts`, `task-details.test.ts` | P1 |
+| **P5** `translation`/`bulkTranslation` summarisers + their tests | `task-details.shared.ts`, the i18n files, the P4 tests | P1, P4 |
 
 P1 owns **all three i18n files** so P2/P3 never edit them — three agents
 appending to one `tasks: {}` block is a merge conflict by construction.
@@ -253,5 +256,7 @@ appending to one `tasks: {}` block is a merge conflict by construction.
   expand arrow.
 - A `seoBulkMeta` run with failures lists the failed cells.
 - A `completed_with_errors` bulk translation produces a warning notification.
+- A `completed_with_errors` translation names the locales that failed, not
+  just the fact that something did.
 - `npm run typecheck` and `npm run test` are green.
 - The tasks-list loader payload no longer contains prompts or results.
