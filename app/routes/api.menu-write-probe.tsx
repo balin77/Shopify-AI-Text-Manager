@@ -172,6 +172,76 @@ const SAMPLE_RESOURCES_QUERY = `#graphql
   }
 `;
 
+/**
+ * One real sample per resource-bound MenuItemType.
+ *
+ * Written flat rather than nested: an articles connection inside blogs would
+ * multiply the query cost by the parent page size, the same rule the gallery
+ * video sweep follows. Every connection asks for ONE node, which is all a
+ * "does this type bind at all" measurement needs.
+ *
+ * `metaobjects` requires a type argument, so it is asked separately once the
+ * definition list is known — a metaobject sample cannot be selected blind.
+ */
+const BOUND_SAMPLES_QUERY = `#graphql
+  query menuWriteProbeBoundSamples {
+    products(first: 1) {
+      nodes {
+        id
+        title
+      }
+    }
+    collections(first: 1) {
+      nodes {
+        id
+        title
+      }
+    }
+    pages(first: 1) {
+      nodes {
+        id
+        title
+      }
+    }
+    blogs(first: 1) {
+      nodes {
+        id
+        title
+      }
+    }
+    articles(first: 1) {
+      nodes {
+        id
+        title
+      }
+    }
+    shop {
+      privacyPolicy {
+        id
+      }
+      refundPolicy {
+        id
+      }
+    }
+    metaobjectDefinitions(first: 1) {
+      nodes {
+        type
+      }
+    }
+  }
+`;
+
+const METAOBJECT_SAMPLE_QUERY = `#graphql
+  query menuWriteProbeMetaobjectSample($type: String!) {
+    metaobjects(first: 1, type: $type) {
+      nodes {
+        id
+        displayName
+      }
+    }
+  }
+`;
+
 const LOCALES_QUERY = `#graphql
   query menuWriteProbeLocales {
     shopLocales {
@@ -554,6 +624,28 @@ export interface MenuWriteProbeReport {
     restorable: boolean | null;
     errors: string[];
   };
+  /**
+   * Does `resourceId` bind for EVERY resource-bound type, or only for the two
+   * that were measured before the target picker existed?
+   *
+   * The picker offers seven types. PRODUCT and COLLECTION were measured with
+   * the first probe run; the other five were an assumption, and an assumption
+   * here fails the WHOLE save (menuUpdate is one call for the whole tree), not
+   * just the one item. Per type: no sample on this shop, refused with the
+   * message verbatim, or accepted and read back with the id we sent.
+   */
+  resourceBound: {
+    attempted: boolean;
+    menuId: string | null;
+    /** type -> the sample GID that was sent, or null when the shop has none. */
+    samples: Record<string, string | null>;
+    createErrors: string[];
+    /** type -> what came back: the resourceId Shopify stored, or null. */
+    readBack: Record<string, string | null>;
+    /** type -> did the stored id equal the one sent? null = not measured. */
+    bound: Record<string, boolean | null>;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -842,6 +934,15 @@ export async function action({ request }: ActionFunctionArgs) {
       valueBeforeDelete: null,
       resourceStillResolves: null,
       valueAfterDelete: null,
+      errors: [],
+    },
+    resourceBound: {
+      attempted: false,
+      menuId: null,
+      samples: {},
+      createErrors: [],
+      readBack: {},
+      bound: {},
       errors: [],
     },
     typeRoundTrip: {
@@ -1267,6 +1368,86 @@ export async function action({ request }: ActionFunctionArgs) {
       } catch (error) {
         report.create.errors.push(error instanceof Error ? error.message : String(error));
       }
+    }
+
+    // ── 5b. Does `resourceId` bind for every resource-bound type? ──────────
+    // Its own menu for the same reason as step 6: one type this shop refuses
+    // must not take the rest of the run with it. And a failure here is worth
+    // measuring precisely, because menuUpdate is one call for the whole tree —
+    // a type the picker offers and the platform refuses fails the merchant's
+    // ENTIRE save, not the one item.
+    try {
+      report.resourceBound.attempted = true;
+      const boundSamples = await run(BOUND_SAMPLES_QUERY);
+      report.resourceBound.errors.push(...topLevelErrors(boundSamples));
+      const nodeId = (key: string) =>
+        (boundSamples.data?.[key] as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
+      const shopData = boundSamples.data?.shop as
+        | { privacyPolicy?: { id: string } | null; refundPolicy?: { id: string } | null }
+        | undefined;
+
+      const samples: Record<string, string | null> = {
+        PRODUCT: nodeId("products"),
+        COLLECTION: nodeId("collections"),
+        PAGE: nodeId("pages"),
+        BLOG: nodeId("blogs"),
+        ARTICLE: nodeId("articles"),
+        SHOP_POLICY: shopData?.privacyPolicy?.id ?? shopData?.refundPolicy?.id ?? null,
+        METAOBJECT: null,
+      };
+
+      // Metaobjects need a type argument, so the definition list has to answer
+      // first. No definitions ⇒ no sample ⇒ "not measured", never "refused".
+      const definitionType = (
+        boundSamples.data?.metaobjectDefinitions as { nodes?: Array<{ type: string }> } | undefined
+      )?.nodes?.[0]?.type;
+      if (definitionType) {
+        const metaSample = await run(METAOBJECT_SAMPLE_QUERY, { type: definitionType });
+        samples.METAOBJECT =
+          (metaSample.data?.metaobjects as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
+      }
+      report.resourceBound.samples = samples;
+
+      const boundTypes = Object.entries(samples).filter(([, id]) => !!id) as Array<[string, string]>;
+      if (boundTypes.length > 0) {
+        const boundHandle = `${handle}-bound`;
+        const created = await run(MENU_CREATE_MUTATION, {
+          title: `ContentPilot write probe bound ${stamp}`,
+          handle: boundHandle,
+          items: boundTypes.map(([type, id]) => ({
+            title: `CP Bound ${type}`,
+            type,
+            resourceId: id,
+          })),
+        });
+        report.resourceBound.createErrors.push(...topLevelErrors(created));
+        const payload = created.data?.menuCreate as
+          | { menu?: { id: string } | null; userErrors?: unknown }
+          | undefined;
+        report.resourceBound.createErrors.push(...userErrorText(payload?.userErrors));
+        report.resourceBound.menuId = payload?.menu?.id ?? null;
+        if (report.resourceBound.menuId) createdMenus.push({ handle: boundHandle, id: report.resourceBound.menuId });
+
+        if (report.resourceBound.menuId) {
+          const readResult = await run(MENU_READ_QUERY, { id: report.resourceBound.menuId });
+          const readItems = ((readResult.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+          for (const [type, sent] of boundTypes) {
+            const row = readItems.find((i) => i.title === `CP Bound ${type}`);
+            const stored = row?.resourceId ?? null;
+            report.resourceBound.readBack[type] = stored;
+            // An item that is not in the read-back at all is UNMEASURED, not
+            // refused: the create may have failed for an unrelated reason and
+            // reporting that as "this type does not bind" is exactly the
+            // failed-call-as-negative-answer trap.
+            report.resourceBound.bound[type] = row ? stored === sent : null;
+          }
+        }
+      }
+      for (const [type, id] of Object.entries(samples)) {
+        if (!id) report.resourceBound.bound[type] = null;
+      }
+    } catch (error) {
+      report.resourceBound.errors.push(error instanceof Error ? error.message : String(error));
     }
 
     // ── 6. Item types that are neither HTTP nor resource-bound ─────────────
@@ -1885,6 +2066,24 @@ export async function action({ request }: ActionFunctionArgs) {
     v.push("RESOURCE BINDING: ⚠️ the resourceId did NOT survive the round trip.");
   } else {
     v.push("RESOURCE BINDING: not measured (no product or collection to bind to).");
+  }
+  if (report.resourceBound.attempted) {
+    const bound = Object.entries(report.resourceBound.bound);
+    const ok = bound.filter(([, v2]) => v2 === true).map(([t]) => t);
+    const refused = bound.filter(([, v2]) => v2 === false).map(([t]) => t);
+    const unmeasured = bound.filter(([, v2]) => v2 === null).map(([t]) => t);
+    if (ok.length > 0) v.push(`TARGET TYPES: resourceId binds for ${ok.join(", ")}.`);
+    if (refused.length > 0) {
+      // The expensive direction: the picker offers the type, the save fails
+      // for the WHOLE tree. Loud on purpose.
+      v.push(`TARGET TYPES: ⚠️ resourceId did NOT bind for ${refused.join(", ")} — the picker must not offer these.`);
+    }
+    if (unmeasured.length > 0) {
+      v.push(`TARGET TYPES: not measured for ${unmeasured.join(", ")} (this shop has no sample of that resource).`);
+    }
+    if (report.resourceBound.createErrors.length > 0) {
+      v.push(`TARGET TYPES: create reported ${report.resourceBound.createErrors.join(" | ")}`);
+    }
   }
   if (report.omission.stillPresentAfterwards === true) {
     v.push("OMISSION: an item left out of the list SURVIVED — menuUpdate is not a full replace.");
