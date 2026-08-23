@@ -276,10 +276,18 @@ export function AIInstructionsTabs({
 
   const handleSave = () => {
     if (visionChanged) saveVision();
-    // A read-only card has nothing else to save: submitting the instruction
-    // fields from here would write the DEFAULTS this merchant is only being
-    // shown, as if they had authored them.
-    if (readOnly) return;
+    /**
+     * Only the half that actually changed is written.
+     *
+     * A read-only card has nothing else to save at all — submitting the
+     * instruction fields from there would write the DEFAULTS this merchant is
+     * merely being shown, as if they had authored them. And on every other
+     * plan, a vision-only change must not drag `localInstructions` along: that
+     * copy is seeded once when the card mounts and never re-synced, so it can
+     * write stale texts over newer stored ones. The narrow `saveAiVision`
+     * action exists precisely so this does not have to.
+     */
+    if (readOnly || !instructionsChanged) return;
 
     const formData = new FormData();
     formData.append("actionType", "saveInstructions");
@@ -318,13 +326,13 @@ export function AIInstructionsTabs({
   };
 
   // Check if there are unsaved changes (instructions OR translation mode)
-  const hasChanges =
-    visionChanged ||
+  const instructionsChanged =
     JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
     localTranslationMode !== translationMode ||
     localKeywordAware !== keywordAwareTranslation ||
     localPurgeOnChange !== translationPurgeOnPrimaryChange ||
     (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges);
+  const hasChanges = instructionsChanged || visionChanged;
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -359,9 +367,15 @@ export function AIInstructionsTabs({
               onDiscard={handleDiscard}
               saveText={t.products?.saveChanges || "Änderungen speichern"}
               discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveInstructions"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
+              // Explicit rather than `action` + `fetcherFormData`: that pair
+              // compares `formData.get("action")`, and this card posts its
+              // discriminator as `actionType` — so it never matched and the
+              // Save button never disabled. It also has to cover BOTH submits,
+              // since the vision pair goes through its own fetcher.
+              isSavingCurrentItem={
+                visionFetcher.state !== "idle" ||
+                (fetcher.state !== "idle" && fetcher.formData?.get("actionType") === "saveInstructions")
+              }
             />
           )}
         </InlineStack>

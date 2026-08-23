@@ -51,6 +51,7 @@ import {
 } from "../components/seo/crawl/ReportTable";
 import { Tile } from "../components/seo/crawl/Tile";
 import { StepTile } from "../components/seo/StepTile";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import {
   OnPageTiles,
   OnPageSections,
@@ -721,13 +722,18 @@ export default function SeoCrawl() {
 
   const [diffOpen, setDiffOpen] = useState(false);
 
-  // §6.5 — optimistic local state so the checkbox reacts immediately; the
-  // loader value re-syncs it after the revalidation.
+  /**
+   * §6.5 — a DRAFT until Save, like every setting in this app (CLAUDE.md,
+   * "Field chrome"). It used to write on the click; the local state is what
+   * the merchant is proposing and the loader value is what the next crawl will
+   * actually do, which is why the two are compared below rather than merged.
+   */
   const externalToggleFetcher = useFetcher<{ ok: boolean; enabled?: boolean }>();
   const [externalChecksEnabled, setExternalChecksEnabled] = useState(data.externalChecksEnabled);
   useEffect(() => {
     setExternalChecksEnabled(data.externalChecksEnabled);
   }, [data.externalChecksEnabled]);
+  const externalChecksChanged = externalChecksEnabled !== data.externalChecksEnabled;
 
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
@@ -753,13 +759,21 @@ export default function SeoCrawl() {
           helpText={c.externalChecksHelp}
           checked={externalChecksEnabled}
           disabled={externalToggleFetcher.state !== "idle"}
-          onChange={(checked) => {
-            setExternalChecksEnabled(checked);
+          onChange={setExternalChecksEnabled}
+        />
+        {/* The page's only save bar — nothing else here is a draft. */}
+        <SaveDiscardButtons
+          hasChanges={externalChecksChanged}
+          onSave={() =>
             externalToggleFetcher.submit(
-              { actionType: "toggleExternalChecks", enabled: String(checked) },
+              { actionType: "toggleExternalChecks", enabled: String(externalChecksEnabled) },
               { method: "post" },
-            );
-          }}
+            )
+          }
+          onDiscard={() => setExternalChecksEnabled(data.externalChecksEnabled)}
+          saveText={t.common?.save || "Save"}
+          discardText={t.content?.discardChanges || "Discard"}
+          isSavingCurrentItem={externalToggleFetcher.state !== "idle"}
         />
 
         {snapshot && snapshot.pagesBlocked > 0 && !data.running && (

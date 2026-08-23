@@ -1066,9 +1066,11 @@ export default function SeoAeo() {
                           onDiscard={() => setLlmsAutoDraft(data.llmsAutoUpdate)}
                           saveText={t.common?.save || "Save"}
                           discardText={t.content?.discardChanges || "Discard"}
-                          action="setLlmsAutoUpdate"
-                          fetcherState={autoFetcher.state}
-                          fetcherFormData={autoFetcher.formData}
+                          // Explicit: the `action` prop is compared against
+                          // `formData.get("action")` and this page posts its
+                          // discriminator as `actionType`, so the match never
+                          // fired and a second click could write twice.
+                          isSavingCurrentItem={autoFetcher.state !== "idle"}
                         />
                       </InlineStack>
                     )}

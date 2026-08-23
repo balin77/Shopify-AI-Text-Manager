@@ -31,7 +31,6 @@ import {
   Collapsible,
 } from "@shopify/polaris";
 import { ToggleRow } from "../components/ToggleRow";
-import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
 import { PlanAccessGate } from "../components/PlanAccessGate";
@@ -548,7 +547,7 @@ export default function DirectTranslationsPage() {
     [selectedMarketId, isNew, selectedItem, currentLanguage, resolveTargetText],
   );
 
-  const hasChanges =
+  const editorHasChanges =
     (isNew && draftSource.trim().length > 0) ||
     (!isNew && selectedItem != null && (draftSource !== baseSource || draftTarget !== baseTarget));
 
@@ -611,21 +610,18 @@ export default function DirectTranslationsPage() {
     [fetcher],
   );
 
+  /**
+   * The collector switches ride on the page's ONE save bar.
+   *
+   * `SaveDiscardButtons` / `AppSaveBar` is not a pair of in-page buttons — it
+   * is the native App Bridge `ui-save-bar` above the iframe, and only one can
+   * be visible. A second one mounted for these switches REPLACED the editor's
+   * bar while a translation draft was dirty, and its unmount then hid the bar
+   * altogether, leaving that draft with no way to save and `confirmNavigation`
+   * asking about the wrong thing.
+   */
   const collectorChanged =
     collectOn !== collect || ignoreOn !== ignoreTranslateNo || filterOn !== filterByLanguage;
-  const saveCollectorSettings = useCallback(() => {
-    submit({
-      action: "setCollectorSettings",
-      collect: String(collectOn),
-      ignoreTranslateNo: String(ignoreOn),
-      filterByLanguage: String(filterOn),
-    });
-  }, [submit, collectOn, ignoreOn, filterOn]);
-  const discardCollectorSettings = useCallback(() => {
-    setCollectOn(collect);
-    setIgnoreOn(ignoreTranslateNo);
-    setFilterOn(filterByLanguage);
-  }, [collect, ignoreTranslateNo, filterByLanguage]);
 
   const handleSave = useCallback(() => {
     submit({
@@ -638,7 +634,28 @@ export default function DirectTranslationsPage() {
     });
   }, [submit, isNew, selectedId, draftSource, currentLanguage, draftTarget, selectedMarketId]);
 
+  const saveCollectorSettings = useCallback(() => {
+    // All three in ONE request: they are one decision with two refinements, and
+    // the action already takes them as a single present-or-absent patch.
+    submit({
+      action: "setCollectorSettings",
+      collect: String(collectOn),
+      ignoreTranslateNo: String(ignoreOn),
+      filterByLanguage: String(filterOn),
+    });
+  }, [submit, collectOn, ignoreOn, filterOn]);
+
+  /** The bar covers two independent drafts; each half is saved only if it is
+   *  the one that changed. */
+  const handleSaveAll = useCallback(() => {
+    if (collectorChanged) saveCollectorSettings();
+    if (editorHasChanges) handleSave();
+  }, [collectorChanged, saveCollectorSettings, editorHasChanges, handleSave]);
+
   const handleDiscard = useCallback(() => {
+    setCollectOn(collect);
+    setIgnoreOn(ignoreTranslateNo);
+    setFilterOn(filterByLanguage);
     if (isNew) {
       setSelectedId(items[0]?.id || null);
       setIsNew(false);
@@ -646,7 +663,7 @@ export default function DirectTranslationsPage() {
     } else {
       loadEditor(selectedItem, currentLanguage);
     }
-  }, [isNew, items, selectedItem, currentLanguage, loadEditor]);
+  }, [isNew, items, selectedItem, currentLanguage, loadEditor, collect, ignoreTranslateNo, filterByLanguage]);
 
   const enabledList = useMemo(() => JSON.stringify([...enabledLanguages]), [enabledLanguages]);
 
@@ -904,22 +921,6 @@ export default function DirectTranslationsPage() {
                     </>
                   )}
 
-                  {/* One Save for all three: they are one decision with two
-                      refinements, and it stays reachable when the first switch
-                      goes OFF and takes the other two off the screen with it. */}
-                  {collectorChanged && (
-                    <InlineStack align="end">
-                      <SaveDiscardButtons
-                        hasChanges
-                        onSave={saveCollectorSettings}
-                        onDiscard={discardCollectorSettings}
-                        saveText={t.common?.save || "Save"}
-                        discardText={t.content?.discardChanges || "Discard"}
-                        action="setCollectorSettings"
-                      />
-                    </InlineStack>
-                  )}
-
                   {collectOn && (
                     <>
                       <Divider />
@@ -961,7 +962,7 @@ export default function DirectTranslationsPage() {
                   primaryLocale={primaryLocale}
                   selectedItem={languageBarItem}
                   contentType={"directTranslations" as ContentType}
-                  hasChanges={hasChanges}
+                  hasChanges={editorHasChanges}
                   onLanguageChange={(loc) => { void handleLanguageChange(loc); }}
                   markets={markets}
                   selectedMarketId={selectedMarketId}
@@ -1085,8 +1086,8 @@ export default function DirectTranslationsPage() {
         </div>
 
         <AppSaveBar
-          hasChanges={hasChanges}
-          onSave={handleSave}
+          hasChanges={editorHasChanges || collectorChanged}
+          onSave={handleSaveAll}
           onDiscard={handleDiscard}
           loading={isBusy}
           saveText={t.content?.save}

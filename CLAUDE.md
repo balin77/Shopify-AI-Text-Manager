@@ -233,14 +233,31 @@ button of its own.**
   is the one place that says whether the screen and the database agree.
   It was built the other way round once, for one afternoon, on a misreading of
   "make it consistent" — the direction was wrong, not the consistency. It holds
-  OUTSIDE Settings too: the llms.txt auto-update on
-  [app.seo.aeo.tsx](app/routes/app.seo.aeo.tsx) and the three collector rows on
-  [app.direct-translations.tsx](app/routes/app.direct-translations.tsx) were the
-  last two that wrote on the click, and both now draft and wait. Where a group
-  of switches belongs to one decision, ONE Save covers the group (the three
-  collector rows share theirs) — and it is rendered outside the branch that
-  hides the dependent switches, or turning the first one off would take the
-  Save button away with them.
+  OUTSIDE Settings too: the llms.txt auto-update
+  ([app.seo.aeo.tsx](app/routes/app.seo.aeo.tsx)), the external-link opt-in
+  ([app.seo.crawl.tsx](app/routes/app.seo.crawl.tsx)) and the three collector
+  rows ([app.direct-translations.tsx](app/routes/app.direct-translations.tsx))
+  all wrote on the click and all now draft and wait. Three mechanics carry it,
+  and each is a bug that shipped once. **`SaveDiscardButtons` is the native App
+  Bridge `ui-save-bar`, not a pair of in-page buttons**, and only ONE can be
+  visible: a second one mounted for a switch group REPLACES the page's own bar
+  while an editor draft is dirty, and its unmount then hides the bar
+  altogether, leaving that draft unsaveable and `confirmNavigation` asking
+  about the wrong thing. So a page with a bar folds the switch into THAT bar
+  (`editorHasChanges || collectorChanged`), and only a page with none may mount
+  its own. **The busy state needs `isSavingCurrentItem`** wherever the submit
+  posts its discriminator as `actionType`: the `action` prop is compared
+  against `formData.get("action")`, so on those pages it never matched and a
+  double click wrote twice. And **only the half that changed is submitted** —
+  the AI-instructions card holds a copy of the instruction texts that is seeded
+  once and never re-synced, so letting a vision-only save carry them writes
+  stale text over newer stored text. Where a group of switches is one decision,
+  ONE Save covers the group, rendered outside the branch that hides the
+  dependent switches — otherwise turning the first one off takes the Save
+  button away with them. What is NOT covered by this rule: a per-ROW edit in a
+  data table (the metafield definition list, a keyword's priority select). That
+  is record data edited in place, not a setting, and a draft over N rows is a
+  different interaction.
 - **NEVER a plain checkbox for a yes/no decision — it is a pill switch, and the
   row it sits in lives in [ToggleRow.tsx](app/components/ToggleRow.tsx).** The
   owner's standing instruction: do not reach for Polaris' `Checkbox` unless
