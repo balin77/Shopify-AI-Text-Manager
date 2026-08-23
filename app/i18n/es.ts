@@ -390,6 +390,15 @@ export const es: Translation = {
     menuTargetPlaceholder: "Busca o pega una URL …",
     menuTargetUseUrl: "Usar esta URL: {url}",
     menuTargetFixedGroup: "Destinos fijos",
+    menuTargetTypeNames: {
+      COLLECTION: "Colección",
+      PRODUCT: "Producto",
+      PAGE: "Página",
+      BLOG: "Blog",
+      ARTICLE: "Entrada",
+      SHOP_POLICY: "Política",
+      METAOBJECT: "Metaobjeto",
+    },
     menuTargetGroups: {
       collections: "Colecciones",
       products: "Productos",

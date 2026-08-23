@@ -50,8 +50,17 @@ export interface MenuTargetPickerStrings {
   placeholder: string;
   /** "Diese URL verwenden: …" — takes the typed value. */
   useUrl: (value: string) => string;
-  /** Section headers, keyed as in MENU_TARGET_GROUPS.labelKey. */
+  /** Section headers, keyed as in MENU_TARGET_GROUPS.labelKey — PLURAL. */
   groupLabels: Record<string, string>;
+  /**
+   * The SINGULAR name of a resource type, keyed by MenuItemType.
+   *
+   * Separate from the section headers because they answer different
+   * questions: a header names a list ("Produkte"), a resting value names one
+   * thing ("Produkt: Vase"). Spending the plural on both read as a bug in
+   * every language the app ships in.
+   */
+  typeNames: Record<string, string>;
   /** Header over the fixed destinations. */
   targetlessGroup: string;
   /** One label per target-less type. */
@@ -124,10 +133,11 @@ export function MenuTargetPicker({
     if (summary.kind === "url") return summary.url || "";
     if (summary.kind === "targetless") return strings.targetlessLabels[summary.type] ?? summary.type;
     if (summary.kind === "resource") {
+      const typeName = strings.typeNames[summary.type] ?? summary.type;
       return summary.resourceTitle
-        ? strings.resolved(strings.groupLabels[groupLabelKeyFor(summary.type)] ?? summary.type, summary.resourceTitle)
+        ? strings.resolved(typeName, summary.resourceTitle)
         : summary.resourceId
-          ? strings.unresolved(summary.type, summary.resourceId)
+          ? strings.unresolved(typeName, summary.resourceId)
           : "";
     }
     return summary.type || "";
@@ -387,28 +397,6 @@ export function MenuTargetPicker({
   );
 }
 
-/** Which group header names a resource type — the reverse of MENU_TARGET_GROUPS. */
-function groupLabelKeyFor(type: string): string {
-  switch (type) {
-    case "COLLECTION":
-      return "collections";
-    case "PRODUCT":
-      return "products";
-    case "PAGE":
-      return "pages";
-    case "BLOG":
-      return "blogs";
-    case "ARTICLE":
-      return "articles";
-    case "SHOP_POLICY":
-      return "policies";
-    case "METAOBJECT":
-      return "metaobjects";
-    default:
-      return type;
-  }
-}
-
 /**
  * The line under the box.
  *
@@ -422,7 +410,7 @@ function targetHelpText(
   strings: MenuTargetPickerStrings,
 ): string | undefined {
   if (summary.kind === "resource" && summary.resourceId && !summary.resourceTitle) {
-    return strings.unresolved(summary.type, summary.resourceId);
+    return strings.unresolved(strings.typeNames[summary.type] ?? summary.type, summary.resourceId);
   }
   if (summary.kind === "unknown" && !summary.type) return strings.noTarget;
   return undefined;

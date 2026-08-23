@@ -1281,6 +1281,7 @@ export default function MenusPage() {
       useUrl: (value: string) =>
         str("menuTargetUseUrl", "Use this URL: {url}").replace("{url}", value),
       groupLabels: dict("menuTargetGroups"),
+      typeNames: dict("menuTargetTypeNames"),
       targetlessGroup: str("menuTargetFixedGroup", "Fixed destinations"),
       targetlessLabels: dict("menuTargetTypes"),
       moreMatches: str("menuTargetMore", "More matches — narrow the search"),

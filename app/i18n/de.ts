@@ -390,6 +390,15 @@ export const de = {
     menuTargetPlaceholder: "Suchen oder URL einfügen …",
     menuTargetUseUrl: "Diese URL verwenden: {url}",
     menuTargetFixedGroup: "Feste Ziele",
+    menuTargetTypeNames: {
+      COLLECTION: "Kollektion",
+      PRODUCT: "Produkt",
+      PAGE: "Seite",
+      BLOG: "Blog",
+      ARTICLE: "Beitrag",
+      SHOP_POLICY: "Richtlinie",
+      METAOBJECT: "Metaobjekt",
+    },
     menuTargetGroups: {
       collections: "Kollektionen",
       products: "Produkte",
