@@ -122,6 +122,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     [selectedItemId, currentLanguage, selectedMarketId],
   );
   const suggestionScopeRef = useLatestRef(suggestionScope);
+  // The scope the route-action fetcher was LAST submitted in. The handlers
+  // below capture their own request scope in a closure; a fetcher response
+  // has no closure to capture, so the scope is taken at submit time — the
+  // merchant may have switched language while it was in flight, and the
+  // answer belongs to the language they asked from.
+  const fetcherScopeRef = useRef<SuggestionScope | null>(null);
   const aiSuggestions = useFieldSuggestions(suggestionScope);
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -1075,7 +1081,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.data?.success && (fetcher.data.actionType === "generateAIText" || fetcher.data.actionType === "formatAIText")) {
       const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
       if (generatedContent && generatedContent.trim()) {
-        setFieldSuggestion(suggestionScopeRef.current, fieldType, generatedContent);
+        setFieldSuggestion(fetcherScopeRef.current ?? suggestionScopeRef.current, fieldType, generatedContent);
       }
       // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). NOTE: the PRIMARY
       // generate path is the raw-fetch submitAIAction flow — its warning
@@ -1221,7 +1227,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "generateAltText") {
       const { altText, imageIndex } = fetcher.data as AltTextResponse;
-      setAltTextSuggestion(suggestionScopeRef.current, imageIndex, altText);
+      setAltTextSuggestion(fetcherScopeRef.current ?? suggestionScopeRef.current, imageIndex, altText);
     }
   }, [fetcher.data]);
 
@@ -2150,7 +2156,11 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // double-submit guard in safeSubmit only blocks within the same tick.
   useEffect(() => {
     justSubmittedRef.current = false;
-  }, [fetcher.state]);
+    // A submission going out IS the request scope for whatever comes back on
+    // this fetcher — read here rather than when the answer lands, since the
+    // merchant can switch item or language in between.
+    if (fetcher.state === "submitting") fetcherScopeRef.current = suggestionScopeRef.current;
+  }, [fetcher.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Process queued saves when the fetcher becomes idle.
   // IMPORTANT: This effect MUST run AFTER the response handler effects above,

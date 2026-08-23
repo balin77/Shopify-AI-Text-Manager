@@ -28,7 +28,9 @@ import { useMemo, useSyncExternalStore } from "react";
  * **Memory only, deliberately.** A reload drops these, like every other
  * unsaved draft in this app (see the create dialog's "no browser storage for
  * drafts" note). What is fixed here is in-app navigation, which is what the
- * merchant actually does between generating and deciding.
+ * merchant actually does between generating and deciding. A suggestion the
+ * merchant is shown but does not decide on is theirs until they DO decide, so
+ * nothing else takes it away — the store is bounded by count, not by a clock.
  */
 
 // ---------------------------------------------------------------------------
@@ -44,34 +46,25 @@ export interface SuggestionScope {
   marketId: string;
 }
 
-interface StoredSuggestion {
-  text: string;
-  createdAt: number;
-}
-
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
 /**
- * A suggestion the merchant never decided on is kept for half an hour. Long
- * enough to survive a detour through the SEO tab and back; short enough that a
- * session spent in the editor cannot accumulate a day of dead proposals.
- */
-const STALE_TIMEOUT_MS = 30 * 60 * 1000;
-
-/**
- * A body_html suggestion can be tens of KB, so the store is capped and evicts
- * the OLDEST entry — the one the merchant is least likely to still be
- * deciding on.
+ * A suggestion lives as long as the page does. There is deliberately NO age
+ * limit: a timeout is not observable from React without a timer, so the memo
+ * below would keep rendering an "expired" suggestion that the imperative
+ * readers already call gone — and the merchant could accept a proposal the
+ * store says does not exist. Bounding by COUNT is the same protection without
+ * that contradiction, and a reload clears everything anyway.
  */
 const MAX_ENTRIES = 100;
 
 /** Alt-text suggestions share the store; the prefix keeps them out of the field record. */
 const ALT_TEXT_PREFIX = "altText::";
 
-/** Composite key: `${resourceId}::${locale}::${marketId}::${fieldKey}` */
-const suggestions = new Map<string, StoredSuggestion>();
+/** Composite key: `${resourceId}::${locale}::${marketId}::${fieldKey}` → suggestion text. */
+const suggestions = new Map<string, string>();
 
 const listeners = new Set<() => void>();
 let version = 0;
@@ -107,40 +100,17 @@ function altTextKey(imageIndex: number) {
   return `${ALT_TEXT_PREFIX}${imageIndex}`;
 }
 
-/**
- * Drop expired entries. Called from WRITE paths only — the read paths run
- * during render, where mutating the store (and notifying) is not allowed.
- * Reads filter by age themselves, so an expired entry is never handed out
- * even before this runs.
- */
-function purgeStale() {
-  const now = Date.now();
-  let changed = false;
-  for (const [key, entry] of suggestions) {
-    if (now - entry.createdAt > STALE_TIMEOUT_MS) {
-      suggestions.delete(key);
-      changed = true;
-    }
-  }
-  return changed;
-}
-
-function isFresh(entry: StoredSuggestion, now: number) {
-  return now - entry.createdAt <= STALE_TIMEOUT_MS;
-}
-
 function write(scope: SuggestionScope, fieldKey: string, text: string) {
   // No item, no scope to hang a suggestion on. An empty suggestion is not a
   // suggestion either — and it must not CLEAR the one already on screen, since
   // the merchant may still be deciding on it.
   if (!scope.resourceId || !text || !text.trim()) return;
 
-  purgeStale();
   const key = makeKey(scope, fieldKey);
   // Delete first so a re-generated suggestion moves to the END of the insertion
   // order — the eviction below drops the oldest WRITE, not the oldest field.
   suggestions.delete(key);
-  suggestions.set(key, { text, createdAt: Date.now() });
+  suggestions.set(key, text);
 
   while (suggestions.size > MAX_ENTRIES) {
     const oldest = suggestions.keys().next();
@@ -151,10 +121,7 @@ function write(scope: SuggestionScope, fieldKey: string, text: string) {
 }
 
 function clear(scope: SuggestionScope, fieldKey: string) {
-  const key = makeKey(scope, fieldKey);
-  const existed = suggestions.delete(key);
-  const purged = purgeStale();
-  if (existed || purged) notify();
+  if (suggestions.delete(makeKey(scope, fieldKey))) notify();
 }
 
 // ---------------------------------------------------------------------------
@@ -179,9 +146,7 @@ export function clearFieldSuggestion(scope: SuggestionScope, fieldKey: string) {
 
 /** Read one field suggestion without subscribing (for imperative handlers). */
 export function getFieldSuggestion(scope: SuggestionScope, fieldKey: string): string | undefined {
-  const entry = suggestions.get(makeKey(scope, fieldKey));
-  if (!entry || !isFresh(entry, Date.now())) return undefined;
-  return entry.text;
+  return suggestions.get(makeKey(scope, fieldKey));
 }
 
 /** Park an alt-text suggestion for one image of the current item. */
@@ -200,12 +165,15 @@ export function getAltTextSuggestion(scope: SuggestionScope, imageIndex: number)
 }
 
 /**
- * Drop every alt-text suggestion of one scope — the "clear all alt texts"
- * handlers, where keeping a proposal for a value the merchant just emptied
- * would be an offer to undo their own click.
+ * Drop every suggestion of one scope — fields and alt texts alike. This is
+ * "Alles leeren": the merchant just emptied this item in this locale, and a
+ * banner that survives it is an offer to undo their own click. It is the whole
+ * scope on purpose, including the title the clear deliberately keeps, because
+ * "clear everything" that leaves one banner standing is the more surprising of
+ * the two rules.
  */
-export function clearAltTextSuggestionsForScope(scope: SuggestionScope) {
-  const prefix = `${scopePrefix(scope)}${ALT_TEXT_PREFIX}`;
+export function clearSuggestionsForScope(scope: SuggestionScope) {
+  const prefix = scopePrefix(scope);
   let changed = false;
   for (const key of [...suggestions.keys()]) {
     if (key.startsWith(prefix)) {
@@ -213,7 +181,6 @@ export function clearAltTextSuggestionsForScope(scope: SuggestionScope) {
       changed = true;
     }
   }
-  if (purgeStale()) changed = true;
   if (changed) notify();
 }
 
@@ -231,12 +198,11 @@ export function readFieldSuggestions(scope: SuggestionScope): Record<string, str
   const record: Record<string, string> = {};
   if (!scope.resourceId) return record;
   const prefix = scopePrefix(scope);
-  const now = Date.now();
-  for (const [key, entry] of suggestions) {
-    if (!key.startsWith(prefix) || !isFresh(entry, now)) continue;
+  for (const [key, text] of suggestions) {
+    if (!key.startsWith(prefix)) continue;
     const fieldKey = key.slice(prefix.length);
     if (fieldKey.startsWith(ALT_TEXT_PREFIX)) continue;
-    record[fieldKey] = entry.text;
+    record[fieldKey] = text;
   }
   return record;
 }
@@ -245,12 +211,11 @@ export function readAltTextSuggestions(scope: SuggestionScope): Record<number, s
   const record: Record<number, string> = {};
   if (!scope.resourceId) return record;
   const prefix = `${scopePrefix(scope)}${ALT_TEXT_PREFIX}`;
-  const now = Date.now();
-  for (const [key, entry] of suggestions) {
-    if (!key.startsWith(prefix) || !isFresh(entry, now)) continue;
+  for (const [key, text] of suggestions) {
+    if (!key.startsWith(prefix)) continue;
     const imageIndex = Number(key.slice(prefix.length));
     if (!Number.isFinite(imageIndex)) continue;
-    record[imageIndex] = entry.text;
+    record[imageIndex] = text;
   }
   return record;
 }

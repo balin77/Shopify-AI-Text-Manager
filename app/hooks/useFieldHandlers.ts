@@ -17,7 +17,7 @@ import { markOperationActive, markOperationFailed, isOperationActive } from "./u
 import {
   setFieldSuggestion,
   clearFieldSuggestion,
-  clearAltTextSuggestionsForScope,
+  clearSuggestionsForScope,
   type SuggestionScope,
 } from "./useAISuggestionStore";
 import { confirmNavigation } from "./useSaveBar";
@@ -1557,7 +1557,7 @@ const handleClearAllConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
-  clearAltTextSuggestionsForScope(suggestionScope);
+  clearSuggestionsForScope(suggestionScope);
 
   // Close modal
   setIsClearAllModalOpen(false);
@@ -1612,7 +1612,7 @@ const handleClearAllForLocaleConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
-  clearAltTextSuggestionsForScope(suggestionScope);
+  clearSuggestionsForScope(suggestionScope);
 
   // Close modal
   setIsClearAllModalOpen(false);

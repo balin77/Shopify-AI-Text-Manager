@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   setFieldSuggestion,
   clearFieldSuggestion,
@@ -7,7 +7,7 @@ import {
   setAltTextSuggestion,
   clearAltTextSuggestion,
   readAltTextSuggestions,
-  clearAltTextSuggestionsForScope,
+  clearSuggestionsForScope,
   __resetSuggestionStore,
   type SuggestionScope,
 } from "~/hooks/useAISuggestionStore";
@@ -25,10 +25,6 @@ const scope = (over: Partial<SuggestionScope> = {}): SuggestionScope => ({
 describe("useAISuggestionStore", () => {
   beforeEach(() => {
     __resetSuggestionStore();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
   });
 
   it("keeps a suggestion the merchant has not decided on", () => {
@@ -84,17 +80,20 @@ describe("useAISuggestionStore", () => {
     expect(readAltTextSuggestions(scope())).toEqual({ 2: "Nahaufnahme der Maserung" });
   });
 
-  it("clears every alt-text suggestion of one scope only", () => {
+  it("clears every suggestion of one scope, and only that scope", () => {
+    // "Alles leeren" emptied this item in this locale — a surviving banner
+    // would offer to refill exactly what the merchant just deleted.
     setAltTextSuggestion(scope(), 0, "Bild 0");
-    setAltTextSuggestion(scope(), 1, "Bild 1");
-    setAltTextSuggestion(scope({ locale: "fr" }), 0, "image 0");
     setFieldSuggestion(scope(), "seoTitle", "Titel");
+    setAltTextSuggestion(scope({ locale: "fr" }), 0, "image 0");
+    setFieldSuggestion(scope({ locale: "fr" }), "seoTitle", "titre");
 
-    clearAltTextSuggestionsForScope(scope());
+    clearSuggestionsForScope(scope());
 
     expect(readAltTextSuggestions(scope())).toEqual({});
+    expect(readFieldSuggestions(scope())).toEqual({});
     expect(readAltTextSuggestions(scope({ locale: "fr" }))).toEqual({ 0: "image 0" });
-    expect(readFieldSuggestions(scope())).toEqual({ seoTitle: "Titel" });
+    expect(readFieldSuggestions(scope({ locale: "fr" }))).toEqual({ seoTitle: "titre" });
   });
 
   it("clears one alt-text suggestion", () => {
@@ -104,16 +103,13 @@ describe("useAISuggestionStore", () => {
     expect(readAltTextSuggestions(scope())).toEqual({ 1: "Bild 1" });
   });
 
-  it("drops a suggestion nobody decided on for half an hour", () => {
-    vi.useFakeTimers();
+  it("keeps a pending suggestion indefinitely — only a decision removes it", () => {
+    // No clock: an age limit is not observable from React without a timer, so
+    // the rendered record and the imperative reader would disagree about
+    // whether an "expired" suggestion still exists.
     setFieldSuggestion(scope(), "seoTitle", "Vorschlag");
-
-    vi.advanceTimersByTime(29 * 60 * 1000);
     expect(getFieldSuggestion(scope(), "seoTitle")).toBe("Vorschlag");
-
-    vi.advanceTimersByTime(2 * 60 * 1000);
-    expect(getFieldSuggestion(scope(), "seoTitle")).toBeUndefined();
-    expect(readFieldSuggestions(scope())).toEqual({});
+    expect(readFieldSuggestions(scope())).toEqual({ seoTitle: "Vorschlag" });
   });
 
   it("caps the store by evicting the oldest write, not the newest", () => {
