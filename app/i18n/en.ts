@@ -610,6 +610,7 @@ export const en: Translation = {
       consequenceKeyword: "Its keyword assignment is removed.",
       consequenceBlogArticles: "Every article in this blog is deleted with it.",
       consequenceMenuItems: "Every item in this menu goes with it, and their translations cannot be recovered — a re-created item gets a new id.",
+      consequenceMenuStorefront: "A theme references a menu by its handle (main-menu, footer). Deleting it removes that handle, and any theme section pointing at it renders nothing.",
       consequenceIrreversible: "This cannot be undone.",
       confirmPrompt: "Type \u201c{name}\u201d to confirm.",
       mismatch: "That does not match.",

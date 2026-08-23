@@ -604,6 +604,7 @@ export const es: Translation = {
       consequenceKeyword: "Se elimina su asignación de palabra clave.",
       consequenceBlogArticles: "Se eliminan también todas las entradas de este blog.",
       consequenceMenuItems: "Cada elemento del menú desaparece con él, y sus traducciones no se pueden recuperar — un elemento recreado recibe un id nuevo.",
+      consequenceMenuStorefront: "Un tema referencia un menú por su handle (main-menu, footer). Al eliminarlo desaparece ese handle, y cualquier sección del tema que apunte a él deja de mostrar nada.",
       consequenceIrreversible: "Esto no se puede deshacer.",
       confirmPrompt: "Escribe \u201c{name}\u201d para confirmar.",
       mismatch: "No coincide.",

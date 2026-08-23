@@ -609,6 +609,7 @@ export const de = {
       consequenceKeyword: "Die Keyword-Zuordnung wird entfernt.",
       consequenceBlogArticles: "Alle Beiträge in diesem Blog werden mitgelöscht.",
       consequenceMenuItems: "Jeder Menüpunkt geht mit, und seine Übersetzungen sind nicht wiederherstellbar — ein neu angelegter Punkt bekommt eine neue ID.",
+      consequenceMenuStorefront: "Ein Theme referenziert ein Menü über seinen Handle (main-menu, footer). Mit dem Menü verschwindet der Handle, und jeder Theme-Abschnitt, der darauf zeigt, zeigt nichts mehr an.",
       consequenceIrreversible: "Das lässt sich nicht rückgängig machen.",
       confirmPrompt: "Tippe \u201e{name}\u201c ein, um zu bestätigen.",
       mismatch: "Das stimmt nicht überein.",
