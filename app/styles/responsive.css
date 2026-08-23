@@ -132,20 +132,16 @@
      copy to all), and at 260 those buttons wrapped into a column of three,
      which is what made an entry three times taller than its content.
 
-     --app-entry-field-gap    the gap between two of those fields. Named
-                              because the wide maximum below is computed from
-                              it and would otherwise drift.
-     --app-entry-wide-field-max-width
-                              the ceiling for the fields that do NOT fit in a
-                              column — a textarea, a rich-text preview, a
-                              taxonomy chip list. They are laid out under the
-                              grid rather than in it, and a chip list stretched
-                              across a 1400px card puts its "Clear" button a
-                              screen away from its label. Two columns' worth is
-                              what a list of chips actually needs. */
+     --app-entry-field-gap    the gap between two of those fields.
+
+     The fields that do NOT belong beside a box — a textarea, a rich-text
+     preview, a taxonomy chip list — carry no width of their own: they are
+     grid items forced to column 1, so they are exactly one column wide on a
+     row of their own and line up with the field above them. A ceiling stated
+     here instead was a second calculation next to the grid's, and the two
+     agreed at exactly one grid width. See `.metaobject-entry-fields__wide`. */
   --app-entry-field-min-width: 340px;
   --app-entry-field-gap: 1rem;
-  --app-entry-wide-field-max-width: calc(2 * var(--app-entry-field-min-width) + var(--app-entry-field-gap));
   --app-value-chip-width: 230px;
   --app-dropdown-panel-max-width: 480px;
   --app-stock-table-max-width: 800px;
@@ -595,8 +591,23 @@
   align-items: start;
 }
 
+/* A wide field is ONE COLUMN on a row of its own — placed IN the grid, so the
+   width is the grid's answer and not a second calculation beside it.
+
+   It used to sit outside the grid under a fixed `2 * min-width + gap` ceiling,
+   and that number only equals a real column at exactly one grid width: a
+   column is `(W - gap) / n`, so on a colour entry (two boxes, therefore two
+   columns) the taxonomy list below "Label" was wider than "Label" everywhere
+   below ~1408px and narrower above it. Left-aligned and never flush.
+
+   `grid-column: 1` is what keeps it out of the boxes' row: the auto-placement
+   cursor cannot go back to an occupied column 1, so the item starts a new row
+   — without SPANNING, which is what the comment on the grid above warns
+   against (a spanning cell keeps every column alive and `auto-fit` can then no
+   longer collapse the empty ones). No `max-width`: the boxes have none either,
+   and any ceiling of its own is the misalignment coming back. */
 .metaobject-entry-fields__wide {
-  max-width: var(--app-entry-wide-field-max-width);
+  grid-column: 1;
 }
 
 /* The row ABOVE the grid — today the entry's image.
@@ -777,6 +788,92 @@ html {
   }
 }
 
+/* ── The clear control: the WORD where there is room, the BIN where there is not
+   ─────────────────────────────────────────────────────────────────────────────
+   The word came first. The bin was introduced because "Leeren" / "Clear" /
+   "Vaciar" is up to seven characters on the label's own line, and on a SHORT
+   field — a vendor, a theme template, one cell of the Details grid — it
+   collided with the label it shares that line with. Applied to every field in
+   the app it then also replaced the word on a product title with 700px of
+   empty label row beside it.
+
+   Which shape a field gets is therefore a question about that field's WIDTH,
+   and it is asked with a container query rather than a prop: no caller has to
+   remember it, and it stays right when the window is resized. A media query
+   cannot answer it — the Details card's fields are narrow on the widest
+   desktop there is, which is the whole case.
+
+   The threshold is a literal because a container query condition cannot read a
+   custom property (no `var()` in `@container`) — the same way the media
+   breakpoints in this file are literals. It therefore has to be RE-DERIVED by
+   hand whenever a field grid's minimum moves, and
+   [field-clear-threshold.test.ts](../../tests/unit/field-clear-threshold.test.ts)
+   fails when it stops clearing them. There are THREE field populations, not
+   two, and the first cut's 360px sat inside the third:
+
+     Details grid   `minmax(195px, 1fr)`, gap 16 — an `auto-fit` track tops out
+                    at 195 + 211/n, so ~300px at two columns and ~265 at three;
+                    only the single-column case reaches ~400px, and there the
+                    word genuinely fits.
+     Entry grid     `minmax(min(100%, 340px), 1fr)` — never NARROWER than 340px
+                    while more than one column fits.
+     Content field  500px and up.
+
+   At 360px the entry grid straddled the line: a track opens just under it and
+   then grows past it, so the same card showed the word at a 900px grid, the
+   bin at 1080px and the word again at 1250px — a shape that flickers as the
+   window widens is worse than either shape. 320px clears the Details maximum
+   by ~30px and sits ~20px BELOW the entry grid's minimum, so every population
+   answers the same way at every width. Keep it under `--app-entry-field-min-width`.
+
+   What it measures is the FIELD, not the label row's free space — the
+   collision it stands in for is horizontal, between the button and a label
+   that may be arbitrarily long (a metaobject field label is authored in the
+   merchant's definition). A proxy, and the honest one available: the label's
+   own width is not knowable in CSS.
+
+   Default = the BIN, deliberately. A container query that never applies (an
+   engine without support, a container whose width cannot be resolved) must
+   fall back to the shape that cannot overlap anything — an unknown
+   `container-type` is dropped and the whole at-rule with it, leaving the
+   `display: none` on the word standing.
+
+   The scope must not land on a SHRINK-TO-FIT box: `container-type: inline-size`
+   contains the inline axis, so in an inline-block, a float or a row-flex item
+   the container resolves to zero width and the field collapses with it. Every
+   current site is a block in a block/column-flex/`minmax()`-grid context.
+   `DisabledActionTooltip` defaults to `inline-block` — wrapping a whole FIELD
+   in one is the cheap way to hit this. */
+.app-field-clear-scope {
+  container-type: inline-size;
+  container-name: appfield;
+}
+
+/* The two variants sit side by side in the markup and CSS shows one; the
+   wrapper keeps them on the button's own line wherever it is dropped (the
+   HTML editor puts it in a flex row beside the HTML/preview toggle). */
+.app-field-clear {
+  display: inline-flex;
+}
+
+.app-field-clear--word {
+  display: none;
+}
+
+.app-field-clear--icon {
+  display: inline-flex;
+}
+
+@container appfield (min-width: 320px) {
+  .app-field-clear--word {
+    display: inline-flex;
+  }
+
+  .app-field-clear--icon {
+    display: none;
+  }
+}
+
 /* The "Clear" button floats over a field's top-right corner, sharing the
    label's row. Wherever a button gets inflated to the 44px touch target it
    overhangs that ~24px row and lands on the input — visibly stuck to the box.
@@ -909,6 +1006,25 @@ html {
 }
 .Polaris-Backdrop ~ .Polaris-Backdrop {
   z-index: 1150 !important;
+}
+
+/* EVERY Polaris tooltip, in one place. Polaris puts its overlays on
+   `--p-z-index-2` (400), which loses against this app's own fixed layers —
+   MainNavigation (1000), ContentTypeNavigation (998), the sticky mobile item
+   dropdown (999). A tooltip on any control that happens to sit under one of
+   them (the editor's action bar is the usual one, opening upwards into the
+   language bar and the nav above it) was drawn BEHIND it. The z-index lives on
+   the PositionedOverlay wrapper, which carries no tooltip-specific class of its
+   own — hence `:has()` on the tooltip child, which also keeps popovers and
+   modal overlays out of this rule.
+
+   1300 clears the modal layers above too (1050–1200), which is right: a tooltip
+   on a control INSIDE a dialog has to be readable. No `!important`, on purpose
+   — the selector already outranks Polaris' own, and a call site that passes
+   `zIndexOverride` for a reason must still win as an inline style. Call sites
+   therefore no longer need that prop for the app's own layers. */
+.Polaris-PositionedOverlay:has(> .Polaris-Tooltip-TooltipOverlay) {
+  z-index: 1300;
 }
 
 /* Image Gallery: Keep aspect ratio consistent at all screen sizes */

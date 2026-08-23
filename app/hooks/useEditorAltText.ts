@@ -4,7 +4,9 @@
  * Encapsulates all alt-text state and handlers extracted from useUnifiedContentEditor.
  * Includes:
  *   - Alt-text state (imageAltTexts, altTextSuggestions, originalAltTexts, etc.)
- *   - sendImageToAI / selectedImageIndex state
+ *   - selectedImageIndex state (whether the AI may LOOK at an image is a
+ *     shop-wide setting now, resolved server-side — see
+ *     [vision-policy.shared.ts](../services/ai/vision-policy.shared.ts))
  *   - ALT-TEXT HANDLERS section
  *   - SEND IMAGE TO AI HANDLERS section (including reset effects)
  */
@@ -70,12 +72,11 @@ interface UseEditorAltTextReturn {
   imageAltTextsRef: React.MutableRefObject<Record<number, string>>;
   originalAltTextsRef: React.MutableRefObject<Record<number, string>>;
   pendingAltTextAutoSaveRef: React.MutableRefObject<Record<number, string> | null>;
-  /** Locale (or `locale::market`) → index → alt text. Exposed so a PRIMARY save
-   *  can drop what the server just deleted — the overlay is read before the
-   *  loaded item, so a stale entry survives the purge and gets written back. */
+  /** Locale (or `locale@@market`, see LOCALE_MARKET_SEP) → index → alt text.
+   *  Exposed so a PRIMARY save can drop what the server just deleted — the
+   *  overlay is read before the loaded item, so a stale entry survives the
+   *  purge and gets written back. */
   localAltTextOverlayRef: React.MutableRefObject<Record<string, Record<number, string>>>;
-  sendImageToAI: boolean;
-  setSendImageToAI: React.Dispatch<React.SetStateAction<boolean>>;
   selectedImageIndex: number;
   setSelectedImageIndex: React.Dispatch<React.SetStateAction<number>>;
   // Handlers
@@ -95,7 +96,6 @@ interface UseEditorAltTextReturn {
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
   handleRejectAltTextSuggestion: (imageIndex: number) => void;
-  handleToggleSendImageToAI: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +155,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   const [fallbackAltTextIndices, setFallbackAltTextIndices] = useState<Set<number>>(new Set());
 
   // Send Image to AI feature state
-  const [sendImageToAI, setSendImageToAI] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
 
   // ============================================================================
@@ -201,7 +200,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         imageUrl: image.url,
         productTitle,
         mainLanguage,
-        sendImageToAI: sendImageToAI.toString(),
         ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
       },
       `altText_${imageIndex}`,
@@ -237,7 +235,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
         productTitle,
         mainLanguage,
         imagesData: JSON.stringify(imagesData),
-        sendImageToAI: sendImageToAI.toString(),
       },
       "allAltTextsGenerate",
       (result) => {
@@ -955,14 +952,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     });
   }, []);
 
-  // ============================================================================
-  // SEND IMAGE TO AI HANDLERS
-  // ============================================================================
-
-  const handleToggleSendImageToAI = useCallback(() => {
-    setSendImageToAI(prev => !prev);
-  }, []);
-
   // Reset alt-text and AI suggestion state when selected item changes
   useEffect(() => {
     setImageAltTexts({});
@@ -1053,8 +1042,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // rendering a foreign alt text that no longer exists for the rest of the
     // session — and a save from that view writes it back.
     localAltTextOverlayRef,
-    sendImageToAI,
-    setSendImageToAI,
     selectedImageIndex,
     setSelectedImageIndex,
     // Handlers
@@ -1073,6 +1060,5 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
-    handleToggleSendImageToAI,
   };
 }

@@ -26,6 +26,7 @@ import type {
   MarketInfo,
 } from "../types/content-editor.types";
 import type { TransitionResult } from "./useUiDataLoader";
+import { aiImageCandidates } from "../services/ai/vision-policy.shared";
 
 // ============================================================================
 // TYPES
@@ -54,7 +55,6 @@ export interface FieldHandlerProps {
   aiSuggestions: Record<string, string>;
   imageAltTexts: Record<number, string>;
   originalAltTexts: Record<number, string>;
-  sendImageToAI: boolean;
   selectedImageIndex: number;
   fallbackFields: Set<string>;
 
@@ -205,7 +205,6 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     aiSuggestions,
     imageAltTexts,
     originalAltTexts,
-    sendImageToAI,
     selectedImageIndex,
     fallbackFields,
     selectedItemIdRef,
@@ -463,20 +462,11 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
   const contextDescription = editableValues.description || editableValues.body || "";
   const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
-  // Determine which image to send based on content type and sendImageToAI state
-  let imageUrl: string | undefined;
-  if (sendImageToAI) {
-    if (config.contentType === "products") {
-      // For products: use currently selected image or fallback to featured image
-      const images = selectedItem.images || [];
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
-    } else if (config.contentType === "collections" || config.contentType === "blogs") {
-      // For collections/blogs: use featured image only
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = featuredImage?.url;
-    }
-  }
+  // The images this item COULD show the AI, best first. Whether any of them is
+  // actually sent, and how many, is the shop's setting and is decided
+  // server-side — this route takes a direct POST, so the client offering
+  // candidates is the only honest half of that contract it can hold up.
+  const imageCandidates = aiImageCandidates(config.contentType, selectedItem, selectedImageIndex);
 
   submitAIAction(
     {
@@ -491,8 +481,7 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
       // the SeoKeyword convention). `mainLanguage` is a display name and can't
       // serve — without this, French copy got the German target keyword.
       keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
-      sendImageToAI: sendImageToAI.toString(),
-      ...(imageUrl && { imageUrl }),
+      ...(imageCandidates.length > 0 && { imageUrls: JSON.stringify(imageCandidates) }),
       ...(userInstruction?.trim() && { userInstruction: userInstruction.trim() }),
     },
     fieldKey,
@@ -538,20 +527,11 @@ const handleFormatAI = (fieldKey: string) => {
   const contextDescription = editableValues.description || editableValues.body || "";
   const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === currentLanguage)?.name || currentLanguage;
 
-  // Determine which image to send based on content type and sendImageToAI state
-  let imageUrl: string | undefined;
-  if (sendImageToAI) {
-    if (config.contentType === "products") {
-      // For products: use currently selected image or fallback to featured image
-      const images = selectedItem.images || [];
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = images[selectedImageIndex]?.url || featuredImage?.url;
-    } else if (config.contentType === "collections" || config.contentType === "blogs") {
-      // For collections/blogs: use featured image only
-      const featuredImage = selectedItem.featuredImage;
-      imageUrl = featuredImage?.url;
-    }
-  }
+  // The images this item COULD show the AI, best first. Whether any of them is
+  // actually sent, and how many, is the shop's setting and is decided
+  // server-side — this route takes a direct POST, so the client offering
+  // candidates is the only honest half of that contract it can hold up.
+  const imageCandidates = aiImageCandidates(config.contentType, selectedItem, selectedImageIndex);
 
   submitAIAction(
     {
@@ -565,8 +545,7 @@ const handleFormatAI = (fieldKey: string) => {
       // Same locale contract as generation — the format pass must preserve THIS
       // language's keywords, not the primary language's.
       keywordLocale: currentLanguage === primaryLocale ? "" : currentLanguage,
-      sendImageToAI: sendImageToAI.toString(),
-      ...(imageUrl && { imageUrl }),
+      ...(imageCandidates.length > 0 && { imageUrls: JSON.stringify(imageCandidates) }),
     },
     fieldKey,
     (result) => {

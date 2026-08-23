@@ -71,12 +71,15 @@ interface Props {
    *
    * A plain field is a BOX and goes into the card's grid, which fills the row
    * with as many of them as fit. `wide` marks the ones that are not boxes -- a
-   * textarea, a rich-text preview, a chip list -- and those are laid out UNDER
-   * the grid, each on its own line and capped at two columns' worth. They are
-   * kept out of the grid rather than spanning it because a spanning cell keeps
+   * textarea, a rich-text preview, a chip list -- and those take a row of their
+   * own, still INSIDE the grid and still one column wide (`grid-column: 1`), so
+   * they line up with the field above them. Never a SPAN: a spanning cell keeps
    * every column alive, and `auto-fit` can then no longer collapse the empty
-   * ones: one chip list at the top of a card left every box below it frozen at
-   * its minimum width with half the card blank beside it.
+   * ones -- one chip list at the top of a card left every box below it frozen
+   * at its minimum width with half the card blank beside it. And never a
+   * width of their own outside the grid: a fixed ceiling equals a real column
+   * at exactly one card width, so below it the chip list was wider than the
+   * label above it and above it narrower.
    *
    * `lead` is the same escape hatch pointing the other way: a row of its own
    * ABOVE the grid. The image is the one field that earns it -- on a colour
@@ -244,11 +247,12 @@ export function MetaobjectEntryCard({
     return !METAOBJECT_HEX_PATTERN.test(value.startsWith("#") ? value : `#${value}`);
   }, [colorControl, colorValue]);
 
-  // The card's THREE regions, in the order they are drawn: lead, grid, wide.
-  // Split here rather than in the caller: which shape a field has is a LAYOUT
-  // question, and the page that renders the cards already answers enough of
-  // them. A field is in exactly one region — `lead` wins over `wide`, so a
-  // caller that marks both cannot land a field in two.
+  // The card's three field shapes: lead (its own row above the grid), box (a
+  // cell of the grid) and wide (a row of its own INSIDE the grid). Split here
+  // rather than in the caller: which shape a field has is a LAYOUT question,
+  // and the page that renders the cards already answers enough of them. A
+  // field has exactly one shape — `lead` wins over `wide`, so a caller that
+  // marks both cannot land a field in two places.
   const leadFields = useMemo(() => children.filter((child) => child.lead), [children]);
   const boxFields = useMemo(() => children.filter((child) => !child.lead && !child.wide), [children]);
   const wideFields = useMemo(() => children.filter((child) => !child.lead && child.wide), [children]);
@@ -416,32 +420,40 @@ export function MetaobjectEntryCard({
           // controls that are mostly one line tall — on a type with 25 entries
           // that is a page nobody can survey.
           //
-          // The three regions, and the widths they spend, live in
-          // responsive.css. Order INSIDE each one is the definition's,
-          // untouched; the split itself reorders two things, and both are
-          // deliberate. "Boxes before lists" keeps the boxes packed into full
-          // rows instead of leaving one stranded on a line of its own behind a
-          // spanning cell. And the LEAD field is hoisted above everything —
-          // the entry's picture, which in the grid claimed a whole text column
-          // for a 48px tile.
+          // The shapes, and the widths they spend, live in responsive.css.
+          // Order INSIDE each one is the definition's, untouched; the split
+          // itself reorders two things, and both are deliberate. "Boxes before
+          // lists" keeps the boxes packed into full rows instead of leaving one
+          // stranded on a line of its own behind a wide field that starts a new
+          // row. And the LEAD field is hoisted above everything — the entry's
+          // picture, which in the grid claimed a whole text column for a 48px
+          // tile.
           <BlockStack gap="400">
             {leadFields.map((child) => (
               <div key={child.key} className="metaobject-entry-fields__lead">
                 {child.node}
               </div>
             ))}
-            {boxFields.length > 0 && (
+            {(boxFields.length > 0 || wideFields.length > 0) && (
               <div className="metaobject-entry-fields">
                 {boxFields.map((child) => (
                   <div key={child.key}>{child.node}</div>
                 ))}
+                {/* IN the grid, not under it: a wide field is one column on a
+                    row of its own (`grid-column: 1`), so its width is the
+                    grid's own answer. Under the grid it needed a ceiling of
+                    its own, and a fixed one equals a real column at exactly
+                    one card width — below that the taxonomy list was wider
+                    than the label above it, above it narrower. Never
+                    `span`: that would keep every column alive and stop
+                    `auto-fit` collapsing the empty ones. */}
+                {wideFields.map((child) => (
+                  <div key={child.key} className="metaobject-entry-fields__wide">
+                    {child.node}
+                  </div>
+                ))}
               </div>
             )}
-            {wideFields.map((child) => (
-              <div key={child.key} className="metaobject-entry-fields__wide">
-                {child.node}
-              </div>
-            ))}
           </BlockStack>
         )}
         {/* The COLOUR counts as an editable field even though it renders in the

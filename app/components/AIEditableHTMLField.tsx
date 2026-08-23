@@ -4,6 +4,7 @@ import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
+import { FieldClearButton } from "./unified/FieldChrome";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ActionTooltip } from "./ActionTooltip";
 import { aiActionTooltip } from "../utils/ai-action-tooltip";
@@ -240,7 +241,14 @@ export function AIEditableHTMLField({
   };
 
   return (
-    <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
+    // `app-field-clear-scope` makes this field its own query container, which
+    // is what lets the clear control below choose the word or the bin from the
+    // field's own width — the same decision every other field in the app makes
+    // through `FieldClearOverlay`. This editor cannot use that wrapper: its
+    // clear button sits IN the header row beside the HTML/preview toggle, not
+    // absolutely over an empty label line, so it shares the decision and not
+    // the positioning.
+    <div className={`ai-editable-html-field app-field-clear-scope ${getBackgroundClass()}`}>
       <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="100" blockAlign="center">
           <Text as="span" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
@@ -252,16 +260,7 @@ export function AIEditableHTMLField({
           <Button size="slim" onClick={onToggleMode}>
             {mode === "html" ? t.products?.preview : t.products?.html}
           </Button>
-          {onClear && value && (
-            <Button
-              size="slim"
-              onClick={onClear}
-              tone="critical"
-              variant="plain"
-            >
-              {t.common?.clear || "Clear"}
-            </Button>
-          )}
+          {onClear && value && <FieldClearButton onClear={onClear} fieldLabel={label} />}
         </InlineStack>
       </InlineStack>
 

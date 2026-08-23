@@ -15,6 +15,11 @@ import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import {
+  readImageCandidates,
+  resolveVisionPolicy,
+  visionImageUrls,
+} from "~/services/ai/vision-policy.shared";
+import {
   explicitPrimaryKeyword,
   findStuffedKeyword,
   keywordPreservationLine,
@@ -140,8 +145,14 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
   const contextDescription = getFormString(formData, "contextDescription") || "";
   const sanitizedContextDescription = sanitizePromptInput(contextDescription, { fieldType: "description", allowNewlines: true });
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
-  const sendImageToAI = formData.get("sendImageToAI") === "true";
-  const imageUrl = getFormString(formData, "imageUrl") || undefined;
+  /**
+   * Whether the AI may look at the images, and at how many, is the SHOP's
+   * setting — not the client's claim. This route takes a direct POST, so a
+   * `sendImageToAI=true` on the wire would be a permission the merchant never
+   * granted; the field is gone and this reads `AISettings` instead. The client
+   * only offers candidates.
+   */
+  const visionImages = visionImageUrls(readImageCandidates(formData), resolveVisionPolicy(ctx.settings));
   // Ad-hoc instruction the merchant typed into the prompt box before firing the
   // generation. Null when the box was submitted empty — then the prompt below
   // is byte-identical to what it was before this feature existed.
@@ -301,8 +312,9 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
       hasInstructions: !!(genInstructionsTextKey && genAiInstructions?.[genInstructionsTextKey]),
     });
 
-    // Use appropriate method based on field type
-    const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
+    // Use appropriate method based on field type. `visionImages` is already
+    // the merchant's answer applied — empty means either "vision is off" or
+    // "this item has no picture", and neither is this call's business.
     // §2.5e — the glossary applies to the ORIGINAL, not only to its
     // translations. Until now a merchant who forced "Sneaker" over "Turnschuh"
     // got "Sneaker" in every translation and "Turnschuh" in the German source:
@@ -323,8 +335,8 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
         };
     const generate = (p: string) =>
       isGenLongContent
-        ? aiService.generateProductDescription(sanitizedContextTitle, p, imageUrlToSend, glossary)
-        : aiService.generateProductTitle(p, imageUrlToSend, glossary);
+        ? aiService.generateProductDescription(sanitizedContextTitle, p, visionImages, glossary)
+        : aiService.generateProductTitle(p, visionImages, glossary);
     let generatedContent = await generate(appendUserInstruction(prompt, userInstruction));
 
     // Stuffing guard (§3.2): hard-enforced in the handler, not just the
@@ -397,8 +409,8 @@ export async function handleFormatAIText(ctx: AIActionContext): Promise<DataResp
   const contextDescription = getFormString(formData, "contextDescription") || "";
   const sanitizedContextDescription = sanitizePromptInput(contextDescription, { fieldType: "description", allowNewlines: true });
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
-  const sendImageToAI = formData.get("sendImageToAI") === "true";
-  const imageUrl = getFormString(formData, "imageUrl") || undefined;
+  // Same rule as the generation path: the shop decides, not the request.
+  const visionImages = visionImageUrls(readImageCandidates(formData), resolveVisionPolicy(ctx.settings));
 
   if (!currentValue) {
     return json({ success: false, error: "No content available to format" }, { status: 400 });
@@ -603,8 +615,9 @@ Do NOT:
       hasInstructions: !!(instructionsTextKey && aiInstructions?.[instructionsTextKey]),
     });
 
-    // Use appropriate method based on field type
-    const imageUrlToSend = sendImageToAI ? imageUrl : undefined;
+    // Use appropriate method based on field type. `visionImages` is already
+    // the merchant's answer applied — empty means either "vision is off" or
+    // "this item has no picture", and neither is this call's business.
     // §2.5e — a reformat rewrites the merchant's own words, which is exactly
     // where a house term gets replaced by a synonym. The context is the text
     // being reworked, so only the rules it actually touches are sent.
@@ -618,8 +631,8 @@ Do NOT:
           };
     const runFormat = (p: string) =>
       isLongContent
-        ? aiService.generateProductDescription(currentValue, p, imageUrlToSend, glossary)
-        : aiService.generateProductTitle(p, imageUrlToSend, glossary);
+        ? aiService.generateProductDescription(currentValue, p, visionImages, glossary)
+        : aiService.generateProductTitle(p, visionImages, glossary);
     let formattedValue = await runFormat(prompt);
 
     // Stuffing guard — the same one generation uses, and now needed here for

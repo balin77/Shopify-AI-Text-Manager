@@ -114,3 +114,55 @@ export function diffMenuTitles(
 export function invalidMenuTitle(title: string): "empty" | null {
   return title.trim() === "" ? "empty" : null;
 }
+
+/**
+ * What somebody ELSE changed, read out of the two fingerprints.
+ *
+ * No extra payload and no second read: the fingerprint is already
+ * `path<TAB>id<TAB>title` per line, i.e. exactly the tree the page was
+ * rendered from. Parsing it back turns a bare refusal ("the menu changed")
+ * into something a merchant can act on ("Kontakt was renamed and one item was
+ * added"), which is the difference between reloading confidently and
+ * wondering what one is about to lose.
+ *
+ * Titles are what the report names — an id tail names nothing.
+ */
+export interface MenuFingerprintDrift {
+  added: string[];
+  removed: string[];
+  renamed: Array<{ from: string; to: string }>;
+  moved: string[];
+}
+
+export function describeFingerprintDrift(before: string, after: string): MenuFingerprintDrift {
+  const parse = (fingerprint: string) => {
+    const byId = new Map<string, { path: string; title: string }>();
+    for (const line of fingerprint.split("\n")) {
+      if (!line) continue;
+      const [path, id, ...rest] = line.split("\t");
+      // A title may legitimately be empty; a line without an id cannot be
+      // matched at all and is skipped rather than guessed at.
+      if (!id) continue;
+      byId.set(id, { path, title: rest.join("\t") });
+    }
+    return byId;
+  };
+
+  const drift: MenuFingerprintDrift = { added: [], removed: [], renamed: [], moved: [] };
+  const beforeById = parse(before);
+  const afterById = parse(after);
+
+  for (const [id, now] of afterById) {
+    const then = beforeById.get(id);
+    if (!then) {
+      drift.added.push(now.title);
+      continue;
+    }
+    if (then.title !== now.title) drift.renamed.push({ from: then.title, to: now.title });
+    else if (then.path !== now.path) drift.moved.push(now.title);
+  }
+  for (const [id, then] of beforeById) {
+    if (!afterById.has(id)) drift.removed.push(then.title);
+  }
+  return drift;
+}

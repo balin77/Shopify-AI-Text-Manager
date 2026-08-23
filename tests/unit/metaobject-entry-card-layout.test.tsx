@@ -3,11 +3,14 @@
  *
  * TWO rules, and the card shipped without either.
  *
- * A field that needs the whole width is laid out UNDER the grid, never inside
- * it. Spanning a cell across every column keeps every column ALIVE, and
- * `auto-fit` only collapses a column that is empty -- so one chip list at the
- * top of an entry froze every box below it at its minimum width and left the
- * rest of the card blank.
+ * A field that does not belong beside a box takes a row of its own — inside
+ * the grid, in column 1, never SPANNING it. A spanning cell keeps every column
+ * ALIVE, and `auto-fit` only collapses a column that is empty, so one chip list
+ * at the top of an entry froze every box below it at its minimum width and left
+ * the rest of the card blank. Staying in the grid is what makes it exactly one
+ * column wide, i.e. flush with the field above it: outside the grid it needed a
+ * width of its own, and a fixed one equals a real column at exactly one card
+ * width.
  *
  * A `lead` field -- the entry's picture -- gets a row of its own ABOVE the
  * grid: in the grid its 48px tile claimed a whole text column and pushed the
@@ -55,23 +58,32 @@ describe("metaobject entry card layout", () => {
     expect(grid()!.contains(screen.getByTestId("image"))).toBe(true);
   });
 
-  it("keeps a wide field OUT of the grid", () => {
+  it("gives a wide field its own row in the grid, so it is one column wide", () => {
     card([
       { key: "label", node: <span data-testid="label">Label</span> },
       { key: "colors", node: <span data-testid="colors">Colors</span>, wide: true },
       { key: "pattern", node: <span data-testid="pattern">Pattern</span> },
     ]);
     const wide = screen.getByTestId("colors");
-    expect(grid()!.contains(wide)).toBe(false);
+    // IN the grid — that is what makes its width the grid's own answer and
+    // therefore flush with the box above it.
+    expect(grid()!.contains(wide)).toBe(true);
     expect(wide.closest(".metaobject-entry-fields__wide")).not.toBeNull();
-    // The box AFTER the wide one still belongs to the grid — it used to start a
-    // row of its own behind the spanning cell, alone in a five-column line.
+    // The boxes stay packed into the first row — the wide field is placed
+    // AFTER them, so it cannot split them across rows.
+    const cells = Array.from(grid()!.children);
+    expect(cells.map((c) => c.className)).toEqual([
+      "",
+      "",
+      "metaobject-entry-fields__wide",
+    ]);
     expect(grid()!.contains(screen.getByTestId("pattern"))).toBe(true);
   });
 
-  it("draws no grid at all when every field is wide", () => {
+  it("still draws the grid when every field is wide", () => {
     card([{ key: "body", node: <span data-testid="body">Body</span>, wide: true }]);
-    expect(grid()).toBeNull();
+    // The grid is where a wide field lives now, so it has to exist for one.
+    expect(grid()).not.toBeNull();
     expect(screen.getByTestId("body").closest(".metaobject-entry-fields__wide")).not.toBeNull();
   });
 

@@ -35,9 +35,14 @@
  * menuUpdate that need a tree editor to be safe, and the Shopify admin already
  * has one.
  *
- * Translations remain GLOBAL (no market scope): whether a market-scoped menu
- * translation behaves like a global one is UNMEASURED, and the market selector
- * would promise a behaviour nobody has verified.
+ * Translations written here remain GLOBAL (no market scope) — but that is now
+ * a scope decision rather than an unmeasured one. MEASURED 2026-08-23: a menu
+ * item CAN hold a market-scoped translation, and the global read does not
+ * return it, so the two layers are genuinely separate. What follows is that a
+ * merchant who set one in Shopify's own editor has a value this page neither
+ * shows nor purges — the storefront keeps serving it in that market after a
+ * rename. Stated here because it is a gap, not an intention; adding the market
+ * selector means reading that layer too, not just writing it.
  *
  * The item column is the shared UnifiedItemList, not a bespoke one: below
  * 900px `.desktop-only` hides it and the navbar's compact selector takes over,
@@ -444,6 +449,8 @@ export default function MenusPage() {
     failures: Array<{ menuItemId: string; message: string }>;
     reassignedItemIds: Array<{ before: string; after: string }>;
     purgedLinkIds: string[];
+    /** Removed (item, locale) rows — what the merchant's banner counts. */
+    purgedTranslationCount: number;
     message?: string;
   };
   /** The manual save bar. */
@@ -1108,17 +1115,25 @@ export default function MenusPage() {
     // not stored yet), and saving afterwards would purge exactly the
     // translation the button just produced, under the merchant's own
     // stale-translation setting. Two wrong outcomes for one click.
+    //
+    // Deliberately NOT gated on the tab being the primary one. The rename is a
+    // property of the ITEM, not of the language on screen: a merchant who
+    // renames on the primary tab, switches to French and presses translate
+    // hits both wrong outcomes just the same, and the draft is still pending.
     const pendingRename =
-      isPrimary &&
       item.menuItemId in primaryDrafts &&
       (primaryDrafts[item.menuItemId] ?? "").trim() !== (primaryTitleById[item.menuItemId] ?? "").trim();
     // In the primary language both buttons write into EVERY other language, so
     // switching them all off leaves them with nothing to write. Disabled with
     // the reason, never hidden — and never a button that silently does nothing.
-    const actionHint = isPrimary
-      ? (singleLocaleHint ?? (pendingRename ? t.content?.menuSaveRenameFirst : allTargetsOffHint))
-      : singleLocaleHint;
-    const actionsBlocked = !canTranslate || !!(isPrimary && (allTargetsOffHint || pendingRename));
+    const actionHint =
+      singleLocaleHint ??
+      (pendingRename
+        ? t.content?.menuSaveRenameFirst
+        : isPrimary
+          ? allTargetsOffHint
+          : undefined);
+    const actionsBlocked = !canTranslate || pendingRename || !!(isPrimary && allTargetsOffHint);
 
     // The app's two translation-state colours, same classes as everywhere else:
     // BLUE on a primary field whose translation is missing somewhere, YELLOW on
@@ -1415,12 +1430,12 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {(primaryResult?.purgedLinkIds?.length ?? 0) > 0 && (
+                    {(primaryResult?.purgedTranslationCount ?? 0) > 0 && (
                       <Banner tone="info">
                         <p>
                           {(t.content?.menuRenamePurgedTranslations || "").replace(
                             "{count}",
-                            String(primaryResult?.purgedLinkIds?.length ?? 0),
+                            String(primaryResult?.purgedTranslationCount ?? 0),
                           )}
                         </p>
                       </Banner>

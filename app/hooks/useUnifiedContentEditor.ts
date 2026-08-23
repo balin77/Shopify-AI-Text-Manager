@@ -531,7 +531,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     originalAltTexts, setOriginalAltTexts,
     imageAltTextsRef, originalAltTextsRef,
     pendingAltTextAutoSaveRef, localAltTextOverlayRef,
-    sendImageToAI, setSendImageToAI,
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
@@ -539,7 +538,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
-    handleRejectAltTextSuggestion, handleToggleSendImageToAI,
+    handleRejectAltTextSuggestion,
   } = useEditorAltText({
     selectedItem,
     selectedItemId,
@@ -2203,7 +2202,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     aiSuggestions,
     imageAltTexts,
     originalAltTexts,
-    sendImageToAI,
     selectedImageIndex,
     fallbackFields,
     selectedItemIdRef,
@@ -2404,7 +2402,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isLoadingImages,
     fallbackFields,
     loadingFieldKeys,
-    sendImageToAI,
     selectedImageIndex,
     images: selectedItem?.images || [],
     featuredImage: selectedItem?.featuredImage || null,
@@ -2452,7 +2449,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
-    handleToggleSendImageToAI,
     setSelectedImageIndex,
   };
 
