@@ -286,12 +286,17 @@ export function partitionStaleTranslations(
       purge.push(entry);
       continue;
     }
+    // The caller's own refusal, on EVERY surface: it is a deliberate decline,
+    // not a failure, so it keeps the merchant's stored answer.
+    if (entry.retranslatable === false) {
+      declined.push(entry);
+      continue;
+    }
     if (opts.anyKey) {
       // A value surface: we DECLINE anything the single-line prompt would
       // mangle — see `declined` on the return type for why that is not the
       // same as a failure.
-      const safe = entry.retranslatable !== false && survivesValuePrompt(entry.primaryValue);
-      (safe ? retranslate : declined).push(entry);
+      (survivesValuePrompt(entry.primaryValue) ? retranslate : declined).push(entry);
       continue;
     }
     // A content surface: the allowlist keeps `handle` out, and that exclusion

@@ -707,6 +707,28 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
   });
 
+  it("skips a key whose read-back does not match what the caller wrote", async () => {
+    // A theme write lands in a FILE and is re-indexed afterwards, so the
+    // read-back can still answer with the PREVIOUS text — and with a digest
+    // that registers cleanly, which would produce an echo-confirmed translation
+    // of text the merchant has just replaced, with the deletion already stood
+    // down. Mismatch is treated exactly like a failed read: nothing translated,
+    // nothing removed.
+    const result = await reconcileAfterPrimarySave(
+      saveParams({
+        changed: [
+          { key: "title", expectedValue: "Something else entirely" },
+          { key: "body_html" },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls.map((c) => c.key)).toEqual(["body_html"]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
   it("keeps everything when the primary read-back itself fails", async () => {
     // A failed lookup and "every field was cleared" look identical in the data,
     // and only one of them may lose its translations. Answering our own blink

@@ -483,7 +483,10 @@ async function updateImageAltTexts(
     // work instead of overwriting what the merchant just wrote. Under the SAME
     // key that repair runs on (translation-locks.shared.ts) — the product's own
     // lock belongs to its field reconciliation.
-    if (shopifySaved && params.locale !== params.primaryLocale) {
+    // GLOBAL layer only: the repair writes global rows, so a market override
+    // edit can never collide with it, and aborting the run over one would leave
+    // its remaining entries in neither list.
+    if (shopifySaved && params.locale !== params.primaryLocale && !marketId) {
       markTranslationSaved(altTextLockId(productId));
     }
 
@@ -1624,12 +1627,12 @@ async function updatePrimaryProduct(
           else unaddressableImageIds.push(image.id);
         }
 
-        // An image the cache cannot address on Shopify gets what it always got:
-        // its local rows go. They cannot be refreshed (there is no resource id
-        // to register against) and leaving them would show the editor a foreign
-        // alt for a primary text that just changed — which is the deletion path
-        // this branch replaces, unchanged for exactly this case.
-        if (unaddressableImageIds.length > 0) {
+        // An image the cache cannot address on Shopify cannot be refreshed —
+        // there is no resource id to register against — so it is a DECLINE, not
+        // a failure, and it follows the merchant's stored answer exactly like
+        // every other declined entry. With the deletion switched off the rows
+        // stay, which is what happened before this branch existed.
+        if (unaddressableImageIds.length > 0 && changePolicy?.purgeUnreconciledSurfaces) {
           await db.productImageAltTranslation.deleteMany({
             where: {
               imageId: { in: unaddressableImageIds },

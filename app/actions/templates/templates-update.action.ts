@@ -1002,6 +1002,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
                 resourceId: keyToResourceId.get(key) || resourceId,
                 resourceType: "OnlineStoreTheme",
                 key,
+                // A theme write lands in a FILE and is re-indexed afterwards,
+                // so the repair's read-back can still answer with the previous
+                // text. Naming what we pushed lets it tell that apart from a
+                // value it may translate — the normalised one, which is what
+                // the file actually holds.
+                expectedValue: pushedValueByKey.get(key) ?? updatedFields[key],
               }))
               .filter((entry) => {
                 const entryThemeId = extractThemeIdFromResourceId(entry.resourceId);
@@ -1071,11 +1077,12 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     for (const [key, value] of entriesToUpsert) {
       const keyResId = keyToResourceId.get(key) || resourceId;
       const keyThemeId = extractThemeIdFromResourceId(keyResId) ?? "";
-      // Claim the resource the merchant just translated. A detached theme
-      // re-translation from an earlier primary save watches its own lock AND
-      // every resource it is about to write, so this is what makes it abandon
-      // the rest instead of overwriting a hand-written value.
-      markTranslationSaved(keyResId);
+      // Claim the resource the merchant just translated, on the GLOBAL layer
+      // only: a detached theme re-translation writes global rows, so a MARKET
+      // override edit can never collide with it — and aborting the run over one
+      // would leave its remaining entries in neither list, on a surface nothing
+      // else revisits.
+      if (!marketId) markTranslationSaved(keyResId);
       dbOps.push(
         db.themeTranslation.upsert({
           where: {

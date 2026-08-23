@@ -1003,6 +1003,20 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     /** `false` = remove this one rather than re-translate it; see
      *  `StaleTranslation.retranslatable`. */
     retranslatable?: boolean;
+    /**
+     * What the caller just wrote, for a surface whose write does not land in
+     * Shopify's translatable content SYNCHRONOUSLY.
+     *
+     * Theme content is written as a FILE (`themeFilesUpsert`) and re-indexed
+     * afterwards, so a read-back can still answer with the previous text — and
+     * with a digest that registers cleanly, which would produce an
+     * echo-confirmed translation of text the merchant has just replaced, with
+     * the deletion already stood down. When this is set and the read-back does
+     * not match it, the entry is treated as UNREADABLE: nothing is translated
+     * and nothing is removed, which is the same conservative answer a failed
+     * read gets.
+     */
+    expectedValue?: string;
   }>;
   /** Published foreign locales — the primary locale never holds a translation row. */
   foreignLocales: readonly string[];
@@ -1028,15 +1042,17 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     /** `${resourceId}\u0000${key}` of the entries the caller marked
      *  remove-only, so the flag survives into the stale set below. */
     const removeOnly = new Set<string>();
+    /** `${resourceId}\u0000${key}` → what the caller says it wrote. */
+    const expected = new Map<string, string>();
     for (const item of changed) {
       const ref = refOf(params, item as StaleTranslation);
       refs.set(ref.resourceId, ref);
       const keys = wantedKeys.get(ref.resourceId) ?? new Set<string>();
       keys.add(item.key);
       wantedKeys.set(ref.resourceId, keys);
-      if (item.retranslatable === false) {
-        removeOnly.add(`${ref.resourceId}${PAIR_SEP}${item.key}`);
-      }
+      const id = `${ref.resourceId}${PAIR_SEP}${item.key}`;
+      if (item.retranslatable === false) removeOnly.add(id);
+      if (item.expectedValue !== undefined) expected.set(id, item.expectedValue);
     }
     const resourceIds = [...refs.keys()];
 
@@ -1083,6 +1099,15 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       }
       const entry = resourcePrimary[key];
       const primaryValue = entry?.value ?? "";
+      // The read-back does not agree with what the caller says it wrote, so
+      // Shopify has not caught up with the write yet. Translating this would
+      // register an echo-confirmed translation of the OLD text; skipping it is
+      // the same answer a failed read gets.
+      const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
+      if (expectedValue !== undefined && expectedValue !== primaryValue) {
+        unreadable++;
+        continue;
+      }
       stale.push({
         key,
         locale,
