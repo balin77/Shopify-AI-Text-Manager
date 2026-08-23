@@ -381,6 +381,51 @@ export default function MenusPage() {
   // Single-language shops keep every action VISIBLE and disabled with a reason
   // — hiding them reads as a missing feature. Only the locale bar disappears.
   const singleLocaleHint = foreignLocales.length === 0 ? t.common?.requiresSecondLanguage : undefined;
+
+  /**
+   * Languages switched OFF by a Ctrl+click on their button.
+   *
+   * Stored as the disabled set, not the enabled one — the shop's locale list
+   * comes from the loader and can grow on a revalidation, and a language that
+   * appears while the page is open must default to ON rather than silently
+   * dropping out of the next "into every language" click. In memory only, for
+   * one session, exactly like the content editor's `enabledLanguages` and the
+   * bulk editor's `disabledLocales`.
+   *
+   * It narrows the BULK buttons and nothing else: a switched-off language can
+   * still be viewed, typed into and saved by hand, and its missing-translation
+   * markers stay on — the merchant took it out of one action, not out of the
+   * shop.
+   */
+  const [disabledLocales, setDisabledLocales] = useState<string[]>([]);
+  const enabledLanguages = useMemo(
+    () =>
+      localeList
+        .map((l: any) => l.locale as string)
+        .filter((locale: string) => !disabledLocales.includes(locale)),
+    [localeList, disabledLocales],
+  );
+  /** What "translate into all languages" / "copy into all languages" write. */
+  const bulkTargetLocales = useMemo(
+    () => foreignLocales.filter((locale: string) => !disabledLocales.includes(locale)),
+    [foreignLocales, disabledLocales],
+  );
+  const toggleLanguage = useCallback(
+    (locale: string) => {
+      // The primary language is the source of every bulk action; switching it
+      // off would leave the buttons with nothing to read from.
+      if (locale === primaryLocale) return;
+      setDisabledLocales((prev) =>
+        prev.includes(locale) ? prev.filter((l) => l !== locale) : [...prev, locale],
+      );
+    },
+    [primaryLocale],
+  );
+  /** Every other language switched off — the bulk buttons have no target. */
+  const allTargetsOffHint =
+    !singleLocaleHint && bulkTargetLocales.length === 0
+      ? t.content?.menuAllLanguagesOff
+      : undefined;
   const isPrimary = activeLocale === primaryLocale;
 
   const parsedMenus = useMemo(
@@ -675,7 +720,7 @@ export default function MenusPage() {
       setTranslateError(null);
       void withBusy(linkId, async () => {
         const values: Record<string, string> = {};
-        for (const locale of foreignLocales) {
+        for (const locale of bulkTargetLocales) {
           try {
             const value = await translateOne(linkId, sourceText, locale);
             if (value) values[locale] = value;
@@ -686,7 +731,7 @@ export default function MenusPage() {
         autoSave(values, linkId);
       });
     },
-    [foreignLocales, translateOne, autoSave, withBusy],
+    [bulkTargetLocales, translateOne, autoSave, withBusy],
   );
 
   /** Primary view: put the primary label into every other language, and save. */
@@ -694,10 +739,10 @@ export default function MenusPage() {
     (item: FlatMenuItem, sourceText: string) => {
       if (!item.linkId || !sourceText.trim()) return;
       const values: Record<string, string> = {};
-      for (const locale of foreignLocales) values[locale] = sourceText;
+      for (const locale of bulkTargetLocales) values[locale] = sourceText;
       autoSave(values, item.linkId);
     },
-    [foreignLocales, autoSave],
+    [bulkTargetLocales, autoSave],
   );
 
   /** Foreign view: translate this entry from the primary language, and save. */
@@ -802,6 +847,11 @@ export default function MenusPage() {
     const editable = canTranslate && !isPrimary;
     const value = isPrimary ? primaryTitle : item.linkId ? valueFor(activeLocale, item.linkId) : "";
     const busy = !!item.linkId && (busyLinkIds.has(item.linkId) || isAutoSaving(item.linkId));
+    // In the primary language both buttons write into EVERY other language, so
+    // switching them all off leaves them with nothing to write. Disabled with
+    // the reason, never hidden — and never a button that silently does nothing.
+    const actionHint = isPrimary ? (singleLocaleHint ?? allTargetsOffHint) : singleLocaleHint;
+    const actionsBlocked = !canTranslate || !!(isPrimary && allTargetsOffHint);
 
     // The app's two translation-state colours, same classes as everywhere else:
     // BLUE on a primary field whose translation is missing somewhere, YELLOW on
@@ -852,11 +902,11 @@ export default function MenusPage() {
           <div className="ai-field-footer">
             <div className="ai-field-footer-left" />
             <div className="ai-field-footer-right">
-              <DisabledActionTooltip hint={singleLocaleHint}>
+              <DisabledActionTooltip hint={actionHint}>
                 <Button
                   size="slim"
                   loading={busy}
-                  disabled={!canTranslate || !primaryTitle.trim() || busy}
+                  disabled={actionsBlocked || !primaryTitle.trim() || busy}
                   onClick={() =>
                     isPrimary
                       ? translateToAll(item, primaryTitle)
@@ -869,10 +919,10 @@ export default function MenusPage() {
                     : t.content?.menuTranslateFromPrimary}
                 </Button>
               </DisabledActionTooltip>
-              <DisabledActionTooltip hint={singleLocaleHint}>
+              <DisabledActionTooltip hint={actionHint}>
                 <Button
                   size="slim"
-                  disabled={!canTranslate || !primaryTitle.trim() || busy}
+                  disabled={actionsBlocked || !primaryTitle.trim() || busy}
                   onClick={() =>
                     isPrimary ? copyToAll(item, primaryTitle) : copyFromPrimary(item, primaryTitle)
                   }
@@ -976,39 +1026,40 @@ export default function MenusPage() {
 
             {/* Right: the selected menu's items, in the active language */}
             <div style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
+              <BlockStack gap="400">
               {error && (
-                <div style={{ marginBottom: "1rem" }}>
-                  <Banner title={t.content?.error || "Error"} tone="critical">
-                    <p>{error}</p>
-                  </Banner>
-                </div>
+                <Banner title={t.content?.error || "Error"} tone="critical">
+                  <p>{error}</p>
+                </Banner>
+              )}
+
+              {/* The app's standard language bar, in its OWN card above the
+                  content — the same shape every other content page has. It
+                  disappears entirely on a single-language shop (one permanently
+                  active button is noise, not a choice), and `shouldRenderLanguageBar`
+                  is what keeps the card from staying behind as an empty box. */}
+              {shouldRenderLanguageBar({ localeCount: localeList.length }) && (
+                <Card padding="400">
+                  <UnifiedLanguageBar
+                    shopLocales={localeList as ShopLocale[]}
+                    currentLanguage={activeLocale}
+                    primaryLocale={primaryLocale}
+                    selectedItem={languageBarItem}
+                    contentType={"menus" as ContentType}
+                    hasChanges={changeCount > 0}
+                    onLanguageChange={setActiveLocale}
+                    enabledLanguages={enabledLanguages}
+                    onToggleLanguage={toggleLanguage}
+                    showTranslateAll={false}
+                    showReloadButton={false}
+                    t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
+                  />
+                </Card>
               )}
 
               <Card>
                 {selectedMenu ? (
                   <BlockStack gap="500">
-                    <Text as="p" tone="subdued">
-                      {t.content?.menuIntro}
-                    </Text>
-
-                    {/* The app's standard language bar. It disappears entirely on
-                        a single-language shop — one permanently active button is
-                        noise, not a choice. */}
-                    {shouldRenderLanguageBar({ localeCount: localeList.length }) && (
-                      <UnifiedLanguageBar
-                        shopLocales={localeList as ShopLocale[]}
-                        currentLanguage={activeLocale}
-                        primaryLocale={primaryLocale}
-                        selectedItem={languageBarItem}
-                        contentType={"menus" as ContentType}
-                        hasChanges={changeCount > 0}
-                        onLanguageChange={setActiveLocale}
-                        showTranslateAll={false}
-                        showReloadButton={false}
-                        t={{ primaryLocaleSuffix: t.content?.primaryLanguageSuffix }}
-                      />
-                    )}
-
                     {foreignLocales.length === 0 && (
                       <Banner tone="info">
                         <p>{t.content?.menuNeedsSecondLanguage}</p>
@@ -1083,6 +1134,7 @@ export default function MenusPage() {
                   </div>
                 )}
               </Card>
+              </BlockStack>
             </div>
           </div>
         </div>

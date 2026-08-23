@@ -374,7 +374,7 @@ export const es: Translation = {
     menuCopyFromPrimary: "Copiar desde el idioma principal",
     menuMissingTranslations: "Faltan traducciones",
     menuTranslateFailed: "La traducción falló",
-    menuIntro: "Traduce aquí los elementos del menú — en todos los niveles, incluidos los subelementos. Las etiquetas del idioma principal y la estructura del menú se gestionan en el administrador de Shopify.",
+    menuAllLanguagesOff: "Todos los demás idiomas están desactivados (Ctrl+clic en un idioma para volver a activarlo).",
     menuPrimaryReadOnly: "Este es tu idioma principal. Elige otro idioma arriba para editar las traducciones.",
     menuNeedsSecondLanguage: "Para traducir menús se necesita un segundo idioma en la tienda.",
     menuNotTranslatable: "Shopify no ofrece un recurso traducible para este elemento del menú — no se puede traducir aquí.",
