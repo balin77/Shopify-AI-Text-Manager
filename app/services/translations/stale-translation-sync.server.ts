@@ -1168,7 +1168,7 @@ async function repairStaleTranslations(
   const lockId = target.lockId ?? resourceId;
   const gateway = new ShopifyApiGateway(client, shop);
   const mirror = mirrorOf(target);
-  const { retranslate, purge } = partitionStaleTranslations(
+  const { retranslate, purge, declined } = partitionStaleTranslations(
     stale,
     policy.autoTranslateExternalChanges,
     // The content-field allowlist exists to keep `handle` out. A surface that
@@ -1192,9 +1192,15 @@ async function repairStaleTranslations(
   // corrected immediately — and its `markTranslationSaved` then lands BEFORE
   // the detached run captures its baseline below. The other order made the
   // run read our own mark as "the merchant saved" and abandon itself.
+  // What WE declined to translate keeps the merchant's stored answer: we chose
+  // not to try, so "don't delete" still means don't delete. `mayPurge` is about
+  // what the automation could not deliver, which is a different promise.
+  const toPurge =
+    declined.length > 0 && policy.purgeUnreconciledSurfaces ? [...purge, ...declined] : purge;
+
   let removed = 0;
-  if (mayPurge && purge.length > 0) {
-    removed = await purgeStaleEntries(gateway, target, mirror, purge);
+  if (mayPurge && toPurge.length > 0) {
+    removed = await purgeStaleEntries(gateway, target, mirror, toPurge);
     // Protect what we just changed from a racing webhook sync that re-fetches
     // Shopify before it is consistent again — under the SAME key as every other
     // claim in this module. Marking the bare `resourceId` here made a

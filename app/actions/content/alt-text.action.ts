@@ -26,6 +26,7 @@ import type { AISettings, AIInstructions } from "@prisma/client";
 import type { SeoLimits } from "../../utils/character-limits";
 import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -828,6 +829,11 @@ export async function handleSaveImageAltText(
     }
 
     if (shopifySaved) {
+      // Claim the MEDIA resource: a detached alt re-translation watches its own
+      // lock AND every resource it is about to write, so marking the image is
+      // both precise and enough — without it the AI would overwrite the value
+      // the merchant just accepted.
+      markTranslationSaved(mediaId);
       try {
         // R4-DI7: shop-scoped — an unscoped mediaId findFirst could resolve
         // another tenant's ProductImage (per-shop-unique GIDs can collide)

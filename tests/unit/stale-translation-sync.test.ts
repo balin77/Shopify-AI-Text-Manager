@@ -52,7 +52,12 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     translate: vi.fn(async () => ({})) as any,
     translateValues: vi.fn(async () => []) as any,
   };
-  const policy = { purgeOnPrimaryChange: true, autoTranslateExternalChanges: false, plan: "max" };
+  const policy = {
+    purgeOnPrimaryChange: true,
+    purgeUnreconciledSurfaces: true,
+    autoTranslateExternalChanges: false,
+    plan: "max",
+  };
   return { db, shopify, ai, policy };
 });
 
@@ -172,6 +177,7 @@ beforeEach(() => {
   shopify.removeConfirms = null;
   shopify.registerConfirms = null;
   policy.purgeOnPrimaryChange = true;
+  policy.purgeUnreconciledSurfaces = true;
   policy.autoTranslateExternalChanges = false;
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
@@ -831,6 +837,7 @@ describe("a group spanning several resources (sub-resources)", () => {
   beforeEach(() => {
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = true;
     translated = { fr: [OPTION, VALUE, METAFIELD] };
     primary = {
       [OPTION]: { name: { value: "Farbe", digest: NEW } },
@@ -927,6 +934,30 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(shopify.registerTargets).toEqual([METAFIELD]);
     expect(shopify.removeTargets.sort()).toEqual([OPTION, VALUE].sort());
     expect(ai.translateValues.mock.calls[0][0]).toEqual(["Massivholz"]);
+  });
+
+  it("KEEPS a declined value when the merchant switched the deletion off", async () => {
+    // We chose not to hand it to the AI; that is not the automation failing, so
+    // the merchant's stored "don't delete" still means don't delete. Folding
+    // the two would delete every richtext theme translation on such a shop.
+    policy.purgeUnreconciledSurfaces = false;
+    primary = {
+      [OPTION]: { name: { value: "Zeile eins\nZeile zwei", digest: NEW } },
+      [METAFIELD]: { value: { value: "Massivholz", digest: NEW } },
+    };
+
+    await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+          { resourceId: METAFIELD, resourceType: "Metafield", key: "value" },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).toEqual([METAFIELD]);
+    expect(shopify.removeTargets).toEqual([]);
   });
 
   it("claims a PRIVATE lock so the product's own reconciliation is not blocked", async () => {

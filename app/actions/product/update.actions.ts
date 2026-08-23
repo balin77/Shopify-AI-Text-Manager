@@ -27,6 +27,7 @@ import {
 } from "~/services/content-attributes.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { altTextLockId } from "~/services/translations/translation-locks.shared";
 import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
@@ -475,6 +476,15 @@ async function updateImageAltTexts(
           }
         }
       }
+    }
+
+    // Claim the alt-text lock the moment Shopify holds the value, so a detached
+    // alt re-translation from an earlier primary save abandons the rest of its
+    // work instead of overwriting what the merchant just wrote. Under the SAME
+    // key that repair runs on (translation-locks.shared.ts) — the product's own
+    // lock belongs to its field reconciliation.
+    if (shopifySaved && params.locale !== params.primaryLocale) {
+      markTranslationSaved(altTextLockId(productId));
     }
 
     // Save to Database ONLY if Shopify save succeeded (no mismatch allowed)
@@ -1315,7 +1325,32 @@ async function updatePrimaryProduct(
   // with auto-translate on the save re-translates them and the deletion stands
   // down — read through the policy, never written as `false`, because which of
   // the two switches applies is that module's question.
-  const retranslateAltTexts = changePolicy?.autoTranslateExternalChanges ?? false;
+  //
+  // The locales are fetched FIRST, because the decision depends on the result:
+  // without a known primary locale there is nothing to translate FROM, and
+  // deciding before the lookup left a throttled shop with neither the repair
+  // nor the deletion.
+  let altForeignLocales: string[] = [];
+  let altPrimaryLocale = "";
+  if (changedAltTextIndices.length > 0 && changePolicy) {
+    try {
+      const { fetchShopLocales } = await import("~/services/sync-utils");
+      const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
+      altForeignLocales = shopLocales.filter((l) => !l.primary && l.published).map((l) => l.locale);
+      altPrimaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+    } catch (localeError: unknown) {
+      // Non-fatal: the primary write has already gone through, so throwing here
+      // would report a completed save as failed.
+      loggers.product("warn", "Could not load shop locales — alt-text translations untouched", {
+        productId,
+        error: localeError instanceof Error ? localeError.message : String(localeError),
+      });
+    }
+  }
+  const retranslateAltTexts =
+    (changePolicy?.autoTranslateExternalChanges ?? false) &&
+    altForeignLocales.length > 0 &&
+    !!altPrimaryLocale;
   const purgeStaleAltTextTranslations = retranslateAltTexts
     ? (changePolicy?.purgeOnPrimaryChange ?? false)
     : (changePolicy?.purgeUnreconciledSurfaces ?? false);
@@ -1444,24 +1479,7 @@ async function updatePrimaryProduct(
   // languages — or, with auto-translate on, replace them (block below).
   if (changedAltTextIndices.length > 0 && purgeStaleAltTextTranslations) {
     try {
-      // Get all shop locales from Shopify API (reuse if already fetched above)
-      const localesResponse = await gateway.graphql(
-        `#graphql
-          query getShopLocales {
-            shopLocales {
-              locale
-              primary
-              published
-            }
-          }`
-      );
-      const localesData = await localesResponse.json() as any;
-      const shopLocales = localesData.data?.shopLocales || [];
-
-      // Filter out the primary locale, only keep published foreign locales
-      const foreignLocales = shopLocales
-        .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
-        .map((l: { locale: string }) => l.locale);
+      const foreignLocales = altForeignLocales;
 
       if (foreignLocales.length > 0) {
         // Get product images from DB to find mediaIds
@@ -1586,14 +1604,10 @@ async function updatePrimaryProduct(
   // Best-effort — the primary write has already gone through.
   if (changedAltTextIndices.length > 0 && retranslateAltTexts) {
     try {
-      const { fetchShopLocales } = await import("~/services/sync-utils");
-      const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
-      const foreignLocales = shopLocales
-        .filter((l) => !l.primary && l.published)
-        .map((l) => l.locale);
-      const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+      const foreignLocales = altForeignLocales;
+      const primaryLocale = altPrimaryLocale;
 
-      if (foreignLocales.length > 0 && primaryLocale) {
+      {
         const dbProduct = await db.product.findUnique({
           where: { shop_id: { shop, id: productId } },
           include: { images: { orderBy: { position: "asc" } } },
@@ -1640,7 +1654,7 @@ async function updatePrimaryProduct(
             // that leaves the title's translations neither purged nor
             // refreshed — permanently, since the sync has advanced their
             // digest baseline by then.
-            lockId: `${productId}#altText`,
+            lockId: altTextLockId(productId),
             contentKind: "product",
             resourceTitle: (data.data.productUpdate.product?.title as string) || productId,
             changed: [...imageIdByMedia.keys()].map((mediaId) => ({

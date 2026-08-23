@@ -10,6 +10,7 @@ import { keyToFilename, replaceValuesInJson } from "~/utils/templates/templates.
 import { normalizeShopifyRichtext, hasHtmlTags, isRichtextTopLevelError } from "~/utils/richtext-normalize.server";
 import type { TemplatesActionContext, TranslatableField } from "./shared";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<DataResponse> {
   const { admin, db, session, formData, groupId, domain, themeGroups, resourceId, keyToResourceId, keyToResourceType, selectedThemeId } = ctx;
@@ -1070,6 +1071,11 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     for (const [key, value] of entriesToUpsert) {
       const keyResId = keyToResourceId.get(key) || resourceId;
       const keyThemeId = extractThemeIdFromResourceId(keyResId) ?? "";
+      // Claim the resource the merchant just translated. A detached theme
+      // re-translation from an earlier primary save watches its own lock AND
+      // every resource it is about to write, so this is what makes it abandon
+      // the rest instead of overwriting a hand-written value.
+      markTranslationSaved(keyResId);
       dbOps.push(
         db.themeTranslation.upsert({
           where: {

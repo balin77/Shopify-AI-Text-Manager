@@ -220,7 +220,18 @@ export function findStaleTranslations(
 }
 
 /**
- * Split the stale set into "re-translate this" and "just delete this".
+ * Split the stale set into three: "re-translate this", "just delete this", and
+ * "we declined to translate this".
+ *
+ * The third one exists because the two are not the same promise. `purge` is
+ * what the automation CANNOT deliver — a cleared source with nothing to
+ * translate, a missing digest, a `handle` — and a shop that asked for "always
+ * give it the new text" wants those removed rather than left describing text
+ * that no longer exists. `declined` is what WE refuse to hand to the AI for our
+ * own safety (a multi-line value, markup, a type the prompt would corrupt), and
+ * that is not the merchant's automation failing: it is us choosing not to try,
+ * so their stored "don't delete" answer stands. Folding the two would delete
+ * every richtext theme translation on a shop that switched the deletion off.
  *
  * A stale entry can only be re-translated when there IS a new primary value to
  * translate (a cleared field has nothing to say), the key is one we translate
@@ -264,17 +275,29 @@ export function partitionStaleTranslations(
    * filtered to the ones it changed.
    */
   opts: { anyKey?: boolean } = {},
-): { retranslate: StaleTranslation[]; purge: StaleTranslation[] } {
+): { retranslate: StaleTranslation[]; purge: StaleTranslation[]; declined: StaleTranslation[] } {
   const retranslate: StaleTranslation[] = [];
   const purge: StaleTranslation[] = [];
+  const declined: StaleTranslation[] = [];
   for (const entry of stale) {
-    const canRetranslate =
-      autoTranslate &&
-      !!entry.primaryValue.trim() &&
-      !!entry.digest &&
-      entry.retranslatable !== false &&
-      (opts.anyKey ? survivesValuePrompt(entry.primaryValue) : AUTO_RETRANSLATABLE_KEYS.has(entry.key));
-    (canRetranslate ? retranslate : purge).push(entry);
+    if (!autoTranslate || !entry.primaryValue.trim() || !entry.digest) {
+      // Nothing to translate, or nothing to register it against. The
+      // automation cannot deliver these no matter what we do.
+      purge.push(entry);
+      continue;
+    }
+    if (opts.anyKey) {
+      // A value surface: we DECLINE anything the single-line prompt would
+      // mangle — see `declined` on the return type for why that is not the
+      // same as a failure.
+      const safe = entry.retranslatable !== false && survivesValuePrompt(entry.primaryValue);
+      (safe ? retranslate : declined).push(entry);
+      continue;
+    }
+    // A content surface: the allowlist keeps `handle` out, and that exclusion
+    // is deliberately a PURGE — a slug the merchant cannot have re-translated
+    // must not keep describing a URL that moved (CLAUDE.md).
+    (AUTO_RETRANSLATABLE_KEYS.has(entry.key) ? retranslate : purge).push(entry);
   }
-  return { retranslate, purge };
+  return { retranslate, purge, declined };
 }

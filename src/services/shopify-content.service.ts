@@ -7,6 +7,7 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
+import { featuredAltLockId } from '../../app/services/translations/translation-locks.shared';
 import { isAuthError, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
@@ -607,6 +608,7 @@ export class ShopifyContentService {
             foreignLocales: [locale],
           });
         }
+        markTranslationSaved(featuredAltLockId(resourceId));
         await db.contentTranslation.deleteMany({
           where: { shop, resourceId, resourceType, key: 'image_alt_text', locale, marketId: "" },
         });
@@ -640,6 +642,12 @@ export class ShopifyContentService {
         loggers.translation('error', `[saveImageAltTextTranslation] Shopify userErrors`, { resourceType, errors: userErrors });
         return { saved: false, reason: 'shopify-error' };
       }
+
+      // Claim the key the featured-alt repair runs under (see
+      // translation-locks.shared.ts). The parent's own lock belongs to its
+      // CONTENT repair, so marking that instead would not reach a detached alt
+      // run — and it would overwrite this value minutes later.
+      markTranslationSaved(featuredAltLockId(resourceId));
 
       await db.contentTranslation.upsert({
         where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: 'image_alt_text', locale, marketId: "" } },
@@ -1492,7 +1500,7 @@ export class ShopifyContentService {
               // repair runs under: an article save fires both, and the second
               // claim would move the timestamp the first run captured and abort
               // it after one locale, leaving the rest in neither list.
-              lockId: `${resourceId}#featuredAlt`,
+              lockId: featuredAltLockId(resourceId),
               contentKind: resourceType === 'Article' ? 'blog' : 'collection',
               resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
               changed: [{ resourceId: imageResourceId, resourceType: 'MediaImage', key: 'alt' }],
