@@ -260,6 +260,8 @@ export function MenuTargetPicker({
    * headers are the point: "Vase" matching a product and a collection is two
    * different links, and a flat list of titles cannot say which is which.
    */
+  const targetlessOptions = options.filter((o) => o.id.startsWith("type:"));
+
   const listbox = (
     <Listbox onSelect={applyById}>
       {looksLikeMenuUrl(typedUrl) && (
@@ -268,18 +270,21 @@ export function MenuTargetPicker({
         </Listbox.Option>
       )}
 
-      <Listbox.Section
-        divider={false}
-        title={<Listbox.Header>{strings.targetlessGroup}</Listbox.Header>}
-      >
-        {options
-          .filter((o) => o.id.startsWith("type:"))
-          .map((o) => (
+      {/* Only when the query left something in it: a header with an empty
+          group under it is a line the merchant has to read past on every
+          search that matched a product and no fixed destination. */}
+      {targetlessOptions.length > 0 && (
+        <Listbox.Section
+          divider={false}
+          title={<Listbox.Header>{strings.targetlessGroup}</Listbox.Header>}
+        >
+          {targetlessOptions.map((o) => (
             <Listbox.Option key={o.id} value={o.id} accessibilityLabel={o.label}>
               <Listbox.TextOption>{o.label}</Listbox.TextOption>
             </Listbox.Option>
           ))}
-      </Listbox.Section>
+        </Listbox.Section>
+      )}
 
       {(results?.groups ?? []).map((group) => (
         <Listbox.Section
