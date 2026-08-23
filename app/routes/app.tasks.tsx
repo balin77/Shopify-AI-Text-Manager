@@ -17,10 +17,17 @@ import {
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { getTaskDateRange } from "~/config/constants";
-import { extractReadableName } from "~/utils/templates-field-factory";
 import { taskErrorText } from "~/utils/task-error-text";
 import { logger } from "~/utils/logger.server";
 import { getFormString } from "~/utils/form-data.utils";
+import {
+  taskTypeLabel,
+  resourceTypeLabel,
+  fieldTypeLabel,
+  taskSubjectLabel,
+} from "~/services/tasks/task-labels.shared";
+import { hasTaskDetails } from "~/services/tasks/task-details.shared";
+import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
 
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -53,18 +60,53 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Get total count for pagination
     const totalCount = await db.task.count({ where });
 
-    // Get tasks with pagination
+    // Get tasks with pagination.
+    //
+    // `prompt` and `result` are read but NEVER shipped: the page used to spread
+    // the whole row, so 20 rows of full AI prompts INCLUDING their responses
+    // plus every result blob crossed the wire on each visit and again on every
+    // 3-second revalidation while a task ran — for the 19 cards nobody expanded.
+    // The expanded card fetches them one at a time from /api/task-result.
+    //
+    // They stay in the SELECT because Prisma cannot compute `prompt IS NOT NULL`
+    // (a select takes booleans, not expressions), and the cost that matters here
+    // is the wire, not the query.
     const tasks = await db.task.findMany({
       where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
+      select: {
+        id: true,
+        type: true,
+        status: true,
+        resourceType: true,
+        resourceId: true,
+        resourceTitle: true,
+        fieldType: true,
+        targetLocale: true,
+        progress: true,
+        total: true,
+        processed: true,
+        error: true,
+        aiModel: true,
+        startedAt: true,
+        completedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        expiresAt: true,
+        prompt: true,
+        result: true,
+      },
     });
 
     // Sanitize tasks to prevent JSON serialization errors
-    const sanitizedTasks = tasks.map(task => ({
+    const sanitizedTasks = tasks.map(({ prompt, result, ...task }) => ({
       ...task,
-      result: task.result, // Include result for displaying AI output
+      // Booleans only — `hasTaskDetails` answers "is there anything behind the
+      // arrow" from these, so the payload never carries the text itself.
+      hasPrompt: typeof prompt === "string" && prompt.length > 0,
+      hasResult: typeof result === "string" && result.length > 0,
       error: task.error ? String(task.error) : null, // Full error message
       startedAt: task.startedAt.toISOString(),
       completedAt: task.completedAt ? task.completedAt.toISOString() : null,
@@ -150,7 +192,6 @@ export default function TasksPage() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
-  const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(new Set());
   const [isClient, setIsClient] = useState(false);
 
   // Mark when we're on the client to avoid hydration mismatches with date formatting
@@ -251,29 +292,6 @@ export default function TasksPage() {
     });
   };
 
-  const togglePromptExpanded = (promptId: string) => {
-    setExpandedPromptIds((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(promptId)) {
-        newSet.delete(promptId);
-      } else {
-        newSet.add(promptId);
-      }
-      return newSet;
-    });
-  };
-
-  // Helper to truncate text if too long
-  const TRUNCATE_LENGTH = 500;
-  const shouldTruncate = (text: string) => text.length > TRUNCATE_LENGTH;
-  const truncateText = (text: string, id: string) => {
-    const isExpanded = expandedPromptIds.has(id);
-    if (!shouldTruncate(text) || isExpanded) {
-      return text;
-    }
-    return text.substring(0, TRUNCATE_LENGTH);
-  };
-
   // Generate Shopify admin URL from resourceId and resourceType
   const getShopifyAdminUrl = (resourceId: string | null, resourceType: string | null): string | null => {
     if (!resourceId || !resourceType || !shop) return null;
@@ -284,15 +302,27 @@ export default function TasksPage() {
 
     const numericId = match[1];
 
-    // Map resourceType to Shopify admin path
+    // Map resourceType to Shopify admin path.
+    //
+    // Runners write this column in several spellings — `"products"`
+    // (api.translate-alt-text-template.tsx), `"Product"`
+    // (app.seo.performance.tsx), plus `"seo"` and `"templateTitles"`, which
+    // name no single admin object at all. The lookup is therefore normalised
+    // and the map lists every spelling EXPLICITLY: a type that is not in it
+    // (site-wide SEO tasks, e-mail templates) yields no link, which is the
+    // right answer — never a guessed, broken admin URL.
     const pathMap: Record<string, string> = {
       product: "products",
+      products: "products",
       collection: "collections",
+      collections: "collections",
       page: "pages",
+      pages: "pages",
       blog: "articles", // Blog articles use /articles path
+      blogs: "articles",
     };
 
-    const path = pathMap[resourceType];
+    const path = pathMap[resourceType.trim().toLowerCase()];
     if (!path) return null;
 
     // Return full Shopify admin URL
@@ -366,21 +396,36 @@ export default function TasksPage() {
             <BlockStack gap="300">
               {tasks.map((task: any) => {
                 const isExpanded = expandedTaskIds.has(task.id);
+                // Eight task types never go through the AI service and write a
+                // result this app has no summariser for — their dropdown was
+                // guaranteed to open onto nothing. Without details the card is
+                // plain: no arrow, no pointer, no click target.
+                const expandable = hasTaskDetails({
+                  type: task.type,
+                  hasPrompt: Boolean(task.hasPrompt),
+                  hasResult: Boolean(task.hasResult),
+                });
+                const subject = taskSubjectLabel(task, t);
+                const resourceLabel = resourceTypeLabel(task.resourceType, t);
+                const fieldLabel = fieldTypeLabel(task.fieldType, t);
                 return (
                 <Card key={task.id}>
                   <BlockStack gap="300">
-                    {/* Header - Clickable to expand/collapse */}
+                    {/* Header - Clickable to expand/collapse (only where there
+                        is something to expand onto) */}
                     <div
-                      onClick={() => toggleTaskExpanded(task.id)}
-                      style={{ cursor: "pointer" }}
+                      onClick={expandable ? () => toggleTaskExpanded(task.id) : undefined}
+                      style={expandable ? { cursor: "pointer" } : undefined}
                     >
                       <InlineStack align="space-between" blockAlign="center">
                         <InlineStack gap="200" blockAlign="center">
-                          <Text as="span" variant="headingMd" fontWeight="medium">
-                            {isExpanded ? "▼" : "▶"}
-                          </Text>
+                          {expandable && (
+                            <Text as="span" variant="headingMd" fontWeight="medium">
+                              {isExpanded ? "▼" : "▶"}
+                            </Text>
+                          )}
                           <Text as="h2" variant="headingMd" fontWeight="semibold">
-                            {(t.tasks.taskType as any)[task.type] || task.type}
+                            {taskTypeLabel(task.type, t)}
                           </Text>
                           {getStatusBadge(task.status)}
                         </InlineStack>
@@ -410,14 +455,15 @@ export default function TasksPage() {
                       </InlineStack>
                     </div>
 
-                    {/* Resource Info - Always Visible */}
-                    {task.resourceTitle && (
+                    {/* Resource Info - Always Visible.
+                        Gated on the SUBJECT, not on the raw resourceTitle:
+                        `taskSubjectLabel` answers null for a seoBulkFix row
+                        whose machine subject names no dashboard problem
+                        ("fixAllForItem:…"), and a badge with nothing beside it
+                        is an empty row. */}
+                    {subject && (
                       <InlineStack gap="200">
-                        {task.resourceType && (
-                          <Badge tone="info">
-                            {(t.tasks.resourceType as any)[task.resourceType] || task.resourceType}
-                          </Badge>
-                        )}
+                        {resourceLabel && <Badge tone="info">{resourceLabel}</Badge>}
                         {(() => {
                           const adminUrl = getShopifyAdminUrl(task.resourceId, task.resourceType);
                           if (adminUrl) {
@@ -429,13 +475,13 @@ export default function TasksPage() {
                                 style={{ color: "#008060", textDecoration: "none" }}
                                 onClick={(e: React.MouseEvent) => e.stopPropagation()}
                               >
-                                {task.resourceTitle}
+                                {subject}
                               </a>
                             );
                           }
                           return (
                             <Text as="p" variant="bodyMd">
-                              {task.resourceTitle}
+                              {subject}
                             </Text>
                           );
                         })()}
@@ -443,13 +489,9 @@ export default function TasksPage() {
                     )}
 
                     {/* Field Type - Always Visible */}
-                    {task.fieldType && (
+                    {fieldLabel && (
                       <Text as="p" variant="bodySm" tone="subdued">
-                        {t.tasks.fieldType && (t.tasks.fieldType as any)[task.fieldType]
-                          ? (t.tasks.fieldType as any)[task.fieldType]
-                          : (task.fieldType.includes('.') || task.fieldType.includes(':'))
-                            ? extractReadableName(task.fieldType)
-                            : task.fieldType}
+                        {fieldLabel}
                         {task.targetLocale && ` → ${task.targetLocale}`}
                       </Text>
                     )}
@@ -499,117 +541,19 @@ export default function TasksPage() {
                       </div>
                     )}
 
-                    {/* Expandable Details - AI Prompt & Output */}
-                    {isExpanded && (
-                      <BlockStack gap="300">
-                        {/* AI Prompt & Response Section */}
-                        {task.prompt && (
-                          <div style={{ padding: "1rem", background: "#f0f7ff", borderRadius: "8px", border: "1px solid #b3d9ff" }}>
-                            <BlockStack gap="200">
-                              <Text as="h3" variant="headingSm" fontWeight="semibold">
-                                {t.tasks.aiPrompt || "AI Prompt"} {(() => {
-                                  try {
-                                    const parsed = JSON.parse(task.prompt);
-                                    if (Array.isArray(parsed)) {
-                                      return `(${parsed.length} ${t.tasks.requests || "requests"})`;
-                                    }
-                                  } catch {
-                                    // Not JSON, single prompt
-                                  }
-                                  return "";
-                                })()}
-                              </Text>
-                              <div style={{ maxHeight: "600px", overflowY: "auto" }}>
-                                {(() => {
-                                  try {
-                                    const parsed = JSON.parse(task.prompt);
-                                    if (Array.isArray(parsed)) {
-                                      // New format: array of { timestamp, prompt, response? }
-                                      return (
-                                        <BlockStack gap="300">
-                                          {parsed.map((entry: { timestamp: string; prompt: string; response?: string }, index: number) => {
-                                            const promptId = `${task.id}-prompt-${index}`;
-                                            const responseId = `${task.id}-response-${index}`;
-                                            const promptTruncated = shouldTruncate(entry.prompt);
-                                            const responseTruncated = entry.response ? shouldTruncate(entry.response) : false;
-
-                                            return (
-                                            <div key={index} style={{ padding: "0.75rem", background: "white", borderRadius: "4px", border: "1px solid #e5e5e5" }}>
-                                              <Text as="p" variant="bodySm" tone="subdued">
-                                                #{index + 1} - {isClient ? new Date(entry.timestamp).toLocaleTimeString() : entry.timestamp}
-                                              </Text>
-                                              <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "400px", overflowY: "auto" }}>
-                                                {truncateText(entry.prompt, promptId)}
-                                                {promptTruncated && (
-                                                  <div style={{ marginTop: "0.5rem" }}>
-                                                    <Button
-                                                      size="slim"
-                                                      variant="plain"
-                                                      onClick={() => togglePromptExpanded(promptId)}
-                                                    >
-                                                      {expandedPromptIds.has(promptId) ? (t.tasks as any).showLess || "Show less" : `...${(t.tasks as any).showMore || "Show more"} (${entry.prompt.length} chars)`}
-                                                    </Button>
-                                                  </div>
-                                                )}
-                                              </div>
-                                              {entry.response && (
-                                                <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "#f0fff4", borderRadius: "4px", border: "1px solid #9ae6b4" }}>
-                                                  <Text as="p" variant="bodySm" fontWeight="semibold" tone="success">
-                                                    {t.tasks.aiOutput || "AI Output"} #{index + 1}
-                                                  </Text>
-                                                  <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.25rem", maxHeight: "400px", overflowY: "auto" }}>
-                                                    {truncateText(entry.response, responseId)}
-                                                    {responseTruncated && (
-                                                      <div style={{ marginTop: "0.5rem" }}>
-                                                        <Button
-                                                          size="slim"
-                                                          variant="plain"
-                                                          onClick={() => togglePromptExpanded(responseId)}
-                                                        >
-                                                          {expandedPromptIds.has(responseId) ? (t.tasks as any).showLess || "Show less" : `...${(t.tasks as any).showMore || "Show more"} (${entry.response.length} chars)`}
-                                                        </Button>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </div>
-                                            );
-                                          })}
-                                        </BlockStack>
-                                      );
-                                    }
-                                  } catch {
-                                    // Not JSON, display as single prompt
-                                  }
-                                  // Legacy format: single prompt string
-                                  const legacyPromptId = `${task.id}-legacy-prompt`;
-                                  const legacyTruncated = shouldTruncate(task.prompt);
-                                  return (
-                                    <div style={{ padding: "0.75rem", background: "white", borderRadius: "4px" }}>
-                                      <div style={{ fontFamily: "monospace", fontSize: "12px", whiteSpace: "pre-wrap", maxHeight: "400px", overflowY: "auto" }}>
-                                        {truncateText(task.prompt, legacyPromptId)}
-                                      </div>
-                                      {legacyTruncated && (
-                                        <div style={{ marginTop: "0.5rem" }}>
-                                          <Button
-                                            size="slim"
-                                            variant="plain"
-                                            onClick={() => togglePromptExpanded(legacyPromptId)}
-                                          >
-                                            {expandedPromptIds.has(legacyPromptId) ? (t.tasks as any).showLess || "Show less" : `...${(t.tasks as any).showMore || "Show more"} (${task.prompt.length} chars)`}
-                                          </Button>
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            </BlockStack>
-                          </div>
-                        )}
-
-                      </BlockStack>
+                    {/* Expandable Details — result summary, failure list and
+                        the AI prompt, in that order (what happened outranks how
+                        it was asked for). Fetched on expand: the loader ships
+                        neither prompt nor result. `updatedAt` is passed in so a
+                        running task's log keeps filling in off the page's own
+                        3-second revalidation, without a second timer. */}
+                    {expandable && isExpanded && (
+                      <TaskDetailsPanel
+                        taskId={task.id}
+                        type={task.type}
+                        updatedAt={task.updatedAt}
+                        isClient={isClient}
+                      />
                     )}
                   </BlockStack>
                 </Card>

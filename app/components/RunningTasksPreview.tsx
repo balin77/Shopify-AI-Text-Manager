@@ -1,7 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { ProgressBar, Spinner, Text, Badge, BlockStack, InlineStack } from "@shopify/polaris";
 import { useI18n } from "../contexts/I18nContext";
-import { extractReadableName } from "../utils/templates-field-factory";
+import {
+  taskTypeLabel,
+  resourceTypeLabel,
+  fieldTypeLabel,
+} from "../services/tasks/task-labels.shared";
 
 interface RunningTaskPreview {
   id: string;
@@ -75,19 +79,6 @@ export function RunningTasksPreview({ count }: { count: number }) {
     mountedRef.current = false;
     if (hideTimer.current) clearTimeout(hideTimer.current);
   }, []);
-
-  const taskTypeLabel = (type: string) =>
-    (t.tasks.taskType as Record<string, string>)?.[type] || type;
-
-  const resourceTypeLabel = (rt: string | null) =>
-    rt ? (t.tasks.resourceType as Record<string, string>)?.[rt] || rt : null;
-
-  const fieldTypeLabel = (raw: string | null) => {
-    if (!raw) return null;
-    const mapped = (t.tasks.fieldType as Record<string, string>)?.[raw];
-    if (mapped) return mapped;
-    return raw.includes(".") || raw.includes(":") ? extractReadableName(raw) : raw;
-  };
 
   const formatDuration = (startedAt: string) => {
     const ms = Date.now() - new Date(startedAt).getTime();
@@ -164,9 +155,9 @@ export function RunningTasksPreview({ count }: { count: number }) {
             ) : (
               <BlockStack gap="300">
                 {(tasks ?? []).map((task) => {
-                  const origin = resourceTypeLabel(task.resourceType);
-                  const field = fieldTypeLabel(task.fieldType);
-                  const name = task.resourceTitle || field || taskTypeLabel(task.type);
+                  const origin = resourceTypeLabel(task.resourceType, t);
+                  const field = fieldTypeLabel(task.fieldType, t);
+                  const name = task.resourceTitle || field || taskTypeLabel(task.type, t);
                   const progress = clampProgress(task.progress);
                   return (
                     <div key={task.id}>
@@ -186,7 +177,7 @@ export function RunningTasksPreview({ count }: { count: number }) {
 
                         <InlineStack gap="150" blockAlign="center" wrap={false}>
                           <Badge tone="info" size="small">
-                            {taskTypeLabel(task.type)}
+                            {taskTypeLabel(task.type, t)}
                           </Badge>
                           <Text as="span" variant="bodyXs" tone="subdued" truncate>
                             {[origin, field, task.status === "running" ? formatDuration(task.startedAt) : null]
