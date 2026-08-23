@@ -222,6 +222,9 @@ export const en: Translation = {
     // carries several of them, so counting entries and saying "fields" named
     // the wrong thing on the one page where that distinction is the point.
     metaobjectEntriesNoun: "entries",
+    metaobjectEntryNoun: "entry",
+    metaobjectEntriesLoadFailed: "Could not load the entries of this type.",
+    metaobjectEntryListHint: "separate values with |",
     metaobjectsSearchEntries: "Search entries...",
     // PLAN_METAOBJECTS_EDITOR — the entry card
     metaobjectDeleteInUse: "Something in your shop still references this entry, so Shopify will not delete it. Remove the reference there first.",
@@ -246,6 +249,8 @@ export const en: Translation = {
     metaobjectColorBaseConvention: "this app's suggestion, not a standard colour",
     metaobjectEntryPickImage: "Choose image",
     metaobjectEntryImagesOnly: "Only images can be used in this field.",
+    metaobjectEntryUploadFailed: "The upload could not be stored as a file.",
+    metaobjectEntryFilesOnly: "Only files from your library or an upload can be used here.",
     metaobjectEntryChangeImage: "Change image",
     metaobjectEntryReadOnlyDefinition: "This app cannot change entries of this definition.",
     metaobjectEntryReadOnlyUnknown: "Whether this definition is writable is unknown — reload to find out.",

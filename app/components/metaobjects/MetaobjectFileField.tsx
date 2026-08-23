@@ -91,7 +91,11 @@ export function MetaobjectFileField({
           // is still a usable reference — refusing it would leave an orphaned
           // file in the merchant's library and no value in the field.
           if (!data.fileId) {
-            setError(typeof data.error === "string" ? data.error : "The upload could not be stored as a file.");
+            setError(
+              typeof data.error === "string"
+                ? data.error
+                : content.metaobjectEntryUploadFailed || "The upload could not be stored as a file.",
+            );
             return;
           }
           onChange(data.fileId);
@@ -105,9 +109,15 @@ export function MetaobjectFileField({
         return;
       }
       // An external video URL is not a file reference at all.
-      setError("Only files from your library or an upload can be used here.");
+      setError(
+        content.metaobjectEntryFilesOnly ||
+          "Only files from your library or an upload can be used here.",
+      );
     },
-    [onChange],
+    // `content` is a dependency because the two messages above are read out of
+    // it — a callback pinned to the first render would keep answering in the
+    // language the page was opened in after a language switch.
+    [onChange, content],
   );
 
   const shownPreview = localPreview ?? previewUrl ?? null;

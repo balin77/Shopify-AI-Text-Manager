@@ -500,6 +500,16 @@
   max-width: var(--app-entry-wide-field-max-width);
 }
 
+/* The row ABOVE the grid — today the entry's image.
+   Capped at ONE column's width rather than left to fill the card: the field
+   chrome draws its clear button in the top-right corner of the field, so at
+   full card width the bin ends up an arm's length from the 48px tile it
+   empties, while every other field on the card has it right beside the label.
+   One column is also what the field was sized for. */
+.metaobject-entry-fields__lead {
+  max-width: var(--app-entry-field-min-width);
+}
+
 @media (max-width: 899px) {
   :root {
     --app-bottom-inset: calc(env(safe-area-inset-bottom, 0px) + 90px);
