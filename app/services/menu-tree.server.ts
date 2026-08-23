@@ -60,7 +60,10 @@ import {
   restoreLinkTranslations,
   type CapturedLinkTranslations,
 } from "./menu-translation-repair.server";
-import { isPurgeOnPrimaryChangeEnabled } from "./translations/translation-change-policy.server";
+import {
+  loadTranslationChangePolicy,
+  type TranslationChangePolicy,
+} from "./translations/translation-change-policy.server";
 import { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } from "./bulk-editor/translations.server";
 import { logger } from "../utils/logger.server";
 
@@ -261,6 +264,13 @@ export interface SaveMenuTreeParams {
   menuTitle?: string;
   /** Published foreign locales — the scope of both the repair and the purge. */
   foreignLocales: string[];
+  /**
+   * The shop's primary locale — the language the titles are written in, which
+   * the auto-re-translation has to name. Empty (a failed lookup) simply means
+   * no re-translation: there is nothing to translate FROM, so the deletion
+   * takes over, which is the direction that never leaves stale text live.
+   */
+  primaryLocale: string;
   /** Active market ids. The repair covers them; an empty list means global only. */
   marketIds: string[];
 }
@@ -277,7 +287,7 @@ export async function saveMenuTree(
   shop: string,
   params: SaveMenuTreeParams,
 ): Promise<MenuTreeSaveResult> {
-  const { menuId, fingerprint, tree, menuTitle, foreignLocales, marketIds } = params;
+  const { menuId, fingerprint, tree, menuTitle, foreignLocales, primaryLocale, marketIds } = params;
 
   // ── 1. Fresh read ────────────────────────────────────────────────────────
   let menu: RawMenu | null = null;
@@ -422,14 +432,79 @@ export async function saveMenuTree(
   const purgedLinkIds: string[] = [];
   let purgedTranslationCount = 0;
   const movedIds = new Set(diff.reparented.map((r) => r.id));
-  const renamedOnly = diff.renamed.map((r) => r.id).filter((id) => !movedIds.has(id));
+  const renamedOnlyEntries = diff.renamed.filter((r) => !movedIds.has(r.id));
+  const renamedOnly = renamedOnlyEntries.map((r) => r.id);
+
+  // With auto-translate on, a rename is REPLACED rather than deleted. A menu
+  // has no webhook and no sync of its own, so this save is the only event that
+  // will ever notice — which is precisely why the deletion used to stand
+  // regardless of the switch.
+  let policy: TranslationChangePolicy | null = null;
   if (renamedOnly.length > 0 && foreignLocales.length > 0) {
-    let mayPurge = false;
     try {
-      mayPurge = await isPurgeOnPrimaryChangeEnabled(shop, db, { reconciled: false });
+      policy = await loadTranslationChangePolicy(shop, db);
     } catch {
-      mayPurge = true; // The policy module fails open by design.
+      policy = null; // The policy module fails open by design; so does this.
     }
+  }
+  const retranslateRenames =
+    !!policy?.autoTranslateExternalChanges && !!primaryLocale && renamedOnly.length > 0;
+
+  if (retranslateRenames) {
+    try {
+      const { reconcileAfterPrimarySave } = await import(
+        "./translations/stale-translation-sync.server"
+      );
+      await reconcileAfterPrimarySave({
+        client: gateway,
+        shop,
+        // The GROUP is the menu — one Task row the merchant recognises, one
+        // in-flight key. Each entry names the LINK its translation lives on,
+        // which is what the register, the removal and the mirror address.
+        resourceId: menuId,
+        resourceType: "Menu",
+        // The prompt comes from `translateAs`; this only decides the Task
+        // label, and `taskResourceType` keeps a menu OUT of the admin-path map,
+        // which has no entry for it and must not guess one.
+        contentKind: "page",
+        taskResourceType: "menu",
+        resourceTitle: menuTitle || menuId,
+        changed: renamedOnlyEntries
+          .map((entry) => ({
+            resourceId: linkGidForMenuItem(entry.id) ?? "",
+            resourceType: MENU_LINK_RESOURCE_TYPE,
+            key: MENU_LINK_KEY,
+            // A rename keeps the translation and flags it outdated with a
+            // CHANGED digest (measured, CLAUDE.md), so the read-back must show
+            // the new title before anything may be translated against it.
+            expectedValue: entry.to,
+          }))
+          .filter((entry) => !!entry.resourceId),
+        foreignLocales,
+        policy: policy!,
+        translateAs: {
+          kind: "values",
+          context: "navigation menu item titles",
+          sourceLocale: primaryLocale,
+        },
+      });
+    } catch (error) {
+      // Never fail the save over the repair: the tree write has already gone
+      // through, and a thrown error here would report it as broken.
+      logger.warn("[MENU-TREE] Rename re-translation failed — translations kept", {
+        context: "MenuTree",
+        shop,
+        menuId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (!retranslateRenames && renamedOnly.length > 0 && foreignLocales.length > 0) {
+    // `purgeUnreconciledSurfaces` is the merchant's stored answer, unmodified —
+    // it is what applies wherever nothing re-translates, which is every menu
+    // save that did not just take the branch above.
+    const mayPurge = policy?.purgeUnreconciledSurfaces ?? true;
     if (mayPurge) {
       for (const menuItemId of renamedOnly) {
         const linkId = linkGidForMenuItem(menuItemId);
