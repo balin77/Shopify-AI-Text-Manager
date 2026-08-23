@@ -1008,6 +1008,25 @@ html {
   z-index: 1150 !important;
 }
 
+/* EVERY Polaris tooltip, in one place. Polaris puts its overlays on
+   `--p-z-index-2` (400), which loses against this app's own fixed layers —
+   MainNavigation (1000), ContentTypeNavigation (998), the sticky mobile item
+   dropdown (999). A tooltip on any control that happens to sit under one of
+   them (the editor's action bar is the usual one, opening upwards into the
+   language bar and the nav above it) was drawn BEHIND it. The z-index lives on
+   the PositionedOverlay wrapper, which carries no tooltip-specific class of its
+   own — hence `:has()` on the tooltip child, which also keeps popovers and
+   modal overlays out of this rule.
+
+   1300 clears the modal layers above too (1050–1200), which is right: a tooltip
+   on a control INSIDE a dialog has to be readable. No `!important`, on purpose
+   — the selector already outranks Polaris' own, and a call site that passes
+   `zIndexOverride` for a reason must still win as an inline style. Call sites
+   therefore no longer need that prop for the app's own layers. */
+.Polaris-PositionedOverlay:has(> .Polaris-Tooltip-TooltipOverlay) {
+  z-index: 1300;
+}
+
 /* Image Gallery: Keep aspect ratio consistent at all screen sizes */
 .image-preview-large > div {
   padding-bottom: 100% !important; /* Always maintain square aspect ratio */
