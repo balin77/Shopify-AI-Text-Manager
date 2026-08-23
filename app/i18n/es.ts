@@ -1923,6 +1923,7 @@ export const es: Translation = {
     failuresMore: "+{n} más",
     detailsLoading: "Cargando detalles…",
     detailsError: "No se pudieron cargar los detalles.",
+    detailsEmpty: "Esta tarea no registró más detalles.",
     capped: "El análisis se limitó — no se cubrió todo.",
     crawlCapped: "El rastreo alcanzó su límite de páginas — no se visitaron todas.",
     internalLinksCapped: "Se alcanzó el límite de sugerencias pendientes — algunas coincidencias no se guardaron.",

@@ -1938,6 +1938,7 @@ export const de = {
     failuresMore: "+{n} weitere",
     detailsLoading: "Details werden geladen…",
     detailsError: "Details konnten nicht geladen werden.",
+    detailsEmpty: "Dieser Task hat keine weiteren Details aufgezeichnet.",
     capped: "Der Scan wurde begrenzt — es wurde nicht alles erfasst.",
     crawlCapped: "Der Crawl hat sein Seitenlimit erreicht — nicht jede Seite wurde besucht.",
     internalLinksCapped: "Das Limit für offene Vorschläge wurde erreicht — einige Treffer wurden nicht gespeichert.",

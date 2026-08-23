@@ -117,12 +117,17 @@ export function TaskDetailsPanel({ taskId, type, updatedAt, isClient }: TaskDeta
   const summary = summariseTaskResult(type, detail.result);
   const prompt = detail.prompt;
 
-  // Reached when the row promised details (hasTaskDetails) but the blob turned
-  // out to be malformed or the prompt was cleared meanwhile. Never blank.
+  // Reached when the row promised details and the fetch SUCCEEDED, but this
+  // particular blob summarises to nothing. `hasTaskDetails` answers from the
+  // registry — "this type can summarise SOME blob" — so a registered type
+  // whose row carries a payload, a bare AI string or a result the recovery
+  // path truncated lands here legitimately. That is not an error and must not
+  // be dressed as one: `detailsError` sends a merchant looking for a fault
+  // that does not exist. The failed FETCH is handled above, where it belongs.
   if (!summary && !prompt) {
     return (
       <Text as="p" variant="bodySm" tone="subdued">
-        {t.tasks?.detailsError}
+        {t.tasks?.detailsEmpty}
       </Text>
     );
   }

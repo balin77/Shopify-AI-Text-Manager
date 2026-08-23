@@ -1940,6 +1940,7 @@ export const en: Translation = {
     failuresMore: "+{n} more",
     detailsLoading: "Loading details…",
     detailsError: "Details could not be loaded.",
+    detailsEmpty: "This task recorded no further details.",
     capped: "Scan was capped — not everything was covered.",
     crawlCapped: "Crawl hit its page limit — not every page was visited.",
     internalLinksCapped: "The pending-suggestion limit was reached — some matches were not saved.",
