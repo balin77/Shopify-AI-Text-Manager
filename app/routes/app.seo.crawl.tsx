@@ -748,7 +748,7 @@ export default function SeoCrawl() {
     if (externalToggleFetcher.state !== "idle" || !externalToggleFetcher.data) return;
     if (externalToggleFetcher.data.ok === false) {
       setExternalChecksEnabled(data.externalChecksEnabled);
-      showInfoBox(c.externalChecksRefused, "critical", t.common?.error || "Error");
+      showInfoBox(c.externalChecksRefused, "critical");
     }
   }, [externalToggleFetcher.state, externalToggleFetcher.data, data.externalChecksEnabled]);
 

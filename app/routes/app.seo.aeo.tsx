@@ -559,7 +559,7 @@ export default function SeoAeo() {
     if (autoFetcher.state !== "idle" || !autoFetcher.data) return;
     if (autoFetcher.data.ok === false) {
       setLlmsAutoDraft(data.llmsAutoUpdate);
-      showInfoBox(a.llmsAutoSaveFailed, "critical", t.common?.error || "Error");
+      showInfoBox(a.llmsAutoSaveFailed, "critical");
     }
   }, [autoFetcher.state, autoFetcher.data, data.llmsAutoUpdate]);
   const removeFetcher = useFetcher<ActionResult>();
