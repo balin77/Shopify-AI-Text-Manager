@@ -285,7 +285,11 @@ async function foreignTranslationPairs(
 ): Promise<Set<string>> {
   const wanted = new Set(changedKeys);
   const pairs = new Set<string>();
-  for (const locale of foreignLocales) {
+  // CONCURRENT, because this sits in the merchant's save request after the
+  // primary write has already succeeded: sequentially, a throttled shop with
+  // eight locales pays eight retry backoffs before the page comes back. The
+  // gateway still paces the calls, so concurrency here costs no extra pressure.
+  await Promise.all(foreignLocales.map(async (locale) => {
     try {
       const response = await gateway.graphql(
         `#graphql
@@ -294,6 +298,7 @@ async function foreignTranslationPairs(
               translations(locale: $locale) {
                 key
                 locale
+                value
               }
             }
           }`,
@@ -302,16 +307,25 @@ async function foreignTranslationPairs(
       const data = (await response.json()) as {
         data?: {
           translatableResource?: {
-            translations?: Array<{ key: string; locale: string }> | null;
+            translations?: Array<{ key: string; locale: string; value: string | null }> | null;
           } | null;
         };
         errors?: Array<{ message: string }>;
       };
       if (data.errors?.length) throw new Error(data.errors[0].message);
       for (const row of data.data?.translatableResource?.translations ?? []) {
+        if (!wanted.has(row.key)) continue;
+        // A row with NO value is not a translation. Shopify answers this query
+        // with one row per translatable key and `value: null` where the locale
+        // has nothing — the same reason every sync in this repo filters
+        // `t.value != null` before mirroring. Without it every changed key in
+        // every published locale would look translated, and the run would not
+        // repair anything: it would CREATE translations into locales the
+        // merchant deliberately never translated, unattended and on their key.
+        if (!row.value || !row.value.trim()) continue;
         // Shopify answers with the requested locale, but trust the row's own —
         // it is what the removal and the register will be addressed by.
-        if (wanted.has(row.key)) pairs.add(`${row.locale}${PAIR_SEP}${row.key}`);
+        pairs.add(`${row.locale}${PAIR_SEP}${row.key}`);
       }
     } catch (error: unknown) {
       logger.warn("[StaleTranslations] Could not read translations for a locale — mirror only", {
@@ -321,7 +335,7 @@ async function foreignTranslationPairs(
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }
+  }));
   return pairs;
 }
 

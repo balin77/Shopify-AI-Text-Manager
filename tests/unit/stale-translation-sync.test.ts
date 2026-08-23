@@ -385,10 +385,19 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       ok: true,
       json: async () => {
         const locale = String(opts?.variables?.locale ?? "");
+        const translated = shopifyHas[locale] ?? [];
         return {
           data: {
             translatableResource: {
-              translations: (shopifyHas[locale] ?? []).map((key) => ({ key, locale })),
+              // Shopify answers with a row per translatable KEY and `value:
+              // null` where that locale has nothing — the shape every sync in
+              // this repo filters on. The fake mirrors it, or the test would
+              // pass on a query that treats untranslated locales as translated.
+              translations: ["title", "body_html"].map((key) => ({
+                key,
+                locale,
+                value: translated.includes(key) ? `existing-${key}` : null,
+              })),
             },
           },
         };
@@ -508,6 +517,22 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(result).toEqual({ removed: 0, retranslating: 0 });
     expect(shopify.removeCalls).toEqual([]);
     expect(shopify.registerCalls).toEqual([]);
+  });
+
+  it("ignores a locale Shopify reports with no value — that is not a translation", async () => {
+    // `translations(locale:)` answers with a row per translatable key and a null
+    // value where the locale has nothing. Taking those as translations would not
+    // repair anything: it would CREATE translations into locales the merchant
+    // deliberately never translated, unattended and on their own API key.
+    db.contentTranslation.findMany.mockResolvedValue([]);
+    shopifyHas = { de: ["title"] }; // fr has rows, all of them empty
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([
+      expect.objectContaining({ key: "title", locale: "de" }),
+    ]);
   });
 
   it("repairs a translation Shopify holds that the local mirror never saw", async () => {

@@ -239,11 +239,17 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
       // Setting or changing one still reported a change (anything differs from
       // ""), but CLEARING one did not — and that is the save whose translations
       // most need to go.
-      const originalValue =
-        (item.images?.[index]?.altText ??
-          (index === 0
-            ? (item as { featuredImage?: { altText?: string } }).featuredImage?.altText
-            : undefined)) || "";
+      //
+      // The fallback is on a MISSING image, never on a missing alt TEXT: a
+      // product whose `images[0]` carries no alt would otherwise be baselined
+      // against the featured image's, and an edit that matches it would go
+      // unreported with its stale translations left standing.
+      const originalImage =
+        item.images?.[index] ??
+        (index === 0
+          ? (item as { featuredImage?: { altText?: string } }).featuredImage
+          : undefined);
+      const originalValue = originalImage?.altText || "";
       if (currentValue !== originalValue) {
         changedIndices.push(index);
       }

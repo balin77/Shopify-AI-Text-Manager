@@ -10,7 +10,7 @@ import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/conten
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey, buildDeletedKey, LOCALE_MARKET_SEP } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
@@ -307,10 +307,20 @@ const handleSave = () => {
     // market override survives), and both places the editor reads them from
     // would otherwise keep serving the deleted value for the rest of the
     // session, with a save from that view writing it straight back.
+    //
+    // Unconditional, exactly like `deletedTranslationKeysRef` above: the client
+    // does not know the merchant's purge switch, so with the deletion switched
+    // OFF this shows the alt texts as gone for the rest of the session while
+    // Shopify still serves them. A deliberate match with the field path rather
+    // than an oversight — one reload corrects it, and the two halves of one
+    // save must not disagree about what the server did.
     if (changedAltTextIndices.length > 0) {
       for (const key of Object.keys(localAltTextOverlayRef.current)) {
-        // Global layer only — a market key is `locale::market` (buildLocaleKey).
-        if (key.includes("::")) continue;
+        // Global layer only — `buildLocaleKey` writes a market key as
+        // `locale@@market`, and the server's removal leaves market overrides
+        // alone. Testing for the wrong separator wiped them from the editor
+        // while Shopify kept serving them.
+        if (key.includes(LOCALE_MARKET_SEP)) continue;
         if (key === primaryLocale) continue;
         for (const index of changedAltTextIndices) {
           delete localAltTextOverlayRef.current[key][index];
