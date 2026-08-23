@@ -14,15 +14,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       const { db } = await import("../db.server");
 
-      // Get tasks that completed (or failed) in the last 30 seconds.
-      // Failed tasks and tasks with partial failures are included so the
-      // navigation can surface them as critical/warning toasts.
+      // Get tasks that reached a terminal state in the last 30 seconds.
+      // `failed` is included so the navigation can raise a critical toast, and
+      // `completed_with_errors` so a run that only PARTLY succeeded raises a
+      // warning one — the four translation paths write that status, and while
+      // the filter carried only the two extremes a bulk translation whose
+      // locales failed ended completely silently.
+      // `cancelled` stays out on purpose: the merchant pressed the button, so
+      // announcing the outcome tells them what they already know.
       const thirtySecondsAgo = new Date(Date.now() - 30000);
 
       const recentlyCompletedTasks = await db.task.findMany({
         where: {
           shop: session.shop,
-          status: { in: ["completed", "failed"] },
+          status: { in: ["completed", "completed_with_errors", "failed"] },
           completedAt: {
             gte: thirtySecondsAgo,
           },

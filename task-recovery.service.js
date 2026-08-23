@@ -44,7 +44,16 @@ const LONG_RUNNING_TASK_TYPES = [
   // would reap it while it is working (PLAN_CONTENT_CREATION §Phase 3.3).
   'blogArticleRedirects',
   'bulkTranslation',
+  // The SAME task type, spelled two ways, and both must be listed. The
+  // alt-text paths create `bulkAIGeneration` (alt-text.handler.ts L227,
+  // alt-text.action.ts L247); the notification-title generator creates
+  // `bulkAiGeneration` (template-titles.handler.ts L89) — an AI call per batch
+  // over every untitled row, i.e. exactly the minutes-long shape this list
+  // exists for, which was reaped at the 10-minute default and marked stuck
+  // mid-flight. NEITHER may be renamed: running rows carry the old string, and
+  // the reaper matches the string it finds in the database.
   'bulkAIGeneration',
+  'bulkAiGeneration',
   'altTextTemplateApply',
   'translation',
   'aiGeneration',
