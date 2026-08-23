@@ -13,9 +13,15 @@
  * action instead (the task type keeps its historical name — renaming would
  * break running tasks), which runs it as a detached, heartbeat-updated Task.
  *
- * All grid state lives in the URL (?type=&locale=&market=&q=&f=&sort=&page=
+ * All grid state lives in the URL (?type=&gridLocale=&market=&q=&f=&sort=&page=
  * &pageSize=) and navigation goes through useAppNavigation() so the Shopify
- * session params (host/shop/embedded) survive.
+ * session params (host/shop/embedded) survive. The language is `gridLocale`
+ * and NOT `locale`: that name is Shopify's — it appends the merchant's ADMIN
+ * UI language under it on every embedded request, `resolveMerchantLocale`
+ * renders the app from it, and useAppNavigation carries it everywhere. Writing
+ * the grid's language there switched the whole admin UI for every merchant who
+ * had not stored an app language; reading it meant the grid opened in the
+ * admin's language.
  */
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
@@ -318,7 +324,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // "" (primary) instead of silently mislabeling primary content as a
   // translation; a market requires a foreign locale (primary is always
   // global) and must be one of the ACTIVE markets.
-  const rawLocale = url.searchParams.get("locale") || "";
+  // `gridLocale`, never `locale` — see the header note: `locale` is Shopify's
+  // admin-UI-language param. An old bookmark opens the primary language rather
+  // than a foreign one, because honouring the old name would be
+  // indistinguishable from honouring Shopify's.
+  const rawLocale = url.searchParams.get("gridLocale") || "";
   const locale = locales.some((l) => !l.primary && l.locale === rawLocale) ? rawLocale : "";
   const rawMarket = url.searchParams.get("market") || "";
   const marketId = locale !== "" && markets.some((m) => m.id === rawMarket) ? rawMarket : "";
@@ -1102,7 +1112,7 @@ export default function BulkEditor() {
   // (and the merchant's position) survive the switch (Plan §6.4). Selecting
   // the primary language clears the market (primary is always global).
   const handleLocaleChange = (value: string) =>
-    navigateGrid({ locale: value, ...(value === "" ? { market: "" } : {}) });
+    navigateGrid({ gridLocale: value, ...(value === "" ? { market: "" } : {}) });
   const handleMarketChange = (value: string) => navigateGrid({ market: value });
   const goToPage = (nextPage: number) => navigateGrid({ page: String(nextPage) });
   const handleSearchCommit = (q: string) => navigateGrid({ q, page: "1" });
