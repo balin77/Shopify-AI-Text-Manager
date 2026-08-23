@@ -269,6 +269,10 @@ describe("projectDrop", () => {
     expect(projectDrop(flat(), "nope", "gid://shopify/MenuItem/1", 0, 40)).toEqual({
       depth: 1,
       parentKey: null,
+      // No usable span either — the drag has nowhere to go sideways, which is
+      // the honest answer for a key that is not in the list.
+      minDepth: 1,
+      maxDepth: 1,
     });
   });
 });
@@ -398,5 +402,70 @@ describe("diffMenuTrees — retargeting", () => {
     const bound = [{ ...base[0], type: "PAGE", url: "/pages/a", resourceId: "gid://shopify/Page/7" }];
     const afterHandleRename = [{ ...bound[0], url: "/pages/a-neu" }];
     expect(diffMenuTrees(bound, afterHandleRename).retargeted).toEqual([]);
+  });
+});
+
+describe("projectDrop reports the bounds it applied", () => {
+  // The editor CLAMPS THE DRAG to these, so they are part of the answer and
+  // not an internal detail: without them the row follows the pointer to any x
+  // at all, inviting the merchant to aim at a level the drop will not grant.
+  const rows = (): MenuEditorNode[] => [
+    {
+      id: "1",
+      key: "1",
+      title: "A",
+      type: "HTTP",
+      url: "/a",
+      children: [{ id: "2", key: "2", title: "A1", type: "HTTP", url: "/a1", children: [] }],
+    },
+    { id: "3", key: "3", title: "B", type: "HTTP", url: "/b", children: [] },
+  ];
+
+  /** Three top-level rows — the case where a drag has real horizontal room. */
+  const siblings = (): MenuEditorNode[] =>
+    ["1", "2", "3"].map((id) => ({
+      id,
+      key: id,
+      title: id,
+      type: "HTTP",
+      url: `/${id}`,
+      children: [],
+    }));
+
+  it("caps at one level below the item above", () => {
+    // "3" dropped where "2" sits, i.e. between "1" and "2": it can stay at the
+    // top level or become a child of "1", and nothing deeper.
+    const projection = projectDrop(flattenEditorTree(siblings()), "3", "2", 999, 28);
+    expect(projection.minDepth).toBe(1);
+    expect(projection.maxDepth).toBe(2);
+    expect(projection.depth).toBe(projection.maxDepth);
+  });
+
+  it("never reports a span the returned depth falls outside of", () => {
+    // The clamp is only sound if this holds — the editor rounds the pointer
+    // into exactly this window and expects the drop to land in it.
+    for (const offset of [-999, -28, 0, 28, 999]) {
+      const p = projectDrop(flattenEditorTree(siblings()), "3", "2", offset, 28);
+      expect(p.depth).toBeGreaterThanOrEqual(p.minDepth);
+      expect(p.depth).toBeLessThanOrEqual(p.maxDepth);
+    }
+  });
+
+  it("leaves no horizontal room where the floor meets the ceiling", () => {
+    // "3" dropped onto "2", which sits under "1": the item above is "1" at
+    // depth 1, so the ceiling is 2 — and the item below is "2" at depth 2, so
+    // the floor is 2 as well. One legal level, and the editor renders that as
+    // a row that cannot be slid sideways at all.
+    const projection = projectDrop(flattenEditorTree(rows()), "3", "2", 999, 28);
+    expect(projection.minDepth).toBe(2);
+    expect(projection.maxDepth).toBe(2);
+  });
+
+  it("reports a single-level span at the top of the list", () => {
+    // Nothing above it ⇒ nothing to nest under ⇒ no horizontal room at all,
+    // which is what the editor renders as "this row cannot move sideways".
+    const projection = projectDrop(flattenEditorTree(rows()), "1", "1", 999, 28);
+    expect(projection.minDepth).toBe(1);
+    expect(projection.maxDepth).toBe(1);
   });
 });

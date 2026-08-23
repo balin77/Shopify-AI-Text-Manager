@@ -425,6 +425,18 @@ export function describeForeignChanges(base: MenuEditorNode[], theirs: MenuEdito
 export interface DropProjection {
   depth: number;
   parentKey: string | null;
+  /**
+   * The shallowest and deepest level this drop could take — the floor and the
+   * ceiling below, reported rather than only applied.
+   *
+   * The editor needs them to CONSTRAIN THE DRAG ITSELF: without them the row
+   * follows the pointer to any x at all, including places the projection would
+   * never grant, and the merchant is invited to aim at a level they cannot
+   * have. With them the horizontal movement stops exactly where the outcome
+   * stops.
+   */
+  minDepth: number;
+  maxDepth: number;
 }
 
 export function projectDrop(
@@ -456,7 +468,7 @@ export function projectDrop(
 
   const overIndex = visible.findIndex((i) => i.key === overKey);
   const activeIndex = visible.findIndex((i) => i.key === activeKey);
-  if (overIndex < 0 || activeIndex < 0) return { depth: 1, parentKey: null };
+  if (overIndex < 0 || activeIndex < 0) return { depth: 1, parentKey: null, minDepth: 1, maxDepth: 1 };
 
   // The list as it would look after the move, so "the item above" is the one
   // the merchant actually sees above the placeholder.
@@ -500,7 +512,7 @@ export function projectDrop(
           .find((i) => i.depth === depth)?.parentKey ?? null;
     }
   }
-  return { depth, parentKey };
+  return { depth, parentKey, minDepth: floor, maxDepth: ceiling };
 }
 
 /**
