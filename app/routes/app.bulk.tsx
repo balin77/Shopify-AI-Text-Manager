@@ -1050,6 +1050,26 @@ export default function BulkEditor() {
   /** Navigate with updated grid params (all state is in the URL, §3.3).
    * handleNavigate merges with the current params, so untouched ones —
    * including Shopify's host/shop/embedded — survive. */
+  /**
+   * "Open in editor" carries the grid's language, under the editor's OWN param
+   * name. It used to arrive by accident: the grid's `?locale=` was inherited by
+   * every navigation and the content routes read that same name — which is
+   * exactly the collision that made them open in the merchant's ADMIN UI
+   * language instead (see `initialLocale` in content-editor.types.ts). The
+   * primary locale is left off: it is what the editor opens in anyway, and a
+   * spelled-out one would take precedence over the language the merchant last
+   * worked in.
+   */
+  const editorLinkParams = (id: string) => {
+    const params = new URLSearchParams({ select: id });
+    // Derived here rather than reused from below: this helper is defined above
+    // the component's own `primaryLocaleCode`, and only ever CALLED from a
+    // click handler.
+    const primary = data.locales.find((l) => l.primary)?.locale ?? "";
+    if (locale && locale !== primary) params.set("contentLocale", locale);
+    return params;
+  };
+
   const navigateGrid = (overrides: Record<string, string>) => {
     setQueuedBanner(false);
     const params = new URLSearchParams();
@@ -2289,7 +2309,7 @@ export default function BulkEditor() {
                           // instead of sending a MediaImage gid as a product id.
                           ...(row.type === "image" && !row.productId
                             ? {}
-                            : { searchParams: new URLSearchParams({ select: row.productId ?? row.id }) }),
+                            : { searchParams: editorLinkParams(row.productId ?? row.id) }),
                         })
                       }
                       columnHeading={columnHeading}
@@ -2354,7 +2374,7 @@ export default function BulkEditor() {
                         const row = previewRow;
                         setPreviewRow(null);
                         handleNavigate(TYPE_EDITOR_PATH[row.type], {
-                          searchParams: new URLSearchParams({ select: row.productId ?? row.id }),
+                          searchParams: editorLinkParams(row.productId ?? row.id),
                         });
                       },
                     },

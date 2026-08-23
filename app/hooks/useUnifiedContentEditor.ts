@@ -44,7 +44,7 @@ import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { readLastSelectedId } from "../utils/last-selected-item";
-import { readLastContentLocale, pickRestoredLocale } from "../utils/last-content-locale";
+import { readLastContentLocale, pickRestoredLocale, resolveInitialLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -103,11 +103,9 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // `shopLocales` comes from the route loader, so it is already populated on
   // mount — the deep-linked locale can be validated right here instead of via
   // a late-resolution effect (which would fight the user's first click).
-  const [currentLanguage, setCurrentLanguage] = useState(() => {
-    if (!initialLocale || initialLocale === primaryLocale) return primaryLocale;
-    const known = shopLocales.find((l) => l.locale === initialLocale && !l.primary);
-    return known ? initialLocale : primaryLocale;
-  });
+  const [currentLanguage, setCurrentLanguage] = useState(() =>
+    resolveInitialLocale(initialLocale, primaryLocale, shopLocales),
+  );
   const currentLanguageRef = useLatestRef(currentLanguage);
   // Selected market for market-specific translations ("" = all markets / global).
   const [selectedMarketId, setSelectedMarketId] = useState<string>("");

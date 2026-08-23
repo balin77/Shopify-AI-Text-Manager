@@ -3,7 +3,16 @@ import {
   readLastContentLocale,
   writeLastContentLocale,
   pickRestoredLocale,
+  resolveInitialLocale,
 } from "~/utils/last-content-locale";
+
+function withShop(shop: string) {
+  Object.defineProperty(window, "location", {
+    value: { ...window.location, search: `?shop=${shop}` },
+    writable: true,
+    configurable: true,
+  });
+}
 
 const LOCALES = [
   { locale: "de", primary: true, published: true },
@@ -25,8 +34,21 @@ describe("last-content-locale", () => {
   });
 
   it("round-trips the working language", () => {
+    withShop("a.myshopify.com");
     expect(readLastContentLocale()).toBeNull();
     writeLastContentLocale("fr");
+    expect(readLastContentLocale()).toBe("fr");
+  });
+
+  it("keeps one shop's language out of another's", () => {
+    // An embedded app serves every shop from ONE origin, and unlike an item id
+    // a locale code matches everywhere.
+    withShop("a.myshopify.com");
+    writeLastContentLocale("fr");
+    withShop("b.myshopify.com");
+    expect(readLastContentLocale()).toBeNull();
+    writeLastContentLocale("es");
+    withShop("a.myshopify.com");
     expect(readLastContentLocale()).toBe("fr");
   });
 
@@ -41,8 +63,31 @@ describe("last-content-locale", () => {
   it("lets a ?contentLocale= deep link win over the stored language", () => {
     // The initializer already applied it; overriding here would fight a link
     // the merchant just followed.
-    expect(pick({ stored: "fr", initialLocale: "es" })).toBeNull();
-    expect(pick({ stored: "fr", initialLocale: "de" })).toBeNull();
+    expect(
+      pick({
+        stored: "fr",
+        initialLocale: "it",
+        shopLocales: [...LOCALES, { locale: "it", published: true }],
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the remembered language when the deep link is one the editor ignores", () => {
+    // Same function decides both, so "the link was honoured" and "step aside
+    // for the link" can never disagree: a stale or primary-naming link costs
+    // the merchant nothing.
+    expect(pick({ stored: "fr", initialLocale: "de" })).toBe("fr"); // primary
+    expect(pick({ stored: "fr", initialLocale: "it" })).toBe("fr"); // not a shop locale
+    expect(pick({ stored: "fr", initialLocale: "es" })).toBe("fr"); // unpublished
+  });
+
+  it("resolveInitialLocale honours only a language the shop really serves", () => {
+    expect(resolveInitialLocale("fr", "de", LOCALES)).toBe("fr");
+    expect(resolveInitialLocale("es", "de", LOCALES)).toBe("de"); // unpublished
+    expect(resolveInitialLocale("it", "de", LOCALES)).toBe("de"); // unknown
+    expect(resolveInitialLocale("de", "de", LOCALES)).toBe("de");
+    expect(resolveInitialLocale(undefined, "de", LOCALES)).toBe("de");
+    expect(resolveInitialLocale("fr", "de", [])).toBe("de"); // failed lookup
   });
 
   it("refuses a language the shop no longer has", () => {

@@ -27,11 +27,30 @@
  * would offer to write translations nobody can see.
  */
 
-const KEY = "contentpilot_last_content_locale";
+const KEY_PREFIX = "contentpilot_last_content_locale_";
+
+/**
+ * The key is SHOP-scoped. An embedded app serves every shop from one origin, so
+ * one localStorage bucket holds them all — and unlike an item id, which can
+ * only ever match the shop it came from, `fr` matches everywhere: an agency
+ * that runs two shops would carry the language of one into the other. The shop
+ * comes from Shopify's own `?shop=` param, which rides on every embedded
+ * request; without it the key falls back to a shared bucket rather than
+ * refusing to remember anything, since a lone shop is the common case and the
+ * cost of being wrong is one wrong language tab.
+ */
+function keyForCurrentShop(): string {
+  try {
+    const shop = new URLSearchParams(window.location.search).get("shop");
+    return `${KEY_PREFIX}${shop || "unknown"}`;
+  } catch {
+    return `${KEY_PREFIX}unknown`;
+  }
+}
 
 export function readLastContentLocale(): string | null {
   try {
-    return localStorage.getItem(KEY);
+    return localStorage.getItem(keyForCurrentShop());
   } catch {
     return null;
   }
@@ -39,7 +58,7 @@ export function readLastContentLocale(): string | null {
 
 export function writeLastContentLocale(locale: string): void {
   try {
-    localStorage.setItem(KEY, locale);
+    localStorage.setItem(keyForCurrentShop(), locale);
   } catch {}
 }
 
@@ -58,16 +77,52 @@ export function writeLastContentLocale(locale: string): void {
  * alike). Everything the loader factory delivers carries it.
  */
 export function pickRestoredLocale(input: {
-  /** `?contentLocale=` from the URL, already applied by the caller when present. */
+  /** `?contentLocale=` from the URL. */
   initialLocale?: string;
   stored: string | null;
   primaryLocale: string;
-  shopLocales: Array<{ locale: string; primary?: boolean; published?: boolean }>;
+  shopLocales: ShopLocaleLike[];
 }): string | null {
   const { initialLocale, stored, primaryLocale, shopLocales } = input;
-  // A deep link names the language explicitly; it outranks what was stored.
-  if (initialLocale) return null;
-  if (!stored || stored === primaryLocale) return null;
-  if (!shopLocales.some((l) => l.locale === stored && !l.primary && l.published !== false)) return null;
-  return stored;
+  // A deep link the editor ACTUALLY OPENS IN outranks what was stored — but
+  // only that one, and it is the SAME function that decides both, so the two
+  // cannot drift apart. A stale link naming a language this shop no longer has
+  // is not applied by the editor either, and stepping aside for it would cost
+  // the merchant their working language over an instruction nobody followed.
+  if (resolveInitialLocale(initialLocale, primaryLocale, shopLocales) !== primaryLocale) return null;
+  return usableForeignLocale(stored, primaryLocale, shopLocales);
+}
+
+/**
+ * The language a `?contentLocale=` deep link opens the editor in — the editor's
+ * own `useState` initializer calls this, which is what keeps the rule above
+ * honest about what the link will really do.
+ *
+ * Answers the primary locale for everything it will not honour: no link, the
+ * primary locale itself, and a code this shop does not have or no longer
+ * publishes (a stale bookmark must not open an empty editor).
+ */
+export function resolveInitialLocale(
+  initialLocale: string | undefined,
+  primaryLocale: string,
+  shopLocales: ShopLocaleLike[],
+): string {
+  return usableForeignLocale(initialLocale, primaryLocale, shopLocales) ?? primaryLocale;
+}
+
+interface ShopLocaleLike {
+  locale: string;
+  primary?: boolean;
+  published?: boolean;
+}
+
+/** A locale this shop really serves and that is not the primary one; else null. */
+function usableForeignLocale(
+  locale: string | null | undefined,
+  primaryLocale: string,
+  shopLocales: ShopLocaleLike[],
+): string | null {
+  if (!locale || locale === primaryLocale) return null;
+  const known = shopLocales.some((l) => l.locale === locale && !l.primary && l.published !== false);
+  return known ? locale : null;
 }
