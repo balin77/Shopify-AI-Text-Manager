@@ -72,6 +72,11 @@ interface UseEditorAltTextReturn {
   imageAltTextsRef: React.MutableRefObject<Record<number, string>>;
   originalAltTextsRef: React.MutableRefObject<Record<number, string>>;
   pendingAltTextAutoSaveRef: React.MutableRefObject<Record<number, string> | null>;
+  /** Locale (or `locale@@market`, see LOCALE_MARKET_SEP) → index → alt text.
+   *  Exposed so a PRIMARY save can drop what the server just deleted — the
+   *  overlay is read before the loaded item, so a stale entry survives the
+   *  purge and gets written back. */
+  localAltTextOverlayRef: React.MutableRefObject<Record<string, Record<number, string>>>;
   selectedImageIndex: number;
   setSelectedImageIndex: React.Dispatch<React.SetStateAction<number>>;
   // Handlers
@@ -813,7 +818,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           // 1. Save the accepted foreign alt-text exactly in `L`.
           saveForeignExact();
 
-          // 2. Save the primary base alt-text (this image only, no deletion trigger).
+          // 2. Save the primary base alt-text (this image only). It carries NO
+          //    `changedAltTextIndices`, which is what keeps it out of the
+          //    featured-alt §6.6 purge — that save would otherwise delete the
+          //    foreign alt saved one line above and the ones step 3 is about to
+          //    write (shopify-content.service.ts, `featuredAltChanged`).
           if (primaryTranslated) {
             const primaryForm: Record<string, string> = {
               action: "updateContent",
@@ -1028,6 +1037,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     imageAltTextsRef,
     originalAltTextsRef,
     pendingAltTextAutoSaveRef,
+    // Exposed so a PRIMARY save can drop what the server just deleted: the
+    // overlay is checked BEFORE the loaded item, so without this it keeps
+    // rendering a foreign alt text that no longer exists for the rest of the
+    // session — and a save from that view writes it back.
+    localAltTextOverlayRef,
     selectedImageIndex,
     setSelectedImageIndex,
     // Handlers

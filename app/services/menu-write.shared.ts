@@ -1,8 +1,13 @@
 /**
- * Renaming menu items — the pure half (no Shopify, no Prisma, no server imports).
+ * The menu tree's FINGERPRINT — the pure half (no Shopify, no Prisma, no
+ * server imports).
  *
- * Translating a menu item and RENAMING it are two different write shapes, and
- * the difference is the reason this module exists:
+ * This module used to hold the rename feature. That feature is gone, absorbed
+ * by the tree editor (menu-tree.shared.ts / menu-tree.server.ts): a rename is
+ * one kind of tree change, and TWO whole-tree writers on one menu is a hazard
+ * rather than a convenience — the second one's drift check would fail against
+ * the first one's own result. What survived is the part both would have
+ * needed, and the reason it exists is unchanged:
  *
  *   A TRANSLATION addresses one Link resource with translationsRegister. One
  *   item, one call, and nothing else in the menu is touched.
@@ -28,12 +33,6 @@ export interface MenuTreeNode {
   id?: unknown;
   title?: unknown;
   items?: unknown;
-}
-
-export interface MenuTitleChange {
-  menuItemId: string;
-  /** The new primary title. Never empty — an unnamed menu entry is not a thing. */
-  title: string;
 }
 
 /**
@@ -73,46 +72,6 @@ export function menuStructureFingerprint(items: unknown, maxDepth = 10): string 
 
   walk(items, 1, []);
   return lines.join("\n");
-}
-
-/**
- * What a save would actually rename.
- *
- * Diff-only, like every other write path here: menuUpdate rewrites the tree
- * anyway, but sending a "change" for an untouched item would report it as
- * saved, and — because a confirmed rename purges that item's translations
- * under the merchant's stale-translation setting — a no-op edit would then
- * delete translations nobody's text change ever invalidated.
- *
- * Both sides are trimmed before comparing (a trailing space is not an edit),
- * and the trimmed value is what gets written: Shopify stores what it is sent,
- * so an untrimmed title would come back as a different string and diff dirty
- * forever.
- */
-export function diffMenuTitles(
-  original: Record<string, string>,
-  draft: Record<string, string>,
-): MenuTitleChange[] {
-  const changes: MenuTitleChange[] = [];
-  for (const [menuItemId, rawValue] of Object.entries(draft)) {
-    const title = rawValue.trim();
-    if (title === (original[menuItemId] ?? "").trim()) continue;
-    changes.push({ menuItemId, title });
-  }
-  return changes;
-}
-
-/**
- * Titles a rename may not carry.
- *
- * Empty is the only one, and it is refused rather than passed on: Shopify
- * would reject the whole menuUpdate for it, and that call carries every OTHER
- * item of the menu — so one blank field would fail the entire save, including
- * renames that were perfectly fine. Same reason productUpdate's attribute
- * validation lives in front of the mutation rather than behind it.
- */
-export function invalidMenuTitle(title: string): "empty" | null {
-  return title.trim() === "" ? "empty" : null;
 }
 
 /**

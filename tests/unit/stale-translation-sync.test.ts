@@ -20,7 +20,7 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     contentTranslation: {
       deleteMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(async () => ({})),
-      findMany: vi.fn(async () => []),
+      findMany: vi.fn(async (): Promise<Array<{ key: string; locale: string }>> => []),
     },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
@@ -73,10 +73,15 @@ vi.mock("../../src/services/translation.service", () => ({
 
 import {
   reconcileStaleTranslations,
+  reconcileAfterPrimarySave,
   awaitDetachedRetranslations,
+  IN_APP_RETRANSLATED_RESOURCE_TYPES,
 } from "../../app/services/translations/stale-translation-sync.server";
 import { digestBaselineKey } from "../../app/services/translations/stale-translations.shared";
-import { markTranslationSaved } from "../../app/utils/translation-save-lock.server";
+import {
+  markTranslationSaved,
+  isTranslationRecentlySaved,
+} from "../../app/utils/translation-save-lock.server";
 
 const SHOP = "test.myshopify.com";
 const OLD = "digest-old";
@@ -362,5 +367,239 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.registerCalls).toEqual([]);
     expect(shopify.removeCalls).toEqual([]);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The in-app entry point. A page / article / blog / policy has no Shopify
+ * webhook, so the save that changed the primary text is the ONLY event that
+ * will ever notice — before this existed their translations were deleted and
+ * nothing refreshed them, and a Max shop got the new text on a product and a
+ * blank field on a page for the very same edit.
+ */
+describe("in-app primary save (reconcileAfterPrimarySave)", () => {
+  const PAGE = "gid://shopify/Page/42";
+
+  /** locale → the keys Shopify reports a GLOBAL translation for. */
+  let shopifyHas: Record<string, string[]> = {};
+
+  const saveClient = () => ({
+    graphql: vi.fn(async (_q: string, opts: { variables?: Record<string, unknown> }) => ({
+      ok: true,
+      json: async () => {
+        const locale = String(opts?.variables?.locale ?? "");
+        const translated = shopifyHas[locale] ?? [];
+        return {
+          data: {
+            translatableResource: {
+              // Shopify answers with a row per translatable KEY and `value:
+              // null` where that locale has nothing — the shape every sync in
+              // this repo filters on. The fake mirrors it, or the test would
+              // pass on a query that treats untranslated locales as translated.
+              translations: ["title", "body_html"].map((key) => ({
+                key,
+                locale,
+                value: translated.includes(key) ? `existing-${key}` : null,
+              })),
+            },
+          },
+        };
+      },
+    })),
+  });
+
+  function saveParams(over: Record<string, unknown> = {}) {
+    return {
+      client: saveClient() as never,
+      shop: SHOP,
+      resourceId: PAGE,
+      resourceType: "Page",
+      contentKind: "page" as const,
+      resourceTitle: "About us",
+      primaryContent: {
+        title: { value: "About us", digest: NEW },
+        body_html: { value: "<p>New text</p>", digest: NEW },
+      },
+      changedKeys: ["title", "body_html"],
+      foreignLocales: ["de", "fr"],
+      policy: policy as never,
+      ...over,
+    };
+  }
+
+  beforeEach(() => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    db.contentTranslation.findMany.mockClear();
+    db.contentTranslation.findMany.mockResolvedValue([
+      { key: "title", locale: "de" },
+      { key: "body_html", locale: "de" },
+    ]);
+    shopifyHas = { de: ["title", "body_html"] };
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+    }));
+  });
+
+  it("names the webhook-less content types and NOT the two the sync already repairs", () => {
+    // Product and Collection have an update webhook, so starting a second run
+    // from the save would queue a duplicate AI run behind a repair that has
+    // already happened.
+    expect([...IN_APP_RETRANSLATED_RESOURCE_TYPES].sort()).toEqual([
+      "Article",
+      "Blog",
+      "Page",
+      "ShopPolicy",
+    ]);
+    expect(IN_APP_RETRANSLATED_RESOURCE_TYPES.has("Product")).toBe(false);
+    expect(IN_APP_RETRANSLATED_RESOURCE_TYPES.has("Collection")).toBe(false);
+  });
+
+  it("re-translates the changed keys instead of deleting them", async () => {
+    const result = await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(2);
+    expect(result.removed).toBe(0);
+    expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
+    expect(shopify.registerCalls.every((c) => c.locale === "de")).toBe(true);
+  });
+
+  it("needs NO digest baseline — the save IS the change event", async () => {
+    // The sync-side gate exists to prove the primary text moved. Here the
+    // caller performed the write, so running that gate would only ADD a way to
+    // miss: a mirror row with no digest would pass no gate and its translation
+    // would be neither refreshed nor removed — live, describing text that no
+    // longer exists. `previousDigests` is not even a parameter here, and the
+    // rows the lookup returns carry no digest of their own.
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toHaveLength(2);
+    const where = (db.contentTranslation.findMany.mock.calls.at(-1) as unknown as [{ where: unknown }])[0].where;
+    expect(where).toMatchObject({ marketId: "", resourceType: "Page" });
+  });
+
+  it("removes a translation whose primary value was CLEARED", async () => {
+    // Nothing to translate, so the AI path cannot deliver it and the storefront
+    // must not keep a translation of text that no longer exists.
+    shopifyHas = { de: ["body_html"] };
+    db.contentTranslation.findMany.mockResolvedValue([{ key: "body_html", locale: "de" }]);
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ primaryContent: { title: { value: "About us", digest: NEW } } }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.removed).toBe(1);
+    expect(shopify.removeCalls).toEqual([{ keys: ["body_html"], locale: "de" }]);
+    expect(shopify.registerCalls).toEqual([]);
+  });
+
+  it("does nothing when auto-translate is off — the caller's own purge is the repair", async () => {
+    // Both paths must be mutually exclusive at BOTH ends: a second
+    // translationsRemove for rows that are already gone echoes nothing back and
+    // logs as an unconfirmed removal.
+    // The switch is re-checked on the policy the CALLER hands in — never on a
+    // second read of its own, which would fail open to "off" and return without
+    // doing anything while the caller has already stood its purge down.
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ policy: { ...policy, autoTranslateExternalChanges: false } as never }),
+    );
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(shopify.removeCalls).toEqual([]);
+    expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+
+  it("touches nothing when the resource has no translations at all", async () => {
+    shopifyHas = {};
+    db.contentTranslation.findMany.mockResolvedValue([]);
+    const result = await reconcileAfterPrimarySave(saveParams());
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.registerCalls).toEqual([]);
+  });
+
+  it("ignores a locale Shopify reports with no value — that is not a translation", async () => {
+    // `translations(locale:)` answers with a row per translatable key and a null
+    // value where the locale has nothing. Taking those as translations would not
+    // repair anything: it would CREATE translations into locales the merchant
+    // deliberately never translated, unattended and on their own API key.
+    db.contentTranslation.findMany.mockResolvedValue([]);
+    shopifyHas = { de: ["title"] }; // fr has rows, all of them empty
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([
+      expect.objectContaining({ key: "title", locale: "de" }),
+    ]);
+  });
+
+  it("repairs a translation Shopify holds that the local mirror never saw", async () => {
+    // Written in the Shopify admin, by another app or by an importer. The code
+    // this path replaces reached it because it removed BLINDLY across every
+    // foreign locale; asking only the mirror would trade "deleted" for "left
+    // live on the storefront" — on a type with no webhook to catch it later.
+    db.contentTranslation.findMany.mockResolvedValue([]);
+    shopifyHas = { fr: ["title"] };
+
+    const result = await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls).toEqual([
+      expect.objectContaining({ key: "title", locale: "fr" }),
+    ]);
+  });
+
+  it("falls back to the mirror for a locale whose Shopify read failed", async () => {
+    // Degrading to the old mirror-only reach is acceptable; losing the whole
+    // repair over one failed query is not.
+    // A GraphQL-level error, which is how a real refusal arrives — and unlike a
+    // thrown transport error it is not retried by the gateway, so the test does
+    // not pay three seconds of backoff per locale to prove one branch.
+    const client = {
+      graphql: vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ errors: [{ message: "Access denied" }] }),
+      })),
+    };
+    await reconcileAfterPrimarySave(saveParams({ client: client as never }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
+  });
+
+  it("claims the resource so a reload cannot queue a second identical run", async () => {
+    // Every entry here is re-translatable, so there is no inline purge to mark
+    // the resource. Without the mark, an item reload while the AI is working
+    // re-detects the same entries against a digest mirror that has not advanced
+    // yet, and the sync-side path queues a duplicate run behind this one.
+    await reconcileAfterPrimarySave(saveParams());
+
+    expect(isTranslationRecentlySaved(PAGE)).toBe(true);
+
+    // ...which is exactly what makes the sync entry point stand down.
+    const result = await reconcileStaleTranslations(
+      baseParams({
+        resourceId: PAGE,
+        resourceType: "Page",
+        contentKind: "page" as const,
+      }),
+    );
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+
+    await awaitDetachedRetranslations();
+  });
+
+  it("never throws — the primary text is already saved", async () => {
+    db.contentTranslation.findMany.mockRejectedValueOnce(new Error("connection lost"));
+    await expect(reconcileAfterPrimarySave(saveParams())).resolves.toEqual({
+      removed: 0,
+      retranslating: 0,
+    });
   });
 });

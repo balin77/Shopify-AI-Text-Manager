@@ -10,7 +10,7 @@ import { isThemeContentType, isResourceBackedThemeContent } from "~/utils/conten
 import { isAttributeField } from "../services/content-attributes.shared";
 import { useCallback, useState } from "react";
 import { getTranslatedValue } from "../utils/contentEditor.utils";
-import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
+import { getItemFieldValue, buildLocaleKey, buildDeletedKey, LOCALE_MARKET_SEP } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
@@ -64,6 +64,10 @@ export interface FieldHandlerProps {
   selectedItemRef: { current: TranslatableContentItem | undefined };
   editableValuesRef: { current: Record<string, string> };
   imageAltTextsRef: { current: Record<number, string> };
+  /** Locale (or `locale::market`) → index → alt text, from useEditorAltText.
+   *  Checked BEFORE the loaded item, so a primary save has to drop what the
+   *  server just deleted here as well. */
+  localAltTextOverlayRef: { current: Record<string, Record<number, string>> };
   originalAltTextsRef: { current: Record<number, string> };
   fallbackFieldsRef: { current: Set<string> };
   isAcceptAndTranslateFlowRef: { current: boolean };
@@ -208,6 +212,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     selectedItemRef,
     editableValuesRef,
     imageAltTextsRef,
+    localAltTextOverlayRef,
     originalAltTextsRef,
     fallbackFieldsRef,
     isAcceptAndTranslateFlowRef,
@@ -296,6 +301,46 @@ const handleSave = () => {
         debugLog.translationClear(`Marked translations for field "${fieldKey}" (key: ${field.translationKey}) as deleted`);
       }
     });
+
+    // The same invalidation for the ALT texts of the images whose primary alt
+    // changed: the server deletes their foreign translations (globally — a
+    // market override survives), and both places the editor reads them from
+    // would otherwise keep serving the deleted value for the rest of the
+    // session, with a save from that view writing it straight back.
+    //
+    // Unconditional, exactly like `deletedTranslationKeysRef` above: the client
+    // does not know the merchant's purge switch, so with the deletion switched
+    // OFF this shows the alt texts as gone for the rest of the session while
+    // Shopify still serves them. A deliberate match with the field path rather
+    // than an oversight — one reload corrects it, and the two halves of one
+    // save must not disagree about what the server did.
+    if (changedAltTextIndices.length > 0) {
+      for (const key of Object.keys(localAltTextOverlayRef.current)) {
+        // Global layer only — `buildLocaleKey` writes a market key as
+        // `locale@@market`, and the server's removal leaves market overrides
+        // alone. Testing for the wrong separator wiped them from the editor
+        // while Shopify kept serving them.
+        if (key.includes(LOCALE_MARKET_SEP)) continue;
+        if (key === primaryLocale) continue;
+        for (const index of changedAltTextIndices) {
+          delete localAltTextOverlayRef.current[key][index];
+        }
+      }
+      const images: Array<{ altTextTranslations?: Array<{ locale: string; marketId?: string }> }> =
+        selectedItem.images && selectedItem.images.length > 0
+          ? selectedItem.images
+          : selectedItem.featuredImage
+            ? [selectedItem.featuredImage]
+            : [];
+      for (const index of changedAltTextIndices) {
+        const img = images[index];
+        if (!img?.altTextTranslations) continue;
+        img.altTextTranslations = img.altTextTranslations.filter(
+          (t: { locale: string; marketId?: string }) =>
+            t.locale === primaryLocale || (t.marketId ?? "") !== "",
+        );
+      }
+    }
 
     // Cache the saved values in a ref that survives revalidation.
     // resolve() checks savedPrimaryValuesRef first for primary locale.
