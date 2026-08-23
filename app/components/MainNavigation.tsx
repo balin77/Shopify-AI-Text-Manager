@@ -17,8 +17,8 @@ import { type Plan, PLAN_DISPLAY_NAMES } from "../config/plans";
 import { CONTENT_RUBRICS, isContentPath } from "../config/content-rubrics";
 import { isSeoPath, SEO_RUBRICS } from "../config/seo-sections";
 import { meetsPlan } from "../utils/planUtils";
-import { extractReadableName } from "../utils/templates-field-factory";
 import { taskErrorText } from "../utils/task-error-text";
+import { fieldTypeLabel, taskSubjectLabel } from "../services/tasks/task-labels.shared";
 import { SYNC_PHASE_ORDER, overallSyncPercent } from "../services/sync-phases.shared";
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { InfoBoxTone } from "../contexts/InfoBoxContext";
@@ -98,10 +98,13 @@ export function MainNavigation() {
     ((matches.find((match) => match.id === "routes/app")?.data as any)?.localeCount as number) ?? 0;
   const maxProducts = getMaxProducts();
 
-  // Show notifications for newly completed/failed tasks (from context).
-  // Tone is derived from status + processed/total so partial failures and
-  // outright failures are surfaced as warning/critical instead of silently
-  // appearing as success.
+  // Show notifications for newly finished tasks (from context) — completed,
+  // completed_with_errors and failed. Tone is derived from status +
+  // processed/total so partial failures and outright failures are surfaced as
+  // warning/critical instead of silently appearing as success. Every name in
+  // the message comes from task-labels.shared.ts, never from a rule spelled
+  // out here: the Tasks page renders the same vocabulary, and two copies of
+  // it have already drifted once.
   useEffect(() => {
     if (!recentlyCompletedTasks.length || !isMountedRef.current) return;
 
@@ -112,25 +115,17 @@ export function MainNavigation() {
 
       const resourceTitle = task.resourceTitle || "";
 
-      const toReadableFieldName = (raw: string) => {
-        if (raw === "allAltTexts") return t.tasks?.allAltTexts || "all alt-texts";
-        const altMatch = raw.match(/^altText_(\d+)$/);
-        if (altMatch) return t.tasks?.imageAltText?.replace("{n}", String(Number(altMatch[1]) + 1)) || `Image ${Number(altMatch[1]) + 1} alt-text`;
-        if (raw.includes('.') || raw.includes(':')) return extractReadableName(raw);
-        return raw;
-      };
-
       const baseMessage = (() => {
         if (task.type === "bulkTranslation") {
           if (task.fieldType === "all") {
             return t.tasks?.translationCompleted?.replace("{title}", resourceTitle) || `Translation completed for "${resourceTitle}"`;
           }
-          const fieldName = toReadableFieldName(task.fieldType || "field");
+          const fieldName = fieldTypeLabel(task.fieldType, t) || "field";
           return t.tasks?.fieldTranslationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
             || `Translation completed for ${fieldName} in "${resourceTitle}"`;
         }
         if (task.type === "aiGeneration" || task.type === "bulkAIGeneration") {
-          const fieldName = toReadableFieldName(task.fieldType || "content");
+          const fieldName = fieldTypeLabel(task.fieldType, t) || "content";
           return t.tasks?.generationCompleted?.replace("{field}", fieldName).replace("{title}", resourceTitle)
             || `AI generation completed for ${fieldName} in "${resourceTitle}"`;
         }
@@ -150,10 +145,11 @@ export function MainNavigation() {
         // bulk-fix runner, not to a merchant. Name the problem it fixed
         // instead, using the dashboard's own label for the code.
         if (task.type === "seoBulkFix") {
-          const code = resourceTitle.startsWith("fixAllForItem:") ? "" : resourceTitle.split(":")[0];
-          const problemLabel = code
-            ? (t.seo?.dashboard?.problems as Record<string, string> | undefined)?.[code]
-            : undefined;
+          // taskSubjectLabel answers null for a subject with no dashboard
+          // label — every `fixAllForItem:…` run, and any problem code the
+          // dashboard does not name. The bare sentence is then the whole
+          // message: never a raw machine string, and never a dangling colon.
+          const problemLabel = taskSubjectLabel(task, t);
           const done = t.tasks?.seoBulkFixCompleted || "SEO fix finished";
           return problemLabel ? `${done}: ${problemLabel}` : done;
         }
@@ -190,11 +186,21 @@ export function MainNavigation() {
           .replace("{total}", String(total))
           .replace("{failed}", String(failed));
         message = `${baseMessage} — ${summary}${errorText ? `: ${errorText}` : ""}`;
-      } else if (errorText) {
-        // Completed with a soft error recorded — surface as warning.
+      } else if (errorText || task.status === "completed_with_errors") {
+        // Completed, but not cleanly. Two independent signals land here and
+        // the ladder's ORDER is what keeps them from shadowing each other:
+        // `failed` first (the whole run is lost), then a counted partial
+        // (processed < total), which owns the richer `partialSummary` and must
+        // therefore win over the bare status — a `completed_with_errors` run
+        // that also counted its failures deserves the numbers, not just the
+        // adjective. Only then this branch: a soft error recorded on an
+        // otherwise finished task, or the status the translation paths write
+        // when some locales failed while nothing counts processed/total. That
+        // status carries no error text of its own, so the message stays the
+        // plain sentence rather than growing a dangling dash.
         tone = "warning";
         title = t.tasks?.partialTitle || "⚠ Partially saved";
-        message = `${baseMessage} — ${errorText}`;
+        message = errorText ? `${baseMessage} — ${errorText}` : baseMessage;
       }
 
       if (isMountedRef.current) {
