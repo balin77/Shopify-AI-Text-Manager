@@ -387,6 +387,7 @@ export const de = {
     menuItemInvalid: "Dieser Menüpunkt kann so nicht gespeichert werden.",
     menuDragHandle: "Verschieben",
     menuAddItem: "Menüpunkt hinzufügen",
+    menuItemUrl: "Ziel-URL",
     menuAddChild: "Unterpunkt",
     menuDeleteItem: "Löschen",
     menuTreeSummary: "{count} Änderung(en) am Menü: {detail}",
