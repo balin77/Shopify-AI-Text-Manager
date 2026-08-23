@@ -32,6 +32,7 @@ import { ShopifyContentService } from "../../../src/services/shopify-content.ser
 import type { AISettings, PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -2628,6 +2629,11 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
   }
 
   await registerAltTranslation(gateway, mediaId, locale, altText, digest);
+
+  // The detached alt repair watches the MEDIA resource it is about to write
+  // (translation-locks.shared.ts); without this claim it never sees the
+  // merchant's bulk fix and overwrites it minutes later.
+  markTranslationSaved(mediaId);
 
   await db.productImageAltTranslation.upsert({
     where: {

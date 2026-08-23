@@ -1467,7 +1467,31 @@ export class ShopifyContentService {
         ? !!changePolicy?.purgeOnPrimaryChange
         : !!changePolicy?.purgeUnreconciledSurfaces;
 
-      if (featuredAltChanged && purgeFeaturedAlt && foreignLocales.length > 0) {
+      // The image id is resolved FIRST when a repair is on the table, because
+      // without it there is nothing to register against — and deciding the
+      // deletion before knowing that left a failed lookup with neither, where
+      // the code this replaces always deleted.
+      let featuredImageId: string | null = null;
+      if (retranslateFeaturedAlt) {
+        try {
+          featuredImageId = await this.fetchFeaturedImageResourceId(
+            resourceId,
+            resourceType as 'Collection' | 'Article',
+          );
+        } catch (lookupError: unknown) {
+          loggers.translation('warn', '[updateContent] Featured image lookup failed — falling back to the deletion', {
+            resourceId,
+            error: lookupError instanceof Error ? lookupError.message : String(lookupError),
+          });
+        }
+      }
+      const repairFeaturedAlt = retranslateFeaturedAlt && !!featuredImageId;
+
+      if (
+        featuredAltChanged &&
+        foreignLocales.length > 0 &&
+        (repairFeaturedAlt ? purgeFeaturedAlt : !!changePolicy?.purgeUnreconciledSurfaces)
+      ) {
         await this.invalidateFeaturedImageAltTranslations({
           resourceId,
           resourceType: resourceType as 'Collection' | 'Article',
@@ -1477,13 +1501,10 @@ export class ShopifyContentService {
         });
       }
 
-      if (retranslateFeaturedAlt) {
+      if (repairFeaturedAlt) {
         try {
-          const imageResourceId = await this.fetchFeaturedImageResourceId(
-            resourceId,
-            resourceType as 'Collection' | 'Article',
-          );
-          if (imageResourceId) {
+          const imageResourceId = featuredImageId!;
+          {
             const { reconcileAfterPrimarySave, featuredImageAltMirror } = await import(
               "../../app/services/translations/stale-translation-sync.server"
             );

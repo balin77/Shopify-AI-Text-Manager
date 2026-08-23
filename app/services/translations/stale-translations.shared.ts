@@ -220,26 +220,6 @@ export function findStaleTranslations(
 }
 
 /**
- * Split the stale set into three: "re-translate this", "just delete this", and
- * "we declined to translate this".
- *
- * The third one exists because the two are not the same promise. `purge` is
- * what the automation CANNOT deliver — a cleared source with nothing to
- * translate, a missing digest, a `handle` — and a shop that asked for "always
- * give it the new text" wants those removed rather than left describing text
- * that no longer exists. `declined` is what WE refuse to hand to the AI for our
- * own safety (a multi-line value, markup, a type the prompt would corrupt), and
- * that is not the merchant's automation failing: it is us choosing not to try,
- * so their stored "don't delete" answer stands. Folding the two would delete
- * every richtext theme translation on a shop that switched the deletion off.
- *
- * A stale entry can only be re-translated when there IS a new primary value to
- * translate (a cleared field has nothing to say), the key is one we translate
- * automatically, and a digest is available — `translationsRegister` requires
- * one, and a translation we cannot register would leave the storefront showing
- * the stale text we set out to remove.
- */
-/**
  * Can this value go through the generic single-line prompt at all?
  *
  * A TYPE check is not always available — a theme setting carries no type
@@ -265,6 +245,26 @@ export function survivesValuePrompt(value: string): boolean {
   return !/&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]{1,31});/.test(value);
 }
 
+/**
+ * Split the stale set into three: "re-translate this", "just delete this", and
+ * "we declined to translate this".
+ *
+ * The third one exists because the two are not the same promise. `purge` is
+ * what the automation CANNOT deliver — a cleared source with nothing to
+ * translate, a missing digest, a `handle` — and a shop that asked for "always
+ * give it the new text" wants those removed rather than left describing text
+ * that no longer exists. `declined` is what WE refuse to hand to the AI for our
+ * own safety (a multi-line value, markup, a type the prompt would corrupt), and
+ * that is not the merchant's automation failing: it is us choosing not to try,
+ * so their stored "don't delete" answer stands. Folding the two would delete
+ * every richtext theme translation on a shop that switched the deletion off.
+ *
+ * A stale entry can only be re-translated when there IS a new primary value to
+ * translate (a cleared field has nothing to say), the key is one we translate
+ * automatically, and a digest is available — `translationsRegister` requires
+ * one, and a translation we cannot register would leave the storefront showing
+ * the stale text we set out to remove.
+ */
 export function partitionStaleTranslations(
   stale: readonly StaleTranslation[],
   autoTranslate: boolean,

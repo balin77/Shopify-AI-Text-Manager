@@ -894,8 +894,31 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // `false`, because which of the two switches applies is that module's
     // question. Without a known PRIMARY locale there is nothing to translate
     // FROM, so that case keeps deleting.
+    // The locales are fetched FIRST, because the deletion decision depends on
+    // whether the repair can actually run: standing the purge down and then
+    // finding no locales left the stale theme translations live forever, on a
+    // surface nothing else revisits. The product path was restructured for
+    // exactly this.
+    let themeForeignLocales: string[] = [];
+    if (savedChangedFields.length > 0 && changePolicy?.autoTranslateExternalChanges) {
+      try {
+        const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+        const localesData = await localesResponse.json();
+        themeForeignLocales = (localesData.data?.shopLocales || [])
+          .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+          .map((l: { locale: string }) => l.locale);
+      } catch (localeError) {
+        // Non-fatal: the primary push has already succeeded.
+        logger.warn("[TEMPLATES] Could not load shop locales — falling back to the deletion", {
+          context: "Templates",
+          error: localeError instanceof Error ? localeError.message : String(localeError),
+        });
+      }
+    }
     const retranslateTheme =
-      !!changePolicy?.autoTranslateExternalChanges && !!primaryLocale;
+      !!changePolicy?.autoTranslateExternalChanges &&
+      !!primaryLocale &&
+      themeForeignLocales.length > 0;
     const purgeTheme =
       !!changePolicy &&
       (retranslateTheme
@@ -973,13 +996,9 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // nothing here may fail the save.
     if (savedChangedFields.length > 0 && retranslateTheme) {
       try {
-        const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
-        const localesData = await localesResponse.json();
-        const foreignLocales = (localesData.data?.shopLocales || [])
-          .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
-          .map((l: { locale: string }) => l.locale);
+        const foreignLocales = themeForeignLocales;
 
-        if (foreignLocales.length > 0) {
+        {
           const { reconcileAfterPrimarySave, themeTranslationMirror } = await import(
             "~/services/translations/stale-translation-sync.server"
           );

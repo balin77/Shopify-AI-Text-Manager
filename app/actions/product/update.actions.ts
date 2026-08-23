@@ -187,7 +187,14 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop, changedAttributeFields);
+      // Only indices whose primary alt actually LANDED: a failed write leaves
+      // the primary text unchanged, so its foreign alts are still correct and
+      // must be neither purged nor re-translated. Same rule the sub-resource
+      // path follows — act on what was SAVED, never on what was requested.
+      const savedAltTextIndices = changedAltTextIndices.filter(
+        (index) => !failedAltTextIndices.includes(index),
+      );
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields);
     }
 
     // If alt-text saves failed, merge warning into the response
