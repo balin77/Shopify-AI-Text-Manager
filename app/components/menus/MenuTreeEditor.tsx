@@ -71,6 +71,16 @@ export interface MenuTreeEditorProps {
   onChange: (nodes: MenuEditorNode[]) => void;
   /** Renders the row's editable field — the page owns what a field means. */
   renderField: (node: MenuEditorNode, flat: FlatEditorItem) => React.ReactNode;
+  /**
+   * Renders the row's TARGET control, or nothing where there is none (a
+   * foreign locale does not retarget).
+   *
+   * Its own render prop rather than part of `renderField`, because the two
+   * are placed independently: side by side while there is room, and stacked
+   * with the action row BETWEEN them when there is not — which no single
+   * returned node could express.
+   */
+  renderTarget?: (node: MenuEditorNode, flat: FlatEditorItem) => React.ReactNode;
   /** Renders the row's per-item actions (translate, copy, …). */
   renderActions?: (node: MenuEditorNode, flat: FlatEditorItem) => React.ReactNode;
   onDelete?: (node: MenuEditorNode) => void;
@@ -84,6 +94,7 @@ export function MenuTreeEditor({
   nodes,
   onChange,
   renderField,
+  renderTarget,
   renderActions,
   onDelete,
   onAddChild,
@@ -196,6 +207,7 @@ export function MenuTreeEditor({
               item={item}
               depth={activeKey === item.key && projection ? projection.depth : item.depth}
               renderField={renderField}
+              renderTarget={renderTarget}
               renderActions={renderActions}
               onDelete={onDelete}
               onAddChild={onAddChild}
@@ -230,6 +242,7 @@ interface MenuTreeRowProps {
   item: FlatEditorItem;
   depth: number;
   renderField: MenuTreeEditorProps["renderField"];
+  renderTarget?: MenuTreeEditorProps["renderTarget"];
   renderActions?: MenuTreeEditorProps["renderActions"];
   onDelete?: MenuTreeEditorProps["onDelete"];
   onAddChild?: MenuTreeEditorProps["onAddChild"];
@@ -241,6 +254,7 @@ function MenuTreeRow({
   item,
   depth,
   renderField,
+  renderTarget,
   renderActions,
   onDelete,
   onAddChild,
@@ -251,6 +265,7 @@ function MenuTreeRow({
     useSortable({ id: item.key, disabled: structureLocked });
 
   const canAddChild = !structureLocked && depth < MAX_MENU_DEPTH;
+  const target = renderTarget?.(item.node, item);
 
   return (
     <div
@@ -286,29 +301,43 @@ function MenuTreeRow({
             ⠿
           </div>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>{renderField(item.node, item)}</div>
-      </InlineStack>
-      <InlineStack gap="200" align="end" blockAlign="center">
-        {renderActions?.(item.node, item)}
-        {canAddChild && onAddChild && (
-          <Button size="slim" variant="tertiary" onClick={() => onAddChild(item.node)}>
-            {strings.addChild}
-          </Button>
-        )}
-        {!structureLocked && depth >= MAX_MENU_DEPTH && onAddChild && (
-          // Said rather than hidden: a merchant who cannot find "add below"
-          // on the third level should learn why, not hunt for it.
-          <Tooltip content={strings.maxDepthReached}>
-            <Text as="span" variant="bodySm" tone="subdued">
-              {strings.maxDepthReached}
-            </Text>
-          </Tooltip>
-        )}
-        {!structureLocked && onDelete && (
-          <Button size="slim" variant="tertiary" tone="critical" onClick={() => onDelete(item.node)}>
-            {strings.deleteItem}
-          </Button>
-        )}
+        {/* Name, target and actions are placed by ONE grid rather than
+            stacked, because their arrangement differs between the two widths
+            in a way stacking cannot express: side by side with the actions
+            running underneath both, or one above the other with the actions
+            BETWEEN them. The rules live in menus.css; the modifier is here
+            because only this component knows whether there is a target at
+            all — a foreign locale has none, and an empty second column would
+            leave the name box at half width for no reason. */}
+        <div
+          className={`menu-row-grid${target ? "" : " menu-row-grid--no-target"}`}
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          <div className="menu-row-name">{renderField(item.node, item)}</div>
+          {target && <div className="menu-row-target">{target}</div>}
+          <div className="menu-row-actions">
+            {renderActions?.(item.node, item)}
+            {canAddChild && onAddChild && (
+              <Button size="slim" variant="tertiary" onClick={() => onAddChild(item.node)}>
+                {strings.addChild}
+              </Button>
+            )}
+            {!structureLocked && depth >= MAX_MENU_DEPTH && onAddChild && (
+              // Said rather than hidden: a merchant who cannot find "add below"
+              // on the third level should learn why, not hunt for it.
+              <Tooltip content={strings.maxDepthReached}>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  {strings.maxDepthReached}
+                </Text>
+              </Tooltip>
+            )}
+            {!structureLocked && onDelete && (
+              <Button size="slim" variant="tertiary" tone="critical" onClick={() => onDelete(item.node)}>
+                {strings.deleteItem}
+              </Button>
+            )}
+          </div>
+        </div>
       </InlineStack>
     </div>
   );
