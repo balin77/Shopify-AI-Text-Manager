@@ -1,5 +1,6 @@
 import type { AIProvider, AIServiceConfig } from './ai.service';
 import { loggers } from '../../app/utils/logger.server';
+import { TASK_CONFIG } from '../../app/config/constants';
 
 // Re-export AIProvider for use in other services
 export type { AIProvider } from './ai.service';
@@ -699,7 +700,8 @@ export class AIQueueService {
         data: {
           status: 'completed',
           progress: 100,
-          result: typeof result === 'string' ? result.substring(0, 500) : JSON.stringify(result).substring(0, 500),
+          result: (typeof result === 'string' ? result : JSON.stringify(result))
+            .substring(0, TASK_CONFIG.LIMITS.RESULT_MAX_LENGTH),
           completedAt: new Date(),
         },
       });

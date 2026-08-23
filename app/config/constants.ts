@@ -50,8 +50,12 @@ export const TASK_CONFIG = {
    */
   LIMITS: {
     /**
-     * Maximum characters in task result field
-     * Longer results will be truncated
+     * Maximum characters in task result field.
+     * The queue's crash-recovery path (`completeRecoveredTask` in
+     * ai-queue.service.ts) truncates the blob it writes back to this length.
+     * It is the only reader left — `truncateTaskResult()` was the other one
+     * and had no callers at all — and it spelled the number out inline until
+     * this constant got pointed at it, so the value keeps a name.
      */
     RESULT_MAX_LENGTH: 500,
 
@@ -290,15 +294,6 @@ export function truncateText(text: string, maxLength: number): string {
     return text;
   }
   return text.substring(0, maxLength - 3) + '...';
-}
-
-/**
- * Truncate task result
- * @param result - Task result to truncate
- * @returns Truncated result
- */
-export function truncateTaskResult(result: string): string {
-  return truncateText(result, TASK_CONFIG.LIMITS.RESULT_MAX_LENGTH);
 }
 
 /**

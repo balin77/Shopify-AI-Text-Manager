@@ -146,9 +146,9 @@ export function MainNavigation() {
       // sentence `baseMessage` can produce asserts that the task finished
       // ("Task completed for \"Bag\"", "Website crawl finished"), and the
       // failure rung used to append the error to one of them — in a red box
-      // whose "✗ Failed" title this navigation banner does not render at all.
-      // So a failed run announced its own completion and nothing contradicted
-      // it. Naming the task is still right; claiming it succeeded is not.
+      // that carries no heading of any kind. So a failed run announced its own
+      // completion and nothing contradicted it. Naming the task is still
+      // right; claiming it succeeded is not.
       const identity = [typeLabel, subject ? `"${subject}"` : fieldName]
         .filter(Boolean)
         .join(" · ");
@@ -231,13 +231,17 @@ export function MainNavigation() {
       const processed = typeof task.processed === "number" ? task.processed : null;
       const failed = total != null && processed != null ? Math.max(total - processed, 0) : 0;
 
+      // Tone and message are the WHOLE signal: the banner renders
+      // `infoBox.message` and nothing else, so a status word only reaches the
+      // merchant by being in that sentence. The box used to carry a `title`
+      // too ("✓ Completed", "⚠ Partially saved", "✗ Failed") which no
+      // renderer has ever displayed — it is gone from `showInfoBox` entirely,
+      // and every rung below therefore states its outcome in the body.
       let tone: InfoBoxTone = "success";
-      let title = t.tasks?.completedTitle || "✓ Completed";
       let message = baseMessage;
 
       if (task.status === "failed") {
         tone = "critical";
-        title = t.tasks?.failedTitle || "✗ Failed";
         // With an error text the word "failed" still has to be IN the body:
         // `taskErrorText` passes an unrecognised message through verbatim
         // ("AI service error: 429" and the like), which describes a fault
@@ -250,7 +254,6 @@ export function MainNavigation() {
         message = identity ? `${identity} — ${detail}` : detail;
       } else if (total != null && processed != null && processed < total) {
         tone = "warning";
-        title = t.tasks?.partialTitle || "⚠ Partially saved";
         const summary = (t.tasks?.partialSummary || "{processed} of {total} saved, {failed} failed")
           .replace("{processed}", String(processed))
           .replace("{total}", String(total))
@@ -267,12 +270,11 @@ export function MainNavigation() {
         // otherwise finished task, or the status the translation paths write
         // when some locales failed while nothing counts processed/total.
         tone = "warning";
-        title = t.tasks?.partialTitle || "⚠ Partially saved";
         // With no error text the body used to be the plain completion
-        // sentence — "Translation completed for \"Blue Vase\"" under a title
-        // reading "Partially saved", and the title is not rendered at all in
-        // this navigation banner, so a partly failed run announced itself as a
-        // clean success in a yellow box. The hint says what happened and where
+        // sentence — "Translation completed for \"Blue Vase\"", so a partly
+        // failed run announced itself as a clean success in a yellow box (the
+        // title that said otherwise was never rendered anywhere, which is why
+        // it no longer exists). The hint says what happened and where
         // the detail is; naming the failed locales would mean selecting
         // `result` in an endpoint polled every ~2s per open admin tab, and
         // that blob belongs to the Tasks panel the hint points at.
@@ -285,7 +287,7 @@ export function MainNavigation() {
       }
 
       if (isMountedRef.current) {
-        showInfoBox(message, tone, title);
+        showInfoBox(message, tone);
       }
     }
 
@@ -709,7 +711,20 @@ export function MainNavigation() {
                           className="info-box"
                           role="status"
                           aria-live="polite"
-                          aria-label={`${infoBox.tone === "success" ? "Success" : infoBox.tone === "critical" ? "Error" : infoBox.tone === "warning" ? "Warning" : "Information"} notification`}
+                          // The banner is the app's one live region, and its
+                          // name was hardcoded English in a three-language
+                          // app. Each bundle carries the whole phrase (German
+                          // "Erfolgsmeldung" is one word), so the tone picks a
+                          // sentence rather than an adjective to splice.
+                          aria-label={
+                            infoBox.tone === "success"
+                              ? t.tasks?.notificationSuccess || "Success notification"
+                              : infoBox.tone === "critical"
+                                ? t.tasks?.notificationCritical || "Error notification"
+                                : infoBox.tone === "warning"
+                                  ? t.tasks?.notificationWarning || "Warning notification"
+                                  : t.tasks?.notificationInfo || "Information notification"
+                          }
                           onClick={togglePopover}
                           style={{
                             display: "flex",

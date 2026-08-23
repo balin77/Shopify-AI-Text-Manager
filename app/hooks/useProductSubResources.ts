@@ -122,16 +122,16 @@ export interface SubResourceHandlers {
   resetForReload: () => void;
 }
 
+// Only MESSAGE strings — the box has no title (see InfoBoxContext), so the
+// `saveFailed` / `validationError` / `success` headings this used to carry
+// have no reader and are gone rather than passed and dropped.
 interface UseProductSubResourcesStrings {
   optionsSavedSuccess?: string;
-  saveFailed?: string;
   saveFailedOptions?: string;
   saveFailedItems?: string;
-  validationError?: string;
   optionNameEmpty?: string;
   optionValuesEmpty?: string;
   metafieldValuesEmpty?: string;
-  success?: string;
   /** One per `OptionWriteWarning` code, e.g. `optionWarning_optionLastOne`.
    *  Indexed rather than listed: the server owns the code list, and a missing
    *  entry drops that reason instead of printing an English one. */
@@ -149,7 +149,7 @@ interface UseProductSubResourcesProps {
   /** @deprecated No longer used — hook creates its own fetcher to avoid shared-fetcher race conditions */
   fetcher?: FetcherWithComponents<any>;
   revalidator?: { revalidate: () => void; state: string };
-  showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical", title?: string) => void;
+  showInfoBox?: (message: string, tone?: "success" | "info" | "warning" | "critical") => void;
   strings?: UseProductSubResourcesStrings;
 }
 
@@ -540,8 +540,7 @@ export function useProductSubResources({
         if (showInfoBox) {
           showInfoBox(
             (strings.saveFailedOptions || "Failed to save {count} option(s). Changes have been reverted to original values.").replace("{count}", String(failedResources.length)),
-            "critical",
-            strings.saveFailed || "Save Failed"
+            "critical"
           );
         }
 
@@ -604,7 +603,7 @@ export function useProductSubResources({
       } else {
         // All saved successfully
         if (showInfoBox) {
-          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success", strings.success || "Success");
+          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
         }
         setHasChanges(false);
         setDirtyOptionIds(new Set());
@@ -642,8 +641,7 @@ export function useProductSubResources({
               (strings.saveFailedItems || "Failed to save {count} item(s). Changes have been reverted to original values.").replace("{count}", String(totalFailed)),
               reasons,
             ].filter(Boolean).join(" "),
-            "critical",
-            strings.saveFailed || "Save Failed"
+            "critical"
           );
         }
 
@@ -689,7 +687,7 @@ export function useProductSubResources({
       } else {
         // All saved successfully
         if (showInfoBox) {
-          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success", strings.success || "Success");
+          showInfoBox(strings.optionsSavedSuccess || "Options and metafields saved successfully", "success");
         }
         setHasChanges(false);
         // Clear primary edits after successful save
@@ -1293,7 +1291,7 @@ export function useProductSubResources({
           // VALIDATION: Prevent empty option names and values
           if (hasNameChange && edit.name.trim() === "") {
             if (showInfoBox) {
-              showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical", strings.validationError || "Validation Error");
+              showInfoBox(strings.optionNameEmpty || "Option name cannot be empty", "critical");
             } else {
               alert("Option name cannot be empty");
             }
@@ -1312,7 +1310,7 @@ export function useProductSubResources({
 
           if (hasValuesChange && survivingEdits.some(v => (v.name ?? "").trim() === "")) {
             if (showInfoBox) {
-              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical", strings.validationError || "Validation Error");
+              showInfoBox(strings.optionValuesEmpty || "Option values cannot be empty", "critical");
             } else {
               alert("Option values cannot be empty");
             }
@@ -1369,7 +1367,7 @@ export function useProductSubResources({
           // VALIDATION: Prevent empty metafield values
           if (editValue.trim() === "") {
             if (showInfoBox) {
-              showInfoBox(strings.metafieldValuesEmpty || "Metafield values cannot be empty", "critical", strings.validationError || "Validation Error");
+              showInfoBox(strings.metafieldValuesEmpty || "Metafield values cannot be empty", "critical");
             } else {
               alert("Metafield values cannot be empty");
             }

@@ -78,7 +78,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Parse query parameters for filtering and pagination
     const url = new URL(request.url);
-    const statusFilter = url.searchParams.get("status") || "all"; // all, completed, failed
+    const statusFilter = url.searchParams.get("status") || "all"; // all, completed, completed_with_errors, failed
     const hoursFilter = parseInt(url.searchParams.get("hours") || "24", 10); // 1, 6, 12, 24 (max 1 day)
     const page = parseInt(url.searchParams.get("page") || "1", 10);
     const pageSize = 20;
@@ -86,9 +86,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // Build where clause
     const where: any = { shop: session.shop };
 
-    // Status filter
+    // Status filter. The three options are DISJOINT and "Successful" is
+    // clean-only: it used to answer `{ in: ["completed", "completed_with_errors"] }`,
+    // which hid the one status this page exists to surface — a run that saved
+    // most of its work and lost the rest was filed under a label that claims
+    // it lost nothing. "All Tasks" is still the union, so no row is
+    // unreachable, and an unknown value falls through to no filter at all.
     if (statusFilter === "completed") {
-      where.status = { in: ["completed", "completed_with_errors"] };
+      where.status = "completed";
+    } else if (statusFilter === "completed_with_errors") {
+      where.status = "completed_with_errors";
     } else if (statusFilter === "failed") {
       where.status = "failed";
     }
@@ -393,6 +400,7 @@ export default function TasksPage() {
                     options={[
                       { label: t.tasks.statusOptions.all, value: "all" },
                       { label: t.tasks.statusOptions.completed, value: "completed" },
+                      { label: t.tasks.statusOptions.partial, value: "completed_with_errors" },
                       { label: t.tasks.statusOptions.failed, value: "failed" },
                     ]}
                     value={filters.status}

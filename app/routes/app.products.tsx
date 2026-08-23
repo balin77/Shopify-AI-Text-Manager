@@ -515,14 +515,11 @@ export default function ProductsPage() {
     enabledLanguages: editor.state.enabledLanguages,
     strings: {
       optionsSavedSuccess: t.products.optionsSavedSuccess,
-      saveFailed: t.products.saveFailed,
       saveFailedOptions: t.products.saveFailedOptions,
       saveFailedItems: t.products.saveFailedItems,
-      validationError: t.products.validationError,
       optionNameEmpty: t.products.optionNameEmpty,
       optionValuesEmpty: t.products.optionValuesEmpty,
       metafieldValuesEmpty: t.products.metafieldValuesEmpty,
-      success: t.products.successTitle,
       // One per failure code the option write paths return. Keyed by code so
       // the server can stay in codes and this app can stay in three languages.
       optionWarning_optionsNotConfirmed: t.products.optionWarningNotConfirmed,
@@ -747,7 +744,7 @@ export default function ProductsPage() {
         const productId = editor.selectedItem.id;
         imageManagerState.handleApply(productId).then(err => {
           if (err) {
-            showInfoBox(err, "critical", t.products.galleryErrorTitle);
+            showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
           } else {
             showInfoBox(t.products.gallerySaveSuccess, "success");
             // Kick off background polling for 3D model previews. Shopify
@@ -950,7 +947,7 @@ export default function ProductsPage() {
 
       if (syncFetcher.data.success && syncFetcher.data.synced > 0 && isMountedRef.current) {
         const message = t.products.syncComplete.replace("{count}", String(syncFetcher.data.synced));
-        showInfoBox(message, "success", t.products.syncCompleteTitle);
+        showInfoBox(message, "success");
         // Reload to show new products
         window.location.reload();
       } else if (isMountedRef.current) {
@@ -965,7 +962,7 @@ export default function ProductsPage() {
       const message = error.startsWith("GraphQL error")
         ? (t.errors?.graphqlError || error)
         : error;
-      showInfoBox(message, "critical", t.common?.error || "Error");
+      showInfoBox(message, "critical");
     }
   }, [error, showInfoBox, t]);
 
@@ -1050,7 +1047,7 @@ export default function ProductsPage() {
             onConfirm: async () => {
               const err = await imageManagerState.handleApply(editor.selectedItem?.id ?? "");
               if (err) {
-                showInfoBox(err, "critical", t.products.galleryErrorTitle);
+                showInfoBox(`${t.products.gallerySaveError} ${err}`, "critical");
               } else {
                 showInfoBox(t.products.gallerySaveSuccess, "success");
                 revalidator.revalidate();

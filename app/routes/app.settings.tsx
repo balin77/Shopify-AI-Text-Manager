@@ -1426,10 +1426,10 @@ export default function SettingsPage() {
   // Also revalidate root loader so SeoSettingsContext picks up new suffix immediately
   useEffect(() => {
     if (fetcher.data?.success) {
-      showInfoBox(t.common.settingsSaved, "success", t.common.success);
+      showInfoBox(t.common.settingsSaved, "success");
       revalidator.revalidate();
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
-      showInfoBox(fetcher.data.error as string, "critical", t.common.error);
+      showInfoBox(fetcher.data.error as string, "critical");
     }
   }, [fetcher.data, showInfoBox, t]);
 
@@ -1443,12 +1443,10 @@ export default function SettingsPage() {
     const template =
       t.settings?.corruptedApiKeyWarning ||
       "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
-    const title = t.settings?.corruptedApiKeyTitle || "API key error";
     for (const provider of corruptedApiKeys) {
       showInfoBox(
         template.replace("{provider}", getProviderDisplayName(provider as AIProvider)),
         "critical",
-        title,
         undefined,
         `corrupted-api-key:${provider}`,
       );
