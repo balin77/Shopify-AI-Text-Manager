@@ -323,6 +323,216 @@ export function metaobjectTranslationMirror(
   };
 }
 
+/**
+ * `ProductImageAltTranslation` — the store for a PRODUCT medium's alt text.
+ *
+ * Two things make it its own mirror. The row is keyed by the ProductImage CACHE
+ * id, not by the MediaImage GID Shopify is addressed with, so the caller hands
+ * the map between them; and the table has no `key` column at all, because a
+ * MediaImage has exactly one translatable key (`alt`) — the key argument is
+ * therefore accepted and ignored rather than written.
+ *
+ * It has no `digest` column either. That costs nothing here: the digest is only
+ * needed to REGISTER on Shopify, and this path reads a fresh one for every
+ * write (CLAUDE.md — the mirror's digest is a sync-side detection baseline, and
+ * this surface has no sync-side detection).
+ */
+export function productImageAltMirror(
+  /** MediaImage GID → ProductImage cache row id. */
+  imageIdByMedia: ReadonlyMap<string, string>,
+): TranslationMirror {
+  const mediaByImageId = new Map([...imageIdByMedia].map(([media, image]) => [image, media]));
+  return {
+    async existing(refs, foreignLocales) {
+      const imageIds = refs
+        .map((ref) => imageIdByMedia.get(ref.resourceId))
+        .filter((id): id is string => !!id);
+      if (imageIds.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.productImageAltTranslation.findMany({
+        where: { imageId: { in: imageIds }, marketId: "", locale: { in: [...foreignLocales] } },
+        select: { imageId: true, locale: true },
+      });
+      return rows
+        .map((row: { imageId: string; locale: string }) => ({
+          resourceId: mediaByImageId.get(row.imageId) ?? "",
+          locale: row.locale,
+          key: "alt",
+        }))
+        .filter((row: { resourceId: string }) => !!row.resourceId);
+    },
+    async remove(ref, locale) {
+      const imageId = imageIdByMedia.get(ref.resourceId);
+      if (!imageId) return;
+      const { db } = await import("../../db.server");
+      await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId: "" } });
+    },
+    async write(ref, locale, _key, value) {
+      const imageId = imageIdByMedia.get(ref.resourceId);
+      if (!imageId) return;
+      const { db } = await import("../../db.server");
+      await db.productImageAltTranslation.upsert({
+        where: { imageId_locale_marketId: { imageId, locale, marketId: "" } },
+        create: { imageId, locale, altText: value, marketId: "" },
+        update: { altText: value },
+      });
+    },
+  };
+}
+
+/**
+ * A collection's / article's FEATURED-image alt — the third translation shape
+ * (CLAUDE.md), and the only mirror where BOTH halves of the address differ from
+ * Shopify's: Shopify stores key `alt` on the image's own
+ * CollectionImage/ArticleImage GID, while the row sits on the PARENT under
+ * `image_alt_text`. Both editors read that row, so the rewrite happens here
+ * rather than in a second row nobody else looks at.
+ */
+export function featuredImageAltMirror(
+  shop: string,
+  parentId: string,
+  parentType: string,
+): TranslationMirror {
+  const DB_KEY = "image_alt_text";
+  return {
+    async existing(refs, foreignLocales) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceId: parentId,
+          resourceType: parentType,
+          key: DB_KEY,
+          marketId: "",
+          locale: { in: [...foreignLocales] },
+        },
+        select: { locale: true },
+      });
+      // Reported under the IMAGE's id and Shopify's key, because that is what
+      // the detection, the removal and the register all address.
+      return rows.map((row: { locale: string }) => ({
+        resourceId: refs[0].resourceId,
+        locale: row.locale,
+        key: "alt",
+      }));
+    },
+    async remove(_ref, locale) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.deleteMany({
+        where: { shop, resourceId: parentId, resourceType: parentType, key: DB_KEY, locale, marketId: "" },
+      });
+    },
+    async write(_ref, locale, _key, value, digest) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.upsert({
+        where: {
+          shop_resourceId_key_locale_marketId: {
+            shop,
+            resourceId: parentId,
+            key: DB_KEY,
+            locale,
+            marketId: "",
+          },
+        },
+        create: {
+          shop,
+          resourceId: parentId,
+          resourceType: parentType,
+          key: DB_KEY,
+          value,
+          locale,
+          digest,
+          marketId: "",
+        },
+        update: { value, digest },
+      });
+    },
+  };
+}
+
+/**
+ * `ThemeTranslation` — the only mirror whose unique key folds BOTH the theme and
+ * the market (CLAUDE.md), so it needs the group and the domain the caller is
+ * saving as well as the resource.
+ *
+ * `themeId` is DERIVED from the resource id with the same helper the save path
+ * uses, never passed in: the two must agree on which theme a row belongs to,
+ * and a group can legitimately span resources of different themes.
+ */
+export function themeTranslationMirror(
+  shop: string,
+  groupId: string,
+  domain: string,
+): TranslationMirror {
+  return {
+    async existing(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.themeTranslation.findMany({
+        where: {
+          shop,
+          groupId,
+          domain,
+          marketId: "",
+          resourceId: { in: refs.map((ref) => ref.resourceId) },
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { resourceId: true, key: true, locale: true },
+      });
+      return rows;
+    },
+    async remove(ref, locale, keys) {
+      const { db } = await import("../../db.server");
+      await db.themeTranslation.deleteMany({
+        where: {
+          shop,
+          groupId,
+          domain,
+          marketId: "",
+          resourceId: ref.resourceId,
+          locale,
+          key: { in: [...keys] },
+        },
+      });
+    },
+    async write(ref, locale, key, value) {
+      const { db } = await import("../../db.server");
+      const { extractThemeIdFromResourceId } = await import("../../utils/theme-id");
+      const themeId = extractThemeIdFromResourceId(ref.resourceId) ?? "";
+      await db.themeTranslation.upsert({
+        where: {
+          shop_resourceId_groupId_key_locale_themeId_marketId: {
+            shop,
+            resourceId: ref.resourceId,
+            groupId,
+            key,
+            locale,
+            themeId,
+            marketId: "",
+          },
+        },
+        create: {
+          shop,
+          resourceId: ref.resourceId,
+          domain,
+          groupId,
+          key,
+          value,
+          locale,
+          outdated: false,
+          themeId,
+          marketId: "",
+        },
+        // `outdated` goes back to false: a value just re-translated against the
+        // current source is not older than it by definition.
+        update: { value, outdated: false },
+      });
+    },
+  };
+}
+
 /** The mirror a target asks for, or the ContentTranslation default. */
 function mirrorOf(target: RepairTarget): TranslationMirror {
   return target.mirror ?? contentTranslationMirror(target.shop);

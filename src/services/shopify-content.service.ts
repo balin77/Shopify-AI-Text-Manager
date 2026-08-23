@@ -1440,7 +1440,20 @@ export class ShopifyContentService {
       // UNRECONCILED by nature and therefore NOT covered by `selfRetranslated`:
       // no sync and no re-translation in this app ever looks at a
       // CollectionImage, so auto-translate does not stand its deletion down.
-      if (featuredAltChanged && changePolicy?.purgeUnreconciledSurfaces && foreignLocales.length > 0) {
+      //
+      // With auto-translate on the save REPLACES it instead: nothing else in
+      // this app ever revisits a CollectionImage, so the alternative is not
+      // "the sync will fix it later" but "never".
+      const retranslateFeaturedAlt =
+        featuredAltChanged &&
+        !!changePolicy?.autoTranslateExternalChanges &&
+        foreignLocales.length > 0 &&
+        !!primaryLocale;
+      const purgeFeaturedAlt = retranslateFeaturedAlt
+        ? !!changePolicy?.purgeOnPrimaryChange
+        : !!changePolicy?.purgeUnreconciledSurfaces;
+
+      if (featuredAltChanged && purgeFeaturedAlt && foreignLocales.length > 0) {
         await this.invalidateFeaturedImageAltTranslations({
           resourceId,
           resourceType: resourceType as 'Collection' | 'Article',
@@ -1448,6 +1461,46 @@ export class ShopifyContentService {
           db,
           foreignLocales,
         });
+      }
+
+      if (retranslateFeaturedAlt) {
+        try {
+          const imageResourceId = await this.fetchFeaturedImageResourceId(
+            resourceId,
+            resourceType as 'Collection' | 'Article',
+          );
+          if (imageResourceId) {
+            const { reconcileAfterPrimarySave, featuredImageAltMirror } = await import(
+              "../../app/services/translations/stale-translation-sync.server"
+            );
+            await reconcileAfterPrimarySave({
+              client: this.admin,
+              shop,
+              // The GROUP is the collection / article the merchant saved; the
+              // one entry names the IMAGE, which is where Shopify keeps the
+              // translation. The mirror rewrites both halves back to the
+              // parent row both editors read.
+              resourceId,
+              resourceType,
+              contentKind: resourceType === 'Article' ? 'blog' : 'collection',
+              resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
+              changed: [{ resourceId: imageResourceId, resourceType: 'MediaImage', key: 'alt' }],
+              foreignLocales,
+              policy: changePolicy!,
+              mirror: featuredImageAltMirror(shop, resourceId, resourceType),
+              translateAs: {
+                kind: 'values',
+                context: 'image alt texts',
+                sourceLocale: primaryLocale,
+              },
+            });
+          }
+        } catch (altError: unknown) {
+          loggers.translation('warn', '[updateContent] Featured alt re-translation failed — translation kept', {
+            resourceId,
+            error: altError instanceof Error ? altError.message : String(altError),
+          });
+        }
       }
 
       // The repair that replaces the deletion for the webhook-less types.

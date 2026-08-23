@@ -22,6 +22,11 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       upsert: vi.fn(async () => ({})),
       findMany: vi.fn(async (): Promise<Array<{ resourceId?: string; key: string; locale: string }>> => []),
     },
+    productImageAltTranslation: {
+      findMany: vi.fn(async (): Promise<Array<{ imageId: string; locale: string }>> => []),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      upsert: vi.fn(async () => ({})),
+    },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
     task: {
@@ -108,6 +113,8 @@ vi.mock("../../src/services/translation.service", () => ({
 }));
 
 import {
+  productImageAltMirror,
+  featuredImageAltMirror,
   reconcileStaleTranslations,
   reconcileAfterPrimarySave,
   awaitDetachedRetranslations,
@@ -920,5 +927,57 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(ai.translateValues).toHaveBeenCalledTimes(3);
     const sizes = ai.translateValues.mock.calls.map((c: unknown[]) => (c[0] as string[]).length);
     expect(sizes).toEqual([40, 40, 15]);
+  });
+});
+
+
+/**
+ * The pluggable mirrors. The Shopify half of a translation never varies — one
+ * API, keyed by GID + key + locale — so only the LOCAL half is per surface,
+ * and two of them do not even address the same row Shopify does.
+ */
+describe("per-surface mirrors", () => {
+  it("a product medium's alt is stored by the CACHE row id, not the MediaImage GID", async () => {
+    const media = "gid://shopify/MediaImage/55";
+    const mirror = productImageAltMirror(new Map([[media, "cache-row-7"]]));
+
+    db.productImageAltTranslation.findMany.mockResolvedValue([
+      { imageId: "cache-row-7", locale: "fr" },
+    ]);
+    // …and it is reported back under the MEDIA id, which is what the detection,
+    // the removal and the register all address.
+    expect(await mirror.existing([{ resourceId: media, resourceType: "MediaImage" }], ["fr"], ["alt"]))
+      .toEqual([{ resourceId: media, locale: "fr", key: "alt" }]);
+
+    await mirror.write({ resourceId: media, resourceType: "MediaImage" }, "fr", "alt", "Chaise", "d");
+    const upsertArgs = (db.productImageAltTranslation.upsert.mock.calls[0] as unknown as [any])[0];
+    expect(upsertArgs.where).toEqual({
+      imageId_locale_marketId: { imageId: "cache-row-7", locale: "fr", marketId: "" },
+    });
+  });
+
+  it("an image with no cached row is skipped rather than written under a wrong id", async () => {
+    const mirror = productImageAltMirror(new Map());
+    db.productImageAltTranslation.upsert.mockClear();
+
+    await mirror.write({ resourceId: "gid://shopify/MediaImage/1", resourceType: "MediaImage" }, "fr", "alt", "x", "d");
+    expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a featured alt rewrites BOTH halves back to the parent row both editors read", async () => {
+    // Shopify: key `alt` on the CollectionImage GID. Mirror: `image_alt_text`
+    // on the COLLECTION. The third translation shape (CLAUDE.md).
+    const parent = "gid://shopify/Collection/3";
+    const image = "gid://shopify/CollectionImage/9";
+    const mirror = featuredImageAltMirror(SHOP, parent, "Collection");
+
+    await mirror.write({ resourceId: image, resourceType: "MediaImage" }, "fr", "alt", "Vase", "dg");
+    const call = (db.contentTranslation.upsert.mock.calls.at(-1) as unknown as [any])[0];
+    expect(call.where.shop_resourceId_key_locale_marketId).toMatchObject({
+      resourceId: parent,
+      key: "image_alt_text",
+      locale: "fr",
+    });
+    expect(call.create).toMatchObject({ resourceType: "Collection", value: "Vase", digest: "dg" });
   });
 });

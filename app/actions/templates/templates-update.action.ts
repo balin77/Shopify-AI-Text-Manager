@@ -875,13 +875,27 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     // changed on Shopify — a field that failed to save still has matching
     // primary content, so its translations must not be dropped.
     // Merchant-switchable (Settings → Übersetzungen), failing OPEN.
-    const { isPurgeOnPrimaryChangeEnabled } = await import(
+    const { loadTranslationChangePolicy } = await import(
       "~/services/translations/translation-change-policy.server"
     );
     const savedChangedFields = changedFields.filter((k) => pushedPrimaryKeys.has(k));
-    // No `reconciled` flag: ThemeTranslation is outside the sync's
-    // re-translation, so auto-translate must not switch this off.
-    if (savedChangedFields.length > 0 && (await isPurgeOnPrimaryChangeEnabled(session.shop, db))) {
+    const changePolicy =
+      savedChangedFields.length > 0 ? await loadTranslationChangePolicy(session.shop, db) : null;
+    // Theme content is repaired by THIS save or by nothing: no sync and no
+    // webhook in this app ever looks at a theme resource's translations. So
+    // with auto-translate on the block further down replaces the stale values
+    // and the deletion stands down — read through the policy, never written as
+    // `false`, because which of the two switches applies is that module's
+    // question. Without a known PRIMARY locale there is nothing to translate
+    // FROM, so that case keeps deleting.
+    const retranslateTheme =
+      !!changePolicy?.autoTranslateExternalChanges && !!primaryLocale;
+    const purgeTheme =
+      !!changePolicy &&
+      (retranslateTheme
+        ? changePolicy.purgeOnPrimaryChange
+        : changePolicy.purgeUnreconciledSurfaces);
+    if (savedChangedFields.length > 0 && purgeTheme) {
       logger.debug("[TEMPLATES] Deleting translations for changed fields", {
         context: "Templates",
         keysToDelete: savedChangedFields,
@@ -944,6 +958,60 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
       logger.debug("[TEMPLATES] Deleted translation entries", { context: "Templates", count: deleteResult.count });
     } else {
       logger.debug("[TEMPLATES] No changedFields to delete translations for", { context: "Templates" });
+    }
+
+    // …or REPLACE them. One group for the whole save: a theme group's keys can
+    // sit on several theme resources, which is exactly the shape the repair is
+    // generic over — one Task row, one batched detection, one AI request per
+    // locale (chunked). Best-effort: the primary push has already succeeded, so
+    // nothing here may fail the save.
+    if (savedChangedFields.length > 0 && retranslateTheme) {
+      try {
+        const localesResponse = await admin.graphql(GET_SHOP_LOCALES);
+        const localesData = await localesResponse.json();
+        const foreignLocales = (localesData.data?.shopLocales || [])
+          .filter((l: { primary: boolean; published: boolean }) => !l.primary && l.published)
+          .map((l: { locale: string }) => l.locale);
+
+        if (foreignLocales.length > 0) {
+          const { reconcileAfterPrimarySave, themeTranslationMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          await reconcileAfterPrimarySave({
+            client: admin,
+            shop: session.shop,
+            // The GROUP is the theme group the merchant saved; each key names
+            // the theme resource its translation actually lives on.
+            resourceId,
+            resourceType: "OnlineStoreTheme",
+            // The AI prompt comes from `translateAs`; this only decides the
+            // Task label, and `taskResourceType` keeps a theme group out of the
+            // admin-path map, which has no entry for it and must not guess one.
+            contentKind: "page",
+            taskResourceType: "templates",
+            resourceTitle: themeGroups?.find((g) => g.groupId === groupId)?.groupName || groupId,
+            changed: savedChangedFields.map((key) => ({
+              resourceId: keyToResourceId.get(key) || resourceId,
+              resourceType: "OnlineStoreTheme",
+              key,
+            })),
+            foreignLocales,
+            policy: changePolicy!,
+            mirror: themeTranslationMirror(session.shop, groupId, domain),
+            translateAs: {
+              kind: "values",
+              context: "storefront theme texts",
+              sourceLocale: primaryLocale,
+            },
+          });
+        }
+      } catch (retranslateError) {
+        logger.warn("[TEMPLATES] Theme re-translation failed — translations kept", {
+          context: "Templates",
+          groupId,
+          error: retranslateError instanceof Error ? retranslateError.message : String(retranslateError),
+        });
+      }
     }
 
     // Surface any primary fields that did NOT reach Shopify. Without this the

@@ -1310,7 +1310,15 @@ async function updatePrimaryProduct(
   // live on the MediaImage resource, which the reconciliation never looks at,
   // so suppressing their deletion would leave the old alt text live for good.
   const purgeStaleTranslations = changePolicy?.purgeOnPrimaryChange ?? false;
-  const purgeStaleAltTextTranslations = changePolicy?.purgeUnreconciledSurfaces ?? false;
+  // ALT-TEXTS are repaired by THIS save or by nothing: they live on the
+  // MediaImage resource, which no sync and no webhook in this app looks at. So
+  // with auto-translate on the save re-translates them and the deletion stands
+  // down — read through the policy, never written as `false`, because which of
+  // the two switches applies is that module's question.
+  const retranslateAltTexts = changePolicy?.autoTranslateExternalChanges ?? false;
+  const purgeStaleAltTextTranslations = retranslateAltTexts
+    ? (changePolicy?.purgeOnPrimaryChange ?? false)
+    : (changePolicy?.purgeUnreconciledSurfaces ?? false);
 
   // Delete translations for changed fields in all foreign languages
   if (changedFields.length > 0 && purgeStaleTranslations) {
@@ -1432,7 +1440,8 @@ async function updatePrimaryProduct(
     }
   }
 
-  // Delete alt-text translations for changed image indices in all foreign languages
+  // Delete alt-text translations for changed image indices in all foreign
+  // languages — or, with auto-translate on, replace them (block below).
   if (changedAltTextIndices.length > 0 && purgeStaleAltTextTranslations) {
     try {
       // Get all shop locales from Shopify API (reuse if already fetched above)
@@ -1568,6 +1577,73 @@ async function updatePrimaryProduct(
         error: altTextTranslationError instanceof Error ? altTextTranslationError.message : String(altTextTranslationError),
       });
       // Don't fail the request - primary update succeeded
+    }
+  }
+
+  // …or REPLACE those alt-text translations instead of deleting them. One group
+  // for the whole save: several images are several MediaImage resources but one
+  // merchant action, so they share a Task row and one AI request per locale.
+  // Best-effort — the primary write has already gone through.
+  if (changedAltTextIndices.length > 0 && retranslateAltTexts) {
+    try {
+      const { fetchShopLocales } = await import("~/services/sync-utils");
+      const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
+      const foreignLocales = shopLocales
+        .filter((l) => !l.primary && l.published)
+        .map((l) => l.locale);
+      const primaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+
+      if (foreignLocales.length > 0 && primaryLocale) {
+        const dbProduct = await db.product.findUnique({
+          where: { shop_id: { shop, id: productId } },
+          include: { images: { orderBy: { position: "asc" } } },
+        });
+        // A cached image with no `mediaId` has no Shopify resource to address
+        // at all, so there is nothing on the storefront to repair — a product
+        // resync fills the id in (CLAUDE.md).
+        const imageIdByMedia = new Map<string, string>();
+        for (const index of changedAltTextIndices) {
+          const image = dbProduct?.images?.[index];
+          if (image?.mediaId) imageIdByMedia.set(image.mediaId, image.id);
+        }
+
+        if (imageIdByMedia.size > 0) {
+          const { reconcileAfterPrimarySave, productImageAltMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          await reconcileAfterPrimarySave({
+            client: gateway,
+            shop,
+            resourceId: productId,
+            resourceType: "Product",
+            contentKind: "product",
+            resourceTitle: (data.data.productUpdate.product?.title as string) || productId,
+            changed: [...imageIdByMedia.keys()].map((mediaId) => ({
+              resourceId: mediaId,
+              resourceType: "MediaImage",
+              key: "alt",
+            })),
+            foreignLocales,
+            policy: changePolicy!,
+            mirror: productImageAltMirror(imageIdByMedia),
+            // An alt text is one line of prose about a picture; it has no field
+            // definition, no SEO limit and no per-field instruction to carry.
+            // The dedicated alt-text prompt is image-aware and one call per
+            // value — deliberately not used here, where this runs unattended
+            // and the alternative it replaces was a plain deletion.
+            translateAs: {
+              kind: "values",
+              context: "product image alt texts",
+              sourceLocale: primaryLocale,
+            },
+          });
+        }
+      }
+    } catch (retranslateError: unknown) {
+      loggers.product("warn", "Alt-text re-translation failed — translations kept", {
+        productId,
+        error: retranslateError instanceof Error ? retranslateError.message : String(retranslateError),
+      });
     }
   }
 
