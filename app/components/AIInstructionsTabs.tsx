@@ -1,8 +1,14 @@
 import { useState, useEffect } from "react";
-import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner } from "@shopify/polaris";
+import { BlockStack, Text, Button, InlineStack, Card, TextField, ChoiceList, Banner, Select } from "@shopify/polaris";
 import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { ToggleRow } from "./ToggleRow";
+import {
+  AI_IMAGES_PER_REQUEST_MAX,
+  AI_IMAGES_PER_REQUEST_MIN,
+  clampImagesPerRequest,
+} from "../services/ai/vision-policy.shared";
 import { HelpTooltip } from "./HelpTooltip";
 import { SettingsGlossaryTab, type GlossaryEntryDto, type GlossaryShopLocale } from "./SettingsGlossaryTab";
 import {
@@ -117,6 +123,15 @@ interface AIInstructionsTabsProps {
   autoTranslateExternalChanges: boolean;
   /** Drives the Max gate on the auto-translate switch. */
   subscriptionPlan: Plan;
+  /**
+   * AISettings.sendImagesToAI — may the AI LOOK at the shop's images? ONE
+   * answer for the whole app; it used to be a per-session checkbox in the
+   * content editor's toolbar, a second one in the create dialog, and a
+   * hardcoded `false` in the alt-text path the image manager posts to.
+   */
+  sendImagesToAI: boolean;
+  /** AISettings.aiImagesPerRequest — how many of them one generation carries. */
+  aiImagesPerRequest: number;
 }
 
 export function AIInstructionsTabs({
@@ -133,6 +148,8 @@ export function AIInstructionsTabs({
   translationPurgeOnPrimaryChange,
   autoTranslateExternalChanges,
   subscriptionPlan,
+  sendImagesToAI,
+  aiImagesPerRequest,
 }: AIInstructionsTabsProps) {
   const { t } = useI18n();
   const [subSection, setSubSection] = useState<"content" | "translations">("content");
@@ -151,6 +168,36 @@ export function AIInstructionsTabs({
   /** Auto-translation is on AND allowed — the state in which it supersedes the
    *  deletion switch (loadTranslationChangePolicy enforces the same). */
   const autoTranslateActive = canAutoTranslateExternal && localAutoTranslateExternal;
+  /**
+   * The vision switch saves ITSELF, and is editable on every plan.
+   *
+   * Two reasons it does not ride on this card's Save button like the
+   * translation knobs do. It is not an instruction: Free and Basic see this
+   * whole card `readOnly` (they use the default instructions), and routing the
+   * switch through that button would take away on those plans a capability
+   * every plan had while it was a checkbox in the editor's toolbar. And a save
+   * from a read-only card would have to send the instruction fields with it —
+   * the action writes `data.x || null` for each, so a payload that omitted
+   * them would WIPE stored instructions. Its own action sends two fields and
+   * touches nothing else. Submitting on change is the pattern the
+   * direct-translations settings rows already use for exactly this shape.
+   */
+  const [localSendImages, setLocalSendImages] = useState(sendImagesToAI);
+  const [localImagesPerRequest, setLocalImagesPerRequest] = useState(
+    clampImagesPerRequest(aiImagesPerRequest),
+  );
+
+  const saveVision = (next: { sendImages?: boolean; imagesPerRequest?: number }) => {
+    const sendImages = next.sendImages ?? localSendImages;
+    const imagesPerRequest = clampImagesPerRequest(next.imagesPerRequest ?? localImagesPerRequest);
+    setLocalSendImages(sendImages);
+    setLocalImagesPerRequest(imagesPerRequest);
+    const formData = new FormData();
+    formData.append("actionType", "saveAiVision");
+    formData.append("sendImagesToAI", String(sendImages));
+    formData.append("aiImagesPerRequest", String(imagesPerRequest));
+    fetcher.submit(formData, { method: "POST" });
+  };
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -586,6 +633,47 @@ export function AIInstructionsTabs({
                 <Text as="p" variant="bodyMd" tone="subdued">
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
                 </Text>
+
+                {/* Vision. FIRST in the General tab, above the instruction
+                    texts: it decides what the AI can SEE, which outranks how it
+                    is told to write. One answer for the whole app — every
+                    surface that generates text or an alt text reads it
+                    server-side, so there is nothing to set per page any more. */}
+                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                  <BlockStack gap="400">
+                    {/* No ❓ on the heading: the switch below carries the
+                        explanation, and two question marks in one small card
+                        are two places to look for one answer. */}
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.aiVisionHeading || "Images"}
+                    </Text>
+                    <ToggleRow
+                      layout="inline"
+                      label={t.settings.aiVisionToggle || "Let the AI look at the images"}
+                      help={t.settings.aiVisionHelp}
+                      checked={localSendImages}
+                      onChange={(v) => saveVision({ sendImages: v })}
+                    />
+                    {/* Offered only once vision is ON: "how many of nothing"
+                        is not a question, and a live control under a switch
+                        that is off reads as if it did something. */}
+                    {localSendImages && (
+                      <Select
+                        label={t.settings.aiImagesPerRequestLabel || "Images per request"}
+                        options={Array.from(
+                          { length: AI_IMAGES_PER_REQUEST_MAX - AI_IMAGES_PER_REQUEST_MIN + 1 },
+                          (_, i) => {
+                            const n = AI_IMAGES_PER_REQUEST_MIN + i;
+                            return { value: String(n), label: String(n) };
+                          },
+                        )}
+                        value={String(localImagesPerRequest)}
+                        onChange={(v) => saveVision({ imagesPerRequest: Number(v) })}
+                        helpText={t.settings.aiImagesPerRequestHelp}
+                      />
+                    )}
+                  </BlockStack>
+                </div>
 
                 {/* Writing Style Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>

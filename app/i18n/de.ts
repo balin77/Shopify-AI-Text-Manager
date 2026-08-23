@@ -404,7 +404,6 @@ export const de = {
     translateAll: "Alles übersetzen",
     translating: "Übersetze...",
     clearAll: "Alles löschen",
-    sendImageToAI: "Bild an KI senden",
     // Markt-spezifische Übersetzungen ("Übersetzen & anpassen")
     market: {
       allMarketsGlobal: "Alle Märkte (global)",
@@ -855,8 +854,6 @@ export const de = {
       generateRestHint: "Die Prompts gehen zusammen mit dem Anlegen an die KI. Es werden nur leere Felder gefüllt — was du geschrieben hast, bleibt.",
       generatedNeedsFixing: "Die KI hat ihren Teil geschrieben, aber etwas passt noch nicht — sieh dir die markierten Felder an.",
       generatingField: "{field} wird geschrieben …",
-      sendImageToAI: "Die KI darf das Bild ansehen",
-      sendImageToAIHint: "Aus geschaltet bekommt die KI nur deine Texte zu sehen und schreibt über das Bild nichts, was nicht schon im Titel steht. An geschaltet geht das Bild selbst mit — das kostet etwas mehr und setzt ein Modell voraus, das Bilder lesen kann. Schaltest du es jetzt ein, wird auch der Alt-Text neu geschrieben.",
       translateAfterwards: "Danach in alle Sprachen übersetzen",
       translateAfterwardsHint: "Läuft direkt nach dem Anlegen, mit der gewohnten Fortschrittsanzeige.",
       translatingAfterCreate: "Wird in deine anderen Sprachen übersetzt …",
@@ -1026,6 +1023,12 @@ export const de = {
     appLanguage: "App-Sprache",
     translations: "Übersetzungen",
     keywordAwareTranslation: "Keywords in Übersetzungen einarbeiten",
+    // KI-Anweisungen → Allgemein: EIN Schalter fürs ganze Programm.
+    aiVisionHeading: "Bilder",
+    aiVisionToggle: "Die KI darf die Bilder ansehen",
+    aiVisionHelp: "Aus sieht die KI nur deine Texte und kann über ein Bild nichts sagen, was nicht schon im Titel steht. An geht das Bild selbst an das Modell mit — das kostet pro Anfrage mehr und setzt ein bildfähiges Modell voraus (HuggingFace und DeepSeek können es nicht). Gilt überall: Editor, Anlege-Dialog, Alt-Texte und Bildmanager.",
+    aiImagesPerRequestLabel: "Bilder pro Anfrage",
+    aiImagesPerRequestHelp: "Wie viele Bilder eines Produkts eine Textgenerierung mitnehmen darf — mehr Bilder heißt mehr Kontext und mehr Kosten. Das gerade gewählte Bild geht immer zuerst mit. Alt-Texte sind davon ausgenommen: dort geht genau das Bild mit, das beschrieben wird.",
     keywordAwareTranslationHelp: "Beim Übersetzen wird der Text so formuliert, dass das für die jeweilige Zielsprache hinterlegte Keyword darin vorkommt — statt den Ausgangstext wörtlich zu übertragen. Sprachen ohne eigene Keywords werden unverändert übersetzt. Abschalten, wenn Übersetzungen streng wortgetreu bleiben müssen.",
     translationChangeHeading: "Bei Änderung der Hauptsprache",
     translationPurgeOnPrimaryChange: "Übersetzungen löschen, wenn der Text in der Hauptsprache geändert oder gelöscht wird",

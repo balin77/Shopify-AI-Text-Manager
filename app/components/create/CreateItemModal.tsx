@@ -134,8 +134,6 @@ export interface CreateItemModalTexts {
   generateRest?: string;
   generateRestHint?: string;
   generatingField?: string;
-  sendImageToAI?: string;
-  sendImageToAIHint?: string;
   /** A generated value the validator refuses — the one AI outcome that has to
    *  be read while the dialog is still open, because nothing was created. */
   generatedNeedsFixing?: string;
@@ -319,10 +317,6 @@ export function CreateItemModal({
    * they did not ask for.
    */
   const [generateWithAi, setGenerateWithAi] = useState(false);
-  // §0.5 — the editor's own "send the image to the AI" toggle is not reachable
-  // from here, so the dialog owns one. Off by default: sending an image costs
-  // more and not every provider is vision-capable.
-  const [sendImageToAI, setSendImageToAI] = useState(false);
 
   const [ruleSources, setRuleSources] = useState<RuleSource[]>([]);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -353,7 +347,7 @@ export function CreateItemModal({
     liveFormRef.current = { values, image, ruleSources, rulesOpen, translateAfterwards };
   });
 
-  const ai = useCreateAiAssist({ mainLanguage, sendImageToAI });
+  const ai = useCreateAiAssist({ mainLanguage });
   /**
    * The one AI outcome that has to be read INSIDE this dialog: a generated
    * value the validator refuses. Everything else the run can report travels
@@ -729,25 +723,6 @@ export function CreateItemModal({
     },
     [ai, resource, values.title],
   );
-
-  /**
-   * The switch can only be turned on AFTER an image exists — it does not
-   * appear before that — and by then the automatic alt text has already been
-   * written, blind, from the title alone. So flipping it on re-runs it: that
-   * is the one moment where "the AI may look at the image" can still change
-   * the answer, and a merchant who ticks it for that reason gets what they
-   * asked for. An alt text they typed themselves is untouched (`autoAltText`
-   * fills only an empty one), and it runs from an EFFECT rather than from the
-   * switch's own handler because the hook captures the flag per render — the
-   * call in the handler would still send the old `false`.
-   */
-  useEffect(() => {
-    if (!sendImageToAI || !image || image.alt.trim()) return;
-    autoAltText(image);
-    // Only when the switch flips: attaching an image already triggers this on
-    // its own, and re-running on every `image` change would fight that.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sendImageToAI]);
 
   const handlePicked = useCallback((items: AddedItem[]) => {
     const first = items[0];
@@ -1202,19 +1177,6 @@ export function CreateItemModal({
                   onChange={setGenerateWithAi}
                   disabled={submitting}
                 />
-                {/* §0.5 — the editor's own "send the image" toggle is not
-                    reachable from here, so the dialog owns one. Offered only
-                    once an image exists; there is nothing to send otherwise. */}
-                {image && (
-                  <ToggleRow
-                    layout="inline"
-                    label={t.sendImageToAI || "Let the AI look at the image"}
-                    help={t.sendImageToAIHint}
-                    checked={sendImageToAI}
-                    onChange={setSendImageToAI}
-                    disabled={submitting}
-                  />
-                )}
                 {/* Which field is being written, while the submit waits for it.
                     The run happens between the click and the create, so this
                     line is the only thing standing between a merchant and a

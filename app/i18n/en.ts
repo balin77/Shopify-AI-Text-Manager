@@ -412,7 +412,6 @@ export const en: Translation = {
     translateAll: "Translate All",
     translating: "Translating...",
     clearAll: "Clear All",
-    sendImageToAI: "Send image to AI",
     // Market-specific translations ("Translate & Adapt")
     market: {
       allMarketsGlobal: "All markets (global)",
@@ -854,8 +853,6 @@ export const en: Translation = {
       generateRestHint: "The prompts go to the AI together with creating the item. Only empty fields are filled — anything you wrote stays.",
       generatedNeedsFixing: "The AI wrote its part, but something does not fit yet — check the marked fields.",
       generatingField: "Writing {field}…",
-      sendImageToAI: "Let the AI look at the image",
-      sendImageToAIHint: "Off, the AI only sees your text and can say nothing about the image that is not already in the title. On, the image itself goes along — that costs a little more and needs a model that can read images. Switching it on now also rewrites the alt text.",
       translateAfterwards: "Translate into all languages afterwards",
       translateAfterwardsHint: "Runs right after creating, with the usual progress display.",
       translatingAfterCreate: "Translating into your other languages…",
@@ -1028,6 +1025,12 @@ export const en: Translation = {
     appLanguage: "App Language",
     translations: "Translations",
     keywordAwareTranslation: "Work keywords into translations",
+    // AI instructions → General: ONE switch for the whole app.
+    aiVisionHeading: "Images",
+    aiVisionToggle: "Let the AI look at the images",
+    aiVisionHelp: "Off, the AI only sees your text and can say nothing about an image that is not already in the title. On, the image itself goes to the model — that costs more per request and needs a vision-capable model (HuggingFace and DeepSeek cannot do it). It applies everywhere: the editor, the create dialog, alt texts and the image manager.",
+    aiImagesPerRequestLabel: "Images per request",
+    aiImagesPerRequestHelp: "How many of a product's images one text generation may carry — more images means more context and more cost. The image you have selected always goes first. Alt texts are exempt: there, exactly the image being described goes along.",
     keywordAwareTranslationHelp: "When translating, the text is phrased so the keyword tracked for that target language appears in it — instead of rendering the source literally. Languages without their own keywords are translated unchanged. Turn this off when translations must stay strictly faithful.",
     translationChangeHeading: "When the primary language changes",
     translationPurgeOnPrimaryChange: "Delete translations when the primary-language text is changed or cleared",
