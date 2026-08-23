@@ -32,6 +32,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
@@ -51,6 +52,7 @@ import {
 } from "../components/seo/crawl/ReportTable";
 import { Tile } from "../components/seo/crawl/Tile";
 import { StepTile } from "../components/seo/StepTile";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import {
   OnPageTiles,
   OnPageSections,
@@ -721,13 +723,34 @@ export default function SeoCrawl() {
 
   const [diffOpen, setDiffOpen] = useState(false);
 
-  // §6.5 — optimistic local state so the checkbox reacts immediately; the
-  // loader value re-syncs it after the revalidation.
+  /**
+   * §6.5 — a DRAFT until Save, like every setting in this app (CLAUDE.md,
+   * "Field chrome"). It used to write on the click; the local state is what
+   * the merchant is proposing and the loader value is what the next crawl will
+   * actually do, which is why the two are compared below rather than merged.
+   */
+  const { showInfoBox } = useInfoBox();
   const externalToggleFetcher = useFetcher<{ ok: boolean; enabled?: boolean }>();
   const [externalChecksEnabled, setExternalChecksEnabled] = useState(data.externalChecksEnabled);
   useEffect(() => {
     setExternalChecksEnabled(data.externalChecksEnabled);
   }, [data.externalChecksEnabled]);
+  const externalChecksChanged = externalChecksEnabled !== data.externalChecksEnabled;
+  /**
+   * A refusal puts the box back.
+   *
+   * This route answers 403 below the Pro plan. Without this the draft stayed
+   * dirty, the save bar stuck for the rest of the page's life, and the
+   * checkbox went on asserting a value nobody had stored — the same lie a
+   * setting that saves itself tells, arrived at from the other direction.
+   */
+  useEffect(() => {
+    if (externalToggleFetcher.state !== "idle" || !externalToggleFetcher.data) return;
+    if (externalToggleFetcher.data.ok === false) {
+      setExternalChecksEnabled(data.externalChecksEnabled);
+      showInfoBox(c.externalChecksRefused, "critical", t.common?.error || "Error");
+    }
+  }, [externalToggleFetcher.state, externalToggleFetcher.data, data.externalChecksEnabled]);
 
   const snapshot = data.snapshot;
   const isCapped = snapshot?.status === "capped";
@@ -745,7 +768,13 @@ export default function SeoCrawl() {
         <Text as="p" variant="bodyMd">{view === "onpage" ? o.introBody : c.introBody}</Text>
       </SeoHelpBanner>
 
-      <CrawlSnapshotHeader snapshot={snapshot} running={data.running} gated={data.gated}>
+      <CrawlSnapshotHeader
+        snapshot={snapshot}
+        running={data.running}
+        gated={data.gated}
+        pendingSettings={externalChecksChanged}
+        pendingSettingsReason={c.externalChecksUnsaved}
+      >
         {/* §6.5 — visible where the crawl is started, because it changes what
             the crawl DOES, not just what it shows. */}
         <Checkbox
@@ -753,13 +782,21 @@ export default function SeoCrawl() {
           helpText={c.externalChecksHelp}
           checked={externalChecksEnabled}
           disabled={externalToggleFetcher.state !== "idle"}
-          onChange={(checked) => {
-            setExternalChecksEnabled(checked);
+          onChange={setExternalChecksEnabled}
+        />
+        {/* The page's only save bar — nothing else here is a draft. */}
+        <SaveDiscardButtons
+          hasChanges={externalChecksChanged}
+          onSave={() =>
             externalToggleFetcher.submit(
-              { actionType: "toggleExternalChecks", enabled: String(checked) },
+              { actionType: "toggleExternalChecks", enabled: String(externalChecksEnabled) },
               { method: "post" },
-            );
-          }}
+            )
+          }
+          onDiscard={() => setExternalChecksEnabled(data.externalChecksEnabled)}
+          saveText={t.common?.save || "Save"}
+          discardText={t.content?.discardChanges || "Discard"}
+          isSavingCurrentItem={externalToggleFetcher.state !== "idle"}
         />
 
         {snapshot && snapshot.pagesBlocked > 0 && !data.running && (

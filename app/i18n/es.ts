@@ -2780,6 +2780,10 @@ export const es: Translation = {
       externalTruncatedBanner: "Solo se registraron los primeros {max} destinos externos distintos. Los enlaces posteriores no aparecen aquí.",
       externalUncheckedBanner: "{count} destinos no se pudieron comprobar dentro del tiempo disponible. Abajo aparecen como «Sin comprobar», no como correctos.",
       externalChecksLabel: "Comprobar también los enlaces externos",
+      // Por qué "Escanear ahora" espera: el servidor lee el valor GUARDADO al
+      // iniciar, así que una casilla sin guardar no se aplicaría.
+      externalChecksRefused: "La comprobación de enlaces externos está disponible a partir del plan Pro: el ajuste no se ha cambiado.",
+      externalChecksUnsaved: "Guarda primero: si no, el escaneo se ejecuta con el ajuste anterior.",
       externalChecksHelp: "Tras el rastreo, comprueba si los enlaces a otros sitios web siguen funcionando. Esto envía peticiones a servidores que no controlamos y alarga un poco el rastreo (2 minutos adicionales como máximo).",
       // Comparación de rastreos (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Desde el último rastreo ({date})",
@@ -3740,6 +3744,7 @@ export const es: Translation = {
       llmsTitle: "Archivos de descubrimiento para IA",
       llmsStaleHint: "Al menos uno de los dos archivos de tu tema ya no coincide con tu catálogo: han cambiado productos, colecciones o políticas desde la última generación. Vuelve a generarlos para que los rastreadores de IA vean el estado actual.",
       llmsContents: "Estado actual: {products} productos, {collections} colecciones, {policies} políticas. Los elementos se incluyen ordenados por handle, hasta 50 por tipo.",
+      llmsAutoSaveFailed: "No se pudo guardar el ajuste.",
       llmsAutoLabel: "Mantener los archivos de descubrimiento actualizados automáticamente",
       llmsAutoDisabled: "Desactivado: los archivos solo cambian cuando pulsas \"Actualizar archivos\" abajo.",
       llmsAutoOn: "Activado: poco después de abrir la app, y cada media hora aproximadamente mientras siga abierta, comprobamos en segundo plano si tu catálogo difiere de los archivos y solo los reescribimos si hay una diferencia real. Los cambios que hagas directamente en Shopify se tienen en cuenta.",

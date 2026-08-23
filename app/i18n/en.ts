@@ -2795,6 +2795,10 @@ export const en: Translation = {
       externalTruncatedBanner: "Only the first {max} distinct external targets were recorded. Any links beyond that are not listed here.",
       externalUncheckedBanner: "{count} targets could not be checked within the time budget. They are marked \"Not checked\" below — not as fine.",
       externalChecksLabel: "Also check external links",
+      // Why "Scan now" waits: the server reads the STORED value when it
+      // starts, so an unsaved tick would simply not apply.
+      externalChecksRefused: "Checking external links is available from the Pro plan — the setting was not changed.",
+      externalChecksUnsaved: "Save first — otherwise the scan still runs with the old setting.",
       externalChecksHelp: "After the crawl, checks whether links to other websites still work. This sends requests to servers we do not control and makes the crawl take a little longer (at most 2 extra minutes).",
       // Crawl comparison (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Since the last crawl ({date})",
@@ -3753,6 +3757,7 @@ export const en: Translation = {
       llmsTitle: "AI discovery files",
       llmsStaleHint: "At least one of the two files in your theme no longer matches your catalog — products, collections or policies have changed since it was last generated. Regenerate them so AI crawlers see the current state.",
       llmsContents: "Current state: {products} products, {collections} collections, {policies} policies. Items are included ordered by handle, up to 50 per type.",
+      llmsAutoSaveFailed: "The setting could not be saved.",
       llmsAutoLabel: "Keep discovery files up to date automatically",
       llmsAutoDisabled: "Off — the files only change when you press \"Update files\" below.",
       llmsAutoOn: "On — shortly after you open the app, and about every half hour while it stays open, we check in the background whether your catalog differs from the files and rewrite them only on a real difference. Changes you make directly in Shopify are included.",
