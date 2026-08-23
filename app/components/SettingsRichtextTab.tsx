@@ -1,14 +1,12 @@
-import { useState, useEffect } from "react";
-import type { FetcherWithComponents } from "react-router";
 import {
   Card,
   Text,
   BlockStack,
   Banner,
-  InlineStack,
   ChoiceList,
 } from "@shopify/polaris";
-import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { useInstantSetting } from "../hooks/useInstantSetting";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 
 interface Settings {
   themeRichtextMode: string;
@@ -16,61 +14,44 @@ interface Settings {
 
 interface SettingsRichtextTabProps {
   settings: Settings;
-  fetcher: FetcherWithComponents<any>;
   t: any;
-  onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
 const VALID_MODES = ["autofix", "normalize", "error"] as const;
 
-export function SettingsRichtextTab({
-  settings,
-  fetcher,
-  t,
-  onHasChangesChange,
-}: SettingsRichtextTabProps) {
+export function SettingsRichtextTab({ settings, t }: SettingsRichtextTabProps) {
   const initial = VALID_MODES.includes(settings.themeRichtextMode as (typeof VALID_MODES)[number])
     ? settings.themeRichtextMode
     : "autofix";
-  const [mode, setMode] = useState<string>(initial);
-  const [hasChanges, setHasChanges] = useState(false);
 
-  useEffect(() => {
-    const changed = mode !== initial;
-    setHasChanges(changed);
-    if (onHasChangesChange) onHasChangesChange(changed);
-  }, [mode, initial, onHasChangesChange]);
-
-  const handleSave = () => {
-    if (!hasChanges) return;
-    fetcher.submit(
-      { actionType: "saveRichtextMode", themeRichtextMode: mode },
-      { method: "POST" }
-    );
-  };
-
-  const handleDiscard = () => setMode(initial);
+  /**
+   * A three-way choice with no text beside it — so it saves itself, like every
+   * other switch and picker in Settings
+   * ([useInstantSetting.ts](../hooks/useInstantSetting.ts)). This card has no
+   * draft state left and therefore no Save button.
+   */
+  const { showInfoBox } = useInfoBox();
+  const richtextMode = useInstantSetting<string>({
+    stored: initial,
+    submit: (value, f) =>
+      f.submit({ actionType: "saveRichtextMode", themeRichtextMode: value }, { method: "POST" }),
+    onError: (error) =>
+      showInfoBox(
+        error || t.settings?.settingSaveFailed || t.products?.saveFailed || "Save failed",
+        "critical",
+        t.common?.error || "Error",
+      ),
+  });
+  const mode = richtextMode.value;
 
   const s = t.settings || {};
 
   return (
     <Card>
       <BlockStack gap="500">
-        <InlineStack align="space-between" blockAlign="center" wrap={false}>
-          <Text as="h2" variant="headingLg">
-            {s.richtextFormatting || "Rich-text formatting"}
-          </Text>
-          <SaveDiscardButtons
-            hasChanges={hasChanges}
-            onSave={handleSave}
-            onDiscard={handleDiscard}
-            saveText={t.products?.saveChanges || "Speichern"}
-            discardText={t.content?.discardChanges || "Verwerfen"}
-            action="saveRichtextMode"
-            fetcherState={fetcher.state}
-            fetcherFormData={fetcher.formData}
-          />
-        </InlineStack>
+        <Text as="h2" variant="headingLg">
+          {s.richtextFormatting || "Rich-text formatting"}
+        </Text>
 
         <Text as="p" variant="bodyMd" tone="subdued">
           {s.richtextFormattingDescription ||
@@ -81,7 +62,7 @@ export function SettingsRichtextTab({
           title={s.richtextModeTitle || "Behaviour on save"}
           titleHidden
           selected={[mode]}
-          onChange={(selected) => setMode(selected[0])}
+          onChange={(selected) => richtextMode.set(selected[0])}
           choices={[
             {
               label: s.richtextModeAutofix || "Fix automatically only when needed (recommended)",

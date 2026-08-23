@@ -224,6 +224,32 @@ button of its own.**
   `ChipCombobox`, `CollectionsField`, `TaxonomyField`. A label is a `span`, never
   a second `label` element: it is passed INTO the Polaris `label` prop, and a
   nested label is invalid markup that also breaks click-to-focus.
+- **A SETTING SAVES ITSELF; only free text waits for a Save button.** A switch
+  is not a draft — it shows a state, and a state that is only true after a
+  second click somewhere else is one the merchant has to remember they have not
+  committed. [useInstantSetting.ts](app/hooks/useInstantSetting.ts) is the one
+  implementation, and its three rules are each there because the naive version
+  lies on screen: the change is OPTIMISTIC but **reverted when the server
+  refuses** (several of these are plan-gated and answer 403 — a switch left in
+  the position the merchant clicked, over a value nobody stored, is still
+  sitting there saying the opposite of the truth on the next page load); it uses
+  **its own fetcher** (the settings route clears `hasChanges` on any `success`,
+  so a shared one would hide the save bar over unsaved TEXT); and it **follows
+  the stored value again once idle**, so a revalidation is not overwritten by a
+  stale local state. Converted: the four SEO switches, both image-manager
+  switches, the app language, the rich-text mode, the four translation-policy
+  controls and the AI-vision pair. What KEEPS a Save button, and why: the
+  instruction texts, the SEO suffix and character limits, the API keys, the
+  glossary — free text, where every keystroke would be a request. The metafield
+  definition list keeps one too, and that is the interesting line: it is
+  "which of these", a bulk edit of a dozen rows, not a setting. **A setting
+  that saves itself needs its own action**, present-or-absent per field: the
+  big `saveInstructions` writes `data.<field> || null` for every instruction it
+  knows, so a one-field payload would blank the lot — hence
+  `saveTranslationPolicy` and `saveAiVision`. `saveSeoSettings` was made
+  present-or-absent for the same reason (its two suffix fields were read
+  unconditionally, so any single-switch payload would have switched the suffix
+  off and blanked its text).
 - **NEVER a plain checkbox for a yes/no decision — it is a pill switch, and the
   row it sits in lives in [ToggleRow.tsx](app/components/ToggleRow.tsx).** The
   owner's standing instruction: do not reach for Polaris' `Checkbox` unless

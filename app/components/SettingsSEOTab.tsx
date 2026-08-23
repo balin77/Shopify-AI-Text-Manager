@@ -13,6 +13,8 @@ import {
 } from "@shopify/polaris";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
+import { useInstantSetting, type InstantSettingResponse } from "../hooks/useInstantSetting";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { DEFAULT_SEO_LIMITS, resolveSeoLimits, type SeoLimits } from "../utils/character-limits";
 import { meetsPlan, canAccessSeoFeature, getMinimumPlanForSeoFeature, type Plan } from "../utils/planUtils";
@@ -147,42 +149,92 @@ export function SettingsSEOTab({
       : undefined;
   const initialDraft = toDraft(settings.seoLimits ?? null);
 
-  const [seoTitleSuffixEnabled, setSeoTitleSuffixEnabled] = useState(
-    settings.seoTitleSuffixEnabled ?? false,
-  );
+  /**
+   * Every switch on this card saves itself; only the TEXT below them (the
+   * suffix, the character limits) waits for the Save button. See
+   * [useInstantSetting.ts](../hooks/useInstantSetting.ts) for why, and for the
+   * revert — two of these are plan-gated and answer 403, and a switch left
+   * standing in a position the server refused is a lie the merchant reads as
+   * a saved setting.
+   */
+  const { showInfoBox } = useInfoBox();
+  const instantError = (error?: string) =>
+    showInfoBox(
+      error || t.settings.settingSaveFailed || t.products?.saveFailed || "Save failed",
+      "critical",
+      t.common?.error || "Error",
+    );
+  /** Post ONE field of this action. Every other field it knows is
+   *  present-or-absent server-side, so a partial payload changes nothing else. */
+  const postSeoField = (field: string) =>
+    (value: boolean, f: FetcherWithComponents<InstantSettingResponse>) =>
+      f.submit({ actionType: "saveSeoSettings", [field]: String(value) }, { method: "POST" });
+
   const [seoTitleSuffix, setSeoTitleSuffix] = useState(settings.seoTitleSuffix || "");
+  /**
+   * The suffix switch may carry a PROPOSED text with it — never the merchant's
+   * unsaved draft.
+   *
+   * The flag and the text are one setting: switched on with nothing stored, the
+   * feature appends nothing, so turning it on when the STORED suffix is empty
+   * proposes the shop name and writes it in the same request. Everything else
+   * goes as the bare flag. Sending the draft instead (the first cut) persisted
+   * text the merchant had typed and not confirmed, and put it out of reach of
+   * Discard.
+   */
+  const suffixEnabled = useInstantSetting<boolean>({
+    stored: settings.seoTitleSuffixEnabled ?? false,
+    submit: (value, f) => {
+      const stored = settings.seoTitleSuffix || "";
+      const proposal = value && !stored && shopDisplayName ? ` – ${shopDisplayName}` : null;
+      if (proposal !== null) setSeoTitleSuffix(proposal);
+      f.submit(
+        {
+          actionType: "saveSeoSettings",
+          seoTitleSuffixEnabled: String(value),
+          ...(proposal !== null ? { seoTitleSuffix: proposal } : {}),
+        },
+        { method: "POST" },
+      );
+    },
+    onError: instantError,
+  });
+  const seoTitleSuffixEnabled = suffixEnabled.value;
+
   // Defaults to ON — see the toggle's comment below. `?? true` is not a
   // fallback for a failed load here: the column has the same default, so an
   // undefined value means "shop row predates the column", which is exactly the
   // state that should behave as on.
-  const [autoHandleRedirect, setAutoHandleRedirect] = useState(
-    settings.seoAutoHandleRedirect ?? true,
-  );
-  const [seoAutoAuditEnabled, setSeoAutoAuditEnabled] = useState(
-    settings.seoAutoAuditEnabled ?? true,
-  );
-  const [seoAutoCrawlEnabled, setSeoAutoCrawlEnabled] = useState(
-    settings.seoAutoCrawlEnabled ?? true,
-  );
+  const autoHandleRedirect = useInstantSetting<boolean>({
+    stored: settings.seoAutoHandleRedirect ?? true,
+    submit: postSeoField("seoAutoHandleRedirect"),
+    onError: instantError,
+  });
+  const seoAutoAudit = useInstantSetting<boolean>({
+    stored: settings.seoAutoAuditEnabled ?? true,
+    submit: postSeoField("seoAutoAuditEnabled"),
+    onError: instantError,
+  });
+  const seoAutoCrawl = useInstantSetting<boolean>({
+    stored: settings.seoAutoCrawlEnabled ?? true,
+    submit: postSeoField("seoAutoCrawlEnabled"),
+    onError: instantError,
+  });
   const [limits, setLimits] = useState<Record<keyof SeoLimits, string>>(initialDraft);
   const [hasChanges, setHasChanges] = useState(false);
 
+  // Only the TEXT is a draft: the switches are saved by the time this runs, so
+  // counting them here would raise the save bar over nothing.
   useEffect(() => {
-    const suffixChanged =
-      seoTitleSuffixEnabled !== (settings.seoTitleSuffixEnabled ?? false) ||
-      seoTitleSuffix !== (settings.seoTitleSuffix || "");
+    const suffixChanged = seoTitleSuffix !== (settings.seoTitleSuffix || "");
     const limitsChanged = ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
-    const redirectChanged = autoHandleRedirect !== (settings.seoAutoHandleRedirect ?? true);
-    const autoAuditChanged = seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true);
-    const autoCrawlChanged = seoAutoCrawlEnabled !== (settings.seoAutoCrawlEnabled ?? true);
-    const changed =
-      suffixChanged || limitsChanged || redirectChanged || autoAuditChanged || autoCrawlChanged;
+    const changed = suffixChanged || limitsChanged;
     setHasChanges(changed);
     if (onHasChangesChange) onHasChangesChange(changed);
     // initialDraft is derived from `settings` — including it in deps would
     // create a new object each render and loop indefinitely.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seoTitleSuffixEnabled, seoTitleSuffix, autoHandleRedirect, seoAutoAuditEnabled, seoAutoCrawlEnabled, limits, settings, onHasChangesChange]);
+  }, [seoTitleSuffix, limits, settings, onHasChangesChange]);
 
   const handleSave = () => {
     if (!hasChanges) return;
@@ -192,34 +244,21 @@ export function SettingsSEOTab({
     const limitsChanged =
       canEditLimits &&
       ALL_LIMIT_KEYS.some((key) => limits[key] !== initialDraft[key]);
+    // The switches are not in here any more — each one saved itself when it was
+    // clicked, and re-sending them would let a stale local copy overwrite one.
     fetcher.submit(
       {
         actionType: "saveSeoSettings",
-        seoTitleSuffixEnabled: String(seoTitleSuffixEnabled),
         seoTitleSuffix,
-        seoAutoHandleRedirect: String(autoHandleRedirect),
         ...(limitsChanged ? { seoLimits: JSON.stringify(coerceLimits(limits)) } : {}),
-        // Same rule as the limits payload: only send the field when the
-        // merchant may change it AND did, so a read-only render on a lower
-        // plan can never write the column.
-        ...(canScheduleAudit && seoAutoAuditEnabled !== (settings.seoAutoAuditEnabled ?? true)
-          ? { seoAutoAuditEnabled: String(seoAutoAuditEnabled) }
-          : {}),
-        ...(canScheduleCrawl && seoAutoCrawlEnabled !== (settings.seoAutoCrawlEnabled ?? true)
-          ? { seoAutoCrawlEnabled: String(seoAutoCrawlEnabled) }
-          : {}),
       },
       { method: "POST" },
     );
   };
 
   const handleDiscard = () => {
-    setSeoTitleSuffixEnabled(settings.seoTitleSuffixEnabled ?? false);
     setSeoTitleSuffix(settings.seoTitleSuffix || "");
-    setAutoHandleRedirect(settings.seoAutoHandleRedirect ?? true);
     setLimits(toDraft(settings.seoLimits ?? null));
-    setSeoAutoAuditEnabled(settings.seoAutoAuditEnabled ?? true);
-    setSeoAutoCrawlEnabled(settings.seoAutoCrawlEnabled ?? true);
   };
 
   const handleResetLimits = () => {
@@ -266,8 +305,8 @@ export function SettingsSEOTab({
               every pill toggle. */}
           <InlineStack gap="300" blockAlign="center" wrap={false}>
             <ToggleSwitch
-              checked={autoHandleRedirect}
-              onChange={setAutoHandleRedirect}
+              checked={autoHandleRedirect.value}
+              onChange={autoHandleRedirect.set}
             />
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
@@ -281,15 +320,9 @@ export function SettingsSEOTab({
           </InlineStack>
 
           <InlineStack gap="300" blockAlign="center" wrap={false}>
-            <ToggleSwitch
-              checked={seoTitleSuffixEnabled}
-              onChange={(checked) => {
-                setSeoTitleSuffixEnabled(checked);
-                if (checked && !seoTitleSuffix && shopDisplayName) {
-                  setSeoTitleSuffix(` – ${shopDisplayName}`);
-                }
-              }}
-            />
+            {/* The shop-name proposal happens inside the setting's own submit,
+                so the value that is stored is the value that appears. */}
+            <ToggleSwitch checked={seoTitleSuffixEnabled} onChange={suffixEnabled.set} />
             <BlockStack gap="100">
               <Text as="p" variant="bodyMd">
                 {t.settings.seoTitleSuffix || "SEO-Titel Shop-Suffix"}
@@ -356,9 +389,9 @@ export function SettingsSEOTab({
                 "why can't I click this", the line answers "what would I get". */}
             <DisabledActionTooltip hint={canScheduleAudit ? undefined : planHint(scheduledAuditPlan)}>
               <ToggleSwitch
-                checked={canScheduleAudit && seoAutoAuditEnabled}
+                checked={canScheduleAudit && seoAutoAudit.value}
                 disabled={!canScheduleAudit}
-                onChange={setSeoAutoAuditEnabled}
+                onChange={seoAutoAudit.set}
               />
             </DisabledActionTooltip>
             <BlockStack gap="100">
@@ -388,9 +421,9 @@ export function SettingsSEOTab({
           <InlineStack gap="300" blockAlign="center" wrap={false}>
             <DisabledActionTooltip hint={canScheduleCrawl ? undefined : planHint(scheduledCrawlPlan)}>
               <ToggleSwitch
-                checked={canScheduleCrawl && seoAutoCrawlEnabled}
+                checked={canScheduleCrawl && seoAutoCrawl.value}
                 disabled={!canScheduleCrawl}
-                onChange={setSeoAutoCrawlEnabled}
+                onChange={seoAutoCrawl.set}
               />
             </DisabledActionTooltip>
             <BlockStack gap="100">

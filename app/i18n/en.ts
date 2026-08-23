@@ -1026,6 +1026,9 @@ export const en: Translation = {
     translations: "Translations",
     keywordAwareTranslation: "Work keywords into translations",
     // AI instructions → General: ONE switch for the whole app.
+    // When a setting that saves itself is refused — the switch springs back,
+    // and this says why it was not just a glitch.
+    settingSaveFailed: "The setting could not be saved.",
     aiVisionHeading: "Images",
     aiVisionToggle: "Let the AI look at the images",
     aiVisionHelp: "Off, the AI only sees your text and can say nothing about an image that is not already in the title. On, the image itself goes to the model — that costs more per request and needs a vision-capable model (HuggingFace and DeepSeek cannot do it). It applies everywhere: the editor, the create dialog, alt texts and the image manager.",

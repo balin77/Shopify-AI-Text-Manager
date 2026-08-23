@@ -4,6 +4,8 @@ import { AIInstructionFieldGroup } from "./AIInstructionFieldGroup";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { ToggleRow } from "./ToggleRow";
+import { useInstantSetting, type InstantSettingResponse } from "../hooks/useInstantSetting";
+import { useInfoBox } from "../contexts/InfoBoxContext";
 import {
   AI_IMAGES_PER_REQUEST_MAX,
   AI_IMAGES_PER_REQUEST_MIN,
@@ -152,52 +154,94 @@ export function AIInstructionsTabs({
   aiImagesPerRequest,
 }: AIInstructionsTabsProps) {
   const { t } = useI18n();
+  const { showInfoBox } = useInfoBox();
   const [subSection, setSubSection] = useState<"content" | "translations">("content");
   const [selectedTab, setSelectedTab] = useState(0);
   const [localInstructions, setLocalInstructions] = useState<Instructions>(instructions);
-  const [localTranslationMode, setLocalTranslationMode] = useState<"exact" | "seo_optimized">(translationMode);
-  const [localKeywordAware, setLocalKeywordAware] = useState(keywordAwareTranslation);
-  const [localPurgeOnChange, setLocalPurgeOnChange] = useState(translationPurgeOnPrimaryChange);
-  const [localAutoTranslateExternal, setLocalAutoTranslateExternal] = useState(
-    autoTranslateExternalChanges,
-  );
+  /**
+   * The translation POLICY saves itself, field by field — it is switches and a
+   * two-way choice, and this card's Save button is for the instruction TEXTS.
+   * Its own action for the same reason the vision switch has one:
+   * `saveInstructions` writes `data.<field> || null` for every instruction it
+   * knows, so a payload carrying one policy field would blank the lot.
+   */
+  const policyError = (error?: string) =>
+    showInfoBox(
+      error || t.settings.settingSaveFailed || t.products?.saveFailed || "Save failed",
+      "critical",
+      t.common?.error || "Error",
+    );
+  const postPolicyField = (field: string) =>
+    (value: string | boolean, f: FetcherWithComponents<InstantSettingResponse>) =>
+      f.submit({ actionType: "saveTranslationPolicy", [field]: String(value) }, { method: "POST" });
+
+  const translationModeSetting = useInstantSetting<"exact" | "seo_optimized">({
+    stored: translationMode,
+    submit: postPolicyField("translationMode"),
+    onError: policyError,
+  });
+  const localTranslationMode = translationModeSetting.value;
+  const keywordAware = useInstantSetting<boolean>({
+    stored: keywordAwareTranslation,
+    submit: postPolicyField("keywordAwareTranslation"),
+    onError: policyError,
+  });
+  const purgeOnChange = useInstantSetting<boolean>({
+    stored: translationPurgeOnPrimaryChange,
+    submit: postPolicyField("translationPurgeOnPrimaryChange"),
+    onError: policyError,
+  });
+  const autoTranslate = useInstantSetting<boolean>({
+    stored: autoTranslateExternalChanges,
+    submit: postPolicyField("autoTranslateExternalChanges"),
+    onError: policyError,
+  });
   // The auto-translate switch stays VISIBLE on every plan (hiding it would
   // read as "this app cannot do that") and is greyed out below Max, with the
   // required tier named underneath.
   const canAutoTranslateExternal = meetsPlan(subscriptionPlan, AUTO_TRANSLATE_MIN_PLAN);
   /** Auto-translation is on AND allowed — the state in which it supersedes the
    *  deletion switch (loadTranslationChangePolicy enforces the same). */
-  const autoTranslateActive = canAutoTranslateExternal && localAutoTranslateExternal;
+  const autoTranslateActive = canAutoTranslateExternal && autoTranslate.value;
   /**
-   * The vision switch saves ITSELF, and is editable on every plan.
+   * The vision pair saves itself too, and is editable on every plan.
    *
-   * Two reasons it does not ride on this card's Save button like the
-   * translation knobs do. It is not an instruction: Free and Basic see this
-   * whole card `readOnly` (they use the default instructions), and routing the
-   * switch through that button would take away on those plans a capability
-   * every plan had while it was a checkbox in the editor's toolbar. And a save
-   * from a read-only card would have to send the instruction fields with it —
-   * the action writes `data.x || null` for each, so a payload that omitted
-   * them would WIPE stored instructions. Its own action sends two fields and
-   * touches nothing else. Submitting on change is the pattern the
-   * direct-translations settings rows already use for exactly this shape.
+   * Two reasons it is not on this card's Save button like the instruction
+   * texts. Free and Basic see the whole card `readOnly` (they use the default
+   * instructions), and routing the switch through that button would take away
+   * on those plans a capability every plan had while it was a checkbox in the
+   * editor's toolbar. And a save from a read-only card would have to send the
+   * instruction fields with it — the action writes `data.x || null` for each,
+   * so a payload that omitted them would WIPE stored instructions.
+   *
+   * Through `useInstantSetting` like every other switch, which is not a
+   * formality: it brings its OWN fetcher. Posting on the page's shared one —
+   * the first cut — made the answer look like the card's Save button had
+   * answered, and the settings route clears `hasChanges` on any success, so
+   * flipping this switch hid the save bar over unsaved instruction text and
+   * disarmed the leave-confirm with it.
    */
-  const [localSendImages, setLocalSendImages] = useState(sendImagesToAI);
-  const [localImagesPerRequest, setLocalImagesPerRequest] = useState(
-    clampImagesPerRequest(aiImagesPerRequest),
-  );
+  const visionError = (error?: string) =>
+    showInfoBox(
+      error || t.settings.settingSaveFailed || t.products?.saveFailed || "Save failed",
+      "critical",
+      t.common?.error || "Error",
+    );
+  const postVisionField = (field: string) =>
+    (value: boolean | number, f: FetcherWithComponents<InstantSettingResponse>) =>
+      f.submit({ actionType: "saveAiVision", [field]: String(value) }, { method: "POST" });
 
-  const saveVision = (next: { sendImages?: boolean; imagesPerRequest?: number }) => {
-    const sendImages = next.sendImages ?? localSendImages;
-    const imagesPerRequest = clampImagesPerRequest(next.imagesPerRequest ?? localImagesPerRequest);
-    setLocalSendImages(sendImages);
-    setLocalImagesPerRequest(imagesPerRequest);
-    const formData = new FormData();
-    formData.append("actionType", "saveAiVision");
-    formData.append("sendImagesToAI", String(sendImages));
-    formData.append("aiImagesPerRequest", String(imagesPerRequest));
-    fetcher.submit(formData, { method: "POST" });
-  };
+  const sendImages = useInstantSetting<boolean>({
+    stored: sendImagesToAI,
+    submit: postVisionField("sendImagesToAI"),
+    onError: visionError,
+  });
+  const imagesPerRequest = useInstantSetting<number>({
+    stored: clampImagesPerRequest(aiImagesPerRequest),
+    submit: postVisionField("aiImagesPerRequest"),
+    onError: visionError,
+  });
+
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -280,24 +324,6 @@ export function AIInstructionsTabs({
       formData.append(key, value);
     });
 
-    // Translation mode piggybacks on the same save so one button covers the
-    // entire Translations sub-section (radio + custom instructions).
-    formData.append("translationMode", localTranslationMode);
-    formData.append("keywordAwareTranslation", String(localKeywordAware));
-    // The merchant's OWN choice is stored, not the value the card currently
-    // displays: while auto-translate is on the server resolves the deletion to
-    // off anyway, and persisting that resolved `false` would silently discard
-    // their preference — switching auto-translate back off later would leave
-    // them with neither behaviour and no hint why.
-    formData.append("translationPurgeOnPrimaryChange", String(localPurgeOnChange));
-    // Never claim the Max feature from a plan that cannot have it: the server
-    // rejects a change it is not entitled to, and sending the STORED value
-    // keeps an unentitled save from tripping that gate.
-    formData.append(
-      "autoTranslateExternalChanges",
-      String(canAutoTranslateExternal ? localAutoTranslateExternal : autoTranslateExternalChanges),
-    );
-
     fetcher.submit(formData, { method: "POST" });
   };
 
@@ -309,12 +335,9 @@ export function AIInstructionsTabs({
   };
 
   // Check if there are unsaved changes (instructions OR translation mode)
-  const hasChanges =
-    JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
-    localTranslationMode !== translationMode ||
-    localKeywordAware !== keywordAwareTranslation ||
-    localPurgeOnChange !== translationPurgeOnPrimaryChange ||
-    (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges);
+  // The instruction TEXTS are the only draft on this card; every switch above
+  // them is already saved by the time this runs.
+  const hasChanges = JSON.stringify(localInstructions) !== JSON.stringify(instructions);
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -325,10 +348,6 @@ export function AIInstructionsTabs({
 
   const handleDiscard = () => {
     setLocalInstructions(instructions);
-    setLocalTranslationMode(translationMode);
-    setLocalKeywordAware(keywordAwareTranslation);
-    setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
-    setLocalAutoTranslateExternal(autoTranslateExternalChanges);
   };
 
   return (
@@ -463,7 +482,7 @@ export function AIInstructionsTabs({
                     onChange={(selected) => {
                       const next = selected[0];
                       if (next === 'exact' || next === 'seo_optimized') {
-                        setLocalTranslationMode(next);
+                        translationModeSetting.set(next);
                       }
                     }}
                     disabled={readOnly}
@@ -505,8 +524,8 @@ export function AIInstructionsTabs({
                   </Text>
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
-                      checked={localKeywordAware}
-                      onChange={setLocalKeywordAware}
+                      checked={keywordAware.value}
+                      onChange={keywordAware.set}
                       disabled={readOnly}
                     />
                     <Text as="p" variant="bodySm" tone="subdued">
@@ -533,8 +552,8 @@ export function AIInstructionsTabs({
 
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
-                      checked={!autoTranslateActive && localPurgeOnChange}
-                      onChange={setLocalPurgeOnChange}
+                      checked={!autoTranslateActive && purgeOnChange.value}
+                      onChange={purgeOnChange.set}
                       disabled={readOnly || autoTranslateActive}
                     />
                     <BlockStack gap="100">
@@ -565,7 +584,7 @@ export function AIInstructionsTabs({
                   <InlineStack gap="300" blockAlign="center" wrap={false}>
                     <ToggleSwitch
                       checked={autoTranslateActive}
-                      onChange={setLocalAutoTranslateExternal}
+                      onChange={autoTranslate.set}
                       disabled={readOnly || !canAutoTranslateExternal}
                     />
                     <BlockStack gap="100">
@@ -651,13 +670,13 @@ export function AIInstructionsTabs({
                       layout="inline"
                       label={t.settings.aiVisionToggle || "Let the AI look at the images"}
                       help={t.settings.aiVisionHelp}
-                      checked={localSendImages}
-                      onChange={(v) => saveVision({ sendImages: v })}
+                      checked={sendImages.value}
+                      onChange={sendImages.set}
                     />
                     {/* Offered only once vision is ON: "how many of nothing"
                         is not a question, and a live control under a switch
                         that is off reads as if it did something. */}
-                    {localSendImages && (
+                    {sendImages.value && (
                       <Select
                         label={t.settings.aiImagesPerRequestLabel || "Images per request"}
                         options={Array.from(
@@ -667,8 +686,8 @@ export function AIInstructionsTabs({
                             return { value: String(n), label: String(n) };
                           },
                         )}
-                        value={String(localImagesPerRequest)}
-                        onChange={(v) => saveVision({ imagesPerRequest: Number(v) })}
+                        value={String(imagesPerRequest.value)}
+                        onChange={(v) => imagesPerRequest.set(clampImagesPerRequest(Number(v)))}
                         helpText={t.settings.aiImagesPerRequestHelp}
                       />
                     )}
