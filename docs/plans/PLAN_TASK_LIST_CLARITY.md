@@ -162,8 +162,12 @@ taskSubjectLabel(task, t): string | null   // seoBulkFix machine string → prob
 
 Rules:
 - An unknown key falls back to a **humanised** form
-  (`imageWebpConversion` → `Image WebP conversion`), never the raw identifier.
-  A missing label then costs polish, not comprehension.
+  (`imageWebpConversion` → `Image webp conversion`), never the raw identifier.
+  A missing label then costs polish, not comprehension. The fallback is
+  SENTENCE case, not Title Case, and deliberately so: a fallback that invents
+  Title Case reads like a real label, and a merchant cannot then tell a
+  missing translation from a deliberate one. An acronym does not survive it
+  (`seoJSONLdAudit` → `Seo json ld audit`) — that is the accepted cost.
 - `bulkAIGeneration` and `bulkAiGeneration` both resolve, from one entry.
 - `MainNavigation`, `RunningTasksPreview` and `app.tasks.tsx` all call it.
   The toast branch in `MainNavigation` keeps its message wording; only the
@@ -187,7 +191,16 @@ hasTaskDetails({ type, hasPrompt, hasResult }): boolean
   the `attributesSyncedAt` rule. `galleryVideos: undefined | null` is the
   named case (§1.3).
 - `hasTaskDetails` takes booleans, not the payload, so it still answers after
-  §3.4 stops shipping `prompt`/`result` in the list.
+  §3.4 stops shipping `prompt`/`result` in the list. **That signature has a
+  hole and both ends must close it.** It answers from the REGISTRY, while
+  `summariseTaskResult` can still return `null` for a registered type whose
+  blob matches no branch — `translation` (nine call sites write that type,
+  only some carry a summarised shape) and `distributeKeywords` (a blob with no
+  `stage`) do exactly that. So the arrow can still open onto nothing, which is
+  the defect this whole change exists to remove. Two fixes, both required:
+  every blob a runner really writes gets a branch (§5 P5), AND the page
+  tolerates "details fetched, summary `null`, no prompt" without drawing an
+  empty box (§3.3).
 
 ### 3.3 The Tasks page renders the summary and drops the empty dropdown
 
@@ -243,7 +256,7 @@ hasTaskDetails({ type, hasPrompt, hasResult }): boolean
 | **P2** Notification path | `api.recently-completed-tasks.tsx`, `TaskCountContext.tsx`, `MainNavigation.tsx` | P1 |
 | **P3** Tasks page + hover card | `app.tasks.tsx`, `RunningTasksPreview.tsx`, `api.task-result.tsx` | P1 |
 | **P4** Unit tests | `tests/unit/task-labels.test.ts`, `task-details.test.ts` | P1 |
-| **P5** `translation`/`bulkTranslation` summarisers + their tests | `task-details.shared.ts`, the i18n files, the P4 tests | P1, P4 |
+| **P5** `translation`/`bulkTranslation` summarisers, readable failure subjects, i18n parity test | `task-details.shared.ts`, the i18n files, the P4 tests | P1, P4 |
 
 P1 owns **all three i18n files** so P2/P3 never edit them — three agents
 appending to one `tasks: {}` block is a merge conflict by construction.
@@ -252,8 +265,11 @@ appending to one `tasks: {}` block is a merge conflict by construction.
 
 - No task type renders a raw camelCase identifier anywhere (Tasks page, hover
   card, toast).
-- `imageWebpConversion`, `pageSpeed` and `distributeKeywords`(apply) show no
-  expand arrow.
+- `imageWebpConversion` and `pageSpeed` show no expand arrow. NOT
+  `distributeKeywords`(apply): §1.2 says it makes no AI call, i.e. it has no
+  PROMPT — which is a different statement from having no details. Its result
+  summarises, so its arrow shows. An earlier draft of this line conflated the
+  two and would have made a correct implementation look like a regression.
 - A `seoBulkMeta` run with failures lists the failed cells.
 - A `completed_with_errors` bulk translation produces a warning notification.
 - A `completed_with_errors` translation names the locales that failed, not
