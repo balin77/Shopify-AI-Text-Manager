@@ -438,6 +438,7 @@ export default function MenusPage() {
       | "structureChanged"
       | "unknownItems"
       | "tooDeep"
+      | "unwritableItem"
       | "writeFailed";
     savedItemIds: string[];
     failures: Array<{ menuItemId: string; message: string }>;
