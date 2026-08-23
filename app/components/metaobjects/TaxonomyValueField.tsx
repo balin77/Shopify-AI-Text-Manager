@@ -154,6 +154,9 @@ async function fetchNames(type: string, fieldKey: string, ids: string[]): Promis
 
 export interface TaxonomyValuePickerProps {
   label: string;
+  /** Draws the red asterisk — a definition's required field is required at
+   *  creation time too, and the create dialog marks every one of them. */
+  requiredIndicator?: boolean;
   /** The stored form: a JSON array of GIDs, or a bare GID. */
   value: string;
   onChange: (next: string) => void;
@@ -180,6 +183,7 @@ export interface TaxonomyValuePickerProps {
 
 export function TaxonomyValuePicker({
   label,
+  requiredIndicator,
   value,
   onChange,
   metaobjectType,
@@ -276,7 +280,7 @@ export function TaxonomyValuePicker({
   if (loading) {
     return (
       <BlockStack gap="150">
-        <FieldLabel label={label} />
+        <FieldLabel label={label} requiredIndicator={requiredIndicator} />
         <InlineStack gap="200" blockAlign="center">
           <Spinner size="small" />
           <Text as="span" variant="bodySm" tone="subdued">
@@ -304,7 +308,7 @@ export function TaxonomyValuePicker({
             "This field does not name a taxonomy attribute, so its values cannot be listed here.";
     return (
       <BlockStack gap="150">
-        <FieldLabel label={label} />
+        <FieldLabel label={label} requiredIndicator={requiredIndicator} />
         {selected.length > 0 && (
           <InlineStack gap="100" wrap>
             {selected.map((id) => (
@@ -341,7 +345,7 @@ export function TaxonomyValuePicker({
     return (
       <BlockStack gap="150">
         <Select
-          label={<FieldLabel label={label} />}
+          label={<FieldLabel label={label} requiredIndicator={requiredIndicator} />}
           options={options}
           value={current}
           disabled={readOnly}
@@ -385,6 +389,7 @@ export function TaxonomyValuePicker({
     <BlockStack gap="150">
       <ChipCombobox
         label={label}
+        requiredIndicator={requiredIndicator}
         selected={selected}
         options={chipOptions}
         onChange={(next) => {

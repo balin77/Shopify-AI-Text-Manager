@@ -57,7 +57,7 @@ function PlaceholderThumbnail({ activeAction, onDrop, onUpload, thumbSize, onOpe
     ? "#005bd3"
     : isActionMode
     ? (activeAction === "copy" ? "#008060" : "#005bd3")
-    : "#c9cccf";
+    : "var(--app-surface-border-color)";
   const bgColor = isOver
     ? "rgba(0,91,211,0.12)"
     : isActionMode

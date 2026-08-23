@@ -845,10 +845,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }) => (
     <div
       className={
-        // The collection's rule builder is a form of its own and takes the
-        // WIDE share of the row, with the boxes narrow beside it — the reverse
-        // of the sales-channel split, and the reason the modifier says which
-        // way round this row is rather than each region asserting a width.
+        // The collection's rule builder is a form of its own and takes every
+        // pixel past the one column of boxes beside it — not a SHARE of the
+        // row like the sales-channel panel takes. On the row rather than on
+        // either region, because the same grid is the wide one on a product.
         layout.editor.length > 0 ? "app-details-layout app-details-layout--with-editor" : "app-details-layout"
       }
     >
@@ -2733,15 +2733,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.
             options: t.content?.enumLabels,
-            // §2.5b — the SCORE strings come from the sidebar's own block, not
-            // a second copy: the two show the same findings, and a wording
-            // that differs between them reads as two different measurements.
             aiWarnings: t.content?.createModal?.aiWarnings,
-            seoScore: {
-              heading: t.content?.createModal?.seoScoreHeading,
-              outOf: t.content?.createModal?.seoScoreOutOf,
-              issues: t.seo?.issues,
-            },
           }}
           // §2.5b/§2.5c — the AI prompts need a language NAME, and the modal
           // has no locale state of its own. The shop's primary one, because

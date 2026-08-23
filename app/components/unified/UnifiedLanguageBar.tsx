@@ -296,6 +296,8 @@ function LocaleButton({
   const isPrimary = locale.primary;
   const isCurrentLanguage = currentLanguage === locale.locale;
 
+  const canToggle = !!onToggleLanguage && !isPrimary;
+
   const buttonProps = {
     variant: isCurrentLanguage ? ("primary" as const) : undefined,
     onClick: () => {
@@ -305,12 +307,28 @@ function LocaleButton({
       }
       onLanguageChange(locale.locale);
     },
+    // The toggle fires on POINTERDOWN, not on click: on macOS a Ctrl+click is
+    // a secondary click and never produces one. The flag then swallows the
+    // click a Windows Ctrl+click does send, so the view does not ALSO switch.
     onPointerDown: (event: React.PointerEvent) => {
-      if (event.ctrlKey && onToggleLanguage && !isPrimary) {
-        ctrlPressedRef.current[locale.locale] = true;
-        event.preventDefault();
-        onToggleLanguage(locale.locale);
+      // Cmd is the Mac spelling of this gesture, and a plain pointerdown CLEARS
+      // the flag: a Ctrl+click that produced no click of its own would
+      // otherwise leave it set and swallow the next ordinary click instead.
+      if (!(event.ctrlKey || event.metaKey) || !canToggle) {
+        ctrlPressedRef.current[locale.locale] = false;
+        return;
       }
+      ctrlPressedRef.current[locale.locale] = true;
+      event.preventDefault();
+      onToggleLanguage?.(locale.locale);
+    },
+    // Keyboard equivalent — onPointerDown never fires for Space/Enter, so
+    // without this a keyboard user could never switch a language off again.
+    onKeyDown: (event: React.KeyboardEvent) => {
+      if (!canToggle || !(event.ctrlKey || event.metaKey)) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onToggleLanguage?.(locale.locale);
     },
     size: "slim" as const,
     tone: (!isEnabled && !isPrimary ? ("critical" as const) : undefined),
@@ -332,7 +350,17 @@ function LocaleButton({
   );
 
   const buttonContent = (
-    <div style={buttonStyle}>
+    // The context menu a Mac Ctrl+click opens would land on top of the button
+    // the merchant just toggled; the flag is cleared with it, because that
+    // gesture sends no click for the swallow above to consume.
+    <div
+      style={buttonStyle}
+      onContextMenu={(event: React.MouseEvent) => {
+        if (!canToggle || !(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        ctrlPressedRef.current[locale.locale] = false;
+      }}
+    >
       <div className="lang-full">
         <Button {...buttonProps}>{fullLabel}</Button>
       </div>

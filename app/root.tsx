@@ -249,6 +249,13 @@ export function ErrorBoundary() {
             font-size: 1rem;
             transition: all 0.2s ease;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            /* Written out rather than pointed at --app-surface-border-color
+               like every other frame in the app, because this boundary renders
+               OUTSIDE the /app layout — the only place responsive.css is
+               imported. The var would not resolve, which invalidates the
+               shorthand and drops border-style to none, and the button would
+               lose its outline exactly the way the locked fields did. Keep it
+               literal. */
             border: 1px solid #c9cccf;
           }
           .btn-secondary:hover {

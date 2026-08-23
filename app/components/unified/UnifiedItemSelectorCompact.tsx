@@ -107,7 +107,7 @@ export function UnifiedItemSelectorCompact({
         style={{
           width: "100%",
           background: "#f6f6f7",
-          border: "1px solid #c9cccf",
+          border: "1px solid var(--app-surface-border-color)",
           borderRadius: "8px",
           padding: "6px 10px",
           cursor: "pointer",
@@ -301,7 +301,7 @@ export function UnifiedItemSelectorCompact({
         .compact-selector-dropdown input:focus,
         .compact-selector-dropdown input:focus-visible,
         .compact-selector-dropdown input:active {
-          border-color: #c9cccf !important;
+          border-color: var(--app-field-border-color) !important;
           box-shadow: none !important;
           outline: none !important;
         }

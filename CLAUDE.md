@@ -157,11 +157,43 @@ button of its own.**
 
 - **The numbers live in the `:root` block of [responsive.css](app/styles/responsive.css)**, next to
   `--app-page-padding` and the widths: `--app-field-border-color`,
-  `--app-field-border-radius`, `--app-field-label-weight`, plus the Details
+  `--app-field-border-color-disabled`, `--app-field-border-radius`,
+  `--app-field-label-weight`, plus the Details
   card's grid (`--app-details-field-min-width`, `--app-details-grid-gap`,
   `--app-details-card-half-height` and the two flex bases DERIVED from them) and
   `--app-attribute-grid-min-width`, which is now only the sales-channel panel's
   own column.
+- **A grey frame is one of THREE tokens, and which one is a question about the
+  thing being framed.** `--app-field-border-color` is a box a merchant types in
+  (every input, the body editors, the probe textareas, and the formatting
+  toolbar — that one is welded to the top of an editor whose own `border-top` is
+  dropped, so it is that field's frame, not a surface). `--app-surface-border-color`
+  is a box that is not an input: the sidebar's detail panel, the compact item
+  selector, the notification button, a create tile, an image tile at rest, a
+  chip. `--app-content-rule-color` is a rule inside RENDERED CONTENT — a
+  blockquote's bar, an `<hr>` — i.e. the merchant's own text being previewed,
+  which our chrome has no business moving. All three hold the same grey today
+  and are separate anyway, for the reason the widths are: "make the input
+  outlines lighter" must not repaint every tile in the app. They replaced
+  `#c9cccf` written out at some twenty call sites, which is what made that one
+  instruction a hunt through components. The ONE deliberate literal left is the
+  root `ErrorBoundary` in [root.tsx](app/root.tsx): it renders outside the `/app`
+  layout, the only place responsive.css is imported, so a var there would not
+  resolve — and an unresolvable var in a `border` shorthand drops
+  `border-style` to `none`, i.e. deletes the frame.
+- **A LOCKED field keeps its frame, and Polaris does not give it one.** A
+  disabled `TextField` gets `border: none` from Polaris, a read-only one
+  `border-color: transparent`, and a disabled `Select` an `#ebebeb` hairline
+  that is invisible on a white card — so a greyed-out field read as text
+  floating with no box. The rule next to the resting one restores it in
+  `--app-field-border-color-disabled`, LIGHTER than the resting frame: "there is
+  a box here" and "you may type in it" are two different statements, and the
+  AI-editable fields paint their translation tint over Polaris' disabled fill
+  (`!important`), so a full-strength frame there would make a locked field
+  indistinguishable from an open one. It spends `border` in full, never
+  `border-color` — `border: none` is the SHORTHAND, so a colour alone restores
+  nothing — and its selectors MIRROR Polaris' own shape for shape, each tying on
+  specificity and winning on load order.
 - **The frame is drawn on Polaris' Backdrop element**, in the one rule in that
   same file — the input itself has `border: none`, and Polaris hardcodes a
   `border-top-color` one shade darker again, so both have to be named.
@@ -190,6 +222,26 @@ button of its own.**
   `ChipCombobox`, `CollectionsField`, `TaxonomyField`. A label is a `span`, never
   a second `label` element: it is passed INTO the Polaris `label` prop, and a
   nested label is invalid markup that also breaks click-to-focus.
+- **NEVER a plain checkbox for a yes/no decision — it is a pill switch, and the
+  row it sits in lives in [ToggleRow.tsx](app/components/ToggleRow.tsx).** The
+  owner's standing instruction: do not reach for Polaris' `Checkbox` unless
+  they ask for one in that specific place. `ToggleRow` is the whole shape — the
+  words, the ❓ that explains them, and `ToggleSwitch` at the right edge — so a
+  new setting is one component call rather than a fresh opinion about spacing.
+  It grew out of the direct-translations settings rows and now also carries the
+  create dialog's decisions ("write the rest with AI", "let the AI see the
+  image", "translate afterwards", "including subcategories"); a third
+  hand-rolled copy is what this rule exists to prevent. The label is TEXT beside
+  the switch, never a `<label>` around it: the switch already is one, and the
+  words reach it through `ariaLabel`, which is the only accessible name it has.
+  A DISABLED decision still renders, greyed, wrapped in `DisabledActionTooltip`
+  (with `block`, or its shrink-wrapping span eats the row's `space-between`) —
+  the single-language rules below are the same rule seen from the other side.
+  What this does NOT cover: a checkbox that means "which of these", not "yes or
+  no" — the rule builder's product-status list, a column picker, the rows of a
+  bulk list. Those are a multi-select and stay checkboxes; the ones still
+  standing elsewhere in the app are legacy, and get converted when their
+  surface is next touched rather than in a sweep of their own.
 - **The clear button is a red BIN with no word.** "Leeren" / "Clear" / "Vaciar"
   is up to seven characters sitting on the label's own line, and since every
   Details field became its own card there are up to six of them on one screen,
@@ -213,6 +265,21 @@ button of its own.**
   a key may be named before its text is written and never shows as an empty
   circle. `helpText` under the control is for a value hint that changes with the
   value (a character count), not for an explanation a merchant reads once.
+  `FieldLabel` takes the explanation as raw TEXT too (`help`), for the one
+  surface with no `t.help` key to name: the create dialog phrases six resource
+  types' fields out of a single `t` prop it is handed
+  ([CreateItemModal.tsx](app/components/create/CreateItemModal.tsx),
+  `t.fieldHelp` keyed by `labelKey`). A second INPUT to the one shape, never a
+  second shape — and the rule above it is unchanged: what the keyword does, what
+  a handle is, what "write the rest with AI" will do all live in the ❓, and a
+  create form that had three of those sentences stacked under three controls is
+  what made the point.
+- **A required field says so BEFORE it is refused.** `FieldLabel`'s
+  `requiredIndicator` draws the red asterisk, and the create dialog spends it
+  off `CreateFieldDef.required` — the very flag `validateCreatePayload` rejects
+  on, so the mark and the refusal cannot disagree. It reaches the metaobject
+  pickers through `TaxonomyValuePicker` / `ChipCombobox` for the same reason: a
+  definition's required field is required at creation time too.
 - **The Details card is one grey card PER FIELD on one grid, and a field's
   SHAPE is the only thing left to decide.** It used to split into a titled
   subcard per section, which on a product drew three frames around six fields
@@ -228,11 +295,16 @@ button of its own.**
   own, so a collection's two bare controls could only sit UNDERNEATH it with
   two columns of white beside them; and `auto-fit` collapses only a track that
   is EMPTY, so the cell keeping every track alive also froze those boxes at
-  their minimum width. As a region it takes the WIDE share of the row and the
-  boxes the narrow one — the aside's 3.8 : 1.2 split with the sides swapped,
-  aliased rather than restated, and declared on the ROW
-  (`.app-details-layout--with-editor`) because the same grid is the wide region
-  on a product. That row is the one place `align-items` is `stretch` instead of
+  their minimum width. As a region it takes every pixel past the boxes, which
+  keep the ONE column they had inside the grid and do not grow — deliberately
+  NOT the aside's 3.8 : 1.2 split, because two switch lists are worth a quarter
+  of the row and a sort order plus a theme template are not: sharing the width
+  made two short answers 250px wide at 900 and 420px at 1600. It is declared on
+  the ROW (`.app-details-layout--with-editor`) because the same grid is the
+  wide region on a product. The only number here is the WRAP point — the
+  editor's basis, two columns, chosen low so the pair stays side by side down
+  to ~620px: past the wrap the boxes keep their one column with the line empty
+  beside them, which is the layout this exists to remove. That row is the one place `align-items` is `stretch` instead of
   `flex-start`: the boxes are meant to REACH the editor's height, which the
   grid passes down by itself (its rows have an `auto` maximum, so
   `align-content` shares the extra out, and a cell's cards already fill their

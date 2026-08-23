@@ -370,7 +370,7 @@ export function ImageGalleryField({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              border: "2px dashed #c9cccf",
+              border: "2px dashed var(--app-surface-border-color)",
               borderRadius: "8px",
               padding: "2rem",
               backgroundColor: "#f6f6f7",
