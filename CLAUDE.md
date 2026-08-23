@@ -234,9 +234,15 @@ button of its own.**
   hand-rolled copy is what this rule exists to prevent. The label is TEXT beside
   the switch, never a `<label>` around it: the switch already is one, and the
   words reach it through `ariaLabel`, which is the only accessible name it has.
-  A DISABLED decision still renders, greyed, wrapped in `DisabledActionTooltip`
-  (with `block`, or its shrink-wrapping span eats the row's `space-between`) —
-  the single-language rules below are the same rule seen from the other side.
+  Two placements, and the choice is not taste: a row in a LIST OF SETTINGS
+  spreads (labels left, every switch on the right, so the column reads as a
+  column of states), while a single decision standing among FORM FIELDS leads
+  with its switch — `layout="inline"`, where the checkbox would have been.
+  Pushing that one to the far right of a wide dialog puts the control an
+  eye-movement away from the words it answers. A DISABLED decision still
+  renders, greyed, wrapped in `DisabledActionTooltip` (with `block`, or its
+  shrink-wrapping span cuts the row off) — the single-language rules below are
+  the same rule seen from the other side.
   What this does NOT cover: a checkbox that means "which of these", not "yes or
   no" — the rule builder's product-status list, a column picker, the rows of a
   bulk list. Those are a multi-select and stay checkboxes; the ones still
@@ -274,6 +280,20 @@ button of its own.**
   a handle is, what "write the rest with AI" will do all live in the ❓, and a
   create form that had three of those sentences stacked under three controls is
   what made the point.
+- **A decision goes BELOW everything it decides about, and "more fields" is
+  part of that.** The create dialog ends with "write the rest with AI" and
+  "translate afterwards", under the advanced-field disclosure rather than above
+  it: a switch that offers to fill the empty fields has to sit after all of
+  them, or it reads as if it only covered the handful on screen.
+- **Closing a form with input in it is confirmed by a second BUTTON, never by
+  `window.confirm`.** Cancel ARMS a red discard button beside itself and does
+  not close; that button closes. The browser dialog is chrome from outside the
+  app, it opens at the top of the window far from the control that summoned it,
+  and in an embedded app it shows the merchant the myshopify host. A second
+  modal over the first is the other wrong answer — a bigger interruption than
+  the question deserves. Anything that says "I am still working here" (a
+  keystroke, attaching or removing the image) disarms it again, or a stray
+  click discards work nobody meant to lose.
 - **A required field says so BEFORE it is refused.** `FieldLabel`'s
   `requiredIndicator` draws the red asterisk, and the create dialog spends it
   off `CreateFieldDef.required` — the very flag `validateCreatePayload` rejects

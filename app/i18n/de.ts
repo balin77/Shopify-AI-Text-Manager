@@ -842,6 +842,7 @@ export const de = {
       generatedNeedsFixing: "Die KI hat ihren Teil geschrieben, aber etwas passt noch nicht — sieh dir die markierten Felder an.",
       generatingField: "{field} wird geschrieben …",
       sendImageToAI: "Die KI darf das Bild ansehen",
+      sendImageToAIHint: "Aus geschaltet bekommt die KI nur deine Texte zu sehen und schreibt über das Bild nichts, was nicht schon im Titel steht. An geschaltet geht das Bild selbst mit — das kostet etwas mehr und setzt ein Modell voraus, das Bilder lesen kann. Schaltest du es jetzt ein, wird auch der Alt-Text neu geschrieben.",
       translateAfterwards: "Danach in alle Sprachen übersetzen",
       translateAfterwardsHint: "Läuft direkt nach dem Anlegen, mit der gewohnten Fortschrittsanzeige.",
       translatingAfterCreate: "Wird in deine anderen Sprachen übersetzt …",
@@ -860,7 +861,9 @@ export const de = {
       fewerFields: "Weniger Felder",
       required: "Pflichtfeld",
       shopifyDefault: "Shopify-Standard",
-      discardConfirm: "Eingaben verwerfen?",
+      // Beschriftung des roten Knopfes, den „Abbrechen“ scharf schaltet —
+      // früher der Text im Browser-Dialog.
+      discardConfirm: "Eingaben verwerfen",
       fields: {
         title: "Titel", description: "Beschreibung", body: "Inhalt", summary: "Zusammenfassung",
         handle: "Handle", seoTitle: "SEO-Titel", metaDescription: "Meta-Beschreibung",
