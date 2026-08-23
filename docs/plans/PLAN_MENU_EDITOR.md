@@ -86,7 +86,14 @@ Vier Punkte, einer pro Hypothese, nach jeder Stufe alle gelesen:
 
 Daraus folgt die Form von Schritt 8 in §4: Die betroffene Menge ist **jeder umgehängte Punkt VEREINIGT mit allen seinen Nachkommen**, nicht nur der gezogene. Sie wird VOR dem Schreibvorgang aus dem Live-Sweep gesichert (nicht aus `ContentTranslation` — ein Shop, der in Shopifys Editor übersetzt hat, hat Werte, die diese App nie geschrieben hat) und danach zurückgeschrieben.
 
-**Ein Rest bleibt und wird benannt statt versteckt:** Die Reparatur kann nur wiederherstellen, was diese App liest — die veröffentlichten Sprachen der globalen Ebene. Ob ein Menüpunkt überhaupt eine **markt-spezifische** Übersetzung tragen kann, ist ungemessen (siehe Dateikopf von `app.menus.tsx`); falls ja, würde ein Umzug sie zerstören und wir könnten sie nicht zurückschreiben. Vor der ersten Auslieferung des Ziehens gehört das gemessen — oder, wenn es dabei bleibt, in eine Warnung.
+### 2.6 Trägt ein Menüpunkt eine MARKT-spezifische Übersetzung — und nimmt der Umzug sie mit?
+
+Der letzte Rest, und er hängt direkt an §2.5: Die Reparatur schreibt zurück, was diese App liest — die veröffentlichten Sprachen der **globalen** Ebene. Ein markt-spezifischer Wert, in Shopifys eigenem Editor gesetzt, ist genau das, was sie nicht liest. Zwei Möglichkeiten, und nur eine davon ist harmlos:
+
+- **Es gibt sie auf Menüpunkten nicht** ⇒ die Reparatur ist vollständig, und der Dateikopf von `app.menus.tsx` kann seine „ungemessen"-Klausel verlieren.
+- **Es gibt sie** ⇒ ein Zug zerstört Händler-Inhalt, den wir nicht zurückschreiben können — dann muss die Reparatur pro Markt laufen, oder das Ziehen bekommt eine Warnung davor.
+
+Die Sonde misst es am fünften Punkt des Haltbarkeits-Menüs: markt-scoped registrieren, unter derselben Marktkennung zurücklesen (Echo ist keine Speicherung), prüfen dass die **globale** Lesung ihn NICHT zeigt (sonst sind es nicht zwei Ebenen), im selben Schreibvorgang wie alle anderen umhängen, und danach — falls weg — zurückschreiben. `read_markets` ist vorhanden, es läuft kein Re-Consent an.
 
 ---
 
