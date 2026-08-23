@@ -455,7 +455,7 @@ export async function saveMenuTree(
       const { reconcileAfterPrimarySave } = await import(
         "./translations/stale-translation-sync.server"
       );
-      await reconcileAfterPrimarySave({
+      const outcome = await reconcileAfterPrimarySave({
         client: gateway,
         shop,
         // The GROUP is the menu — one Task row the merchant recognises, one
@@ -477,7 +477,12 @@ export async function saveMenuTree(
             // A rename keeps the translation and flags it outdated with a
             // CHANGED digest (measured, CLAUDE.md), so the read-back must show
             // the new title before anything may be translated against it.
-            expectedValue: entry.to,
+            // TRIMMED, because that is what `buildUpdateInput` sent: comparing
+            // against the raw editor value would make a title with stray
+            // whitespace mismatch, and a mismatch is a decline — the
+            // translation would be deleted, which is the outcome this branch
+            // exists to prevent.
+            expectedValue: entry.to.trim(),
           }))
           .filter((entry) => !!entry.resourceId),
         foreignLocales,
@@ -488,6 +493,11 @@ export async function saveMenuTree(
           sourceLocale: primaryLocale,
         },
       });
+      // The repair removes what it cannot re-translate (a cleared title, a
+      // missing digest, a stale read-back the merchant asked to delete). That
+      // is a deletion the merchant should see, so it joins the count the purge
+      // branch reports rather than leaving it at zero.
+      purgedTranslationCount += outcome.removed;
     } catch (error) {
       // Never fail the save over the repair: the tree write has already gone
       // through, and a thrown error here would report it as broken.

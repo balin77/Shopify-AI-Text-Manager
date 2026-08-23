@@ -452,6 +452,30 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.removeCalls).toEqual([]);
   });
 
+  it("stops before the WRITE when the merchant saves mid-locale", async () => {
+    // With one locale the outer check never runs again, so a translation save
+    // that lands while that locale's AI request is in flight — a rename plus
+    // its foreign title in one save — would be overwritten by the answer.
+    const product = freshProduct();
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => {
+      markTranslationSaved(product); // the merchant, mid-request
+      return {
+        [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+      };
+    });
+
+    await reconcileStaleTranslations(
+      baseParams({
+        resourceId: product,
+        translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls).toEqual([]);
+  });
+
   it("keeps the stale rows when the run cannot even START", async () => {
     // The realistic trigger is a DATABASE error. Answering it with the purge
     // would delete the translations on Shopify while the local mirror delete

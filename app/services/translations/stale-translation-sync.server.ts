@@ -552,6 +552,16 @@ export function themeTranslationMirror(
   };
 }
 
+/**
+ * The rate-limited client for a repair. A caller that already holds a gateway
+ * hands it over as `client`, and wrapping it a second time would give this run
+ * its own queue and its own retry budget on top of the caller's — two schedulers
+ * pacing the same shop, inside the merchant's save request.
+ */
+function gatewayFor(client: ShopifyGraphQLClient, shop: string): ShopifyApiGateway {
+  return client instanceof ShopifyApiGateway ? client : new ShopifyApiGateway(client, shop);
+}
+
 /** The mirror a target asks for, or the ContentTranslation default. */
 function mirrorOf(target: RepairTarget): TranslationMirror {
   return target.mirror ?? contentTranslationMirror(target.shop);
@@ -1070,7 +1080,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // The mirror is the fallback: a locale whose read failed answers nothing,
     // and dropping it would silently do less than before. A pair we once wrote
     // is evidence enough to repair it.
-    const gateway = new ShopifyApiGateway(params.client, shop);
+    const gateway = gatewayFor(params.client, shop);
     const allKeys = [...new Set(changed.map((item) => item.key))];
     const triples = await foreignTranslationTriples(gateway, resourceIds, foreignLocales, wantedKeys);
     for (const row of await mirrorOf(params).existing([...refs.values()], foreignLocales, allKeys)) {
@@ -1196,7 +1206,7 @@ async function repairStaleTranslations(
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
   const lockId = target.lockId ?? resourceId;
-  const gateway = new ShopifyApiGateway(client, shop);
+  const gateway = gatewayFor(client, shop);
   const mirror = mirrorOf(target);
   const { retranslate, purge, declined } = partitionStaleTranslations(
     stale,
@@ -1687,6 +1697,20 @@ async function runRetranslation(
         }
 
         for (const { ref, writes: resourceWrites } of byResource.values()) {
+          // Re-checked HERE, not only at the top of the locale: a translation
+          // save can land while the AI request for this very locale is in
+          // flight — a menu rename plus its English title in one save is
+          // exactly that — and with one locale the outer check never runs
+          // again. Stopping before the write is the whole point of the rule.
+          if (supersededByMerchant()) {
+            logger.info("[StaleTranslations] Merchant saved mid-locale — not registering the rest", {
+              context: "StaleTranslations",
+              shop,
+              resourceId: ref.resourceId,
+              locale,
+            });
+            break;
+          }
           const { confirmedKeys } = await registerAndVerify(
             gateway,
             ref.resourceId,
