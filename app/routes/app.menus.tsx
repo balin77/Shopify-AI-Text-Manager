@@ -58,7 +58,9 @@ import {
   Banner,
   Button,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
+import { RefreshIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
@@ -1058,6 +1060,73 @@ export default function MenusPage() {
     [activeLocale, translateOne, autoSave, withBusy],
   );
 
+  /**
+   * The whole menu at once — the same pair every other content page has.
+   *
+   * Built from the SAME primitives the per-entry buttons use (translateOne +
+   * autoSave), not from a second write path: one echo-verified save either
+   * way, and a bulk run that behaved differently from the single one would be
+   * two features wearing one label. Sequential on purpose — the AI endpoint is
+   * one request per item per language, and firing a menu's worth at once buys
+   * no wall clock while making a failure impossible to attribute.
+   */
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const translateWholeMenu = useCallback(async () => {
+    const items = (selectedMenu?.flat ?? []) as FlatMenuItem[];
+    const targets = isPrimary ? bulkTargetLocales : [activeLocale];
+    if (targets.length === 0) return;
+    setBulkBusy(true);
+    setTranslateError(null);
+    try {
+      for (const item of items) {
+        if (!item.linkId) continue;
+        const row = (linkTranslations || {})[item.linkId] as LinkTranslationDTO | undefined;
+        if (!row?.translatable) continue;
+        const source = row.primaryTitle ?? item.title;
+        if (!source.trim()) continue;
+        const values: Record<string, string> = {};
+        for (const locale of targets) {
+          try {
+            const value = await translateOne(item.linkId, source, locale);
+            if (value) values[locale] = value;
+          } catch (e) {
+            // One item's failure is reported and the run continues: the
+            // alternative is a half-translated menu with no way to tell which
+            // half, which is the per-cell rule the bulk editor follows too.
+            setTranslateError(e instanceof Error ? e.message : String(e));
+          }
+        }
+        autoSave(values, item.linkId);
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selectedMenu, isPrimary, bulkTargetLocales, activeLocale, linkTranslations, translateOne, autoSave]);
+
+  /**
+   * Empty every translation of this menu — in the active language, or in all
+   * of them from the primary view.
+   *
+   * It only fills the DRAFT with empty values; nothing is removed until the
+   * merchant saves, and Discard puts it all back. That is why there is no
+   * confirmation dialog: the save bar already is one, and it names the count.
+   */
+  const clearWholeMenu = useCallback(() => {
+    const targets = isPrimary ? foreignLocales : [activeLocale];
+    if (targets.length === 0) return;
+    const ids = [...visibleLinkIds];
+    setDraftByLocale((prev) => {
+      const next = { ...prev };
+      for (const locale of targets) {
+        const bucket = { ...(next[locale] ?? {}) };
+        for (const linkId of ids) bucket[linkId] = "";
+        next[locale] = bucket;
+      }
+      return next;
+    });
+  }, [isPrimary, foreignLocales, activeLocale, visibleLinkIds]);
+
   /** Foreign view: take the primary label over as-is, and save. */
   const copyFromPrimary = useCallback(
     (item: FlatMenuItem, sourceText: string) => {
@@ -1432,18 +1501,69 @@ export default function MenusPage() {
                 </Card>
               )}
 
+              {/* The operations row every content page has: what happens to
+                  the TEXT on the left, what happens to the MENU on the right,
+                  in its own card between the language bar and the content —
+                  the same three-card rhythm as UnifiedContentEditor. */}
+              {selectedMenu && (
+                <Card padding="400">
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
+                    <InlineStack gap="200">
+                      <DisabledActionTooltip hint={singleLocaleHint ?? (isPrimary ? allTargetsOffHint : undefined)}>
+                        <Button
+                          size="slim"
+                          loading={bulkBusy}
+                          disabled={bulkBusy || !!singleLocaleHint || !!(isPrimary && allTargetsOffHint)}
+                          onClick={() => void translateWholeMenu()}
+                        >
+                          {bulkBusy
+                            ? (t.content?.translating || "…")
+                            : (t.content?.translateAll || "🌍 Translate All")}
+                        </Button>
+                      </DisabledActionTooltip>
+                      <DisabledActionTooltip hint={singleLocaleHint}>
+                        <Button size="slim" tone="critical" disabled={!!singleLocaleHint} onClick={clearWholeMenu}>
+                          🗑️ {t.content?.clearAll || "Clear All"}
+                        </Button>
+                      </DisabledActionTooltip>
+                    </InlineStack>
+
+                    <InlineStack gap="200" blockAlign="center">
+                      {/* Reload is a REVALIDATION here, not a per-item sync
+                          endpoint: the loader re-reads every menu from Shopify
+                          on each run, so re-running it IS the reload — and it
+                          keeps unsaved drafts, which a page reload would not. */}
+                      <Tooltip content={t.content?.menuReload || "Reload"}>
+                        <Button
+                          size="slim"
+                          icon={RefreshIcon}
+                          accessibilityLabel={t.content?.menuReload || "Reload"}
+                          loading={revalidator.state !== "idle"}
+                          onClick={() => revalidator.revalidate()}
+                        />
+                      </Tooltip>
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          onClick={() => {
+                            newNodeSeq.current += 1;
+                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
+                          }}
+                        >
+                          {t.content?.menuAddItem}
+                        </Button>
+                      )}
+                    </InlineStack>
+                  </InlineStack>
+                </Card>
+              )}
+
               <Card>
                 {selectedMenu ? (
                   <BlockStack gap="500">
                     {foreignLocales.length === 0 && (
                       <Banner tone="info">
                         <p>{t.content?.menuNeedsSecondLanguage}</p>
-                      </Banner>
-                    )}
-
-                    {isPrimary && (
-                      <Banner tone="info">
-                        <p>{t.content?.menuPrimaryEditHint}</p>
                       </Banner>
                     )}
 
@@ -1520,16 +1640,10 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {(treeResult?.translationRepair?.restored ?? 0) > 0 && (
-                      <Banner tone="info">
-                        <p>
-                          {(t.content?.menuTreeRepairDone || "").replace(
-                            "{count}",
-                            String(treeResult?.translationRepair?.restored ?? 0),
-                          )}
-                        </p>
-                      </Banner>
-                    )}
+                    {/* The SUCCESSFUL repair says nothing a merchant can act
+                        on: their translations are where they left them, which
+                        is what they expected. Only the FAILED one above is
+                        news. (The restore itself is logged server-side.) */}
 
                     {(treeResult?.purgedTranslationCount ?? 0) > 0 && (
                       <Banner tone="info">
@@ -1664,18 +1778,6 @@ export default function MenusPage() {
                       }}
                     />
 
-                    {isPrimary && (
-                      <InlineStack>
-                        <Button
-                          onClick={() => {
-                            newNodeSeq.current += 1;
-                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
-                          }}
-                        >
-                          {t.content?.menuAddItem}
-                        </Button>
-                      </InlineStack>
-                    )}
                   </BlockStack>
                 ) : (
                   <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
