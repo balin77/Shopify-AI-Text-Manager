@@ -192,9 +192,33 @@ export function isEmptyMenuTreeDiff(diff: MenuTreeDiff): boolean {
   );
 }
 
+/**
+ * A node's target as one comparable string — THE definition of "same target",
+ * used by the retarget diff here and by the drift fingerprint next door, so
+ * the two can never disagree about whether an item moved.
+ *
+ * For a resource-bound type the `url` is deliberately LEFT OUT: Shopify
+ * DERIVES it from the resource's handle, so a handle changed anywhere else in
+ * the shop would otherwise turn an untouched item into a phantom "retarget" —
+ * and the write path would then send our stale derived url alongside the
+ * (correct) resourceId. What identifies such a target is the resource, and
+ * nothing else.
+ */
+export function menuTargetKey(node: {
+  type?: string | null;
+  url?: string | null;
+  resourceId?: string | null;
+}): string {
+  const type = node.type ?? "";
+  if ((MENU_ITEM_TYPES_NEEDING_RESOURCE as readonly string[]).includes(type)) {
+    return `${type}|${node.resourceId ?? ""}`;
+  }
+  return `${type}|${node.url ?? ""}`;
+}
+
 /** A short description of a node's target, for the retarget comparison. */
 function targetOf(node: MenuEditorNode): string {
-  return `${node.type}|${node.resourceId ?? ""}|${node.url ?? ""}`;
+  return menuTargetKey(node);
 }
 
 /**
