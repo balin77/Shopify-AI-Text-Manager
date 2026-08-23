@@ -242,7 +242,7 @@ export function SettingsPublicationProbeTab() {
                   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
                   fontSize: "12px",
                   padding: "12px",
-                  border: "1px solid #c9cccf",
+                  border: "1px solid var(--app-field-border-color)",
                   borderRadius: "8px",
                   background: "#fafbfb",
                   resize: "vertical",

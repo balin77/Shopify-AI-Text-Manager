@@ -195,6 +195,29 @@
                                      label and the merchandising controls a
                                      regular one, in the same card.
 
+     --app-surface-border-color      the frame of a box that is NOT an input:
+                                     the sidebar's detail panel, the compact
+                                     item selector, the notification button,
+                                     the create-resource tiles, an image tile
+                                     at rest, a variable chip. Its own token
+                                     rather than the field colour even though
+                                     the two hold the same grey today, for the
+                                     reason the widths above are separate
+                                     tokens: "make the input outlines lighter"
+                                     must not also lighten every tile and
+                                     button in the app. They were all written
+                                     out as #c9cccf at some twenty call sites,
+                                     which is what made that one instruction a
+                                     hunt through components.
+
+     --app-content-rule-color        rules drawn INSIDE rendered content — the
+                                     bar on a blockquote, an <hr> — in the body
+                                     editor and the AI suggestion preview. Third
+                                     token for the same reason: that is the
+                                     merchant's text being previewed, not our
+                                     chrome, and a change to the app's frames
+                                     has no business moving it.
+
      --app-attribute-grid-min-width  the auto-fit column of the sales-channel
                                      panel's three lists (channels / regions /
                                      B2B). It used to be 260px, on the reasoning
@@ -245,6 +268,8 @@
   --app-field-border-color-disabled: #dfe1e3;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
+  --app-surface-border-color: #c9cccf;
+  --app-content-rule-color: #c9cccf;
   --app-attribute-grid-min-width: 180px;
   --app-details-field-min-width: 195px;
   --app-details-grid-gap: 1rem;

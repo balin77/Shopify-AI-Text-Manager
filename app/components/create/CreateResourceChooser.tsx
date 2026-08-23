@@ -68,7 +68,7 @@ export function CreateResourceChooser({
                   width: "100%",
                   textAlign: "left",
                   padding: "12px",
-                  border: "1px solid #c9cccf",
+                  border: "1px solid var(--app-surface-border-color)",
                   borderRadius: "8px",
                   background: gate.allowed ? "white" : "#f6f6f7",
                   cursor: gate.allowed ? "pointer" : "not-allowed",
