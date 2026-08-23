@@ -43,6 +43,12 @@
 .menu-row-name {
   grid-area: name;
   min-width: 0;
+  /* The depth indent, spent HERE and not on the row: the box's left edge moves
+     with the nesting while its right edge stays on the column boundary, so
+     every target box on the page starts at the same x. Padding rather than
+     margin, so `min-width: 0` still measures the whole cell and a long title
+     cannot push the column apart. */
+  padding-left: var(--menu-row-indent, 0);
 }
 
 .menu-row-target {
@@ -65,6 +71,18 @@
       "name"
       "actions"
       "target";
+  }
+
+  /* Stacked, there is no target column to line up — so the indent goes back to
+     the whole row and the three parts stay together as one item. Indenting
+     only the name here would leave the target hanging out to its left, which
+     reads as a layout fault rather than as nesting. */
+  .menu-tree-row {
+    margin-left: var(--menu-row-indent, 0);
+  }
+
+  .menu-row-name {
+    padding-left: 0;
   }
 
   .menu-row-actions {

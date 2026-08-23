@@ -270,15 +270,29 @@ function MenuTreeRow({
   return (
     <div
       ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-        // The dragged row keeps its space but goes quiet — the overlay above
-        // is the thing that moves.
-        opacity: isDragging ? 0.4 : 1,
-        marginLeft: `${(depth - 1) * INDENT_WIDTH}px`,
-        marginBottom: "0.75rem",
-      }}
+      className="menu-tree-row"
+      style={
+        {
+          transform: CSS.Translate.toString(transform),
+          transition,
+          // The dragged row keeps its space but goes quiet — the overlay above
+          // is the thing that moves.
+          opacity: isDragging ? 0.4 : 1,
+          marginBottom: "0.75rem",
+          // Depth as a VARIABLE, not as a margin on the row.
+          //
+          // A margin here shifted the whole grid, so a nested row's name box
+          // ended further right than a top-level one's and the target column
+          // started at a different x on every line — a ragged right edge down
+          // the middle of the page. The stylesheet spends it on the NAME cell
+          // instead: the left edge moves with the depth, the right edge is the
+          // column boundary and does not move, and every target box therefore
+          // begins at the same place. On a phone, where the two boxes stack and
+          // there is no column to line up, it goes back to being the row's own
+          // indent so the stacked pair reads as one item.
+          "--menu-row-indent": `${(depth - 1) * INDENT_WIDTH}px`,
+        } as React.CSSProperties
+      }
     >
       <InlineStack gap="200" blockAlign="start" wrap={false}>
         {!structureLocked && (
