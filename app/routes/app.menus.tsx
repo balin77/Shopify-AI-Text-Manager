@@ -1752,6 +1752,25 @@ export default function MenusPage() {
                           {t.content?.menuAddItem}
                         </Button>
                       )}
+                      {/* The whole menu. Only on the primary language: deleting
+                          a menu from a translation tab is not a translation
+                          act. */}
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          tone="critical"
+                          variant="tertiary"
+                          onClick={() =>
+                            deleteMenu.request({
+                              id: selectedMenu.id,
+                              title: selectedMenu.title,
+                              resource: "menu",
+                            })
+                          }
+                        >
+                          {t.content?.menuDeleteMenu || "Delete menu"}
+                        </Button>
+                      )}
                       {/* Reload is a REVALIDATION here, not a per-item sync
                           endpoint: the loader re-reads every menu from Shopify
                           on each run, so re-running it IS the reload — and it
@@ -1772,26 +1791,6 @@ export default function MenusPage() {
                           BEFORE pressing it, not from the undo they do not
                           have. */}
                       <HelpTooltip helpKey="menuActionBar" position="below" />
-                      {/* The whole menu. Last in the row and the only critical
-                          control in it — and only on the primary language,
-                          because deleting a menu from a translation tab is not
-                          a translation act. */}
-                      {isPrimary && (
-                        <Button
-                          size="slim"
-                          tone="critical"
-                          variant="tertiary"
-                          onClick={() =>
-                            deleteMenu.request({
-                              id: selectedMenu.id,
-                              title: selectedMenu.title,
-                              resource: "menu",
-                            })
-                          }
-                        >
-                          {t.content?.menuDeleteMenu || "Delete menu"}
-                        </Button>
-                      )}
                     </InlineStack>
                   </InlineStack>
                 </Card>
