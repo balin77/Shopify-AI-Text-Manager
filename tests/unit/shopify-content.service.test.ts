@@ -553,40 +553,89 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
  * translation.action.ts read that as `status: "completed"` and the merchant was
  * told it had worked. These pin the three answers the fix has to give:
  * refused ⇒ failed, saved ⇒ not failed, and a DELIBERATE skip ⇒ not failed.
+ *
+ * The ECHO block below is the second half of the same rule (CLAUDE.md: "A save
+ * is only successful if Shopify echoes back the keys — `userErrors` alone is
+ * not enough"). All three save tiers now read `translationsRegister.
+ * translations`; these pin what each of them does with a full, a partial, an
+ * empty and an ABSENT echo, and that only echoed entries are mirrored to the
+ * DB.
  */
 describe('ShopifyContentService.translateAllContent() — failure reporting', () => {
   const productId = 'gid://shopify/Product/42';
 
   /**
    * One admin mock for both documents the run uses: the digest query and the
-   * register mutation. `registerResponse` decides what Shopify answers to the
-   * write, which is the whole variable under test.
+   * register mutation. `register` decides what Shopify answers to the write,
+   * which is the whole variable under test — either one fixed response or a
+   * function of the variables actually sent, so a test can answer a batch
+   * differently from the single-entry retry that follows it.
    */
-  function makeTranslateAdmin(registerResponse: any) {
-    const graphql = vi.fn().mockImplementation(async (document: string) => ({
-      ok: true,
-      json: async () => {
-        if (document.includes('translationsRegister')) return registerResponse;
-        return {
-          data: {
-            translatableResource: {
-              translatableContent: [
-                { key: 'body_html', digest: 'digest-body', value: 'Vase aus Ton' },
-              ],
+  function makeTranslateAdmin(register: any | ((variables: any) => any)) {
+    const registerCalls: any[] = [];
+    const graphql = vi.fn().mockImplementation(async (document: string, options?: any) => {
+      const variables = options?.variables;
+      if (document.includes('translationsRegister')) registerCalls.push(variables);
+      return {
+        ok: true,
+        json: async () => {
+          if (document.includes('translationsRegister')) {
+            return typeof register === 'function' ? register(variables) : register;
+          }
+          return {
+            data: {
+              translatableResource: {
+                translatableContent: [
+                  { key: 'body_html', digest: 'digest-body', value: 'Vase aus Ton' },
+                  { key: 'title', digest: 'digest-title', value: 'Vase' },
+                ],
+              },
             },
-          },
-        };
-      },
-    }));
-    return { graphql };
+          };
+        },
+      };
+    });
+    return { graphql, registerCalls };
   }
 
+  /** Shopify's honest answer: it echoes back exactly what it stored. */
+  const echoEverything = (variables: any) => ({
+    data: {
+      translationsRegister: {
+        userErrors: [],
+        translations: (variables.translations ?? []).map((t: any) => ({
+          locale: t.locale, key: t.key, value: t.value,
+        })),
+      },
+    },
+  });
+
+  /** The same, filtered — what an accepted call that stored only SOME of it
+   *  looks like on the wire. */
+  const echoOnly = (predicate: (t: any) => boolean) => (variables: any) => ({
+    data: {
+      translationsRegister: {
+        userErrors: [],
+        translations: (variables.translations ?? []).filter(predicate).map((t: any) => ({
+          locale: t.locale, key: t.key, value: t.value,
+        })),
+      },
+    },
+  });
+
+  /** One `upsert` spy shared with the transaction callback, so a test can ask
+   *  what was mirrored — the DB half of the echo rule. */
   function makeDb() {
+    const upsert = vi.fn();
     return {
-      $transaction: vi.fn(async (fn: any) => fn({ contentTranslation: { upsert: vi.fn() } })),
-      contentTranslation: { upsert: vi.fn() },
+      $transaction: vi.fn(async (fn: any) => fn({ contentTranslation: { upsert } })),
+      contentTranslation: { upsert },
     } as any;
   }
+
+  /** The locales the DB mirror was actually written for. */
+  const mirroredLocales = (db: any): string[] =>
+    db.contentTranslation.upsert.mock.calls.map((c: any[]) => c[0].create.locale).sort();
 
   /** The AI half always succeeds here — only the SAVE half varies. */
   const translationService = {
@@ -627,17 +676,20 @@ describe('ShopifyContentService.translateAllContent() — failure reporting', ()
     expect(result.translations.fr).toEqual({});
   });
 
-  it('reports nothing when Shopify accepts the writes', async () => {
-    const admin = makeTranslateAdmin({
-      data: { translationsRegister: { userErrors: [], translations: [{ locale: 'fr', key: 'body_html', value: 'x' }] } },
-    });
+  it('reports nothing when Shopify echoes every write back', async () => {
+    const admin = makeTranslateAdmin(echoEverything);
     const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
 
-    const result = await service.translateAllContent(params(admin, makeDb()) as any);
+    const result = await service.translateAllContent(params(admin, db) as any);
 
     expect(result.failedLocales).toEqual([]);
     expect(result.rejectedFields).toEqual({});
     expect(result.translations.fr.description).toBe('[fr] Vase aus Ton');
+    expect(result.translations.de.description).toBe('[de] Vase aus Ton');
+    // One mega-batch call for both locales — a full echo needs no fallback.
+    expect(admin.registerCalls).toHaveLength(1);
+    expect(mirroredLocales(db)).toEqual(['de', 'fr']);
   });
 
   it('does not call a locale failed whose only field was DELIBERATELY skipped', async () => {
@@ -663,5 +715,162 @@ describe('ShopifyContentService.translateAllContent() — failure reporting', ()
 
     expect(result.failedLocales).toEqual([]);
     expect(result.skippedFields.fr).toEqual(['handle']);
+  });
+
+  // === The echo rule ===
+
+  it('treats an accepted write Shopify did not echo back as NOT saved, and mirrors nothing', async () => {
+    // The historic silent no-op: no userErrors, no errors — and an empty echo,
+    // which is an ANSWER ("nothing was stored"), not a missing one.
+    const admin = makeTranslateAdmin({ data: { translationsRegister: { userErrors: [], translations: [] } } });
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+
+    const result = await service.translateAllContent(params(admin, db) as any);
+
+    expect(result.failedLocales.sort()).toEqual(['de', 'fr']);
+    expect(result.rejectedFields.fr).toEqual(['description']);
+    expect(result.rejectedFields.de).toEqual(['description']);
+    expect(result.translations.fr).toEqual({});
+    expect(result.translations.de).toEqual({});
+    // Nothing was stored on Shopify, so nothing may be stored here either.
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(mirroredLocales(db)).toEqual([]);
+  });
+
+  it('splits a partially echoed batch — the echoed locale is saved, the other one fails', async () => {
+    // fr comes back, de does not. Mega-batch ⇒ per-locale ⇒ individual, and
+    // every tier keeps giving the same answer for de.
+    const admin = makeTranslateAdmin(echoOnly((t: any) => t.locale === 'fr'));
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+
+    const result = await service.translateAllContent(params(admin, db) as any);
+
+    expect(result.failedLocales).toEqual(['de']);
+    expect(result.rejectedFields.de).toEqual(['description']);
+    expect(result.rejectedFields.fr).toBeUndefined();
+    expect(result.translations.fr.description).toBe('[fr] Vase aus Ton');
+    expect(result.translations.de).toEqual({});
+    expect(mirroredLocales(db)).toEqual(['fr']);
+  });
+
+  it('reports a field the batch dropped but the individual retry got through as SAVED', async () => {
+    // Trap 3: an entry refused by the per-locale batch and then stored by the
+    // one-by-one retry must appear in `saved` only — never in both lists. The
+    // mega-batch's own un-echoed entries must likewise leave no trace, since
+    // the re-send goes on to save them.
+    const admin = makeTranslateAdmin((variables: any) =>
+      // A batch stores the title only; a single-entry call stores what it got.
+      (variables.translations.length > 1
+        ? echoOnly((t: any) => t.key === 'title')
+        : echoEverything)(variables),
+    );
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+    const bothFieldsService = {
+      translateShortFieldsBatch: vi.fn(async (fields: Record<string, string>, _src: string, locales: string[]) => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const locale of locales) out[locale] = { title: `[${locale}] ${fields.title}` };
+        return out;
+      }),
+      translateProduct: vi.fn(async (fields: Record<string, string>, locales: string[]) => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const locale of locales) out[locale] = { description: `[${locale}] ${fields.description}` };
+        return out;
+      }),
+    };
+
+    const result = await service.translateAllContent({
+      ...params(admin, db),
+      fields: { title: 'Vase', description: 'Vase aus Ton' },
+      translationService: bothFieldsService as any,
+      targetLocales: ['fr'],
+    } as any);
+
+    expect(result.failedLocales).toEqual([]);
+    expect(result.rejectedFields).toEqual({});
+    expect(result.translations.fr.title).toBe('[fr] Vase');
+    expect(result.translations.fr.description).toBe('[fr] Vase aus Ton');
+    expect(mirroredLocales(db)).toEqual(['fr', 'fr']);
+  });
+
+  it('re-asks one entry at a time when a batch answers with NO echo, and believes the answer it then gets', async () => {
+    // Trap 1: an absent echo is "we do not know", not "nothing was stored" —
+    // a throttled or truncated body looks exactly like this. The batch tiers
+    // treat it as a reason to ask again, never as a refusal.
+    const admin = makeTranslateAdmin((variables: any) =>
+      variables.translations.length > 1
+        ? { data: { translationsRegister: { userErrors: [] } } } // no `translations` at all
+        : echoEverything(variables),
+    );
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+
+    const result = await service.translateAllContent(params(admin, db) as any);
+
+    expect(result.failedLocales).toEqual([]);
+    expect(result.rejectedFields).toEqual({});
+    expect(result.translations.fr.description).toBe('[fr] Vase aus Ton');
+    expect(mirroredLocales(db)).toEqual(['de', 'fr']);
+  });
+
+  it('counts an entry as NOT saved when even the individual write answers with no echo', async () => {
+    // Trap 1, bottom tier: there is no narrower re-send left, so "we do not
+    // know" is recorded as not saved. A false alarm costs a re-run of an
+    // idempotent write; the other direction is a DB row for a translation the
+    // storefront never got.
+    const admin = makeTranslateAdmin({ data: { translationsRegister: { userErrors: [] } } });
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+
+    const result = await service.translateAllContent(params(admin, db) as any);
+
+    expect(result.failedLocales.sort()).toEqual(['de', 'fr']);
+    expect(result.rejectedFields.fr).toEqual(['description']);
+    expect(result.rejectedFields.de).toEqual(['description']);
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('accepts an echo whose regional code differs only in CASE', async () => {
+    // Shopify is inconsistent about the case of a regional code and the target
+    // locales come from client form data, so `pt-br` written and `pt-BR`
+    // echoed is the same translation — reading it as a miss would report a
+    // locale as refused while the storefront serves it.
+    const admin = makeTranslateAdmin((variables: any) => ({
+      data: {
+        translationsRegister: {
+          userErrors: [],
+          translations: variables.translations.map((t: any) => ({
+            locale: t.locale.toUpperCase(), key: t.key, value: t.value,
+          })),
+        },
+      },
+    }));
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+
+    const result = await service.translateAllContent({
+      ...params(admin, db),
+      targetLocales: ['pt-br'],
+    } as any);
+
+    expect(result.failedLocales).toEqual([]);
+    expect(result.rejectedFields).toEqual({});
+    expect(result.translations['pt-br'].description).toBe('[pt-br] Vase aus Ton');
+    expect(mirroredLocales(db)).toEqual(['pt-br']);
+  });
+
+  it('does not trust a `data: null` response that carries no userErrors', async () => {
+    // The throttled shape the video-schema writer already refuses to read as a
+    // success: no data, no userErrors, nothing echoed.
+    const admin = makeTranslateAdmin({ data: null });
+    const service = new ShopifyContentService(admin as any);
+    const db = makeDb();
+
+    const result = await service.translateAllContent(params(admin, db) as any);
+
+    expect(result.failedLocales.sort()).toEqual(['de', 'fr']);
+    expect(mirroredLocales(db)).toEqual([]);
   });
 });
