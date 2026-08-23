@@ -987,17 +987,12 @@ export async function handleSavePrimarySubResources(
     // deletion stands down — read through the policy rather than written as
     // `false`, because which of the two switches applies is that module's
     // question, never a call site's.
-    const selfRetranslated = !!changePolicy?.autoTranslateExternalChanges;
-    const purgeStaleTranslations =
-      !!changePolicy &&
-      (selfRetranslated
-        ? changePolicy.purgeOnPrimaryChange
-        : changePolicy.purgeUnreconciledSurfaces);
+    const autoTranslate = !!changePolicy?.autoTranslateExternalChanges;
 
     // Locales for both passes below, fetched once and only when one can run.
     let foreignLocales: string[] = [];
     let shopPrimaryLocale = "";
-    if (somethingChanged && (purgeStaleTranslations || selfRetranslated)) {
+    if (somethingChanged && !!changePolicy) {
       try {
         const localesResponse = await gateway.graphql(
           `#graphql
@@ -1025,9 +1020,23 @@ export async function handleSavePrimarySubResources(
       }
     }
 
-    if (purgeStaleTranslations && somethingChanged) {
+    // Decided AFTER the lookup, because it depends on its result: without a
+    // known PRIMARY locale there is nothing to translate FROM, and the repair
+    // cannot run — so the deletion has to, or the stale text stays live for
+    // good on a surface nothing else ever revisits.
+    const selfRetranslated = autoTranslate && !!shopPrimaryLocale && foreignLocales.length > 0;
+    const purgeStaleTranslations =
+      !!changePolicy &&
+      (selfRetranslated
+        ? changePolicy.purgeOnPrimaryChange
+        : changePolicy.purgeUnreconciledSurfaces);
+
+    if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
       try {
         {
+          // (the `foreignLocales.length > 0` guard now sits on the `if` above —
+          // without it every changed sub-resource fired a
+          // `translationsRemove(locales: [])` on a single-language shop)
           // Delete option translations
           for (const optionId of changedOptionIds) {
             if (!isValidShopifyGID(optionId)) continue;
@@ -1176,7 +1185,7 @@ export async function handleSavePrimarySubResources(
     // action, so they share a Task row, one batched detection and one AI
     // request per locale. Best-effort — the primary writes above have already
     // gone through, so nothing here may fail the save.
-    if (selfRetranslated && somethingChanged && foreignLocales.length > 0 && shopPrimaryLocale) {
+    if (selfRetranslated && somethingChanged) {
       const changed: Array<{ resourceId: string; resourceType: string; key: string }> = [];
       for (const optionId of changedOptionIds) {
         if (!isValidShopifyGID(optionId)) continue;

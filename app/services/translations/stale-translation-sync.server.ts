@@ -89,6 +89,15 @@ export interface RepairTarget {
    * leaves the task without a link.
    */
   contentKind: "product" | "collection" | "blog" | "page";
+  /**
+   * What goes into `Task.resourceType`, when that is NOT the same question as
+   * the AI prompt's kind. The Tasks tab maps this to a Shopify admin path and
+   * deliberately yields NO link for a type its map does not list — so a
+   * metaobject must not travel as "page", or the row offers
+   * `/admin/pages/<metaobject id>`, the guessed broken URL that map exists to
+   * prevent. Defaults to `contentKind`, which is right wherever the two agree.
+   */
+  taskResourceType?: string;
   /** Shown on the Task row when a re-translation runs. */
   resourceTitle?: string;
   /**
@@ -245,41 +254,64 @@ export function contentTranslationMirror(shop: string): TranslationMirror {
  */
 export function metaobjectTranslationMirror(
   shop: string,
-  metaobjectId: string,
-  type: string,
+  /** Entry GID → its BARE metaobject type (CLAUDE.md), for the rows this
+   *  creates. One save can touch several entries of the same type. */
+  typeById: ReadonlyMap<string, string>,
 ): TranslationMirror {
   return {
-    async existing(_refs, foreignLocales, keys) {
+    async existing(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
       const { db } = await import("../../db.server");
       const rows = await db.metaobjectTranslation.findMany({
         where: {
           shop,
-          metaobjectId,
+          metaobjectId: { in: refs.map((ref) => ref.resourceId) },
           marketId: "",
           key: { in: [...keys] },
           locale: { in: [...foreignLocales] },
         },
-        select: { key: true, locale: true },
+        select: { metaobjectId: true, key: true, locale: true },
       });
-      return rows.map((row: { key: string; locale: string }) => ({
-        resourceId: metaobjectId,
+      return rows.map((row: { metaobjectId: string; key: string; locale: string }) => ({
+        resourceId: row.metaobjectId,
         key: row.key,
         locale: row.locale,
       }));
     },
-    async remove(_ref, locale, keys) {
+    async remove(ref, locale, keys) {
       const { db } = await import("../../db.server");
       await db.metaobjectTranslation.deleteMany({
-        where: { shop, metaobjectId, locale, marketId: "", key: { in: [...keys] } },
+        where: {
+          shop,
+          metaobjectId: ref.resourceId,
+          locale,
+          marketId: "",
+          key: { in: [...keys] },
+        },
       });
     },
-    async write(_ref, locale, key, value) {
+    async write(ref, locale, key, value) {
       const { db } = await import("../../db.server");
       await db.metaobjectTranslation.upsert({
         where: {
-          shop_metaobjectId_key_locale_marketId: { shop, metaobjectId, key, locale, marketId: "" },
+          shop_metaobjectId_key_locale_marketId: {
+            shop,
+            metaobjectId: ref.resourceId,
+            key,
+            locale,
+            marketId: "",
+          },
         },
-        create: { shop, metaobjectId, type, key, value, locale, outdated: false, marketId: "" },
+        create: {
+          shop,
+          metaobjectId: ref.resourceId,
+          type: typeById.get(ref.resourceId) ?? "",
+          key,
+          value,
+          locale,
+          outdated: false,
+          marketId: "",
+        },
         update: { value, outdated: false },
       });
     },
@@ -496,7 +528,11 @@ const PAIR_SEP = "\u0000";
  */
 const DETECTION_BUDGET_MS = 5_000;
 
-/** `translatableResourcesByIds` caps its page at 250. */
+/** `translatableResourcesByIds` caps its page at 250. The queries ask for
+ *  `ids.length`, never this constant: `first` is what the Admin API prices the
+ *  query at, so a single-resource save asking for 250 pays ~125× its cost and
+ *  meets the throttle that much sooner — where this path degrades silently to
+ *  mirror-only detection. */
 const RESOURCE_BATCH = 250;
 
 /**
@@ -554,7 +590,7 @@ async function foreignTranslationTriples(
                 }
               }
             }`,
-          { variables: { resourceIds: ids, locale, first: RESOURCE_BATCH } },
+          { variables: { resourceIds: ids, locale, first: ids.length } },
         );
         const data = (await response.json()) as {
           data?: {
@@ -648,7 +684,7 @@ async function currentPrimaryContent(
               }
             }
           }`,
-        { variables: { resourceIds: ids, first: RESOURCE_BATCH } },
+        { variables: { resourceIds: ids, first: ids.length } },
       );
       const data = (await response.json()) as {
         data?: {
@@ -1156,7 +1192,7 @@ async function runRetranslation(
       status: "running",
       // The Tasks tab maps this to a label and a Shopify admin link, and it
       // speaks the merchant-facing kind, not the Shopify resource type.
-      resourceType: contentKind,
+      resourceType: params.taskResourceType ?? contentKind,
       resourceId,
       resourceTitle: resourceTitle || resourceId,
       fieldType: "autoTranslateExternalChange",
