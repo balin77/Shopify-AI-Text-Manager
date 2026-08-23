@@ -242,14 +242,34 @@ button of its own.**
   bulk list. Those are a multi-select and stay checkboxes; the ones still
   standing elsewhere in the app are legacy, and get converted when their
   surface is next touched rather than in a sweep of their own.
-- **The clear button is a red BIN with no word.** "Leeren" / "Clear" / "Vaciar"
-  is up to seven characters sitting on the label's own line, and since every
-  Details field became its own card there are up to six of them on one screen,
-  each eating the width its own label wanted. The word moves into
-  `accessibilityLabel`, which is where it was worth more anyway: the button has
-  no text of its own now, so that name is the ONLY one it has — and four of
-  these in one row all called "Leeren" tell a screen reader nothing apart, which
-  is what `fieldLabel` is for.
+- **The clear control is the WORD where the field is wide enough and a red BIN
+  where it is not — and the FIELD's width decides, not the viewport and not the
+  caller.** "Leeren" / "Clear" / "Vaciar" is up to seven characters on the
+  label's own line, and on a short field — a vendor, a theme template, one cell
+  of the Details grid — it collided with the label it shares that line with.
+  The bin fixed that and was then applied to every field in the app, including a
+  product title with 700px of empty label row beside it, which is not what it
+  was for. So `FieldClearButton` renders BOTH and a **container query** shows
+  one (`.app-field-clear-scope`, threshold 360px, in responsive.css): a media
+  query cannot answer this, because the Details fields are narrow on the widest
+  desktop there is. The default is the BIN — a query that never applies (no
+  engine support, an unresolvable width) must fall back to the shape that cannot
+  overlap. Both shapes are rendered because Polaris derives its padding from the
+  PROPS (`icon && children == null` ⇒ `iconOnly`), and only the icon-only plain
+  button gets the 32px minimum touch target; one button morphing between the two
+  would silently lose it on exactly the narrow fields the bin exists for. The
+  hidden one is `display: none`, so a screen reader is offered one control.
+  `accessibilityLabel` is set on both and OPENS with the visible word (WCAG
+  "Label in Name"): four of these in one Details row all called "Leeren" tell a
+  screen reader nothing apart, which is what `fieldLabel` is for.
+  The **HTML-capable editor** shares the decision but not the positioning:
+  [AIEditableHTMLField.tsx](app/components/AIEditableHTMLField.tsx) puts its clear button IN the header row
+  beside the HTML/preview toggle rather than absolutely over an empty label
+  line, so it carries `app-field-clear-scope` itself and renders
+  `FieldClearButton` directly. The standalone clear on
+  [app.direct-translations.tsx](app/routes/app.direct-translations.tsx) is deliberately NOT this control: it is an
+  action row under a wide textarea, not a label-row overlay, and it carries a
+  `disabled` state this component does not model.
 - **The clear button is drawn only where `""` is a value the field can HOLD.** A
   select and a toggle are enums — Shopify stores one of their options, never
   nothing — so a Clear there would either write a value the API rejects at the

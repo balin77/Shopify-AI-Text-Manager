@@ -13,6 +13,12 @@
  *  - An enum has no empty value. A Clear button on a status or a sort order
  *    would either write a value Shopify rejects at the schema level or do
  *    nothing at all, so the attribute controls offer it for text only.
+ *
+ * `clearButton()` and not `getByRole(… /clear/i)`: the control renders BOTH of
+ * its shapes — the word and the bin — and a container query shows one (see
+ * `FieldClearButton`). In a browser exactly one is in the accessibility tree;
+ * jsdom applies no stylesheet, so both are there and a role query matches two.
+ * Either shape clears, so the tests take the bin and say so.
  */
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -25,6 +31,10 @@ import { AttributeField } from "~/components/unified/AttributeField";
 import type { FieldDefinition } from "~/types/content-editor.types";
 
 afterEach(cleanup);
+
+/** The clear control, addressed by ONE of its two shapes — see the note above. */
+const clearButton = () =>
+  document.querySelector<HTMLButtonElement>(".app-field-clear--icon button");
 
 function ui(children: React.ReactNode) {
   return (
@@ -60,7 +70,7 @@ describe("ChipCombobox — clearing", () => {
       />
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: /clear/i }));
+    fireEvent.click(clearButton()!);
     expect(onChange).toHaveBeenCalledWith(["b"]);
   });
 
@@ -74,7 +84,7 @@ describe("ChipCombobox — clearing", () => {
       />
     ));
 
-    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+    expect(clearButton()).toBeNull();
   });
 
   it("offers no Clear when the field is read-only", () => {
@@ -88,7 +98,7 @@ describe("ChipCombobox — clearing", () => {
       />
     ));
 
-    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+    expect(clearButton()).toBeNull();
   });
 });
 
@@ -99,7 +109,7 @@ describe("AttributeField — clearing", () => {
       <AttributeField field={attribute({})} value="Acme" onChange={onChange} label="Vendor" isPrimaryLocale t={{}} />
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: /clear/i }));
+    fireEvent.click(clearButton()!);
     expect(onChange).toHaveBeenCalledWith("");
   });
 
@@ -120,7 +130,7 @@ describe("AttributeField — clearing", () => {
       />
     ));
 
-    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+    expect(clearButton()).toBeNull();
   });
 
   it("offers no Clear in a foreign locale — the field is read-only there", () => {
@@ -135,7 +145,7 @@ describe("AttributeField — clearing", () => {
       />
     ));
 
-    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+    expect(clearButton()).toBeNull();
   });
 });
 
