@@ -380,7 +380,7 @@ export const en: Translation = {
     menuCopyFromPrimary: "Copy from the primary language",
     menuMissingTranslations: "Missing translations",
     menuTranslateFailed: "Translation failed",
-    menuIntro: "Translate menu items here — at every level, sub-items included. The primary-language labels and the menu structure itself are managed in the Shopify admin.",
+    menuAllLanguagesOff: "Every other language is switched off (Ctrl+click a language to switch it back on).",
     menuPrimaryReadOnly: "This is your primary language. Pick another language above to edit translations.",
     menuNeedsSecondLanguage: "Translating menus requires a second language in your shop.",
     menuNotTranslatable: "Shopify offers no translatable resource for this menu item — it cannot be translated here.",

@@ -374,7 +374,7 @@ export const de = {
     menuCopyFromPrimary: "Aus der Hauptsprache übertragen",
     menuMissingTranslations: "Fehlende Übersetzungen",
     menuTranslateFailed: "Übersetzung fehlgeschlagen",
-    menuIntro: "Menüpunkte werden hier übersetzt — auf jeder Ebene, auch Unterpunkte. Die Bezeichnungen der Hauptsprache und die Menüstruktur selbst werden im Shopify-Admin gepflegt.",
+    menuAllLanguagesOff: "Alle anderen Sprachen sind abgeschaltet (Strg+Klick auf eine Sprache schaltet sie wieder ein).",
     menuPrimaryReadOnly: "Das ist die Hauptsprache. Wähle oben eine andere Sprache, um Übersetzungen zu bearbeiten.",
     menuNeedsSecondLanguage: "Für Menü-Übersetzungen wird eine zweite Sprache im Shop benötigt.",
     menuNotTranslatable: "Für diesen Menüpunkt liefert Shopify keine übersetzbare Ressource — er kann hier nicht übersetzt werden.",
