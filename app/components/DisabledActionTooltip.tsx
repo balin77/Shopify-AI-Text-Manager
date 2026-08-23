@@ -8,6 +8,12 @@
  *
  * Pass `hint={undefined}` to render the children untouched (no wrapper, no
  * tooltip) — that keeps call sites free of conditional JSX.
+ *
+ * The wrapper is `inline-block`, which is right for the buttons and icons this
+ * mostly wraps and WRONG for a full-width row: a `ToggleRow` inside it lost its
+ * `space-between`, so a disabled switch sat beside its label while every
+ * enabled one beside it kept its switch at the right edge. `block` is that
+ * case — the layout is the child's business again.
  */
 
 import { Tooltip } from "@shopify/polaris";
@@ -18,19 +24,24 @@ interface DisabledActionTooltipProps {
   hint?: string;
   children: ReactNode;
   preferredPosition?: "above" | "below" | "mostSpace";
+  /** The child lays itself out across the full width (a `ToggleRow`), so the
+   *  wrapper must not shrink-wrap it. */
+  block?: boolean;
 }
 
 export function DisabledActionTooltip({
   hint,
   children,
   preferredPosition = "above",
+  block = false,
 }: DisabledActionTooltipProps) {
   if (!hint) return <>{children}</>;
 
+  const display = block ? "block" : "inline-block";
   return (
     <Tooltip content={hint} dismissOnMouseOut preferredPosition={preferredPosition}>
-      <span style={{ display: "inline-block", cursor: "not-allowed" }}>
-        <span style={{ display: "inline-block", pointerEvents: "none" }}>{children}</span>
+      <span style={{ display, cursor: "not-allowed" }}>
+        <span style={{ display, pointerEvents: "none" }}>{children}</span>
       </span>
     </Tooltip>
   );

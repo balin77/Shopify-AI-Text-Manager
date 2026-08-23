@@ -39,6 +39,7 @@ import {
   Box,
   Link,
 } from "@shopify/polaris";
+import { ToggleRow } from "../ToggleRow";
 import {
   CONDITION_MATCH_TYPES,
   PRODUCT_STATUSES,
@@ -270,10 +271,13 @@ export function CollectionRuleBuilder({
         )}
 
         {/* Shopify stores this per category value; the form holds one answer
-            for the condition, and a tree that disagrees is read-only instead. */}
+            for the condition, and a tree that disagrees is read-only instead.
+            A yes/no answer, so a pill switch and not a checkbox — see
+            CLAUDE.md, "Field chrome". The status list above stays a checkbox
+            group: that one is "which of these", not "yes or no". */}
         {spec?.read === "category" && (
           <Box minWidth="200px">
-            <Checkbox
+            <ToggleRow
               label={t.includeDescendants || "Including subcategories"}
               checked={condition.includeDescendants === true}
               onChange={(includeDescendants) =>

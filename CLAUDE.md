@@ -190,6 +190,26 @@ button of its own.**
   `ChipCombobox`, `CollectionsField`, `TaxonomyField`. A label is a `span`, never
   a second `label` element: it is passed INTO the Polaris `label` prop, and a
   nested label is invalid markup that also breaks click-to-focus.
+- **NEVER a plain checkbox for a yes/no decision — it is a pill switch, and the
+  row it sits in lives in [ToggleRow.tsx](app/components/ToggleRow.tsx).** The
+  owner's standing instruction: do not reach for Polaris' `Checkbox` unless
+  they ask for one in that specific place. `ToggleRow` is the whole shape — the
+  words, the ❓ that explains them, and `ToggleSwitch` at the right edge — so a
+  new setting is one component call rather than a fresh opinion about spacing.
+  It grew out of the direct-translations settings rows and now also carries the
+  create dialog's decisions ("write the rest with AI", "let the AI see the
+  image", "translate afterwards", "including subcategories"); a third
+  hand-rolled copy is what this rule exists to prevent. The label is TEXT beside
+  the switch, never a `<label>` around it: the switch already is one, and the
+  words reach it through `ariaLabel`, which is the only accessible name it has.
+  A DISABLED decision still renders, greyed, wrapped in `DisabledActionTooltip`
+  (with `block`, or its shrink-wrapping span eats the row's `space-between`) —
+  the single-language rules below are the same rule seen from the other side.
+  What this does NOT cover: a checkbox that means "which of these", not "yes or
+  no" — the rule builder's product-status list, a column picker, the rows of a
+  bulk list. Those are a multi-select and stay checkboxes; the ones still
+  standing elsewhere in the app are legacy, and get converted when their
+  surface is next touched rather than in a sweep of their own.
 - **The clear button is a red BIN with no word.** "Leeren" / "Clear" / "Vaciar"
   is up to seven characters sitting on the label's own line, and since every
   Details field became its own card there are up to six of them on one screen,
@@ -213,6 +233,21 @@ button of its own.**
   a key may be named before its text is written and never shows as an empty
   circle. `helpText` under the control is for a value hint that changes with the
   value (a character count), not for an explanation a merchant reads once.
+  `FieldLabel` takes the explanation as raw TEXT too (`help`), for the one
+  surface with no `t.help` key to name: the create dialog phrases six resource
+  types' fields out of a single `t` prop it is handed
+  ([CreateItemModal.tsx](app/components/create/CreateItemModal.tsx),
+  `t.fieldHelp` keyed by `labelKey`). A second INPUT to the one shape, never a
+  second shape — and the rule above it is unchanged: what the keyword does, what
+  a handle is, what "write the rest with AI" will do all live in the ❓, and a
+  create form that had three of those sentences stacked under three controls is
+  what made the point.
+- **A required field says so BEFORE it is refused.** `FieldLabel`'s
+  `requiredIndicator` draws the red asterisk, and the create dialog spends it
+  off `CreateFieldDef.required` — the very flag `validateCreatePayload` rejects
+  on, so the mark and the refusal cannot disagree. It reaches the metaobject
+  pickers through `TaxonomyValuePicker` / `ChipCombobox` for the same reason: a
+  definition's required field is required at creation time too.
 - **The Details card is one grey card PER FIELD on one grid, and a field's
   SHAPE is the only thing left to decide.** It used to split into a titled
   subcard per section, which on a product drew three frames around six fields
