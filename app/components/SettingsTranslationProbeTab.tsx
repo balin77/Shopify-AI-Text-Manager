@@ -956,6 +956,42 @@ interface MenuWriteProbeReport {
     digestChanged: boolean | null;
     errors: string[];
   };
+  move: {
+    attempted: boolean;
+    movedItemId: string | null;
+    idAfterMove: string | null;
+    idKept: boolean | null;
+    childIdKept: boolean | null;
+    depthBefore: number | null;
+    depthAfter: number | null;
+    siblingIdsKept: boolean | null;
+    translationAfterMove: string | null;
+    translationOutdated: boolean | null;
+    errors: string[];
+  };
+  create: {
+    attempted: boolean;
+    sentAtPosition: number | null;
+    createdId: string | null;
+    positionHeld: boolean | null;
+    existingIdsKept: boolean | null;
+    linkResolved: boolean | null;
+    errors: string[];
+  };
+  depth: {
+    attempted: boolean;
+    results: Array<{ depth: number; accepted: boolean; observedDepth: number | null; error?: string }>;
+    maxAccepted: number | null;
+    readableDepth: number;
+  };
+  deleteTranslation: {
+    attempted: boolean;
+    linkId: string | null;
+    valueBeforeDelete: string | null;
+    resourceStillResolves: boolean | null;
+    valueAfterDelete: string | null;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -967,7 +1003,7 @@ interface MenuWriteProbeReport {
     withoutUrlOk: boolean | null;
     withoutUrlErrors: string[];
   };
-  cleanup: { deleted: boolean; typesMenuDeleted: boolean | null; errors: string[] };
+  cleanup: { menus: Array<{ handle: string; id: string; deleted: boolean; error?: string }>; allDeleted: boolean };
   verdict: string[];
 }
 
@@ -978,7 +1014,12 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   lines.push(`# Menu write probe — ${r.shop}`);
   lines.push(`Generated: ${r.generatedAt}`);
   lines.push(`API version: ${r.apiVersion}`);
-  lines.push(`Throwaway menu: ${r.setup.handle} (${r.setup.created ? "created" : "NOT created"}, ${r.cleanup.deleted ? "deleted again" : "NOT deleted"})`);
+  lines.push(
+    `Throwaway menus: ${r.cleanup.menus.length} created, ${r.cleanup.allDeleted ? "all deleted again" : "NOT all deleted"}`,
+  );
+  for (const m of r.cleanup.menus) {
+    lines.push(`  - ${m.handle}: ${m.deleted ? "deleted" : `NOT DELETED (${m.error ?? "?"})`}`);
+  }
   lines.push("");
 
   lines.push("## Verdict");
@@ -1036,6 +1077,45 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   for (const e of r.translation.errors) lines.push(`  - error: ${e}`);
   lines.push("");
 
+  lines.push("## Move (does an item keep its id when re-parented?)");
+  lines.push(`- Attempted: ${r.move.attempted ? "yes" : "no"}`);
+  lines.push(`- Moved: ${r.move.movedItemId ?? "-"} (depth ${r.move.depthBefore ?? "?"} -> ${r.move.depthAfter ?? "?"})`);
+  lines.push(`- Id after the move: ${r.move.idAfterMove ?? "(not found)"}`);
+  lines.push(`- Id kept: ${yesNo(r.move.idKept)}`);
+  lines.push(`- Child id kept: ${yesNo(r.move.childIdKept)}`);
+  lines.push(`- Untouched siblings kept their ids: ${yesNo(r.move.siblingIdsKept)}`);
+  lines.push(
+    `- Translation after the move: ${r.move.translationAfterMove === null ? "(gone)" : `"${r.move.translationAfterMove}"`} (outdated: ${yesNo(r.move.translationOutdated)})`,
+  );
+  for (const e of r.move.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  lines.push("## Create (an item sent without an id)");
+  lines.push(`- Attempted: ${r.create.attempted ? "yes" : "no"}, sent at position ${r.create.sentAtPosition ?? "-"}`);
+  lines.push(`- Created id: ${r.create.createdId ?? "(none)"}`);
+  lines.push(`- Came back at the sent position: ${yesNo(r.create.positionHeld)}`);
+  lines.push(`- Existing ids kept: ${yesNo(r.create.existingIdsKept)}`);
+  lines.push(`- New item's Link resource resolves: ${yesNo(r.create.linkResolved)}`);
+  for (const e of r.create.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  lines.push("## Depth accepted by Shopify");
+  for (const d of r.depth.results) {
+    lines.push(
+      `- ${d.depth} levels: ${d.accepted ? "accepted" : `refused (${d.error ?? "?"})`}, read back as ${d.observedDepth ?? "-"}`,
+    );
+  }
+  lines.push(`- Maximum accepted and confirmed by a read: ${r.depth.maxAccepted ?? "(none)"} (this probe reads ${r.depth.readableDepth} levels)`);
+  lines.push("");
+
+  lines.push("## A deleted item's translation");
+  lines.push(`- Attempted: ${r.deleteTranslation.attempted ? "yes" : "no"} (${r.deleteTranslation.linkId ?? "-"})`);
+  lines.push(`- Value before the delete: ${r.deleteTranslation.valueBeforeDelete ?? "(none registered)"}`);
+  lines.push(`- Link resource still resolves: ${yesNo(r.deleteTranslation.resourceStillResolves)}`);
+  lines.push(`- Value after the delete: ${r.deleteTranslation.valueAfterDelete ?? "(gone)"}`);
+  for (const e of r.deleteTranslation.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
   lines.push("## Item types that are neither HTTP nor resource-bound");
   lines.push(`- Attempted: ${r.typeRoundTrip.attempted ? "yes" : "no"} (${r.typeRoundTrip.typesTried.join(", ") || "-"})`);
   for (const item of r.typeRoundTrip.read) {
@@ -1050,10 +1130,9 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   for (const e of r.typeRoundTrip.createErrors) lines.push(`  - create error: ${e}`);
   lines.push("");
 
-  if (r.setup.errors.length > 0 || r.cleanup.errors.length > 0) {
-    lines.push("## Setup / cleanup errors");
-    for (const e of r.setup.errors) lines.push(`- setup: ${e}`);
-    for (const e of r.cleanup.errors) lines.push(`- cleanup: ${e}`);
+  if (r.setup.errors.length > 0) {
+    lines.push("## Setup errors");
+    for (const e of r.setup.errors) lines.push(`- ${e}`);
   }
 
   return lines.join("\n");
@@ -1090,8 +1169,7 @@ function MenuWriteProbeCard() {
   // leaves something behind in the merchant's shop.
   const tone = (() => {
     if (!report) return "info" as const;
-    if (report.setup.created && !report.cleanup.deleted) return "critical" as const;
-    if (report.typeRoundTrip.menuId && report.cleanup.typesMenuDeleted === false) return "critical" as const;
+    if (!report.cleanup.allDeleted) return "critical" as const;
     if (report.verdict.some((v) => v.includes("⚠️") || v.includes("FAILED") || v.includes("BLOCKED"))) return "warning" as const;
     return "success" as const;
   })();
@@ -1107,22 +1185,26 @@ function MenuWriteProbeCard() {
           item left out of the list is deleted, whether a resource-bound item keeps its
           <code> resourceId</code>, and what a rename does to an existing translation. Also
           introspects <code>MenuItemCreateInput</code> / <code>MenuItemUpdateInput</code> from your shop.
-          A second throwaway menu answers whether a whole-tree write-back survives item types that
-          are neither HTTP nor resource-bound (<code>FRONTPAGE</code>, <code>SEARCH</code>, …) — every
-          default main menu has one, and a single refused field fails the entire mutation.
+          Further throwaway menus answer what a tree EDITOR would need: whether an item keeps its id
+          when it is re-parented (its translation lives on that number, so a new id would lose it),
+          whether an item sent without an id is created and can be found again by position, how deep
+          Shopify really accepts (documented is three), what becomes of a deleted item&apos;s
+          translation, and whether a write-back survives item types that are neither HTTP nor
+          resource-bound (<code>FRONTPAGE</code>, <code>SEARCH</code>, …) — every default main menu
+          has one, and a single refused field fails the entire mutation.
         </Text>
         <Banner tone="warning">
           <Text as="p">
-            This probe WRITES. It creates its own three-level menu under a stamped handle (plus a
-            second, tiny one for the item-type question), measures on them (including deleting one
-            item) and deletes both again. Your real menus are never
+            This probe WRITES. It creates up to six menus of its own under stamped handles — one it
+            renames, moves, extends and prunes, one per item-type question, and one per depth it
+            tries — and deletes every one of them again. Your real menus are never
             read or written. A menu is only rendered by a theme that references its handle, so the
             throwaway one is invisible in the storefront for the seconds it exists — and if the delete
             ever fails, the report names the handle so you can remove it by hand.
           </Text>
         </Banner>
         <Checkbox
-          label="I understand this creates and deletes two throwaway menus in my shop"
+          label="I understand this creates and deletes several throwaway menus in my shop"
           checked={confirmed}
           onChange={(checked) => setConfirmed(checked)}
         />

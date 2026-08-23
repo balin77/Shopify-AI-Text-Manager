@@ -355,6 +355,87 @@ export interface MenuWriteProbeReport {
    * in a SECOND throwaway menu so an item type this shop's schema does not
    * accept cannot block the measurements above.
    */
+  /**
+   * §2.1 — does an item keep its id when it is MOVED?
+   *
+   * The load-bearing one for the tree editor, and heavier than the rename
+   * question: a translation lives on gid://shopify/Link/<the item's number>,
+   * so if re-parenting mints a new id, EVERY drag loses that item's
+   * translations and refreshMenuCache's orphan cleanup deletes the rows on the
+   * next page load. One write does both halves of the question — the item is
+   * hoisted to another parent AND its siblings are reordered.
+   */
+  move: {
+    attempted: boolean;
+    movedItemId: string | null;
+    /** The id found at the item's NEW position, by title. */
+    idAfterMove: string | null;
+    idKept: boolean | null;
+    /** Its subtree came along with it, ids intact. */
+    childIdKept: boolean | null;
+    /** Depth before and after, so "it moved at all" is visible in the report. */
+    depthBefore: number | null;
+    depthAfter: number | null;
+    /** Reordered siblings keep their ids too. */
+    siblingIdsKept: boolean | null;
+    /** The translation registered before the move, read back on the same Link GID. */
+    translationAfterMove: string | null;
+    translationOutdated: boolean | null;
+    errors: string[];
+  };
+  /**
+   * §2.2 — does an item WITHOUT an id create a new one, and can the new id be
+   * recovered by position? The editor's temp ids depend on the second half.
+   */
+  create: {
+    attempted: boolean;
+    /** Where the new item was placed in the sent list (1-based, top level). */
+    sentAtPosition: number | null;
+    createdId: string | null;
+    /** The new item came back at the position we sent it at. */
+    positionHeld: boolean | null;
+    /** No existing item lost or changed its id in the same write. */
+    existingIdsKept: boolean | null;
+    /** A freshly created item's Link resource resolves and can be translated. */
+    linkResolved: boolean | null;
+    errors: string[];
+  };
+  /**
+   * §2.3 — how deep does Shopify actually accept? Documented is three. The
+   * editor's drag projection needs a measured number to clamp against, and the
+   * write path a measured number to refuse past.
+   */
+  depth: {
+    attempted: boolean;
+    /**
+     * depth -> accepted, with the refusal text when it was not.
+     *
+     * `observedDepth` is what a FRESH READ found, because "the mutation did not
+     * complain" is not the same as "the tree was stored" — the echo rule, one
+     * level up. It saturates at the read query's own four levels, which is
+     * stated rather than hidden: past that the probe cannot see, and the write
+     * path refuses there anyway.
+     */
+    results: Array<{ depth: number; accepted: boolean; observedDepth: number | null; error?: string }>;
+    maxAccepted: number | null;
+    /** How deep this probe's own read query can look. */
+    readableDepth: number;
+  };
+  /**
+   * §2.4 — what happens to a deleted item's translations on SHOPIFY's side?
+   * Locally refreshMenuCache cleans up. This decides whether an accidental
+   * delete is repairable by re-creating the item (it is not, if the new item
+   * gets a new id — see `move` and `create`).
+   */
+  deleteTranslation: {
+    attempted: boolean;
+    linkId: string | null;
+    valueBeforeDelete: string | null;
+    /** After the item was deleted by omission. */
+    resourceStillResolves: boolean | null;
+    valueAfterDelete: string | null;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -369,11 +450,17 @@ export interface MenuWriteProbeReport {
     withoutUrlOk: boolean | null;
     withoutUrlErrors: string[];
   };
+  /**
+   * Every menu this run created, and whether it went away again.
+   *
+   * A list rather than a field per menu: the probe now builds four (the main
+   * one, one for item types, one per depth attempt), and a per-menu field
+   * would be a new one to forget every time a measurement is added. Anything
+   * left behind is named with its handle so it can be removed by hand.
+   */
   cleanup: {
-    deleted: boolean;
-    /** The second menu's own delete. Reported apart: two menus, two outcomes. */
-    typesMenuDeleted: boolean | null;
-    errors: string[];
+    menus: Array<{ handle: string; id: string; deleted: boolean; error?: string }>;
+    allDeleted: boolean;
   };
   verdict: string[];
 }
@@ -475,6 +562,30 @@ function topLevelErrors(result: GqlResult): string[] {
   return (result.errors ?? []).map((e) => e.message);
 }
 
+/**
+ * Move a subtree to the top level, in front of everything else.
+ *
+ * Both halves of the move question in one write: the item changes PARENT (out
+ * of its branch, up to the root) and every remaining item changes POSITION. If
+ * ids survive this, they survive any drag the editor can produce.
+ */
+function hoistToTop(items: RawItem[], itemId: string): RawItem[] {
+  let lifted: RawItem | null = null;
+  const strip = (nodes: RawItem[]): RawItem[] => {
+    const out: RawItem[] = [];
+    for (const node of nodes) {
+      if (node.id === itemId) {
+        lifted = node;
+        continue;
+      }
+      out.push({ ...node, items: strip(node.items ?? []) });
+    }
+    return out;
+  };
+  const rest = strip(items);
+  return lifted ? [lifted, ...rest] : rest;
+}
+
 // ── Route ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -512,6 +623,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const stamp = `${Date.now()}`;
   const handle = `contentpilot-write-probe-${stamp}`;
+  /**
+   * Every menu created by this run, in creation order.
+   *
+   * The cleanup iterates this instead of naming menus one by one: the probe
+   * now builds up to four, and a per-menu delete block is one to forget the
+   * next time a measurement is added — which would leave a stray menu in a
+   * merchant's shop.
+   */
+  const createdMenus: Array<{ handle: string; id: string }> = [];
 
   const report: MenuWriteProbeReport = {
     generatedAt: new Date().toISOString(),
@@ -555,6 +675,37 @@ export async function action({ request }: ActionFunctionArgs) {
       digestChanged: null,
       errors: [],
     },
+    move: {
+      attempted: false,
+      movedItemId: null,
+      idAfterMove: null,
+      idKept: null,
+      childIdKept: null,
+      depthBefore: null,
+      depthAfter: null,
+      siblingIdsKept: null,
+      translationAfterMove: null,
+      translationOutdated: null,
+      errors: [],
+    },
+    create: {
+      attempted: false,
+      sentAtPosition: null,
+      createdId: null,
+      positionHeld: null,
+      existingIdsKept: null,
+      linkResolved: null,
+      errors: [],
+    },
+    depth: { attempted: false, results: [], maxAccepted: null, readableDepth: 4 },
+    deleteTranslation: {
+      attempted: false,
+      linkId: null,
+      valueBeforeDelete: null,
+      resourceStillResolves: null,
+      valueAfterDelete: null,
+      errors: [],
+    },
     typeRoundTrip: {
       attempted: false,
       menuId: null,
@@ -566,7 +717,7 @@ export async function action({ request }: ActionFunctionArgs) {
       withoutUrlOk: null,
       withoutUrlErrors: [],
     },
-    cleanup: { deleted: false, typesMenuDeleted: null, errors: [] },
+    cleanup: { menus: [], allDeleted: true },
     verdict: [],
   };
 
@@ -646,6 +797,7 @@ export async function action({ request }: ActionFunctionArgs) {
     report.setup.errors.push(...userErrorText(createPayload?.userErrors));
     report.setup.menuId = createPayload?.menu?.id ?? null;
     report.setup.created = !!report.setup.menuId;
+    if (report.setup.menuId) createdMenus.push({ handle, id: report.setup.menuId });
 
     if (!report.setup.menuId) {
       report.verdict.push("BLOCKED: the probe menu could not be created — nothing below was measured.");
@@ -734,6 +886,54 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
+    // ── 4b. A translation on the item the omission test will DELETE ────────
+    // Registered here rather than later because it has to exist BEFORE the
+    // deletion for the question to mean anything: what does Shopify do with a
+    // translation whose menu item is gone.
+    if (grandchild && foreignLocale) {
+      const deletedLinkId = linkGidForMenuItem(grandchild.id);
+      report.deleteTranslation.linkId = deletedLinkId;
+      if (deletedLinkId) {
+        report.deleteTranslation.attempted = true;
+        try {
+          const read = await run(LINK_TRANSLATABLE_QUERY, { id: deletedLinkId, locale: foreignLocale });
+          report.deleteTranslation.errors.push(...topLevelErrors(read));
+          const digest = (
+            read.data?.translatableResource as
+              | { translatableContent?: Array<{ key: string; digest: string | null }> }
+              | null
+              | undefined
+          )?.translatableContent?.find((c) => c.key === "title")?.digest ?? null;
+          if (digest) {
+            const registered = await run(REGISTER_MUTATION, {
+              resourceId: deletedLinkId,
+              translations: [
+                {
+                  key: "title",
+                  locale: foreignLocale,
+                  value: `CP-PROBE-DOOMED-${stamp}`,
+                  translatableContentDigest: digest,
+                },
+              ],
+            });
+            report.deleteTranslation.errors.push(...topLevelErrors(registered));
+            const verify = await run(LINK_TRANSLATABLE_QUERY, { id: deletedLinkId, locale: foreignLocale });
+            report.deleteTranslation.valueBeforeDelete =
+              (
+                verify.data?.translatableResource as
+                  | { translations?: Array<{ key: string; value: string }> }
+                  | null
+                  | undefined
+              )?.translations?.find((t) => t.key === "title")?.value ?? null;
+          } else {
+            report.deleteTranslation.errors.push("No digest — nothing could be registered on the doomed item.");
+          }
+        } catch (error) {
+          report.deleteTranslation.errors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+
     // ── 5. The rename ──────────────────────────────────────────────────────
     if (targetBefore) {
       report.rename.attempted = true;
@@ -814,6 +1014,123 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
+    // ── 5b. The MOVE (§2.1) ────────────────────────────────────────────────
+    // The decisive measurement for a tree editor. The renamed depth-2 item is
+    // hoisted to the top, in front of everything — one write that changes its
+    // PARENT and every sibling's POSITION at once.
+    if (targetBefore && report.rename.idsStable !== null) {
+      report.move.attempted = true;
+      report.move.movedItemId = targetBefore.id;
+      report.move.depthBefore = targetBefore.depth;
+      try {
+        const beforeRead = await readMenu();
+        report.move.errors.push(...beforeRead.errors);
+        const beforeItems = flatten(beforeRead.items);
+        const movedTitle = beforeItems.find((i) => i.id === targetBefore.id)?.title ?? "";
+
+        const moveResult = await run(MENU_UPDATE_MUTATION, {
+          id: menuId,
+          title: `ContentPilot write probe ${stamp}`,
+          handle,
+          items: toUpdateInput(hoistToTop(beforeRead.items, targetBefore.id), {}),
+        });
+        report.move.errors.push(...topLevelErrors(moveResult));
+        const movePayload = moveResult.data?.menuUpdate as { userErrors?: unknown } | undefined;
+        report.move.errors.push(...userErrorText(movePayload?.userErrors));
+
+        const afterRead = await readMenu();
+        report.move.errors.push(...afterRead.errors);
+        const afterItems = flatten(afterRead.items);
+
+        // Matched by TITLE, not by id or position: matching by id would
+        // presuppose the answer, and the position is what just changed.
+        const movedAfter = afterItems.find((i) => i.title === movedTitle);
+        report.move.idAfterMove = movedAfter?.id ?? null;
+        report.move.depthAfter = movedAfter?.depth ?? null;
+        report.move.idKept = movedAfter ? movedAfter.id === targetBefore.id : null;
+
+        if (grandchild) {
+          const childAfter = afterItems.find((i) => i.title === grandchild.title);
+          report.move.childIdKept = childAfter ? childAfter.id === grandchild.id : null;
+        }
+        // Every item that did NOT move must still hold its id, even though its
+        // position changed.
+        const untouched = beforeItems.filter((i) => i.id !== targetBefore.id && i.id !== grandchild?.id);
+        report.move.siblingIdsKept =
+          untouched.length === 0
+            ? null
+            : untouched.every((before) => afterItems.some((a) => a.id === before.id && a.title === before.title));
+
+        if (report.translation.registered && report.translation.linkId && foreignLocale) {
+          const afterTranslation = await run(LINK_TRANSLATABLE_QUERY, {
+            id: report.translation.linkId,
+            locale: foreignLocale,
+          });
+          const row = (
+            afterTranslation.data?.translatableResource as
+              | { translations?: Array<{ key: string; value: string; outdated: boolean }> }
+              | null
+              | undefined
+          )?.translations?.find((t) => t.key === "title");
+          report.move.translationAfterMove = row?.value ?? null;
+          report.move.translationOutdated = row?.outdated ?? null;
+        }
+      } catch (error) {
+        report.move.errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // ── 5c. CREATE by omitting the id (§2.2) ───────────────────────────────
+    // MenuItemUpdateInput.id is optional (measured in the schema above), which
+    // is presumably how a new item is added. "Presumably" is not a finding.
+    {
+      report.create.attempted = true;
+      try {
+        const beforeRead = await readMenu();
+        report.create.errors.push(...beforeRead.errors);
+        const beforeItems = flatten(beforeRead.items);
+        const sent = toUpdateInput(beforeRead.items, {});
+        // Appended LAST rather than first: the position is what the editor has
+        // to map its temp id through, and the last slot is the one an
+        // off-by-one would betray.
+        sent.push({ title: `CP Probe NEW ${stamp}`, type: "HTTP", url: "https://example.com/cp-probe-new" });
+        report.create.sentAtPosition = sent.length;
+
+        const createResult = await run(MENU_UPDATE_MUTATION, {
+          id: menuId,
+          title: `ContentPilot write probe ${stamp}`,
+          handle,
+          items: sent,
+        });
+        report.create.errors.push(...topLevelErrors(createResult));
+        const payload = createResult.data?.menuUpdate as { userErrors?: unknown } | undefined;
+        report.create.errors.push(...userErrorText(payload?.userErrors));
+
+        const afterRead = await readMenu();
+        report.create.errors.push(...afterRead.errors);
+        const topLevel = (afterRead.items ?? []) as RawItem[];
+        const atPosition = topLevel[report.create.sentAtPosition - 1];
+        const byTitle = flatten(afterRead.items).find((i) => i.title === `CP Probe NEW ${stamp}`);
+        report.create.createdId = byTitle?.id ?? null;
+        report.create.positionHeld = !!byTitle && !!atPosition && atPosition.id === byTitle.id;
+        report.create.existingIdsKept = beforeItems.every((b) =>
+          flatten(afterRead.items).some((a) => a.id === b.id),
+        );
+
+        // A brand-new item has to be translatable straight away, or the
+        // editor's second save phase has nothing to write to.
+        if (byTitle) {
+          const newLinkId = linkGidForMenuItem(byTitle.id);
+          if (newLinkId && foreignLocale) {
+            const linkRead = await run(LINK_TRANSLATABLE_QUERY, { id: newLinkId, locale: foreignLocale });
+            report.create.linkResolved = !!linkRead.data?.translatableResource;
+          }
+        }
+      } catch (error) {
+        report.create.errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
     // ── 6. Item types that are neither HTTP nor resource-bound ─────────────
     // Its own menu: a type this shop's schema will not create must not take
     // the omission test below down with it.
@@ -837,6 +1154,7 @@ export async function action({ request }: ActionFunctionArgs) {
           | undefined;
         report.typeRoundTrip.createErrors.push(...userErrorText(payload?.userErrors));
         report.typeRoundTrip.menuId = payload?.menu?.id ?? null;
+        if (report.typeRoundTrip.menuId) createdMenus.push({ handle: typesHandle, id: report.typeRoundTrip.menuId });
 
         if (report.typeRoundTrip.menuId) {
           const typesMenuId = report.typeRoundTrip.menuId;
@@ -911,40 +1229,130 @@ export async function action({ request }: ActionFunctionArgs) {
       const afterItems = flatten(afterOmit.items);
       report.omission.stillPresentAfterwards = afterItems.some((i) => i.id === grandchild.id);
       report.omission.siblingsSurvived = afterItems.some((i) => i.id === targetBefore?.id);
+
+      // §2.4 — and what became of ITS translation? This decides whether an
+      // accidental delete is repairable by re-creating the item, which it is
+      // not if the re-created item gets a fresh id.
+      if (report.deleteTranslation.attempted && report.deleteTranslation.linkId && foreignLocale) {
+        try {
+          const read = await run(LINK_TRANSLATABLE_QUERY, {
+            id: report.deleteTranslation.linkId,
+            locale: foreignLocale,
+          });
+          report.deleteTranslation.errors.push(...topLevelErrors(read));
+          const resource = read.data?.translatableResource as
+            | { translations?: Array<{ key: string; value: string }> }
+            | null
+            | undefined;
+          // An ABSENT translatableResource is the answer here, not an
+          // inconclusive read: the item is provably gone (the fresh read above
+          // says so), so its Link having disappeared with it is a measurement.
+          report.deleteTranslation.resourceStillResolves = !!resource;
+          report.deleteTranslation.valueAfterDelete =
+            resource?.translations?.find((t) => t.key === "title")?.value ?? null;
+        } catch (error) {
+          report.deleteTranslation.errors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+    }
+    // ── 8. How deep does Shopify accept? (§2.3) ────────────────────────────
+    // Shopify documents three levels. The editor's drag has to clamp somewhere
+    // and the write path has to refuse somewhere; both need a MEASURED number,
+    // not a documented one. Each depth gets its OWN menu, so a refusal at four
+    // says nothing about five and neither disturbs anything above.
+    report.depth.attempted = true;
+    for (const depth of [3, 4, 5]) {
+      const depthHandle = `${handle}-d${depth}`;
+      // A chain of `depth` nested items, innermost first.
+      let node: Record<string, unknown> = {
+        title: `CP Probe L${depth}`,
+        type: "HTTP",
+        url: `https://example.com/cp-probe-l${depth}`,
+      };
+      for (let level = depth - 1; level >= 1; level -= 1) {
+        node = {
+          title: `CP Probe L${level}`,
+          type: "HTTP",
+          url: `https://example.com/cp-probe-l${level}`,
+          items: [node],
+        };
+      }
+      try {
+        const result = await run(MENU_CREATE_MUTATION, {
+          title: `ContentPilot depth probe ${depth} ${stamp}`,
+          handle: depthHandle,
+          items: [node],
+        });
+        const errors = [...topLevelErrors(result)];
+        const payload = result.data?.menuCreate as
+          | { menu?: { id: string } | null; userErrors?: unknown }
+          | undefined;
+        errors.push(...userErrorText(payload?.userErrors));
+        const createdId = payload?.menu?.id ?? null;
+        if (createdId) createdMenus.push({ handle: depthHandle, id: createdId });
+        // Accepted means CREATED, not "no error": a mutation that answers
+        // without userErrors and without a menu has stored nothing.
+        const accepted = !!createdId && errors.length === 0;
+
+        // And created is not stored either. A fresh read says how deep the
+        // tree actually came back — the same reason every write in this app
+        // re-reads instead of trusting its own mutation.
+        let observedDepth: number | null = null;
+        if (createdId) {
+          const back = await run(MENU_READ_QUERY, { id: createdId });
+          const items = flatten((back.data?.menu as { items?: RawItem[] } | null)?.items);
+          observedDepth = items.length > 0 ? Math.max(...items.map((i) => i.depth)) : null;
+        }
+
+        report.depth.results.push({
+          depth,
+          accepted,
+          observedDepth,
+          error: accepted ? undefined : errors.join("; ") || "no menu returned",
+        });
+        if (accepted && observedDepth !== null && observedDepth >= Math.min(depth, report.depth.readableDepth)) {
+          report.depth.maxAccepted = Math.max(report.depth.maxAccepted ?? 0, depth);
+        }
+      } catch (error) {
+        report.depth.results.push({
+          depth,
+          accepted: false,
+          observedDepth: null,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   } catch (error) {
     report.setup.errors.push(`Probe aborted: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
-    // The menu must go even when a step above threw. A leftover probe menu is
-    // clutter the merchant did not ask for, and the handle is stamped so it can
-    // always be found by hand if this ever fails.
-    if (report.typeRoundTrip.menuId) {
+    // Every menu created above must go, even when a step threw. The handles
+    // are stamped, so anything left behind can always be found by hand — and
+    // the report says so rather than leaving the merchant to notice.
+    for (const created of createdMenus) {
       try {
-        const deleteResult = await run(MENU_DELETE_MUTATION, { id: report.typeRoundTrip.menuId });
-        report.cleanup.errors.push(...topLevelErrors(deleteResult));
+        const deleteResult = await run(MENU_DELETE_MUTATION, { id: created.id });
+        const errors = [...topLevelErrors(deleteResult)];
         const payload = deleteResult.data?.menuDelete as
           | { deletedMenuId?: string | null; userErrors?: unknown }
           | undefined;
-        report.cleanup.errors.push(...userErrorText(payload?.userErrors));
-        report.cleanup.typesMenuDeleted = !!payload?.deletedMenuId;
+        errors.push(...userErrorText(payload?.userErrors));
+        const deleted = !!payload?.deletedMenuId;
+        report.cleanup.menus.push({
+          handle: created.handle,
+          id: created.id,
+          deleted,
+          error: deleted ? undefined : errors.join("; ") || "no deletedMenuId returned",
+        });
       } catch (error) {
-        report.cleanup.typesMenuDeleted = false;
-        report.cleanup.errors.push(error instanceof Error ? error.message : String(error));
+        report.cleanup.menus.push({
+          handle: created.handle,
+          id: created.id,
+          deleted: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
-    if (report.setup.menuId) {
-      try {
-        const deleteResult = await run(MENU_DELETE_MUTATION, { id: report.setup.menuId });
-        report.cleanup.errors.push(...topLevelErrors(deleteResult));
-        const payload = deleteResult.data?.menuDelete as
-          | { deletedMenuId?: string | null; userErrors?: unknown }
-          | undefined;
-        report.cleanup.errors.push(...userErrorText(payload?.userErrors));
-        report.cleanup.deleted = !!payload?.deletedMenuId;
-      } catch (error) {
-        report.cleanup.errors.push(error instanceof Error ? error.message : String(error));
-      }
-    }
+    report.cleanup.allDeleted = report.cleanup.menus.every((m) => m.deleted);
   }
 
   // ── Verdict ────────────────────────────────────────────────────────────────
@@ -994,6 +1402,65 @@ export async function action({ request }: ActionFunctionArgs) {
   } else if (report.translation.attempted) {
     v.push("TRANSLATION: not measured — the probe translation could not be registered.");
   }
+  if (report.move.attempted) {
+    if (report.move.idKept === true) {
+      v.push(
+        `MOVE: an item keeps its id when it is re-parented and its siblings reordered (depth ${report.move.depthBefore} -> ${report.move.depthAfter})${report.move.childIdKept === true ? ", and its subtree comes along with its ids" : ""} — a tree editor may drag freely.`,
+      );
+      if (report.move.translationAfterMove) {
+        v.push(
+          `MOVE: the moved item's translation is still there${report.move.translationOutdated ? " (flagged outdated)" : ""} — moving does not lose it.`,
+        );
+      } else if (report.translation.registered) {
+        v.push("MOVE: ⚠️ the moved item's translation is GONE after the move.");
+      }
+    } else if (report.move.idKept === false) {
+      v.push(
+        "MOVE: ⚠️ Shopify minted a NEW id for the moved item. Every drag would orphan that item's translations — a tree editor needs a translation migration before it may ship.",
+      );
+    } else {
+      v.push("MOVE: not measured — the moved item could not be found again by title.");
+    }
+    if (report.move.siblingIdsKept === false) {
+      v.push("MOVE: ⚠️ items that did NOT move lost their ids when the order changed.");
+    }
+  }
+  if (report.create.attempted) {
+    if (report.create.createdId) {
+      v.push(
+        `CREATE: an item sent without an id is created (${report.create.createdId})${report.create.positionHeld ? ", at exactly the position it was sent at, so a temp id can be resolved by position" : " — but NOT at the position it was sent at, so position cannot map a temp id"}${report.create.existingIdsKept === false ? ". ⚠️ Existing items lost their ids in the same write." : ""}`,
+      );
+      if (report.create.linkResolved === false) {
+        v.push("CREATE: ⚠️ the new item's Link resource does not resolve yet — its translation cannot be written in the same save.");
+      }
+    } else {
+      v.push("CREATE: ⚠️ an item without an id did NOT appear — adding items needs another route.");
+    }
+  }
+  if (report.depth.attempted) {
+    const accepted = report.depth.results.filter((r) => r.accepted).map((r) => r.depth);
+    const refused = report.depth.results.filter((r) => !r.accepted).map((r) => r.depth);
+    const unverifiable = report.depth.results.filter(
+      (r) => r.accepted && r.observedDepth !== null && r.observedDepth < Math.min(r.depth, report.depth.readableDepth),
+    );
+    v.push(
+      `DEPTH: accepted ${accepted.join(", ") || "none"}${refused.length > 0 ? `; refused ${refused.join(", ")}` : ""} — confirmed by a fresh read up to ${report.depth.maxAccepted ?? "(nothing)"} level(s). Past ${report.depth.readableDepth} this probe cannot look, and the write path refuses there anyway.`,
+    );
+    if (unverifiable.length > 0) {
+      v.push(
+        `DEPTH: ⚠️ ${unverifiable.map((r) => r.depth).join(", ")} level(s) were accepted by the mutation but came back SHALLOWER on a fresh read — Shopify stored less than it was sent.`,
+      );
+    }
+  }
+  if (report.deleteTranslation.attempted && report.omission.stillPresentAfterwards === false) {
+    if (report.deleteTranslation.valueAfterDelete) {
+      v.push("DELETE: ⚠️ the deleted item's translation is still stored on its Link resource.");
+    } else {
+      v.push(
+        `DELETE: the deleted item's translation is gone with it (its Link resource ${report.deleteTranslation.resourceStillResolves ? "still resolves but holds nothing" : "no longer resolves"}) — an accidental delete is not undone by re-creating the item.`,
+      );
+    }
+  }
   if (report.typeRoundTrip.asReadOk === true) {
     v.push(
       `ITEM TYPES: a whole-tree write-back with url present is accepted for ${report.typeRoundTrip.typesTried.join(", ")} — the write path may keep sending what it read.`,
@@ -1007,18 +1474,19 @@ export async function action({ request }: ActionFunctionArgs) {
   } else if (report.typeRoundTrip.attempted) {
     v.push("ITEM TYPES: not measured — the second probe menu could not be created.");
   }
-  if (report.typeRoundTrip.menuId && report.cleanup.typesMenuDeleted === false) {
-    v.push(`⚠️ CLEANUP FAILED — delete the menu "${report.setup.handle}-types" by hand in the Shopify admin.`);
-  }
-  if (!report.cleanup.deleted && report.setup.created) {
-    v.push(`⚠️ CLEANUP FAILED — delete the menu "${report.setup.handle}" by hand in the Shopify admin.`);
+  const leftBehind = report.cleanup.menus.filter((m) => !m.deleted);
+  if (leftBehind.length > 0) {
+    v.push(
+      `⚠️ CLEANUP FAILED — delete these menus by hand in the Shopify admin: ${leftBehind.map((m) => m.handle).join(", ")}.`,
+    );
   }
 
   logger.info("[MENU-WRITE-PROBE] Done", {
     context: "MenuWriteProbe",
     shop: session.shop,
     created: report.setup.created,
-    deleted: report.cleanup.deleted,
+    menusCreated: report.cleanup.menus.length,
+    allDeleted: report.cleanup.allDeleted,
     idsStable: String(report.rename.idsStable),
   });
 

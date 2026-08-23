@@ -1,6 +1,6 @@
 # Menü-Editor — Plan (ändern und übersetzen auf einem Bildschirm)
 
-**Status:** ENTWURF. Phase 0 (Messung) ist spezifiziert und teilweise gebaut, gebaut ist bisher nur das Umbenennen (siehe §0).
+**Status:** Phase 0 (Messung) GEBAUT — die Sonde beantwortet §2.1–§2.4, gelaufen ist sie noch nicht. Vom Editor selbst ist bisher nur das Umbenennen gebaut (siehe §0).
 **Ziel:** `/app/menus` wird eine vollständige Alternative zum Shopify-Menü-Editor — Reihenfolge, Verschachtelung, Anlegen, Löschen, Ziel ändern, das Menü selbst umbenennen — **und** die Übersetzung steht dabei in derselben Zeile. Der Zweck ist nicht Funktionsgleichheit mit Shopify, sondern das Wegfallen des Hin-und-Her: heute benennt man im Shopify-Admin um und übersetzt danach hier.
 
 > **Keine neuen Scopes.** `write_online_store_navigation` und `read_translations`/`write_translations` sind vorhanden. Es läuft **kein** Re-Consent an. Das ist die eine Randbedingung, die diesen Plan billig macht — jede Phase unten kostet Arbeit, keine kostet Händler.
@@ -145,15 +145,14 @@ dnd-kit hat keinen Baum. Das etablierte Vorgehen (und das der offiziellen `Sorta
 
 ---
 
-## 6. Ändern und Übersetzen nebeneinander — der eigentliche Zweck
+## 6. Was hier NICHT das Problem ist: die Sprachleiste
 
-Heute schaltet die Sprachleiste die **ganze Seite** um: auf der Hauptsprache benennt man um, auf einer Fremdsprache übersetzt man. Das ist genau das Hin-und-Her, nur innerhalb dieser App statt zwischen zwei Apps.
+Ein früherer Entwurf schlug zwei Spalten pro Zeile vor (Primärtitel links, Übersetzung rechts). **Verworfen, auf Ansage des Eigentümers:** das Umschalten zwischen Sprachen INNERHALB dieser App ist gewollt und gut so. Das Hin-und-Her, das dieser Plan beseitigt, ist das zwischen dieser App und der Shopify-Oberfläche — also genau die Operationen in §5, §7, §8 und §9, für die man heute den Shopify-Admin öffnen muss.
 
-**Vorschlag: zwei Spalten pro Zeile.** Links der Primärtitel, rechts die Übersetzung in der gewählten Sprache, beide gleichzeitig editierbar. Die Sprachleiste wählt dann nicht mehr den Modus, sondern nur noch die **rechte Spalte** — und die Übersetzen-/Kopieren-Knöpfe wirken auf die Zeile, in der man steht.
+Die Sprachleiste bleibt also, wie sie ist: sie schaltet die Seite auf eine Sprache, die Struktur ist auf jeder Sprache dieselbe. Zwei Folgen für den Editor:
 
-Damit fällt auch die Sperre aus dem Review weg, die heute nötig ist („erst den neuen Namen speichern"): Wenn Primärtitel und Übersetzung in einem Speichervorgang gehen, ist die Quelle für die KI-Übersetzung der Text im linken Feld, und der Purge greift, bevor die neue Übersetzung geschrieben wird — genau die Reihenfolge, die §4.1 ohnehin festlegt.
-
-Bei mehr als zwei, drei Sprachen wird eine Spalte pro Sprache zu breit; dafür gibt es den Bulk-Editor. Der Menü-Editor bleibt bei **einer** Übersetzungsspalte.
+- **Umbauen ist sprachunabhängig.** Ziehen, Anlegen und Löschen dürfen auf JEDER Sprache möglich sein — die Reihenfolge eines Menüs ist keine Eigenschaft der Sprache. Was nur auf der Hauptsprache geht, bleibt das Umbenennen des Primärtitels; auf einer Fremdsprache ist dasselbe Feld die Übersetzung.
+- **Die Sperre aus dem Review bleibt nötig.** Solange Primärtitel und Übersetzung nicht in derselben Zeile stehen, kann ein Händler umbenennen, die Sprache wechseln und übersetzen, ohne gespeichert zu haben — mit dem alten Text als Quelle und einem Purge, der das Ergebnis gleich wieder löscht. Die Sperre greift bereits sprachübergreifend (Review-Befund 1).
 
 ---
 
@@ -197,12 +196,11 @@ Bis dahin gilt für einen Typ ohne Picker dieselbe Regel wie bei den Metaobjekt-
 |---|---|---|
 | **0** | Sonde um §2.1–§2.4 erweitern, einmal laufen lassen | §2.1 kann den Rest umwerfen |
 | **1** | Drei-Bäume-Diff + `saveMenuTree` mit **Reihenfolge und Verschachtelung**; Editor-UI mit dnd-kit; Änderungsliste über dem Speichern | größter Nutzen, keine neuen Eingabemasken |
-| **2** | Zwei-Spalten-Zeile (Primär + Übersetzung gleichzeitig) | erst wenn der Baum steht, sonst zweimal umgebaut |
-| **3** | Anlegen und Löschen, inkl. zweiphasigem Speichern (§4.1) | braucht die ID-Zuordnung aus Phase 1 |
-| **4** | Ziel ändern (Ressourcen-Picker) | größter Aufwand, geringste Häufigkeit |
-| **5** | Menütitel, Handle mit Theme-Prüfung, Menü anlegen/löschen | unabhängig, jederzeit einschiebbar |
+| **2** | Anlegen und Löschen, inkl. zweiphasigem Speichern (§4.1) | braucht die ID-Zuordnung aus Phase 1 |
+| **3** | Ziel ändern (Ressourcen-Picker) | größter Aufwand, geringste Häufigkeit |
+| **4** | Menütitel, Handle mit Theme-Prüfung, Menü anlegen/löschen | unabhängig, jederzeit einschiebbar |
 
-Phase 1 und 2 sind zusammen das, was der Auslöser dieses Plans war. Alles danach ist Vervollständigung.
+Nach Phase 2 muss ein Händler den Shopify-Admin für ein Menü nicht mehr öffnen, außer um ein Ziel umzuhängen. Das ist die Schwelle, auf die es ankommt.
 
 ---
 
