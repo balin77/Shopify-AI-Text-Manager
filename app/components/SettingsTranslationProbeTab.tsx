@@ -998,6 +998,7 @@ interface MenuWriteProbeReport {
     locale: string | null;
     links: Array<{ role: string; linkId: string }>;
     observations: Array<{ stage: string; role: string; value: string | null; outdated: boolean | null }>;
+    reRegisterAfterMove: { attempted: boolean; digestFound: boolean | null; restored: boolean | null };
     errors: string[];
   };
   typeRoundTrip: {
@@ -1140,6 +1141,9 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
       lines.push(`| ${stage} | ${cells.join(" | ")} |`);
     }
   }
+  lines.push(
+    `- Re-register right after the move: ${r.translationDurability.reRegisterAfterMove.attempted ? yesNo(r.translationDurability.reRegisterAfterMove.restored) : "not attempted"}`,
+  );
   for (const e of r.translationDurability.errors) lines.push(`  - error: ${e}`);
   lines.push("");
 
