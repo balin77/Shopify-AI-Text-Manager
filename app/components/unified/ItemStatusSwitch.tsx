@@ -28,19 +28,29 @@
  *      trustworthy on every row.)
  *   2. ACTIVE is not the same as VISIBLE. A product on no sales channel is
  *      invisible everywhere and Shopify's own admin does not say so on the
- *      product page either — which is why the hint beside "Active" mentions the
- *      channel rather than promising a live page.
+ *      product page either — which is why the "Active" hint mentions the
+ *      channel rather than promising a live page. It rides in the control's
+ *      TOOLTIP: as a line of text in the row it pushed Duplicate/Delete around
+ *      every time the value changed.
  *
  * It writes through the SAME value map as the field it replaced, so the change
  * lands in the ordinary save (and the ordinary save bar) rather than firing a
  * write of its own.
  */
 
-import { InlineStack, Select, Text } from "@shopify/polaris";
+import { Select, Text, Tooltip } from "@shopify/polaris";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 
 /** Shopify's ProductStatus, in the order the admin lists them. */
 const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"] as const;
+
+/**
+ * The action bar sits UNDER the language bar, so a tooltip opening upwards
+ * lands on top of it — and Polaris' own tooltip layer (the 400s) loses against
+ * this app's layers (fixed nav 1000, sticky bars 999). 1200 is the number the
+ * item list already uses for exactly this; keep the two in step.
+ */
+const TOOLTIP_Z_INDEX = 1200;
 
 export interface ItemStatusSwitchTexts {
   active?: string;
@@ -133,20 +143,41 @@ export function ItemStatusSwitch({
       </div>
     );
 
-  return (
-    <InlineStack gap="200" blockAlign="center">
-      {/* A disabled control dispatches no pointer events, so a bare Tooltip
-          around it never opens — the reason this wrapper exists at all. */}
-      <DisabledActionTooltip hint={disabled ? disabledHint : undefined}>{control}</DisabledActionTooltip>
-      <Text as="span" variant="bodySm" tone="subdued">
-        {hintFor(kind, value, t)}
-      </Text>
-    </InlineStack>
+  // The sentence belongs to the control, not beside it: spelled out in the row
+  // it was a line of prose between the Select and Duplicate/Delete, and it
+  // changes with the value, so the row resized on every switch. In a foreign
+  // locale the control is disabled and the tooltip says WHY instead — that
+  // reason outranks the state, which the merchant can read off the Select.
+  const stateHint = hintFor(kind, value, t);
+  const hint = disabled ? disabledHint ?? stateHint : stateHint;
+  if (!hint) return control;
+
+  // A disabled control dispatches no pointer events, so a bare Tooltip around
+  // it never opens — that is the whole reason DisabledActionTooltip exists.
+  // An ENABLED one must NOT go through it: its wrapper sets
+  // `pointer-events: none` on the child, which would make the Select unusable.
+  return disabled ? (
+    <DisabledActionTooltip hint={hint} zIndexOverride={TOOLTIP_Z_INDEX}>
+      {control}
+    </DisabledActionTooltip>
+  ) : (
+    // `activatorWrapper="div"`: the control IS a div, and Polaris' default
+    // `span` wrapper would nest it in an inline element.
+    <Tooltip
+      content={hint}
+      dismissOnMouseOut
+      preferredPosition="above"
+      zIndexOverride={TOOLTIP_Z_INDEX}
+      activatorWrapper="div"
+    >
+      {control}
+    </Tooltip>
   );
 }
 
-/** The sentence under the control. Each state gets its OWN, because the whole
- *  point of the line is that "Active" and "visible" are not the same claim. */
+/** The sentence in the control's tooltip. Each state gets its OWN, because the
+ *  whole point of the line is that "Active" and "visible" are not the same
+ *  claim. */
 function hintFor(kind: "status" | "published", value: string, t: ItemStatusSwitchTexts): string {
   if (kind === "published") {
     return (value === "false" ? t.unpublishedHint : t.publishedHint) ?? "";
