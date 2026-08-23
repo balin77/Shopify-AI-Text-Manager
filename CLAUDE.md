@@ -221,7 +221,24 @@ button of its own.**
   product type / collections / tags saying "Organisation" adds a line and no
   information. [details-layout.ts](app/config/details-layout.ts) is what is left of that module, and it
   answers by field TYPE, never by key: a `commerce` field is the ASIDE, a
-  `collectionRules` field spans the grid, everything else is a box.
+  `collectionRules` field is the EDITOR region, everything else is a box.
+  **A field that is a form of its own is a REGION, never a spanning cell** —
+  the same rule the aside follows and for the same two reasons, which the rule
+  builder demonstrated one at a time. Spanning `1 / -1` it took a row of its
+  own, so a collection's two bare controls could only sit UNDERNEATH it with
+  two columns of white beside them; and `auto-fit` collapses only a track that
+  is EMPTY, so the cell keeping every track alive also froze those boxes at
+  their minimum width. As a region it takes the WIDE share of the row and the
+  boxes the narrow one — the aside's 3.8 : 1.2 split with the sides swapped,
+  aliased rather than restated, and declared on the ROW
+  (`.app-details-layout--with-editor`) because the same grid is the wide region
+  on a product. That row is the one place `align-items` is `stretch` instead of
+  `flex-start`: the boxes are meant to REACH the editor's height, which the
+  grid passes down by itself (its rows have an `auto` maximum, so
+  `align-content` shares the extra out, and a cell's cards already fill their
+  cell). Measured in Chromium, not assumed: two stacked half cards end exactly
+  where a 320px rule builder does, and a rule builder shorter than the pair
+  grows to meet THEM.
   **The grid counts in HALF rows, and the halves are PAIRED into one cell.** An
   ordinary field spans two rows; a field that is one bare control — a vendor
   name, a theme template — spans one, and `splitDetailsFields` puts two of those

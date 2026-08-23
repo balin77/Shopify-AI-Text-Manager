@@ -8,7 +8,7 @@
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { detailsFieldsForLocale, fieldCard } from "~/services/content-attributes.shared";
 import {
-  isFullWidthDetailsField,
+  isDetailsEditorField,
   isHalfHeightDetailsField,
   splitDetailsFields,
 } from "~/config/details-layout";
@@ -835,18 +835,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // needs no span rule of its own, only the gap.
     if (cell.length > 1) return "app-details-field--stack";
     const [field] = cell;
-    return (
-      [
-        isFullWidthDetailsField(field) ? "app-details-field--full" : "",
-        isHalfHeightDetailsField(field) ? "app-details-field--half" : "",
-      ]
-        .filter(Boolean)
-        .join(" ") || undefined
-    );
+    return isHalfHeightDetailsField(field) ? "app-details-field--half" : undefined;
   };
 
-  const renderDetailsFields = (layout: { grid: FieldDefinition[][]; aside: FieldDefinition[] }) => (
-    <div className="app-details-layout">
+  const renderDetailsFields = (layout: {
+    grid: FieldDefinition[][];
+    aside: FieldDefinition[];
+    editor: FieldDefinition[];
+  }) => (
+    <div
+      className={
+        // The collection's rule builder is a form of its own and takes the
+        // WIDE share of the row, with the boxes narrow beside it — the reverse
+        // of the sales-channel split, and the reason the modifier says which
+        // way round this row is rather than each region asserting a width.
+        layout.editor.length > 0 ? "app-details-layout app-details-layout--with-editor" : "app-details-layout"
+      }
+    >
       <div className="app-details-layout__grid">
         {layout.grid.map((cell) => (
           <div key={cell[0].key} className={detailsCellClass(cell)}>
@@ -858,6 +863,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </div>
         ))}
       </div>
+      {layout.editor.length > 0 && (
+        /* The rule builder, beside the boxes rather than across the whole card.
+           It used to span every column, which put the two bare controls on a
+           row of their own underneath with two columns of white next to them —
+           and a spanning cell keeps every track alive, so those columns could
+           not collapse into fewer, wider ones either. As a region it takes the
+           height of the row with it: the stack beside it stretches to match. */
+        <div className="app-details-layout__editor">
+          {layout.editor.map((field) => (
+            <Card key={field.key} background="bg-surface-secondary" padding="300">
+              {renderEditorField(field)}
+            </Card>
+          ))}
+        </div>
+      )}
       {layout.aside.length > 0 && (
         <div className="app-details-layout__aside">
           {/* The channels, the regions and the B2B catalogs are ONE card: they

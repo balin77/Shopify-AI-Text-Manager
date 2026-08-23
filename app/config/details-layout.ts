@@ -22,8 +22,13 @@
  *    it. As its own flex region (`.app-details-layout__aside`) it sits flush
  *    RIGHT while there is room and drops to a full-width row of its own when
  *    there is not — no hole in either case.
- *  - FULL width inside the grid — the collection rule builder, which is an
- *    editor rather than a field and has never fitted in a column.
+ *  - the EDITOR — the collection rule builder. It is not a field but a form of
+ *    its own, and it used to span the whole grid: a row for itself, the two
+ *    bare controls beneath it in one cell, and two or three columns of empty
+ *    white beside them. It is now its own flex region, like the aside and for
+ *    the same reason, but the WIDE one: the boxes take the narrow share on the
+ *    left and the editor the rest, so the row is as tall as the editor instead
+ *    of the editor plus a row of leftovers.
  *
  * Keyed on the field TYPE, never on the key: the type is what says "this is a
  * list of switches" or "this is a rule editor", and a second content type that
@@ -35,8 +40,9 @@ import { isAttributeField } from "../services/content-attributes.shared";
 /** Types that render as their own region beside the grid, not inside it. */
 const ASIDE_FIELD_TYPES = new Set(["commerce"]);
 
-/** Types that need the whole grid width wherever the grid is. */
-const FULL_WIDTH_FIELD_TYPES = new Set(["collectionRules"]);
+/** Types that are a form of their own and render as the wide region beside
+ *  the grid — never inside it. */
+const EDITOR_FIELD_TYPES = new Set(["collectionRules"]);
 
 /**
  * Types that are ONE control and nothing else — no chips under the box, no row
@@ -61,9 +67,9 @@ export function isDetailsAsideField(field: DetailsLayoutField): boolean {
   return ASIDE_FIELD_TYPES.has(field.type);
 }
 
-/** Does this field span every column of the grid? */
-export function isFullWidthDetailsField(field: DetailsLayoutField): boolean {
-  return FULL_WIDTH_FIELD_TYPES.has(field.type);
+/** Does this field render as the wide region beside the grid? */
+export function isDetailsEditorField(field: DetailsLayoutField): boolean {
+  return EDITOR_FIELD_TYPES.has(field.type);
 }
 
 /**
@@ -98,11 +104,19 @@ export interface DetailsLayout<F> {
   grid: F[][];
   /** The right-hand region, in config order. Empty for every type but products. */
   aside: F[];
+  /**
+   * The wide region beside the grid, in config order. Empty for every type but
+   * collections. Its own region rather than a spanning cell for the reason the
+   * aside has one: a cell that spans every column keeps every track alive, so
+   * the boxes cannot collapse into fewer, wider columns beside it — and
+   * `auto-fit` can place a wide cell only where auto-placement puts it.
+   */
+  editor: F[];
 }
 
 /**
- * Split the Details card's fields into the two regions, pairing up the boxes
- * that are only half a card tall.
+ * Split the Details card's fields into its regions, pairing up the boxes that
+ * are only half a card tall.
  *
  * Order is the CONFIG's, untouched: the config is the one place that says a
  * vendor comes before a product type, and a second ordering rule here would be
@@ -121,11 +135,16 @@ export interface DetailsLayout<F> {
 export function splitDetailsFields<F extends DetailsLayoutField>(fields: F[]): DetailsLayout<F> {
   const grid: F[][] = [];
   const aside: F[] = [];
+  const editor: F[] = [];
   let openStack: F[] | null = null;
 
   for (const field of fields) {
     if (isDetailsAsideField(field)) {
       aside.push(field);
+      continue;
+    }
+    if (isDetailsEditorField(field)) {
+      editor.push(field);
       continue;
     }
     if (!isHalfHeightDetailsField(field)) {
@@ -140,5 +159,5 @@ export function splitDetailsFields<F extends DetailsLayoutField>(fields: F[]): D
     grid.push(openStack);
   }
 
-  return { grid, aside };
+  return { grid, aside, editor };
 }
