@@ -228,11 +228,16 @@ button of its own.**
   own, so a collection's two bare controls could only sit UNDERNEATH it with
   two columns of white beside them; and `auto-fit` collapses only a track that
   is EMPTY, so the cell keeping every track alive also froze those boxes at
-  their minimum width. As a region it takes the WIDE share of the row and the
-  boxes the narrow one — the aside's 3.8 : 1.2 split with the sides swapped,
-  aliased rather than restated, and declared on the ROW
-  (`.app-details-layout--with-editor`) because the same grid is the wide region
-  on a product. That row is the one place `align-items` is `stretch` instead of
+  their minimum width. As a region it takes every pixel past the boxes, which
+  keep the ONE column they had inside the grid and do not grow — deliberately
+  NOT the aside's 3.8 : 1.2 split, because two switch lists are worth a quarter
+  of the row and a sort order plus a theme template are not: sharing the width
+  made two short answers 250px wide at 900 and 420px at 1600. It is declared on
+  the ROW (`.app-details-layout--with-editor`) because the same grid is the
+  wide region on a product. The only number here is the WRAP point — the
+  editor's basis, two columns, chosen low so the pair stays side by side down
+  to ~620px: past the wrap the boxes keep their one column with the line empty
+  beside them, which is the layout this exists to remove. That row is the one place `align-items` is `stretch` instead of
   `flex-start`: the boxes are meant to REACH the editor's height, which the
   grid passes down by itself (its rows have an `auto` maximum, so
   `align-content` shares the extra out, and a cell's cards already fill their

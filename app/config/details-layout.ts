@@ -26,9 +26,9 @@
  *    its own, and it used to span the whole grid: a row for itself, the two
  *    bare controls beneath it in one cell, and two or three columns of empty
  *    white beside them. It is now its own flex region, like the aside and for
- *    the same reason, but the WIDE one: the boxes take the narrow share on the
- *    left and the editor the rest, so the row is as tall as the editor instead
- *    of the editor plus a row of leftovers.
+ *    the same reason, but the WIDE one: the boxes keep the ONE column they had
+ *    inside the grid and the editor takes every pixel past it, so the row is
+ *    as tall as the editor instead of the editor plus a row of leftovers.
  *
  * Keyed on the field TYPE, never on the key: the type is what says "this is a
  * list of switches" or "this is a rule editor", and a second content type that

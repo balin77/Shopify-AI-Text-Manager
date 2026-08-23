@@ -249,16 +249,19 @@
   --app-details-grid-basis: calc(3 * var(--app-details-field-min-width) + 2 * var(--app-details-grid-gap));
   --app-details-aside-basis: calc(1.2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
 
-  /* The SAME split, mirrored, for the row that carries an editor instead of a
-     panel — the collection rule builder. There the wide region is the editor
-     and the narrow one is the boxes, so the two shares of the split simply
-     change sides. Aliases rather than a second pair of numbers: a row split
-     76 / 24 one way and 75 / 25 the other is a difference nobody intended and
-     everybody would eventually see. */
-  --app-details-editor-grow: var(--app-details-grid-grow);
-  --app-details-editor-basis: var(--app-details-grid-basis);
-  --app-details-boxes-grow: var(--app-details-aside-grow);
-  --app-details-boxes-basis: var(--app-details-aside-basis);
+  /* The row that carries an EDITOR — the collection rule builder — is not a
+     split like the aside's. Two switch lists are worth a quarter of the row;
+     a sort order and a theme template are not, and giving them a SHARE of the
+     width made two short answers 250px wide at 900 and 420px at 1600, where
+     the grid had them at one column before. So the boxes stay ONE column and
+     do not grow, and every pixel past it goes to the editor. Only the wrap
+     point is a number here — the editor's basis, below which the two stop
+     sharing a line and the editor drops underneath. TWO columns, not the three
+     the grid region asks for when it is the wide one: past the wrap the boxes
+     keep their one column with the rest of the line empty beside them, which
+     is the layout this change exists to get rid of, so the pair stays side by
+     side down to a width where the builder's own selects still fit. */
+  --app-details-editor-basis: calc(2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
@@ -438,37 +441,40 @@
    bare controls could not sit NEXT to it, only underneath, with two columns of
    white beside them — and `auto-fit` collapses only a track that is EMPTY, so
    a cell keeping every track alive froze the boxes at their minimum width as
-   well. As a region it takes the wide share of the line and the boxes the
-   narrow one, which is the aside's split with the sides swapped. */
+   well. As a region it takes every pixel the one column of boxes beside it
+   does not need. */
 .app-details-layout__editor {
-  flex-grow: var(--app-details-editor-grow);
+  flex-grow: 1;
   flex-shrink: 1;
   flex-basis: var(--app-details-editor-basis);
   min-width: 0;
 }
 
-/* The row an editor region is on differs from the aside's in two ways: which
-   side gets the width, and how tall the other side is.
+/* The row an editor region is on differs from the aside's in two ways: how
+   wide the boxes beside it are, and how tall.
 
-   The split is swapped — the boxes take the narrow share, the editor the wide
-   one — and it is stated on the ROW rather than by the grid region asserting a
-   width of its own, because the same grid is the wide region on a product.
+   WIDTH: one column, and no growing. The aside's row splits its width because
+   both sides are worth width; here the boxes are two short answers and the
+   editor is a form, so anything past one column is worth more to the editor
+   than to a `Select`. Stated on the ROW rather than by the grid region
+   asserting a width of its own, because the same grid is the WIDE region on a
+   product. The column is the grid's own minimum, so moving that moves this.
 
-   `stretch` replaces the container's `flex-start`, so the boxes reach the
-   editor's height instead of ending wherever their own cards do. It applies
-   per LINE, so a wrapped narrow layout still sizes each line to its own
-   content. The grid passes that height down by itself: its rows have an `auto`
-   maximum, which is what lets the default `align-content` share the extra out
-   among them, and a cell's cards already grow to fill the cell they were
-   given. So two bare controls and one rule editor end at one line, which is
-   the whole reason for putting them side by side. */
+   HEIGHT: `stretch` replaces the container's `flex-start`, so the boxes reach
+   the editor's height instead of ending wherever their own cards do. It
+   applies per LINE, so a wrapped narrow layout still sizes each line to its
+   own content. The grid passes that height down by itself: its rows have an
+   `auto` maximum, which is what lets the default `align-content` share the
+   extra out among them, and a cell's cards already grow to fill the cell they
+   were given. So two bare controls and one rule editor end at one line, which
+   is the whole reason for putting them side by side. */
 .app-details-layout--with-editor {
   align-items: stretch;
 }
 
 .app-details-layout--with-editor > .app-details-layout__grid {
-  flex-grow: var(--app-details-boxes-grow);
-  flex-basis: var(--app-details-boxes-basis);
+  flex-grow: 0;
+  flex-basis: var(--app-details-field-min-width);
 }
 
 /* ── THE METAOBJECT ENTRY CARD'S FIELDS ─────────────────────────────────────

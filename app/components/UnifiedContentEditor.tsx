@@ -845,10 +845,10 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
   }) => (
     <div
       className={
-        // The collection's rule builder is a form of its own and takes the
-        // WIDE share of the row, with the boxes narrow beside it — the reverse
-        // of the sales-channel split, and the reason the modifier says which
-        // way round this row is rather than each region asserting a width.
+        // The collection's rule builder is a form of its own and takes every
+        // pixel past the one column of boxes beside it — not a SHARE of the
+        // row like the sales-channel panel takes. On the row rather than on
+        // either region, because the same grid is the wide one on a product.
         layout.editor.length > 0 ? "app-details-layout app-details-layout--with-editor" : "app-details-layout"
       }
     >
