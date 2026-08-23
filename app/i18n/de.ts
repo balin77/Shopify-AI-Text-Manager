@@ -429,6 +429,7 @@ export const de = {
     menuTreeRenamed: "{count} umbenannt",
     menuTreeMoved: "{count} umgehängt",
     menuTreeReordered: "{count} umsortiert",
+    menuTreeRetargeted: "{count} umgezielt",
     menuTreeCreated: "{count} neu",
     menuTreeDeleted: "{count} gelöscht",
     menuDeleteWarning: "Beim Speichern werden {count} Menüpunkt(e) gelöscht — mitsamt ihren Übersetzungen. Das lässt sich durch Wiederanlegen nicht rückgängig machen, weil ein neuer Punkt eine neue ID bekommt.",

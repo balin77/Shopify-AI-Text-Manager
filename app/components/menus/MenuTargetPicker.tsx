@@ -99,6 +99,8 @@ interface PickerOption {
   id: string;
   label: string;
   subtitle?: string;
+  /** For a resource option: the GID and the title, so the pick can be named. */
+  remember?: { id: string; title: string };
   apply: () => { type: string; url: string | null; resourceId: string | null };
 }
 
@@ -122,10 +124,21 @@ export function MenuTargetPicker({
   const [results, setResults] = useState<MenuTargetSearchResult | null>(null);
   const [loading, setLoading] = useState(false);
   const activatorRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Titles of resources picked in THIS session.
+   *
+   * `targetTitles` comes from the loader and only knows the GIDs that were
+   * already in the saved menu — so without this, a product picked from the
+   * dropdown resolved to nothing and the field immediately read "not in our
+   * cache" plus a raw GID, telling the merchant to reload right after a
+   * successful pick. The dropdown had the title in its hand; this is it not
+   * being thrown away.
+   */
+  const [pickedTitles, setPickedTitles] = useState<Record<string, string>>({});
 
   const summary = useMemo(
-    () => summarizeMenuTarget({ type, url, resourceId }, (id) => targetTitles[id]),
-    [type, url, resourceId, targetTitles],
+    () => summarizeMenuTarget({ type, url, resourceId }, (id) => pickedTitles[id] ?? targetTitles[id]),
+    [type, url, resourceId, targetTitles, pickedTitles],
   );
 
   /** What the box reads when nobody is typing in it. */
@@ -172,6 +185,10 @@ export function MenuTargetPicker({
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      // The `finally` below is guarded on `cancelled`, so a fetch abandoned by
+      // a close would leave the spinner on and the next open would read
+      // "Searching …" over a list that had already arrived.
+      setLoading(false);
     };
   }, [open, query]);
 
@@ -188,8 +205,12 @@ export function MenuTargetPicker({
       get current(): HTMLElement | null {
         const activator = activatorRef.current?.querySelector<HTMLElement>("[aria-controls]");
         const overlayId = activator?.getAttribute("aria-controls");
+        // `closest`, not `querySelector`: Polaris points `aria-controls` at the
+        // <ul role="listbox">, which sits INSIDE the pane — looking downwards
+        // from it finds nothing, and the whole scoping silently fell back to
+        // the document-wide query it exists to replace.
         const scoped = overlayId
-          ? document.getElementById(overlayId)?.querySelector<HTMLElement>(".Polaris-Popover__Pane")
+          ? document.getElementById(overlayId)?.closest<HTMLElement>(".Polaris-Popover__Pane")
           : null;
         return (
           scoped ??
@@ -230,6 +251,7 @@ export function MenuTargetPicker({
           id: `${group.type}:${item.id}`,
           label: item.title,
           subtitle: item.subtitle,
+          remember: { id: item.id, title: item.title },
           apply: () => menuTargetPatch({ kind: "resource", type: group.type, id: item.id }),
         });
       }
@@ -241,6 +263,10 @@ export function MenuTargetPicker({
     (id: string) => {
       const option = options.find((o) => o.id === id);
       if (!option) return;
+      if (option.remember) {
+        const { id: gid, title } = option.remember;
+        setPickedTitles((prev) => (prev[gid] === title ? prev : { ...prev, [gid]: title }));
+      }
       onChange(option.apply());
       setQuery(null);
       setOpen(false);
@@ -248,10 +274,14 @@ export function MenuTargetPicker({
     [options, onChange],
   );
 
-  // Gated on there BEING a popover: Polaris renders none for an empty option
-  // list, and freezing the page around a dropdown that is not there reads as
-  // the app having hung.
-  useScrollLock(open && options.length > 0, paneRef);
+  // Gated on `open` ALONE, unlike ChipCombobox next door — and the difference
+  // is the reason the comment is here. Polaris decides whether to render a
+  // popover from `Children.count(children)`, and this component's child is
+  // always the <Listbox> element, which always carries at least its own
+  // "nothing matched" row. So there IS a popover with zero options, and the
+  // earlier `options.length > 0` gate switched the lock off in exactly the
+  // case where a merchant is still typing and scrolling.
+  useScrollLock(open, paneRef);
 
   /**
    * The listbox, section by section.
@@ -315,19 +345,22 @@ export function MenuTargetPicker({
               </Listbox.TextOption>
             </Listbox.Option>
           )}
-          {/* Named, not hidden: blogs are derived from the article cache, so a
-              blog without a single post cannot appear in this list at all. A
-              merchant hunting for one should learn why rather than conclude the
-              picker is broken. */}
-          {group.type === "BLOG" && (
-            <Listbox.Option value="blogNote" disabled accessibilityLabel={strings.blogsFromArticles}>
-              <Listbox.TextOption>
-                <Text as="span" variant="bodySm" tone="subdued">{strings.blogsFromArticles}</Text>
-              </Listbox.TextOption>
-            </Listbox.Option>
-          )}
         </Listbox.Section>
       ))}
+
+      {/* Named, not hidden — and named where it MATTERS. Blogs are derived
+          from the article cache, so a blog with no posts cannot be offered at
+          all; the endpoint then drops the empty group and the note used to
+          vanish with it, i.e. it appeared only when blogs WERE listed and
+          never in the one case it exists for. It now shows exactly when the
+          search came back without a blog. */}
+      {results !== null && !results.groups.some((g) => g.type === "BLOG") && strings.blogsFromArticles && (
+        <Listbox.Option value="blogNote" disabled accessibilityLabel={strings.blogsFromArticles}>
+          <Listbox.TextOption>
+            <Text as="span" variant="bodySm" tone="subdued">{strings.blogsFromArticles}</Text>
+          </Listbox.TextOption>
+        </Listbox.Option>
+      )}
 
       {(results?.failed ?? []).length > 0 && (
         <Listbox.Option value="failed" disabled accessibilityLabel={strings.lookupFailed}>
@@ -352,7 +385,6 @@ export function MenuTargetPicker({
   return (
     <div
       ref={activatorRef}
-      className="app-field-clear-scope"
       // Escape closes Polaris' own popover without moving focus, so no blur
       // fires — and this component would be left holding the page scroll with
       // no panel left to release it. Same mirror, same reason, as

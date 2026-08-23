@@ -435,6 +435,7 @@ export const en: Translation = {
     menuTreeRenamed: "{count} renamed",
     menuTreeMoved: "{count} moved",
     menuTreeReordered: "{count} reordered",
+    menuTreeRetargeted: "{count} retargeted",
     menuTreeCreated: "{count} added",
     menuTreeDeleted: "{count} deleted",
     menuDeleteWarning: "Saving will delete {count} menu item(s) — with their translations. Re-creating the item does not undo it, because a new item gets a new id.",

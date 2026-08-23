@@ -310,6 +310,7 @@ export async function saveMenuTree(
       removed: foreignChanges.removed.length,
       renamed: foreignChanges.renamed.length,
       moved: foreignChanges.moved.length,
+      retargeted: foreignChanges.retargeted.length,
     });
     return emptyResult("structureChanged", { foreignChanges });
   }

@@ -518,6 +518,7 @@ export default function MenusPage() {
       removed: string[];
       renamed: Array<{ from: string; to: string }>;
       moved: string[];
+      retargeted: string[];
     };
     translationRepair: { restored: number; failed: Array<{ linkId: string; message: string }> };
     purgedLinkIds: string[];
@@ -1462,6 +1463,7 @@ export default function MenusPage() {
     say(t.content?.menuTreeRenamed, treeDiff.renamed.length);
     say(t.content?.menuTreeMoved, treeDiff.reparented.length);
     say(t.content?.menuTreeReordered, treeDiff.reordered.length);
+    say(t.content?.menuTreeRetargeted, treeDiff.retargeted.length);
     say(t.content?.menuTreeCreated, treeDiff.created.length);
     say(t.content?.menuTreeDeleted, treeDiff.deleted.length);
     return (t.content?.menuTreeSummary || "{count}: {detail}")
@@ -1690,6 +1692,7 @@ export default function MenusPage() {
                             ...(treeResult?.foreignChanges?.added ?? []),
                             ...(treeResult?.foreignChanges?.removed ?? []),
                             ...(treeResult?.foreignChanges?.moved ?? []),
+                            ...(treeResult?.foreignChanges?.retargeted ?? []),
                           ].map((title, i) => (
                             <Text as="p" variant="bodySm" key={`o${i}`}>
                               {title}

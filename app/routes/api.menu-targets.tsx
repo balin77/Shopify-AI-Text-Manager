@@ -2,10 +2,13 @@
  * The menu target picker's search — one endpoint for every resource-bound
  * MenuItemType.
  *
- * GET /api/menu-targets?q=vase&type=PRODUCT
- *   q     substring over the title (optional; empty = the first page of each
- *         group, so the dropdown is BROWSABLE and not only searchable)
- *   type  one resource-bound MenuItemType; omitted = every group at once
+ * GET /api/menu-targets?q=vase
+ *   q  substring over the title (optional; empty = the first page of each
+ *      group, so the dropdown is BROWSABLE and not only searchable)
+ *
+ * Every group, always. A `type` parameter for drilling into one group was
+ * written and removed again: nothing calls it, and an untravelled branch in a
+ * search endpoint is a second answer waiting to drift from the first.
  *
  * It reads the DB CACHE, never Shopify: a live query per keystroke would
  * throttle a real catalogue, and every row here is one the rest of the app
@@ -30,16 +33,13 @@ import {
 } from "../services/menu-targets.shared";
 
 /**
- * How many rows one group returns.
+ * How many rows one group returns — the dropdown is a menu, not a catalogue.
  *
- * Small when every group is on show (the dropdown is a menu, not a catalogue)
- * and larger when the merchant has drilled into one. One extra row is asked for
- * in both cases: getting it back is what `truncated` means, and "there are
- * more" is the only honest thing to say to a query that matched a thousand
- * products.
+ * One extra row is asked for: getting it back is what `truncated` means, and
+ * "there are more" is the only honest thing to say to a query that matched a
+ * thousand products.
  */
 const PER_GROUP = 6;
-const PER_SINGLE_GROUP = 30;
 
 interface RowQueryArgs {
   shop: string;
@@ -145,18 +145,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const url = new URL(request.url);
   const q = (url.searchParams.get("q") || "").trim();
-  const typeParam = url.searchParams.get("type") || "";
-
-  const wanted = typeParam
-    ? MENU_TARGET_GROUPS.filter((g) => g.type === typeParam)
-    : MENU_TARGET_GROUPS;
-  const take = (typeParam ? PER_SINGLE_GROUP : PER_GROUP) + 1;
+  const take = PER_GROUP + 1;
 
   // Per GROUP, never all-or-nothing: one failing query must not blank a
   // dropdown whose other six groups answered — and the group that failed is
   // NAMED, because an empty list would read as "this shop has none".
   const settled = await Promise.all(
-    wanted.map(async (group): Promise<{ group: MenuTargetGroupResult } | { failedType: string }> => {
+    MENU_TARGET_GROUPS.map(async (group): Promise<{ group: MenuTargetGroupResult } | { failedType: string }> => {
       try {
         const rows = await loadGroup(group.source, { shop, q, take });
         const truncated = rows.length > take - 1;

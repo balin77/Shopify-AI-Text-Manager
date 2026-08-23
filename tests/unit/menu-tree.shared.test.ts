@@ -16,6 +16,7 @@ import {
   diffMenuTrees,
   dropIndexAmongSiblings,
   idsUnder,
+  menuTargetKey,
   moveNode,
   projectDrop,
   removeNode,
@@ -343,5 +344,59 @@ describe("tree mutations", () => {
     const added = appendNode(base, node(null, "Neu"));
     expect(added).toHaveLength(3);
     expect(added[2].id).toBeNull();
+  });
+});
+
+describe("menuTargetKey", () => {
+  it("identifies a resource-bound target by its RESOURCE, never its url", () => {
+    // Shopify derives that url from the resource's handle. Including it would
+    // turn a handle rename anywhere in the shop into a phantom "retarget" —
+    // and the write path would then push our stale url alongside the id.
+    const a = { type: "PAGE", resourceId: "gid://shopify/Page/1", url: "/pages/about" };
+    const b = { type: "PAGE", resourceId: "gid://shopify/Page/1", url: "/pages/about-us" };
+    expect(menuTargetKey(a)).toBe(menuTargetKey(b));
+  });
+
+  it("separates two different resources of the same type", () => {
+    expect(menuTargetKey({ type: "PAGE", resourceId: "gid://shopify/Page/1" })).not.toBe(
+      menuTargetKey({ type: "PAGE", resourceId: "gid://shopify/Page/2" }),
+    );
+  });
+
+  it("identifies a free-URL target by its url, which IS the target", () => {
+    expect(menuTargetKey({ type: "HTTP", url: "https://a.test" })).not.toBe(
+      menuTargetKey({ type: "HTTP", url: "https://b.test" }),
+    );
+  });
+
+  it("separates two target-less types", () => {
+    expect(menuTargetKey({ type: "FRONTPAGE" })).not.toBe(menuTargetKey({ type: "SEARCH" }));
+  });
+
+  it("ignores the url Shopify returns for a target-less type", () => {
+    // Measured: Shopify serves "/" for FRONTPAGE, "/search" for SEARCH. Those
+    // are not the merchant's input and must not read as one.
+    expect(menuTargetKey({ type: "FRONTPAGE", url: "/" })).not.toBe(
+      menuTargetKey({ type: "FRONTPAGE" }),
+    );
+  });
+});
+
+describe("diffMenuTrees — retargeting", () => {
+  const base = [
+    { id: "gid://shopify/MenuItem/1", key: "gid://shopify/MenuItem/1", title: "A", type: "HTTP", url: "/a", children: [] },
+  ];
+
+  it("reports a changed target", () => {
+    const edited = [{ ...base[0], type: "PAGE", url: null, resourceId: "gid://shopify/Page/7" }];
+    expect(diffMenuTrees(base, edited).retargeted).toEqual([
+      { id: "gid://shopify/MenuItem/1", from: "HTTP|/a", to: "PAGE|gid://shopify/Page/7" },
+    ]);
+  });
+
+  it("does NOT report a resource-bound item whose derived url moved", () => {
+    const bound = [{ ...base[0], type: "PAGE", url: "/pages/a", resourceId: "gid://shopify/Page/7" }];
+    const afterHandleRename = [{ ...bound[0], url: "/pages/a-neu" }];
+    expect(diffMenuTrees(bound, afterHandleRename).retargeted).toEqual([]);
   });
 });

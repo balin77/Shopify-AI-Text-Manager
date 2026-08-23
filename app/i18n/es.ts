@@ -429,6 +429,7 @@ export const es: Translation = {
     menuTreeRenamed: "{count} renombrado(s)",
     menuTreeMoved: "{count} reubicado(s)",
     menuTreeReordered: "{count} reordenado(s)",
+    menuTreeRetargeted: "{count} con destino cambiado",
     menuTreeCreated: "{count} nuevo(s)",
     menuTreeDeleted: "{count} eliminado(s)",
     menuDeleteWarning: "Al guardar se eliminarán {count} elemento(s) del menú — con sus traducciones. Volver a crearlos no lo deshace, porque un elemento nuevo recibe un id nuevo.",

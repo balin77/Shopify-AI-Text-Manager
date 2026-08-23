@@ -1442,6 +1442,9 @@ export async function action({ request }: ActionFunctionArgs) {
       report.resourceBound.samples = samples;
 
       const boundTypes = Object.entries(samples).filter(([, id]) => !!id) as Array<[string, string]>;
+      // Types that ended up in the COMBINED menu — the one the retarget step
+      // below writes to. A type measured by a solo retry lives elsewhere.
+      const inCombinedMenu = new Set<string>();
       if (boundTypes.length > 0) {
         const boundHandle = `${handle}-bound`;
         const created = await run(MENU_CREATE_MUTATION, {
@@ -1473,7 +1476,41 @@ export async function action({ request }: ActionFunctionArgs) {
             // reporting that as "this type does not bind" is exactly the
             // failed-call-as-negative-answer trap.
             report.resourceBound.bound[type] = row ? stored === sent : null;
+            if (row) inCombinedMenu.add(type);
           }
+        }
+
+        // One create for all seven is cheap and answers on a healthy shop —
+        // but menuCreate is ALL-OR-NOTHING, so a single type the shop refuses
+        // would leave every OTHER type reported as "not measured" and never
+        // name the offending one. So whatever the combined attempt did not
+        // answer is retried one menu at a time. Only then can a `false` mean
+        // "this type refuses" rather than "something in the batch did".
+        for (const [type, sent] of boundTypes) {
+          if (inCombinedMenu.has(type)) continue;
+          const soloHandle = `${handle}-bound-${type.toLowerCase().replace(/_/g, "-")}`;
+          const solo = await run(MENU_CREATE_MUTATION, {
+            title: `ContentPilot write probe bound ${type} ${stamp}`,
+            handle: soloHandle,
+            items: [{ title: `CP Bound ${type}`, type, resourceId: sent }],
+          });
+          const soloErrors = [
+            ...topLevelErrors(solo),
+            ...userErrorText((solo.data?.menuCreate as { userErrors?: unknown } | undefined)?.userErrors),
+          ];
+          const soloId = (solo.data?.menuCreate as { menu?: { id: string } | null } | undefined)?.menu?.id ?? null;
+          if (soloId) createdMenus.push({ handle: soloHandle, id: soloId });
+          if (!soloId) {
+            // The type is what the platform refused, and the message says so.
+            report.resourceBound.bound[type] = false;
+            for (const e of soloErrors) report.resourceBound.createErrors.push(`${type}: ${e}`);
+            continue;
+          }
+          const soloRead = await run(MENU_READ_QUERY, { id: soloId });
+          const soloItems = ((soloRead.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+          const row = soloItems.find((i) => i.title === `CP Bound ${type}`);
+          report.resourceBound.readBack[type] = row?.resourceId ?? null;
+          report.resourceBound.bound[type] = row ? row.resourceId === sent : null;
         }
       }
       for (const [type, id] of Object.entries(samples)) {
@@ -1486,7 +1523,11 @@ export async function action({ request }: ActionFunctionArgs) {
       // "omission clears the old binding" has to hold or a product link
       // retargeted to a URL would keep pointing at the product.
       const boundMenuId = report.resourceBound.menuId;
-      const reboundType = boundTypes.find(([type]) => report.resourceBound.bound[type] === true);
+      // Only a type that is IN the combined menu can be retargeted there — a
+      // type measured by a solo retry lives in a different menu.
+      const reboundType = boundTypes.find(
+        ([type]) => report.resourceBound.bound[type] === true && inCombinedMenu.has(type),
+      );
       if (boundMenuId && reboundType) {
         const rt = report.resourceBound.retarget;
         rt.attempted = true;
