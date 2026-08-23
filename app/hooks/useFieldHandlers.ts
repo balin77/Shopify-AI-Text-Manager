@@ -13,6 +13,7 @@ import { getTranslatedValue } from "../utils/contentEditor.utils";
 import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataLoader";
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
+import { writeLastContentLocale } from "../utils/last-content-locale";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
 import {
   setFieldSuggestion,
@@ -1387,6 +1388,14 @@ const handleLanguageChange = async (locale: string) => {
     await confirmNavigation();
   }
   setCurrentLanguage(locale);
+  // This click is the only writer of the remembered working language: the
+  // editor unmounts on every main-nav navigation, and coming back in the
+  // primary locale threw away the language the merchant was editing in — and
+  // with it the view onto anything stored per locale, a pending AI suggestion
+  // included. It sits directly beside the state change and behind the same
+  // unsaved-changes confirmation, so what is remembered is exactly the switch
+  // that happened — never one the merchant backed out of.
+  writeLastContentLocale(locale);
   // If the currently-selected market does not serve the new locale, fall back to
   // "global" — a market-specific translation only makes sense for locales the
   // market actually offers (and the primary locale is always global).

@@ -44,6 +44,7 @@ import { extractReadableName } from "../utils/templates-field-factory";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { readLastSelectedId } from "../utils/last-selected-item";
+import { readLastContentLocale, pickRestoredLocale } from "../utils/last-content-locale";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
@@ -427,6 +428,38 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setSelectedItemId(items[0].id);
     setHasRestored(true);
   }, [hasRestored, items, initialItemId, config.contentType]);
+
+  // ============================================================================
+  // RESTORE THE WORKING LANGUAGE ON MOUNT (client-only, once)
+  // Priority: ?locale= (handled in the useState initializer above) > the last
+  // language the merchant SWITCHED to > the primary locale.
+  //
+  // Why an effect and not that initializer: localStorage does not exist during
+  // the server render, so a value read there would be `null` on the server and
+  // a locale on the client — a hydration mismatch. The item restore above
+  // solves the same problem the same way.
+  //
+  // Only a locale the shop still PUBLISHES is restored. An empty `shopLocales`
+  // means the lookup failed rather than "one language" (see CLAUDE.md), so it
+  // restores nothing: opening in a language that may no longer be served is
+  // the more expensive of the two errors. Nothing is written back here — the
+  // language bar's own handler is the only writer.
+  // ============================================================================
+
+  const restoredLocaleRef = useRef(false);
+
+  useEffect(() => {
+    if (restoredLocaleRef.current) return;
+    restoredLocaleRef.current = true;
+
+    const restored = pickRestoredLocale({
+      initialLocale,
+      stored: readLastContentLocale(),
+      primaryLocale,
+      shopLocales,
+    });
+    if (restored) setCurrentLanguage(restored);
+  }, [initialLocale, primaryLocale, shopLocales]);
 
   // ============================================================================
   // AUTO-SELECT FIRST ITEM if the selected one disappears (e.g. deleted, or
