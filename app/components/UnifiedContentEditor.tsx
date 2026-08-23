@@ -2278,6 +2278,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         valueLabel: t.products?.valueLabel,
                         addValue: t.products?.addValue,
                         removeValue: t.products?.removeValue,
+                        reorderValue: t.products?.reorderValue,
+                        reorderOption: t.products?.reorderOption,
                       }}
                     />
                   </div>

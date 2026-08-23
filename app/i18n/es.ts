@@ -44,6 +44,8 @@ export const es: Translation = {
     valueLabel: "Valor",
     addValue: "Añadir otro valor",
     removeValue: "Quitar valor",
+    reorderValue: "Mover {value}",
+    reorderOption: "Mover {value}",
     optionWarningNotConfirmed: "Shopify no confirmó el cambio, así que no se guardó nada.",
     optionWarningFailed: "Shopify rechazó el cambio.",
     optionWarningNameEmpty: "Una variante necesita un nombre.",

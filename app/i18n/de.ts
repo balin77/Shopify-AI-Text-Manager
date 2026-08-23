@@ -43,6 +43,8 @@ export const de = {
     valueLabel: "Wert",
     addValue: "Weiteren Wert hinzufügen",
     removeValue: "Wert entfernen",
+    reorderValue: "{value} verschieben",
+    reorderOption: "{value} verschieben",
     optionWarningNotConfirmed: "Shopify hat die Änderung nicht bestätigt, es wurde nichts gespeichert.",
     optionWarningFailed: "Shopify hat die Änderung abgelehnt.",
     optionWarningNameEmpty: "Eine Variante braucht einen Namen.",
