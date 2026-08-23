@@ -793,17 +793,46 @@ html {
    desktop there is, which is the whole case.
 
    The threshold is a literal because a container query condition cannot read a
-   custom property (no `var()` in `@container`), the same way the media
-   breakpoints in this file are literals. 360px sits between the two
-   populations with room on both sides: a Details column is ~195–290px at every
-   width where more than one of them fits, and a main content field is 500px
-   and up. Where the Details card collapses to a single column it can reach
-   ~400px — and then the word does fit, which is the right answer, not an
-   exception.
+   custom property (no `var()` in `@container`) — the same way the media
+   breakpoints in this file are literals. It therefore has to be RE-DERIVED by
+   hand whenever a field grid's minimum moves, and
+   [field-clear-threshold.test.ts](../../tests/unit/field-clear-threshold.test.ts)
+   fails when it stops clearing them. There are THREE field populations, not
+   two, and the first cut's 360px sat inside the third:
+
+     Details grid   `minmax(195px, 1fr)`, gap 16 — an `auto-fit` track tops out
+                    at 195 + 211/n, so ~300px at two columns and ~265 at three;
+                    only the single-column case reaches ~400px, and there the
+                    word genuinely fits.
+     Entry grid     `minmax(min(100%, 340px), 1fr)` — never NARROWER than 340px
+                    while more than one column fits.
+     Content field  500px and up.
+
+   At 360px the entry grid straddled the line: a track opens just under it and
+   then grows past it, so the same card showed the word at a 900px grid, the
+   bin at 1080px and the word again at 1250px — a shape that flickers as the
+   window widens is worse than either shape. 320px clears the Details maximum
+   by ~30px and sits ~20px BELOW the entry grid's minimum, so every population
+   answers the same way at every width. Keep it under `--app-entry-field-min-width`.
+
+   What it measures is the FIELD, not the label row's free space — the
+   collision it stands in for is horizontal, between the button and a label
+   that may be arbitrarily long (a metaobject field label is authored in the
+   merchant's definition). A proxy, and the honest one available: the label's
+   own width is not knowable in CSS.
 
    Default = the BIN, deliberately. A container query that never applies (an
    engine without support, a container whose width cannot be resolved) must
-   fall back to the shape that cannot overlap anything. */
+   fall back to the shape that cannot overlap anything — an unknown
+   `container-type` is dropped and the whole at-rule with it, leaving the
+   `display: none` on the word standing.
+
+   The scope must not land on a SHRINK-TO-FIT box: `container-type: inline-size`
+   contains the inline axis, so in an inline-block, a float or a row-flex item
+   the container resolves to zero width and the field collapses with it. Every
+   current site is a block in a block/column-flex/`minmax()`-grid context.
+   `DisabledActionTooltip` defaults to `inline-block` — wrapping a whole FIELD
+   in one is the cheap way to hit this. */
 .app-field-clear-scope {
   container-type: inline-size;
   container-name: appfield;
@@ -824,7 +853,7 @@ html {
   display: inline-flex;
 }
 
-@container appfield (min-width: 360px) {
+@container appfield (min-width: 320px) {
   .app-field-clear--word {
     display: inline-flex;
   }

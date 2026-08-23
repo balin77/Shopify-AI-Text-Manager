@@ -108,11 +108,11 @@ export interface FieldClearOverlayProps {
   /**
    * The field this button empties, for its accessible NAME.
    *
-   * The button shows a bin and no words, so the accessible name is the ONLY
-   * name it has — and four of these sit in one Details row (vendor, product
-   * type, collections, tags), where four buttons called "Leeren" tell a screen
-   * reader nothing apart. Sighted users have the field the icon sits in, which
-   * is exactly what the accessible name was missing.
+   * On the bin there is no text at all, so this is the ONLY name it has. On the
+   * word it is still needed: four of these sit in one Details row (vendor,
+   * product type, collections, tags), and four buttons called "Leeren" tell a
+   * screen reader nothing apart. The name OPENS with the visible word, which is
+   * what WCAG's "Label in Name" asks of the word variant.
    */
   fieldLabel?: string;
   children: ReactNode;
@@ -142,12 +142,22 @@ export interface FieldClearButtonProps {
  * is, which is precisely the case a media query cannot see.
  *
  * BOTH shapes are rendered and CSS shows one. That looks like waste and is not:
- * Polaris derives its padding from the PROPS (`icon && children == null` ⇒
- * `iconOnly`), and only the icon-only plain button gets the 32px minimum touch
- * target. One button morphing between the two shapes would silently lose it on
- * exactly the narrow fields the bin exists for. `display: none` also takes the
- * hidden one out of the accessibility tree, so a screen reader is offered one
- * control, not two.
+ * Polaris derives the button's box from the PROPS, not from what is visible —
+ * `icon && children == null` ⇒ `iconOnly`, which for the plain variant is the
+ * only branch that zeroes the padding and floors the box at
+ * `--p-height-500`/`--p-width-500` (1.25rem = 20px, measured in
+ * @shopify/polaris 13.9.5 — NOT the 32px this app puts on both variants in its
+ * own mobile rule). A single button carrying an icon AND a hidden word is
+ * `iconWithText` forever, so the bin would quietly render in a text-shaped box
+ * on exactly the narrow fields it exists for. `display: none` also takes the
+ * hidden variant out of the accessibility tree and the tab order, so a screen
+ * reader is offered one control, not two.
+ *
+ * It only works INSIDE an `app-field-clear-scope` ancestor. Rendered anywhere
+ * else no `appfield` container matches, the `@container` block never applies,
+ * and the caller gets a permanent bin with no error — `FieldClearOverlay`
+ * carries the class for every field that goes through it, and
+ * `AIEditableHTMLField` sets it on its own root.
  */
 export function FieldClearButton({ onClear, fieldLabel }: FieldClearButtonProps) {
   const { t } = useI18n();

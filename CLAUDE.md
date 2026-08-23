@@ -250,18 +250,38 @@ button of its own.**
   The bin fixed that and was then applied to every field in the app, including a
   product title with 700px of empty label row beside it, which is not what it
   was for. So `FieldClearButton` renders BOTH and a **container query** shows
-  one (`.app-field-clear-scope`, threshold 360px, in responsive.css): a media
-  query cannot answer this, because the Details fields are narrow on the widest
-  desktop there is. The default is the BIN — a query that never applies (no
-  engine support, an unresolvable width) must fall back to the shape that cannot
-  overlap. Both shapes are rendered because Polaris derives its padding from the
-  PROPS (`icon && children == null` ⇒ `iconOnly`), and only the icon-only plain
-  button gets the 32px minimum touch target; one button morphing between the two
-  would silently lose it on exactly the narrow fields the bin exists for. The
-  hidden one is `display: none`, so a screen reader is offered one control.
-  `accessibilityLabel` is set on both and OPENS with the visible word (WCAG
-  "Label in Name"): four of these in one Details row all called "Leeren" tell a
-  screen reader nothing apart, which is what `fieldLabel` is for.
+  one (`.app-field-clear-scope`, in responsive.css): a media query cannot answer
+  this, because the Details fields are narrow on the widest desktop there is.
+  The default is the BIN — a query that never applies (no engine support, an
+  unresolvable width) must fall back to the shape that cannot overlap. The
+  threshold is a LITERAL, because a container query condition cannot read a
+  custom property, so it has to be re-derived by hand against the field grids'
+  minimums; there are THREE populations and the first cut's 360px sat inside the
+  third. `--app-entry-field-min-width` is 340px and an `auto-fit` track opens
+  just under its own minimum and then grows past it, so the metaobject card
+  showed the word at a 900px grid, the bin at 1080px and the word again at
+  1250px. 320px clears the Details maximum (~300px where two of them share a
+  row) and stays below the entry minimum, so every population answers the same
+  way at every width — [field-clear-threshold.test.ts](tests/unit/field-clear-threshold.test.ts) fails when a token moves
+  out from under it. What the query measures is the FIELD, not the label row's
+  free space: the collision is horizontal, against a label that may be
+  arbitrarily long, and the label's width is not knowable in CSS. Both shapes
+  are rendered because Polaris derives the button's box from the PROPS, not from
+  what is visible: `icon && children == null` ⇒ `iconOnly`, the only plain
+  branch that zeroes the padding and floors the box (at `--p-height-500`, 20px —
+  NOT the 32px this app puts on both variants in its own mobile rule). A single
+  button carrying an icon and a hidden word is `iconWithText` forever, so the
+  bin would render in a text-shaped box on exactly the narrow fields it exists
+  for. The hidden one is `display: none`, so a screen reader is offered one
+  control. `accessibilityLabel` is set on both and OPENS with the visible word
+  (WCAG "Label in Name"): four of these in one Details row all called "Leeren"
+  tell a screen reader nothing apart, which is what `fieldLabel` is for.
+  **The scope must never land on a shrink-to-fit box** — `container-type:
+  inline-size` contains the inline axis, so in an inline-block, a float or a
+  row-flex item it resolves to zero width and takes the field with it. Every
+  current site is a block in a block / column-flex / `minmax()`-grid context;
+  `DisabledActionTooltip` defaults to `inline-block`, which makes wrapping a
+  whole FIELD in one the cheap way to hit this.
   The **HTML-capable editor** shares the decision but not the positioning:
   [AIEditableHTMLField.tsx](app/components/AIEditableHTMLField.tsx) puts its clear button IN the header row
   beside the HTML/preview toggle rather than absolutely over an empty label
