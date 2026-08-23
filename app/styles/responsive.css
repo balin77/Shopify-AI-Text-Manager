@@ -132,20 +132,16 @@
      copy to all), and at 260 those buttons wrapped into a column of three,
      which is what made an entry three times taller than its content.
 
-     --app-entry-field-gap    the gap between two of those fields. Named
-                              because the wide maximum below is computed from
-                              it and would otherwise drift.
-     --app-entry-wide-field-max-width
-                              the ceiling for the fields that do NOT fit in a
-                              column — a textarea, a rich-text preview, a
-                              taxonomy chip list. They are laid out under the
-                              grid rather than in it, and a chip list stretched
-                              across a 1400px card puts its "Clear" button a
-                              screen away from its label. Two columns' worth is
-                              what a list of chips actually needs. */
+     --app-entry-field-gap    the gap between two of those fields.
+
+     The fields that do NOT belong beside a box — a textarea, a rich-text
+     preview, a taxonomy chip list — carry no width of their own: they are
+     grid items forced to column 1, so they are exactly one column wide on a
+     row of their own and line up with the field above them. A ceiling stated
+     here instead was a second calculation next to the grid's, and the two
+     agreed at exactly one grid width. See `.metaobject-entry-fields__wide`. */
   --app-entry-field-min-width: 340px;
   --app-entry-field-gap: 1rem;
-  --app-entry-wide-field-max-width: calc(2 * var(--app-entry-field-min-width) + var(--app-entry-field-gap));
   --app-value-chip-width: 230px;
   --app-dropdown-panel-max-width: 480px;
   --app-stock-table-max-width: 800px;
@@ -595,8 +591,23 @@
   align-items: start;
 }
 
+/* A wide field is ONE COLUMN on a row of its own — placed IN the grid, so the
+   width is the grid's answer and not a second calculation beside it.
+
+   It used to sit outside the grid under a fixed `2 * min-width + gap` ceiling,
+   and that number only equals a real column at exactly one grid width: a
+   column is `(W - gap) / n`, so on a colour entry (two boxes, therefore two
+   columns) the taxonomy list below "Label" was wider than "Label" everywhere
+   below ~1408px and narrower above it. Left-aligned and never flush.
+
+   `grid-column: 1` is what keeps it out of the boxes' row: the auto-placement
+   cursor cannot go back to an occupied column 1, so the item starts a new row
+   — without SPANNING, which is what the comment on the grid above warns
+   against (a spanning cell keeps every column alive and `auto-fit` can then no
+   longer collapse the empty ones). No `max-width`: the boxes have none either,
+   and any ceiling of its own is the misalignment coming back. */
 .metaobject-entry-fields__wide {
-  max-width: var(--app-entry-wide-field-max-width);
+  grid-column: 1;
 }
 
 /* The row ABOVE the grid — today the entry's image.
