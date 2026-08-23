@@ -66,6 +66,8 @@ import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
 import { HelpTooltip } from "../components/HelpTooltip";
+import { useDeleteItem } from "../hooks/useDeleteItem";
+import { DeleteItemModal } from "../components/create/DeleteItemModal";
 import { UnifiedItemList, type UnifiedItem } from "../components/unified/UnifiedItemList";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
@@ -290,6 +292,28 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const formData = await request.formData();
+
+  /**
+   * Deleting a whole menu — the ONE delete path of the app, third entrance.
+   *
+   * Not a menu-local mutation: `deleteContentObject` already owns the echo
+   * rule (Shopify must hand the id back — `userErrors: []` is not success),
+   * the id/type agreement check, the plan gate and the cache purge, and a
+   * second copy of those for menus is how one of them ends up missing. The
+   * purge knows that a menu's translations hang off its ITEMS' Link ids and
+   * has to collect them before the row goes.
+   */
+  if (formData.get("action") === "deleteContent") {
+    const { deleteContentObject } = await import("~/actions/content/delete.actions");
+    return deleteContentObject({
+      admin,
+      session,
+      db,
+      plan: ((settings?.subscriptionPlan || "free") as never),
+      resource: "menu",
+      gid: String(formData.get("resourceId") || ""),
+    });
+  }
 
   // Per-LOCALE payload, not a single locale. The per-entry buttons write into
   // several languages at once ("translate into all languages"), and the native
@@ -1526,6 +1550,28 @@ export default function MenusPage() {
     }
   };
 
+  /**
+   * Deleting the whole menu.
+   *
+   * The same hook, dialog and server path as every other content delete —
+   * including the two-step confirmation that makes the merchant type the
+   * name. A menu is exactly the case that guard exists for: it takes every
+   * item with it, and each item's translations go with its Link resource for
+   * good (measured — re-creating the item mints a new id, so the values do
+   * not come back).
+   *
+   * On success the selection moves to another menu rather than staying on a
+   * GID that no longer exists, and the loader is re-read.
+   */
+  const deleteMenu = useDeleteItem({
+    onDeleted: () => {
+      setSelectedMenuId(
+        (parsedMenus as Array<{ id: string }>).find((m) => m.id !== selectedMenuId)?.id ?? null,
+      );
+      revalidator.revalidate();
+    },
+  });
+
   /** The tree write's outcome, or undefined when the last save had none. */
   const treeStatus = treeResult?.status;
 
@@ -1704,6 +1750,25 @@ export default function MenusPage() {
                           }}
                         >
                           {t.content?.menuAddItem}
+                        </Button>
+                      )}
+                      {/* The whole menu. Only on the primary language: deleting
+                          a menu from a translation tab is not a translation
+                          act. */}
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          tone="critical"
+                          variant="tertiary"
+                          onClick={() =>
+                            deleteMenu.request({
+                              id: selectedMenu.id,
+                              title: selectedMenu.title,
+                              resource: "menu",
+                            })
+                          }
+                        >
+                          {t.content?.menuDeleteMenu || "Delete menu"}
                         </Button>
                       )}
                       {/* Reload is a REVALIDATION here, not a per-item sync
@@ -1987,6 +2052,18 @@ export default function MenusPage() {
           </div>
         </div>
       </Page>
+
+      {deleteMenu.target && (
+        <DeleteItemModal
+          open={!!deleteMenu.target}
+          onClose={deleteMenu.cancel}
+          item={deleteMenu.target}
+          onConfirm={deleteMenu.confirm}
+          deleting={deleteMenu.deleting}
+          error={deleteMenu.error}
+          t={t.content?.deleteModal}
+        />
+      )}
     </PlanAccessGate>
   );
 }

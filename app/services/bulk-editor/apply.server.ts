@@ -37,6 +37,7 @@ import {
 } from "../../graphql/content.mutations";
 import { debugLog } from "../../utils/debug";
 import { markTranslationSaved } from "../../utils/translation-save-lock.server";
+import { featuredAltLockId } from "../translations/translation-locks.shared";
 import {
   loadDigestsForRows,
   fetchDigestsForResource,
@@ -2049,7 +2050,14 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   for (const cell of featuredAltCells) {
     const error = await writeFeaturedImageAltTranslation(group, cell.value, deps);
     if (error) failures.push(failureOf(group, error, cell.columnId));
-    else markTranslationSaved(group.rowId);
+    else {
+      markTranslationSaved(group.rowId);
+      // The single editor's featured-alt repair runs under its OWN key — the
+      // parent's lock belongs to that resource's CONTENT repair — so a claim on
+      // the row alone would never reach it. Global layer only, for the same
+      // reason as the sub-resource claim below.
+      if (group.marketId === "") markTranslationSaved(featuredAltLockId(group.rowId));
+    }
   }
 
   // Duplicate-slug guard (same rule as updateContent in the single editor):
@@ -2543,12 +2551,25 @@ async function persistSubResourceTranslations(
     }
 
     let cellFailed: string | null = null;
+    const claimed: string[] = [];
     for (const pair of pairs) {
       const error = await writeSubResourceTranslation(pair.target, pair.value, deps);
       if (error && !cellFailed) cellFailed = error;
+      if (!error) claimed.push(pair.target.resourceId);
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
     else markTranslationSaved(group.rowId);
+    // …and the SUB-RESOURCE itself. The single editor's sub-resource repair
+    // runs under a private lock (translation-locks.shared.ts) and watches the
+    // resources it is about to write, not the product — so a claim on the row
+    // alone is invisible to it and the AI would overwrite this value.
+    //
+    // GLOBAL layer only: that repair writes global rows, so a MARKET override
+    // can never collide with it, and aborting it over one would leave its
+    // remaining entries in neither list.
+    if (group.marketId === "") {
+      for (const resourceId of claimed) markTranslationSaved(resourceId);
+    }
   }
 
   return failures;

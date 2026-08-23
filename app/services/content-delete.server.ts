@@ -26,6 +26,8 @@
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
 import type { DeletableResource } from "~/config/create-fields.config";
+import { flattenMenuItems } from "~/services/menu-translations.shared";
+import { MENU_LINK_RESOURCE_TYPE } from "~/services/menu-translations.server";
 
 export type { DeletableResource } from "~/config/create-fields.config";
 
@@ -101,6 +103,39 @@ export async function purgeContentFromCache(
             ).count;
           }
           counts.article = (await tx.article.deleteMany({ where: { shop, blogId: gid } })).count;
+        }
+        break;
+
+      case "menu":
+        // The two lines above cleaned up rows keyed by the MENU's own GID, and
+        // a menu has none of those: its translations live on its ITEMS, each
+        // under `gid://shopify/Link/<the MenuItem's number>`. Nothing in the
+        // schema connects those to the menu, so they have to be collected from
+        // the cached tree BEFORE the row goes — a delete-first order would
+        // strand every one of them, the same trap `MetaobjectTranslation`
+        // presented for a definition.
+        {
+          const row = await tx.menu.findFirst({ where: { shop, id: gid }, select: { items: true } });
+          // The SAME walker `refreshMenuCache` uses to collect a tree's Link
+          // ids — not a second one written next to it. Two walkers over one
+          // JSON shape that must agree is how the external-video parser drifted
+          // into three copies, and the failure here is asymmetric: the purge
+          // would miss rows the sync still counts as live.
+          const linkIds = row
+            ? flattenMenuItems(row.items).flatMap((i) => (i.linkId ? [i.linkId] : []))
+            : [];
+          if (linkIds.length > 0) {
+            counts.menuLinkTranslations = (
+              await tx.contentTranslation.deleteMany({
+                // Scoped by resourceType, exactly like the sync's own bulk
+                // delete of these rows. Only menu items carry a Link GID
+                // today, so this changes no result — it is a belt on a
+                // destructive deleteMany whose one sibling already wears it.
+                where: { shop, resourceType: MENU_LINK_RESOURCE_TYPE, resourceId: { in: linkIds } },
+              })
+            ).count;
+          }
+          counts.menu = (await tx.menu.deleteMany({ where: { shop, id: gid } })).count;
         }
         break;
 

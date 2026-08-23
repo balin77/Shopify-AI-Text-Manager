@@ -32,6 +32,8 @@ import { ShopifyContentService } from "../../../src/services/shopify-content.ser
 import type { AISettings, PrismaClient } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { featuredAltLockId } from "~/services/translations/translation-locks.shared";
 
 // Cap how many items ONE run touches. The audit's own MAX_PROBLEM_BUCKET_ITEMS
 // (100) already bounds this at the source, but re-asserting it here keeps this
@@ -2582,6 +2584,13 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
       throw new Error(`No translatable digest for alt on ${imageResourceId}.`);
     }
     await registerAltTranslation(gateway, imageResourceId, locale, altText, digest);
+
+    // The single editor's featured-alt repair runs under its OWN key and
+    // watches the image resource it is about to write, so a claim on neither
+    // would let it overwrite this value (translation-locks.shared.ts). The
+    // product branch below claims for the same reason.
+    markTranslationSaved(featuredAltLockId(job.id));
+    markTranslationSaved(imageResourceId);
     await db.contentTranslation.upsert({
       where: {
         shop_resourceId_key_locale_marketId: {
@@ -2628,6 +2637,11 @@ async function persistImageAltTextForLocale(params: PersistImageAltForLocaleArgs
   }
 
   await registerAltTranslation(gateway, mediaId, locale, altText, digest);
+
+  // The detached alt repair watches the MEDIA resource it is about to write
+  // (translation-locks.shared.ts); without this claim it never sees the
+  // merchant's bulk fix and overwrites it minutes later.
+  markTranslationSaved(mediaId);
 
   await db.productImageAltTranslation.upsert({
     where: {

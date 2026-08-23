@@ -14,6 +14,7 @@ import { parseValueOrderPayload } from "~/services/product-options.shared";
 import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { subResourceLockId } from "~/services/translations/translation-locks.shared";
 import { getTaskExpirationDate } from "~/config/constants";
 import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
@@ -1277,6 +1278,10 @@ export async function handleSavePrimarySubResources(
             // the sub-resource its translation actually lives on.
             resourceId: productId,
             resourceType: "Product",
+            // Same reason as the alt-text repair: the Task row names the
+            // product, the lock does not, so the product's OWN field
+            // reconciliation on the next webhook is not blocked by this.
+            lockId: subResourceLockId(productId),
             contentKind: "product",
             // Read from the cache rather than taken from the form: the client
             // does not send a title here, and a Task row labelled with a GID is

@@ -22,6 +22,11 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
       upsert: vi.fn(async () => ({})),
       findMany: vi.fn(async (): Promise<Array<{ resourceId?: string; key: string; locale: string }>> => []),
     },
+    productImageAltTranslation: {
+      findMany: vi.fn(async (): Promise<Array<{ imageId: string; locale: string }>> => []),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      upsert: vi.fn(async () => ({})),
+    },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
     task: {
@@ -47,7 +52,12 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     translate: vi.fn(async () => ({})) as any,
     translateValues: vi.fn(async () => []) as any,
   };
-  const policy = { purgeOnPrimaryChange: true, autoTranslateExternalChanges: false, plan: "max" };
+  const policy = {
+    purgeOnPrimaryChange: true,
+    purgeUnreconciledSurfaces: true,
+    autoTranslateExternalChanges: false,
+    plan: "max",
+  };
   return { db, shopify, ai, policy };
 });
 
@@ -108,6 +118,8 @@ vi.mock("../../src/services/translation.service", () => ({
 }));
 
 import {
+  productImageAltMirror,
+  featuredImageAltMirror,
   reconcileStaleTranslations,
   reconcileAfterPrimarySave,
   awaitDetachedRetranslations,
@@ -165,6 +177,7 @@ beforeEach(() => {
   shopify.removeConfirms = null;
   shopify.registerConfirms = null;
   policy.purgeOnPrimaryChange = true;
+  policy.purgeUnreconciledSurfaces = true;
   policy.autoTranslateExternalChanges = false;
   db.contentTranslation.deleteMany.mockClear();
   db.contentTranslation.upsert.mockClear();
@@ -694,6 +707,50 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
   });
 
+  it("never TRANSLATES a key whose read-back does not match what the caller wrote", async () => {
+    // A theme write lands in a FILE and is re-indexed afterwards, so the
+    // read-back can still answer with the PREVIOUS text — and with a digest
+    // that registers cleanly, which would produce an echo-confirmed translation
+    // of text the merchant has just replaced, with the deletion already stood
+    // down.
+    const result = await reconcileAfterPrimarySave(
+      saveParams({
+        changed: [
+          { key: "title", expectedValue: "Something else entirely" },
+          { key: "body_html" },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls.map((c) => c.key)).toEqual(["body_html"]);
+  });
+
+  it("...and DECLINES it, so the merchant's stored deletion answer decides", async () => {
+    // Skipping it outright would leave a foreign value live on a surface
+    // nothing else ever revisits; deleting it regardless would ignore a
+    // merchant who switched the deletion off. It is a decline, so their answer
+    // stands — here: on.
+    policy.purgeUnreconciledSurfaces = true;
+    await reconcileAfterPrimarySave(
+      saveParams({ changed: [{ key: "title", expectedValue: "Something else" }] }),
+    );
+    await awaitDetachedRetranslations();
+    expect(shopify.removeCalls.map((c) => c.keys)).toEqual([["title"]]);
+
+    shopify.removeCalls = [];
+    policy.purgeUnreconciledSurfaces = false;
+    await reconcileAfterPrimarySave(
+      saveParams({
+        resourceId: `${PAGE}-b`,
+        changed: [{ key: "title", expectedValue: "Something else" }],
+      }),
+    );
+    await awaitDetachedRetranslations();
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
   it("keeps everything when the primary read-back itself fails", async () => {
     // A failed lookup and "every field was cleared" look identical in the data,
     // and only one of them may lose its translations. Answering our own blink
@@ -824,6 +881,7 @@ describe("a group spanning several resources (sub-resources)", () => {
   beforeEach(() => {
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = true;
     translated = { fr: [OPTION, VALUE, METAFIELD] };
     primary = {
       [OPTION]: { name: { value: "Farbe", digest: NEW } },
@@ -902,6 +960,83 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(ai.translateValues.mock.calls[0][0]).toEqual(["Farbe"]);
   });
 
+  it("REMOVES a value the single-line prompt would flatten", async () => {
+    // A theme setting carries no type metadata, only a key, so the VALUE is
+    // what gets asked. `translateBatchValues` sanitises with allowNewlines:
+    // false and has no rule that preserves markup, so a multi-line value comes
+    // back flattened and a value with tags comes back with them rewritten —
+    // echo-confirmed and mirrored, i.e. corruption recorded as a success.
+    primary = {
+      [OPTION]: { name: { value: "Zeile eins\nZeile zwei", digest: NEW } },
+      [VALUE]: { name: { value: "<p>Absatz</p>", digest: NEW } },
+      [METAFIELD]: { value: { value: "Massivholz", digest: NEW } },
+    };
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).toEqual([METAFIELD]);
+    expect(shopify.removeTargets.sort()).toEqual([OPTION, VALUE].sort());
+    expect(ai.translateValues.mock.calls[0][0]).toEqual(["Massivholz"]);
+  });
+
+  it("KEEPS a declined value when the merchant switched the deletion off", async () => {
+    // We chose not to hand it to the AI; that is not the automation failing, so
+    // the merchant's stored "don't delete" still means don't delete. Folding
+    // the two would delete every richtext theme translation on such a shop.
+    policy.purgeUnreconciledSurfaces = false;
+    primary = {
+      [OPTION]: { name: { value: "Zeile eins\nZeile zwei", digest: NEW } },
+      [METAFIELD]: { value: { value: "Massivholz", digest: NEW } },
+    };
+
+    await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+          { resourceId: METAFIELD, resourceType: "Metafield", key: "value" },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).toEqual([METAFIELD]);
+    expect(shopify.removeTargets).toEqual([]);
+  });
+
+  it("claims a PRIVATE lock so the product's own reconciliation is not blocked", async () => {
+    // The Task row names the product; the lock must not, or the
+    // products/update webhook's field reconciliation bails for 30 seconds and
+    // those translations are neither purged nor refreshed — permanently, since
+    // the sync has advanced their digest baseline by then.
+    // A fresh id: the save-lock map is module-level, and an earlier test in
+    // this block claims PRODUCT under its own (default) lock.
+    const fresh = freshProduct();
+    await reconcileAfterPrimarySave(
+      groupParams({ resourceId: fresh, lockId: `${fresh}#subResources` }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(isTranslationRecentlySaved(`${fresh}#subResources`)).toBe(true);
+    expect(isTranslationRecentlySaved(fresh)).toBe(false);
+  });
+
+  it("a SIBLING repair's own claim does not abort a private-lock run", async () => {
+    // An article save runs the content repair and the featured-alt repair on
+    // one id. With the group id in the watch list, the sibling's inline claim
+    // aborted this run mid-locale and its remaining entries landed in neither
+    // list — neither refreshed nor purged, on a surface nothing else revisits.
+    const fresh = freshProduct();
+    const run = reconcileAfterPrimarySave(
+      groupParams({ resourceId: fresh, lockId: `${fresh}#subResources` }),
+    );
+    markTranslationSaved(fresh); // the sibling, mid-flight
+    await run;
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+  });
+
   it("chunks the values instead of building one oversized prompt", async () => {
     const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
     primary = Object.fromEntries(
@@ -920,5 +1055,57 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(ai.translateValues).toHaveBeenCalledTimes(3);
     const sizes = ai.translateValues.mock.calls.map((c: unknown[]) => (c[0] as string[]).length);
     expect(sizes).toEqual([40, 40, 15]);
+  });
+});
+
+
+/**
+ * The pluggable mirrors. The Shopify half of a translation never varies — one
+ * API, keyed by GID + key + locale — so only the LOCAL half is per surface,
+ * and two of them do not even address the same row Shopify does.
+ */
+describe("per-surface mirrors", () => {
+  it("a product medium's alt is stored by the CACHE row id, not the MediaImage GID", async () => {
+    const media = "gid://shopify/MediaImage/55";
+    const mirror = productImageAltMirror(new Map([[media, "cache-row-7"]]));
+
+    db.productImageAltTranslation.findMany.mockResolvedValue([
+      { imageId: "cache-row-7", locale: "fr" },
+    ]);
+    // …and it is reported back under the MEDIA id, which is what the detection,
+    // the removal and the register all address.
+    expect(await mirror.existing([{ resourceId: media, resourceType: "MediaImage" }], ["fr"], ["alt"]))
+      .toEqual([{ resourceId: media, locale: "fr", key: "alt" }]);
+
+    await mirror.write({ resourceId: media, resourceType: "MediaImage" }, "fr", "alt", "Chaise", "d");
+    const upsertArgs = (db.productImageAltTranslation.upsert.mock.calls[0] as unknown as [any])[0];
+    expect(upsertArgs.where).toEqual({
+      imageId_locale_marketId: { imageId: "cache-row-7", locale: "fr", marketId: "" },
+    });
+  });
+
+  it("an image with no cached row is skipped rather than written under a wrong id", async () => {
+    const mirror = productImageAltMirror(new Map());
+    db.productImageAltTranslation.upsert.mockClear();
+
+    await mirror.write({ resourceId: "gid://shopify/MediaImage/1", resourceType: "MediaImage" }, "fr", "alt", "x", "d");
+    expect(db.productImageAltTranslation.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a featured alt rewrites BOTH halves back to the parent row both editors read", async () => {
+    // Shopify: key `alt` on the CollectionImage GID. Mirror: `image_alt_text`
+    // on the COLLECTION. The third translation shape (CLAUDE.md).
+    const parent = "gid://shopify/Collection/3";
+    const image = "gid://shopify/CollectionImage/9";
+    const mirror = featuredImageAltMirror(SHOP, parent, "Collection");
+
+    await mirror.write({ resourceId: image, resourceType: "MediaImage" }, "fr", "alt", "Vase", "dg");
+    const call = (db.contentTranslation.upsert.mock.calls.at(-1) as unknown as [any])[0];
+    expect(call.where.shop_resourceId_key_locale_marketId).toMatchObject({
+      resourceId: parent,
+      key: "image_alt_text",
+      locale: "fr",
+    });
+    expect(call.create).toMatchObject({ resourceType: "Collection", value: "Vase", digest: "dg" });
   });
 });

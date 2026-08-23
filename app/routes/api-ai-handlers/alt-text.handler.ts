@@ -14,6 +14,7 @@ import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
 import { loadTrackedKeywordsUnfiltered, resolveKeywordLocale, resolveWrittenLocale } from "./keyword-prompt";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 /**
  * Alt-text requirement line for the item's primary keyword. The shipped default
@@ -732,6 +733,10 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
 
             if (shopifySaved && dbImage) {
               try {
+                // The detached alt repair watches the MEDIA resource it is about to
+                // write (translation-locks.shared.ts); without this claim it never sees
+                // the merchant write and overwrites it minutes later.
+                markTranslationSaved(dbImage.mediaId);
                 const existing = await db.productImageAltTranslation.findUnique({
                   where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
                 });
@@ -1027,6 +1032,10 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
           // Only save to DB if Shopify save succeeded
           if (shopifySaved) {
             try {
+              // The detached alt repair watches the MEDIA resource it is about to
+              // write (translation-locks.shared.ts); without this claim it never sees
+              // the merchant write and overwrites it minutes later.
+              markTranslationSaved(dbImage.mediaId);
               const existing = await db.productImageAltTranslation.findUnique({
                 where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
               });
@@ -1296,6 +1305,10 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
         // Only save to DB if Shopify save succeeded
         if (shopifySaved) {
           try {
+            // The detached alt repair watches the MEDIA resource it is about to
+            // write (translation-locks.shared.ts); without this claim it never sees
+            // the merchant write and overwrites it minutes later.
+            markTranslationSaved(dbImage.mediaId);
             const existing = await db.productImageAltTranslation.findUnique({
               where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale: targetLocale } },
             });

@@ -7,6 +7,7 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
+import { featuredAltLockId } from '../../app/services/translations/translation-locks.shared';
 import { isAuthError, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
@@ -708,6 +709,7 @@ export class ShopifyContentService {
             foreignLocales: [locale],
           });
         }
+        markTranslationSaved(featuredAltLockId(resourceId));
         await db.contentTranslation.deleteMany({
           where: { shop, resourceId, resourceType, key: 'image_alt_text', locale, marketId: "" },
         });
@@ -741,6 +743,12 @@ export class ShopifyContentService {
         loggers.translation('error', `[saveImageAltTextTranslation] Shopify userErrors`, { resourceType, errors: userErrors });
         return { saved: false, reason: 'shopify-error' };
       }
+
+      // Claim the key the featured-alt repair runs under (see
+      // translation-locks.shared.ts). The parent's own lock belongs to its
+      // CONTENT repair, so marking that instead would not reach a detached alt
+      // run — and it would overwrite this value minutes later.
+      markTranslationSaved(featuredAltLockId(resourceId));
 
       await db.contentTranslation.upsert({
         where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: 'image_alt_text', locale, marketId: "" } },
@@ -1583,7 +1591,13 @@ export class ShopifyContentService {
       const needsForeignLocales =
         (purgeChangedFields && changedTranslationKeys.length > 0) ||
         (selfRetranslated && changedTranslationKeys.length > 0) ||
-        (featuredAltChanged && !!changePolicy?.purgeUnreconciledSurfaces);
+        // BOTH featured-alt outcomes need the locales — the deletion to scope
+        // it, the re-translation to know what to translate into. Asking only
+        // about the deletion left a shop with auto-translate ON and the stored
+        // purge OFF with neither.
+        (featuredAltChanged &&
+          (!!changePolicy?.purgeUnreconciledSurfaces ||
+            !!changePolicy?.autoTranslateExternalChanges));
       let foreignLocales: string[] = [];
       if (needsForeignLocales) {
         try {
@@ -1640,7 +1654,44 @@ export class ShopifyContentService {
       // UNRECONCILED by nature and therefore NOT covered by `selfRetranslated`:
       // no sync and no re-translation in this app ever looks at a
       // CollectionImage, so auto-translate does not stand its deletion down.
-      if (featuredAltChanged && changePolicy?.purgeUnreconciledSurfaces && foreignLocales.length > 0) {
+      //
+      // With auto-translate on the save REPLACES it instead: nothing else in
+      // this app ever revisits a CollectionImage, so the alternative is not
+      // "the sync will fix it later" but "never".
+      const retranslateFeaturedAlt =
+        featuredAltChanged &&
+        !!changePolicy?.autoTranslateExternalChanges &&
+        foreignLocales.length > 0 &&
+        !!primaryLocale;
+      const purgeFeaturedAlt = retranslateFeaturedAlt
+        ? !!changePolicy?.purgeOnPrimaryChange
+        : !!changePolicy?.purgeUnreconciledSurfaces;
+
+      // The image id is resolved FIRST when a repair is on the table, because
+      // without it there is nothing to register against — and deciding the
+      // deletion before knowing that left a failed lookup with neither, where
+      // the code this replaces always deleted.
+      let featuredImageId: string | null = null;
+      if (retranslateFeaturedAlt) {
+        try {
+          featuredImageId = await this.fetchFeaturedImageResourceId(
+            resourceId,
+            resourceType as 'Collection' | 'Article',
+          );
+        } catch (lookupError: unknown) {
+          loggers.translation('warn', '[updateContent] Featured image lookup failed — falling back to the deletion', {
+            resourceId,
+            error: lookupError instanceof Error ? lookupError.message : String(lookupError),
+          });
+        }
+      }
+      const repairFeaturedAlt = retranslateFeaturedAlt && !!featuredImageId;
+
+      if (
+        featuredAltChanged &&
+        foreignLocales.length > 0 &&
+        (repairFeaturedAlt ? purgeFeaturedAlt : !!changePolicy?.purgeUnreconciledSurfaces)
+      ) {
         await this.invalidateFeaturedImageAltTranslations({
           resourceId,
           resourceType: resourceType as 'Collection' | 'Article',
@@ -1648,6 +1699,48 @@ export class ShopifyContentService {
           db,
           foreignLocales,
         });
+      }
+
+      if (repairFeaturedAlt) {
+        try {
+          const imageResourceId = featuredImageId!;
+          {
+            const { reconcileAfterPrimarySave, featuredImageAltMirror } = await import(
+              "../../app/services/translations/stale-translation-sync.server"
+            );
+            await reconcileAfterPrimarySave({
+              client: this.admin,
+              shop,
+              // The GROUP is the collection / article the merchant saved; the
+              // one entry names the IMAGE, which is where Shopify keeps the
+              // translation. The mirror rewrites both halves back to the
+              // parent row both editors read.
+              resourceId,
+              resourceType,
+              // The alt repair must not claim the resource its own CONTENT
+              // repair runs under: an article save fires both, and the second
+              // claim would move the timestamp the first run captured and abort
+              // it after one locale, leaving the rest in neither list.
+              lockId: featuredAltLockId(resourceId),
+              contentKind: resourceType === 'Article' ? 'blog' : 'collection',
+              resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
+              changed: [{ resourceId: imageResourceId, resourceType: 'MediaImage', key: 'alt' }],
+              foreignLocales,
+              policy: changePolicy!,
+              mirror: featuredImageAltMirror(shop, resourceId, resourceType),
+              translateAs: {
+                kind: 'values',
+                context: 'image alt texts',
+                sourceLocale: primaryLocale,
+              },
+            });
+          }
+        } catch (altError: unknown) {
+          loggers.translation('warn', '[updateContent] Featured alt re-translation failed — translation kept', {
+            resourceId,
+            error: altError instanceof Error ? altError.message : String(altError),
+          });
+        }
       }
 
       // The repair that replaces the deletion for the webhook-less types.

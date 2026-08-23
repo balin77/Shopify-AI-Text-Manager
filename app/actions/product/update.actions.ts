@@ -27,6 +27,7 @@ import {
 } from "~/services/content-attributes.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
+import { altTextLockId } from "~/services/translations/translation-locks.shared";
 import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
@@ -186,7 +187,14 @@ export async function handleUpdateProduct(
     if (params.locale !== params.primaryLocale) {
       response = await updateTranslatedProduct(gateway, db, productId, params, context.session.shop);
     } else {
-      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, changedAltTextIndices, context.session.shop, changedAttributeFields);
+      // Only indices whose primary alt actually LANDED: a failed write leaves
+      // the primary text unchanged, so its foreign alts are still correct and
+      // must be neither purged nor re-translated. Same rule the sub-resource
+      // path follows — act on what was SAVED, never on what was requested.
+      const savedAltTextIndices = changedAltTextIndices.filter(
+        (index) => !failedAltTextIndices.includes(index),
+      );
+      response = await updatePrimaryProduct(gateway, db, productId, params, changedFields, savedAltTextIndices, context.session.shop, changedAttributeFields);
     }
 
     // If alt-text saves failed, merge warning into the response
@@ -475,6 +483,18 @@ async function updateImageAltTexts(
           }
         }
       }
+    }
+
+    // Claim the alt-text lock the moment Shopify holds the value, so a detached
+    // alt re-translation from an earlier primary save abandons the rest of its
+    // work instead of overwriting what the merchant just wrote. Under the SAME
+    // key that repair runs on (translation-locks.shared.ts) — the product's own
+    // lock belongs to its field reconciliation.
+    // GLOBAL layer only: the repair writes global rows, so a market override
+    // edit can never collide with it, and aborting the run over one would leave
+    // its remaining entries in neither list.
+    if (shopifySaved && params.locale !== params.primaryLocale && !marketId) {
+      markTranslationSaved(altTextLockId(productId));
     }
 
     // Save to Database ONLY if Shopify save succeeded (no mismatch allowed)
@@ -1310,7 +1330,40 @@ async function updatePrimaryProduct(
   // live on the MediaImage resource, which the reconciliation never looks at,
   // so suppressing their deletion would leave the old alt text live for good.
   const purgeStaleTranslations = changePolicy?.purgeOnPrimaryChange ?? false;
-  const purgeStaleAltTextTranslations = changePolicy?.purgeUnreconciledSurfaces ?? false;
+  // ALT-TEXTS are repaired by THIS save or by nothing: they live on the
+  // MediaImage resource, which no sync and no webhook in this app looks at. So
+  // with auto-translate on the save re-translates them and the deletion stands
+  // down — read through the policy, never written as `false`, because which of
+  // the two switches applies is that module's question.
+  //
+  // The locales are fetched FIRST, because the decision depends on the result:
+  // without a known primary locale there is nothing to translate FROM, and
+  // deciding before the lookup left a throttled shop with neither the repair
+  // nor the deletion.
+  let altForeignLocales: string[] = [];
+  let altPrimaryLocale = "";
+  if (changedAltTextIndices.length > 0 && changePolicy) {
+    try {
+      const { fetchShopLocales } = await import("~/services/sync-utils");
+      const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
+      altForeignLocales = shopLocales.filter((l) => !l.primary && l.published).map((l) => l.locale);
+      altPrimaryLocale = shopLocales.find((l) => l.primary)?.locale ?? "";
+    } catch (localeError: unknown) {
+      // Non-fatal: the primary write has already gone through, so throwing here
+      // would report a completed save as failed.
+      loggers.product("warn", "Could not load shop locales — alt-text translations untouched", {
+        productId,
+        error: localeError instanceof Error ? localeError.message : String(localeError),
+      });
+    }
+  }
+  const retranslateAltTexts =
+    (changePolicy?.autoTranslateExternalChanges ?? false) &&
+    altForeignLocales.length > 0 &&
+    !!altPrimaryLocale;
+  const purgeStaleAltTextTranslations = retranslateAltTexts
+    ? (changePolicy?.purgeOnPrimaryChange ?? false)
+    : (changePolicy?.purgeUnreconciledSurfaces ?? false);
 
   // Delete translations for changed fields in all foreign languages
   if (changedFields.length > 0 && purgeStaleTranslations) {
@@ -1432,27 +1485,11 @@ async function updatePrimaryProduct(
     }
   }
 
-  // Delete alt-text translations for changed image indices in all foreign languages
+  // Delete alt-text translations for changed image indices in all foreign
+  // languages — or, with auto-translate on, replace them (block below).
   if (changedAltTextIndices.length > 0 && purgeStaleAltTextTranslations) {
     try {
-      // Get all shop locales from Shopify API (reuse if already fetched above)
-      const localesResponse = await gateway.graphql(
-        `#graphql
-          query getShopLocales {
-            shopLocales {
-              locale
-              primary
-              published
-            }
-          }`
-      );
-      const localesData = await localesResponse.json() as any;
-      const shopLocales = localesData.data?.shopLocales || [];
-
-      // Filter out the primary locale, only keep published foreign locales
-      const foreignLocales = shopLocales
-        .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
-        .map((l: { locale: string }) => l.locale);
+      const foreignLocales = altForeignLocales;
 
       if (foreignLocales.length > 0) {
         // Get product images from DB to find mediaIds
@@ -1568,6 +1605,94 @@ async function updatePrimaryProduct(
         error: altTextTranslationError instanceof Error ? altTextTranslationError.message : String(altTextTranslationError),
       });
       // Don't fail the request - primary update succeeded
+    }
+  }
+
+  // …or REPLACE those alt-text translations instead of deleting them. One group
+  // for the whole save: several images are several MediaImage resources but one
+  // merchant action, so they share a Task row and one AI request per locale.
+  // Best-effort — the primary write has already gone through.
+  if (changedAltTextIndices.length > 0 && retranslateAltTexts) {
+    try {
+      const foreignLocales = altForeignLocales;
+      const primaryLocale = altPrimaryLocale;
+
+      {
+        const dbProduct = await db.product.findUnique({
+          where: { shop_id: { shop, id: productId } },
+          include: { images: { orderBy: { position: "asc" } } },
+        });
+        // A cached image with no `mediaId` has no Shopify resource to address
+        // at all, so there is nothing on the storefront to repair — a product
+        // resync fills the id in (CLAUDE.md).
+        const imageIdByMedia = new Map<string, string>();
+        const unaddressableImageIds: string[] = [];
+        for (const index of changedAltTextIndices) {
+          const image = dbProduct?.images?.[index];
+          if (!image) continue;
+          if (image.mediaId) imageIdByMedia.set(image.mediaId, image.id);
+          else unaddressableImageIds.push(image.id);
+        }
+
+        // An image the cache cannot address on Shopify cannot be refreshed —
+        // there is no resource id to register against — so it is a DECLINE, not
+        // a failure, and it follows the merchant's stored answer exactly like
+        // every other declined entry. With the deletion switched off the rows
+        // stay, which is what happened before this branch existed.
+        if (unaddressableImageIds.length > 0 && changePolicy?.purgeUnreconciledSurfaces) {
+          await db.productImageAltTranslation.deleteMany({
+            where: {
+              imageId: { in: unaddressableImageIds },
+              marketId: "",
+              locale: { in: foreignLocales },
+            },
+          });
+        }
+
+        if (imageIdByMedia.size > 0) {
+          const { reconcileAfterPrimarySave, productImageAltMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          await reconcileAfterPrimarySave({
+            client: gateway,
+            shop,
+            resourceId: productId,
+            resourceType: "Product",
+            // The Task row stays on the PRODUCT; the lock does not. Claiming
+            // the product here would make the `products/update` webhook's field
+            // reconciliation bail for 30 seconds, and with auto-translate on
+            // that leaves the title's translations neither purged nor
+            // refreshed — permanently, since the sync has advanced their
+            // digest baseline by then.
+            lockId: altTextLockId(productId),
+            contentKind: "product",
+            resourceTitle: (data.data.productUpdate.product?.title as string) || productId,
+            changed: [...imageIdByMedia.keys()].map((mediaId) => ({
+              resourceId: mediaId,
+              resourceType: "MediaImage",
+              key: "alt",
+            })),
+            foreignLocales,
+            policy: changePolicy!,
+            mirror: productImageAltMirror(imageIdByMedia),
+            // An alt text is one line of prose about a picture; it has no field
+            // definition, no SEO limit and no per-field instruction to carry.
+            // The dedicated alt-text prompt is image-aware and one call per
+            // value — deliberately not used here, where this runs unattended
+            // and the alternative it replaces was a plain deletion.
+            translateAs: {
+              kind: "values",
+              context: "product image alt texts",
+              sourceLocale: primaryLocale,
+            },
+          });
+        }
+      }
+    } catch (retranslateError: unknown) {
+      loggers.product("warn", "Alt-text re-translation failed — translations kept", {
+        productId,
+        error: retranslateError instanceof Error ? retranslateError.message : String(retranslateError),
+      });
     }
   }
 

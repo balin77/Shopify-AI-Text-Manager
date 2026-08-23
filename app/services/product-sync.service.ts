@@ -25,6 +25,7 @@ import {
   type ShopifyProductAttributes,
   type ShopifyProductCollections,
 } from './attribute-sync.shared';
+import { subResourceLockId, altTextLockId } from "./translations/translation-locks.shared";
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -1873,7 +1874,19 @@ export class ProductSyncService {
 
       // Check if user recently saved translations for this product
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
-      const skipTranslationSync = !forceSync && isTranslationRecentlySaved(productData.id);
+      //
+      // The two PRIVATE repair locks count too. A sub-resource or alt-text
+      // repair deliberately does NOT claim the bare product id — that id gates
+      // the FIELD reconciliation, which must keep running — but its inline
+      // purge does remove rows this very block would otherwise re-insert from a
+      // read-back Shopify has not caught up with yet. Both consumers read the
+      // same helper, so the repair claims a key of its own and the shield asks
+      // for it by name (translation-locks.shared.ts).
+      const skipTranslationSync =
+        !forceSync &&
+        (isTranslationRecentlySaved(productData.id) ||
+          isTranslationRecentlySaved(subResourceLockId(productData.id)) ||
+          isTranslationRecentlySaved(altTextLockId(productData.id)));
 
       if (skipTranslationSync) {
         logger.info(`[ProductSync] Skipping translation sync - recently saved by user`, { productId: productData.id });

@@ -87,6 +87,7 @@ const { retranslate } = vi.hoisted(() => ({
 
 vi.mock('../../app/services/translations/stale-translation-sync.server', () => ({
   IN_APP_RETRANSLATED_RESOURCE_TYPES: new Set(['Page', 'Article', 'Blog', 'ShopPolicy']),
+  featuredImageAltMirror: vi.fn(() => ({ existing: vi.fn(), remove: vi.fn(), write: vi.fn() })),
   reconcileAfterPrimarySave: vi.fn(async (args: Record<string, unknown>) => {
     retranslate.calls.push(args);
     return { removed: 0, retranslating: 1 };
@@ -357,14 +358,36 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     expect(removeAcrossLocales.calls).toEqual([]);
   });
 
-  it('is UNRECONCILED — auto-translate does not stand its deletion down', async () => {
-    // No sync and no re-translation in this app ever looks at a CollectionImage,
-    // so suppressing the removal here would leave the old alt live for good.
+  it('re-translates instead of deleting when auto-translate is on', async () => {
+    // Nothing else in this app ever revisits a CollectionImage, so the
+    // alternative to the save doing it is not "the sync will fix it later" but
+    // "never" — which is why this used to delete regardless of the switch.
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
+    retranslate.calls = [];
+    await save();
+
+    expect(removeAcrossLocales.calls).toEqual([]);
+    expect(retranslate.calls).toHaveLength(1);
+    // The GROUP is the collection; the one entry names the IMAGE, which is
+    // where Shopify keeps the translation.
+    expect(retranslate.calls[0]).toMatchObject({
+      resourceId: collectionId,
+      resourceType: 'Collection',
+    });
+    expect(retranslate.calls[0].changed).toEqual([
+      { resourceId: imageId, resourceType: 'MediaImage', key: 'alt' },
+    ]);
+  });
+
+  it('still deletes when auto-translate is off', async () => {
+    policy.autoTranslateExternalChanges = false;
+    policy.purgeUnreconciledSurfaces = true;
+    retranslate.calls = [];
     await save();
 
     expect(removeAcrossLocales.calls).toHaveLength(1);
+    expect(retranslate.calls).toEqual([]);
   });
 
   it('leaves the alt alone when it did not change', async () => {

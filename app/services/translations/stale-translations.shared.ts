@@ -220,7 +220,44 @@ export function findStaleTranslations(
 }
 
 /**
- * Split the stale set into "re-translate this" and "just delete this".
+ * Can this value go through the generic single-line prompt at all?
+ *
+ * A TYPE check is not always available — a theme setting carries no type
+ * metadata, only a key — so the VALUE is asked instead, which is the question
+ * anyway: `translateBatchValues` sanitises with `allowNewlines: false`, so
+ * anything multi-line comes back flattened, and it has no rule that preserves
+ * markup, so a value carrying tags comes back with them rewritten or dropped.
+ * Both would be echo-confirmed and mirrored, i.e. corruption recorded as a
+ * success. A value this refuses keeps the behaviour that predates
+ * auto-translate on these surfaces: its stale translation is REMOVED.
+ *
+ * Deliberately conservative in the same direction as `isBatchTranslatableValueType`,
+ * which stays as the TYPE-level guard where a type is known — this is the
+ * value-level backstop for the surfaces where it is not.
+ */
+export function survivesValuePrompt(value: string): boolean {
+  if (/[\r\n]/.test(value)) return false;
+  // Opening AND closing tags, and HTML entities: a value carrying any of them
+  // is markup the prompt has no rule to preserve, and matching only `<a…>`
+  // let `…</a>` and `&amp;` straight through into the flattening batch — the
+  // corruption this exists to prevent. A plain `&` is not markup and passes.
+  if (/<\/?[a-zA-Z][^>]*>/.test(value)) return false;
+  return !/&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]{1,31});/.test(value);
+}
+
+/**
+ * Split the stale set into three: "re-translate this", "just delete this", and
+ * "we declined to translate this".
+ *
+ * The third one exists because the two are not the same promise. `purge` is
+ * what the automation CANNOT deliver — a cleared source with nothing to
+ * translate, a missing digest, a `handle` — and a shop that asked for "always
+ * give it the new text" wants those removed rather than left describing text
+ * that no longer exists. `declined` is what WE refuse to hand to the AI for our
+ * own safety (a multi-line value, markup, a type the prompt would corrupt), and
+ * that is not the merchant's automation failing: it is us choosing not to try,
+ * so their stored "don't delete" answer stands. Folding the two would delete
+ * every richtext theme translation on a shop that switched the deletion off.
  *
  * A stale entry can only be re-translated when there IS a new primary value to
  * translate (a cleared field has nothing to say), the key is one we translate
@@ -243,17 +280,34 @@ export function partitionStaleTranslations(
    * filtered to the ones it changed.
    */
   opts: { anyKey?: boolean } = {},
-): { retranslate: StaleTranslation[]; purge: StaleTranslation[] } {
+): { retranslate: StaleTranslation[]; purge: StaleTranslation[]; declined: StaleTranslation[] } {
   const retranslate: StaleTranslation[] = [];
   const purge: StaleTranslation[] = [];
+  const declined: StaleTranslation[] = [];
   for (const entry of stale) {
-    const canRetranslate =
-      autoTranslate &&
-      !!entry.primaryValue.trim() &&
-      !!entry.digest &&
-      entry.retranslatable !== false &&
-      (opts.anyKey || AUTO_RETRANSLATABLE_KEYS.has(entry.key));
-    (canRetranslate ? retranslate : purge).push(entry);
+    if (!autoTranslate || !entry.primaryValue.trim() || !entry.digest) {
+      // Nothing to translate, or nothing to register it against. The
+      // automation cannot deliver these no matter what we do.
+      purge.push(entry);
+      continue;
+    }
+    // The caller's own refusal, on EVERY surface: it is a deliberate decline,
+    // not a failure, so it keeps the merchant's stored answer.
+    if (entry.retranslatable === false) {
+      declined.push(entry);
+      continue;
+    }
+    if (opts.anyKey) {
+      // A value surface: we DECLINE anything the single-line prompt would
+      // mangle — see `declined` on the return type for why that is not the
+      // same as a failure.
+      (survivesValuePrompt(entry.primaryValue) ? retranslate : declined).push(entry);
+      continue;
+    }
+    // A content surface: the allowlist keeps `handle` out, and that exclusion
+    // is deliberately a PURGE — a slug the merchant cannot have re-translated
+    // must not keep describing a URL that moved (CLAUDE.md).
+    (AUTO_RETRANSLATABLE_KEYS.has(entry.key) ? retranslate : purge).push(entry);
   }
-  return { retranslate, purge };
+  return { retranslate, purge, declined };
 }

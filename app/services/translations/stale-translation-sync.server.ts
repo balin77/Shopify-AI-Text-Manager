@@ -103,6 +103,25 @@ export interface RepairTarget {
    * prevent. Defaults to `contentKind`, which is right wherever the two agree.
    */
   taskResourceType?: string;
+  /**
+   * The key this run CLAIMS and watches under, when that must not be the
+   * resource id itself. Defaults to `resourceId`.
+   *
+   * Claiming is how a repair tells the sync "I am handling this resource"
+   * (`isTranslationRecentlySaved`) and how two runs for the same thing queue
+   * instead of racing. But a product carries SEVERAL independent repairs — its
+   * own fields via the `products/update` webhook, its sub-resources and its alt
+   * texts from their own saves — and if the alt repair claims the product, the
+   * webhook's field reconciliation bails for 30 seconds and those field
+   * translations are neither purged nor refreshed, permanently, because the
+   * sync has already advanced their digest baseline. A private key keeps the
+   * Task row on the product (where the merchant can recognise it) while leaving
+   * the product's own lock alone.
+   *
+   * The WATCH list still covers the resource and every entry, so a merchant
+   * save on any of them still aborts the run.
+   */
+  lockId?: string;
   /** Shown on the Task row when a re-translation runs. */
   resourceTitle?: string;
   /**
@@ -317,6 +336,216 @@ export function metaobjectTranslationMirror(
           outdated: false,
           marketId: "",
         },
+        update: { value, outdated: false },
+      });
+    },
+  };
+}
+
+/**
+ * `ProductImageAltTranslation` — the store for a PRODUCT medium's alt text.
+ *
+ * Two things make it its own mirror. The row is keyed by the ProductImage CACHE
+ * id, not by the MediaImage GID Shopify is addressed with, so the caller hands
+ * the map between them; and the table has no `key` column at all, because a
+ * MediaImage has exactly one translatable key (`alt`) — the key argument is
+ * therefore accepted and ignored rather than written.
+ *
+ * It has no `digest` column either. That costs nothing here: the digest is only
+ * needed to REGISTER on Shopify, and this path reads a fresh one for every
+ * write (CLAUDE.md — the mirror's digest is a sync-side detection baseline, and
+ * this surface has no sync-side detection).
+ */
+export function productImageAltMirror(
+  /** MediaImage GID → ProductImage cache row id. */
+  imageIdByMedia: ReadonlyMap<string, string>,
+): TranslationMirror {
+  const mediaByImageId = new Map([...imageIdByMedia].map(([media, image]) => [image, media]));
+  return {
+    async existing(refs, foreignLocales) {
+      const imageIds = refs
+        .map((ref) => imageIdByMedia.get(ref.resourceId))
+        .filter((id): id is string => !!id);
+      if (imageIds.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.productImageAltTranslation.findMany({
+        where: { imageId: { in: imageIds }, marketId: "", locale: { in: [...foreignLocales] } },
+        select: { imageId: true, locale: true },
+      });
+      return rows
+        .map((row: { imageId: string; locale: string }) => ({
+          resourceId: mediaByImageId.get(row.imageId) ?? "",
+          locale: row.locale,
+          key: "alt",
+        }))
+        .filter((row: { resourceId: string }) => !!row.resourceId);
+    },
+    async remove(ref, locale) {
+      const imageId = imageIdByMedia.get(ref.resourceId);
+      if (!imageId) return;
+      const { db } = await import("../../db.server");
+      await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId: "" } });
+    },
+    async write(ref, locale, _key, value) {
+      const imageId = imageIdByMedia.get(ref.resourceId);
+      if (!imageId) return;
+      const { db } = await import("../../db.server");
+      await db.productImageAltTranslation.upsert({
+        where: { imageId_locale_marketId: { imageId, locale, marketId: "" } },
+        create: { imageId, locale, altText: value, marketId: "" },
+        update: { altText: value },
+      });
+    },
+  };
+}
+
+/**
+ * A collection's / article's FEATURED-image alt — the third translation shape
+ * (CLAUDE.md), and the only mirror where BOTH halves of the address differ from
+ * Shopify's: Shopify stores key `alt` on the image's own
+ * CollectionImage/ArticleImage GID, while the row sits on the PARENT under
+ * `image_alt_text`. Both editors read that row, so the rewrite happens here
+ * rather than in a second row nobody else looks at.
+ */
+export function featuredImageAltMirror(
+  shop: string,
+  parentId: string,
+  parentType: string,
+): TranslationMirror {
+  const DB_KEY = "image_alt_text";
+  return {
+    async existing(refs, foreignLocales) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceId: parentId,
+          resourceType: parentType,
+          key: DB_KEY,
+          marketId: "",
+          locale: { in: [...foreignLocales] },
+        },
+        select: { locale: true },
+      });
+      // Reported under the IMAGE's id and Shopify's key, because that is what
+      // the detection, the removal and the register all address.
+      return rows.map((row: { locale: string }) => ({
+        resourceId: refs[0].resourceId,
+        locale: row.locale,
+        key: "alt",
+      }));
+    },
+    async remove(_ref, locale) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.deleteMany({
+        where: { shop, resourceId: parentId, resourceType: parentType, key: DB_KEY, locale, marketId: "" },
+      });
+    },
+    async write(_ref, locale, _key, value, digest) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.upsert({
+        where: {
+          shop_resourceId_key_locale_marketId: {
+            shop,
+            resourceId: parentId,
+            key: DB_KEY,
+            locale,
+            marketId: "",
+          },
+        },
+        create: {
+          shop,
+          resourceId: parentId,
+          resourceType: parentType,
+          key: DB_KEY,
+          value,
+          locale,
+          digest,
+          marketId: "",
+        },
+        update: { value, digest },
+      });
+    },
+  };
+}
+
+/**
+ * `ThemeTranslation` — the only mirror whose unique key folds BOTH the theme and
+ * the market (CLAUDE.md), so it needs the group and the domain the caller is
+ * saving as well as the resource.
+ *
+ * `themeId` is DERIVED from the resource id with the same helper the save path
+ * uses, never passed in: the two must agree on which theme a row belongs to,
+ * and a group can legitimately span resources of different themes.
+ */
+export function themeTranslationMirror(
+  shop: string,
+  groupId: string,
+  domain: string,
+): TranslationMirror {
+  return {
+    async existing(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.themeTranslation.findMany({
+        where: {
+          shop,
+          groupId,
+          domain,
+          marketId: "",
+          resourceId: { in: refs.map((ref) => ref.resourceId) },
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { resourceId: true, key: true, locale: true },
+      });
+      return rows;
+    },
+    async remove(ref, locale, keys) {
+      const { db } = await import("../../db.server");
+      await db.themeTranslation.deleteMany({
+        where: {
+          shop,
+          groupId,
+          domain,
+          marketId: "",
+          resourceId: ref.resourceId,
+          locale,
+          key: { in: [...keys] },
+        },
+      });
+    },
+    async write(ref, locale, key, value) {
+      const { db } = await import("../../db.server");
+      const { extractThemeIdFromResourceId } = await import("../../utils/theme-id");
+      const themeId = extractThemeIdFromResourceId(ref.resourceId) ?? "";
+      await db.themeTranslation.upsert({
+        where: {
+          shop_resourceId_groupId_key_locale_themeId_marketId: {
+            shop,
+            resourceId: ref.resourceId,
+            groupId,
+            key,
+            locale,
+            themeId,
+            marketId: "",
+          },
+        },
+        create: {
+          shop,
+          resourceId: ref.resourceId,
+          domain,
+          groupId,
+          key,
+          value,
+          locale,
+          outdated: false,
+          themeId,
+          marketId: "",
+        },
+        // `outdated` goes back to false: a value just re-translated against the
+        // current source is not older than it by definition.
         update: { value, outdated: false },
       });
     },
@@ -774,6 +1003,20 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     /** `false` = remove this one rather than re-translate it; see
      *  `StaleTranslation.retranslatable`. */
     retranslatable?: boolean;
+    /**
+     * What the caller just wrote, for a surface whose write does not land in
+     * Shopify's translatable content SYNCHRONOUSLY.
+     *
+     * Theme content is written as a FILE (`themeFilesUpsert`) and re-indexed
+     * afterwards, so a read-back can still answer with the previous text — and
+     * with a digest that registers cleanly, which would produce an
+     * echo-confirmed translation of text the merchant has just replaced, with
+     * the deletion already stood down. When this is set and the read-back does
+     * not match it, the entry is DECLINED: never translated, and removed only
+     * if the merchant's stored deletion answer says so. Skipping it outright
+     * would leave a foreign value live on a surface nothing else revisits.
+     */
+    expectedValue?: string;
   }>;
   /** Published foreign locales — the primary locale never holds a translation row. */
   foreignLocales: readonly string[];
@@ -799,15 +1042,17 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     /** `${resourceId}\u0000${key}` of the entries the caller marked
      *  remove-only, so the flag survives into the stale set below. */
     const removeOnly = new Set<string>();
+    /** `${resourceId}\u0000${key}` → what the caller says it wrote. */
+    const expected = new Map<string, string>();
     for (const item of changed) {
       const ref = refOf(params, item as StaleTranslation);
       refs.set(ref.resourceId, ref);
       const keys = wantedKeys.get(ref.resourceId) ?? new Set<string>();
       keys.add(item.key);
       wantedKeys.set(ref.resourceId, keys);
-      if (item.retranslatable === false) {
-        removeOnly.add(`${ref.resourceId}${PAIR_SEP}${item.key}`);
-      }
+      const id = `${ref.resourceId}${PAIR_SEP}${item.key}`;
+      if (item.retranslatable === false) removeOnly.add(id);
+      if (item.expectedValue !== undefined) expected.set(id, item.expectedValue);
     }
     const resourceIds = [...refs.keys()];
 
@@ -839,6 +1084,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
 
     const stale: StaleTranslation[] = [];
     let unreadable = 0;
+    let declinedByReadBack = 0;
     for (const triple of triples) {
       const [itemResourceId, locale, key] = triple.split(PAIR_SEP);
       const ref = refs.get(itemResourceId);
@@ -854,6 +1100,15 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       }
       const entry = resourcePrimary[key];
       const primaryValue = entry?.value ?? "";
+      // The read-back does not agree with what the caller says it wrote, so
+      // Shopify has not caught up with the write yet. Translating this would
+      // register an echo-confirmed translation of the OLD text — so it is a
+      // DECLINE: we refuse to try, and the merchant's stored answer decides
+      // whether the stale translation goes. Skipping it outright would leave a
+      // foreign value live on a surface nothing else ever revisits.
+      const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
+      const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
+      if (staleReadBack) declinedByReadBack++;
       stale.push({
         key,
         locale,
@@ -867,16 +1122,20 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         reason: primaryValue.trim() ? "outdated" : "primary-empty",
         primaryValue,
         digest: entry?.digest ?? null,
-        retranslatable: !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
+        retranslatable: !staleReadBack && !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
       });
     }
 
-    if (unreadable > 0) {
-      logger.warn("[StaleTranslations] Some resources could not be read back — their translations kept", {
+    if (unreadable > 0 || declinedByReadBack > 0) {
+      logger.warn("[StaleTranslations] Some entries could not be read back as written", {
         context: "StaleTranslations",
         shop,
         resourceId,
-        skipped: unreadable,
+        // Skipped entirely — a resource we could not read at all.
+        unreadable,
+        // Read, but not yet showing what the caller wrote: declined, so the
+        // merchant's stored deletion answer decides.
+        staleReadBack: declinedByReadBack,
       });
     }
     if (stale.length === 0) return NOTHING;
@@ -899,7 +1158,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // first. It lands before the detached run reads its own baseline, which is
     // the ordering the inline purge already relies on, so the run cannot mistake
     // this for a merchant write and abandon itself.
-    markTranslationSaved(resourceId);
+    markTranslationSaved(params.lockId ?? resourceId);
 
     return await repairStaleTranslations(params, stale, policy);
   } catch (error: unknown) {
@@ -936,9 +1195,10 @@ async function repairStaleTranslations(
   policy: TranslationChangePolicy,
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
+  const lockId = target.lockId ?? resourceId;
   const gateway = new ShopifyApiGateway(client, shop);
   const mirror = mirrorOf(target);
-  const { retranslate, purge } = partitionStaleTranslations(
+  const { retranslate, purge, declined } = partitionStaleTranslations(
     stale,
     policy.autoTranslateExternalChanges,
     // The content-field allowlist exists to keep `handle` out. A surface that
@@ -962,12 +1222,22 @@ async function repairStaleTranslations(
   // corrected immediately — and its `markTranslationSaved` then lands BEFORE
   // the detached run captures its baseline below. The other order made the
   // run read our own mark as "the merchant saved" and abandon itself.
+  // What WE declined to translate keeps the merchant's stored answer: we chose
+  // not to try, so "don't delete" still means don't delete. `mayPurge` is about
+  // what the automation could not deliver, which is a different promise.
+  const toPurge =
+    declined.length > 0 && policy.purgeUnreconciledSurfaces ? [...purge, ...declined] : purge;
+
   let removed = 0;
-  if (mayPurge && purge.length > 0) {
-    removed = await purgeStaleEntries(gateway, target, mirror, purge);
+  if (mayPurge && toPurge.length > 0) {
+    removed = await purgeStaleEntries(gateway, target, mirror, toPurge);
     // Protect what we just changed from a racing webhook sync that re-fetches
-    // Shopify before it is consistent again.
-    markTranslationSaved(resourceId);
+    // Shopify before it is consistent again — under the SAME key as every other
+    // claim in this module. Marking the bare `resourceId` here made a
+    // private-lock repair claim the product after all as soon as one of its
+    // entries was a cleared value, which is exactly what `lockId` exists to
+    // stop.
+    markTranslationSaved(lockId);
   }
 
   // The AI re-translation is DETACHED. Two of the callers (the single-item
@@ -993,9 +1263,17 @@ async function repairStaleTranslations(
       // only the product would never see the merchant's hand-written value land
       // — the one rule that is supposed to protect it would not fire, and the
       // AI would overwrite it minutes later.
+      // What a merchant write on would make this run stand down: our own lock,
+      // plus every resource whose translations this run is about to replace.
+      //
+      // The group's `resourceId` is included ONLY when it is the lock too. With
+      // a private lock that id belongs to a DIFFERENT repair — an article save
+      // runs the content repair and the featured-alt repair on one id — and its
+      // inline claim would abort this run mid-locale, leaving the rest of the
+      // entries in neither list: neither refreshed nor purged, on a surface
+      // nothing else revisits. A sibling of ours is not the merchant.
       const watched = [
-        resourceId,
-        ...new Set(retranslate.map((entry) => entry.resourceId ?? resourceId)),
+        ...new Set([lockId, ...retranslate.map((entry) => entry.resourceId ?? resourceId)]),
       ];
       const savedAtStart = new Map(watched.map((id) => [id, translationSavedAt(id)]));
       const supersededByMerchant = () =>
@@ -1025,7 +1303,7 @@ async function repairStaleTranslations(
         ) {
           await purgeStaleEntries(gateway, target, mirror, outcome.failed);
         }
-        if (outcome.registered.length > 0) markTranslationSaved(resourceId);
+        if (outcome.registered.length > 0) markTranslationSaved(lockId);
       } catch (error: unknown) {
         logger.warn("[StaleTranslations] Detached re-translation run failed", {
           context: "StaleTranslations",

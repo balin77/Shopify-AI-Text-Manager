@@ -746,6 +746,15 @@ export const DELETE_BLOG = `#graphql
   }
 `;
 
+export const DELETE_MENU = `#graphql
+  mutation deleteMenu($id: ID!) {
+    menuDelete(id: $id) {
+      deletedMenuId
+      userErrors { field message }
+    }
+  }
+`;
+
 export const DELETE_METAOBJECT = `#graphql
   mutation deleteMetaobject($id: ID!) {
     metaobjectDelete(id: $id) {

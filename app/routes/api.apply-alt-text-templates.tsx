@@ -5,6 +5,7 @@ import { fillAltTextTemplate, resolveVariableValues, createTranslationCache } fr
 import { withDbRaceRetry } from "../utils/db-retry.server";
 import { getTaskExpirationDate } from "../config/constants";
 import type { VariantWithGallery } from "../components/image-manager/types";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 // Resolve a fresh image URL from Shopify for stub-row creation. Returns the gid
 // itself as a last-resort placeholder so we never lose a translation due to a
@@ -94,6 +95,10 @@ async function persistAltText(
         select: { id: true },
       });
       if (!isPrimary) {
+        // The detached alt repair watches the MEDIA resource it is about to
+        // write (translation-locks.shared.ts); without this claim it never sees
+        // the merchant write and overwrites it minutes later.
+        markTranslationSaved(gid);
         await tx.productImageAltTranslation.upsert({
           where: { imageId_locale_marketId: { marketId: "",  imageId: img.id, locale } },
           create: { imageId: img.id, locale, altText },

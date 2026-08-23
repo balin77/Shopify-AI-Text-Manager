@@ -27,6 +27,7 @@ import type { AISettings, AIInstructions } from "@prisma/client";
 import type { SeoLimits } from "../../utils/character-limits";
 import type { TranslationMode } from "../../routes/api-ai-handlers/shared";
 import type { DataResponse } from "~/types/data-response";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 export interface ContentActionHandlerContext {
   admin: AdminApiContext;
@@ -654,6 +655,10 @@ export async function handleTranslateAltTextToAllLocales(
 
           // Only save to DB if Shopify succeeded
           if (shopifySaved) {
+            // The detached alt repair watches the MEDIA resource it is about to
+            // write (translation-locks.shared.ts); without this claim it never
+            // sees the merchant write and overwrites it minutes later.
+            markTranslationSaved(dbImage.mediaId);
             try {
               const existing = await db.productImageAltTranslation.findUnique({
                 where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
@@ -857,6 +862,11 @@ export async function handleSaveImageAltText(
     }
 
     if (shopifySaved) {
+      // Claim the MEDIA resource: a detached alt re-translation watches its own
+      // lock AND every resource it is about to write, so marking the image is
+      // both precise and enough — without it the AI would overwrite the value
+      // the merchant just accepted.
+      markTranslationSaved(mediaId);
       try {
         // R4-DI7: shop-scoped — an unscoped mediaId findFirst could resolve
         // another tenant's ProductImage (per-shop-unique GIDs can collide)
