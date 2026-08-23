@@ -44,14 +44,18 @@ each runner for an `AIService` reference.
 `translation`, `bulkTranslation`, `aiGeneration`, `bulkAIGeneration`,
 `bulkAiGeneration`, `formatting`, `aiFormatting`, `insertKeyword`,
 `seoBulkFix`, `bulkEditorTranslate`, `distributeKeywords`(suggest),
-`seoInternalLinks`, `seoRobotsAdvice`, `aiDiscoveryIntro`, `pageSpeed`
+`seoInternalLinks`, `seoRobotsAdvice`, `aiDiscoveryIntro`
 
 ### 1.2 No AI call — the dropdown is guaranteed empty
 
 `seoCrawl`, `seoAudit`, `seoJsonLdAudit`, `seoBulkMeta`, `altTextTemplateApply`,
-`imageWebpConversion`, `blogArticleRedirects`, `distributeKeywords`(apply)
+`imageWebpConversion`, `blogArticleRedirects`, `distributeKeywords`(apply),
+`pageSpeed`
 
-`grep -c AIService` is 0 in all eight runners.
+`grep -c AIService` is 0 in all of these runners. `pageSpeed` calls PageSpeed
+Insights, not an AI provider — the three `AIService` hits in
+[app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx) belong to
+that route's separate alt-text `aiGeneration` task (L563), not to this one.
 
 ### 1.3 What sits in `result`, per type
 
@@ -72,7 +76,8 @@ each runner for an `AIService` reference.
 | `aiDiscoveryIntro` | `{file, chars}` | Yes |
 | `translation` (direct-translations) | `{translated, total}` | Yes |
 | `translation` (stale-sync) | `{retranslated, purged}` | Yes |
-| `imageWebpConversion` | `{sourceUrl, mediaId, productImageId, productId, altText, position}` | **NO — this is the job INPUT, not a result** ([api.convert-webp.tsx](../../app/routes/api.convert-webp.tsx) L132). A generic JSON dump would show a merchant an internal job spec. This is exactly why the renderer must be per type and never a `<pre>{result}</pre>`. |
+| `pageSpeed` | `{url, strategy}` | **NO — the job INPUT again** ([app.seo.performance.tsx](../../app/routes/app.seo.performance.tsx) L640/L655, written identically at start and at finish). The route's own loader (L287) reads it to restore the active audit; it is state, not an outcome. |
+| `imageWebpConversion` | `{sourceUrl, mediaId, productImageId, productId, altText, position}` | **NO — the job INPUT, not a result** ([api.convert-webp.tsx](../../app/routes/api.convert-webp.tsx) L132). A generic JSON dump would show a merchant an internal job spec. This is exactly why the renderer must be per type and never a `<pre>{result}</pre>`. |
 
 ---
 
@@ -244,7 +249,8 @@ appending to one `tasks: {}` block is a merge conflict by construction.
 
 - No task type renders a raw camelCase identifier anywhere (Tasks page, hover
   card, toast).
-- `imageWebpConversion` and `distributeKeywords`(apply) show no expand arrow.
+- `imageWebpConversion`, `pageSpeed` and `distributeKeywords`(apply) show no
+  expand arrow.
 - A `seoBulkMeta` run with failures lists the failed cells.
 - A `completed_with_errors` bulk translation produces a warning notification.
 - `npm run typecheck` and `npm run test` are green.
