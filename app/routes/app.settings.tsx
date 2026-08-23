@@ -689,6 +689,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const data = validationResult.data;
 
+      // PLAN GATE FIRST — before anything is written. The Translations
+      // sub-section saves its switches together with the instruction texts, so
+      // a 403 decided after the AIInstructions upsert would leave a
+      // half-applied save that keeps failing on every retry.
+      // Same "would it change anything" rule as the SEO limits: a payload that
+      // matches the stored value is a no-op and must not 403 (a downgraded
+      // shop re-submits its stored `true` on every save of this tab).
+      const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
+      let autoTranslateUpdate: { autoTranslateExternalChanges: boolean } | Record<string, never> = {};
+      if (rawAutoTranslate !== null) {
+        const requested = rawAutoTranslate === "true";
+        const row = await db.aISettings.findUnique({
+          where: { shop: session.shop },
+          select: { subscriptionPlan: true, autoTranslateExternalChanges: true },
+        });
+        if ((row?.autoTranslateExternalChanges ?? false) !== requested) {
+          const { meetsPlan } = await import("../utils/planUtils");
+          const { AUTO_TRANSLATE_MIN_PLAN } = await import(
+            "../services/translations/translation-change-policy.shared"
+          );
+          const plan = (row?.subscriptionPlan || "free") as Plan;
+          if (!meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN)) {
+            return json(
+              {
+                success: false,
+                error: "Automatic re-translation of external changes is available on the Max plan.",
+                actionType,
+              },
+              { status: 403 },
+            );
+          }
+          autoTranslateUpdate = { autoTranslateExternalChanges: requested };
+        }
+      }
+
       // Sanitize HTML content in format examples (for description fields)
       const sanitizedData = {
         // General (Writing Style Instructions)
@@ -762,70 +797,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      // The translation POLICY (strategy, keyword-aware, purge, auto-translate)
-      // used to ride along here. It has its own action now — those are switches
-      // and a two-way choice, and they save the moment they are clicked, while
-      // this button is for the instruction TEXTS.
-      return json({ success: true, actionType });
-    } else if (actionType === "saveTranslationPolicy") {
-      /**
-       * How the AI translates, and what happens to a translation when its
-       * source changes. Four controls of one card, each saving itself.
-       *
-       * Present-or-absent per field: one request carries one of them. Its own
-       * action rather than a rider on `saveInstructions` — that one writes
-       * `data.<field> || null` for every instruction it knows, so a payload
-       * with a single policy field would blank all of them.
-       */
+      // Translation mode ("exact" | "seo_optimized") is stored on AISettings
+      // and piggybacks on the same submit so the Translations sub-section has
+      // a single Save button covering the radio + custom instructions.
+      // Keyword-aware translation rides along on the same submit, for the same
+      // reason: it is a knob of the Translations sub-section, and that section
+      // has one Save button. Absent (a submit from another sub-section) leaves
+      // the stored value alone rather than defaulting it back on.
       const rawMode = String(formData.get("translationMode") || "");
-      const modeUpdate =
-        rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
-
       const rawKeywordAware = formData.get("keywordAwareTranslation");
       const keywordAwareUpdate =
         rawKeywordAware === null ? {} : { keywordAwareTranslation: rawKeywordAware === "true" };
+      const modeUpdate =
+        rawMode === "exact" || rawMode === "seo_optimized" ? { translationMode: rawMode } : {};
 
-      // The merchant's OWN choice is stored, not the value the card displays:
-      // while auto-translate is on the policy module resolves the deletion to
-      // off anyway, and persisting that resolved `false` would silently discard
-      // their preference — switching auto-translate back off later would leave
-      // them with neither behaviour and no hint why.
+      // "Bei Änderung der Hauptsprache" — same absent-means-unchanged rule.
       const rawPurge = formData.get("translationPurgeOnPrimaryChange");
       const purgeUpdate =
         rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
 
-      // PLAN GATE FIRST — before anything is written, on the same "would it
-      // change anything" rule as the SEO limits: a payload that matches the
-      // stored value is a no-op and must not 403 (a downgraded shop still
-      // renders its stored `true`).
-      const rawAutoTranslate = formData.get("autoTranslateExternalChanges");
-      let autoTranslateUpdate: { autoTranslateExternalChanges: boolean } | Record<string, never> = {};
-      if (rawAutoTranslate !== null) {
-        const requested = rawAutoTranslate === "true";
-        const row = await db.aISettings.findUnique({
-          where: { shop: session.shop },
-          select: { subscriptionPlan: true, autoTranslateExternalChanges: true },
-        });
-        if ((row?.autoTranslateExternalChanges ?? false) !== requested) {
-          const { meetsPlan } = await import("../utils/planUtils");
-          const { AUTO_TRANSLATE_MIN_PLAN } = await import(
-            "../services/translations/translation-change-policy.shared"
-          );
-          const plan = (row?.subscriptionPlan || "free") as Plan;
-          if (!meetsPlan(plan, AUTO_TRANSLATE_MIN_PLAN)) {
-            return json(
-              {
-                success: false,
-                error: "Automatic re-translation of external changes is available on the Max plan.",
-                actionType,
-              },
-              { status: 403 },
-            );
-          }
-          autoTranslateUpdate = { autoTranslateExternalChanges: requested };
-        }
-      }
 
+      // (The Max gate for autoTranslateExternalChanges already ran above, so
+      // `autoTranslateUpdate` is either the entitled change or empty.)
       const translationSettingsUpdate = {
         ...modeUpdate,
         ...keywordAwareUpdate,
@@ -900,19 +893,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       return json({ success: true, actionType });
     } else if (actionType === "saveSeoSettings") {
-      /**
-       * EVERY field here is present-or-absent.
-       *
-       * The switches on this card save themselves, one field per request, so a
-       * payload carrying only `seoAutoCrawlEnabled` is the normal case now —
-       * and the two suffix fields used to be read unconditionally, which would
-       * have switched the suffix off and blanked its text on every one of
-       * those. The rule was already written out on `seoAutoHandleRedirect`
-       * below; it just was not applied to its neighbours.
-       */
-      const rawSuffixEnabled = formData.get("seoTitleSuffixEnabled");
-      const suffixEnabledUpdate =
-        rawSuffixEnabled === null ? undefined : String(rawSuffixEnabled) === "true";
+      const enabled = formData.get("seoTitleSuffixEnabled") === "true";
       // Nightly audit switch. Only written when the field is present, so a
       // client that does not know the field cannot reset it. Gated below,
       // next to the seoLimits gate, on the same "would it change anything"
@@ -922,9 +903,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Weekly crawl switch — same present-or-absent rule as the audit one.
       const rawAutoCrawl = formData.get("seoAutoCrawlEnabled");
       const autoCrawlRequested = rawAutoCrawl === null ? undefined : rawAutoCrawl === "true";
-      const rawSuffix = formData.get("seoTitleSuffix");
-      const suffixUpdate =
-        rawSuffix === null ? undefined : String(rawSuffix).slice(0, 60) || null;
+      const suffix = String(formData.get("seoTitleSuffix") || "").slice(0, 60) || null;
 
       // PLAN §Phase 3.3 — auto-redirect on handle change. Read as
       // present-or-absent, NOT as `=== "true"` on a possibly-missing field:
@@ -1042,8 +1021,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await db.aISettings.upsert({
         where: { shop: session.shop },
         update: {
-          ...(suffixEnabledUpdate !== undefined ? { seoTitleSuffixEnabled: suffixEnabledUpdate } : {}),
-          ...(suffixUpdate !== undefined ? { seoTitleSuffix: suffixUpdate } : {}),
+          seoTitleSuffixEnabled: enabled,
+          seoTitleSuffix: suffix,
           ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
@@ -1051,8 +1030,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
         create: {
           shop: session.shop,
-          ...(suffixEnabledUpdate !== undefined ? { seoTitleSuffixEnabled: suffixEnabledUpdate } : {}),
-          ...(suffixUpdate !== undefined ? { seoTitleSuffix: suffixUpdate } : {}),
+          seoTitleSuffixEnabled: enabled,
+          seoTitleSuffix: suffix,
           ...(autoRedirectUpdate !== undefined ? { seoAutoHandleRedirect: autoRedirectUpdate } : {}),
           ...(seoLimitsUpdate !== undefined ? { seoLimits: seoLimitsUpdate as any } : {}),
           ...(autoAuditUpdate !== undefined ? { seoAutoAuditEnabled: autoAuditUpdate } : {}),
@@ -1419,11 +1398,13 @@ export default function SettingsPage() {
   const [initialOtherSubTab] = useState<OtherSubTab | undefined>(getInitialOtherSubTab);
   const [initialProbeSubTab] = useState<ProbeSubTab | undefined>(getInitialProbeSubTab);
   const [hasAIChanges, setHasAIChanges] = useState(false);
+  const [hasLanguageChanges, setHasLanguageChanges] = useState(false);
   const [hasInstructionsChanges, setHasInstructionsChanges] = useState(false);
+  const [hasImageManagerChanges, setHasImageManagerChanges] = useState(false);
   const [hasMetafieldChanges, setHasMetafieldChanges] = useState(false);
   const [hasGlossaryChanges, setHasGlossaryChanges] = useState(false);
   // Check if there are any unsaved changes across tabs
-  const hasUnsavedChanges = hasAIChanges || hasInstructionsChanges || hasMetafieldChanges || hasGlossaryChanges;
+  const hasUnsavedChanges = hasAIChanges || hasLanguageChanges || hasInstructionsChanges || hasImageManagerChanges || hasMetafieldChanges || hasGlossaryChanges;
 
   // Handle section navigation — native save bar shows a confirm dialog when
   // there are unsaved changes. Resolves only if the merchant confirms leaving.
@@ -1436,6 +1417,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (fetcher.data?.success) {
       setHasAIChanges(false);
+      setHasLanguageChanges(false);
       setHasInstructionsChanges(false);
     }
   }, [fetcher.data]);
@@ -1677,6 +1659,8 @@ export default function SettingsPage() {
                   webhookCount={webhookCount}
                   t={t}
                   languageSettings={settings}
+                  languageFetcher={fetcher}
+                  onLanguageHasChangesChange={setHasLanguageChanges}
                 />
               )}
 
@@ -1746,6 +1730,7 @@ export default function SettingsPage() {
                   metafieldsLastScanAt={metafieldsLastScanAt}
                   onMetafieldHasChangesChange={setHasMetafieldChanges}
                   richtextSettings={settings}
+                  onRichtextHasChangesChange={setHasAIChanges}
                   groupedFieldTranslations={groupedFieldTranslations}
                   optionValueMemory={optionValueMemory}
                   primaryShopLocale={primaryShopLocale}
@@ -1753,6 +1738,7 @@ export default function SettingsPage() {
                   showImageManagerTab={showImageManagerTab}
                   imageManagerSettings={imageManagerSettings ?? { enabled: true, autoAltText: false }}
                   shop={shop}
+                  onImageManagerHasChangesChange={setHasImageManagerChanges}
               />
               )}
 

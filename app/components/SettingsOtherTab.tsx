@@ -54,6 +54,7 @@ interface Props {
 
   // Richtext
   richtextSettings: RichtextSettings;
+  onRichtextHasChangesChange?: (hasChanges: boolean) => void;
 
   // Recurring values
   groupedFieldTranslations: GroupedFieldTranslationEntry[];
@@ -65,6 +66,7 @@ interface Props {
   showImageManagerTab: boolean;
   imageManagerSettings: ImageManagerSettings;
   shop: string;
+  onImageManagerHasChangesChange?: (hasChanges: boolean) => void;
 }
 
 // Groups the "less common" settings (Metafields, Rich-text formatting,
@@ -80,6 +82,7 @@ export function SettingsOtherTab({
   metafieldsLastScanAt,
   onMetafieldHasChangesChange,
   richtextSettings,
+  onRichtextHasChangesChange,
   groupedFieldTranslations,
   optionValueMemory,
   primaryShopLocale,
@@ -87,6 +90,7 @@ export function SettingsOtherTab({
   showImageManagerTab,
   imageManagerSettings,
   shop,
+  onImageManagerHasChangesChange,
 }: Props) {
   const ts = t.settings as unknown as Record<string, string>;
 
@@ -153,7 +157,12 @@ export function SettingsOtherTab({
       )}
 
       {selected === "richtext" && (
-        <SettingsRichtextTab settings={richtextSettings} t={t} />
+        <SettingsRichtextTab
+          settings={richtextSettings}
+          fetcher={fetcher}
+          t={t}
+          onHasChangesChange={onRichtextHasChangesChange}
+        />
       )}
 
       {selected === "recurring" && (
@@ -173,6 +182,7 @@ export function SettingsOtherTab({
             autoAltText: imageManagerSettings?.autoAltText ?? false,
           }}
           shop={shop}
+          onHasChangesChange={onImageManagerHasChangesChange}
         />
       )}
     </BlockStack>

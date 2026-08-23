@@ -1009,9 +1009,6 @@ export const es: Translation = {
     translations: "Traducciones",
     keywordAwareTranslation: "Incorporar palabras clave en las traducciones",
     // Instrucciones de IA → General: UN interruptor para toda la app.
-    // Cuando se rechaza un ajuste que se guarda solo: el interruptor vuelve a
-    // su sitio, y esto explica que no ha sido un fallo visual.
-    settingSaveFailed: "No se pudo guardar el ajuste.",
     aiVisionHeading: "Imágenes",
     aiVisionToggle: "Permitir que la IA vea las imágenes",
     aiVisionHelp: "Desactivado, la IA solo ve tus textos y no puede decir de una imagen nada que no esté ya en el título. Activado, la imagen viaja hasta el modelo: cuesta más por solicitud y requiere un modelo capaz de ver (HuggingFace y DeepSeek no pueden). Se aplica en todas partes: el editor, el diálogo de creación, los textos alternativos y el gestor de imágenes.",

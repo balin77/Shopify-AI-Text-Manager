@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Card, Text, BlockStack, InlineStack, Button, Banner, Box, Divider, Collapsible } from "@shopify/polaris";
+import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { meetsPlan, getPlanDisplayName, type Plan } from "../utils/planUtils";
 import { SettingsLanguageTab } from "./SettingsLanguageTab";
@@ -20,6 +21,8 @@ interface SettingsSetupTabProps {
   webhookCount: number;
   t: I18nTranslation;
   languageSettings: { appLanguage: string; [key: string]: any };
+  languageFetcher: FetcherWithComponents<any>;
+  onLanguageHasChangesChange?: (hasChanges: boolean) => void;
 }
 
 export function SettingsSetupTab({
@@ -33,6 +36,8 @@ export function SettingsSetupTab({
   webhookCount,
   t,
   languageSettings,
+  languageFetcher,
+  onLanguageHasChangesChange,
 }: SettingsSetupTabProps) {
   // Theme-editor deep links must use the app's api_key (Shopify client_id),
   // NOT the extension UID. The uuid form has been deprecated and Shopify
@@ -113,7 +118,12 @@ export function SettingsSetupTab({
 
   return (
     <>
-      <SettingsLanguageTab settings={languageSettings} t={t} />
+      <SettingsLanguageTab
+        settings={languageSettings}
+        fetcher={languageFetcher}
+        t={t}
+        onHasChangesChange={onLanguageHasChangesChange}
+      />
 
       <Banner title={t.settings.setupInstructions} tone="info">
         <p>{t.settings.setupDescription}</p>

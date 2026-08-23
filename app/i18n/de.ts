@@ -1024,9 +1024,6 @@ export const de = {
     translations: "Übersetzungen",
     keywordAwareTranslation: "Keywords in Übersetzungen einarbeiten",
     // KI-Anweisungen → Allgemein: EIN Schalter fürs ganze Programm.
-    // Wenn eine sofort speichernde Einstellung abgelehnt wird — der Schalter
-    // springt dann zurück, und das hier sagt warum es nicht nur geruckelt hat.
-    settingSaveFailed: "Die Einstellung konnte nicht gespeichert werden.",
     aiVisionHeading: "Bilder",
     aiVisionToggle: "Die KI darf die Bilder ansehen",
     aiVisionHelp: "Aus sieht die KI nur deine Texte und kann über ein Bild nichts sagen, was nicht schon im Titel steht. An geht das Bild selbst an das Modell mit — das kostet pro Anfrage mehr und setzt ein bildfähiges Modell voraus (HuggingFace und DeepSeek können es nicht). Gilt überall: Editor, Anlege-Dialog, Alt-Texte und Bildmanager.",
