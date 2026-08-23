@@ -4069,6 +4069,20 @@ export const en: Translation = {
 
   // Help Tooltips
   help: {
+    menuActionBar: {
+      title: "This action bar",
+      summary:
+        "Five buttons with very different reach. The left side changes the menu, the right side only reloads it. What you press here reaches Shopify when you save — with one exception: translating writes immediately.",
+      tips: [
+        "\"Add menu item\" appends an empty item at the bottom; dragging and nesting come after",
+        "\"Translate all\" fills every item in ALL active languages and stores those translations right away",
+        "\"Clear all\" empties only the translations of the language you are currently viewing — the primary language is untouched",
+        "Reload fetches the menus fresh from Shopify and keeps your unsaved changes",
+        "Structural changes (order, nesting, adding, deleting) only go out with \"Save\"",
+      ],
+      details:
+        "The difference between left and right is why this bar exists: \"Translate all\" and \"Clear all\" act on the language selected above and write translations — a separate write path that never touches the menu structure. \"Add menu item\" changes the tree, and a tree is always written to Shopify as a WHOLE: saving sends the complete item list, which is why the change list above the Save button names every item the write touches — the ones to be deleted above all.",
+    },
     commercePrices: {
       title: "The three prices",
       summary:

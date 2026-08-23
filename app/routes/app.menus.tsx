@@ -65,6 +65,7 @@ import { useI18n } from "../contexts/I18nContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
+import { HelpTooltip } from "../components/HelpTooltip";
 import { UnifiedItemList, type UnifiedItem } from "../components/unified/UnifiedItemList";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
@@ -1508,7 +1509,18 @@ export default function MenusPage() {
               {selectedMenu && (
                 <Card padding="400">
                   <InlineStack align="space-between" blockAlign="center" gap="300">
-                    <InlineStack gap="200">
+                    <InlineStack gap="200" blockAlign="center">
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          onClick={() => {
+                            newNodeSeq.current += 1;
+                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
+                          }}
+                        >
+                          {t.content?.menuAddItem}
+                        </Button>
+                      )}
                       <DisabledActionTooltip hint={singleLocaleHint ?? (isPrimary ? allTargetsOffHint : undefined)}>
                         <Button
                           size="slim"
@@ -1542,17 +1554,13 @@ export default function MenusPage() {
                           onClick={() => revalidator.revalidate()}
                         />
                       </Tooltip>
-                      {isPrimary && (
-                        <Button
-                          size="slim"
-                          onClick={() => {
-                            newNodeSeq.current += 1;
-                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
-                          }}
-                        >
-                          {t.content?.menuAddItem}
-                        </Button>
-                      )}
+                      {/* The bar's own ❓, at the far right: five buttons whose
+                          scopes differ (one item, every item, this language,
+                          every language) and whose costs differ — a merchant
+                          should be able to read what "clear all" empties
+                          BEFORE pressing it, not from the undo they do not
+                          have. */}
+                      <HelpTooltip helpKey="menuActionBar" position="below" />
                     </InlineStack>
                   </InlineStack>
                 </Card>

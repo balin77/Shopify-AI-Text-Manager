@@ -4081,6 +4081,20 @@ export const de = {
 
   // Help Tooltips
   help: {
+    menuActionBar: {
+      title: "Diese Aktionsleiste",
+      summary:
+        "Fünf Knöpfe mit sehr unterschiedlicher Reichweite. Links wird das Menü verändert, rechts nur neu geladen. Was hier gedrückt wird, landet erst beim Speichern in Shopify — mit einer Ausnahme: Übersetzen schreibt sofort.",
+      tips: [
+        "„Menüpunkt hinzufügen“ hängt einen leeren Punkt ganz unten an; ziehen und verschachteln geht danach",
+        "„Alles übersetzen“ füllt jeden Punkt in ALLEN aktiven Sprachen und speichert diese Übersetzungen direkt",
+        "„Alles löschen“ leert nur die Übersetzungen der GERADE gewählten Sprache — die Hauptsprache bleibt unberührt",
+        "Neuladen holt die Menüs frisch aus Shopify und behält deine ungespeicherten Änderungen",
+        "Struktur-Änderungen (Reihenfolge, Verschachtelung, Anlegen, Löschen) gehen erst mit „Speichern“ raus",
+      ],
+      details:
+        "Der Unterschied zwischen links und rechts ist der Grund für diese Leiste: „Alles übersetzen“ und „Alles löschen“ arbeiten auf der Sprache, die oben gewählt ist, und schreiben Übersetzungen — das ist ein eigener Schreibweg, der die Menüstruktur nicht anfasst. „Menüpunkt hinzufügen“ dagegen verändert den Baum, und ein Baum wird bei Shopify immer als GANZES geschrieben: Speichern schickt die vollständige Punktliste, weshalb die Änderungsliste über dem Speichern-Knopf jeden Punkt nennt, den der Vorgang anfasst — besonders die zu löschenden.",
+    },
     commercePrices: {
       title: "Die drei Preise",
       summary:
