@@ -198,8 +198,32 @@ describe("saveMenuItemTitles", () => {
     // The local row goes only where Shopify confirmed the removal.
     expect(translationDeleteMany.mock.calls[0][0].where.locale).toEqual({ in: ["en"] });
     expect(result.purgedLinkIds).toEqual(["gid://shopify/Link/20"]);
+    // One ITEM, but the merchant's banner counts removed translations — and
+    // only the locale Shopify actually confirmed.
+    expect(result.purgedTranslationCount).toBe(1);
     // Menus are reconciled by no webhook, so they ask the unreconciled side.
     expect(isPurgeOnPrimaryChangeEnabled).toHaveBeenCalledWith(SHOP, db, { reconciled: false });
+  });
+
+  it("counts every removed (item, locale) row, not the items", async () => {
+    // A four-locale shop deletes four rows for one rename; a banner saying
+    // "1 translation removed" understates exactly what was thrown away.
+    isPurgeOnPrimaryChangeEnabled.mockResolvedValue(true);
+    removeAndVerifyAcrossLocales.mockResolvedValue({
+      confirmedPairs: new Set(["en\u0000title", "fr\u0000title", "it\u0000title"]),
+      userErrors: [],
+    });
+    const { gateway } = makeGateway([readOk, updateOk(echoWith("Stiftehalter"))]);
+
+    const result = await saveMenuItemTitles(gateway, db, SHOP, {
+      menuId: menu.id,
+      fingerprint,
+      changes: [{ menuItemId: "gid://shopify/MenuItem/20", title: "Stiftehalter" }],
+      foreignLocales: ["en", "fr", "it"],
+    });
+
+    expect(result.purgedLinkIds).toHaveLength(1);
+    expect(result.purgedTranslationCount).toBe(3);
   });
 
   it("does not touch translations when the merchant switched the purge off", async () => {
@@ -357,7 +381,10 @@ describe("saveMenuItemTitles", () => {
                     id: "gid://shopify/MenuItem/4",
                     title: "L4",
                     type: "HTTP",
-                    items: [{ id: "gid://shopify/MenuItem/5", title: "L5", type: "HTTP", items: [] }],
+                    // Exactly what MENU_WRITE_READ_QUERY returns for a fifth
+                    // level: an id and nothing else. It exists only so this
+                    // refusal can observe it.
+                    items: [{ id: "gid://shopify/MenuItem/5" }],
                   },
                 ],
               },
