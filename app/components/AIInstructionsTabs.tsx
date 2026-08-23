@@ -284,9 +284,17 @@ export function AIInstructionsTabs({
   };
 
   const handleSave = () => {
-    if (readOnly) {
-      // Nothing else on this card is editable here, and the instruction fields
-      // would be the DEFAULTS this merchant is merely being shown.
+    /**
+     * A vision-only change goes out NARROW, on every plan.
+     *
+     * `localInstructions` is seeded once when this card mounts and never
+     * re-synced from props, so a `saveInstructions` fired for the vision
+     * switch would write whatever texts this tab was opened with — over
+     * anything a second tab or another device has stored since. On the
+     * read-only plans it is worse still: those texts are the DEFAULTS the
+     * merchant is merely being shown.
+     */
+    if (readOnly || !instructionsChanged) {
       if (!visionChanged) return;
       const visionOnly = new FormData();
       visionOnly.append("actionType", "saveAiVision");

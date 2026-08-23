@@ -497,7 +497,7 @@ export default function DirectTranslationsPage() {
       setIsNew(false);
       loadEditor(item, currentLanguage);
     },
-    [items, currentLanguage, loadEditor, isNew, selectedId],
+    [items, currentLanguage, loadEditor, isNew, selectedId, leaveGuard],
   );
 
   const handleAddNew = useCallback(async () => {
@@ -509,7 +509,10 @@ export default function DirectTranslationsPage() {
     setBaseSource("");
     setBaseTarget("");
     setEditingSource(true);
-  }, []);
+    // `leaveGuard` in the deps, not an empty array: it closes over the loader
+    // values the collector draft is reset TO, so a stale copy would put the
+    // switches back to what they were before the last save.
+  }, [leaveGuard]);
 
   // Plain click switches language; Ctrl/Cmd-click toggles it on/off (primary
   // can't be toggled). The pointerdown flag prevents the click from also firing.
@@ -545,7 +548,7 @@ export default function DirectTranslationsPage() {
         setBaseTarget(resolved);
       }
     },
-    [currentLanguage, isNew, selectedItem, selectedMarketId, markets, resolveTargetText],
+    [currentLanguage, isNew, selectedItem, selectedMarketId, markets, resolveTargetText, leaveGuard],
   );
 
   const handleMarketChange = useCallback(
@@ -560,7 +563,7 @@ export default function DirectTranslationsPage() {
         setBaseTarget(resolved);
       }
     },
-    [selectedMarketId, isNew, selectedItem, currentLanguage, resolveTargetText],
+    [selectedMarketId, isNew, selectedItem, currentLanguage, resolveTargetText, leaveGuard],
   );
 
   const editorHasChanges =
@@ -688,9 +691,11 @@ export default function DirectTranslationsPage() {
   }, [collectorChanged, saveCollectorSettings, editorHasChanges, handleSave]);
 
   const handleDiscard = useCallback(() => {
-    setCollectOn(collect);
-    setIgnoreOn(ignoreTranslateNo);
-    setFilterOn(filterByLanguage);
+    resetCollectorDraft();
+    // Only the half that is dirty. The bar can be up for the collector switches
+    // alone, and running the editor branch then throws a merchant who is
+    // composing a new entry out of the form they are typing in.
+    if (!editorHasChanges) return;
     if (isNew) {
       setSelectedId(items[0]?.id || null);
       setIsNew(false);
@@ -698,7 +703,7 @@ export default function DirectTranslationsPage() {
     } else {
       loadEditor(selectedItem, currentLanguage);
     }
-  }, [isNew, items, selectedItem, currentLanguage, loadEditor, collect, ignoreTranslateNo, filterByLanguage]);
+  }, [isNew, items, selectedItem, currentLanguage, loadEditor, resetCollectorDraft, editorHasChanges]);
 
   const enabledList = useMemo(() => JSON.stringify([...enabledLanguages]), [enabledLanguages]);
 
