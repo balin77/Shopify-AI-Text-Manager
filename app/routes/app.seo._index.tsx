@@ -135,10 +135,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const primary = shopLocales.find((l) => l.primary);
   const primaryLocale = primary?.locale ?? "";
 
-  // Selected locale from ?locale=xx. Empty = primary (snapshot sentinel).
+  // Selected locale from ?auditLocale=xx. Empty = primary (snapshot sentinel).
   // Unknown/unpublished/non-shop locales fall back to primary so a stale link
   // never renders an empty dashboard.
-  const requestedLocale = new URL(request.url).searchParams.get("locale") ?? "";
+  //
+  // NOT `?locale=`: that name is Shopify's, which appends the merchant's ADMIN
+  // UI language under it on every embedded request — and `resolveMerchantLocale`
+  // reads it to render the app. Writing this dashboard's audit language there
+  // (which is what `switchLocale` used to do) switched the whole admin UI to
+  // English or Spanish for every merchant who had not stored an app language,
+  // and it stuck for the session because useAppNavigation carries the param
+  // onto every navigation. A bookmark on the old name now opens the primary
+  // audit instead of a foreign one — deliberately, since honouring it would be
+  // indistinguishable from honouring Shopify's own parameter.
+  const requestedLocale = new URL(request.url).searchParams.get("auditLocale") ?? "";
   const isValidForeign =
     requestedLocale.length > 0 &&
     requestedLocale !== primaryLocale &&
@@ -275,9 +285,9 @@ export default function SeoDashboard() {
     // Empty string / primary code => primary tab, drop the URL param entirely.
     const next = new URLSearchParams(searchParams);
     if (!locale || locale === primaryLocale) {
-      next.delete("locale");
+      next.delete("auditLocale");
     } else {
-      next.set("locale", locale);
+      next.set("auditLocale", locale);
     }
     setSearchParams(next, { replace: true });
   };
@@ -289,7 +299,10 @@ export default function SeoDashboard() {
   // visible there.
   const openInEditor = (type: AuditType, id: string) => {
     const params = new URLSearchParams({ select: id });
-    if (activeLocale) params.set("locale", activeLocale);
+    // Its OWN name: `locale` is Shopify's admin-UI-language param and rides on
+    // every in-app navigation, so a content locale sent under it cannot be told
+    // apart from the language the merchant's admin is displayed in.
+    if (activeLocale) params.set("contentLocale", activeLocale);
     handleNavigate(TYPE_PATH[type], { searchParams: params });
   };
 
