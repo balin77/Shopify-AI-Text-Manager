@@ -257,7 +257,12 @@ export function findStaleTranslations(
  */
 export function survivesValuePrompt(value: string): boolean {
   if (/[\r\n]/.test(value)) return false;
-  return !/<[a-zA-Z][^>]*>/.test(value);
+  // Opening AND closing tags, and HTML entities: a value carrying any of them
+  // is markup the prompt has no rule to preserve, and matching only `<a…>`
+  // let `…</a>` and `&amp;` straight through into the flattening batch — the
+  // corruption this exists to prevent. A plain `&` is not markup and passes.
+  if (/<\/?[a-zA-Z][^>]*>/.test(value)) return false;
+  return !/&(?:#\d+|#x[0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]{1,31});/.test(value);
 }
 
 export function partitionStaleTranslations(

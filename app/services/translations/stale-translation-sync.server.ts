@@ -1084,6 +1084,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
 
     const stale: StaleTranslation[] = [];
     let unreadable = 0;
+    let declinedByReadBack = 0;
     for (const triple of triples) {
       const [itemResourceId, locale, key] = triple.split(PAIR_SEP);
       const ref = refs.get(itemResourceId);
@@ -1101,13 +1102,13 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       const primaryValue = entry?.value ?? "";
       // The read-back does not agree with what the caller says it wrote, so
       // Shopify has not caught up with the write yet. Translating this would
-      // register an echo-confirmed translation of the OLD text; skipping it is
-      // the same answer a failed read gets.
+      // register an echo-confirmed translation of the OLD text — so it is a
+      // DECLINE: we refuse to try, and the merchant's stored answer decides
+      // whether the stale translation goes. Skipping it outright would leave a
+      // foreign value live on a surface nothing else ever revisits.
       const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
-      if (expectedValue !== undefined && expectedValue !== primaryValue) {
-        unreadable++;
-        continue;
-      }
+      const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
+      if (staleReadBack) declinedByReadBack++;
       stale.push({
         key,
         locale,
@@ -1121,16 +1122,20 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         reason: primaryValue.trim() ? "outdated" : "primary-empty",
         primaryValue,
         digest: entry?.digest ?? null,
-        retranslatable: !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
+        retranslatable: !staleReadBack && !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
       });
     }
 
-    if (unreadable > 0) {
-      logger.warn("[StaleTranslations] Some resources could not be read back — their translations kept", {
+    if (unreadable > 0 || declinedByReadBack > 0) {
+      logger.warn("[StaleTranslations] Some entries could not be read back as written", {
         context: "StaleTranslations",
         shop,
         resourceId,
-        skipped: unreadable,
+        // Skipped entirely — a resource we could not read at all.
+        unreadable,
+        // Read, but not yet showing what the caller wrote: declined, so the
+        // merchant's stored deletion answer decides.
+        staleReadBack: declinedByReadBack,
       });
     }
     if (stale.length === 0) return NOTHING;

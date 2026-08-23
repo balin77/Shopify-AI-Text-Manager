@@ -343,6 +343,11 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
     for (const [resId, keysToDelete] of deletionsByResource) {
       if (keysToDelete.length === 0) continue;
 
+      // Clearing a translation is a merchant write like any other: an in-flight
+      // theme repair must abandon the rest rather than re-create what was just
+      // deleted. Global layer only, like the upsert claim.
+      if (!marketId) markTranslationSaved(resId);
+
       logger.info("[TEMPLATES] Deleting cleared translations from Shopify", {
         context: "Templates",
         resourceId: resId,

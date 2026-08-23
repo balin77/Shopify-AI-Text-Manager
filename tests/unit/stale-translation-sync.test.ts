@@ -707,13 +707,12 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
   });
 
-  it("skips a key whose read-back does not match what the caller wrote", async () => {
+  it("never TRANSLATES a key whose read-back does not match what the caller wrote", async () => {
     // A theme write lands in a FILE and is re-indexed afterwards, so the
     // read-back can still answer with the PREVIOUS text — and with a digest
     // that registers cleanly, which would produce an echo-confirmed translation
     // of text the merchant has just replaced, with the deletion already stood
-    // down. Mismatch is treated exactly like a failed read: nothing translated,
-    // nothing removed.
+    // down.
     const result = await reconcileAfterPrimarySave(
       saveParams({
         changed: [
@@ -726,6 +725,29 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
 
     expect(result.retranslating).toBe(1);
     expect(shopify.registerCalls.map((c) => c.key)).toEqual(["body_html"]);
+  });
+
+  it("...and DECLINES it, so the merchant's stored deletion answer decides", async () => {
+    // Skipping it outright would leave a foreign value live on a surface
+    // nothing else ever revisits; deleting it regardless would ignore a
+    // merchant who switched the deletion off. It is a decline, so their answer
+    // stands — here: on.
+    policy.purgeUnreconciledSurfaces = true;
+    await reconcileAfterPrimarySave(
+      saveParams({ changed: [{ key: "title", expectedValue: "Something else" }] }),
+    );
+    await awaitDetachedRetranslations();
+    expect(shopify.removeCalls.map((c) => c.keys)).toEqual([["title"]]);
+
+    shopify.removeCalls = [];
+    policy.purgeUnreconciledSurfaces = false;
+    await reconcileAfterPrimarySave(
+      saveParams({
+        resourceId: `${PAGE}-b`,
+        changed: [{ key: "title", expectedValue: "Something else" }],
+      }),
+    );
+    await awaitDetachedRetranslations();
     expect(shopify.removeCalls).toEqual([]);
   });
 
