@@ -55,6 +55,12 @@ import {
   useCompletedResults,
   consumeCompletedResult,
 } from "./useAIOperationsStore";
+import {
+  setFieldSuggestion,
+  setAltTextSuggestion,
+  useFieldSuggestions,
+  type SuggestionScope,
+} from "./useAISuggestionStore";
 
 interface TaskData {
   fieldType?: string | null;
@@ -105,7 +111,18 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   // Selected market for market-specific translations ("" = all markets / global).
   const [selectedMarketId, setSelectedMarketId] = useState<string>("");
   const [editableValues, setEditableValues] = useState<Record<string, string>>({});
-  const [aiSuggestions, setAiSuggestions] = useState<Record<string, string>>({});
+  // AI suggestions live OUTSIDE this component (useAISuggestionStore): they
+  // used to be `useState` here, so leaving the page — a main-nav tab, another
+  // item — threw away an answer the merchant had already paid for and never
+  // decided on. The scope is what makes that safe: a suggestion belongs to one
+  // field of one item in one locale under one market, so coming back shows
+  // exactly the ones that were pending, and no others.
+  const suggestionScope = useMemo<SuggestionScope>(
+    () => ({ resourceId: selectedItemId || "", locale: currentLanguage, marketId: selectedMarketId }),
+    [selectedItemId, currentLanguage, selectedMarketId],
+  );
+  const suggestionScopeRef = useLatestRef(suggestionScope);
+  const aiSuggestions = useFieldSuggestions(suggestionScope);
   const [htmlModes, setHtmlModes] = useState<Record<string, 'html' | 'rendered'>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [enabledLanguages, setEnabledLanguages] = useState<string[]>(
@@ -285,6 +302,15 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
       if (!result) continue;
 
       const data = result.result;
+      // The locale/market the request was made from. Missing only for an
+      // operation started before this was carried through — the scope the
+      // merchant is in now is the best answer there, and the wrong one is
+      // simply not shown rather than written anywhere.
+      const resultScope: SuggestionScope = {
+        resourceId: completed.resourceId,
+        locale: result.scope?.locale ?? suggestionScopeRef.current.locale,
+        marketId: result.scope?.marketId ?? suggestionScopeRef.current.marketId,
+      };
 
       // Apply based on action type
       if (completed.action === "generateAIText" || completed.action === "formatAIText") {
@@ -292,10 +318,25 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const generatedContent = data.generatedContent as string;
         const fieldType = data.fieldType as string;
         if (generatedContent && fieldType) {
-          setAiSuggestions((prev) => ({
-            ...prev,
-            [fieldType]: generatedContent,
-          }));
+          setFieldSuggestion(resultScope, fieldType, generatedContent);
+        }
+      }
+      // The keyword pass answers per field under `value`, and the alt-text
+      // generator per image index. Both used to be consumed here and then
+      // dropped on the floor — the merchant navigated away mid-request and the
+      // answer they had paid for never appeared anywhere.
+      if (completed.action === "insertKeyword") {
+        const value = data.value as string;
+        const fieldType = (data.fieldType as string) || completed.fieldKey;
+        if (value && fieldType && !data.skipped) {
+          setFieldSuggestion(resultScope, fieldType, value);
+        }
+      }
+      if (completed.action === "generateAltText") {
+        const altText = data.altText as string;
+        const imageIndex = data.imageIndex as number | undefined;
+        if (altText && typeof imageIndex === "number") {
+          setAltTextSuggestion(resultScope, imageIndex, altText);
         }
       }
       // For translate actions, the server saved the translation to DB.
@@ -527,7 +568,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   const {
     imageAltTexts, setImageAltTexts,
     fallbackAltTextIndices,
-    altTextSuggestions, setAltTextSuggestions,
+    altTextSuggestions,
     originalAltTexts, setOriginalAltTexts,
     imageAltTextsRef, originalAltTextsRef,
     pendingAltTextAutoSaveRef,
@@ -562,7 +603,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     submitAIAction: (data, fieldKey, onSuccess, onError) => submitAIActionRef.current(data, fieldKey, onSuccess, onError),
     showInfoBox,
     t,
-    setAiSuggestions,
+    suggestionScope,
   });
 
   // Change detection — unified across standard, template, and metaobject content types
@@ -928,8 +969,13 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
     const action = data.action || "unknown";
 
-    // Mark in global store (spinner visible immediately, survives navigation)
-    markOperationActive(itemId, fieldKey, action, data.targetLocale);
+    // Mark in global store (spinner visible immediately, survives navigation).
+    // The scope goes in with it so an answer parked while the merchant is
+    // elsewhere is applied to the locale/market it was ASKED from.
+    markOperationActive(itemId, fieldKey, action, data.targetLocale, {
+      locale: suggestionScopeRef.current.locale,
+      marketId: suggestionScopeRef.current.marketId,
+    });
 
     try {
       const formData = new FormData();
@@ -1029,10 +1075,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     if (fetcher.data?.success && (fetcher.data.actionType === "generateAIText" || fetcher.data.actionType === "formatAIText")) {
       const { fieldType, generatedContent } = fetcher.data as GeneratedContentResponse;
       if (generatedContent && generatedContent.trim()) {
-        setAiSuggestions((prev) => ({
-          ...prev,
-          [fieldType]: generatedContent,
-        }));
+        setFieldSuggestion(suggestionScopeRef.current, fieldType, generatedContent);
       }
       // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2). NOTE: the PRIMARY
       // generate path is the raw-fetch submitAIAction flow — its warning
@@ -1178,10 +1221,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   useEffect(() => {
     if (fetcher.data?.success && fetcher.data.actionType === "generateAltText") {
       const { altText, imageIndex } = fetcher.data as AltTextResponse;
-      setAltTextSuggestions(prev => ({
-        ...prev,
-        [imageIndex]: altText
-      }));
+      setAltTextSuggestion(suggestionScopeRef.current, imageIndex, altText);
     }
   }, [fetcher.data]);
 
@@ -2200,6 +2240,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     enabledLanguages,
     editableValues,
     aiSuggestions,
+    suggestionScope,
     imageAltTexts,
     originalAltTexts,
     selectedImageIndex,
@@ -2243,14 +2284,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     setSelectedMarketId,
     markets,
     setEditableValues,
-    setAiSuggestions,
     setHtmlModes,
     setEnabledLanguages,
     setIsAcceptAndTranslateFlow,
     setIsLoadingData,
     setIsClearAllModalOpen,
     setImageAltTexts,
-    setAltTextSuggestions,
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,

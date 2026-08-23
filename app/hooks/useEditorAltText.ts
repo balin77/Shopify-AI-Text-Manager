@@ -15,6 +15,12 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useLatestRef } from "./useLatestRef";
 import { getItemFieldValue, buildLocaleKey } from "./useUiDataLoader";
 import { markOperationActive, markOperationFailed } from "./useAIOperationsStore";
+import {
+  setAltTextSuggestion,
+  clearAltTextSuggestion,
+  useAltTextSuggestions,
+  type SuggestionScope,
+} from "./useAISuggestionStore";
 import type {
   ShopLocale,
   ContentImage,
@@ -56,7 +62,8 @@ interface UseEditorAltTextProps {
   ) => void;
   showInfoBox: (message: string, tone?: import("../types/content-editor.types").InfoBoxTone, title?: string) => void;
   t: TranslationStrings;
-  setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  /** Item + locale + market this editor is showing — the key AI suggestions are stored under. */
+  suggestionScope: SuggestionScope;
 }
 
 interface UseEditorAltTextReturn {
@@ -66,7 +73,6 @@ interface UseEditorAltTextReturn {
   fallbackAltTextIndices: Set<number>;
   setImageAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   altTextSuggestions: Record<number, string>;
-  setAltTextSuggestions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   originalAltTexts: Record<number, string>;
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   imageAltTextsRef: React.MutableRefObject<Record<number, string>>;
@@ -121,7 +127,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     submitAIAction,
     showInfoBox,
     t,
-    setAiSuggestions,
+    suggestionScope,
   } = props;
 
   // ============================================================================
@@ -130,7 +136,10 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
 
   // Alt-text state for images (indexed by image position)
   const [imageAltTexts, setImageAltTexts] = useState<Record<number, string>>({});
-  const [altTextSuggestions, setAltTextSuggestions] = useState<Record<number, string>>({});
+  // Suggestions live in the global store, not in this component: an answer the
+  // merchant has not decided on must survive them leaving the page and coming
+  // back (see useAISuggestionStore).
+  const altTextSuggestions = useAltTextSuggestions(suggestionScope);
   // Track original alt-texts to detect changes (using state to trigger re-renders)
   const [originalAltTexts, setOriginalAltTexts] = useState<Record<number, string>>({});
   const imageAltTextsRef = useLatestRef(imageAltTexts);
@@ -182,7 +191,9 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     const image = getImageAtIndex(selectedItem, imageIndex);
     if (!image) return;
 
-    const requestItemId = selectedItem.id;
+    // Captured now, not read when the answer lands: the suggestion belongs to
+    // the item, locale and market it was requested from.
+    const requestScope: SuggestionScope = { ...suggestionScope, resourceId: selectedItem.id };
     const productTitle = getItemFieldValue(selectedItem, 'title', primaryLocale, config);
     const mainLanguage = shopLocales.find((l: ShopLocale) => l.locale === primaryLocale)?.name || primaryLocale;
 
@@ -199,13 +210,12 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       },
       `altText_${imageIndex}`,
       (result) => {
-        // Guard: discard if user switched to a different item during the request.
-        if (selectedItemIdRef.current !== requestItemId) return;
+        // Stored under the scope the request was MADE in, so navigating away
+        // mid-request no longer throws the answer away — it is waiting on the
+        // image when the merchant comes back. (`requestScope` carries the item
+        // id, which is what the old `selectedItemIdRef` guard checked for.)
         if (result.altText) {
-          setAltTextSuggestions((prev) => ({
-            ...prev,
-            [imageIndex]: result.altText as string,
-          }));
+          setAltTextSuggestion(requestScope, imageIndex, result.altText as string);
         }
       }
     );
@@ -704,11 +714,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
       }
     }
 
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
+    clearAltTextSuggestion(suggestionScope, imageIndex);
 
 
 
@@ -755,11 +761,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     // Update the UI state
     setImageAltTexts(newAltTexts);
 
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
+    clearAltTextSuggestion(suggestionScope, imageIndex);
 
     // ========================================================================
     // FOREIGN LOCALE PATH
@@ -936,19 +938,17 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
   };
 
   const handleRejectAltTextSuggestion = useCallback((imageIndex: number) => {
-    setAltTextSuggestions(prev => {
-      const newSuggestions = { ...prev };
-      delete newSuggestions[imageIndex];
-      return newSuggestions;
-    });
-  }, []);
+    clearAltTextSuggestion(suggestionScope, imageIndex);
+  }, [suggestionScope]);
 
-  // Reset alt-text and AI suggestion state when selected item changes
+  // Reset alt-text state when the selected item changes. AI suggestions are
+  // NOT reset here any more: they are keyed by item + locale + market in the
+  // global store, so another item's suggestions are simply out of scope —
+  // and clearing on arrival would delete the very ones the merchant came back
+  // for.
   useEffect(() => {
     setImageAltTexts({});
-    setAltTextSuggestions({});
     setOriginalAltTexts({});
-    setAiSuggestions({});
     localAltTextOverlayRef.current = {};
   }, [selectedItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1022,7 +1022,6 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     setImageAltTexts,
     fallbackAltTextIndices,
     altTextSuggestions,
-    setAltTextSuggestions,
     originalAltTexts,
     setOriginalAltTexts,
     imageAltTextsRef,

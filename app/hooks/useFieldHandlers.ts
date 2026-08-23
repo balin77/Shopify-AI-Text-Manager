@@ -14,6 +14,12 @@ import { getItemFieldValue, buildLocaleKey, buildDeletedKey } from "./useUiDataL
 import { debugLog } from "../utils/debug";
 import { writeLastSelectedId } from "../utils/last-selected-item";
 import { markOperationActive, markOperationFailed, isOperationActive } from "./useAIOperationsStore";
+import {
+  setFieldSuggestion,
+  clearFieldSuggestion,
+  clearAltTextSuggestionsForScope,
+  type SuggestionScope,
+} from "./useAISuggestionStore";
 import { confirmNavigation } from "./useSaveBar";
 import type {
   TranslatableContentItem,
@@ -53,6 +59,8 @@ export interface FieldHandlerProps {
   enabledLanguages: string[];
   editableValues: Record<string, string>;
   aiSuggestions: Record<string, string>;
+  /** Item + locale + market the suggestions above are stored under. */
+  suggestionScope: SuggestionScope;
   imageAltTexts: Record<number, string>;
   originalAltTexts: Record<number, string>;
   selectedImageIndex: number;
@@ -127,14 +135,12 @@ export interface FieldHandlerProps {
   /** All markets (for the language-change reset guard). */
   markets: MarketInfo[];
   setEditableValues: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setHtmlModes: React.Dispatch<React.SetStateAction<Record<string, "html" | "rendered">>>;
   setEnabledLanguages: React.Dispatch<React.SetStateAction<string[]>>;
   setIsAcceptAndTranslateFlow: React.Dispatch<React.SetStateAction<boolean>>;
   setIsLoadingData: React.Dispatch<React.SetStateAction<boolean>>;
   setIsClearAllModalOpen: React.Dispatch<React.SetStateAction<boolean>>;
   setImageAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
-  setAltTextSuggestions: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setOriginalAltTexts: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   setFallbackFields: React.Dispatch<React.SetStateAction<Set<string>>>;
   setTemplateValuesVersion: React.Dispatch<React.SetStateAction<number>>;
@@ -199,6 +205,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     enabledLanguages,
     editableValues,
     aiSuggestions,
+    suggestionScope,
     imageAltTexts,
     originalAltTexts,
     selectedImageIndex,
@@ -242,14 +249,12 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     setSelectedMarketId,
     markets,
     setEditableValues,
-    setAiSuggestions,
     setHtmlModes,
     setEnabledLanguages,
     setIsAcceptAndTranslateFlow,
     setIsLoadingData,
     setIsClearAllModalOpen,
     setImageAltTexts,
-    setAltTextSuggestions,
     setOriginalAltTexts,
     setFallbackFields,
     setTemplateValuesVersion,
@@ -412,6 +417,10 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
   if (!selectedItemId || !selectedItem) return;
 
   const requestItemId = selectedItemId;
+  // The scope the merchant ASKED from. A suggestion that arrives after they
+  // moved on belongs here, not to wherever they are now — and this is what
+  // makes it wait for them instead of being dropped.
+  const requestScope: SuggestionScope = { ...suggestionScope, resourceId: requestItemId };
   const currentValue = editableValues[fieldKey] || "";
   const contextTitle = editableValues.title || "";
   const contextDescription = editableValues.description || editableValues.body || "";
@@ -441,12 +450,10 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
     },
     fieldKey,
     (result) => {
-      // Guard: discard if user has switched to a different item since the request was made
+      setFieldSuggestion(requestScope, fieldKey, result.generatedContent as string);
+      // The WARNING is only worth showing while the merchant is still looking
+      // at the item it belongs to; the suggestion above is kept either way.
       if (selectedItemIdRef.current !== requestItemId) return;
-      setAiSuggestions((prev) => ({
-        ...prev,
-        [fieldKey]: result.generatedContent as string,
-      }));
       // Stuffing guard (PLAN_KEYWORDS_EXPANSION.md §3.2): the server retried
       // once and the output STILL over-uses a tracked keyword — warn so the
       // merchant reviews the suggestion before accepting it. This raw-fetch
@@ -468,6 +475,7 @@ const handleFormatAI = (fieldKey: string) => {
   if (!selectedItemId || !selectedItem) return;
 
   const requestItemId = selectedItemId;
+  const requestScope: SuggestionScope = { ...suggestionScope, resourceId: requestItemId };
   const currentValue = editableValues[fieldKey] || "";
   if (!currentValue) {
     showInfoBox(
@@ -504,12 +512,8 @@ const handleFormatAI = (fieldKey: string) => {
     },
     fieldKey,
     (result) => {
-      // Guard: discard if user has switched to a different item since the request was made
+      setFieldSuggestion(requestScope, fieldKey, result.generatedContent as string);
       if (selectedItemIdRef.current !== requestItemId) return;
-      setAiSuggestions((prev) => ({
-        ...prev,
-        [fieldKey]: result.generatedContent as string,
-      }));
       // Formatting may now work a missing target keyword in, so it can overshoot
       // the same way generation can — and warns the same way.
       if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) {
@@ -543,6 +547,7 @@ const handleInsertKeywords = async () => {
       }
     | undefined;
   const requestItemId = selectedItemId;
+  const requestScope: SuggestionScope = { ...suggestionScope, resourceId: requestItemId };
 
   // The fields a keyword can live in, in the order the server understands
   // them. Slugs are deliberately absent — the pass skips them anyway, and
@@ -580,11 +585,13 @@ const handleInsertKeywords = async () => {
         },
         fieldKey,
         (result) => {
-          if (selectedItemIdRef.current !== requestItemId) return;
           if (result.skipped) return;
+          setFieldSuggestion(requestScope, fieldKey, result.value as string);
+          // The run's own bookkeeping (the summary box at the end) only makes
+          // sense while the merchant is still on the item it summarises.
+          if (selectedItemIdRef.current !== requestItemId) return;
           changed += 1;
           if ((result as { keywordStuffingWarning?: boolean }).keywordStuffingWarning) stuffing = true;
-          setAiSuggestions((prev) => ({ ...prev, [fieldKey]: result.value as string }));
         },
       );
     }
@@ -1069,11 +1076,7 @@ const handleAcceptSuggestion = (fieldKey: string) => {
   // Update the UI state
   setEditableValues(newValues);
 
-  setAiSuggestions((prev) => {
-    const newSuggestions = { ...prev };
-    delete newSuggestions[fieldKey];
-    return newSuggestions;
-  });
+  clearFieldSuggestion(suggestionScope, fieldKey);
 };
 
 const handleAcceptAndTranslate = (fieldKey: string) => {
@@ -1116,11 +1119,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   // Accept the suggestion into the currently-viewed locale
   setEditableValues(newValues);
 
-  setAiSuggestions((prev) => {
-    const newSuggestions = { ...prev };
-    delete newSuggestions[fieldKey];
-    return newSuggestions;
-  });
+  clearFieldSuggestion(suggestionScope, fieldKey);
 
   // Get context title for translation
   const contextTitle = getItemFieldValue(selectedItem!, 'title', primaryLocale, config) || selectedItem!.id || "";
@@ -1380,12 +1379,8 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
 };
 
 const handleRejectSuggestion = useCallback((fieldKey: string) => {
-  setAiSuggestions((prev) => {
-    const newSuggestions = { ...prev };
-    delete newSuggestions[fieldKey];
-    return newSuggestions;
-  });
-}, []);
+  clearFieldSuggestion(suggestionScope, fieldKey);
+}, [suggestionScope]);
 
 const handleLanguageChange = async (locale: string) => {
   if (hasChanges || isSavingCurrentItem) {
@@ -1562,7 +1557,7 @@ const handleClearAllConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
-  setAltTextSuggestions({});
+  clearAltTextSuggestionsForScope(suggestionScope);
 
   // Close modal
   setIsClearAllModalOpen(false);
@@ -1617,7 +1612,7 @@ const handleClearAllForLocaleConfirm = () => {
     setImageAltTexts(clearedAltTexts);
     setOriginalAltTexts({});
   }
-  setAltTextSuggestions({});
+  clearAltTextSuggestionsForScope(suggestionScope);
 
   // Close modal
   setIsClearAllModalOpen(false);
