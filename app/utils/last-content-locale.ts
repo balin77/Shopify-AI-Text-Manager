@@ -21,10 +21,10 @@
  * USER-ACTION-driven only. A restore effect that writes back what it just read
  * turns any transient state into the new stored answer.
  *
- * A stored locale is never trusted on its own: the caller checks it against the
- * shop's published locales, because a language can be unpublished between two
- * sessions and reopening the editor in a locale the shop no longer serves would
- * offer to write translations nobody can see.
+ * A stored locale is never trusted on its own: it is checked against the shop's
+ * locales, because a language can be removed or unpublished between two
+ * sessions, and reopening the editor in one the storefront no longer serves
+ * would offer to write translations nobody can see.
  */
 
 const KEY = "contentpilot_last_content_locale";
@@ -50,19 +50,24 @@ export function writeLastContentLocale(locale: string): void {
  * Returns `null` for "keep the primary locale", which is also the answer for
  * every doubtful case: a deep link that already named a language, an empty
  * locale list (a FAILED lookup, not a single-language shop), a language the
- * shop no longer publishes, and the primary locale itself.
+ * shop no longer has or no longer publishes, and the primary locale itself.
+ *
+ * `published` REFUSES where it is present and false; where the flag is missing
+ * entirely it decides nothing, because an absent key is not a negative answer
+ * (the trap CLAUDE.md names for `translatableContent` and `attributesSyncedAt`
+ * alike). Everything the loader factory delivers carries it.
  */
 export function pickRestoredLocale(input: {
-  /** `?locale=` from the URL, already applied by the caller when present. */
+  /** `?contentLocale=` from the URL, already applied by the caller when present. */
   initialLocale?: string;
   stored: string | null;
   primaryLocale: string;
-  shopLocales: Array<{ locale: string; primary?: boolean }>;
+  shopLocales: Array<{ locale: string; primary?: boolean; published?: boolean }>;
 }): string | null {
   const { initialLocale, stored, primaryLocale, shopLocales } = input;
   // A deep link names the language explicitly; it outranks what was stored.
   if (initialLocale) return null;
   if (!stored || stored === primaryLocale) return null;
-  if (!shopLocales.some((l) => l.locale === stored && !l.primary)) return null;
+  if (!shopLocales.some((l) => l.locale === stored && !l.primary && l.published !== false)) return null;
   return stored;
 }

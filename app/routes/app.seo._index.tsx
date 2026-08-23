@@ -289,7 +289,10 @@ export default function SeoDashboard() {
   // visible there.
   const openInEditor = (type: AuditType, id: string) => {
     const params = new URLSearchParams({ select: id });
-    if (activeLocale) params.set("locale", activeLocale);
+    // Its OWN name: `locale` is Shopify's admin-UI-language param and rides on
+    // every in-app navigation, so a content locale sent under it cannot be told
+    // apart from the language the merchant's admin is displayed in.
+    if (activeLocale) params.set("contentLocale", activeLocale);
     handleNavigate(TYPE_PATH[type], { searchParams: params });
   };
 

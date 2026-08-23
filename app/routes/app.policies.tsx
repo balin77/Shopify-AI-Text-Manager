@@ -200,7 +200,11 @@ export default function PoliciesPage() {
   // report's "open in editor" could only drop the merchant on the list.
   const [searchParams] = useSearchParams();
   const initialItemId = searchParams.get("select") || undefined;
-  const initialLocale = searchParams.get("locale") || undefined;
+  // NOT `?locale=` — Shopify appends the merchant's ADMIN UI language under
+  // that name on every embedded request, and useAppNavigation carries every
+  // param along, so reading it here opened the content editor in whatever
+  // language the admin happens to be in (see the initialLocale docstring).
+  const initialLocale = searchParams.get("contentLocale") || undefined;
 
   // Initialize unified content editor
   const editor = useUnifiedContentEditor({

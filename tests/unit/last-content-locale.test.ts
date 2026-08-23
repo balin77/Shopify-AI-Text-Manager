@@ -6,9 +6,9 @@ import {
 } from "~/utils/last-content-locale";
 
 const LOCALES = [
-  { locale: "de", primary: true },
-  { locale: "fr" },
-  { locale: "es" },
+  { locale: "de", primary: true, published: true },
+  { locale: "fr", published: true },
+  { locale: "es", published: false },
 ];
 
 const pick = (over: Partial<Parameters<typeof pickRestoredLocale>[0]> = {}) =>
@@ -38,15 +38,27 @@ describe("last-content-locale", () => {
     expect(pick({ stored: null })).toBeNull();
   });
 
-  it("lets a ?locale= deep link win over the stored language", () => {
+  it("lets a ?contentLocale= deep link win over the stored language", () => {
     // The initializer already applied it; overriding here would fight a link
     // the merchant just followed.
     expect(pick({ stored: "fr", initialLocale: "es" })).toBeNull();
     expect(pick({ stored: "fr", initialLocale: "de" })).toBeNull();
   });
 
-  it("refuses a language the shop no longer publishes", () => {
+  it("refuses a language the shop no longer has", () => {
     expect(pick({ stored: "it" })).toBeNull();
+  });
+
+  it("refuses a language the storefront no longer serves", () => {
+    // Unpublished: the editor would offer to write translations nobody can see.
+    expect(pick({ stored: "es" })).toBeNull();
+  });
+
+  it("does not refuse on a MISSING published flag", () => {
+    // An absent key is not a negative answer — narrower callers build this
+    // type by hand, and a silently dead restore is how the ?locale= collision
+    // went unnoticed.
+    expect(pick({ stored: "fr", shopLocales: [{ locale: "de", primary: true }, { locale: "fr" }] })).toBe("fr");
   });
 
   it("refuses everything when the locale lookup failed", () => {
