@@ -265,9 +265,15 @@ describe("summariseTaskResult — distributeKeywords is discriminated by its own
   });
 });
 
-// ── 6. one type, two blobs — translation ────────────────────────────────────
+// ── 6. the translation family — twenty call sites, one summariser ───────────
 
-describe("summariseTaskResult — translation is written by two runners", () => {
+/**
+ * `translation` (nine call sites) and `bulkTranslation` (eleven) are the
+ * biggest task family in the app and the only one whose partial failure was
+ * already a STATUS (`completed_with_errors`) with nothing behind it. Every
+ * blob below was read off a real `task.update` in the repo.
+ */
+describe("summariseTaskResult — the translation family", () => {
   it("direct-translations: {translated, total}", () => {
     const summary = summariseTaskResult("translation", json({ translated: 12, total: 14 }));
     expect(keys(summary)).toEqual(["translated", "total"]);
@@ -279,10 +285,306 @@ describe("summariseTaskResult — translation is written by two runners", () => 
     expect(keys(summary)).toEqual(["retranslated", "purged"]);
   });
 
-  it("a blob matching neither shape returns null instead of guessing", () => {
+  it("the grouped-field sync: {synced, failed, total}", () => {
+    // api.grouped-field-translations.tsx L204 — a fourth blob under
+    // `bulkTranslation`, and the one that sets completed_with_errors.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({ synced: 18, failed: 2, total: 20 }),
+    );
+    expect(keys(summary)).toEqual(["synced", "total", "failed"]);
+    expect(summary?.lines).toContainEqual({ labelKey: "failed", value: "2", tone: "critical" });
+  });
+
+  it("sub-resources, one locale: {translatedCount, failedCount, targetLocale}", () => {
+    // sub-resources.action.ts L488. `targetLocale` alone is not a line — the
+    // task row already names the locale, and a lone locale is not a summary.
+    const summary = summariseTaskResult(
+      "translation",
+      json({ translatedCount: 6, failedCount: 0, targetLocale: "fr" }),
+    );
+    expect(keys(summary)).toEqual(["translated", "failed"]);
+    expect(valueOf(summary, "translated")).toBe("6");
+    expect(summary?.lines).toContainEqual({ labelKey: "failed", value: "0" });
+  });
+
+  it("sub-resources, all locales: {translatedLocales[], failedLocales[]}", () => {
+    // sub-resources.action.ts L689.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({ translatedLocales: ["fr", "de"], failedLocales: ["it"] }),
+    );
+    expect(keys(summary)).toEqual(["localesTranslated", "localesFailed"]);
+    expect(valueOf(summary, "localesTranslated")).toBe("2");
+    expect(summary?.lines).toContainEqual({
+      labelKey: "localesFailed",
+      value: "1",
+      tone: "critical",
+    });
+    // The point of the exercise: the merchant reads the code itself.
+    expect(summary?.failures).toEqual([{ subject: "", message: "it" }]);
+  });
+
+  it("translateAll: the failed locales are named, not just counted", () => {
+    // translation.action.ts L416 — the shape behind completed_with_errors.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        success: true,
+        locales: ["fr", "de", "it"],
+        failedLocales: ["it", "nl"],
+        rejectedFields: {},
+        skippedFields: {},
+      }),
+    );
+    expect(keys(summary)).toEqual([
+      "localesTranslated",
+      "localesFailed",
+      "fieldsRejected",
+      "fieldsSkipped",
+    ]);
+    // `locales` is the TARGET list — shopify-content.service.ts L1381 seeds the
+    // map with one empty entry per target locale BEFORE the first AI call, so
+    // a locale that failed outright is still in it. Reporting its raw length
+    // would print "3 translated" directly above "2 failed".
+    expect(valueOf(summary, "localesTranslated")).toBe("2");
+    expect(summary?.failures).toEqual([
+      { subject: "", message: "it" },
+      { subject: "", message: "nl" },
+    ]);
+    // Present-but-empty records are a real 0, untoned.
+    expect(summary?.lines).toContainEqual({ labelKey: "fieldsRejected", value: "0" });
+    expect(summary?.lines).toContainEqual({ labelKey: "fieldsSkipped", value: "0" });
+  });
+
+  it("rejected and skipped fields name the FIELDS, per locale", () => {
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        success: true,
+        locales: ["fr", "de"],
+        failedLocales: [],
+        rejectedFields: { fr: ["seoTitle", "body_html"], de: ["body_html"] },
+        skippedFields: { fr: ["handle"] },
+      }),
+    );
+    // The count is the number of (locale, field) PAIRS.
+    expect(summary?.lines).toContainEqual({
+      labelKey: "fieldsRejected",
+      value: "3",
+      tone: "critical",
+    });
+    // A deliberate skip is a warning, not an error.
+    expect(summary?.lines).toContainEqual({
+      labelKey: "fieldsSkipped",
+      value: "1",
+      tone: "warning",
+    });
+    // Only the REJECTED fields are listed. The panel renders `failures` as a
+    // red "failed items" box, and a skipped handle is a deliberate outcome on
+    // a task that finished `completed` — its warning count line says it
+    // happened without dressing a success up as a failure.
+    expect(summary?.failures).toEqual([
+      { subject: "fr", message: "seoTitle, body_html" },
+      { subject: "de", message: "body_html" },
+    ]);
+  });
+
+  it("a locale that only SKIPPED a field is still listed when it failed", () => {
+    // The bare-code entry is suppressed by a REJECTED group, never by a
+    // skipped one — nothing else would name that locale.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({ failedLocales: ["fr"], skippedFields: { fr: ["handle"] } }),
+    );
+    expect(summary?.failures).toEqual([{ subject: "", message: "fr" }]);
+    expect(summary?.lines).toContainEqual({
+      labelKey: "fieldsSkipped",
+      value: "1",
+      tone: "warning",
+    });
+  });
+
+  it("a locale whose fields are named is not listed a second time as a bare code", () => {
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        failedLocales: ["fr", "it"],
+        rejectedFields: { fr: ["seoTitle"] },
+      }),
+    );
+    // "fr" is covered by the field entry; only "it" has nothing more to say.
+    expect(summary?.failures).toEqual([
+      { subject: "", message: "it" },
+      { subject: "fr", message: "seoTitle" },
+    ]);
+  });
+
+  it("translateFieldToAllLocales counts the translations map as LOCALES", () => {
+    // translation.action.ts L706: `{translations: Record<locale, string>,
+    // fieldType, …}` — `fieldType` is what says the keys are locales.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        translations: { fr: "Boîte", de: "Kiste", it: "Scatola" },
+        fieldType: "title",
+        failedLocales: [],
+        rejectedFields: {},
+        skippedFields: {},
+      }),
+    );
+    expect(valueOf(summary, "localesTranslated")).toBe("3");
+    expect(keys(summary)).not.toContain("fieldsTranslated");
+
+    // L695 fills the map for EVERY locale of the seeded set, failures with an
+    // empty string — so neither an empty value nor a failed locale counts.
+    const partial = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        translations: { fr: "Boîte", de: "", it: "Scatola" },
+        fieldType: "title",
+        failedLocales: ["it"],
+      }),
+    );
+    expect(valueOf(partial, "localesTranslated")).toBe("1");
+  });
+
+  it("translateAllForLocale counts the same map as FIELDS", () => {
+    // translation.action.ts L578: one locale, `{fieldKey: value}`. Counting
+    // those keys as locales would report "4 languages" for a one-locale run.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        success: true,
+        targetLocale: "fr",
+        translations: { title: "Boîte", body_html: "…", seoTitle: "…", handle: "boite" },
+        failedLocales: [],
+        rejectedFields: {},
+        skippedFields: {},
+      }),
+    );
+    expect(valueOf(summary, "fieldsTranslated")).toBe("4");
+    expect(keys(summary)).not.toContain("localesTranslated");
+  });
+
+  it("an empty value is not a translated field, and a failed locale has none", () => {
+    const partial = summariseTaskResult(
+      "bulkTranslation",
+      json({ targetLocale: "fr", translations: { title: "Boîte", body_html: "", seoTitle: "  " } }),
+    );
+    expect(valueOf(partial, "fieldsTranslated")).toBe("1");
+
+    // The one locale of the run failed: nothing was saved, so a field count
+    // would describe an AI answer nobody received.
+    const failed = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        targetLocale: "fr",
+        translations: { title: "Boîte" },
+        failedLocales: ["fr"],
+      }),
+    );
+    expect(keys(failed)).toEqual(["localesFailed"]);
+  });
+
+  it("a translations map with neither discriminator is not counted at all", () => {
+    // Rather than guess whether its keys are locales or fields.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({ translations: { fr: "x" }, failedLocales: ["it"] }),
+    );
+    expect(keys(summary)).toEqual(["localesFailed"]);
+  });
+
+  it("the alt-text bulk blob reports its locale counts and drops the payload", () => {
+    // alt-text.action.ts L514/L662.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        translatedAltTexts: { fr: "Boîte kumiko", it: "Scatola kumiko" },
+        imageIndex: 2,
+        targetLocales: ["fr", "it"],
+        savedLocales: ["fr"],
+        failedLocales: ["it"],
+      }),
+    );
+    expect(keys(summary)).toEqual(["localesSaved", "localesTargeted", "localesFailed"]);
+    expect(valueOf(summary, "localesSaved")).toBe("1");
+    expect(valueOf(summary, "localesTargeted")).toBe("2");
+    expect(summary?.failures).toEqual([{ subject: "", message: "it" }]);
+    // The translated text itself is content, not a summary.
+    expect(JSON.stringify(summary)).not.toContain("Boîte kumiko");
+  });
+
+  it("a payload-only blob returns null instead of dumping it", () => {
+    // alt-text.action.ts L391 — the single alt-text translation: nothing but
+    // the translated string, an image index and the locale.
+    expect(
+      summariseTaskResult(
+        "translation",
+        json({ translatedAltText: "Boîte kumiko", imageIndex: 2, targetLocale: "fr" }),
+      ),
+    ).toBeNull();
+    // alt-text.handler.ts L1278 — `{<imageIndex>: <alt text>}`.
+    expect(summariseTaskResult("translation", json({ "0": "Boîte", "1": "Scatola" }))).toBeNull();
+  });
+
+  it("the results that are not JSON objects at all return null", () => {
+    // These are real stored values, and a registered type answering null is a
+    // state the consumer has to tolerate (module rule 4).
+    const NON_JSON = [
+      // templates-translate-field.action.ts L144 — the translated value itself,
+      // truncated to 1000 characters.
+      '"Eine Vase aus Walnussholz"',
+      "Eine Vase aus Walnussholz",
+      // templates-translate-field.action.ts L316 / templates-translate-all L230.
+      "Translated to 4 locales",
+      "Translated 12 fields to 4 locales",
+      // alt-text.handler.ts L730 / text-translation.handler.ts L1512 — an
+      // ARRAY of per-locale AI responses.
+      json([{ locale: "fr", response: "Boîte" }]),
+      // ai-queue.service.ts L700 truncates any recovered result to 500 chars.
+      '{"locales":["fr","de"],"failedLoc',
+    ];
+    for (const stored of NON_JSON) {
+      for (const type of ["translation", "bulkTranslation"]) {
+        expect(() => summariseTaskResult(type, stored)).not.toThrow();
+        expect(summariseTaskResult(type, stored)).toBeNull();
+      }
+    }
+  });
+
+  it("a blob matching no shape returns null instead of guessing", () => {
     expect(summariseTaskResult("translation", json({ locale: "fr", ok: true }))).toBeNull();
+    expect(summariseTaskResult("bulkTranslation", json({ success: true }))).toBeNull();
     // A count of the wrong type is not a count.
     expect(summariseTaskResult("translation", json({ translated: "12" }))).toBeNull();
+    // Neither is a locale list of the wrong type.
+    expect(summariseTaskResult("bulkTranslation", json({ failedLocales: "fr" }))).toBeNull();
+    expect(summariseTaskResult("bulkTranslation", json({ rejectedFields: [] }))).toBeNull();
+  });
+
+  it("both type spellings resolve to the same summary", () => {
+    const blob = json({ locales: ["fr"], failedLocales: ["it"] });
+    expect(summariseTaskResult("translation", blob)).toEqual(
+      summariseTaskResult("bulkTranslation", blob),
+    );
+  });
+
+  it("garbage entries inside the lists are dropped, not rendered", () => {
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        locales: ["fr", 7, "", "   ", null],
+        failedLocales: ["it", 9],
+        rejectedFields: { fr: "not-an-array", de: [], it: ["title", 3] },
+      }),
+    );
+    expect(valueOf(summary, "localesTranslated")).toBe("1");
+    expect(valueOf(summary, "localesFailed")).toBe("1");
+    // `fr` has no array and `de` an empty one — neither is a named field.
+    expect(valueOf(summary, "fieldsRejected")).toBe("1");
+    expect(summary?.failures).toEqual([{ subject: "it", message: "title" }]);
   });
 });
 
@@ -303,7 +605,9 @@ describe("summariseTaskResult — seoBulkFix carries two failure shapes", () => 
     expect(valueOf(summary, "succeeded")).toBe("1");
     expect(summary?.lines).toContainEqual({ labelKey: "failed", value: "1", tone: "critical" });
     expect(summary?.failures).toHaveLength(1);
-    expect(summary?.failures[0].subject).toBe("product gid://shopify/Product/8123");
+    // P5: the raw GID is a machine string — the subject names what a merchant
+    // can act on, and the numeric tail is what the admin URL carries.
+    expect(summary?.failures[0].subject).toBe("Product 8123");
     expect(summary?.failures[0].subject).not.toBe("");
     expect(summary?.failures[0].message).toBe("Item no longer exists");
   });
@@ -389,12 +693,14 @@ describe("summariseTaskResult — altTextTemplateApply.errors is a string[]", ()
     expect(summary?.lines).toContainEqual({ labelKey: "errors", value: "0" });
     expect(summary?.failures).toEqual([]);
 
+    // P5: the count is the LENGTH OF THE LIST, not of the raw array — a "3"
+    // above an empty list is a number the merchant cannot reconcile.
     const blanks = summariseTaskResult(
       "altTextTemplateApply",
       json({ attempted: 2, errors: ["", "   ", 7] }),
     );
     expect(blanks?.failures).toEqual([]);
-    expect(valueOf(blanks, "errors")).toBe("3");
+    expect(valueOf(blanks, "errors")).toBe("0");
   });
 
   it("a numeric `errors` is read as the count it is", () => {
@@ -424,8 +730,8 @@ describe("summariseTaskResult — the bulk failure list is the only record there
     const summary = summariseTaskResult("seoBulkMeta", json({ saved: 37, failures: [CELL, ROW] }));
     expect(keys(summary)).toEqual(["saved", "failed"]);
     expect(summary?.lines).toContainEqual({ labelKey: "failed", value: "2", tone: "critical" });
-    expect(summary?.failures[0].subject).toBe("gid://shopify/Product/8123 · seo.metaDescription");
-    expect(summary?.failures[1].subject).toBe("gid://shopify/Page/55");
+    expect(summary?.failures[0].subject).toBe("Product 8123 · seo.metaDescription");
+    expect(summary?.failures[1].subject).toBe("Page 55");
     expect(summary?.failures[0].subject).not.toBe(summary?.failures[1].subject);
     expect(summary?.failures[0].message).toBe("Shopify did not echo the value back");
   });
@@ -435,11 +741,9 @@ describe("summariseTaskResult — the bulk failure list is the only record there
       "seoBulkMeta",
       json({ saved: 0, failures: [{ ...CELL, locale: "fr" }, { ...ROW, locale: "" }] }),
     );
-    expect(summary?.failures[0].subject).toBe(
-      "gid://shopify/Product/8123 · seo.metaDescription [fr]",
-    );
+    expect(summary?.failures[0].subject).toBe("Product 8123 · seo.metaDescription [fr]");
     // An empty locale is the primary one — no bracket.
-    expect(summary?.failures[1].subject).toBe("gid://shopify/Page/55");
+    expect(summary?.failures[1].subject).toBe("Page 55");
   });
 
   it("seoBulkMeta omits the failed line when the blob carries no failures key", () => {
@@ -457,8 +761,8 @@ describe("summariseTaskResult — the bulk failure list is the only record there
     expect(summary?.lines).toContainEqual({ labelKey: "failed", value: "2", tone: "critical" });
     // A deliberate skip that is explained nowhere else.
     expect(valueOf(summary, "skippedHandles")).toBe("3");
-    expect(summary?.failures[0].subject).toBe("gid://shopify/Product/8123 · seo.metaDescription");
-    expect(summary?.failures[1].subject).toBe("gid://shopify/Page/55");
+    expect(summary?.failures[0].subject).toBe("Product 8123 · seo.metaDescription");
+    expect(summary?.failures[1].subject).toBe("Page 55");
   });
 
   it("a failure list alone is enough of a summary to render", () => {
@@ -570,7 +874,9 @@ describe("hasTaskDetails", () => {
  * type. The list is pinned here rather than checked against `app/i18n/en.ts`:
  * importing the bundle makes this file fail for edits that have nothing to do
  * with this module. A new labelKey therefore has to be added HERE and to the
- * three i18n files — this test is the reminder, not the proof.
+ * three i18n files — which is what makes adding one a deliberate act.
+ * `task-i18n-parity.test.ts` is the other half: it imports the three real
+ * bundles and proves every emitted key is really translated in all of them.
  */
 describe("the emitted label vocabulary", () => {
   const MAXIMAL: [string, unknown][] = [
@@ -629,6 +935,20 @@ describe("the emitted label vocabulary", () => {
     ["aiDiscoveryIntro", { file: "llms", chars: 1 }],
     ["translation", { translated: 1, total: 1 }],
     ["translation", { retranslated: 1, purged: 1 }],
+    ["translation", { translatedCount: 1, failedCount: 1 }],
+    ["bulkTranslation", { synced: 1, failed: 1, total: 1 }],
+    [
+      "bulkTranslation",
+      {
+        locales: ["fr"],
+        savedLocales: ["fr"],
+        targetLocales: ["fr"],
+        failedLocales: ["it"],
+        rejectedFields: { fr: ["seoTitle"] },
+        skippedFields: { fr: ["handle"] },
+      },
+    ],
+    ["bulkTranslation", { translations: { title: "x" }, targetLocale: "fr" }],
   ];
 
   const EXPECTED = [
@@ -646,6 +966,9 @@ describe("the emitted label vocabulary", () => {
     "externalFound",
     "failed",
     "failedBatches",
+    "fieldsRejected",
+    "fieldsSkipped",
+    "fieldsTranslated",
     "file",
     "galleryVideoProducts",
     "galleryVideosMissingDate",
@@ -656,6 +979,10 @@ describe("the emitted label vocabulary", () => {
     "itemsAvailable",
     "itemsScanned",
     "keywords",
+    "localesFailed",
+    "localesSaved",
+    "localesTargeted",
+    "localesTranslated",
     "mediaVideosMissingDate",
     "orphanPages",
     "pagesBlocked",
@@ -678,6 +1005,7 @@ describe("the emitted label vocabulary", () => {
     "succeeded",
     "suggestionsCreated",
     "suggestionsUpdated",
+    "synced",
     "synonymRequests",
     "targetsConsidered",
     "total",

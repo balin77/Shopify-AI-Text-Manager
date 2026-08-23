@@ -30,7 +30,11 @@ function humanise(raw: string): string {
   const words = raw
     .replace(/[_-]+/g, " ")
     // camelCase and acronym boundaries: "webpConversion" -> "webp Conversion",
-    // "JSONLd" -> "JSON Ld"
+    // "JSONLd" -> "JSON Ld". Both are INTERMEDIATE: the whole phrase is
+    // lowercased two lines down and only its first letter is restored, so
+    // `seoJSONLdAudit` really comes out as "Seo json ld audit". An acronym
+    // does not survive a humanised fallback — the accepted cost of a fallback
+    // that must not read like a real label.
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replace(/\s+/g, " ")

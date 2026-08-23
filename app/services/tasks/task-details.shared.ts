@@ -20,6 +20,18 @@
  *  3. **Never throws.** These rows can only be removed from the Tasks page,
  *     so a summariser that throws on a truncated blob would take away the one
  *     way to delete it.
+ *  4. **A REGISTERED type may still answer `null`, and the consumer must
+ *     tolerate that.** `hasTaskDetails` answers from the registry — i.e. from
+ *     the type alone — while this function reads the blob, and several types
+ *     are written by many runners with different shapes: the translation
+ *     family stores a bare AI response string (`text-translation.handler.ts`
+ *     L234), an ARRAY of per-locale AI responses (L1512), or the sentence
+ *     `Translated to N locales` (`templates-translate-field.action.ts` L316);
+ *     `ai-queue.service.ts` L700 truncates ANY recovered task's result to 500
+ *     characters, which turns a valid blob into unparseable JSON. None of
+ *     those is a summary, so `null` is the right answer and the page must
+ *     render "details fetched, nothing to summarise" without drawing an empty
+ *     box (PLAN §3.2 / §3.3).
  */
 
 export interface TaskSummaryLine {
@@ -83,10 +95,46 @@ function arrayLength(v: unknown): number | null {
 }
 
 /**
- * The bulk editor's `BulkFailure[]` (columns.shared.ts) and the bulk-editor
- * translate task's `failures[]` share a shape: `{rowId, columnId?, locale?,
- * message}`. `columnId` is absent on a ROW-level failure; `locale` is absent
- * on a primary-locale one.
+ * `gid://shopify/Product/8123` -> `{type: "Product", id: "8123"}`; anything
+ * that is not a Shopify GID answers `null`. A GID may carry a query string
+ * (`?namespace=…` on a metafield), so the id stops at the first `?` or `#`.
+ */
+function parseGid(raw: string): { type: string; id: string } | null {
+  const m = /^gid:\/\/shopify\/([A-Za-z]+)\/([^/?#]+)/.exec(raw);
+  return m ? { type: m[1], id: m[2] } : null;
+}
+
+/**
+ * A row id a merchant can act on: `gid://shopify/Product/8123` reads as
+ * `Product 8123` — the numeric tail is the id the Shopify admin URL carries,
+ * and the full GID is a machine string of exactly the kind PLAN §B4 exists to
+ * remove from the UI. The row's own `rowType` names the thing when it has one
+ * ("variant" is friendlier than the GID's `ProductVariant`); the GID's type
+ * segment is the fallback. An id that is NOT a GID is already readable (a
+ * policy handle, a composite key) and is passed through untouched.
+ */
+function readableRowId(rowId: string, rowType: string): string {
+  const gid = parseGid(rowId);
+  const word = rowType ? rowType.charAt(0).toUpperCase() + rowType.slice(1) : (gid?.type ?? "");
+  const id = gid ? gid.id : rowId;
+  return word ? `${word} ${id}`.trim() : id;
+}
+
+/**
+ * `seoBulkMeta` stores the bulk editor's `BulkFailure[]` verbatim (`{rowId,
+ * rowType, columnId?, locale?, marketId?, message}`); `columnId` is absent on
+ * a ROW-level failure and `locale` on a primary-locale one. The
+ * `bulkEditorTranslate` task stores a NARROWER copy of the same list —
+ * `bulk-editor-translate.handler.ts` maps it down to `{rowId, columnId?,
+ * message}` — so every optional field here is read defensively and the GID's
+ * own type segment names the row when `rowType` did not travel.
+ *
+ * `marketId` is part of the SUBJECT because it is part of the identity: the
+ * same cell in the same locale can fail once for the global layer and once for
+ * a market override, and two failure lines a merchant cannot tell apart are
+ * worth about as much as one. `marketId: ""` is the global layer and is NOT
+ * shown — the bulk editor's own rule, where "" and a market GID are different
+ * rows, not a missing value.
  */
 function bulkFailures(v: unknown): TaskFailureLine[] {
   if (!Array.isArray(v)) return [];
@@ -94,11 +142,18 @@ function bulkFailures(v: unknown): TaskFailureLine[] {
   for (const entry of v) {
     if (!entry || typeof entry !== "object") continue;
     const f = entry as Blob;
-    const rowId = text(f.rowId);
+    const rowId = readableRowId(text(f.rowId), text(f.rowType));
     const columnId = text(f.columnId);
     let subject = columnId ? `${rowId} · ${columnId}` : rowId;
+    const scope: string[] = [];
     const locale = text(f.locale);
-    if (locale) subject = `${subject} [${locale}]`;
+    if (locale) scope.push(locale);
+    const marketId = text(f.marketId);
+    if (marketId) {
+      const market = parseGid(marketId);
+      scope.push(market ? `${market.type} ${market.id}` : marketId);
+    }
+    if (scope.length > 0) subject = `${subject} [${scope.join(" · ")}]`;
     out.push({ subject, message: text(f.message) });
   }
   return out;
@@ -211,7 +266,10 @@ const seoBulkFix: Summariser = (blob) => {
       const type = text(f.type);
       const id = text(f.id);
       const code = text(f.code);
-      const subject = type || id ? `${type} ${id}`.trim() : code;
+      // Same readability rule as the bulk failure list: `{type: "product",
+      // id: "gid://shopify/Product/8123"}` reads as `Product 8123`. A `{code}`
+      // entry is already a word.
+      const subject = type || id ? readableRowId(id, type) : code;
       failures.push({ subject, message: text(f.error) });
     }
   }
@@ -251,17 +309,22 @@ const altTextTemplateApply: Summariser = (blob) => {
         : { labelKey: "errors", value: "0" },
     );
   } else if (Array.isArray(errors)) {
-    lines.push(
-      errors.length > 0
-        ? { labelKey: "errors", value: String(errors.length), tone: "critical" }
-        : { labelKey: "errors", value: "0" },
-    );
     for (const entry of errors) {
       if (typeof entry !== "string" || !entry.trim()) continue;
       const match = entry.match(/^(.*?\))\s*:\s*([\s\S]+)$/);
       if (match) failures.push({ subject: match[1].trim(), message: match[2].trim() });
       else failures.push({ subject: "", message: entry.trim() });
     }
+    // COUNT WHAT IS LISTED. The line used to carry `errors.length` while the
+    // loop skipped non-string and blank entries, so a blob the runner cannot
+    // actually produce (but a truncated or hand-edited one can) said "3
+    // errors" above an empty list — a number the merchant has no way to
+    // reconcile with what is under it.
+    lines.push(
+      failures.length > 0
+        ? { labelKey: "errors", value: String(failures.length), tone: "critical" }
+        : { labelKey: "errors", value: "0" },
+    );
   }
   return { lines, failures };
 };
@@ -325,27 +388,178 @@ const aiDiscoveryIntro: Summariser = (blob) => {
   return { lines, failures: [] };
 };
 
+/** The string entries of an array — a locale list, cleaned. */
+function stringList(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: string[] = [];
+  for (const entry of v) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (trimmed) out.push(trimmed);
+  }
+  return out;
+}
+
 /**
- * `translation` is written by several runners with DIFFERENT blobs. Only the
- * two that carry counts are summarised — detection is by which keys are
- * present, since neither carries a discriminator:
- *   - direct-translation-ai.server.ts L118: `{translated, total}`
- *   - stale-translation-sync.server.ts L662: `{retranslated, purged}`
- * Anything else returns null rather than guessing.
+ * `Record<locale, fieldKey[]>` (shopify-content.service.ts L1378-1379) as a
+ * flat, order-preserving list. A non-object answers `null` (= omit the line);
+ * a present-but-empty `{}` answers `[]`, which is a real "none", not a
+ * missing key.
  */
-const translation: Summariser = (blob) => {
+function localeFieldGroups(v: unknown): { locale: string; fields: string[] }[] | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const out: { locale: string; fields: string[] }[] = [];
+  for (const [locale, fields] of Object.entries(v as Blob)) {
+    const names = stringList(fields);
+    if (names && names.length > 0) out.push({ locale, fields: names });
+  }
+  return out;
+}
+
+function countedLine(
+  labelKey: string,
+  count: number,
+  tone: TaskSummaryLine["tone"],
+): TaskSummaryLine {
+  return count > 0 ? { labelKey, value: String(count), tone } : { labelKey, value: String(count) };
+}
+
+/**
+ * `translation` and `bulkTranslation` — ONE summariser for both, because the
+ * two types are not two shapes: twenty call sites write them and the SAME blob
+ * appears under either name (the sub-resource and alt-text paths write the
+ * single-locale variant as `translation` and the all-locales variant as
+ * `bulkTranslation`, from the same code).
+ *
+ * This is the family whose partial failure is already a STATUS
+ * (`completed_with_errors`) with nothing behind it, so `failedLocales`,
+ * `rejectedFields` and `skippedFields` are the point of the exercise: each is
+ * a count LINE and a `failures` entry, so the merchant reads the locale codes
+ * and the field names rather than "something failed".
+ *
+ * Detection is by which keys are present — no runner writes a discriminator.
+ * The shapes found in the repo, all covered here:
+ *   - `{translated, total}`                        direct-translation-ai.server.ts L118
+ *   - `{retranslated, purged}`                     stale-translation-sync.server.ts L662
+ *   - `{synced, failed, total}`                    api.grouped-field-translations.tsx L204
+ *   - `{translatedCount, failedCount, targetLocale}`   sub-resources.action.ts L488
+ *   - `{translatedLocales[], failedLocales[]}`     sub-resources.action.ts L689
+ *   - `{success, locales[], failedLocales[], rejectedFields{}, skippedFields{}}`
+ *                                                  translation.action.ts L380/L416
+ *   - `{success, targetLocale, translations{}, failedLocales[], …}`
+ *                                                  translation.action.ts L542/L578
+ *   - `{translations{}, fieldType, failedLocales[], …}`  translation.action.ts L706
+ *   - `{translatedAltTexts{}, imageIndex, targetLocales[], savedLocales[], failedLocales[]}`
+ *                                                  alt-text.action.ts L514/L662
+ *
+ * Deliberately NOT rendered: `translations`, `translatedAltTexts` and
+ * `translatedAltText` are the translated CONTENT. A payload is not a summary —
+ * the same rule that keeps `imageWebpConversion` out of the registry. Their
+ * key SETS are counted where the blob says what a key is (see below), and the
+ * blobs that carry nothing else (a bare alt text, an array of AI responses, a
+ * `Translated to N locales` sentence) answer `null` per rule 4 above.
+ */
+const translationFamily: Summariser = (blob) => {
   const lines: TaskSummaryLine[] = [];
-  if (typeof blob.translated === "number" || typeof blob.total === "number") {
-    num(lines, blob, "translated", "translated");
-    num(lines, blob, "total", "total");
-    return lines.length ? { lines, failures: [] } : null;
+  const failures: TaskFailureLine[] = [];
+
+  // Read first, because the counts above depend on them: `locales` is the
+  // TARGET list, not the achieved one (see below).
+  const failedLocales = stringList(blob.failedLocales);
+  const failedSet = new Set(failedLocales ?? []);
+  const rejected = localeFieldGroups(blob.rejectedFields);
+  const skipped = localeFieldGroups(blob.skippedFields);
+
+  // ── what was done ────────────────────────────────────────────────────────
+  num(lines, blob, "translated", "translated");
+  num(lines, blob, "translatedCount", "translated");
+  num(lines, blob, "synced", "synced");
+  num(lines, blob, "retranslated", "retranslated");
+  num(lines, blob, "purged", "purged");
+
+  // `locales: Object.keys(allTranslations)` (translation.action.ts L418) is NOT
+  // the list of locales that worked: shopify-content.service.ts L1381 SEEDS
+  // that map with an empty object per target locale before the first AI call,
+  // so a locale that failed outright stays in the key set and only
+  // `failedLocales` records it. Reporting its length as "languages translated"
+  // printed "3" directly above "2 failed" — a fabricated count, the rule-2
+  // failure mode one level up. The failed ones are subtracted here, which also
+  // costs nothing where the runner already excluded them
+  // (sub-resources.action.ts L689 writes `translatedLocales` pre-filtered).
+  const translatedLocales = stringList(blob.locales) ?? stringList(blob.translatedLocales);
+  if (translatedLocales) {
+    const achieved = translatedLocales.filter((locale) => !failedSet.has(locale));
+    lines.push({ labelKey: "localesTranslated", value: String(achieved.length) });
+  } else if (blob.translations && typeof blob.translations === "object" && !Array.isArray(blob.translations)) {
+    // `translations` is a payload, but its KEY SET is a count — and WHICH
+    // dimension it counts differs per runner, so it is only counted where the
+    // blob itself says which: `fieldType` present = one field across locales
+    // (translation.action.ts L706), `targetLocale` present = one locale across
+    // fields (L542/L578). With neither, the keys are not countable as anything
+    // and nothing is emitted.
+    const map = blob.translations as Blob;
+    // An entry is only a translation when it carries text: L695 fills
+    // `flattened[locale] = fields[fieldType] || ""` for EVERY locale in the
+    // seeded map, failures included.
+    const filled = Object.entries(map).filter(
+      ([, value]) => typeof value === "string" && value.trim().length > 0,
+    );
+    if (typeof blob.fieldType === "string") {
+      const achieved = filled.filter(([locale]) => !failedSet.has(locale));
+      lines.push({ labelKey: "localesTranslated", value: String(achieved.length) });
+    } else if (typeof blob.targetLocale === "string") {
+      // One locale: its keys are FIELDS. If that very locale failed, nothing
+      // was saved and a field count would describe an AI answer nobody
+      // received — no line at all rather than a number that reads as success.
+      if (!failedSet.has(blob.targetLocale)) {
+        lines.push({ labelKey: "fieldsTranslated", value: String(filled.length) });
+      }
+    }
   }
-  if (typeof blob.retranslated === "number" || typeof blob.purged === "number") {
-    num(lines, blob, "retranslated", "retranslated");
-    num(lines, blob, "purged", "purged");
-    return lines.length ? { lines, failures: [] } : null;
+
+  const savedLocales = stringList(blob.savedLocales);
+  if (savedLocales) lines.push({ labelKey: "localesSaved", value: String(savedLocales.length) });
+  const targetLocales = stringList(blob.targetLocales);
+  if (targetLocales) lines.push({ labelKey: "localesTargeted", value: String(targetLocales.length) });
+
+  num(lines, blob, "total", "total");
+
+  // ── what did not happen ──────────────────────────────────────────────────
+  num(lines, blob, "failed", "failed", criticalWhenPositive);
+  num(lines, blob, "failedCount", "failed", criticalWhenPositive);
+
+  if (failedLocales) lines.push(countedLine("localesFailed", failedLocales.length, "critical"));
+
+  if (rejected) {
+    const count = rejected.reduce((n, g) => n + g.fields.length, 0);
+    lines.push(countedLine("fieldsRejected", count, "critical"));
   }
-  return null;
+  if (skipped) {
+    const count = skipped.reduce((n, g) => n + g.fields.length, 0);
+    // A skip is deliberate — shopify-content.service.ts L1424 skips a handle
+    // whose translation equals the primary one, which is a routing conflict
+    // avoided, not a loss. It is a WARNING count and deliberately NOT a
+    // `failures` entry: that list renders as a red "failed items" box, and a
+    // task that finished `completed` would open onto one.
+    lines.push(countedLine("fieldsSkipped", count, "warning"));
+  }
+
+  // The list follows the order of the lines above. A locale whose REJECTED
+  // fields are named is not listed a second time as a bare code — that entry
+  // already carries the locale and says more.
+  const named = new Set<string>((rejected ?? []).map((g) => g.locale));
+  for (const locale of failedLocales ?? []) {
+    // An empty subject is the documented "render the message alone" case: a
+    // locale code with a trailing colon and nothing after it reads as a line
+    // whose text failed to load.
+    if (!named.has(locale)) failures.push({ subject: "", message: locale });
+  }
+  for (const group of rejected ?? []) {
+    failures.push({ subject: group.locale, message: group.fields.join(", ") });
+  }
+
+  if (lines.length === 0 && failures.length === 0) return null;
+  return { lines, failures };
 };
 
 // ── registry ────────────────────────────────────────────────────────────────
@@ -376,7 +590,8 @@ const SUMMARISERS: Record<string, Summariser> = {
   distributeKeywords,
   seoRobotsAdvice,
   aiDiscoveryIntro,
-  translation,
+  translation: translationFamily,
+  bulkTranslation: translationFamily,
 };
 
 export function summariseTaskResult(
@@ -414,7 +629,11 @@ export function summariseTaskResult(
  *
  * Takes BOOLEANS, not the payload: after §3.4 the list loader no longer ships
  * `prompt`/`result`, and this question still has to be answerable from the
- * row.
+ * row. That is also its limit: it answers from the REGISTRY, so `true` means
+ * "this type can summarise SOME blob", never "this blob summarises". A
+ * registered type whose stored result is a payload, a sentence or a truncated
+ * blob still yields `null` from `summariseTaskResult` (rule 4 at the top of
+ * this file) — the consumer must render that case without an empty box.
  */
 export function hasTaskDetails(input: {
   type: string;
