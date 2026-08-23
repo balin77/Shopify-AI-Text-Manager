@@ -35,9 +35,14 @@
  * menuUpdate that need a tree editor to be safe, and the Shopify admin already
  * has one.
  *
- * Translations remain GLOBAL (no market scope): whether a market-scoped menu
- * translation behaves like a global one is UNMEASURED, and the market selector
- * would promise a behaviour nobody has verified.
+ * Translations written here remain GLOBAL (no market scope) — but that is now
+ * a scope decision rather than an unmeasured one. MEASURED 2026-08-23: a menu
+ * item CAN hold a market-scoped translation, and the global read does not
+ * return it, so the two layers are genuinely separate. What follows is that a
+ * merchant who set one in Shopify's own editor has a value this page neither
+ * shows nor purges — the storefront keeps serving it in that market after a
+ * rename. Stated here because it is a gap, not an intention; adding the market
+ * selector means reading that layer too, not just writing it.
  *
  * The item column is the shared UnifiedItemList, not a bespoke one: below
  * 900px `.desktop-only` hides it and the navbar's compact selector takes over,
