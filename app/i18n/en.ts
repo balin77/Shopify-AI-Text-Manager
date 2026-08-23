@@ -848,6 +848,7 @@ export const en: Translation = {
       generatedNeedsFixing: "The AI wrote its part, but something does not fit yet — check the marked fields.",
       generatingField: "Writing {field}…",
       sendImageToAI: "Let the AI look at the image",
+      sendImageToAIHint: "Off, the AI only sees your text and can say nothing about the image that is not already in the title. On, the image itself goes along — that costs a little more and needs a model that can read images. Switching it on now also rewrites the alt text.",
       translateAfterwards: "Translate into all languages afterwards",
       translateAfterwardsHint: "Runs right after creating, with the usual progress display.",
       translatingAfterCreate: "Translating into your other languages…",
@@ -866,7 +867,9 @@ export const en: Translation = {
       fewerFields: "Fewer fields",
       required: "Required",
       shopifyDefault: "Shopify default",
-      discardConfirm: "Discard your input?",
+      // Label of the red button that Cancel arms — it used to be the text in
+      // the browser dialog.
+      discardConfirm: "Discard your input",
       fields: {
         title: "Title", description: "Description", body: "Content", summary: "Summary",
         handle: "Handle", seoTitle: "SEO title", metaDescription: "Meta description",

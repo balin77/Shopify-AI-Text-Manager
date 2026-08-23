@@ -833,6 +833,7 @@ export const es: Translation = {
       generatedNeedsFixing: "La IA ha escrito su parte, pero algo no encaja todavía: revisa los campos marcados.",
       generatingField: "Escribiendo {field}…",
       sendImageToAI: "Permitir que la IA vea la imagen",
+      sendImageToAIHint: "Desactivado, la IA solo ve tus textos y no puede decir nada de la imagen que no esté ya en el título. Activado, la imagen viaja con el prompt: cuesta algo más y requiere un modelo capaz de leer imágenes. Si lo activas ahora, también se reescribe el texto alternativo.",
       translateAfterwards: "Traducir después a todos los idiomas",
       translateAfterwardsHint: "Se ejecuta justo después de crearlo, con el indicador de progreso habitual.",
       translatingAfterCreate: "Traduciendo a tus otros idiomas…",
@@ -851,7 +852,9 @@ export const es: Translation = {
       fewerFields: "Menos campos",
       required: "Obligatorio",
       shopifyDefault: "Valor predeterminado de Shopify",
-      discardConfirm: "¿Descartar lo introducido?",
+      // Etiqueta del botón rojo que activa «Cancelar»: antes era el texto del
+      // diálogo del navegador.
+      discardConfirm: "Descartar lo introducido",
       fields: {
         title: "Título", description: "Descripción", body: "Contenido", summary: "Resumen",
         handle: "Handle", seoTitle: "Título SEO", metaDescription: "Metadescripción",
