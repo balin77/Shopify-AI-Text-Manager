@@ -125,6 +125,26 @@ export function metaobjectFieldRole(fieldType: string): MetaobjectFieldRole {
   return "unsupported";
 }
 
+/**
+ * May this field's value be handed to the GENERIC value translator
+ * (`translateBatchValues`) as one bare string?
+ *
+ * Only a SINGLE-LINE text may. That prompt numbers its values into one list and
+ * sanitises each with `allowNewlines: false`, so a multi-line value comes back
+ * with every newline gone; and a list field is stored as raw JSON, which the AI
+ * would rewrite into something `formatListMetafieldValue` can no longer parse.
+ * Both would be ECHO-CONFIRMED and mirrored, i.e. recorded as a success —
+ * corruption where the previous behaviour was a plain deletion.
+ *
+ * The bulk editor draws exactly this line (`isBatchSubResourceColumn` excludes
+ * the multi-line metafield type); a value this returns false for is repaired by
+ * REMOVING its stale translation, the same as before auto-translate reached
+ * these surfaces at all.
+ */
+export function isBatchTranslatableValueType(fieldType: string): boolean {
+  return metaobjectFieldRole(fieldType) === "text";
+}
+
 /** Fields the editor renders at all (editable or deliberately read-only). */
 export function isRenderableMetaobjectFieldType(fieldType: string): boolean {
   return metaobjectFieldRole(fieldType) !== "unsupported";

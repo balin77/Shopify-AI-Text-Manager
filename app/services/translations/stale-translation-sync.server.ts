@@ -762,7 +762,14 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
    * be the one of the text that is there NOW, and the caller's own write is
    * what invalidated the last one it saw.
    */
-  changed: ReadonlyArray<{ resourceId?: string; resourceType?: string; key: string }>;
+  changed: ReadonlyArray<{
+    resourceId?: string;
+    resourceType?: string;
+    key: string;
+    /** `false` = remove this one rather than re-translate it; see
+     *  `StaleTranslation.retranslatable`. */
+    retranslatable?: boolean;
+  }>;
   /** Published foreign locales — the primary locale never holds a translation row. */
   foreignLocales: readonly string[];
   /**
@@ -784,12 +791,18 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // The group's resources, and which keys were changed on each.
     const refs = new Map<string, TranslationRef>();
     const wantedKeys = new Map<string, Set<string>>();
+    /** `${resourceId}\u0000${key}` of the entries the caller marked
+     *  remove-only, so the flag survives into the stale set below. */
+    const removeOnly = new Set<string>();
     for (const item of changed) {
       const ref = refOf(params, item as StaleTranslation);
       refs.set(ref.resourceId, ref);
       const keys = wantedKeys.get(ref.resourceId) ?? new Set<string>();
       keys.add(item.key);
       wantedKeys.set(ref.resourceId, keys);
+      if (item.retranslatable === false) {
+        removeOnly.add(`${ref.resourceId}${PAIR_SEP}${item.key}`);
+      }
     }
     const resourceIds = [...refs.keys()];
 
@@ -849,6 +862,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         reason: primaryValue.trim() ? "outdated" : "primary-empty",
         primaryValue,
         digest: entry?.digest ?? null,
+        retranslatable: !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
       });
     }
 

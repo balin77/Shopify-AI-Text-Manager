@@ -807,6 +807,32 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(shopify.removeTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
   });
 
+  it("REMOVES an entry the generic prompt cannot carry, never re-translates it", async () => {
+    // A multi-line text loses every newline to the prompt's sanitiser and a
+    // list field is raw JSON. Either would be echo-confirmed and mirrored —
+    // corruption recorded as a success, where the previous behaviour was a
+    // plain deletion.
+    await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+          {
+            resourceId: METAFIELD,
+            resourceType: "Metafield",
+            key: "value",
+            retranslatable: false,
+          },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).toEqual([OPTION]);
+    expect(shopify.removeTargets).toEqual([METAFIELD]);
+    // ...and it never reached the AI at all.
+    expect(ai.translateValues.mock.calls[0][0]).toEqual(["Farbe"]);
+  });
+
   it("chunks the values instead of building one oversized prompt", async () => {
     const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
     primary = Object.fromEntries(

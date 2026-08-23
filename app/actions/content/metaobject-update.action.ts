@@ -43,6 +43,7 @@ import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 import {
   formatMetaobjectFieldValue,
+  isBatchTranslatableValueType,
   isTranslatableMetaobjectFieldType,
   metaobjectFieldRole,
   metaobjectListValueIsAmbiguous,
@@ -200,7 +201,7 @@ export async function handleMetaobjectUpdate(
   let primaryLocaleCache = "";
   /** Every (entry, field) whose primary value this save moved — collected
    *  across the entry loop and repaired once. */
-  const staleByEntry: Array<{ metaobjectId: string; key: string }> = [];
+  const staleByEntry: Array<{ metaobjectId: string; key: string; retranslatable: boolean }> = [];
   // Declared BEFORE the dispatch below: savePrimary() -> invalidateForeign() ->
   // getForeignLocales() reads it, and a `let` further down would still be in
   // its temporal dead zone at that point.
@@ -345,7 +346,19 @@ export async function handleMetaobjectUpdate(
       // is stale. Removed on Shopify first and locally only for the (locale,
       // key) pairs Shopify confirmed — an unconfirmed removal keeps the row.
       const staleKeys = result.confirmedKeys.filter((key) => translatableConfirmedKeys.includes(key));
-      for (const key of staleKeys) staleByEntry.push({ metaobjectId, key });
+      for (const key of staleKeys) {
+        // A multi-line text or a list field cannot go through the generic
+        // value prompt (newlines stripped / raw JSON), so it is repaired by
+        // REMOVING its stale translation, exactly as before.
+        // The ONE resolver this file already uses — a definition's `type` is
+        // either a string or `{ name }` depending on when it was cached.
+        const fieldType = fieldTypeOf(key, entry, definitionFields);
+        staleByEntry.push({
+          metaobjectId,
+          key,
+          retranslatable: isBatchTranslatableValueType(fieldType),
+        });
+      }
     }
     // ONE pass for the whole save, never one per entry: a metaobjects page
     // saves up to 25 cards at once, and a repair per entry would mean 25 Task
@@ -363,7 +376,9 @@ export async function handleMetaobjectUpdate(
    * asks, through the same module, which fails OPEN so a lookup error keeps
    * the historic behaviour.
    */
-  async function repairForeign(stale: Array<{ metaobjectId: string; key: string }>): Promise<void> {
+  async function repairForeign(
+    stale: Array<{ metaobjectId: string; key: string; retranslatable: boolean }>,
+  ): Promise<void> {
     try {
       const { loadTranslationChangePolicy } = await import(
         "~/services/translations/translation-change-policy.server"
@@ -385,7 +400,13 @@ export async function handleMetaobjectUpdate(
         const { reconcileAfterPrimarySave, metaobjectTranslationMirror } = await import(
           "~/services/translations/stale-translation-sync.server"
         );
-        const entryIdsInSave = [...new Set(stale.map((item) => item.metaobjectId))];
+        // SORTED, so the same set of entries always produces the same group id
+        // — that id is also the in-flight key and the `markTranslationSaved`
+        // target, and two saves of the same cards must queue rather than run
+        // concurrently. Two OVERLAPPING but different sets still get different
+        // keys; that residual needs per-entry in-flight tracking, which the
+        // module does not have.
+        const entryIdsInSave = [...new Set(stale.map((item) => item.metaobjectId))].sort();
         const typeById = new Map(
           entryIdsInSave.map((id) => [id, entries.get(id)?.type ?? ""] as const),
         );
@@ -411,6 +432,7 @@ export async function handleMetaobjectUpdate(
             resourceId: item.metaobjectId,
             resourceType: "Metaobject",
             key: item.key,
+            retranslatable: item.retranslatable,
           })),
           foreignLocales,
           policy,

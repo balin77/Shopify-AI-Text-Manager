@@ -101,6 +101,15 @@ export interface StaleTranslation {
   /** `ContentTranslation.resourceType` (or the mirror's equivalent) for the
    *  row above. Absent = the group's own. */
   resourceType?: string;
+  /**
+   * `false` forces this entry to the REMOVAL even under auto-translate. The
+   * caller uses it for a value the generic prompt cannot carry — a multi-line
+   * text (newlines are stripped) or a list field (raw JSON) — where a
+   * re-translation would be echo-confirmed and mirrored, i.e. recorded as a
+   * success while the value is corrupt. Removing it is what happened before
+   * auto-translate reached these surfaces, so it is the known-safe answer.
+   */
+  retranslatable?: boolean;
   reason: StaleReason;
   /** The CURRENT primary value ("" when the field was cleared). */
   primaryValue: string;
@@ -242,6 +251,7 @@ export function partitionStaleTranslations(
       autoTranslate &&
       !!entry.primaryValue.trim() &&
       !!entry.digest &&
+      entry.retranslatable !== false &&
       (opts.anyKey || AUTO_RETRANSLATABLE_KEYS.has(entry.key));
     (canRetranslate ? retranslate : purge).push(entry);
   }

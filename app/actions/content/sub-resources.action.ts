@@ -11,6 +11,7 @@ import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
 import { parseValueOrderPayload } from "~/services/product-options.shared";
+import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
@@ -1186,7 +1187,12 @@ export async function handleSavePrimarySubResources(
     // request per locale. Best-effort — the primary writes above have already
     // gone through, so nothing here may fail the save.
     if (selfRetranslated && somethingChanged) {
-      const changed: Array<{ resourceId: string; resourceType: string; key: string }> = [];
+      const changed: Array<{
+        resourceId: string;
+        resourceType: string;
+        key: string;
+        retranslatable?: boolean;
+      }> = [];
       for (const optionId of changedOptionIds) {
         if (!isValidShopifyGID(optionId)) continue;
         const changes = optionsChanges[optionId];
@@ -1204,9 +1210,31 @@ export async function handleSavePrimarySubResources(
           });
         }
       }
+      // A metafield's TYPE decides whether its value can go through the generic
+      // prompt at all: a multi-line text comes back with its newlines stripped
+      // and a list field is raw JSON, and both would be echo-confirmed and
+      // mirrored — a corruption recorded as a success, where the previous
+      // behaviour was a plain deletion. The bulk editor draws the same line.
+      const metafieldTypes = new Map<string, string>(
+        changedMetafieldIds.length > 0
+          ? (
+              await db.productMetafield.findMany({
+                where: { productId, id: { in: changedMetafieldIds } },
+                select: { id: true, type: true },
+              })
+            ).map((row: { id: string; type: string }) => [row.id, row.type])
+          : [],
+      );
       for (const metafieldId of changedMetafieldIds) {
         if (!isValidShopifyGID(metafieldId)) continue;
-        changed.push({ resourceId: metafieldId, resourceType: "Metafield", key: "value" });
+        changed.push({
+          resourceId: metafieldId,
+          resourceType: "Metafield",
+          key: "value",
+          // An UNKNOWN type (not in the cache) counts as unsafe: guessing
+          // "single line" is the direction that corrupts.
+          retranslatable: isBatchTranslatableValueType(metafieldTypes.get(metafieldId) ?? ""),
+        });
       }
 
       if (changed.length > 0) {
