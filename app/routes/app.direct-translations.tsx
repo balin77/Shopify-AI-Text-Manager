@@ -31,6 +31,7 @@ import {
   Collapsible,
 } from "@shopify/polaris";
 import { ToggleRow } from "../components/ToggleRow";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
 import { PlanAccessGate } from "../components/PlanAccessGate";
@@ -416,10 +417,17 @@ export default function DirectTranslationsPage() {
       return next;
     });
   }, []);
-  // Mirror the three persisted booleans locally so the toggles feel snappy
-  // (toggling fires an action; we update the UI immediately and let the
-  // revalidator reconcile if it bounces). Synced when the loader reports
-  // fresh values.
+  /**
+   * The three collector switches are a DRAFT until Save — the app-wide rule
+   * (CLAUDE.md, "Field chrome"): a setting is never written by the click that
+   * changes it. They used to fire an action per click, which is also why they
+   * were mirrored locally "so the toggles feel snappy".
+   *
+   * All three save TOGETHER, in one request: they are one decision with two
+   * refinements ("collect texts, and which ones"), the action already takes
+   * them as one present-or-absent payload, and three save rows under three
+   * switches in a settings panel is not a design, it is an accident.
+   */
   const [collectOn, setCollectOn] = useState(collect);
   const [ignoreOn, setIgnoreOn] = useState(ignoreTranslateNo);
   const [filterOn, setFilterOn] = useState(filterByLanguage);
@@ -602,6 +610,22 @@ export default function DirectTranslationsPage() {
     },
     [fetcher],
   );
+
+  const collectorChanged =
+    collectOn !== collect || ignoreOn !== ignoreTranslateNo || filterOn !== filterByLanguage;
+  const saveCollectorSettings = useCallback(() => {
+    submit({
+      action: "setCollectorSettings",
+      collect: String(collectOn),
+      ignoreTranslateNo: String(ignoreOn),
+      filterByLanguage: String(filterOn),
+    });
+  }, [submit, collectOn, ignoreOn, filterOn]);
+  const discardCollectorSettings = useCallback(() => {
+    setCollectOn(collect);
+    setIgnoreOn(ignoreTranslateNo);
+    setFilterOn(filterByLanguage);
+  }, [collect, ignoreTranslateNo, filterByLanguage]);
 
   const handleSave = useCallback(() => {
     submit({
@@ -860,10 +884,7 @@ export default function DirectTranslationsPage() {
                     label={tt.collectToggle}
                     help={tt.collectHelp}
                     checked={collectOn}
-                    onChange={(v) => {
-                      setCollectOn(v);
-                      submit({ action: "setCollectorSettings", collect: String(v) });
-                    }}
+                    onChange={setCollectOn}
                   />
 
                   {collectOn && (
@@ -872,21 +893,35 @@ export default function DirectTranslationsPage() {
                         label={tt.ignoreTranslateNoToggle}
                         help={tt.ignoreTranslateNoHelp}
                         checked={ignoreOn}
-                        onChange={(v) => {
-                          setIgnoreOn(v);
-                          submit({ action: "setCollectorSettings", ignoreTranslateNo: String(v) });
-                        }}
+                        onChange={setIgnoreOn}
                       />
                       <ToggleRow
                         label={tt.filterByLanguageToggle}
                         help={tt.filterByLanguageHelp}
                         checked={filterOn}
-                        onChange={(v) => {
-                          setFilterOn(v);
-                          submit({ action: "setCollectorSettings", filterByLanguage: String(v) });
-                        }}
+                        onChange={setFilterOn}
                       />
+                    </>
+                  )}
 
+                  {/* One Save for all three: they are one decision with two
+                      refinements, and it stays reachable when the first switch
+                      goes OFF and takes the other two off the screen with it. */}
+                  {collectorChanged && (
+                    <InlineStack align="end">
+                      <SaveDiscardButtons
+                        hasChanges
+                        onSave={saveCollectorSettings}
+                        onDiscard={discardCollectorSettings}
+                        saveText={t.common?.save || "Save"}
+                        discardText={t.content?.discardChanges || "Discard"}
+                        action="setCollectorSettings"
+                      />
+                    </InlineStack>
+                  )}
+
+                  {collectOn && (
+                    <>
                       <Divider />
 
                       <BlockStack gap="200">

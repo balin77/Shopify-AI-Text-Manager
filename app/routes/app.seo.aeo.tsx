@@ -16,7 +16,7 @@
  * hiding buttons.
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { useLoaderData, useFetcher } from "react-router";
 import {
@@ -36,6 +36,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { SaveDiscardButtons } from "../components/SaveDiscardButtons";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { StepTile } from "../components/seo/StepTile";
@@ -533,6 +534,18 @@ export default function SeoAeo() {
   const fetcher = useFetcher<ActionResult>();
   const robotsFetcher = useFetcher<ActionResult>();
   const autoFetcher = useFetcher<ActionResult>();
+  /**
+   * The auto-update switch is a DRAFT until Save, like every setting in this
+   * app (see CLAUDE.md, "Field chrome"). It used to write on the click, which
+   * is the one thing a merchant cannot look at before it happens.
+   * `useState(data.…)` seeds it and the effect below follows the loader again
+   * after a save or a revalidation.
+   */
+  const [llmsAutoDraft, setLlmsAutoDraft] = useState(data.llmsAutoUpdate);
+  useEffect(() => {
+    setLlmsAutoDraft(data.llmsAutoUpdate);
+  }, [data.llmsAutoUpdate]);
+  const llmsAutoChanged = llmsAutoDraft !== data.llmsAutoUpdate;
   const removeFetcher = useFetcher<ActionResult>();
   const [step, setStep] = useState<AeoStep>("robots");
 
@@ -1012,35 +1025,54 @@ export default function SeoAeo() {
                   borderColor="border"
                   borderRadius="200"
                 >
-                  <InlineStack gap="300" blockAlign="center" wrap={false}>
-                    <ToggleSwitch
-                      id="llms-auto-update"
-                      checked={data.llmsAutoUpdate}
-                      disabled={autoFetcher.state !== "idle"}
-                      onChange={(next) =>
-                        autoFetcher.submit(
-                          { actionType: "setLlmsAutoUpdate", enabled: String(next) },
-                          { method: "post" },
-                        )
-                      }
-                    />
-                    <BlockStack gap="050">
-                      <label htmlFor="llms-auto-update">
-                        <Text as="span" variant="bodyMd" fontWeight="medium">
-                          {a.llmsAutoLabel}
+                  <BlockStack gap="300">
+                    <InlineStack gap="300" blockAlign="center" wrap={false}>
+                      <ToggleSwitch
+                        id="llms-auto-update"
+                        checked={llmsAutoDraft}
+                        disabled={autoFetcher.state !== "idle"}
+                        onChange={setLlmsAutoDraft}
+                      />
+                      <BlockStack gap="050">
+                        <label htmlFor="llms-auto-update">
+                          <Text as="span" variant="bodyMd" fontWeight="medium">
+                            {a.llmsAutoLabel}
+                          </Text>
+                        </label>
+                        {/* The explanation describes the STORED state, not the
+                            draft: until this is saved, nothing about the
+                            refresh has changed. */}
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {!data.llmsAutoUpdate
+                            ? a.llmsAutoDisabled
+                            : !data.themeWrites
+                              ? a.llmsAutoOff
+                              : data.llmsTxtExists
+                                ? a.llmsAutoOn
+                                : a.llmsAutoAfterFirst}
                         </Text>
-                      </label>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        {!data.llmsAutoUpdate
-                          ? a.llmsAutoDisabled
-                          : !data.themeWrites
-                            ? a.llmsAutoOff
-                            : data.llmsTxtExists
-                              ? a.llmsAutoOn
-                              : a.llmsAutoAfterFirst}
-                      </Text>
-                    </BlockStack>
-                  </InlineStack>
+                      </BlockStack>
+                    </InlineStack>
+                    {llmsAutoChanged && (
+                      <InlineStack align="end">
+                        <SaveDiscardButtons
+                          hasChanges
+                          onSave={() =>
+                            autoFetcher.submit(
+                              { actionType: "setLlmsAutoUpdate", enabled: String(llmsAutoDraft) },
+                              { method: "post" },
+                            )
+                          }
+                          onDiscard={() => setLlmsAutoDraft(data.llmsAutoUpdate)}
+                          saveText={t.common?.save || "Save"}
+                          discardText={t.content?.discardChanges || "Discard"}
+                          action="setLlmsAutoUpdate"
+                          fetcherState={autoFetcher.state}
+                          fetcherFormData={autoFetcher.formData}
+                        />
+                      </InlineStack>
+                    )}
+                  </BlockStack>
                 </Box>
 
                 {/* llms.txt is a 2024 community proposal, not a ratified

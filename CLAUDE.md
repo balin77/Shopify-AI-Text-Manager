@@ -232,11 +232,15 @@ button of its own.**
   before committing it, and no way back except changing it again. The save bar
   is the one place that says whether the screen and the database agree.
   It was built the other way round once, for one afternoon, on a misreading of
-  "make it consistent" — the direction was wrong, not the consistency. Two
-  switches OUTSIDE Settings still save on the click and are the known
-  exceptions until they are converted: the llms.txt auto-update on
+  "make it consistent" — the direction was wrong, not the consistency. It holds
+  OUTSIDE Settings too: the llms.txt auto-update on
   [app.seo.aeo.tsx](app/routes/app.seo.aeo.tsx) and the three collector rows on
-  [app.direct-translations.tsx](app/routes/app.direct-translations.tsx).
+  [app.direct-translations.tsx](app/routes/app.direct-translations.tsx) were the
+  last two that wrote on the click, and both now draft and wait. Where a group
+  of switches belongs to one decision, ONE Save covers the group (the three
+  collector rows share theirs) — and it is rendered outside the branch that
+  hides the dependent switches, or turning the first one off would take the
+  Save button away with them.
 - **NEVER a plain checkbox for a yes/no decision — it is a pill switch, and the
   row it sits in lives in [ToggleRow.tsx](app/components/ToggleRow.tsx).** The
   owner's standing instruction: do not reach for Polaris' `Checkbox` unless
