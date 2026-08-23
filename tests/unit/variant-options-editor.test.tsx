@@ -23,6 +23,7 @@ import { variantCountKey } from "~/services/product-options.shared";
 
 const OPTION = "gid://shopify/ProductOption/1";
 const SECOND = "gid://shopify/ProductOption/2";
+const THIRD = "gid://shopify/ProductOption/3";
 
 const options = [
   {
@@ -63,10 +64,11 @@ const handlers = () => ({
  *
  * Two things have to be arranged for it, and neither is incidental:
  *
- * jsdom gives every element a 0x0 rect at the origin, and dnd-kit decides what
- * a drag is OVER by comparing rect centres — with every centre at (0, 0) the
- * answer is whichever droppable registered first, i.e. noise. So the rows are
- * given real geometry first: one `ROW_HEIGHT` band each, stacked.
+ * The DOM here reports every element as 0x0 at the origin, and dnd-kit decides
+ * what a drag is OVER by comparing rect centres — with every centre at (0, 0)
+ * the answer is whichever droppable registered first, i.e. noise. So the rows
+ * are given real geometry first: one `ROW_HEIGHT` band each by default, or the
+ * heights passed in, separated by `ROW_GAP`.
  *
  * And the mouse sensor only starts a drag once the pointer has moved past its
  * 8px activation distance, which is what keeps a click on a value's text field
@@ -78,32 +80,54 @@ const handlers = () => ({
  * drag in the DOM that is not an inline style.
  */
 const ROW_HEIGHT = 40;
+const ROW_GAP = 8;
 
-function sortableRows(container: HTMLElement, match: string) {
+/** Where each row sits, given its height and the one gap between rows. */
+function rowTops(heights: number[]) {
+  const tops: number[] = [];
+  heights.reduce((top, height) => {
+    tops.push(top);
+    return top + height + ROW_GAP;
+  }, 0);
+  return tops;
+}
+
+function sortableRows(container: HTMLElement, match: string, heights?: number[]) {
   const rows = [...container.querySelectorAll("[data-sortable-id]")].filter((node) =>
     node.getAttribute("data-sortable-id")!.includes(match),
   ) as HTMLElement[];
+  const sizes = heights ?? rows.map(() => ROW_HEIGHT);
+  const tops = rowTops(sizes);
   rows.forEach((node, index) => {
-    const top = index * ROW_HEIGHT;
+    const top = tops[index];
+    const height = sizes[index];
     node.getBoundingClientRect = () =>
       ({
         top,
-        bottom: top + ROW_HEIGHT,
+        bottom: top + height,
         left: 0,
         right: 200,
         width: 200,
-        height: ROW_HEIGHT,
+        height,
         x: 0,
         y: top,
         toJSON: () => ({}),
       }) as DOMRect;
   });
-  return rows;
+  return { rows, tops, heights: sizes };
 }
 
 /** Picks a row up and holds it over `toIndex`, without letting go. */
-async function dragHandleOver(handle: HTMLElement, fromIndex: number, toIndex: number) {
-  const y = (index: number) => index * ROW_HEIGHT + ROW_HEIGHT / 2;
+async function dragHandleOver(
+  handle: HTMLElement,
+  fromIndex: number,
+  toIndex: number,
+  geometry?: { tops: number[]; heights: number[] },
+) {
+  const y = (index: number) =>
+    geometry
+      ? (geometry.tops[index] ?? index * (ROW_HEIGHT + ROW_GAP)) + (geometry.heights[index] ?? ROW_HEIGHT) / 2
+      : index * (ROW_HEIGHT + ROW_GAP) + ROW_HEIGHT / 2;
   fireEvent.mouseDown(handle, { clientX: 10, clientY: y(fromIndex) });
   // Past the sensor's activation distance...
   fireEvent.mouseMove(document, { clientX: 10, clientY: y(fromIndex) + 20 });
@@ -405,11 +429,16 @@ describe("VariantOptionsEditor — colours and order", () => {
     fireEvent.click(screen.getByText("Colour"));
     await screen.findByDisplayValue("Red");
 
-    const rows = sortableRows(container, "ProductOptionValue");
+    const { rows } = sortableRows(container, "ProductOptionValue");
     await dragHandleOver(screen.getByLabelText("Reorder Red"), 0, 1);
 
-    // "Blue" has stepped up into the place "Red" is being dragged out of...
-    expect(rows[1].style.transform).toContain(`-${ROW_HEIGHT}px`);
+    // "Blue" has stepped up into the place "Red" is being dragged out of —
+    // by exactly one row and one gap, and asserted as the WHOLE declaration
+    // rather than as a substring: dnd-kit will also write a scaleX/scaleY that
+    // resizes an item to the one it is over, which on rows of unequal height
+    // stretches the card being dragged and squashes the one it passes. This
+    // list renders `CSS.Translate`, which has no scale to write.
+    expect(rows[1].style.transform).toBe(`translate3d(0px, -${ROW_HEIGHT + ROW_GAP}px, 0)`);
     // ...and "Red" is ghosted, so it reads as the one in flight.
     expect(rows[0].style.opacity).toBe("0.5");
     // Still a preview: nothing has been reported to the save bar.
@@ -417,6 +446,56 @@ describe("VariantOptionsEditor — colours and order", () => {
 
     await dropHere();
     expect(spies.onReorderValues).toHaveBeenCalled();
+  });
+
+  it("previews the landing slot on cards of very different heights", async () => {
+    // The case that decides the sorting strategy, and the one a merchant hits
+    // by opening an option before dragging another past it: the open card is a
+    // form several hundred pixels tall and stays in the list as a drop target.
+    // Displacing the rows in between by the DRAGGED row's height is exactly
+    // right in one column — taking a row out moves everything after it by the
+    // height of the row that left, whatever those rows are themselves. The
+    // grid strategy the values use instead assumes each item lands on some
+    // other item's rectangle, which here points at a slot 100px from the real
+    // one.
+    const { container, spies } = ui({
+      options: [
+        { id: OPTION, name: "Colour", position: 1, values: [{ id: "gid://shopify/ProductOptionValue/1", name: "Red" }] },
+        { id: SECOND, name: "Size", position: 2, values: [{ id: "gid://shopify/ProductOptionValue/3", name: "S" }] },
+        { id: THIRD, name: "Material", position: 3, values: [{ id: "gid://shopify/ProductOptionValue/9", name: "Oak" }] },
+      ],
+    });
+
+    // A collapsed card, an open one, a collapsed one.
+    const geometry = sortableRows(container, "ProductOption/", [60, 400, 60]);
+    await dragHandleOver(screen.getByLabelText("Reorder Colour"), 0, 2, geometry);
+
+    // Both cards behind it step up by the 60px card that left, plus its gap —
+    // NOT by their own heights, and with no scale written next to it.
+    expect(geometry.rows[1].style.transform).toBe(`translate3d(0px, -${60 + ROW_GAP}px, 0)`);
+    expect(geometry.rows[2].style.transform).toBe(`translate3d(0px, -${60 + ROW_GAP}px, 0)`);
+
+    await dropHere();
+    expect(spies.onReorder).toHaveBeenCalledWith([SECOND, THIRD, OPTION]);
+  });
+
+  it("names each drag handle in the merchant's language", async () => {
+    // The handle is a control with no text of its own, so this name is the
+    // only one it has — and the keyboard sensor moves the row from it. The
+    // strings reach this component through a whitelist in UnifiedContentEditor
+    // that has to name every key; the two here were added to the language
+    // bundles and left out of it, so every handle in every language announced
+    // the English fallback.
+    const { container } = ui({
+      t: { reorderOption: "{value} verschieben", reorderValue: "{value} bewegen" },
+    });
+
+    expect(screen.getByLabelText("Colour verschieben")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Red");
+    expect(screen.getByLabelText("Red bewegen")).toBeTruthy();
+    expect(container).toBeTruthy();
   });
 
   it("reports an option drag as a new order", async () => {
@@ -471,10 +550,10 @@ describe("VariantOptionsEditor — an abandoned drag", () => {
     fireEvent.click(screen.getByText("Colour"));
     await screen.findByDisplayValue("Red");
 
-    const rows = sortableRows(container, "ProductOptionValue");
+    const { rows } = sortableRows(container, "ProductOptionValue");
     await dragHandleOver(screen.getByLabelText("Reorder Red"), 0, 1);
     // The preview is up...
-    expect(rows[1].style.transform).toContain(`-${ROW_HEIGHT}px`);
+    expect(rows[1].style.transform).toContain(`-${ROW_HEIGHT + ROW_GAP}px`);
 
     await cancelDrag();
 
@@ -482,6 +561,17 @@ describe("VariantOptionsEditor — an abandoned drag", () => {
     // ...and it is gone again: nothing left ghosted or displaced.
     expect(rows[0].style.opacity).toBe("1");
     expect(rows[1].style.transform).toBe("");
+
+    // And the drag that follows it reports ITSELF and nothing more. This is
+    // the shape of the bug the native implementation had: the abandoned drag's
+    // id stayed in state, so the next drop replayed it — twice the move the
+    // merchant asked for, on rows they had not touched.
+    sortableRows(container, "ProductOptionValue");
+    await dragHandleOver(screen.getByLabelText("Reorder Blue"), 1, 0);
+    await dropHere();
+    expect(spies.onReorderValues.mock.calls).toEqual([
+      [OPTION, ["gid://shopify/ProductOptionValue/2", "gid://shopify/ProductOptionValue/1"]],
+    ]);
   });
 
   it("does not paint a hex-shaped SIZE", async () => {

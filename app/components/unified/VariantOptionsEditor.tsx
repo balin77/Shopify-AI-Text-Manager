@@ -44,8 +44,11 @@
  * none -- the only way to find out where it would land was to drop it and read
  * the result. dnd-kit slides the other items out of the way while the drag is
  * in flight, so what is under the cursor IS what the save will store. It also
- * works from a finger, which a native drag does not: `dragstart` never fires
- * on a touch device, and the Shopify admin is used on tablets.
+ * gives the two gestures a native drag has none of: a 250ms press-and-hold on
+ * a touch device (`dragstart` never fires from a finger at all, and the
+ * Shopify admin is used on tablets), and Space-arrow-Space from the keyboard.
+ * The keyboard path is covered by a test; the touch path is the sensor's,
+ * configured exactly as the galleries configure it, and not measured here.
  *
  * Same library, same sensors and same reading (the item in flight is ghosted)
  * as the image manager's galleries -- one drag gesture across the app.
@@ -106,6 +109,7 @@ import {
   rectSortingStrategy,
   sortableKeyboardCoordinates,
   useSortable,
+  verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
@@ -218,7 +222,15 @@ function SortableItem({
       data-sortable-id={id}
       style={{
         ...style,
-        transform: CSS.Transform.toString(transform),
+        // `Translate`, NOT `Transform`: the second one also writes the scaleX /
+        // scaleY dnd-kit computes, which is how a sortable RESIZES an item to
+        // the one it is over. On a list whose rows are all the same size that
+        // is invisible; on the option cards -- one of which is an open form
+        // several hundred pixels tall -- it stretched the card being dragged to
+        // 6x its height and squashed the one it passed to a sliver. A preview
+        // that distorts what it previews is the bug this file is fixing, in a
+        // second costume.
+        transform: CSS.Translate.toString(transform),
         transition,
         // The same ghosting the image galleries use, so a drag reads the same
         // way wherever it happens in this app.
@@ -266,7 +278,20 @@ function DragHandle({ label, style }: { label?: string; style?: CSSProperties })
       {...handle.attributes}
       {...handle.listeners}
       aria-label={label}
-      style={{ cursor: "grab", display: "flex", flex: "0 0 auto", ...style }}
+      style={{
+        cursor: "grab",
+        display: "flex",
+        flex: "0 0 auto",
+        // The icon is 20px, which is a small thing to hit and a smaller thing
+        // to hit with a thumb. The padding grows the TARGET to 32px and the
+        // negative margin takes the growth straight back out of the layout, so
+        // the icon does not move and the row does not get taller -- the old
+        // whole-card drag target is not coming back (it would make the card's
+        // contents presentational), so this is what replaces it.
+        padding: "6px",
+        margin: "-6px",
+        ...style,
+      }}
     >
       <Icon source={DragHandleIcon} tone="subdued" />
     </span>
@@ -809,19 +834,26 @@ export function VariantOptionsEditor({
           </Button>
         </InlineStack>
 
-        {/* `rectSortingStrategy`, not the vertical-list one, and that is not a
-            detail: the vertical strategy displaces every other item by the
-            DRAGGED item's height, which is only a preview as long as the rows
-            are the same size. Here they are not even close -- the open option
-            card is a form several hundred pixels tall and stays in the list as
-            a drop target -- so a collapsed card dragged past it would have
-            shifted it by its own 60px and drawn the two on top of each other,
-            pointing at a slot that is not where the drop would land. That is
-            the failure this whole change exists to remove. `closestCorners`
-            for the same reason: the centre of a card that tall is nowhere near
-            the edge the pointer is actually at. */}
-        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={reorderOptions}>
-        <SortableContext items={visible.map((o) => o.id)} strategy={rectSortingStrategy}>
+        {/* `verticalListSortingStrategy`, and the reason is the OPEN card: the
+            option cards are a single column whose rows are nowhere near the
+            same height, since one of them is a form several hundred pixels
+            tall that stays in the list as a drop target.
+
+            That is an argument FOR this strategy, not against it, and it is
+            worth stating because the opposite reads as plausible. Displacing
+            every other row by the DRAGGED row's height is exactly right in one
+            column: taking a row out and putting it back somewhere else moves
+            everything in between by the height of the row that left, whatever
+            those rows are themselves. `rectSortingStrategy` -- which the
+            values below DO use -- instead assumes each item lands on some
+            other item's existing rectangle, which only holds when they tile,
+            and it emits a per-item SCALE besides. On [60, 100, 60] cards it
+            previews the third row 40px away from where it settles.
+
+            `closestCorners` because a card that tall has its centre nowhere
+            near the edge the pointer is actually at. */}
+        <DndContext id="variant-options" sensors={sensors} collisionDetection={closestCorners} onDragEnd={reorderOptions}>
+        <SortableContext items={visible.map((o) => o.id)} strategy={verticalListSortingStrategy}>
         {visible.map((option) => {
           const isOpen = openOptionId === option.id;
           const values = valuesOf(option);
@@ -840,7 +872,11 @@ export function VariantOptionsEditor({
                         card with two rows of value chips is much taller. */}
                     <DragHandle
                       label={(t.reorderOption || "Reorder {value}").replace("{value}", nameOf(option))}
-                      style={{ paddingTop: "2px" }}
+                      // A transform, not a padding: the box model here is
+                      // already spoken for by the hit area above, and nudging
+                      // the icon onto the option name's line must not resize
+                      // the target or move the row.
+                      style={{ transform: "translateY(2px)" }}
                     />
                     <div style={{ flex: 1, minWidth: 0 }} onClick={() => setOpenOptionId(option.id)}>
                       <BlockStack gap="150">
@@ -946,12 +982,22 @@ export function VariantOptionsEditor({
                         which variant the storefront shows first. So: draggable,
                         not renameable. */}
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
+                    {/* The id is spelled out rather than generated: dnd-kit
+                        would otherwise number its contexts from a module-level
+                        counter, which a server render and the client hydration
+                        do not agree on -- and the handle's `aria-describedby`
+                        would then point at drag instructions that are not on
+                        the page. */}
                     <DndContext
+                      id={`option-values-${option.id}`}
                       sensors={sensors}
                       collisionDetection={closestCenter}
                       onDragEnd={(event) => reorderValues(option, event)}
                     >
                     <div style={valueListStyle}>
+                      {/* `rectSortingStrategy` here and not above: the value
+                          chips are one fixed width and one line tall, and they
+                          WRAP, so this is a grid rather than a column. */}
                       <SortableContext items={sortableValueIds(values)} strategy={rectSortingStrategy}>
                       {values.map((value, index) => {
                         const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
@@ -1086,6 +1132,7 @@ export function VariantOptionsEditor({
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
                     <DndContext
+                      id={`option-values-${option.id}`}
                       sensors={sensors}
                       collisionDetection={closestCenter}
                       onDragEnd={(event) => reorderValues(option, event)}
