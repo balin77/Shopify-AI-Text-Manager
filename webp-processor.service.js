@@ -12,6 +12,17 @@
  * merchant sees. This service owns both halves: it runs the items and it
  * settles the aggregate above them (`settleParent`), because nothing else knows
  * when the last image of a run has landed.
+ *
+ * ONE WRITER PER VERDICT. A work item's terminal status is also its refund —
+ * an image operation is owed back for exactly those items recorded `failed` —
+ * and it is what the batch above settles on, once, irreversibly. So every
+ * terminal write on an item row is guarded on a still-open status and pays its
+ * refund only if that guard let it through (`failTask`, step 10), and nothing
+ * writes a verdict it does not have evidence for: giving up on WAITING for an
+ * item is not a failure of the item, so it writes nothing at all and leaves the
+ * row to the steps that are still running it. What that costs is stated at
+ * WEBP_TASK_TIMEOUT_MS; what it buys is that the row, the batch and the
+ * merchant's quota cannot disagree.
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -63,11 +74,35 @@ const DOWNLOAD_BASE_DELAY_MS = 1000;
 const DOWNLOAD_TIMEOUT_MS = 30000;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const SHOPIFY_FETCH_TIMEOUT_MS = 30000;
-// Hard cap for an entire task (download + convert + several Shopify calls).
-// Each fetch already has its own 30s timeout, but a wedged sequence (or a
-// hung sharp conversion) could otherwise keep a task "running" indefinitely
-// and never trip the recovery threshold reliably.
+// How long ONE work item may hold the poll's `await` before the processor
+// stops waiting for it (download + convert + several Shopify calls; each fetch
+// already has its own 30s timeout).
+//
+// It stops the WAITING, it does not stop the WORK — a JS promise cannot be
+// killed, and killing this one mid-sequence is the one thing that must not
+// happen: between step 6 and step 9 the new media exists and the merchant's
+// original is being deleted, which is exactly what the <70/>=70 progress
+// boundary in task-recovery.service.js is there to classify. So the item row
+// is left `running` and its own steps write its one terminal state whenever
+// they land. Writing `failed` here (what this used to do) put a SECOND writer
+// on the row: the steps then finished and overwrote the verdict, the refund
+// that verdict had already paid out stayed paid, and if that item was the last
+// open one the batch above it had already settled as failed and is guarded
+// against ever being recounted. A merchant was told images failed that in fact
+// converted, and got a month's quota back for them.
+//
+// A work item that really is wedged is still caught, by the stuck-task reaper
+// (10 min without a write) and, if the process dies with it, by the boot
+// recovery — both of which read the row this leaves behind rather than racing
+// the steps that own it.
 const WEBP_TASK_TIMEOUT_MS = 4 * 60 * 1000;
+
+/**
+ * The processor gave up WAITING for an item; the item itself is still running.
+ * Its own class so the catch below can tell it from a real failure — everything
+ * else that comes out of the steps is a verdict and still fails the row.
+ */
+class WebPItemAbandoned extends Error {}
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -456,6 +491,36 @@ export class WebPProcessorService {
     );
   }
 
+  /**
+   * Keep a work item that IS progressing out of the stuck-task reaper.
+   *
+   * The reaper reads staleness, and the steps report progress at boundaries
+   * that carry meaning (the <70/>=70 split the boot recovery reads), so a
+   * stretch with no boundary in it is silent however hard the item is working
+   * — step 8 makes one Shopify call per affected variant, up to a hundred of
+   * them at 30s each. Reaped there, the item is failed and REFUNDED while its
+   * conversion goes on to succeed, and the guarded completion write then has
+   * to leave that wrong verdict standing. This bumps `updatedAt` and nothing
+   * else: the progress value keeps its step meaning.
+   *
+   * It has no lifetime cap of its own, deliberately. Its reach is bounded by
+   * the loop it sits in — one beat per affected variant, and the variant cache
+   * stops at 100 (`hasMoreVariants`) — so the worst case is a work item held
+   * open for the length of the work it is actually doing, roughly an hour if
+   * every one of those calls burns its full 30s ceiling. That costs one of the
+   * shop's concurrency slots and delays its batch; capping it instead would
+   * put the reaper back on a LIVE conversion, refund an image that is about to
+   * succeed and report it failed. Slow is the cheaper of the two.
+   */
+  async touchWorkItem(taskId) {
+    await db.task
+      .updateMany({
+        where: { id: taskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        data: { updatedAt: new Date() },
+      })
+      .catch(() => {});
+  }
+
   /** Keep an open batch out of the stuck-task reaper while its items work. */
   async touchParent(parentTaskId) {
     await db.task
@@ -471,6 +536,12 @@ export class WebPProcessorService {
    * `finally` covers the early returns for unusable job data just as much as a
    * finished conversion, because a parent whose last item died on a malformed
    * blob would otherwise stay open until the reaper timed it out.
+   *
+   * "Exit" now includes giving up on the WAIT (WEBP_TASK_TIMEOUT_MS): that
+   * item is still open, so this settle reports progress and keeps the batch
+   * running, which is what it is. The item's own terminal write later has no
+   * settle beside it and needs none — `settleOpenParents` closes the batch on
+   * the next poll, which is precisely the backstop it was written to be.
    */
   async processTask(task) {
     const parentTaskId = webpParentTaskId(task.result);
@@ -490,13 +561,13 @@ export class WebPProcessorService {
     try {
       taskData = JSON.parse(task.result || "{}");
     } catch {
-      await this.failTask(task.id, "Invalid task data");
+      await this.failTask(task, "Invalid task data");
       return;
     }
 
     const { sourceUrl, productId } = taskData;
     if (!sourceUrl || !productId) {
-      await this.failTask(task.id, "Missing sourceUrl or productId");
+      await this.failTask(task, "Missing sourceUrl or productId");
       return;
     }
 
@@ -506,14 +577,26 @@ export class WebPProcessorService {
         this._runWebpSteps(task, taskData),
         new Promise((_, reject) => {
           timeoutTimer = setTimeout(
-            () => reject(new Error(`WebP task timed out after ${WEBP_TASK_TIMEOUT_MS}ms`)),
+            () => reject(new WebPItemAbandoned(`WebP task still running after ${WEBP_TASK_TIMEOUT_MS}ms`)),
             WEBP_TASK_TIMEOUT_MS,
           );
         }),
       ]);
     } catch (err) {
-      console.error(`[WebPProcessor] Task ${task.id} timed out / failed:`, err);
-      await this.failTask(task.id, describeError(err));
+      if (err instanceof WebPItemAbandoned) {
+        // Deliberately NO status write and NO refund: at this moment we have no
+        // evidence either way, and the steps that DO have it are still running
+        // and will write it themselves. Leaving the row `running` is also the
+        // true statement — the conversion is in flight, the image manager's
+        // spinner is right to keep spinning, and if the process dies here the
+        // boot recovery still sees the progress it needs to classify the row.
+        console.warn(
+          `[WebPProcessor] Task ${task.id} ${err.message} — no longer waiting for it; its own steps, the stuck-task reaper or the boot recovery will settle it`,
+        );
+        return;
+      }
+      console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
+      await this.failTask(task, describeError(err));
     } finally {
       clearTimeout(timeoutTimer);
     }
@@ -543,13 +626,13 @@ export class WebPProcessorService {
       });
 
       if (!session?.accessToken) {
-        await this.failTask(task.id, "No valid session found for shop");
+        await this.failTask(task, "No valid session found for shop");
         return;
       }
 
       const accessToken = decryptToken(session.accessToken);
       if (!accessToken) {
-        await this.failTask(task.id, "Failed to decrypt session access token");
+        await this.failTask(task, "Failed to decrypt session access token");
         return;
       }
 
@@ -595,20 +678,20 @@ export class WebPProcessorService {
       }, "stagedUploadsCreate");
       if (!stagedRes.ok) {
         const body = await stagedRes.text();
-        await this.failTask(task.id, `Staged upload HTTP ${stagedRes.status}: ${body}`);
+        await this.failTask(task, `Staged upload HTTP ${stagedRes.status}: ${body}`);
         return;
       }
       const stagedData = await stagedRes.json();
       const userErrors = stagedData.data?.stagedUploadsCreate?.userErrors ?? [];
       if (userErrors.length > 0) {
-        await this.failTask(task.id, `Staged upload userErrors: ${JSON.stringify(userErrors)}`);
+        await this.failTask(task, `Staged upload userErrors: ${JSON.stringify(userErrors)}`);
         return;
       }
       const target = stagedData.data?.stagedUploadsCreate?.stagedTargets?.[0];
 
       if (!target) {
         console.error("[WebPProcessor] Unexpected stagedUploadsCreate response:", JSON.stringify(stagedData));
-        await this.failTask(task.id, "Staged upload creation failed: no target returned");
+        await this.failTask(task, "Staged upload creation failed: no target returned");
         return;
       }
 
@@ -644,13 +727,13 @@ export class WebPProcessorService {
       }, "productCreateMedia");
       if (!createMediaRes.ok) {
         const body = await createMediaRes.text();
-        await this.failTask(task.id, `Create media HTTP ${createMediaRes.status}: ${body}`);
+        await this.failTask(task, `Create media HTTP ${createMediaRes.status}: ${body}`);
         return;
       }
       const createMediaData = await createMediaRes.json();
       const mediaUserErrors = createMediaData.data?.productCreateMedia?.mediaUserErrors ?? [];
       if (mediaUserErrors.length > 0) {
-        await this.failTask(task.id, `Create media userErrors: ${JSON.stringify(mediaUserErrors)}`);
+        await this.failTask(task, `Create media userErrors: ${JSON.stringify(mediaUserErrors)}`);
         return;
       }
       const newMediaId = createMediaData.data?.productCreateMedia?.media?.[0]?.id ?? null;
@@ -781,6 +864,10 @@ export class WebPProcessorService {
         });
 
         for (const variant of affectedVariants) {
+          // One Shopify call per variant, each with its own 30s ceiling and no
+          // progress boundary between them — say we are alive before spending
+          // another one (see touchWorkItem).
+          await this.touchWorkItem(task.id);
           try {
             const gids = JSON.parse(variant.galleryJson || "[]");
             const updatedGids = gids.map(g => g === mediaId ? newMediaId : g);
@@ -845,53 +932,143 @@ export class WebPProcessorService {
       }
 
       // 10. Mark task as completed
-      await db.task.update({
-        where: { id: task.id },
-        data: {
-          status: "completed",
-          progress: 100,
-          completedAt: new Date(),
-          result: JSON.stringify({
-            ...taskData,
-            webpUrl: resolvedUrl ?? target.resourceUrl,
-          }),
-        },
+      const closed = await this.completeWorkItem(task.id, {
+        ...taskData,
+        webpUrl: resolvedUrl ?? target.resourceUrl,
       });
+
+      if (!closed) {
+        console.warn(
+          `[WebPProcessor] Task ${task.id} converted ${sourceUrl}, but the row was already closed by the reaper or the boot recovery — leaving that verdict (and its refund) standing`,
+        );
+        return;
+      }
 
       console.log(`[WebPProcessor] Task ${task.id} completed: ${sourceUrl} → ${resolvedUrl ?? "(URL pending)"}`);
     } catch (err) {
       console.error(`[WebPProcessor] Task ${task.id} failed:`, err);
-      await this.failTask(task.id, describeError(err));
+      await this.failTask(task, describeError(err));
     }
   }
 
-  async failTask(taskId, error) {
-    // Only the FIRST transition into "failed" should refund: updateMany with a
-    // non-terminal status guard makes the refund idempotent even if failTask
-    // runs twice for the same task.
-    let shop = null;
-    try {
-      const before = await db.task.findUnique({
-        where: { id: taskId },
-        select: { shop: true, status: true },
-      });
-      const res = await db.task.updateMany({
-        where: { id: taskId, status: { notIn: ["failed", "completed"] } },
-        data: { status: "failed", completedAt: new Date(), error },
-      });
-      if (res.count > 0 && before?.shop) shop = before.shop;
-    } catch {
-      // Fall back to a best-effort status write without the guard.
-      await db.task
-        .update({ where: { id: taskId }, data: { status: "failed", completedAt: new Date(), error } })
-        .catch(() => {});
+  /**
+   * Close ONE work item as converted. Answers whether this call is what closed
+   * it.
+   *
+   * The mirror of `failTask`, and guarded for the same reason: the steps are
+   * not the only writer on the row. The stuck-task reaper can fail an item
+   * that went quiet for ten minutes — and REFUND its image operation — while
+   * this sequence is still working, and the boot recovery can flag one whose
+   * process died past the destructive step. An unguarded write here (what this
+   * used to be) flipped such a row back to `completed` with the refund already
+   * paid out and the batch above it already settled, terminally, on the other
+   * verdict.
+   *
+   * So the first terminal write wins and this one reports the loss instead of
+   * papering over it. When it loses, the image really is converted on Shopify
+   * and the row says otherwise: that is the reaper's presumption standing, the
+   * refund matches what the merchant was told, and the disagreement is with
+   * Shopify rather than between our own two records of it.
+   */
+  async completeWorkItem(taskId, resultData) {
+    const res = await db.task.updateMany({
+      where: { id: taskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+      data: {
+        status: "completed",
+        progress: 100,
+        completedAt: new Date(),
+        result: JSON.stringify(resultData),
+      },
+    });
+    return res.count > 0;
+  }
+
+  /**
+   * Fail ONE work item and give its image operation back.
+   *
+   * The invariant this maintains, and the reason the refund is welded to the
+   * status write rather than sitting beside it: an outstanding refund exists
+   * for exactly those work items whose recorded status is `failed`. So a
+   * refund is paid if and only if THIS call is what performed the transition
+   * into `failed` — `updateMany`'s count says whether it did, and a second
+   * call, a reaper that got there first or a row somebody cancelled all report
+   * zero and pay nothing.
+   *
+   * Takes the ROW, not an id: the shop has to come from something this call
+   * already holds. Reading it back after the write means a lookup that can
+   * fail on its own, and a failed row whose refund was skipped because a
+   * SELECT blinked is the one direction the arithmetic may not err in.
+   */
+  async failTask(task, error) {
+    const { id: taskId, shop } = task ?? {};
+    if (!taskId || !shop) {
+      // Loudly, never quietly: an id with no shop beside it would close the row
+      // and skip its refund, which is the one direction this may not err in.
+      console.error("[WebPProcessor] failTask needs the row (id + shop), got:", task);
+      return;
     }
 
-    // Each imageWebpConversion task consumed exactly one image operation at
-    // batch-creation time; a failed conversion produced no result, so give
-    // the op back (N-H4). The `shop` guard above (set only when this call
-    // performed the first failed-transition) keeps the refund idempotent.
-    if (shop) {
+    const write = () =>
+      db.task.updateMany({
+        // Non-terminal ONLY. The older guard was `notIn: ["failed",
+        // "completed"]`, which still matched `cancelled` and would turn a run
+        // the merchant stopped into a failure — and pay a refund for it.
+        //
+        // Stated because it is a choice and not an oversight: a work item the
+        // merchant CANCELLED therefore keeps its image operation. Cancelling
+        // does not stop the conversion (this sequence runs to the end either
+        // way, which is what keeps Shopify consistent), so the operation
+        // really was spent, and the alternative — letting a failure overwrite
+        // `cancelled` to get at the refund — undoes the one thing the merchant
+        // asked for. Only a pre-split row of the parent type is reachable this
+        // way at all: `app.tasks.tsx` hides `imageWebpConversionItem`, and the
+        // parent row a merchant can cancel spent nothing of its own.
+        where: { id: taskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        data: { status: "failed", completedAt: new Date(), error },
+      });
+
+    let flipped = 0;
+    try {
+      flipped = (await write()).count;
+    } catch (err) {
+      // One guarded retry, never an unguarded one: the fallback this replaces
+      // wrote `failed` with no status precondition at all, so a transient DB
+      // error on the first statement was enough to turn an already-completed
+      // conversion into a failure. If the retry fails too, the row stays open
+      // and the reaper settles it — with its own refund.
+      console.error(`[WebPProcessor] Failed to close task ${taskId}, retrying:`, err);
+      flipped = await write().then((res) => res.count).catch((retryErr) => {
+        console.error(`[WebPProcessor] Could not close task ${taskId}:`, retryErr);
+        return 0;
+      });
+
+      if (flipped === 0) {
+        // The case the retry cannot tell apart on its own: the FIRST statement
+        // committed and the client threw on the way back (a reset connection,
+        // a pool timeout on the response), which looks exactly like a write
+        // that never happened. The row is terminal now, so the reaper's
+        // non-terminal selector never revisits it and nobody would ever pay
+        // this refund — a `failed` item with no refund behind it, which is the
+        // one direction the invariant above may not err in.
+        //
+        // The row carrying OUR error is the evidence. Every other verdict
+        // names itself (the reaper's `task_timed_out`, the boot recovery's
+        // "Server restarted at progress …"), and a SECOND failTask for this
+        // row cannot reach this branch at all: its first statement would have
+        // answered zero without throwing.
+        const after = await db.task
+          .findUnique({ where: { id: taskId }, select: { status: true, error: true } })
+          .catch(() => null);
+        if (after?.status === "failed" && after.error === error) {
+          console.warn(`[WebPProcessor] Task ${taskId} was closed by the statement that threw — refunding it`);
+          flipped = 1;
+        }
+      }
+    }
+
+    // Each work item consumed exactly one image operation at batch-creation
+    // time; a failed conversion produced no result, so give the op back (N-H4).
+    if (flipped > 0) {
       await refundImageOperations(db, shop, 1);
     }
   }
