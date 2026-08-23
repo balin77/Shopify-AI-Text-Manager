@@ -144,6 +144,12 @@ export function MenuTreeEditor({
     return flat.filter((i) => !hidden.has(i.key));
   }, [flat, activeKey]);
 
+  /** The dragged row's own depth — the origin the horizontal clamp measures from. */
+  const activeDepth = useMemo(
+    () => (activeKey ? (flat.find((i) => i.key === activeKey)?.depth ?? null) : null),
+    [flat, activeKey],
+  );
+
   const projection = useMemo(() => {
     if (!activeKey || !overKey) return null;
     const active = findNode(nodes, activeKey);
@@ -153,34 +159,41 @@ export function MenuTreeEditor({
   /**
    * What the dragged row is ALLOWED to do, as a dnd-kit modifier.
    *
-   * Without it the row follows the raw pointer: out of the list at the top and
-   * bottom, and sideways to any x at all — while its INDENT separately jumped
-   * to whatever depth the projection had settled on. Two horizontal movements
-   * at once, one of them meaningless, and a row that could be parked in the
-   * margin next to a place it can never go.
+   * Unconstrained, the row follows the raw pointer: out of the list at the top
+   * and bottom, and sideways to any x at all — parked in the margin beside a
+   * level it can never have. Both axes are held to what a drop can actually
+   * produce.
    *
-   * So both axes are pinned to what a drop can actually produce:
-   *
-   *   X is held at ZERO. Depth is already shown — `MenuTreeRow` renders the
-   *   PROJECTED depth while dragging, so the row's indent steps between the
-   *   legal positions on its own. Letting the element translate horizontally
-   *   as well only added a second, finer movement that promised placements
-   *   (half a level, four levels in) that the projection would never grant.
+   *   X SNAPS to whole indent steps and stops at the projection's own floor
+   *   and ceiling, so the row can be slid from level 1 to 2 to 3 and back and
+   *   nowhere else. Snapping is what makes the movement legible AND what keeps
+   *   this safe (see the feedback note below): it rounds to exactly the step
+   *   the projection rounds to, so constraining the rendering cannot change
+   *   the outcome.
    *
    *   Y is clamped to the list. `containerNodeRect` is the row's parent — the
    *   element inside SortableContext — so the row stops at the first and last
-   *   position instead of being carried off past them.
+   *   position instead of being carried past them.
    *
-   * The projection itself keeps reading the RAW pointer offset (`delta.x`),
-   * which the modifier does not touch: the merchant's intent is still measured
-   * from where they actually moved the mouse, and only the rendering is
-   * constrained. Clamping the input instead would make the depth stick one
-   * step below the pointer.
+   * ── The feedback trap, which cost a round ───────────────────────────────
+   * `delta` in dnd-kit's drag events is the MODIFIED transform, not the raw
+   * pointer offset. So whatever this returns for x is what `handleDragMove`
+   * feeds back into the projection. A first cut pinned x to zero — reasoning
+   * that the indent already showed the depth — and thereby fed a permanent
+   * zero into the projection: the horizontal drag stopped working entirely.
+   *
+   * Two properties make the current version safe. The clamp is IDEMPOTENT (a
+   * value already inside the bounds passes through untouched), and the snap
+   * uses the SAME rounding as `projectDrop`, so `round(snapped / w)` and
+   * `round(raw / w)` are the same number. The projection therefore sees the
+   * step the merchant is pointing at, and the loop has a fixed point instead
+   * of drifting or locking.
    */
-  const modifiers = useMemo(
+  const modifiers = useMemo<Modifier[]>(
     () => [
-      ({ transform, draggingNodeRect, containerNodeRect }: Parameters<Modifier>[0]) => {
-        let y = transform.y;
+      ({ transform, draggingNodeRect, containerNodeRect }) => {
+        let { x, y } = transform;
+
         if (draggingNodeRect && containerNodeRect) {
           const minY = containerNodeRect.top - draggingNodeRect.top;
           const maxY = containerNodeRect.bottom - draggingNodeRect.bottom;
@@ -188,10 +201,20 @@ export function MenuTreeEditor({
           // one wins, so the grab point stays visible.
           y = maxY > minY ? Math.min(Math.max(y, minY), maxY) : minY;
         }
-        return { ...transform, x: 0, y };
+
+        if (projection && activeDepth !== null) {
+          const minX = (projection.minDepth - activeDepth) * INDENT_WIDTH;
+          const maxX = (projection.maxDepth - activeDepth) * INDENT_WIDTH;
+          const stepped = Math.round(x / INDENT_WIDTH) * INDENT_WIDTH;
+          x = Math.min(Math.max(stepped, minX), maxX);
+        } else {
+          x = 0;
+        }
+
+        return { ...transform, x, y };
       },
     ],
-    [],
+    [projection, activeDepth],
   );
 
   const sensors = useSensors(
@@ -254,7 +277,10 @@ export function MenuTreeEditor({
             <MenuTreeRow
               key={item.key}
               item={item}
-              depth={activeKey === item.key && projection ? projection.depth : item.depth}
+              // The dragged row keeps its OWN indent: its horizontal movement
+              // is the depth feedback now, and re-indenting it as well moved
+              // it two steps for one level.
+              depth={item.depth}
               renderField={renderField}
               renderTarget={renderTarget}
               renderActions={renderActions}
