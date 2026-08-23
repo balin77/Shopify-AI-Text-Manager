@@ -903,6 +903,8 @@ export const en: Translation = {
     // so is the point: the merchant must not think it was dropped.
     readOnlyHeading: "Rule kept unchanged",
     readOnlyBody: "This rule uses something this editor cannot show. It is left exactly as it is and saving here will not touch it.",
+    manualHeading: "Filled by hand",
+    manualBody: "This collection has no automatic rules — its products are picked individually. Saving here leaves that selection untouched; change it in the Shopify admin or on each product under \"Collections\".",
     openInAdmin: "Open in Shopify admin",
     unreadableTree: "This collection's rules could not be read in a form this editor understands, so they are left untouched. Manage them in the Shopify admin.",
     requiresNewerApi: "Automatic collection rules need a newer Shopify API version than this app currently uses. Until then, manage them in the Shopify admin.",

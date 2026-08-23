@@ -905,6 +905,8 @@ export const de = {
     unavailable: "Regeln sind noch nicht verfügbar",
     readOnlyHeading: "Regel bleibt unverändert",
     readOnlyBody: "Diese Regel nutzt etwas, das dieser Editor nicht darstellen kann. Sie bleibt genau so, wie sie ist — Speichern rührt sie nicht an.",
+    manualHeading: "Von Hand befüllt",
+    manualBody: "Diese Kollektion hat keine automatischen Regeln — ihre Produkte sind einzeln ausgewählt. Speichern lässt diese Auswahl unverändert; ändern kannst du sie im Shopify-Admin oder je Produkt im Feld „Kollektionen“.",
     openInAdmin: "Im Shopify-Admin öffnen",
     unreadableTree: "Die Regeln dieser Kollektion ließen sich nicht in einer Form lesen, die dieser Editor versteht — sie bleiben unangetastet. Bearbeite sie im Shopify-Admin.",
     requiresNewerApi: "Automatische Kollektions-Regeln brauchen eine neuere Shopify-API-Version, als diese App derzeit nutzt. Bis dahin verwaltest du sie im Shopify-Admin.",

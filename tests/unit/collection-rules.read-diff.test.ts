@@ -135,6 +135,62 @@ describe("fromShopifySources", () => {
     expect(source.unrenderable?.reason).toBe("unknownCondition");
   });
 
+  it("calls a source with picks but NO conditions a hand-picked membership", () => {
+    // The 2026-07 model gives a MANUAL collection a conditions source too:
+    // zero conditions, the picks in `selections` (measured — twelve manual
+    // collections on a shop with no smart collection at all). Read-only like
+    // every other unrenderable source, because the picks must survive a save
+    // — but it is not a rule this editor failed to understand, and the banner
+    // that said so appeared on every ordinary collection.
+    const [source] = fromShopifySources([
+      {
+        __typename: CONDITIONS_SOURCE,
+        id: "s1",
+        title: "Hand-picked",
+        inclusion: {
+          matchType: "ALL",
+          conditions: [],
+          selections: { nodes: [{ __typename: "CollectionInclusionProductSelection" }] },
+        },
+      },
+    ]);
+    expect(source.unrenderable?.reason).toBe("manualSelection");
+    expect(source.unrenderable?.raw).toBeTruthy();
+  });
+
+  it("still calls picks NEXT TO a condition an unreadable rule", () => {
+    // One condition is enough: the editor could render it, and rendering it
+    // while dropping the picks is what would change the membership. The
+    // milder sentence belongs only to a source that has no rule at all.
+    const [source] = fromShopifySources([
+      {
+        __typename: CONDITIONS_SOURCE,
+        id: "s1",
+        title: "Picks in the exclusion",
+        inclusion: { matchType: "ALL", conditions: [tagCondition] },
+        exclusion: {
+          matchType: "ANY",
+          conditions: [],
+          selections: { nodes: [{ __typename: "CollectionExclusionProductSelection" }] },
+        },
+      },
+    ]);
+    expect(source.unrenderable?.reason).toBe("unknownCondition");
+  });
+
+  it("never submits a hand-picked source, in any direction", () => {
+    // The whole reason it stays `unrenderable`: a manual collection's picks
+    // are its membership, and a save that diffed them away would empty it.
+    const manual: RuleSource = {
+      id: "gid://shopify/CollectionSource/9",
+      title: "Hand-picked",
+      inclusion: { matchType: "ALL", conditions: [] },
+      unrenderable: { reason: "manualSelection", raw: { picks: true } },
+    };
+    const diff = diffRuleSources([manual], [manual]);
+    expect(diff).toEqual({ sourcesToCreate: [], sourcesToUpdate: [], sourcesToDelete: [] });
+  });
+
   it("reads an exclusion side, and omits it when empty", () => {
     const [withExclusion] = fromShopifySources([
       {

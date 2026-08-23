@@ -888,6 +888,8 @@ export const es: Translation = {
     unavailable: "Las reglas aún no están disponibles",
     readOnlyHeading: "Regla sin cambios",
     readOnlyBody: "Esta regla usa algo que este editor no puede mostrar. Se deja exactamente como está y guardar aquí no la tocará.",
+    manualHeading: "Rellenada a mano",
+    manualBody: "Esta colección no tiene reglas automáticas: sus productos están elegidos uno a uno. Guardar aquí no toca esa selección; cámbiala en el admin de Shopify o en cada producto, en el campo «Colecciones».",
     openInAdmin: "Abrir en el admin de Shopify",
     unreadableTree: "Las reglas de esta colección no se pudieron leer en un formato que este editor entienda, así que quedan intactas. Gestiónalas en el admin de Shopify.",
     requiresNewerApi: "Las reglas automáticas de colección necesitan una versión de la API de Shopify más nueva que la que usa esta app. Hasta entonces, gestiónalas en el admin de Shopify.",
