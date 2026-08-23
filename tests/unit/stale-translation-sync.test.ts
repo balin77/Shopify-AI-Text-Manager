@@ -78,7 +78,10 @@ import {
   IN_APP_RETRANSLATED_RESOURCE_TYPES,
 } from "../../app/services/translations/stale-translation-sync.server";
 import { digestBaselineKey } from "../../app/services/translations/stale-translations.shared";
-import { markTranslationSaved } from "../../app/utils/translation-save-lock.server";
+import {
+  markTranslationSaved,
+  isTranslationRecentlySaved,
+} from "../../app/utils/translation-save-lock.server";
 
 const SHOP = "test.myshopify.com";
 const OLD = "digest-old";
@@ -555,15 +558,41 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   it("falls back to the mirror for a locale whose Shopify read failed", async () => {
     // Degrading to the old mirror-only reach is acceptable; losing the whole
     // repair over one failed query is not.
+    // A GraphQL-level error, which is how a real refusal arrives — and unlike a
+    // thrown transport error it is not retried by the gateway, so the test does
+    // not pay three seconds of backoff per locale to prove one branch.
     const client = {
-      graphql: vi.fn(async () => {
-        throw new Error("throttled");
-      }),
+      graphql: vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ errors: [{ message: "Access denied" }] }),
+      })),
     };
     await reconcileAfterPrimarySave(saveParams({ client: client as never }));
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
+  });
+
+  it("claims the resource so a reload cannot queue a second identical run", async () => {
+    // Every entry here is re-translatable, so there is no inline purge to mark
+    // the resource. Without the mark, an item reload while the AI is working
+    // re-detects the same entries against a digest mirror that has not advanced
+    // yet, and the sync-side path queues a duplicate run behind this one.
+    await reconcileAfterPrimarySave(saveParams());
+
+    expect(isTranslationRecentlySaved(PAGE)).toBe(true);
+
+    // ...which is exactly what makes the sync entry point stand down.
+    const result = await reconcileStaleTranslations(
+      baseParams({
+        resourceId: PAGE,
+        resourceType: "Page",
+        contentKind: "page" as const,
+      }),
+    );
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+
+    await awaitDetachedRetranslations();
   });
 
   it("never throws — the primary text is already saved", async () => {

@@ -274,9 +274,20 @@ const PAIR_SEP = "\u0000";
  * caller unions this with the local mirror, so a failed read degrades to the
  * old mirror-only reach instead of losing the whole repair. It goes through the
  * GATEWAY, not the raw admin client: this runs inside the merchant's save
- * request, once per published locale, and an unthrottled burst there would
- * answer a rate limit with exactly that silent degradation.
+ * request, and an unthrottled burst there would answer a rate limit with
+ * exactly that silent degradation.
+ *
+ * Sequential and DEADLINED, which are one decision. `ShopifyApiGateway` drains
+ * its queue with a single serial consumer whose retry sleeps block every other
+ * queued call, so firing the locales concurrently changes nothing about the
+ * wall clock — it only takes away the one place a budget can be checked. This
+ * whole sweep sits behind a primary write that has ALREADY succeeded, so past
+ * the budget the remaining locales are simply left to the mirror: a repair
+ * narrowed to what this app itself wrote is the documented fallback, and a save
+ * that hangs for a minute is not.
  */
+const DETECTION_BUDGET_MS = 5_000;
+
 async function foreignTranslationPairs(
   gateway: ShopifyApiGateway,
   resourceId: string,
@@ -285,11 +296,17 @@ async function foreignTranslationPairs(
 ): Promise<Set<string>> {
   const wanted = new Set(changedKeys);
   const pairs = new Set<string>();
-  // CONCURRENT, because this sits in the merchant's save request after the
-  // primary write has already succeeded: sequentially, a throttled shop with
-  // eight locales pays eight retry backoffs before the page comes back. The
-  // gateway still paces the calls, so concurrency here costs no extra pressure.
-  await Promise.all(foreignLocales.map(async (locale) => {
+  const deadline = Date.now() + DETECTION_BUDGET_MS;
+  for (const locale of foreignLocales) {
+    if (Date.now() > deadline) {
+      logger.warn("[StaleTranslations] Detection budget spent — remaining locales left to the mirror", {
+        context: "StaleTranslations",
+        resourceId,
+        reached: pairs.size,
+        skippedFrom: locale,
+      });
+      break;
+    }
     try {
       const response = await gateway.graphql(
         `#graphql
@@ -335,7 +352,7 @@ async function foreignTranslationPairs(
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }));
+  }
   return pairs;
 }
 
@@ -452,6 +469,18 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       resourceType,
       stale: stale.length,
     });
+
+    // Claim the resource BEFORE the repair starts. The sync-side entry point
+    // bails on `isTranslationRecentlySaved`, and without this mark nothing sets
+    // it on a save whose entries are ALL re-translatable (there is no inline
+    // purge to do it): the merchant presses reload while the AI is working, the
+    // digest mirror has not advanced yet, so the sync re-detects the very same
+    // entries and `retranslationsInFlight` QUEUES a second identical run —
+    // every locale translated and registered twice, the second overwriting the
+    // first. It lands before the detached run reads its own baseline, which is
+    // the ordering the inline purge already relies on, so the run cannot mistake
+    // this for a merchant write and abandon itself.
+    markTranslationSaved(resourceId);
 
     return await repairStaleTranslations(params, stale, policy);
   } catch (error: unknown) {
