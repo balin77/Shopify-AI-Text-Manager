@@ -388,12 +388,50 @@ export const es: Translation = {
     menuReload: "Recargar menús desde Shopify",
     menuAddItem: "Añadir elemento",
     menuItemUrl: "URL de destino",
+    menuTargetLabel: "Destino",
+    menuTargetPlaceholder: "Busca o pega una URL …",
+    menuTargetUseUrl: "Usar esta URL: {url}",
+    menuTargetFixedGroup: "Destinos fijos",
+    menuTargetTypeNames: {
+      COLLECTION: "Colección",
+      PRODUCT: "Producto",
+      PAGE: "Página",
+      BLOG: "Blog",
+      ARTICLE: "Entrada",
+      SHOP_POLICY: "Política",
+      METAOBJECT: "Metaobjeto",
+    },
+    menuTargetGroups: {
+      collections: "Colecciones",
+      products: "Productos",
+      pages: "Páginas",
+      blogs: "Blogs",
+      articles: "Entradas",
+      policies: "Políticas",
+      metaobjects: "Metaobjetos",
+    },
+    menuTargetTypes: {
+      FRONTPAGE: "Página de inicio",
+      CATALOG: "Catálogo",
+      COLLECTIONS: "Todas las colecciones",
+      SEARCH: "Resultados de búsqueda",
+      CUSTOMER_ACCOUNT_PAGE: "Cuenta de cliente",
+    },
+    menuTargetMore: "Más resultados — afina la búsqueda",
+    menuTargetLookupFailed: "Parte de la búsqueda falló — no se muestran todos los resultados.",
+    menuTargetNoMatches: "Sin resultados. Puedes escribir una URL directamente.",
+    menuTargetSearching: "Buscando …",
+    menuTargetUnresolved: "{type}: {id} — no está en nuestra caché. Recarga si el recurso es nuevo.",
+    menuTargetResolved: "{type}: {title}",
+    menuTargetNone: "Aún no hay destino elegido.",
+    menuTargetBlogsNote: "Los blogs provienen de las entradas — un blog sin entradas no aparece aquí.",
     menuAddChild: "Subelemento",
     menuDeleteItem: "Eliminar",
     menuTreeSummary: "{count} cambio(s) en el menú: {detail}",
     menuTreeRenamed: "{count} renombrado(s)",
     menuTreeMoved: "{count} reubicado(s)",
     menuTreeReordered: "{count} reordenado(s)",
+    menuTreeRetargeted: "{count} con destino cambiado",
     menuTreeCreated: "{count} nuevo(s)",
     menuTreeDeleted: "{count} eliminado(s)",
     menuDeleteWarning: "Al guardar se eliminarán {count} elemento(s) del menú — con sus traducciones. Volver a crearlos no lo deshace, porque un elemento nuevo recibe un id nuevo.",
@@ -4223,6 +4261,20 @@ export const es: Translation = {
 
   // Help Tooltips
   help: {
+    menuActionBar: {
+      title: "Esta barra de acciones",
+      summary:
+        "Cinco botones con alcances muy distintos. A la izquierda se modifica el menú, a la derecha solo se recarga. Lo que pulses aquí llega a Shopify al guardar — con una excepción: traducir escribe de inmediato.",
+      tips: [
+        "«Añadir elemento de menú» agrega un elemento vacío al final; arrastrar y anidar viene después",
+        "«Traducir todo» rellena cada elemento en TODOS los idiomas activos y guarda esas traducciones al momento",
+        "«Borrar todo» vacía solo las traducciones del idioma que estás viendo — el idioma principal no se toca",
+        "Recargar trae los menús frescos de Shopify y conserva tus cambios sin guardar",
+        "Los cambios de estructura (orden, anidamiento, alta, borrado) solo salen con «Guardar»",
+      ],
+      details:
+        "La diferencia entre izquierda y derecha es la razón de esta barra: «Traducir todo» y «Borrar todo» actúan sobre el idioma seleccionado arriba y escriben traducciones — una vía de escritura propia que nunca toca la estructura del menú. «Añadir elemento de menú», en cambio, modifica el árbol, y un árbol se escribe en Shopify siempre COMPLETO: al guardar se envía la lista entera de elementos, por eso la lista de cambios sobre el botón Guardar nombra cada elemento que la escritura toca — sobre todo los que se van a borrar.",
+    },
     commercePrices: {
       title: "Los tres precios",
       summary:

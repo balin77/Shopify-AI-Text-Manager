@@ -388,12 +388,50 @@ export const de = {
     menuReload: "Menüs neu von Shopify laden",
     menuAddItem: "Menüpunkt hinzufügen",
     menuItemUrl: "Ziel-URL",
+    menuTargetLabel: "Ziel",
+    menuTargetPlaceholder: "Suchen oder URL einfügen …",
+    menuTargetUseUrl: "Diese URL verwenden: {url}",
+    menuTargetFixedGroup: "Feste Ziele",
+    menuTargetTypeNames: {
+      COLLECTION: "Kollektion",
+      PRODUCT: "Produkt",
+      PAGE: "Seite",
+      BLOG: "Blog",
+      ARTICLE: "Beitrag",
+      SHOP_POLICY: "Richtlinie",
+      METAOBJECT: "Metaobjekt",
+    },
+    menuTargetGroups: {
+      collections: "Kollektionen",
+      products: "Produkte",
+      pages: "Seiten",
+      blogs: "Blogs",
+      articles: "Beiträge",
+      policies: "Richtlinien",
+      metaobjects: "Metaobjekte",
+    },
+    menuTargetTypes: {
+      FRONTPAGE: "Startseite",
+      CATALOG: "Katalog",
+      COLLECTIONS: "Alle Kollektionen",
+      SEARCH: "Suchergebnisse",
+      CUSTOMER_ACCOUNT_PAGE: "Kundenkonto",
+    },
+    menuTargetMore: "Weitere Treffer — bitte genauer suchen",
+    menuTargetLookupFailed: "Ein Teil der Suche ist fehlgeschlagen — nicht jeder Treffer wird angezeigt.",
+    menuTargetNoMatches: "Nichts gefunden. Eine URL kannst du direkt eintippen.",
+    menuTargetSearching: "Wird gesucht …",
+    menuTargetUnresolved: "{type}: {id} — nicht in unserem Zwischenspeicher. Neu laden hilft, wenn die Ressource neu ist.",
+    menuTargetResolved: "{type}: {title}",
+    menuTargetNone: "Noch kein Ziel gewählt.",
+    menuTargetBlogsNote: "Blogs stammen aus den Beiträgen — ein Blog ohne Beitrag steht hier nicht.",
     menuAddChild: "Unterpunkt",
     menuDeleteItem: "Löschen",
     menuTreeSummary: "{count} Änderung(en) am Menü: {detail}",
     menuTreeRenamed: "{count} umbenannt",
     menuTreeMoved: "{count} umgehängt",
     menuTreeReordered: "{count} umsortiert",
+    menuTreeRetargeted: "{count} umgezielt",
     menuTreeCreated: "{count} neu",
     menuTreeDeleted: "{count} gelöscht",
     menuDeleteWarning: "Beim Speichern werden {count} Menüpunkt(e) gelöscht — mitsamt ihren Übersetzungen. Das lässt sich durch Wiederanlegen nicht rückgängig machen, weil ein neuer Punkt eine neue ID bekommt.",
@@ -4247,6 +4285,20 @@ export const de = {
 
   // Help Tooltips
   help: {
+    menuActionBar: {
+      title: "Diese Aktionsleiste",
+      summary:
+        "Fünf Knöpfe mit sehr unterschiedlicher Reichweite. Links wird das Menü verändert, rechts nur neu geladen. Was hier gedrückt wird, landet erst beim Speichern in Shopify — mit einer Ausnahme: Übersetzen schreibt sofort.",
+      tips: [
+        "„Menüpunkt hinzufügen“ hängt einen leeren Punkt ganz unten an; ziehen und verschachteln geht danach",
+        "„Alles übersetzen“ füllt jeden Punkt in ALLEN aktiven Sprachen und speichert diese Übersetzungen direkt",
+        "„Alles löschen“ leert nur die Übersetzungen der GERADE gewählten Sprache — die Hauptsprache bleibt unberührt",
+        "Neuladen holt die Menüs frisch aus Shopify und behält deine ungespeicherten Änderungen",
+        "Struktur-Änderungen (Reihenfolge, Verschachtelung, Anlegen, Löschen) gehen erst mit „Speichern“ raus",
+      ],
+      details:
+        "Der Unterschied zwischen links und rechts ist der Grund für diese Leiste: „Alles übersetzen“ und „Alles löschen“ arbeiten auf der Sprache, die oben gewählt ist, und schreiben Übersetzungen — das ist ein eigener Schreibweg, der die Menüstruktur nicht anfasst. „Menüpunkt hinzufügen“ dagegen verändert den Baum, und ein Baum wird bei Shopify immer als GANZES geschrieben: Speichern schickt die vollständige Punktliste, weshalb die Änderungsliste über dem Speichern-Knopf jeden Punkt nennt, den der Vorgang anfasst — besonders die zu löschenden.",
+    },
     commercePrices: {
       title: "Die drei Preise",
       summary:

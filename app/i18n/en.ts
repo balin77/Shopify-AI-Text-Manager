@@ -396,12 +396,50 @@ export const en: Translation = {
     menuReload: "Reload menus from Shopify",
     menuAddItem: "Add menu item",
     menuItemUrl: "Target URL",
+    menuTargetLabel: "Target",
+    menuTargetPlaceholder: "Search or paste a URL …",
+    menuTargetUseUrl: "Use this URL: {url}",
+    menuTargetFixedGroup: "Fixed destinations",
+    menuTargetTypeNames: {
+      COLLECTION: "Collection",
+      PRODUCT: "Product",
+      PAGE: "Page",
+      BLOG: "Blog",
+      ARTICLE: "Post",
+      SHOP_POLICY: "Policy",
+      METAOBJECT: "Metaobject",
+    },
+    menuTargetGroups: {
+      collections: "Collections",
+      products: "Products",
+      pages: "Pages",
+      blogs: "Blogs",
+      articles: "Posts",
+      policies: "Policies",
+      metaobjects: "Metaobjects",
+    },
+    menuTargetTypes: {
+      FRONTPAGE: "Home page",
+      CATALOG: "Catalog",
+      COLLECTIONS: "All collections",
+      SEARCH: "Search results",
+      CUSTOMER_ACCOUNT_PAGE: "Customer account",
+    },
+    menuTargetMore: "More matches — narrow the search",
+    menuTargetLookupFailed: "Part of the search failed — not every match is shown.",
+    menuTargetNoMatches: "Nothing found. You can type a URL directly.",
+    menuTargetSearching: "Searching …",
+    menuTargetUnresolved: "{type}: {id} — not in our cache. Reload if the resource is new.",
+    menuTargetResolved: "{type}: {title}",
+    menuTargetNone: "No target chosen yet.",
+    menuTargetBlogsNote: "Blogs come from the posts — a blog without a post is not listed here.",
     menuAddChild: "Sub-item",
     menuDeleteItem: "Delete",
     menuTreeSummary: "{count} change(s) to the menu: {detail}",
     menuTreeRenamed: "{count} renamed",
     menuTreeMoved: "{count} moved",
     menuTreeReordered: "{count} reordered",
+    menuTreeRetargeted: "{count} retargeted",
     menuTreeCreated: "{count} added",
     menuTreeDeleted: "{count} deleted",
     menuDeleteWarning: "Saving will delete {count} menu item(s) — with their translations. Re-creating the item does not undo it, because a new item gets a new id.",
@@ -4235,6 +4273,20 @@ export const en: Translation = {
 
   // Help Tooltips
   help: {
+    menuActionBar: {
+      title: "This action bar",
+      summary:
+        "Five buttons with very different reach. The left side changes the menu, the right side only reloads it. What you press here reaches Shopify when you save — with one exception: translating writes immediately.",
+      tips: [
+        "\"Add menu item\" appends an empty item at the bottom; dragging and nesting come after",
+        "\"Translate all\" fills every item in ALL active languages and stores those translations right away",
+        "\"Clear all\" empties only the translations of the language you are currently viewing — the primary language is untouched",
+        "Reload fetches the menus fresh from Shopify and keeps your unsaved changes",
+        "Structural changes (order, nesting, adding, deleting) only go out with \"Save\"",
+      ],
+      details:
+        "The difference between left and right is why this bar exists: \"Translate all\" and \"Clear all\" act on the language selected above and write translations — a separate write path that never touches the menu structure. \"Add menu item\" changes the tree, and a tree is always written to Shopify as a WHOLE: saving sends the complete item list, which is why the change list above the Save button names every item the write touches — the ones to be deleted above all.",
+    },
     commercePrices: {
       title: "The three prices",
       summary:
