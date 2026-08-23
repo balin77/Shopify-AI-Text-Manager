@@ -258,8 +258,16 @@ button of its own.**
   becomes invisible and unsaveable. Two more that only show up in use: a save
   bar covering two independent drafts must submit them on two DIFFERENT
   fetchers (`router.fetch` aborts whatever is in flight on the same key, so the
-  first save dies silently), and a draft that changes what a BUTTON on the same
-  page will do has to block that button until it is saved — the crawl reads the
+  first save dies silently), a control whose state is seeded at mount and never
+  re-synced (the AI-instructions texts, the vision pair) must be sent ONLY when
+  it changed, or a save meant for one half writes the other half's stale copy
+  over whatever a second tab stored since; a card that can raise a bar must not
+  sit in the same sub-section as another card that has one (the vision panel
+  stays out of the sub-section holding the glossary for exactly that reason —
+  the instructions card and the glossary card can still both be dirty at once,
+  which predates this and is the one known collision left); and a draft that
+  changes what a BUTTON on the same page will do has to block that button until
+  it is saved — the crawl reads the
   STORED `seoCrawlExternalLinks` when it starts, so "tick, then Scan now" would
   otherwise run without the checks the box claims are on. A draft also pulls the whole
   unsaved-changes protocol onto its page: every navigation the page guards

@@ -679,9 +679,13 @@ export default function DirectTranslationsPage() {
   useEffect(() => {
     if (collectorFetcher.state !== "idle" || !collectorFetcher.data) return;
     if (collectorFetcher.data.success === false) {
+      // Put the switches back, like the crawl and AEO drafts do: left standing,
+      // they assert a value nobody stored and the save bar stays up for the
+      // rest of the page's life.
+      resetCollectorDraft();
       showInfoBox(collectorFetcher.data.error || t.common?.error || "Error", "critical");
     }
-  }, [collectorFetcher.state, collectorFetcher.data, showInfoBox, t]);
+  }, [collectorFetcher.state, collectorFetcher.data, showInfoBox, t, resetCollectorDraft]);
 
   /** The bar covers two independent drafts; each half is saved only if it is
    *  the one that changed. */
