@@ -53,7 +53,10 @@ import {
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
 import { registerAndVerify, removeAndVerify } from "../bulk-editor/translations.server";
-import { loadTranslationChangePolicy } from "./translation-change-policy.server";
+import {
+  loadTranslationChangePolicy,
+  type TranslationChangePolicy,
+} from "./translation-change-policy.server";
 import {
   digestBaselineKey,
   findStaleTranslations,
@@ -65,12 +68,17 @@ import {
 
 export type { PrimaryContentEntry, SyncedTranslation } from "./stale-translations.shared";
 
-export interface ReconcileParams {
+/**
+ * WHO is being repaired — the part both entry points share. `ReconcileParams`
+ * adds the EVIDENCE the sync-side detection needs on top of it; the in-app save
+ * carries none of that, because it is the change event itself.
+ */
+export interface RepairTarget {
   /** Anything with `.graphql` — `admin` or an existing gateway. */
   client: ShopifyGraphQLClient;
   shop: string;
   resourceId: string;
-  /** `ContentTranslation.resourceType` — "Product" | "Collection" | "Article" | "Page" | "Blog". */
+  /** `ContentTranslation.resourceType` — "Product" | "Collection" | "Article" | "Page" | "Blog" | "ShopPolicy". */
   resourceType: string;
   /**
    * The merchant-facing kind, used for BOTH the AI prompt and the Task row.
@@ -83,6 +91,9 @@ export interface ReconcileParams {
   contentKind: "product" | "collection" | "blog" | "page";
   /** Shown on the Task row when a re-translation runs. */
   resourceTitle?: string;
+}
+
+export interface ReconcileParams extends RepairTarget {
   /** Every translation row this sync fetched (all market layers). */
   translations: readonly SyncedTranslation[];
   /** `translatableContent` of the resource: key → { value, digest }. */
@@ -185,8 +196,7 @@ export async function loadPreviousTranslationDigests(
  * webhook into a retry loop.
  */
 export async function reconcileStaleTranslations(params: ReconcileParams): Promise<ReconcileResult> {
-  const { client, shop, resourceId, resourceType, translations, primaryContent, previousDigests } =
-    params;
+  const { shop, resourceId, resourceType, translations, primaryContent, previousDigests } = params;
 
   try {
     // Same guard the sync's own translation rewrite uses: right after this app
@@ -211,119 +221,7 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
       autoTranslate: policy.autoTranslateExternalChanges,
     });
 
-    const gateway = new ShopifyApiGateway(client, shop);
-    const { retranslate, purge } = partitionStaleTranslations(
-      stale,
-      policy.autoTranslateExternalChanges,
-    );
-
-    // May a stale translation be REMOVED here? Not the same question as the
-    // merchant's purge switch, which auto-translate forces off (the two are
-    // alternatives — translation-change-policy.server.ts). A shop that asked
-    // for "always give it the new text" is asking for the opposite of stale,
-    // so whatever the AI cannot deliver — a CLEARED source with nothing to
-    // translate, a `handle`, a provider error — is removed rather than left
-    // describing text that no longer exists. Only with BOTH switches off does
-    // nothing get touched, and that case never reaches this line.
-    const mayPurge = policy.purgeOnPrimaryChange || policy.autoTranslateExternalChanges;
-
-    // The INLINE purge runs FIRST: one GraphQL call, so the storefront is
-    // corrected immediately — and its `markTranslationSaved` then lands BEFORE
-    // the detached run captures its baseline below. The other order made the
-    // run read our own mark as "the merchant saved" and abandon itself.
-    let removed = 0;
-    if (mayPurge && purge.length > 0) {
-      removed = await purgeStaleEntries(gateway, shop, resourceId, resourceType, purge);
-      // Protect what we just changed from a racing webhook sync that re-fetches
-      // Shopify before it is consistent again.
-      markTranslationSaved(resourceId);
-    }
-
-    // The AI re-translation is DETACHED. Two of the callers (the single-item
-    // reload routes) await this sync inside an HTTP request, and one AI request
-    // per locale does not fit in a request the browser abandons after 30
-    // seconds. It is Task-tracked, so nothing is lost by not waiting.
-    const inFlightKey = `${shop}${IN_FLIGHT_SEP}${resourceId}`;
-    const startRetranslation = retranslate.length > 0;
-    if (startRetranslation) {
-      const runWork = async () => {
-        // "Has someone written since I started?" — a TIMESTAMP, not the
-        // boolean, and captured HERE rather than at spawn. The boolean cannot
-        // tell a merchant save from this module's own mark (the purge above
-        // marks the resource, and so does a finishing run), and a snapshot
-        // taken at spawn is already minutes stale for a run that was QUEUED
-        // behind another — the run it waited for marks the resource on its way
-        // out, and the queued one then abandons itself before touching a
-        // single locale. Its entries end up in neither list, so nothing
-        // re-translates and nothing removes them, permanently, because the
-        // sync has already advanced their digest baseline.
-        const savedAtStart = translationSavedAt(resourceId);
-        const supersededByMerchant = () => {
-          const now = translationSavedAt(resourceId);
-          return now !== null && now !== savedAtStart;
-        };
-        try {
-          const outcome = await retranslateStaleEntries(
-            gateway,
-            params,
-            retranslate,
-            supersededByMerchant,
-          );
-          // Entries the AI path could not deliver still have to lose their
-          // stale translation — a failed automation must never leave the old
-          // text on the storefront. UNLESS the merchant edited this resource's
-          // translations while the AI was working: the run took minutes, their
-          // hand-written value is newer than everything decided here, and
-          // deleting it would be the one unrecoverable outcome. The next change
-          // event repairs whatever is genuinely still stale.
-          if (
-            mayPurge &&
-            !outcome.startFailed &&
-            outcome.failed.length > 0 &&
-            !supersededByMerchant()
-          ) {
-            await purgeStaleEntries(gateway, shop, resourceId, resourceType, outcome.failed);
-          }
-          if (outcome.registered.length > 0) markTranslationSaved(resourceId);
-        } catch (error: unknown) {
-          logger.warn("[StaleTranslations] Detached re-translation run failed", {
-            context: "StaleTranslations",
-            shop,
-            resourceId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      };
-
-      // A run already going for this resource is WAITED FOR, never a reason to
-      // drop this one: these entries were detected against a baseline this sync
-      // has already overwritten, so discarding them loses them for good. Two
-      // admin edits a minute apart are exactly that case. The several webhooks
-      // of ONE save never reach here — by then the digests match and
-      // `retranslate` is empty.
-      const previous = retranslationsInFlight.get(inFlightKey);
-      const run: Promise<void> = (previous ? previous.then(runWork, runWork) : runWork()).finally(
-        () => {
-          if (retranslationsInFlight.get(inFlightKey) === run) {
-            retranslationsInFlight.delete(inFlightKey);
-          }
-        },
-      );
-      retranslationsInFlight.set(inFlightKey, run);
-      void run;
-    }
-
-    if (removed > 0 || startRetranslation) {
-      logger.info("[StaleTranslations] Reconciled", {
-        context: "StaleTranslations",
-        shop,
-        resourceId,
-        removed,
-        retranslating: startRetranslation ? retranslate.length : 0,
-      });
-    }
-
-    return { removed, retranslating: startRetranslation ? retranslate.length : 0 };
+    return await repairStaleTranslations(params, stale, policy);
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Reconciliation failed — stale rows kept", {
       context: "StaleTranslations",
@@ -333,6 +231,273 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
     });
     return NOTHING;
   }
+}
+
+/**
+ * Resource types whose primary text this app can edit but NO automatic event
+ * re-translates: pages, articles, blogs and policies have no Shopify webhook,
+ * so the only moment anything knows they changed is the save that changed them
+ * (CLAUDE.md). Until `reconcileAfterPrimarySave` existed they were therefore
+ * "unreconciled" in the strict sense — their translations were DELETED and
+ * nothing ever refreshed them, so on a Max shop the same edit produced the new
+ * text on a product and a blank field on a page.
+ *
+ * Product and Collection are deliberately ABSENT: their update webhook already
+ * runs the sync-side reconciliation, and starting a second run from the save
+ * would queue a duplicate AI run behind it (the in-flight map never drops one)
+ * for a repair that has already happened.
+ */
+export const IN_APP_RETRANSLATED_RESOURCE_TYPES: ReadonlySet<string> = new Set([
+  "Page",
+  "Article",
+  "Blog",
+  "ShopPolicy",
+]);
+
+/**
+ * The in-app counterpart of `reconcileStaleTranslations`: the merchant just
+ * rewrote a resource's PRIMARY text in this app, and this is the only event
+ * that will ever notice for the types above.
+ *
+ * It does NO detection, and that is the point. The sync-side entry point must
+ * prove the primary text moved — it did not author the change and Shopify's
+ * `outdated` flag alone says nothing about WHEN. Here the caller performed the
+ * write, and `changedKeys` is the list it computed against the baseline the
+ * editor loaded from. Running the digest gate over that would only ADD a way to
+ * miss: a row whose local mirror carries no digest (a DB-only write, an older
+ * cache) would pass no gate, and the translation would then be neither
+ * re-translated nor removed — live on the storefront, describing text that no
+ * longer exists.
+ *
+ * AUTO-TRANSLATE ONLY, checked here and not only at the call site. Without it
+ * the caller's own purge loop is the repair; running this one as well would
+ * send a second `translationsRemove` for rows that are already gone, which
+ * echoes nothing back and logs as an unconfirmed removal. The two paths are
+ * mutually exclusive at BOTH ends on purpose.
+ *
+ * BEST-EFFORT: the primary write has already happened, so every failure is
+ * logged and swallowed. The merchant's text is saved either way.
+ */
+export async function reconcileAfterPrimarySave(params: RepairTarget & {
+  /**
+   * `translatableContent` read back AFTER the primary write — the NEW values
+   * and their NEW digests, which is what a re-registration needs. A key Shopify
+   * no longer lists (or lists with an empty value) is a CLEARED field: there is
+   * nothing to translate, so it falls through to the removal.
+   */
+  primaryContent: Readonly<Record<string, PrimaryContentEntry>>;
+  /** Shopify translation keys whose primary value this save changed. */
+  changedKeys: readonly string[];
+  /** Published foreign locales — the primary locale never holds a translation row. */
+  foreignLocales: readonly string[];
+}): Promise<ReconcileResult> {
+  const { shop, resourceId, resourceType, changedKeys, foreignLocales, primaryContent } = params;
+
+  try {
+    if (changedKeys.length === 0 || foreignLocales.length === 0) return NOTHING;
+
+    const policy = await loadTranslationChangePolicy(shop);
+    if (!policy.autoTranslateExternalChanges) return NOTHING;
+
+    // Which (locale, key) pairs actually HAVE a translation to repair. Read
+    // from the mirror rather than from Shopify: the alternative is one
+    // `translations(locale:)` query per locale for a question the local rows
+    // already answer, and a pair the mirror does not know is one this app
+    // never wrote and whose digest baseline it could not supply either.
+    const { db } = await import("../../db.server");
+    const rows = await db.contentTranslation.findMany({
+      where: {
+        shop,
+        resourceId,
+        resourceType,
+        // GLOBAL layer only — a market override is a deliberate separate value
+        // and survives a primary change, the same rule as everywhere else.
+        marketId: "",
+        key: { in: [...changedKeys] },
+        locale: { in: [...foreignLocales] },
+      },
+      select: { key: true, locale: true },
+    });
+    if (rows.length === 0) return NOTHING;
+
+    const seen = new Set<string>();
+    const stale: StaleTranslation[] = [];
+    for (const row of rows) {
+      const id = digestBaselineKey(row.locale, row.key);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const entry = primaryContent[row.key];
+      const primaryValue = entry?.value ?? "";
+      stale.push({
+        key: row.key,
+        locale: row.locale,
+        // The two reasons this module already knows, decided from the value we
+        // just wrote: text there ⇒ the translation is out of date, nothing
+        // there ⇒ the merchant cleared the field. `partitionStaleTranslations`
+        // routes the second one to the removal by itself (no source, no
+        // translation), so this is a label rather than a second decision.
+        reason: primaryValue.trim() ? "outdated" : "primary-empty",
+        primaryValue,
+        digest: entry?.digest ?? null,
+      });
+    }
+
+    logger.info("[StaleTranslations] Primary text changed in the editor — re-translating", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      resourceType,
+      stale: stale.length,
+    });
+
+    return await repairStaleTranslations(params, stale, policy);
+  } catch (error: unknown) {
+    logger.warn("[StaleTranslations] Post-save re-translation failed — translations kept", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return NOTHING;
+  }
+}
+
+/**
+ * Repair entries ALREADY established as stale: purge them, re-translate them,
+ * or both. Both entry points share it, because everything delicate lives here
+ * — the in-flight queue, the "did the merchant write while we worked"
+ * timestamp, the "a confirmed write is never taken back" rule and the fallback
+ * purge for what the AI could not deliver. A second copy of that would drift
+ * within one release.
+ *
+ * What each caller does to ESTABLISH staleness is its own business, and the two
+ * differ on purpose: the sync above has to PROVE the primary text moved (digest
+ * baseline plus Shopify's `outdated` flag, neither of which it authored), while
+ * the in-app save below IS the change event and knows exactly which keys it
+ * just rewrote.
+ *
+ * NOTHING escapes it either — both callers wrap it, and the sync's contract
+ * is that a stale row left behind must never fail the save or the webhook.
+ */
+async function repairStaleTranslations(
+  target: RepairTarget,
+  stale: readonly StaleTranslation[],
+  policy: TranslationChangePolicy,
+): Promise<ReconcileResult> {
+  const { client, shop, resourceId, resourceType } = target;
+  const gateway = new ShopifyApiGateway(client, shop);
+  const { retranslate, purge } = partitionStaleTranslations(
+    stale,
+    policy.autoTranslateExternalChanges,
+  );
+
+  // May a stale translation be REMOVED here? Not the same question as the
+  // merchant's purge switch, which auto-translate forces off (the two are
+  // alternatives — translation-change-policy.server.ts). A shop that asked
+  // for "always give it the new text" is asking for the opposite of stale,
+  // so whatever the AI cannot deliver — a CLEARED source with nothing to
+  // translate, a `handle`, a provider error — is removed rather than left
+  // describing text that no longer exists. Only with BOTH switches off does
+  // nothing get touched, and that case never reaches this line.
+  const mayPurge = policy.purgeOnPrimaryChange || policy.autoTranslateExternalChanges;
+
+  // The INLINE purge runs FIRST: one GraphQL call, so the storefront is
+  // corrected immediately — and its `markTranslationSaved` then lands BEFORE
+  // the detached run captures its baseline below. The other order made the
+  // run read our own mark as "the merchant saved" and abandon itself.
+  let removed = 0;
+  if (mayPurge && purge.length > 0) {
+    removed = await purgeStaleEntries(gateway, shop, resourceId, resourceType, purge);
+    // Protect what we just changed from a racing webhook sync that re-fetches
+    // Shopify before it is consistent again.
+    markTranslationSaved(resourceId);
+  }
+
+  // The AI re-translation is DETACHED. Two of the callers (the single-item
+  // reload routes) await this sync inside an HTTP request, and one AI request
+  // per locale does not fit in a request the browser abandons after 30
+  // seconds. It is Task-tracked, so nothing is lost by not waiting.
+  const inFlightKey = `${shop}${IN_FLIGHT_SEP}${resourceId}`;
+  const startRetranslation = retranslate.length > 0;
+  if (startRetranslation) {
+    const runWork = async () => {
+      // "Has someone written since I started?" — a TIMESTAMP, not the
+      // boolean, and captured HERE rather than at spawn. The boolean cannot
+      // tell a merchant save from this module's own mark (the purge above
+      // marks the resource, and so does a finishing run), and a snapshot
+      // taken at spawn is already minutes stale for a run that was QUEUED
+      // behind another — the run it waited for marks the resource on its way
+      // out, and the queued one then abandons itself before touching a
+      // single locale. Its entries end up in neither list, so nothing
+      // re-translates and nothing removes them, permanently, because the
+      // sync has already advanced their digest baseline.
+      const savedAtStart = translationSavedAt(resourceId);
+      const supersededByMerchant = () => {
+        const now = translationSavedAt(resourceId);
+        return now !== null && now !== savedAtStart;
+      };
+      try {
+        const outcome = await retranslateStaleEntries(
+          gateway,
+          target,
+          retranslate,
+          supersededByMerchant,
+        );
+        // Entries the AI path could not deliver still have to lose their
+        // stale translation — a failed automation must never leave the old
+        // text on the storefront. UNLESS the merchant edited this resource's
+        // translations while the AI was working: the run took minutes, their
+        // hand-written value is newer than everything decided here, and
+        // deleting it would be the one unrecoverable outcome. The next change
+        // event repairs whatever is genuinely still stale.
+        if (
+          mayPurge &&
+          !outcome.startFailed &&
+          outcome.failed.length > 0 &&
+          !supersededByMerchant()
+        ) {
+          await purgeStaleEntries(gateway, shop, resourceId, resourceType, outcome.failed);
+        }
+        if (outcome.registered.length > 0) markTranslationSaved(resourceId);
+      } catch (error: unknown) {
+        logger.warn("[StaleTranslations] Detached re-translation run failed", {
+          context: "StaleTranslations",
+          shop,
+          resourceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    // A run already going for this resource is WAITED FOR, never a reason to
+    // drop this one: these entries were detected against a baseline this sync
+    // has already overwritten, so discarding them loses them for good. Two
+    // admin edits a minute apart are exactly that case. The several webhooks
+    // of ONE save never reach here — by then the digests match and
+    // `retranslate` is empty.
+    const previous = retranslationsInFlight.get(inFlightKey);
+    const run: Promise<void> = (previous ? previous.then(runWork, runWork) : runWork()).finally(
+      () => {
+        if (retranslationsInFlight.get(inFlightKey) === run) {
+          retranslationsInFlight.delete(inFlightKey);
+        }
+      },
+    );
+    retranslationsInFlight.set(inFlightKey, run);
+    void run;
+  }
+
+  if (removed > 0 || startRetranslation) {
+    logger.info("[StaleTranslations] Reconciled", {
+      context: "StaleTranslations",
+      shop,
+      resourceId,
+      removed,
+      retranslating: startRetranslation ? retranslate.length : 0,
+    });
+  }
+
+  return { removed, retranslating: startRetranslation ? retranslate.length : 0 };
 }
 
 // ─── Purge ────────────────────────────────────────────────────────────────
@@ -416,7 +581,7 @@ interface RetranslateOutcome {
  */
 async function retranslateStaleEntries(
   gateway: ShopifyApiGateway,
-  params: ReconcileParams,
+  params: RepairTarget,
   entries: readonly StaleTranslation[],
   /** "Did a save land after this run started?" — see the caller. */
   supersededByMerchant: () => boolean,
@@ -437,7 +602,7 @@ async function retranslateStaleEntries(
 
 async function runRetranslation(
   gateway: ShopifyApiGateway,
-  params: ReconcileParams,
+  params: RepairTarget,
   entries: readonly StaleTranslation[],
   supersededByMerchant: () => boolean,
 ): Promise<RetranslateOutcome> {

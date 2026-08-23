@@ -458,13 +458,123 @@ export class ShopifyContentService {
   }
 
   /**
+   * §6.6 for the FEATURED-IMAGE ALT of a Collection or Article: its primary
+   * value just changed, so every foreign alt translation of it now describes a
+   * text that no longer exists.
+   *
+   * It needs its own pass because this alt is the THIRD translation shape
+   * (CLAUDE.md): Shopify stores it as key `alt` on the image's OWN
+   * CollectionImage/ArticleImage GID, while the mirror row sits on the PARENT
+   * under `image_alt_text`. The generic field purge can address neither half.
+   *
+   * Same echo rule as everywhere else — a local row is deleted ONLY for a
+   * locale Shopify CONFIRMS the removal for, because `translationsRemove` can
+   * silently no-op and a DB that disagrees with Shopify is worse than a stale
+   * row. Best-effort: never throws, because the primary save already happened.
+   */
+  private async invalidateFeaturedImageAltTranslations(params: {
+    resourceId: string;
+    resourceType: 'Collection' | 'Article';
+    shop: string;
+    db: PrismaClient;
+    foreignLocales: readonly string[];
+  }): Promise<void> {
+    const { resourceId, resourceType, shop, db, foreignLocales } = params;
+    if (foreignLocales.length === 0) return;
+    try {
+      // Only talk to Shopify when there is something to invalidate — the common
+      // case is a shop that never translated this alt text at all.
+      const existing = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceId,
+          resourceType,
+          key: 'image_alt_text',
+          marketId: "",
+          locale: { in: [...foreignLocales] },
+        },
+        select: { locale: true },
+      });
+      if (existing.length === 0) return;
+
+      const imageResourceId = await this.fetchFeaturedImageResourceId(resourceId, resourceType);
+      if (!imageResourceId) return;
+
+      const locales = [...new Set(existing.map((row: { locale: string }) => row.locale))];
+      const { ShopifyApiGateway } = await import("../../app/services/shopify-api-gateway.service");
+      const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
+        "../../app/services/bulk-editor/translations.server"
+      );
+      const gateway = new ShopifyApiGateway(this.admin, shop);
+      const { confirmedPairs } = await removeAndVerifyAcrossLocales(
+        gateway,
+        imageResourceId,
+        ['alt'],
+        locales,
+        "",
+      );
+      const confirmed = locales.filter((locale) => confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}alt`));
+      if (confirmed.length === 0) return;
+
+      await db.contentTranslation.deleteMany({
+        where: {
+          shop,
+          resourceId,
+          resourceType,
+          key: 'image_alt_text',
+          marketId: "",
+          locale: { in: confirmed },
+        },
+      });
+      loggers.translation('info', `[updateContent] Invalidated featured image alt translations`, {
+        resourceId,
+        resourceType,
+        locales: confirmed,
+      });
+    } catch (err: unknown) {
+      loggers.translation('warn', `[updateContent] Featured image alt invalidation failed — rows kept`, {
+        resourceId,
+        resourceType,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * The image's OWN translatable-resource GID. Shopify keys a
+   * CollectionImage/ArticleImage by the IMAGE's id, never by the parent's — the
+   * two are not convertible into each other (CLAUDE.md), so it has to be read
+   * off the parent.
+   */
+  private async fetchFeaturedImageResourceId(
+    resourceId: string,
+    resourceType: 'Collection' | 'Article',
+  ): Promise<string | null> {
+    const fieldName = resourceType === 'Article' ? 'article' : 'collection';
+    const response = await this.admin.graphql(
+      `#graphql
+        query getFeaturedImageId($id: ID!) {
+          ${fieldName}(id: $id) {
+            image { id }
+          }
+        }`,
+      { variables: { id: resourceId } },
+    );
+    const payload = await response.json() as {
+      data?: Record<string, { image?: { id?: string | null } | null } | null>;
+      errors?: Array<{ message: string }>;
+    };
+    if (payload.errors?.length) throw new Error(payload.errors[0].message);
+    return payload.data?.[fieldName]?.image?.id ?? null;
+  }
+
+  /**
    * Translate the featured-image alt text of an Article or Collection.
    *
    * In Shopify, Article/Collection image alt text is a SEPARATE translatable resource
    * (CollectionImage / ArticleImage), not part of the parent's translatable content.
-   * The image resource GID mirrors the parent's numeric ID:
-   *   Collection gid://shopify/Collection/123 → gid://shopify/CollectionImage/123
-   *   Article    gid://shopify/Article/123    → gid://shopify/ArticleImage/123
+   * Its GID is the IMAGE's own and is NOT derivable from the parent's numeric id
+   * (CLAUDE.md) — `fetchFeaturedImageResourceId` reads it off the parent.
    *
    * Persists to the polymorphic `contentTranslation` table under the parent's resourceId
    * with key "image_alt_text" so the editor's loader can read it back.
@@ -484,20 +594,9 @@ export class ShopifyContentService {
     try {
       // Shopify's *Image translatable resource is keyed by the image's OWN id
       // (e.g. gid://shopify/CollectionImage/1825168326988), NOT by the parent
-      // collection/article id. We must fetch image.id from the parent — using
-      // the parent's numeric id constructs a non-existent GID.
-      const fieldName = resourceType === 'Article' ? 'article' : 'collection';
-      const imageIdResponse = await this.admin.graphql(
-        `#graphql
-          query getImageId($id: ID!) {
-            ${fieldName}(id: $id) {
-              image { id }
-            }
-          }`,
-        { variables: { id: resourceId } }
-      );
-      const imageIdData = await imageIdResponse.json() as any;
-      const imageResourceId: string | undefined = imageIdData.data?.[fieldName]?.image?.id;
+      // collection/article id — ONE lookup, shared with the §6.6 invalidation
+      // of the same translation, so the two can never address different images.
+      const imageResourceId = await this.fetchFeaturedImageResourceId(resourceId, resourceType);
 
       if (!imageResourceId) {
         loggers.translation('warn', `[saveImageAltTextTranslation] ${resourceType} has no image.id — cannot translate alt text`, { resourceId });
@@ -1209,66 +1308,177 @@ export class ShopifyContentService {
         throw new Error(`Unsupported resource type for primary locale update: ${resourceType}`);
       }
 
-      // Delete translations for changed fields across ALL foreign locales.
-      // Merchant-switchable (Settings → Übersetzungen): with the purge off the
-      // old translations stay and Shopify flags them "outdated" in its own
-      // editor instead. The lookup fails OPEN — see
+      // What a changed PRIMARY value does to its foreign translations — the
+      // merchant switch (Settings → Übersetzungen). Read ONCE: the fields, the
+      // featured-image alt and the re-translation below all ask it, and three
+      // separate lookups are three chances for one save to answer the same
+      // question differently. Fails OPEN — see
       // services/translations/translation-change-policy.server.ts.
-      const { isPurgeOnPrimaryChangeEnabled } = await import(
+      const { loadTranslationChangePolicy } = await import(
         "../../app/services/translations/translation-change-policy.server"
       );
-      // `reconciled` only for COLLECTION here: it is the one type on this path
-      // Shopify sends an update webhook for, so the sync re-translates it by
-      // itself. A page / article / blog / policy is reconciled only when the
-      // merchant presses reload on that item, which is not a repair we may
-      // trade a certain deletion for (translation-change-policy.server.ts).
-      if (
-        changedFields &&
-        changedFields.length > 0 &&
-        (await isPurgeOnPrimaryChangeEnabled(shop, db, {
-          reconciled: resourceType === "Collection",
-        }))
-      ) {
-        // Map UI field names to Shopify translation keys — the ONE canonical
-        // map (FIELD_TO_TRANSLATION_KEY, top of this file).
-        const keyMapping = fieldTranslationKeyMap(resourceType);
+      const fieldsChanged = !!changedFields && changedFields.length > 0;
+      // `updates.imageAltText` is only ever present when it CHANGED: the client
+      // filters `imageAltTexts` down to the entries that differ from what it
+      // loaded (useFieldHandlers), and index 0 is the featured image. So its
+      // presence IS the change signal — there is no `imageAltText` field
+      // definition and it never appears in `changedFields`.
+      const featuredAltChanged =
+        updates.imageAltText !== undefined &&
+        (resourceType === 'Collection' || resourceType === 'Article');
+      const changePolicy =
+        fieldsChanged || featuredAltChanged
+          ? await loadTranslationChangePolicy(shop, db)
+          : null;
 
-        const translationKeysToDelete = changedFields
-          .map(field => keyMapping[field])
-          .filter(key => key !== undefined);
+      // Does an automatic re-translation reach THIS resource's own fields?
+      //  - Collection: yes, through the collections/update webhook.
+      //  - Page / Article / Blog / ShopPolicy: no webhook exists, so the only
+      //    event that will ever notice is the save happening right now. With
+      //    auto-translate on, that repair is `reconcileAfterPrimarySave` below
+      //    — which is what makes them reconciled BY THIS SAVE and lets the
+      //    deletion stand down. Without it they were deleted and nothing ever
+      //    refreshed them, so a Max shop got the new text on a product and a
+      //    blank field on a page for the very same edit.
+      const { IN_APP_RETRANSLATED_RESOURCE_TYPES } = await import(
+        "../../app/services/translations/stale-translation-sync.server"
+      );
+      const selfRetranslated =
+        !!changePolicy?.autoTranslateExternalChanges &&
+        IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType);
+      const purgeChangedFields = !!changePolicy && (
+        selfRetranslated || resourceType === 'Collection'
+          ? changePolicy.purgeOnPrimaryChange
+          : changePolicy.purgeUnreconciledSurfaces
+      );
 
-        if (translationKeysToDelete.length > 0) {
-          // Get all foreign locales
+      // Map UI field names to Shopify translation keys — the ONE canonical map
+      // (FIELD_TO_TRANSLATION_KEY, top of this file).
+      const changedTranslationKeys = fieldsChanged
+        ? [...new Set(
+            changedFields!
+              .map(field => fieldTranslationKeyMap(resourceType)[field])
+              .filter((key): key is string => key !== undefined),
+          )]
+        : [];
+
+      // Published foreign locales, resolved ONCE for the three passes below and
+      // only when one of them can actually run — a save that changed no
+      // translatable text must not pay for a shopLocales query.
+      //
+      // A FAILED lookup yields [] and skips all three rather than throwing. The
+      // primary write has already gone through at this point, so an exception
+      // here reports a save that succeeded as failed, and the merchant re-saves
+      // — repeating the write. A stale translation is visible and repairable;
+      // "your text was not saved" about text that was is neither.
+      const needsForeignLocales =
+        (purgeChangedFields && changedTranslationKeys.length > 0) ||
+        (selfRetranslated && changedTranslationKeys.length > 0) ||
+        (featuredAltChanged && !!changePolicy?.purgeUnreconciledSurfaces);
+      let foreignLocales: string[] = [];
+      if (needsForeignLocales) {
+        try {
           const { shopLocales } = await this.loadShopLocales();
-          const foreignLocales = shopLocales
+          foreignLocales = shopLocales
             .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
             .map((l: { locale: string }) => l.locale);
+        } catch (localeError: unknown) {
+          loggers.translation('warn', '[updateContent] Could not load shop locales — translations left untouched', {
+            resourceId,
+            error: localeError instanceof Error ? localeError.message : String(localeError),
+          });
+        }
+      }
 
-          if (foreignLocales.length > 0) {
-            // Delete from Shopify
-            await this.deleteAllTranslationsForKeys({
-              resourceId,
-              translationKeys: translationKeysToDelete,
-              foreignLocales,
-            });
+      // Delete translations for changed fields across ALL foreign locales.
+      // With the purge off the old translations stay and Shopify flags them
+      // "outdated" in its own editor instead.
+      if (purgeChangedFields && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
+        // Delete from Shopify
+        await this.deleteAllTranslationsForKeys({
+          resourceId,
+          translationKeys: changedTranslationKeys,
+          foreignLocales,
+        });
 
-            // Delete from database (single batch call instead of N×M loop).
-            // Scoped to global (marketId "") to mirror the global-only Shopify
-            // removal above: market-specific overrides survive both sides (Shopify
-            // flags them outdated), matching the plan's market-independence rule.
-            await db.contentTranslation.deleteMany({
-              where: {
-                shop,
-                resourceId,
-                resourceType,
-                marketId: "",
-                key: { in: translationKeysToDelete },
-                locale: { in: foreignLocales },
-              },
-            });
+        // Delete from database (single batch call instead of N×M loop).
+        // Scoped to global (marketId "") to mirror the global-only Shopify
+        // removal above: market-specific overrides survive both sides (Shopify
+        // flags them outdated), matching the plan's market-independence rule.
+        await db.contentTranslation.deleteMany({
+          where: {
+            shop,
+            resourceId,
+            resourceType,
+            marketId: "",
+            key: { in: changedTranslationKeys },
+            locale: { in: foreignLocales },
+          },
+        });
 
-            loggers.translation('info', `Deleted translations for fields: ${changedFields.join(', ')}`);
+        loggers.translation('info', `Deleted translations for fields: ${changedFields!.join(', ')}`);
+      }
+
+      // §6.6 for the FEATURED-IMAGE ALT — the third translation shape
+      // (CLAUDE.md). Its Shopify target is the image's own
+      // CollectionImage/ArticleImage GID while its DB row sits on the PARENT
+      // under `image_alt_text`, and `imageAltText` is not in
+      // FIELD_TO_TRANSLATION_KEY at all — so neither half of the generic purge
+      // above can reach it, and a changed primary alt used to leave its
+      // translations live for good. The bulk editor has run this pass since
+      // Phase 4b; this is the single editor's missing copy of the same rule.
+      //
+      // UNRECONCILED by nature and therefore NOT covered by `selfRetranslated`:
+      // no sync and no re-translation in this app ever looks at a
+      // CollectionImage, so auto-translate does not stand its deletion down.
+      if (featuredAltChanged && changePolicy?.purgeUnreconciledSurfaces && foreignLocales.length > 0) {
+        await this.invalidateFeaturedImageAltTranslations({
+          resourceId,
+          resourceType: resourceType as 'Collection' | 'Article',
+          shop,
+          db,
+          foreignLocales,
+        });
+      }
+
+      // The repair that replaces the deletion for the webhook-less types.
+      // Best-effort by contract: the primary write has already happened, so a
+      // failure here costs a stale translation, never the merchant's text.
+      if (selfRetranslated && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
+        try {
+          // Read the primary values BACK — the re-translation needs the NEW
+          // text and, to register at all, the NEW digest. A key Shopify no
+          // longer lists is a cleared field, which the reconciliation routes to
+          // the removal by itself.
+          const { valueMap, digestMap } = await this.loadTranslatableContent(resourceId);
+          const primaryContent: Record<string, { value: string; digest?: string | null }> = {};
+          for (const [key, digest] of Object.entries(digestMap)) {
+            primaryContent[key] = { value: valueMap[key] ?? "", digest };
           }
+          const { reconcileAfterPrimarySave } = await import(
+            "../../app/services/translations/stale-translation-sync.server"
+          );
+          await reconcileAfterPrimarySave({
+            client: this.admin,
+            shop,
+            resourceId,
+            resourceType,
+            // The merchant-facing kind the AI prompt and the Tasks tab speak —
+            // an article and its blog are both "blog"; a policy has no kind of
+            // its own and rides with "page", the same choice the policy sync
+            // makes.
+            contentKind: resourceType === 'Article' || resourceType === 'Blog' ? 'blog' : 'page',
+            resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
+            primaryContent,
+            changedKeys: changedTranslationKeys,
+            foreignLocales,
+          });
+        } catch (retranslateError: unknown) {
+          loggers.translation('warn', '[updateContent] Re-translation after primary save failed — translations kept', {
+            resourceId,
+            resourceType,
+            error: retranslateError instanceof Error ? retranslateError.message : String(retranslateError),
+          });
         }
       }
 
