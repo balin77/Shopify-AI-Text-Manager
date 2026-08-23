@@ -108,7 +108,6 @@ export const en: Translation = {
     accept: "Accept",
     acceptTranslate: "Accept & Translate",
     decline: "Decline",
-    successTitle: "Success!",
     changesSavedMessage: "Changes saved successfully!",
     translateFromPrimary: "Translate from primary language",
     copy: "Copy",
@@ -183,17 +182,14 @@ export const en: Translation = {
     // Plan upgrade sync
     syncInProgress: "Loading additional products after plan upgrade...",
     syncComplete: "{count} new products loaded",
-    syncCompleteTitle: "Sync complete",
     // Gallery toast messages
     gallerySaveSuccess: "Gallery saved to Shopify successfully.",
     gallerySaveError: "Gallery could not be saved.",
-    galleryErrorTitle: "Gallery Error",
     // Sub-resource (options/metafields) toast messages
     optionsSavedSuccess: "Options and metafields saved successfully",
     saveFailed: "Save Failed",
     saveFailedOptions: "Failed to save {count} option(s). Changes have been reverted to original values.",
     saveFailedItems: "Failed to save {count} item(s). Changes have been reverted to original values.",
-    validationError: "Validation Error",
     optionNameEmpty: "Option name cannot be empty",
     optionValuesEmpty: "Option values cannot be empty",
     metafieldValuesEmpty: "Metafield values cannot be empty",
@@ -359,7 +355,6 @@ export const en: Translation = {
     },
     errorLoadingThemeContent: "Error loading theme content",
     error: "Error",
-    success: "Success!",
     aiSuggestion: "AI suggestion:",
     accept: "Accept",
     decline: "Decline",
@@ -393,6 +388,28 @@ export const en: Translation = {
     menuPrimaryEditHint: "Primary language: changing a label renames the menu item in Shopify. Order, nesting and link targets are still managed in the Shopify admin.",
     menuTitleRequired: "A menu item needs a name.",
     menuSaveRenameFirst: "Save the new name first — otherwise the translation would be made from the old text and removed again on save.",
+    menuNewItem: "New menu item",
+    menuTranslateAfterSave: "Translatable once the item has been saved.",
+    menuTargetRequired: "This menu item needs a target.",
+    menuMaxDepthReached: "Shopify allows three levels.",
+    menuItemInvalid: "This menu item cannot be saved as it is.",
+    menuDragHandle: "Move",
+    menuAddItem: "Add menu item",
+    menuItemUrl: "Target URL",
+    menuAddChild: "Sub-item",
+    menuDeleteItem: "Delete",
+    menuTreeSummary: "{count} change(s) to the menu: {detail}",
+    menuTreeRenamed: "{count} renamed",
+    menuTreeMoved: "{count} moved",
+    menuTreeReordered: "{count} reordered",
+    menuTreeCreated: "{count} added",
+    menuTreeDeleted: "{count} deleted",
+    menuDeleteWarning: "Saving will delete {count} menu item(s) — with their translations. Re-creating the item does not undo it, because a new item gets a new id.",
+    menuTreeSaveFailed: "The menu could not be saved",
+    menuTreeInvalid: "Please fix the marked menu items — Shopify always writes the menu as a whole, so one bad item would take every other change with it.",
+    menuTreeDriftIntro: "The menu changed in Shopify since this page was loaded — nothing was written:",
+    menuTreeRepairFailed: "{count} translation(s) could not be restored after the move. Shopify deletes them when an item is re-parented; please check the affected items.",
+    menuTreeRepairDone: "{count} translation(s) were restored automatically after the move.",
     menuRenameFailed: "Renaming failed",
     menuRenameStructureChanged: "The menu changed in Shopify since this page was loaded — nothing was renamed. Reload and save again; your edits are kept.",
     menuReloadAndRetry: "Reload",
@@ -1269,15 +1286,12 @@ export const en: Translation = {
     policyNotice: "For policies (Privacy, Terms, Imprint, etc.) only the content is editable.",
     exampleText: "Example text...",
     // API Key Warnings
-    noApiKeyConfigured: "No API key",
     noApiKeyForProvider: "No API key configured for {provider}",
     configureApiKeyInSettings: "Please add API key in Settings",
     goToSettings: "Go to Settings",
     preferredProviderNoKey: "No {provider} API key. Please add key in Settings or change model.",
     preferredProviderNoKeyDescription: "AI features require an API key for {provider}.",
-    noApiKeyAtAll: "No AI API key set up yet",
     noApiKeyAtAllDescription: "To use AI features, you first need to add an API key for an AI provider.",
-    corruptedApiKeyTitle: "API key error",
     corruptedApiKeyWarning: "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.",
     apiKeyFormatError: "This key doesn't match the expected format. Double-check it in the provider dashboard and paste it again.",
     apiKeySaveErrorIntro: "Some entries don't match the expected format. The fields with problems are highlighted below — fix them and click Save again.",
@@ -1558,7 +1572,6 @@ export const en: Translation = {
     themeSetupWebVitalsButton: "Activate Web Vitals",
     themeSetupNote: "After each activation, save your theme. All blocks belong to the same ContentPilot Storefront extension.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
-    extensionSetupHintTitle: "Set up the theme extension",
     extensionSetupHintMessage: "You're now on Pro/Max. To show variant image galleries on your storefront, the ContentPilot theme extension still needs to be enabled in your theme editor. This is optional.",
     extensionSetupHintAction: "Set it up",
     billingSuccessTitle: "Plan activated",
@@ -1801,6 +1814,10 @@ export const en: Translation = {
     statusOptions: {
       all: "All Tasks",
       completed: "Successful",
+      // `completed_with_errors` deserves its own option rather than being
+      // folded into "Successful": a run that saved most of its work and lost
+      // the rest is exactly what a merchant comes to this filter for.
+      partial: "Completed with errors",
       failed: "Failed",
     },
     timeRangeOptions: {
@@ -1844,6 +1861,7 @@ export const en: Translation = {
       insertKeyword: "Keyword insertion",
       altTextTemplateApply: "Alt-text templates",
       imageWebpConversion: "Image conversion (WebP)",
+      imageWebpConversionItem: "Image conversion (one image)",
       blogArticleRedirects: "Blog article redirects",
       seoRobotsAdvice: "robots.txt advice",
       aiDiscoveryIntro: "Opening text (AI discovery)",
@@ -1905,9 +1923,6 @@ export const en: Translation = {
     aiOutput: "AI Output",
     image: "Image",
     // Completion notifications
-    completedTitle: "✓ Completed",
-    failedTitle: "✗ Failed",
-    partialTitle: "⚠ Partially saved",
     partialSummary: "{processed} of {total} saved, {failed} failed",
     taskFailedGeneric: "Task failed — please retry.",
     taskCompleted: "Task completed for \"{title}\"",
@@ -1923,6 +1938,36 @@ export const en: Translation = {
     seoBulkFixCompleted: "SEO fix finished",
     taskTimedOut: "Timed out — the task reported no progress for too long and was cancelled. Please start it again.",
     taskInterrupted: "Interrupted — the server restarted (a deploy, for example) while the task was running. Please start it again.",
+    // Accessible name of the navigation's notification box — read out instead
+    // of the coloured border, which says the same thing to everyone else.
+    notificationSuccess: "Success notification",
+    notificationWarning: "Warning notification",
+    notificationCritical: "Error notification",
+    notificationInfo: "Information notification",
+    // ── Codes stored in `Task.error` (app/utils/task-error-text.ts) ───────
+    // A runner finishes long after the request that started it and has no
+    // merchant locale, so it stores `<code>:<arg>` and the numbers are
+    // substituted here. `{count}`/`{total}` are counts, `{language}` a locale
+    // code. `invalidApiKey` is appended to the line it explains, never shown
+    // on its own; `someFailed` is the fallback for a code whose numbers
+    // cannot be read — never a half-filled template.
+    taskErrors: {
+      rowsFailed: "{count} row(s) could not be saved.",
+      rowsFailedOfTotal: "{count} of {total} row(s) could not be saved.",
+      itemsFailed: "{count} of {total} item(s) failed.",
+      imagesFailed: "{count} of {total} image(s) failed.",
+      fixesFailed: "{count} of {total} fix(es) failed.",
+      altImagesFailed: "{count} of {total} image(s) failed.",
+      batchesAllFailed: "Every AI batch call failed ({total} in total).",
+      batchesFailed: "{count} of {total} AI batch call(s) failed — the entries in them received no keyword suggestions.",
+      localeScansFailed: "Every language scan failed ({total} in total) — see the logs for details.",
+      aiEmptyValue: "The AI returned an empty value.",
+      itemMissing: "This entry no longer exists in the content cache — reload it and try again.",
+      webpBatchNotStarted: "The image conversion could not be started. No image was changed — please try again.",
+      slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
+      invalidApiKey: "(the AI API key was rejected)",
+      someFailed: "Some entries could not be processed — open the task for details.",
+    },
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",
     generationCompleted: "AI generation for {field} in \"{title}\" completed",
@@ -1984,7 +2029,9 @@ export const en: Translation = {
       galleryVideosVimeo: "Products with Vimeo gallery videos",
       generated: "Generated",
       headDrift: "Pages whose title drifted from the SEO title",
+      imagesConverted: "Images converted",
       imagesFailed: "Images that failed",
+      imagesTotal: "Images in the run",
       internalLinksCapped: "The pending-suggestion limit was reached — some matches were not saved.",
       items: "Entries",
       itemsAvailable: "Entries in the catalogue",
@@ -2748,6 +2795,10 @@ export const en: Translation = {
       externalTruncatedBanner: "Only the first {max} distinct external targets were recorded. Any links beyond that are not listed here.",
       externalUncheckedBanner: "{count} targets could not be checked within the time budget. They are marked \"Not checked\" below — not as fine.",
       externalChecksLabel: "Also check external links",
+      // Why "Scan now" waits: the server reads the STORED value when it
+      // starts, so an unsaved tick would simply not apply.
+      externalChecksRefused: "Checking external links is available from the Pro plan — the setting was not changed.",
+      externalChecksUnsaved: "Save first — otherwise the scan still runs with the old setting.",
       externalChecksHelp: "After the crawl, checks whether links to other websites still work. This sends requests to servers we do not control and makes the crawl take a little longer (at most 2 extra minutes).",
       // Crawl comparison (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Since the last crawl ({date})",
@@ -3706,6 +3757,7 @@ export const en: Translation = {
       llmsTitle: "AI discovery files",
       llmsStaleHint: "At least one of the two files in your theme no longer matches your catalog — products, collections or policies have changed since it was last generated. Regenerate them so AI crawlers see the current state.",
       llmsContents: "Current state: {products} products, {collections} collections, {policies} policies. Items are included ordered by handle, up to 50 per type.",
+      llmsAutoSaveFailed: "The setting could not be saved.",
       llmsAutoLabel: "Keep discovery files up to date automatically",
       llmsAutoDisabled: "Off — the files only change when you press \"Update files\" below.",
       llmsAutoOn: "On — shortly after you open the app, and about every half hour while it stays open, we check in the background whether your catalog differs from the files and rewrite them only on a real difference. Changes you make directly in Shopify are included.",

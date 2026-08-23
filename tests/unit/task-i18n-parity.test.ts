@@ -95,6 +95,18 @@ const MAXIMAL: [string, unknown][] = [
   // TASK_TYPE_ALIASES, which is the point of listing it as it is created).
   ["bulkAiGeneration", { generated: 1, failed: 1 }],
   ["bulkAIGeneration", { generatedAltTexts: { "0": "x" }, failedIndices: [1] }],
+  // The AGGREGATE row of a WebP conversion run. Its per-image work items
+  // (`imageWebpConversionItem`) are deliberately unregistered and therefore
+  // emit nothing — that is pinned in task-details.test.ts, not here.
+  [
+    "imageWebpConversion",
+    {
+      total: 2,
+      converted: 1,
+      failed: 1,
+      failures: [{ mediaId: "gid://shopify/MediaImage/1", position: 0, message: "boom" }],
+    },
+  ],
   ["translation", { translated: 1, total: 1 }],
   ["translation", { retranslated: 1, purged: 1 }],
   ["translation", { translatedCount: 1, failedCount: 1 }],

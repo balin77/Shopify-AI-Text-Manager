@@ -6,10 +6,12 @@
  * failure list in there is the ONLY record of what went wrong anywhere. The
  * rules under test each have a failure mode behind them:
  *
- *  1. **Per type, never a JSON dump.** `imageWebpConversion` and `pageSpeed`
- *     store the job INPUT, not an outcome, so they are absent from the registry
- *     on purpose — a generic renderer would show a merchant an internal job
- *     spec.
+ *  1. **Per type, never a JSON dump.** `imageWebpConversionItem` and
+ *     `pageSpeed` store the job INPUT, not an outcome, so they are absent from
+ *     the registry on purpose — a generic renderer would show a merchant an
+ *     internal job spec. `imageWebpConversion` is the aggregate row ABOVE those
+ *     items and holds a real outcome, so it is registered; the split between
+ *     the two is pinned below.
  *  2. **An absent key is omitted, never rendered as 0** — the
  *     `attributesSyncedAt` rule. A fabricated 0 is a wrong number, and
  *     `galleryVideos` is the named three-valued case.
@@ -76,8 +78,8 @@ describe("summariseTaskResult — malformed input", () => {
 // ── 2. the two deliberate exclusions ────────────────────────────────────────
 
 describe("summariseTaskResult — the job-INPUT types are excluded on purpose", () => {
-  it("imageWebpConversion returns null even for a well-formed blob", () => {
-    // api.convert-webp.tsx L132 — this is the job spec, not an outcome.
+  it("imageWebpConversionItem returns null even for a well-formed blob", () => {
+    // api.convert-webp.tsx — this is the job spec of ONE image, not an outcome.
     const blob = json({
       sourceUrl: "https://cdn.shopify.com/s/files/1/0001/kumiko.jpg",
       mediaId: "gid://shopify/MediaImage/1234567890",
@@ -85,6 +87,24 @@ describe("summariseTaskResult — the job-INPUT types are excluded on purpose", 
       productId: "gid://shopify/Product/999",
       altText: "Kumiko box in walnut",
       position: 2,
+      parentTaskId: "ckparent",
+    });
+    expect(summariseTaskResult("imageWebpConversionItem", blob)).toBeNull();
+  });
+
+  it("a legacy pre-split row under the PARENT type shows no job spec either", () => {
+    // Rows created before the parent/child split carry the job input under
+    // `imageWebpConversion`. That type is registered now, so the guard is the
+    // summariser's own: none of those keys is a count, so it answers null and
+    // the merchant is not shown an internal job spec.
+    const blob = json({
+      sourceUrl: "https://cdn.shopify.com/s/files/1/0001/kumiko.jpg",
+      mediaId: "gid://shopify/MediaImage/1234567890",
+      productImageId: "img_42",
+      productId: "gid://shopify/Product/999",
+      altText: "Kumiko box in walnut",
+      position: 2,
+      webpUrl: "https://cdn.shopify.com/s/files/1/0001/kumiko.webp",
     });
     expect(summariseTaskResult("imageWebpConversion", blob)).toBeNull();
   });
@@ -896,6 +916,87 @@ describe("summariseTaskResult — the remaining registered types", () => {
 
 // ── 9. hasTaskDetails ───────────────────────────────────────────────────────
 
+// ── 8b. the WebP conversion AGGREGATE ───────────────────────────────────────
+
+describe("summariseTaskResult — the WebP conversion batch", () => {
+  it("reports the three counts and names the failed images by gallery position", () => {
+    const summary = summariseTaskResult(
+      "imageWebpConversion",
+      json({
+        total: 3,
+        converted: 2,
+        failed: 1,
+        failures: [
+          {
+            mediaId: "gid://shopify/MediaImage/1234567890",
+            position: 2,
+            message: "Failed to download image: 404",
+          },
+        ],
+      }),
+    );
+    expect(keys(summary)).toEqual(["imagesConverted", "imagesFailed", "imagesTotal"]);
+    expect(valueOf(summary, "imagesConverted")).toBe("2");
+    expect(valueOf(summary, "imagesTotal")).toBe("3");
+    // The count is the merchant's warning that something is still a PNG.
+    expect(summary?.lines.find((l) => l.labelKey === "imagesFailed")?.tone).toBe("critical");
+    // Stored zero-based, counted from one — the same +1 as `altText_<n>`.
+    expect(summary?.failures).toEqual([
+      {
+        subject: "Image 3",
+        message: "Failed to download image: 404",
+        parts: { rowType: "image", rowId: "3" },
+      },
+    ]);
+  });
+
+  it("falls back to the media id when the run recorded no position", () => {
+    const summary = summariseTaskResult(
+      "imageWebpConversion",
+      json({
+        total: 1,
+        converted: 0,
+        failed: 1,
+        failures: [{ mediaId: "gid://shopify/MediaImage/42", position: null, message: "boom" }],
+      }),
+    );
+    expect(summary?.failures).toEqual([
+      { subject: "Image 42", message: "boom", parts: { rowType: "image", rowId: "42" } },
+    ]);
+  });
+
+  it("a still-running batch shows only what is already true", () => {
+    // The route writes `{total}` alone at creation: a `converted: 0` before
+    // anything ran would be a fabricated measurement (the absent-is-not-zero
+    // rule), so the two counts appear only once the processor has recounted.
+    const summary = summariseTaskResult("imageWebpConversion", json({ total: 20 }));
+    expect(keys(summary)).toEqual(["imagesTotal"]);
+    expect(summary?.failures).toEqual([]);
+  });
+
+  it("a zero failure count is still shown, and quietly", () => {
+    const summary = summariseTaskResult(
+      "imageWebpConversion",
+      json({ total: 2, converted: 2, failed: 0, failures: [] }),
+    );
+    expect(valueOf(summary, "imagesFailed")).toBe("0");
+    expect(summary?.lines.find((l) => l.labelKey === "imagesFailed")?.tone).toBeUndefined();
+  });
+
+  it("a failure entry with neither identity nor message is dropped, not rendered blank", () => {
+    const summary = summariseTaskResult(
+      "imageWebpConversion",
+      json({
+        total: 2,
+        converted: 1,
+        failed: 1,
+        failures: [{}, { message: "no id, but a reason" }, null, "nonsense"],
+      }),
+    );
+    expect(summary?.failures).toEqual([{ subject: "", message: "no id, but a reason" }]);
+  });
+});
+
 describe("hasTaskDetails", () => {
   it("a prompt alone is enough, whatever the type", () => {
     expect(hasTaskDetails({ type: "pageSpeed", hasPrompt: true, hasResult: false })).toBe(true);
@@ -909,10 +1010,18 @@ describe("hasTaskDetails", () => {
 
   it("a result alone is NOT enough for the two job-input types", () => {
     // This pair is what removes the dropdown that opened onto nothing.
-    expect(hasTaskDetails({ type: "imageWebpConversion", hasPrompt: false, hasResult: true })).toBe(
-      false,
-    );
+    expect(
+      hasTaskDetails({ type: "imageWebpConversionItem", hasPrompt: false, hasResult: true }),
+    ).toBe(false);
     expect(hasTaskDetails({ type: "pageSpeed", hasPrompt: false, hasResult: true })).toBe(false);
+  });
+
+  it("the WebP AGGREGATE row does have details", () => {
+    // The arrow the item type must not draw is exactly the one the parent
+    // must: its result is the only place the per-image failures are readable.
+    expect(hasTaskDetails({ type: "imageWebpConversion", hasPrompt: false, hasResult: true })).toBe(
+      true,
+    );
   });
 
   it("an unregistered type with a result has nothing to show", () => {
@@ -1285,6 +1394,7 @@ describe("the emitted label vocabulary", () => {
     ["bulkAiGeneration", { generated: 1, failed: 1 }],
     ["bulkAIGeneration", { generatedAltTexts: { "0": "x" }, failedIndices: [1] }],
     ["aiDiscoveryIntro", { file: "llms", chars: 1 }],
+    ["imageWebpConversion", { total: 1, converted: 1, failed: 1, failures: [] }],
     ["translation", { translated: 1, total: 1 }],
     ["translation", { retranslated: 1, purged: 1 }],
     ["translation", { translatedCount: 1, failedCount: 1 }],
@@ -1333,7 +1443,9 @@ describe("the emitted label vocabulary", () => {
     "galleryVideosVimeo",
     "generated",
     "headDrift",
+    "imagesConverted",
     "imagesFailed",
+    "imagesTotal",
     "internalLinksCapped",
     "items",
     "itemsAvailable",

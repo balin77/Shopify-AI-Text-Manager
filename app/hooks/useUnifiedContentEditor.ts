@@ -45,6 +45,7 @@ import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { readLastSelectedId } from "../utils/last-selected-item";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
+import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -998,7 +999,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           onError?.(errorMsg);
           if (!options?.suppressErrorBox) {
             const translatedError = translateErrorMessage(errorMsg, t);
-            showInfoBox(translatedError, "critical", t.common?.error || "Error");
+            showInfoBox(translatedError, "critical");
           }
         }
       }
@@ -1009,7 +1010,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         onError?.(errorMessage);
         if (!options?.suppressErrorBox) {
           const translatedError = translateErrorMessage(errorMessage, t);
-          showInfoBox(translatedError, "critical", t.common?.error || "Error");
+          showInfoBox(translatedError, "critical");
         }
       }
     }
@@ -1043,8 +1044,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
             "The generated text still over-uses a tracked keyword — review it before accepting.",
-          "warning",
-          t.common?.warning || "Warning",
+          "warning"
         );
       }
     }
@@ -1227,16 +1227,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{failedLocales}", failedList),
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       } else {
         showInfoBox(
           String(t.content?.altTextTranslatedToAllLocales || "Alt-text for image {imageNumber} translated to {count} language(s)")
             .replace("{imageNumber}", String((imageIndex || 0) + 1))
             .replace("{count}", String(targetLocales.length)),
-          "success",
-          t.common?.success || "Success"
+          "success"
         );
       }
 
@@ -1355,10 +1353,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           if (failed.length > 0) {
             const failedList = failed.join(", ");
-            const totalLocales = Object.keys(translations).length + failed.length;
-            const successCount = Object.keys(translations).filter(
-              (l: string) => Object.keys((translations as Record<string, Record<string, string>>)[l] || {}).length > 0
-            ).length;
+            // One rule, one module: the map is SEEDED with every target locale,
+            // so adding the failed list to its key count counted failures twice.
+            const { succeeded: successCount, total: totalLocales } = partialLocaleCounts(
+              translations as Record<string, unknown>,
+              failed,
+            );
             messages.push(
               String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
                 .replace("{successCount}", String(successCount))
@@ -1389,16 +1389,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           showInfoBox(
             messages.join(" "),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           const localeCount = Object.keys(translations).length;
           showInfoBox(
             String(t.content?.translateAllSuccess || "Successfully translated to {count} language(s).")
               .replace("{count}", String(localeCount)),
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
       }
@@ -1462,8 +1460,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           showInfoBox(
             String(t.content?.translateLocaleError || "Translation to {locale} failed. Please try again.")
               .replace("{locale}", targetLocale),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else if ((rejectedForLocale && rejectedForLocale.length > 0) || (skippedForLocale && skippedForLocale.length > 0)) {
           const messages: string[] = [];
@@ -1482,14 +1479,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           }
           showInfoBox(
             messages.join(" "),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
             t.common?.translatedSuccessfully || `Successfully translated to ${targetLocale}`,
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
       }
@@ -1656,10 +1651,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         if (pendingRedirectMessage) {
           showInfoBox(
             pendingRedirectMessage.text,
-            pendingRedirectMessage.tone,
-            pendingRedirectMessage.tone === "warning"
-              ? t.common?.warning || "Warning"
-              : t.common?.success || "Success",
+            pendingRedirectMessage.tone
           );
         }
         const { fieldKey, sourceText, targetLocales, contextTitle, itemId } = pendingTranslationAfterSaveRef.current;
@@ -1755,10 +1747,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               if (failedFieldLocales.length > 0) {
                 const failedList = failedFieldLocales.join(", ");
+                const counts = partialLocaleCounts(
+                  translations as Record<string, unknown>,
+                  failedFieldLocales,
+                );
                 messages.push(
                   String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                    .replace("{successCount}", String(Object.keys(translations).length))
-                    .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
+                    .replace("{successCount}", String(counts.succeeded))
+                    .replace("{totalCount}", String(counts.total))
                     .replace("{failedLocales}", failedList)
                 );
               }
@@ -1785,8 +1781,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               showInfoBox(
                 messages.join(" "),
-                "warning",
-                t.common?.warning || "Warning"
+                "warning"
               );
             } else {
               const fieldLabel = resolveFieldLabel(fieldKey);
@@ -1795,8 +1790,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
                   ?.replace("{fieldType}", fieldLabel)
                   .replace("{count}", String(Object.keys(translations).length))
                   || `${fieldLabel} translated to ${Object.keys(translations).length} language(s)`,
-                "success",
-                t.common?.success || "Success"
+                "success"
               );
             }
 
@@ -1910,36 +1904,29 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
           t.content?.altTextSavePartialImages ||
             "Changes saved, but alt-text for image(s) {failedImages} could not be saved to Shopify. Please sync the product again.",
         ).replace("{failedImages}", failedList);
-        showInfoBox(
-          ...withRedirect(serverWarning ? `${altMessage} ${serverWarning}` : altMessage, "warning"),
-          t.common?.warning || "Warning"
-        );
+        showInfoBox(...withRedirect(serverWarning ? `${altMessage} ${serverWarning}` : altMessage, "warning"));
       } else if (serverWarning) {
         // Server returned success but with a warning (e.g. Shopify saved, DB cache failed)
-        showInfoBox(
-          ...withRedirect(serverWarning, "warning"),
-          t.common?.warning || "Warning"
-        );
+        showInfoBox(...withRedirect(serverWarning, "warning"));
       } else if (wasCopySave) {
         // Copy ("Übertragen") confirmed persisted to Shopify.
         const [text, tone] = withRedirect(
           String(t.common?.copiedToShopify || "Successfully transferred to Shopify"),
           "success",
         );
-        showInfoBox(text, tone, tone === "warning" ? t.common?.warning || "Warning" : t.common?.success || "Success");
+        showInfoBox(text, tone);
       } else if (!wasTranslateSave) {
         const [text, tone] = withRedirect(
           String(t.common?.changesSaved || "Changes saved successfully!"),
           "success",
         );
-        showInfoBox(text, tone, tone === "warning" ? t.common?.warning || "Warning" : t.common?.success || "Success");
+        showInfoBox(text, tone);
       } else if (redirectMessage) {
         // A translate-triggered save shows no message of its own — but the
         // redirect outcome still has to reach the merchant.
         showInfoBox(
           redirectMessage.text,
-          redirectMessage.tone,
-          redirectMessage.tone === "warning" ? t.common?.warning || "Warning" : t.common?.success || "Success",
+          redirectMessage.tone
         );
       }
 
@@ -2021,7 +2008,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
       if (isSavedItemCurrent) {
         const translatedError = translateErrorMessage(String(fetcher.data.error || ""), t);
-        showInfoBox(translatedError, "critical", t.common?.error || "Error");
+        showInfoBox(translatedError, "critical");
       }
     } else if (fetcher.data && !fetcher.data.success && 'errorKey' in fetcher.data && isSavePendingRef.current) {
       // ─── Handle i18n error-key responses (e.g. emptyPrimaryFieldsError) ───
@@ -2046,7 +2033,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
         const errorMessage =
           (t.content as Record<string, string>)?.[errorKey] ||
           errorKey;
-        showInfoBox(errorMessage, "critical", (t.content?.error as string) || t.common?.error || "Error");
+        showInfoBox(errorMessage, "critical");
 
         // Auto-restore empty fields to their original values (discard empty edits)
         if (isThemeContentType(config.contentType) && originalTemplateValuesRef.current) {
@@ -2102,7 +2089,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     }
 
     const translatedError = translateErrorMessage(errorMsg, t);
-    showInfoBox(translatedError, "critical", t.common?.error || "Error");
+    showInfoBox(translatedError, "critical");
   }, [fetcher.data, showInfoBox, t]);
 
   // Clear justSubmittedRef when fetcher picks up the request (state leaves 'idle')

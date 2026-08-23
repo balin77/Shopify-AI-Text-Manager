@@ -1081,8 +1081,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       revalidator?.revalidate();
       showInfoBox(
         (t.content?.deletedMessage || "“{name}” was deleted.").replace("{name}", target.title || target.id),
-        "success",
-        t.content?.success || "Success!",
+        "success"
       );
     },
   });
@@ -1982,7 +1981,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           locale={state.currentLanguage}
                           tooltip={t.content?.reloadItemTooltip}
                           onReloadComplete={handleReloadComplete}
-                          onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
+                          onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success")}
                           revalidator={revalidator}
                         />
                         <HelpTooltip helpKey="mobileToolbarActions" position="below" />

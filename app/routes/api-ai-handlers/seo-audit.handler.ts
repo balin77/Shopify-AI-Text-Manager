@@ -222,9 +222,8 @@ async function runSeoAudit(taskId: string, args: RunArgs): Promise<void> {
         progress: 100,
         processed,
         completedAt: new Date(),
-        error: allFailed
-          ? `All ${scanTargets.length} locale scan(s) failed — see logs for details.`
-          : null,
+        // A machine code, translated at render time by `taskErrorText`.
+        error: allFailed ? `locale_scans_failed:${scanTargets.length}` : null,
         // Result summary keeps the primary-locale headline numbers for
         // continuity with the pre-multi-locale schema.
         result: JSON.stringify(

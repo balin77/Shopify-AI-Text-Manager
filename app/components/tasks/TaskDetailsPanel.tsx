@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { BlockStack, Button, Text } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
 import {
-  summariseTaskResult,
   type TaskFailureLine,
+  type TaskResultSummary,
   type TaskSummaryLine,
 } from "../../services/tasks/task-details.shared";
 import { resourceTypeLabel } from "../../services/tasks/task-labels.shared";
@@ -30,6 +30,12 @@ import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
  *  - **Result first, failures second, the prompt last.** What happened outranks
  *    how it was asked for. The prompt block below is the page's own former
  *    rendering, moved down unchanged.
+ *  - **The summary arrives ALREADY SUMMARISED.** This panel used to receive
+ *    the raw `result` blob and call `summariseTaskResult` itself, which for a
+ *    `distributeKeywords`(suggest) row meant downloading its `suggestions[]`
+ *    and `itemTitles{}` payload in order to render four numbers. The route
+ *    runs the same pure function server-side and ships only its output; this
+ *    component renders what it is given and parses nothing.
  *
  * An in-flight RE-fetch keeps the previous content on screen: the loading line
  * is for the first load only, or an open card would blink every three seconds.
@@ -48,7 +54,16 @@ interface TaskDetailsPanelProps {
 
 interface FetchedDetail {
   prompt: string | null;
-  result: string | null;
+  /** `null` = nothing to summarise, which is NOT an error. See below. */
+  summary: TaskResultSummary | null;
+}
+
+/** The route's `resultSummary`, defensively — it crosses the wire as JSON. */
+function readSummary(value: unknown): TaskResultSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<TaskResultSummary>;
+  if (!Array.isArray(candidate.lines) || !Array.isArray(candidate.failures)) return null;
+  return { lines: candidate.lines, failures: candidate.failures };
 }
 
 /** Reads `t.tasks.resultLabels[key]` defensively — the bundle is `any`. */
@@ -226,7 +241,7 @@ export function TaskDetailsPanel({
         if (cancelled) return;
         setDetail({
           prompt: typeof task.prompt === "string" ? task.prompt : null,
-          result: typeof task.result === "string" ? task.result : null,
+          summary: readSummary(task.resultSummary),
         });
       } catch {
         // The card must never sit blank; the merchant sees detailsError.
@@ -281,14 +296,14 @@ export function TaskDetailsPanel({
     );
   }
 
-  const summary = summariseTaskResult(type, detail.result);
+  const summary = detail.summary;
   const prompt = detail.prompt;
 
   // Reached when the row promised details and the fetch SUCCEEDED, but this
-  // particular blob summarises to nothing. `hasTaskDetails` answers from the
-  // registry — "this type can summarise SOME blob" — so a registered type
-  // whose row carries a payload, a bare AI string or a result the recovery
-  // path truncated lands here legitimately. That is not an error and must not
+  // particular blob summarised to nothing (the route answers `null`).
+  // `hasTaskDetails` answers from the registry — "this type can summarise SOME
+  // blob" — so a registered type whose row carries a payload, a bare AI string
+  // or a result the recovery path truncated lands here legitimately. That is not an error and must not
   // be dressed as one: `detailsError` sends a merchant looking for a fault
   // that does not exist. The failed FETCH is handled above, where it belongs.
   if (!summary && !prompt) {

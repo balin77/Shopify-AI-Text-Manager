@@ -103,7 +103,6 @@ export const de = {
     accept: "Übernehmen",
     acceptTranslate: "Übernehmen & Übersetzen",
     decline: "Ablehnen",
-    successTitle: "Erfolg!",
     changesSavedMessage: "Änderungen erfolgreich gespeichert!",
     translateFromPrimary: "Aus Hauptsprache übersetzen",
     copy: "Übertragen",
@@ -178,17 +177,14 @@ export const de = {
     // Plan upgrade sync
     syncInProgress: "Lade zusätzliche Produkte nach Plan-Upgrade...",
     syncComplete: "{count} neue Produkte geladen",
-    syncCompleteTitle: "Sync abgeschlossen",
     // Gallery toast messages
     gallerySaveSuccess: "Galerie erfolgreich auf Shopify gespeichert.",
     gallerySaveError: "Galerie konnte nicht gespeichert werden.",
-    galleryErrorTitle: "Galerie-Fehler",
     // Sub-resource (options/metafields) toast messages
     optionsSavedSuccess: "Optionen und Metafelder erfolgreich gespeichert",
     saveFailed: "Speichern fehlgeschlagen",
     saveFailedOptions: "{count} Option(en) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
     saveFailedItems: "{count} Element(e) konnte(n) nicht gespeichert werden. Änderungen wurden auf die ursprünglichen Werte zurückgesetzt.",
-    validationError: "Validierungsfehler",
     optionNameEmpty: "Optionsname darf nicht leer sein",
     optionValuesEmpty: "Optionswerte dürfen nicht leer sein",
     metafieldValuesEmpty: "Metafeld-Werte dürfen nicht leer sein",
@@ -351,7 +347,6 @@ export const de = {
     },
     errorLoadingThemeContent: "Fehler beim Laden des Theme-Inhalts",
     error: "Fehler",
-    success: "Erfolg!",
     aiSuggestion: "KI-Vorschlag:",
     accept: "Übernehmen",
     decline: "Ablehnen",
@@ -385,6 +380,28 @@ export const de = {
     menuPrimaryEditHint: "Hauptsprache: Ein geänderter Text benennt den Menüpunkt in Shopify um. Reihenfolge, Verschachtelung und Ziele der Punkte werden weiterhin im Shopify-Admin gepflegt.",
     menuTitleRequired: "Ein Menüpunkt braucht einen Namen.",
     menuSaveRenameFirst: "Speichere den neuen Namen zuerst — sonst würde vom alten Text übersetzt und die Übersetzung beim Speichern wieder entfernt.",
+    menuNewItem: "Neuer Menüpunkt",
+    menuTranslateAfterSave: "Übersetzbar, sobald der Punkt gespeichert ist.",
+    menuTargetRequired: "Dieser Menüpunkt braucht ein Ziel.",
+    menuMaxDepthReached: "Shopify erlaubt drei Ebenen.",
+    menuItemInvalid: "Dieser Menüpunkt kann so nicht gespeichert werden.",
+    menuDragHandle: "Verschieben",
+    menuAddItem: "Menüpunkt hinzufügen",
+    menuItemUrl: "Ziel-URL",
+    menuAddChild: "Unterpunkt",
+    menuDeleteItem: "Löschen",
+    menuTreeSummary: "{count} Änderung(en) am Menü: {detail}",
+    menuTreeRenamed: "{count} umbenannt",
+    menuTreeMoved: "{count} umgehängt",
+    menuTreeReordered: "{count} umsortiert",
+    menuTreeCreated: "{count} neu",
+    menuTreeDeleted: "{count} gelöscht",
+    menuDeleteWarning: "Beim Speichern werden {count} Menüpunkt(e) gelöscht — mitsamt ihren Übersetzungen. Das lässt sich durch Wiederanlegen nicht rückgängig machen, weil ein neuer Punkt eine neue ID bekommt.",
+    menuTreeSaveFailed: "Das Menü konnte nicht gespeichert werden",
+    menuTreeInvalid: "Bitte korrigiere die markierten Menüpunkte — Shopify schreibt das Menü immer als Ganzes, ein einziger Fehler würde alle anderen Änderungen mitreißen.",
+    menuTreeDriftIntro: "Das Menü hat sich in Shopify geändert, seit diese Seite geladen wurde — es wurde nichts geschrieben:",
+    menuTreeRepairFailed: "{count} Übersetzung(en) konnten nach dem Verschieben nicht wiederhergestellt werden. Shopify löscht sie beim Umhängen; bitte prüfe die betroffenen Punkte.",
+    menuTreeRepairDone: "{count} Übersetzung(en) wurden nach dem Verschieben automatisch wiederhergestellt.",
     menuRenameFailed: "Umbenennen fehlgeschlagen",
     menuRenameStructureChanged: "Das Menü hat sich in Shopify geändert, seit diese Seite geladen wurde — es wurde nichts umbenannt. Neu laden und noch einmal speichern; deine Eingaben bleiben erhalten.",
     menuReloadAndRetry: "Neu laden",
@@ -1267,15 +1284,12 @@ export const de = {
     policyNotice: "Für Richtlinien (Datenschutz, AGB, Impressum, etc.) ist nur der Inhalt editierbar.",
     exampleText: "Beispieltext...",
     // API Key Warnings
-    noApiKeyConfigured: "Kein API-Schlüssel",
     noApiKeyForProvider: "Kein API-Schlüssel für {provider} konfiguriert",
     configureApiKeyInSettings: "Bitte API-Schlüssel in den Einstellungen eingeben",
     goToSettings: "Zu den Einstellungen",
     preferredProviderNoKey: "Kein {provider} API-Schlüssel. Bitte Schlüssel in den Einstellungen eingeben oder Modell wechseln.",
     preferredProviderNoKeyDescription: "KI-Funktionen benötigen einen API-Schlüssel für {provider}.",
-    noApiKeyAtAll: "Noch kein KI-API-Schlüssel hinterlegt",
     noApiKeyAtAllDescription: "Um die KI-Funktionen nutzen zu können, müssen Sie zuerst einen API-Schlüssel eines KI-Anbieters hinterlegen.",
-    corruptedApiKeyTitle: "API-Schlüssel Fehler",
     corruptedApiKeyWarning: "Der gespeicherte API-Schlüssel für {provider} konnte nicht entschlüsselt werden und wurde zurückgesetzt. Bitte erneut eingeben und speichern.",
     apiKeyFormatError: "Der eingegebene Schlüssel hat nicht das erwartete Format. Bitte überprüfen Sie den Code im Anbieter-Dashboard und fügen Sie ihn erneut ein.",
     apiKeySaveErrorIntro: "Einige Einträge haben nicht das erwartete Format. Die betroffenen Felder sind unten rot markiert – bitte korrigieren Sie diese und klicken Sie erneut auf Speichern.",
@@ -1556,7 +1570,6 @@ export const de = {
     themeSetupWebVitalsButton: "Web Vitals aktivieren",
     themeSetupNote: "Nach jeder Aktivierung das Theme speichern. Alle Blöcke gehören zur gleichen ContentPilot Storefront-Extension.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
-    extensionSetupHintTitle: "Theme-Extension noch einrichten",
     extensionSetupHintMessage: "Du nutzt jetzt Pro/Max. Damit variantenspezifische Bildergalerien im Shop angezeigt werden, muss die ContentPilot Theme-Extension noch im Theme-Editor aktiviert werden. Das ist optional.",
     extensionSetupHintAction: "Jetzt einrichten",
     billingSuccessTitle: "Plan aktiviert",
@@ -1799,6 +1812,10 @@ export const de = {
     statusOptions: {
       all: "Alle Aufgaben",
       completed: "Erfolgreich",
+      // `completed_with_errors` verdient eine eigene Option, statt unter
+      // "Erfolgreich" zu verschwinden: ein Lauf, der das meiste gespeichert
+      // und den Rest verloren hat, ist genau das, wonach hier gesucht wird.
+      partial: "Mit Fehlern abgeschlossen",
       failed: "Fehlgeschlagen",
     },
     timeRangeOptions: {
@@ -1842,6 +1859,7 @@ export const de = {
       insertKeyword: "Keyword-Einfügung",
       altTextTemplateApply: "Alt-Text-Vorlagen",
       imageWebpConversion: "Bild-Konvertierung (WebP)",
+      imageWebpConversionItem: "Bild-Konvertierung (Einzelbild)",
       blogArticleRedirects: "Weiterleitungen für Blog-Artikel",
       seoRobotsAdvice: "robots.txt-Empfehlungen",
       aiDiscoveryIntro: "Einleitungstext (KI-Discovery)",
@@ -1903,9 +1921,6 @@ export const de = {
     aiOutput: "KI-Antwort",
     image: "Bild",
     // Completion notifications
-    completedTitle: "✓ Fertig",
-    failedTitle: "✗ Fehlgeschlagen",
-    partialTitle: "⚠ Teilweise gespeichert",
     partialSummary: "{processed} von {total} gespeichert, {failed} fehlgeschlagen",
     taskFailedGeneric: "Aufgabe fehlgeschlagen — bitte erneut versuchen.",
     taskCompleted: "Aufgabe abgeschlossen für \"{title}\"",
@@ -1921,6 +1936,37 @@ export const de = {
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
     taskTimedOut: "Zeitüberschreitung — die Aufgabe hat zu lange keinen Fortschritt gemeldet und wurde abgebrochen. Bitte erneut starten.",
     taskInterrupted: "Unterbrochen — der Server wurde neu gestartet (z. B. durch ein Deploy), während die Aufgabe lief. Bitte erneut starten.",
+    // Zugänglicher Name der Benachrichtigungsbox in der Navigation — wird
+    // vorgelesen statt der farbigen Umrandung, die allen anderen dasselbe sagt.
+    notificationSuccess: "Erfolgsmeldung",
+    notificationWarning: "Warnmeldung",
+    notificationCritical: "Fehlermeldung",
+    notificationInfo: "Infomeldung",
+    // ── Codes aus `Task.error` (app/utils/task-error-text.ts) ────────────
+    // Ein Runner endet lange nach dem Request, der ihn gestartet hat, und
+    // kennt die Sprache des Händlers nicht — er speichert `<code>:<arg>`,
+    // die Zahlen werden hier eingesetzt. `{count}`/`{total}` sind Anzahlen,
+    // `{language}` ein Sprachcode. `invalidApiKey` hängt an der Zeile, die
+    // es erklärt, und steht nie allein; `someFailed` ist der Rückfall für
+    // einen Code, dessen Zahlen nicht lesbar sind — nie ein halb gefuelltes
+    // Template.
+    taskErrors: {
+      rowsFailed: "{count} Zeile(n) konnte(n) nicht gespeichert werden.",
+      rowsFailedOfTotal: "{count} von {total} Zeile(n) konnte(n) nicht gespeichert werden.",
+      itemsFailed: "Bei {count} von {total} Einträgen ist die Bearbeitung fehlgeschlagen.",
+      imagesFailed: "Bei {count} von {total} Bildern ist die Bearbeitung fehlgeschlagen.",
+      fixesFailed: "{count} von {total} Korrektur(en) sind fehlgeschlagen.",
+      altImagesFailed: "Bei {count} von {total} Bildern ist die Generierung fehlgeschlagen.",
+      batchesAllFailed: "Alle KI-Anfragen sind fehlgeschlagen ({total} insgesamt).",
+      batchesFailed: "{count} von {total} KI-Anfrage(n) sind fehlgeschlagen — die Einträge darin haben keine Keyword-Vorschläge bekommen.",
+      localeScansFailed: "Alle Sprach-Scans sind fehlgeschlagen ({total} insgesamt) — Details stehen im Log.",
+      aiEmptyValue: "Die KI hat einen leeren Wert zurückgegeben.",
+      itemMissing: "Dieser Eintrag ist nicht mehr im Inhalts-Cache — bitte neu laden und erneut versuchen.",
+      webpBatchNotStarted: "Die Bild-Konvertierung konnte nicht gestartet werden. Es wurde kein Bild verändert — bitte erneut versuchen.",
+      slugEmpty: "Der übersetzte URL-Slug für {language} war leer und wurde nicht gespeichert.",
+      invalidApiKey: "(der KI-API-Schlüssel wurde abgelehnt)",
+      someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
+    },
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
     generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",
@@ -1983,7 +2029,9 @@ export const de = {
       galleryVideosVimeo: "Produkte mit Vimeo-Galerie-Videos",
       generated: "Generiert",
       headDrift: "Seiten mit abweichendem Titel",
+      imagesConverted: "Konvertierte Bilder",
       imagesFailed: "Fehlgeschlagene Bilder",
+      imagesTotal: "Bilder im Durchlauf",
       internalLinksCapped: "Das Limit für offene Vorschläge wurde erreicht — einige Treffer wurden nicht gespeichert.",
       items: "Einträge",
       itemsAvailable: "Einträge im Katalog",
@@ -2752,6 +2800,10 @@ export const de = {
       externalTruncatedBanner: "Es wurden nur die ersten {max} verschiedenen externen Ziele erfasst. Weitere Links dahinter sind hier nicht aufgeführt.",
       externalUncheckedBanner: "{count} Ziele konnten im Zeitrahmen nicht mehr geprüft werden. Sie sind unten als „Nicht geprüft\" markiert — nicht als in Ordnung.",
       externalChecksLabel: "Externe Links mitprüfen",
+      // Warum "Jetzt scannen" wartet: der Server liest beim Start den
+      // GESPEICHERTEN Wert, ein ungespeicherter Haken würde also ins Leere gehen.
+      externalChecksRefused: "Die Prüfung externer Links gibt es ab dem Pro-Plan — die Einstellung wurde nicht geändert.",
+      externalChecksUnsaved: "Erst speichern — sonst läuft der Scan noch mit der alten Einstellung.",
       externalChecksHelp: "Prüft nach dem Crawl, ob Links auf fremde Websites noch funktionieren. Dabei werden Anfragen an fremde Server geschickt und der Crawl dauert etwas länger (maximal 2 Minuten zusätzlich).",
       // Crawl-Vergleich (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Seit dem letzten Crawl ({date})",
@@ -3715,6 +3767,7 @@ export const de = {
       llmsTitle: "KI-Discovery-Dateien",
       llmsStaleHint: "Mindestens eine der beiden Dateien weicht im Theme vom aktuellen Stand deines Katalogs ab — seit der letzten Erzeugung haben sich Produkte, Kollektionen oder Richtlinien geändert. Erzeuge sie neu, damit KI-Crawler den aktuellen Stand sehen.",
       llmsContents: "Aktueller Stand: {products} Produkte, {collections} Kollektionen, {policies} Richtlinien. Aufgenommen werden die Einträge nach Handle sortiert, maximal 50 pro Typ.",
+      llmsAutoSaveFailed: "Die Einstellung konnte nicht gespeichert werden.",
       llmsAutoLabel: "Discovery-Dateien automatisch aktuell halten",
       llmsAutoDisabled: "Aus — die Dateien ändern sich nur, wenn du unten auf „Dateien aktualisieren“ klickst.",
       llmsAutoOn: "An — kurz nach jedem Öffnen der App und danach etwa halbstündlich, solange sie offen ist, prüfen wir im Hintergrund, ob dein Katalog von den Dateien abweicht, und schreiben sie nur bei einer echten Abweichung neu. Änderungen, die du direkt in Shopify machst, werden dabei mitberücksichtigt.",

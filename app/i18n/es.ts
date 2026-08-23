@@ -104,7 +104,6 @@ export const es: Translation = {
     accept: "Aceptar",
     acceptTranslate: "Aceptar y traducir",
     decline: "Rechazar",
-    successTitle: "¡Éxito!",
     changesSavedMessage: "¡Cambios guardados correctamente!",
     translateFromPrimary: "Traducir desde el idioma principal",
     copy: "Copiar",
@@ -179,17 +178,14 @@ export const es: Translation = {
     // Plan upgrade sync
     syncInProgress: "Cargando productos adicionales después de la actualización del plan...",
     syncComplete: "{count} nuevos productos cargados",
-    syncCompleteTitle: "Sincronización completa",
     // Gallery toast messages
     gallerySaveSuccess: "Galería guardada en Shopify correctamente.",
     gallerySaveError: "No se pudo guardar la galería.",
-    galleryErrorTitle: "Error de galería",
     // Sub-resource (options/metafields) toast messages
     optionsSavedSuccess: "Opciones y metadatos guardados correctamente",
     saveFailed: "Error al guardar",
     saveFailedOptions: "No se pudo guardar {count} opción/opciones. Los cambios han sido revertidos a los valores originales.",
     saveFailedItems: "No se pudo guardar {count} elemento(s). Los cambios han sido revertidos a los valores originales.",
-    validationError: "Error de validación",
     optionNameEmpty: "El nombre de la opción no puede estar vacío",
     optionValuesEmpty: "Los valores de la opción no pueden estar vacíos",
     metafieldValuesEmpty: "Los valores de los metadatos no pueden estar vacíos",
@@ -351,7 +347,6 @@ export const es: Translation = {
     },
     errorLoadingThemeContent: "Error al cargar el contenido del tema",
     error: "Error",
-    success: "¡Éxito!",
     aiSuggestion: "Sugerencia de IA:",
     accept: "Aceptar",
     decline: "Rechazar",
@@ -385,6 +380,28 @@ export const es: Translation = {
     menuPrimaryEditHint: "Idioma principal: cambiar una etiqueta renombra el elemento del menú en Shopify. El orden, la jerarquía y los destinos se siguen gestionando en el administrador de Shopify.",
     menuTitleRequired: "Un elemento del menú necesita un nombre.",
     menuSaveRenameFirst: "Guarda primero el nombre nuevo — si no, se traduciría el texto antiguo y la traducción se eliminaría al guardar.",
+    menuNewItem: "Nuevo elemento de menú",
+    menuTranslateAfterSave: "Se podrá traducir una vez guardado el elemento.",
+    menuTargetRequired: "Este elemento del menú necesita un destino.",
+    menuMaxDepthReached: "Shopify permite tres niveles.",
+    menuItemInvalid: "Este elemento del menú no se puede guardar así.",
+    menuDragHandle: "Mover",
+    menuAddItem: "Añadir elemento",
+    menuItemUrl: "URL de destino",
+    menuAddChild: "Subelemento",
+    menuDeleteItem: "Eliminar",
+    menuTreeSummary: "{count} cambio(s) en el menú: {detail}",
+    menuTreeRenamed: "{count} renombrado(s)",
+    menuTreeMoved: "{count} reubicado(s)",
+    menuTreeReordered: "{count} reordenado(s)",
+    menuTreeCreated: "{count} nuevo(s)",
+    menuTreeDeleted: "{count} eliminado(s)",
+    menuDeleteWarning: "Al guardar se eliminarán {count} elemento(s) del menú — con sus traducciones. Volver a crearlos no lo deshace, porque un elemento nuevo recibe un id nuevo.",
+    menuTreeSaveFailed: "No se pudo guardar el menú",
+    menuTreeInvalid: "Corrige los elementos marcados — Shopify escribe el menú entero, así que un solo error arrastraría todos los demás cambios.",
+    menuTreeDriftIntro: "El menú cambió en Shopify desde que se cargó esta página — no se escribió nada:",
+    menuTreeRepairFailed: "No se pudieron restaurar {count} traducción(es) tras el movimiento. Shopify las elimina al reubicar un elemento; revisa los elementos afectados.",
+    menuTreeRepairDone: "Se restauraron automáticamente {count} traducción(es) tras el movimiento.",
     menuRenameFailed: "No se pudo renombrar",
     menuRenameStructureChanged: "El menú cambió en Shopify desde que se cargó esta página — no se renombró nada. Vuelve a cargar y guarda otra vez; tus cambios se conservan.",
     menuReloadAndRetry: "Volver a cargar",
@@ -1252,15 +1269,12 @@ export const es: Translation = {
     policyNotice: "Para las políticas (Privacidad, Términos, Aviso legal, etc.) solo el contenido es editable.",
     exampleText: "Texto de ejemplo...",
     // API Key Warnings
-    noApiKeyConfigured: "Sin clave API",
     noApiKeyForProvider: "No hay clave API configurada para {provider}",
     configureApiKeyInSettings: "Por favor, añade la clave API en Configuración",
     goToSettings: "Ir a Configuración",
     preferredProviderNoKey: "Sin clave API de {provider}. Por favor, añade la clave en Configuración o cambia el modelo.",
     preferredProviderNoKeyDescription: "Las funciones de IA requieren una clave API para {provider}.",
-    noApiKeyAtAll: "Aún no hay ninguna clave API de IA configurada",
     noApiKeyAtAllDescription: "Para usar las funciones de IA, primero debes añadir una clave API de un proveedor de IA.",
-    corruptedApiKeyTitle: "Error de clave API",
     corruptedApiKeyWarning: "La clave API guardada para {provider} no se pudo descifrar y se ha borrado. Vuelve a introducirla y guárdala.",
     apiKeyFormatError: "Esta clave no tiene el formato esperado. Compruébala en el panel del proveedor y pégala de nuevo.",
     apiKeySaveErrorIntro: "Algunas entradas no tienen el formato esperado. Los campos con problemas están resaltados a continuación: corrígelos y vuelve a hacer clic en Guardar.",
@@ -1541,7 +1555,6 @@ export const es: Translation = {
     themeSetupWebVitalsButton: "Activar Web Vitals",
     themeSetupNote: "Tras cada activación, guarda tu tema. Todos los bloques pertenecen a la misma extensión Storefront de ContentPilot.",
     // First-run hint (infobox) when a shop first reaches Pro/Max
-    extensionSetupHintTitle: "Configura la extensión del tema",
     extensionSetupHintMessage: "Ahora tienes Pro/Max. Para mostrar galerías de imágenes por variante en tu tienda, todavía hay que activar la extensión de tema de ContentPilot en el editor de temas. Es opcional.",
     extensionSetupHintAction: "Configurar ahora",
     billingSuccessTitle: "Plan activado",
@@ -1784,6 +1797,10 @@ export const es: Translation = {
     statusOptions: {
       all: "Todas las tareas",
       completed: "Exitosas",
+      // `completed_with_errors` merece una opción propia en lugar de quedar
+      // dentro de "Exitosas": una ejecución que guardó casi todo y perdió el
+      // resto es justo lo que se busca en este filtro.
+      partial: "Completadas con errores",
       failed: "Fallidas",
     },
     timeRangeOptions: {
@@ -1826,7 +1843,8 @@ export const es: Translation = {
       formatting: "Formato de texto",
       insertKeyword: "Inserción de palabra clave",
       altTextTemplateApply: "Plantillas de texto alt",
-      imageWebpConversion: "Conversión de imagen (WebP)",
+      imageWebpConversion: "Conversión de imágenes (WebP)",
+      imageWebpConversionItem: "Conversión de imágenes (una imagen)",
       blogArticleRedirects: "Redirecciones de artículos del blog",
       seoRobotsAdvice: "Recomendaciones de robots.txt",
       aiDiscoveryIntro: "Texto introductorio (descubrimiento para IA)",
@@ -1888,9 +1906,6 @@ export const es: Translation = {
     aiOutput: "Salida de IA",
     image: "Imagen",
     // Completion notifications
-    completedTitle: "✓ Completada",
-    failedTitle: "✗ Fallida",
-    partialTitle: "⚠ Guardada parcialmente",
     partialSummary: "{processed} de {total} guardados, {failed} fallidos",
     taskFailedGeneric: "Tarea fallida — por favor inténtalo de nuevo.",
     taskCompleted: "Tarea completada para \"{title}\"",
@@ -1906,6 +1921,37 @@ export const es: Translation = {
     seoBulkFixCompleted: "Corrección SEO finalizada",
     taskTimedOut: "Tiempo agotado — la tarea no informó progreso durante demasiado tiempo y se canceló. Vuelve a iniciarla.",
     taskInterrupted: "Interrumpida — el servidor se reinició (por ejemplo, un despliegue) mientras la tarea estaba en curso. Vuelve a iniciarla.",
+    // Nombre accesible del cuadro de notificaciones de la navegación — se lee
+    // en voz alta en lugar del borde de color, que dice lo mismo a los demás.
+    notificationSuccess: "Notificación de éxito",
+    notificationWarning: "Notificación de advertencia",
+    notificationCritical: "Notificación de error",
+    notificationInfo: "Notificación informativa",
+    // ── Códigos guardados en `Task.error` (app/utils/task-error-text.ts) ──
+    // Un runner termina mucho después de la petición que lo inició y no
+    // conoce el idioma del comerciante, así que guarda `<code>:<arg>` y aquí
+    // se sustituyen los números. `{count}`/`{total}` son cantidades y
+    // `{language}` un código de idioma. `invalidApiKey` se añade a la línea
+    // que explica y nunca aparece sola; `someFailed` es el respaldo para un
+    // código cuyos números no se pueden leer — nunca una plantilla a medio
+    // rellenar.
+    taskErrors: {
+      rowsFailed: "No se pudieron guardar {count} fila(s).",
+      rowsFailedOfTotal: "No se pudieron guardar {count} de {total} fila(s).",
+      itemsFailed: "Fallaron {count} de {total} entrada(s).",
+      imagesFailed: "Fallaron {count} de {total} imagen(es).",
+      fixesFailed: "Fallaron {count} de {total} corrección(es).",
+      altImagesFailed: "Fallaron {count} de {total} imagen(es).",
+      batchesAllFailed: "Fallaron todas las llamadas de IA ({total} en total).",
+      batchesFailed: "Fallaron {count} de {total} llamada(s) de IA — sus entradas no recibieron sugerencias de palabras clave.",
+      localeScansFailed: "Fallaron todos los análisis de idioma ({total} en total) — consulta los registros para ver los detalles.",
+      aiEmptyValue: "La IA devolvió un valor vacío.",
+      itemMissing: "Esta entrada ya no está en la caché de contenido — vuelve a cargarla e inténtalo de nuevo.",
+      webpBatchNotStarted: "No se pudo iniciar la conversión de imágenes. No se modificó ninguna imagen — inténtalo de nuevo.",
+      slugEmpty: "El slug de URL traducido para {language} quedó vacío y no se guardó.",
+      invalidApiKey: "(la clave de API de IA fue rechazada)",
+      someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
+    },
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
     generationCompleted: "Generación de IA para {field} en \"{title}\" completada",
@@ -1968,7 +2014,9 @@ export const es: Translation = {
       galleryVideosVimeo: "Productos con vídeos de galería de Vimeo",
       generated: "Generados",
       headDrift: "Páginas cuyo título no coincide con el SEO",
+      imagesConverted: "Imágenes convertidas",
       imagesFailed: "Imágenes fallidas",
+      imagesTotal: "Imágenes del proceso",
       internalLinksCapped: "Se alcanzó el límite de sugerencias pendientes — algunas coincidencias no se guardaron.",
       items: "Entradas",
       itemsAvailable: "Entradas del catálogo",
@@ -2732,6 +2780,10 @@ export const es: Translation = {
       externalTruncatedBanner: "Solo se registraron los primeros {max} destinos externos distintos. Los enlaces posteriores no aparecen aquí.",
       externalUncheckedBanner: "{count} destinos no se pudieron comprobar dentro del tiempo disponible. Abajo aparecen como «Sin comprobar», no como correctos.",
       externalChecksLabel: "Comprobar también los enlaces externos",
+      // Por qué "Escanear ahora" espera: el servidor lee el valor GUARDADO al
+      // iniciar, así que una casilla sin guardar no se aplicaría.
+      externalChecksRefused: "La comprobación de enlaces externos está disponible a partir del plan Pro: el ajuste no se ha cambiado.",
+      externalChecksUnsaved: "Guarda primero: si no, el escaneo se ejecuta con el ajuste anterior.",
       externalChecksHelp: "Tras el rastreo, comprueba si los enlaces a otros sitios web siguen funcionando. Esto envía peticiones a servidores que no controlamos y alarga un poco el rastreo (2 minutos adicionales como máximo).",
       // Comparación de rastreos (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Desde el último rastreo ({date})",
@@ -3692,6 +3744,7 @@ export const es: Translation = {
       llmsTitle: "Archivos de descubrimiento para IA",
       llmsStaleHint: "Al menos uno de los dos archivos de tu tema ya no coincide con tu catálogo: han cambiado productos, colecciones o políticas desde la última generación. Vuelve a generarlos para que los rastreadores de IA vean el estado actual.",
       llmsContents: "Estado actual: {products} productos, {collections} colecciones, {policies} políticas. Los elementos se incluyen ordenados por handle, hasta 50 por tipo.",
+      llmsAutoSaveFailed: "No se pudo guardar el ajuste.",
       llmsAutoLabel: "Mantener los archivos de descubrimiento actualizados automáticamente",
       llmsAutoDisabled: "Desactivado: los archivos solo cambian cuando pulsas \"Actualizar archivos\" abajo.",
       llmsAutoOn: "Activado: poco después de abrir la app, y cada media hora aproximadamente mientras siga abierta, comprobamos en segundo plano si tu catálogo difiere de los archivos y solo los reescribimos si hay una diferencia real. Los cambios que hagas directamente en Shopify se tienen en cuenta.",

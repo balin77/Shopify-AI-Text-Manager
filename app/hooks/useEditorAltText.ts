@@ -54,7 +54,7 @@ interface UseEditorAltTextProps {
     onSuccess?: (result: Record<string, unknown>) => void,
     onError?: (error: string) => void
   ) => void;
-  showInfoBox: (message: string, tone?: import("../types/content-editor.types").InfoBoxTone, title?: string) => void;
+  showInfoBox: (message: string, tone?: import("../types/content-editor.types").InfoBoxTone) => void;
   t: TranslationStrings;
   setAiSuggestions: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }
@@ -262,8 +262,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -314,8 +313,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -362,8 +360,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -423,8 +420,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             t.common?.fieldTranslatedAndSaved
               ?.replace("{fieldType}", "Alt-Text")
               || "Alt-Text translated and saved successfully",
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
       }
@@ -441,8 +437,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
       return;
     }
@@ -452,8 +447,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!sourceAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -483,15 +477,13 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
             String(t.content?.altTextPartialLocales || "Alt-text for image {imageNumber} partially translated. Language(s) {failedLocales} could not be saved. Please try again or re-sync.")
               .replace("{imageNumber}", String(imageIndex + 1))
               .replace("{failedLocales}", failedList),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
             String(t.content?.altTextTranslatedToLanguages || "Alt-text translated to {count} language(s)")
               .replace("{count}", String(successCount)),
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
 
@@ -518,8 +510,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
       return;
     }
@@ -538,8 +529,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!hasAnyAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -568,16 +558,14 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
               .replace("{totalCount}", String(imageCount))
               .replace("{languageCount}", String(translatedCount))
               .replace("{failedImages}", failedList),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
             String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
               .replace("{totalCount}", String(imageCount))
               .replace("{languageCount}", String(translatedCount)),
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
 
@@ -631,8 +619,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (!hasAnyAltText) {
       showInfoBox(
         t.content?.noSourceText || "Kein Alt-Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
       return;
     }
@@ -676,8 +663,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           showInfoBox(
             String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
               .replace("{failedImages}", failedList),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         }
       }
@@ -894,8 +880,7 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     if (targetLocales.length === 0) {
       showInfoBox(
         t.common?.noTargetLanguagesEnabled || "No target languages enabled",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
       // No translations needed, just save the primary text directly
 

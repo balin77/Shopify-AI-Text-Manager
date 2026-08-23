@@ -267,7 +267,6 @@ function AppContent() {
       // 'warning' (not 'info') so the hint persists until dismissed instead of
       // auto-hiding after 5s — it carries an actionable deep-link.
       "warning",
-      t.settings?.extensionSetupHintTitle || "Set up the theme extension",
       {
         url: "/app/settings?tab=imagemanager",
         label: t.settings?.extensionSetupHintAction || "Set it up",
@@ -348,7 +347,6 @@ function AppContent() {
         t.settings?.noApiKeyAtAllDescription ||
           "To use AI features, you first need to add an API key for an AI provider.",
         "warning",
-        t.settings?.noApiKeyAtAll || "No AI API key set up yet",
         link,
         NO_KEY_AT_ALL,
       );
@@ -358,7 +356,7 @@ function AppContent() {
       const providerName = getProviderDisplayName(aiSettings.preferredProvider as AIProvider);
       const message = t.settings?.preferredProviderNoKey?.replace("{provider}", providerName) ||
         `No ${providerName} API key. Please add in Settings.`;
-      showInfoBox(message, "warning", t.settings?.noApiKeyConfigured || "No API Key", link, NO_PREFERRED_KEY);
+      showInfoBox(message, "warning", link, NO_PREFERRED_KEY);
     }
   }, [aiSettings, t, showInfoBox, dismissByKey]);
 

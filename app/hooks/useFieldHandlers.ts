@@ -27,6 +27,7 @@ import type {
 } from "../types/content-editor.types";
 import type { TransitionResult } from "./useUiDataLoader";
 import { aiImageCandidates } from "../services/ai/vision-policy.shared";
+import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 
 // ============================================================================
 // TYPES
@@ -107,7 +108,7 @@ export interface FieldHandlerProps {
   getChangedFields: (valuesToCheck: Record<string, string>) => string[];
   getChangedAltTextIndices: () => number[];
   resolveFieldLabel: (fieldKey: string) => string;
-  showInfoBox: (message: string, tone: InfoBoxTone, title?: string) => void;
+  showInfoBox: (message: string, tone: InfoBoxTone) => void;
   dataLoader: {
     onTranslateFieldComplete: (
       fieldKey: string,
@@ -501,8 +502,7 @@ const handleGenerateAI = (fieldKey: string, userInstruction?: string) => {
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
             "The generated text still over-uses a tracked keyword — review it before accepting.",
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       }
     }
@@ -517,8 +517,7 @@ const handleFormatAI = (fieldKey: string) => {
   if (!currentValue) {
     showInfoBox(
       t.common?.noContentToFormat || "No content available to format",
-      "warning",
-      t.common?.warning || "Warning"
+      "warning"
     );
     return;
   }
@@ -561,8 +560,7 @@ const handleFormatAI = (fieldKey: string) => {
         showInfoBox(
           (t.seo as { keywordStuffingWarning?: string } | undefined)?.keywordStuffingWarning ||
             "The formatted text still over-uses a tracked keyword — review it before accepting.",
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       }
     }
@@ -599,8 +597,7 @@ const handleInsertKeywords = async () => {
   if (candidateKeys.length === 0) {
     showInfoBox(
       seoStrings?.insertKeywordsNothing || "No text to work keywords into.",
-      "warning",
-      t.common?.warning || "Warning",
+      "warning"
     );
     return;
   }
@@ -641,16 +638,14 @@ const handleInsertKeywords = async () => {
   if (changed === 0) {
     showInfoBox(
       seoStrings?.insertKeywordsNoneMissing || "Every tracked keyword is already in the texts.",
-      "info",
-      String(t.common?.info || "Info"),
+      "info"
     );
     return;
   }
   showInfoBox(
     (seoStrings?.insertKeywordsDone || "Keywords worked into {count} field(s) — review and accept them.")
       .replace("{count}", String(changed)),
-    stuffing ? "warning" : "success",
-    stuffing ? t.common?.warning || "Warning" : t.common?.success || "Success",
+    stuffing ? "warning" : "success"
   );
 };
 
@@ -667,8 +662,7 @@ const handleTranslateField = (fieldKey: string) => {
   if (!sourceText) {
     showInfoBox(
       t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-      "warning",
-      "Warnung"
+      "warning"
     );
     return;
   }
@@ -758,8 +752,7 @@ const handleTranslateField = (fieldKey: string) => {
         t.common?.fieldTranslatedAndSaved
           ?.replace("{fieldType}", fieldLabel)
           || `${fieldLabel} translated and saved successfully`,
-        "success",
-        t.common?.success || "Success"
+        "success"
       );
 
       // For templates: Update original values so templateHasFieldChanges becomes false
@@ -801,8 +794,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
     if (!auto) {
       showInfoBox(
         t.common?.noTargetLanguagesSelected || "No target languages selected",
-        "warning",
-        t.common?.warning || "Warning"
+        "warning"
       );
     }
     return;
@@ -818,8 +810,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
     if (!auto) {
       showInfoBox(
         t.content?.noSourceText || "Kein Text in der Hauptsprache vorhanden zum Übersetzen",
-        "warning",
-        "Warnung"
+        "warning"
       );
     }
     return;
@@ -880,10 +871,11 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
 
         if (failedFieldLocales2.length > 0) {
           const failedList = failedFieldLocales2.join(", ");
+          const counts2 = partialLocaleCounts(translations, failedFieldLocales2);
           messages.push(
             String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-              .replace("{successCount}", String(translationCount))
-              .replace("{totalCount}", String(translationCount + failedFieldLocales2.length))
+              .replace("{successCount}", String(counts2.succeeded))
+              .replace("{totalCount}", String(counts2.total))
               .replace("{failedLocales}", failedList)
           );
         }
@@ -910,8 +902,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
 
         showInfoBox(
           messages.join(" "),
-          "warning",
-          t.common?.warning || "Warning"
+          "warning"
         );
       } else {
         const fieldLabel2 = resolveFieldLabel(fieldKey);
@@ -919,7 +910,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
             ?.replace("{fieldType}", fieldLabel2)
             .replace("{count}", String(translationCount))
             || `${fieldLabel2} translated to ${translationCount} language(s)`;
-        showInfoBox(toastMsg, "success", t.common?.success || "Success");
+        showInfoBox(toastMsg, "success");
       }
 
       // For templates: Update original value so hasChanges becomes false after translation
@@ -951,8 +942,7 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
               t.content?.autoTranslateFailed ||
                 "{field} could not be translated automatically. Use the translate button on the field to do it now.",
             ).replace("{field}", resolveFieldLabel(fieldKey)),
-            "warning",
-            t.common?.warning || "Warning",
+            "warning"
           );
         }
       : undefined,
@@ -972,8 +962,7 @@ const handleTranslateAll = () => {
   if (targetLocales.length === 0) {
     showInfoBox(
       t.common?.noTargetLanguagesSelected || "No target languages selected",
-      "warning",
-      t.common?.warning || "Warning"
+      "warning"
     );
     return;
   }
@@ -1035,16 +1024,14 @@ const handleTranslateAll = () => {
                 .replace("{totalCount}", String(imageCount))
                 .replace("{languageCount}", String(translatedCount))
                 .replace("{failedImages}", failedList),
-              "warning",
-              t.common?.warning || "Warning"
+              "warning"
             );
           } else {
             showInfoBox(
               String(t.content?.altTextTranslateAllSuccess || "Alt-texts for {totalCount} image(s) translated to {languageCount} language(s)")
                 .replace("{totalCount}", String(imageCount))
                 .replace("{languageCount}", String(translatedCount)),
-              "success",
-              t.common?.success || "Success"
+              "success"
             );
           }
           // Update UI state with translated alt texts for current language
@@ -1133,8 +1120,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
     showInfoBox(
       String(t.content?.primaryReadOnlyHint
         || "This field can't be edited in the main language here — manage the original in your Shopify admin. You can still translate it into other languages."),
-      "warning",
-      String(t.common?.warning || "Warning")
+      "warning"
     );
     return;
   }
@@ -1255,8 +1241,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
         showInfoBox(
           String(t.content?.primaryReadOnlyTranslateInfo
             || "The main language is read-only for this content type — the translation was accepted, but the original is managed in your Shopify admin."),
-          "info",
-          String(t.common?.info || "Info")
+          "info"
         );
       }
       return;
@@ -1341,8 +1326,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
               .replace("{successCount}", String(Object.keys(translations).length))
               .replace("{totalCount}", String(Object.keys(translations).length + failedLocales.length))
               .replace("{failedLocales}", failedLocales.join(", ")),
-            "warning",
-            t.common?.warning || "Warning"
+            "warning"
           );
         } else {
           showInfoBox(
@@ -1350,8 +1334,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
               ?.replace("{fieldType}", fieldLabel)
               .replace("{count}", String(Object.keys(othersTranslations).length + (primaryTranslated ? 1 : 0)))
               || `${fieldLabel} translated`,
-            "success",
-            t.common?.success || "Success"
+            "success"
           );
         }
 
@@ -1378,8 +1361,7 @@ const handleAcceptAndTranslate = (fieldKey: string) => {
   if (targetLocales.length === 0) {
     showInfoBox(
       t.common?.noTargetLanguagesEnabled || "No target languages enabled",
-      "warning",
-      t.common?.warning || "Warning"
+      "warning"
     );
     setIsAcceptAndTranslateFlow(false);
     // No translations needed, just save the primary text directly
@@ -1813,8 +1795,7 @@ const handleTranslateAllForLocale = () => {
             showInfoBox(
               String(t.content?.altTextTranslatePartialImages || "Alt-texts partially saved. Image(s) {failedImages} could not be saved to Shopify. Please sync the product again.")
                 .replace("{failedImages}", failedList),
-              "warning",
-              t.common?.warning || "Warning"
+              "warning"
             );
           }
         }

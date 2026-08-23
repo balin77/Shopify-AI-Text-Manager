@@ -379,3 +379,227 @@ export function validateEditorTree(nodes: MenuEditorNode[]): MenuTreeProblem[] {
 export function describeForeignChanges(base: MenuEditorNode[], theirs: MenuEditorNode[]): MenuTreeDiff {
   return diffMenuTrees(base, theirs);
 }
+
+// ── Dragging ────────────────────────────────────────────────────────────────
+
+/**
+ * Where a drag would drop, in tree terms.
+ *
+ * dnd-kit has no tree: the list is flattened, and NESTING is expressed by the
+ * horizontal offset of the pointer. This function is the translation between
+ * the two, and it lives here rather than in the component because it is where
+ * the measured depth limit is enforced — a pure function with tests beats a
+ * clamp buried in a drag handler.
+ *
+ * `activeSubtreeHeight` is the part the canonical dnd-kit tree example does
+ * NOT have, and leaving it out is a real bug rather than a rough edge: a
+ * two-level branch dropped at depth 3 puts its children at depth 4, which
+ * Shopify refuses outright ("Menu has more than 3 levels of nesting"). The
+ * drag has to be clamped by the height of what is being dragged, not just by
+ * where the pointer is.
+ */
+export interface DropProjection {
+  depth: number;
+  parentKey: string | null;
+}
+
+export function projectDrop(
+  items: FlatEditorItem[],
+  activeKey: string,
+  overKey: string,
+  dragOffsetX: number,
+  indentationWidth: number,
+  activeSubtreeHeight = 1,
+): DropProjection {
+  // The dragged item's OWN descendants come out of the list first — they
+  // travel with it, so they are neither a neighbour it can nest under nor one
+  // that can push it deeper. Leaving them in is not cosmetic: the item below a
+  // dragged parent is its own child, whose depth then acts as a floor and
+  // defeats the height clamp below. dnd-kit's own tree example collapses the
+  // branch in the component for the same reason; doing it here means a caller
+  // cannot forget.
+  const descendants = new Set<string>();
+  const collect = (parent: string) => {
+    for (const item of items) {
+      if (item.parentKey === parent && !descendants.has(item.key)) {
+        descendants.add(item.key);
+        collect(item.key);
+      }
+    }
+  };
+  collect(activeKey);
+  const visible = items.filter((i) => !descendants.has(i.key));
+
+  const overIndex = visible.findIndex((i) => i.key === overKey);
+  const activeIndex = visible.findIndex((i) => i.key === activeKey);
+  if (overIndex < 0 || activeIndex < 0) return { depth: 1, parentKey: null };
+
+  // The list as it would look after the move, so "the item above" is the one
+  // the merchant actually sees above the placeholder.
+  const moved = [...visible];
+  const [active] = moved.splice(activeIndex, 1);
+  moved.splice(overIndex, 0, active);
+
+  const previous = moved[overIndex - 1];
+  const next = moved[overIndex + 1];
+  const dragDepth = indentationWidth > 0 ? Math.round(dragOffsetX / indentationWidth) : 0;
+  const projected = active.depth + dragDepth;
+
+  // Two bounds, and the order between them matters. The CEILING is one below
+  // the item above, further limited by the height of what is being dragged —
+  // a two-level branch dropped at depth 3 would put its child at depth 4,
+  // which Shopify refuses for the whole tree. The FLOOR is the depth of the
+  // item below, which would otherwise be orphaned.
+  //
+  // The ceiling WINS. Applying the floor last (the first cut did) let a deep
+  // next-item push the projection past the ceiling and hand Shopify a tree it
+  // rejects; a temporarily orphaned neighbour is a layout the merchant can
+  // see and fix, a refused save is not.
+  const ceiling = Math.max(
+    1,
+    Math.min(previous ? previous.depth + 1 : 1, MAX_MENU_DEPTH - (activeSubtreeHeight - 1)),
+  );
+  const floor = Math.min(next ? next.depth : 1, ceiling);
+  const depth = Math.min(ceiling, Math.max(floor, Math.max(1, projected)));
+
+  let parentKey: string | null = null;
+  if (depth > 1 && previous) {
+    if (depth === previous.depth) parentKey = previous.parentKey;
+    else if (depth > previous.depth) parentKey = previous.key;
+    else {
+      // Dropping shallower than the item above: the parent is the nearest
+      // preceding item that sits one level up.
+      parentKey =
+        moved
+          .slice(0, overIndex)
+          .reverse()
+          .find((i) => i.depth === depth)?.parentKey ?? null;
+    }
+  }
+  return { depth, parentKey };
+}
+
+/**
+ * Where among its new siblings the dragged item lands.
+ *
+ * Counted on the list AS MOVED — the same rearrangement `projectDrop` uses —
+ * and not on the original one. Slicing the original list up to and including
+ * the over-item is right for a downward drag and wrong for an upward one: it
+ * counts the item being passed as if it were already above, so dragging the
+ * second item onto the first left the order untouched. Confirmed as a defect
+ * in review, which is why it lives here with a test instead of in a handler.
+ */
+export function dropIndexAmongSiblings(
+  visible: FlatEditorItem[],
+  activeKey: string,
+  overKey: string,
+  parentKey: string | null,
+): number {
+  const overIndex = visible.findIndex((i) => i.key === overKey);
+  const activeIndex = visible.findIndex((i) => i.key === activeKey);
+  if (overIndex < 0 || activeIndex < 0) return 0;
+
+  const moved = [...visible];
+  const [moving] = moved.splice(activeIndex, 1);
+  moved.splice(overIndex, 0, moving);
+  const landedAt = moved.findIndex((i) => i.key === activeKey);
+  return moved.slice(0, landedAt).filter((i) => i.parentKey === parentKey && i.key !== activeKey).length;
+}
+
+/** How many levels the subtree under (and including) this node spans. */
+export function subtreeHeight(node: MenuEditorNode): number {
+  if (!node.children || node.children.length === 0) return 1;
+  return 1 + Math.max(...node.children.map(subtreeHeight));
+}
+
+/** The node with this key, anywhere in the tree. */
+export function findNode(nodes: MenuEditorNode[], key: string): MenuEditorNode | null {
+  for (const node of nodes) {
+    if (node.key === key) return node;
+    const hit = findNode(node.children ?? [], key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The tree without this node (and its subtree). */
+function withoutNode(nodes: MenuEditorNode[], key: string): MenuEditorNode[] {
+  const out: MenuEditorNode[] = [];
+  for (const node of nodes) {
+    if (node.key === key) continue;
+    out.push({ ...node, children: withoutNode(node.children ?? [], key) });
+  }
+  return out;
+}
+
+/**
+ * Move a node (with its subtree) under `parentKey` at `index`.
+ *
+ * Returns the tree unchanged when the move is impossible — into its own
+ * descendant, or onto a key that does not exist. Refusing here rather than in
+ * the drag handler keeps the one rule ("a branch cannot contain itself") in
+ * the same place as everything else about the tree.
+ */
+export function moveNode(
+  nodes: MenuEditorNode[],
+  key: string,
+  parentKey: string | null,
+  index: number,
+): MenuEditorNode[] {
+  const node = findNode(nodes, key);
+  if (!node) return nodes;
+  if (parentKey && (parentKey === key || findNode(node.children ?? [], parentKey))) return nodes;
+
+  const without = withoutNode(nodes, key);
+  const insert = (list: MenuEditorNode[]): MenuEditorNode[] => {
+    const next = [...list];
+    next.splice(Math.max(0, Math.min(index, next.length)), 0, node);
+    return next;
+  };
+  if (!parentKey) return insert(without);
+
+  const walk = (list: MenuEditorNode[]): MenuEditorNode[] =>
+    list.map((candidate) =>
+      candidate.key === parentKey
+        ? { ...candidate, children: insert(candidate.children ?? []) }
+        : { ...candidate, children: walk(candidate.children ?? []) },
+    );
+  return walk(without);
+}
+
+/** Replace one node's own fields, leaving its children and position alone. */
+export function updateNode(
+  nodes: MenuEditorNode[],
+  key: string,
+  patch: Partial<Omit<MenuEditorNode, "key" | "children">>,
+): MenuEditorNode[] {
+  return nodes.map((node) =>
+    node.key === key
+      ? { ...node, ...patch }
+      : { ...node, children: updateNode(node.children ?? [], key, patch) },
+  );
+}
+
+/** The tree without this node and its subtree — deletion, in editor terms. */
+export function removeNode(nodes: MenuEditorNode[], key: string): MenuEditorNode[] {
+  return withoutNode(nodes, key);
+}
+
+/** Append a new node at the top level. */
+export function appendNode(nodes: MenuEditorNode[], node: MenuEditorNode): MenuEditorNode[] {
+  return [...nodes, node];
+}
+
+/**
+ * Every id that would disappear with this node — itself and its descendants.
+ *
+ * The delete confirmation counts with it: "delete Produkte" is a very
+ * different question from "delete Produkte and the four items under it", and
+ * their translations go with them (measured, and not undone by re-creating).
+ */
+export function idsUnder(node: MenuEditorNode): string[] {
+  const out: string[] = [];
+  if (node.id) out.push(node.id);
+  for (const child of node.children ?? []) out.push(...idsUnder(child));
+  return out;
+}

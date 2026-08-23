@@ -319,6 +319,24 @@ export async function saveMenuLinkTranslations(
 
 /** Depth Shopify documents is 3; this reads one more so an unexpected level
  *  cannot vanish silently. */
+/**
+ * The cached tree.
+ *
+ * `type`, `url` and `resourceId` are read although nothing MIRRORS them
+ * anywhere: the tree editor builds its initial state from this cache, and a
+ * node without a type fails validation on sight — every field red, the save
+ * refused, on a menu nobody has touched. They are display and validation
+ * input, not a second copy of Shopify's data; the write path still takes them
+ * from its own fresh read.
+ */
+const MENU_ITEM_CACHE_FIELDS = `
+  id
+  title
+  type
+  url
+  resourceId
+`;
+
 const MENUS_WITH_ITEMS_QUERY = `#graphql
   query menusWithItems($first: Int!) {
     menus(first: $first) {
@@ -327,15 +345,14 @@ const MENUS_WITH_ITEMS_QUERY = `#graphql
         title
         handle
         items {
-          id
-          title
+          ${MENU_ITEM_CACHE_FIELDS}
           items {
-            id
-            title
+            ${MENU_ITEM_CACHE_FIELDS}
             items {
-              id
-              title
-              items { id title }
+              ${MENU_ITEM_CACHE_FIELDS}
+              items {
+                ${MENU_ITEM_CACHE_FIELDS}
+              }
             }
           }
         }

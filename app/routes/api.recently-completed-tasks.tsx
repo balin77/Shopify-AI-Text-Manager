@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
+import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 
 /**
  * API endpoint to fetch recently completed tasks (last 30 seconds)
@@ -27,6 +28,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const recentlyCompletedTasks = await db.task.findMany({
         where: {
           shop: session.shop,
+          // The per-image work items of a WebP conversion are excluded: a
+          // 20-image upload finished 20 of them within seconds of each other
+          // and fired a toast for every one. The run has ONE merchant-facing
+          // row (the `imageWebpConversion` parent), and that is the one that
+          // announces itself. Legacy rows from before the split carry the
+          // parent type and still notify — one per image, as they always did,
+          // which is the behaviour their merchant is already mid-way through.
+          type: { not: WEBP_ITEM_TASK_TYPE },
           status: { in: ["completed", "completed_with_errors", "failed"] },
           completedAt: {
             gte: thirtySecondsAgo,

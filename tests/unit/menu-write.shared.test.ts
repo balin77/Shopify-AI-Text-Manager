@@ -8,11 +8,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  menuStructureFingerprint,
-  diffMenuTitles,
-  invalidMenuTitle,
-} from "~/services/menu-write.shared";
+import { menuStructureFingerprint, describeFingerprintDrift } from "~/services/menu-write.shared";
 
 const tree = [
   {
@@ -89,39 +85,32 @@ describe("menuStructureFingerprint", () => {
   });
 });
 
-describe("diffMenuTitles", () => {
-  const baseline = { a: "Produkte", b: "Kontakt" };
-
-  it("reports only what changed", () => {
-    expect(diffMenuTitles(baseline, { a: "Produkte", b: "Kontakt & Anfahrt" })).toEqual([
-      { menuItemId: "b", title: "Kontakt & Anfahrt" },
+describe("describeFingerprintDrift", () => {
+  it("names what somebody else changed, out of the fingerprints alone", () => {
+    // No extra payload and no second read: the fingerprint already carries
+    // path, id and title per line, which is exactly the tree the page saw.
+    const before = menuStructureFingerprint([
+      { id: "gid://shopify/MenuItem/1", title: "Produkte" },
+      { id: "gid://shopify/MenuItem/4", title: "Kontakt" },
     ]);
-  });
-
-  it("does not report a whitespace wobble", () => {
-    expect(diffMenuTitles(baseline, { a: "  Produkte  " })).toEqual([]);
-  });
-
-  it("writes the TRIMMED value", () => {
-    // Shopify stores what it is sent, so an untrimmed title would come back
-    // different from the draft and diff dirty on every subsequent render.
-    expect(diffMenuTitles(baseline, { a: "  Produkte neu " })).toEqual([
-      { menuItemId: "a", title: "Produkte neu" },
+    const after = menuStructureFingerprint([
+      { id: "gid://shopify/MenuItem/4", title: "Kontakt & Anfahrt" },
+      { id: "gid://shopify/MenuItem/9", title: "Neu" },
     ]);
+    const drift = describeFingerprintDrift(before, after);
+    expect(drift.renamed).toEqual([{ from: "Kontakt", to: "Kontakt & Anfahrt" }]);
+    expect(drift.added).toEqual(["Neu"]);
+    expect(drift.removed).toEqual(["Produkte"]);
   });
 
-  it("reports an item the baseline does not know as a change", () => {
-    expect(diffMenuTitles(baseline, { c: "Neu" })).toEqual([{ menuItemId: "c", title: "Neu" }]);
-  });
-});
-
-describe("invalidMenuTitle", () => {
-  it("refuses empty and whitespace-only names", () => {
-    expect(invalidMenuTitle("")).toBe("empty");
-    expect(invalidMenuTitle("   ")).toBe("empty");
-  });
-
-  it("accepts anything else", () => {
-    expect(invalidMenuTitle("Produkte")).toBeNull();
+  it("reports a move as a move, not as an add and a remove", () => {
+    const before = menuStructureFingerprint([
+      { id: "a", title: "A", items: [{ id: "b", title: "B" }] },
+    ]);
+    const after = menuStructureFingerprint([
+      { id: "a", title: "A" },
+      { id: "b", title: "B" },
+    ]);
+    expect(describeFingerprintDrift(before, after).moved).toEqual(["B"]);
   });
 });

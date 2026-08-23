@@ -773,8 +773,11 @@ async function runSeoBulkFix(taskId: string, args: RunArgs): Promise<void> {
   }
 
   const finalStatus = succeeded.length === 0 ? "failed" : "completed";
+  // A machine code, translated at render time by `taskErrorText` (app/utils).
+  // The rejected-key note is a FLAG argument, so it is translated with the
+  // sentence instead of being English glued onto a German one.
   const failureSummary =
-    failed.length > 0 ? `${failed.length} of ${total} item(s) failed${authErrorSeen ? " (invalid AI API key)" : ""}` : null;
+    failed.length > 0 ? `items_failed:${failed.length}:${total}${authErrorSeen ? ":1" : ""}` : null;
 
   await db.task.update({
     where: { id: taskId },
@@ -1129,7 +1132,7 @@ async function runAltTextBulkFix(taskId: string, args: AltTextRunArgs): Promise<
   const finalStatus = succeeded.length === 0 ? "failed" : "completed";
   const failureSummary =
     failed.length > 0
-      ? `${failed.length} of ${total} image(s) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+      ? `images_failed:${failed.length}:${total}${authErrorSeen ? ":1" : ""}`
       : null;
 
   await db.task.update({
@@ -1698,7 +1701,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
         status: "failed",
         progress: 100,
         completedAt: new Date(),
-        error: "Item no longer exists in the content cache",
+        error: "item_missing",
       },
     });
     return;
@@ -1857,7 +1860,7 @@ async function runFixAllForItem(taskId: string, args: FixAllRunArgs): Promise<vo
   const finalStatus = succeeded.length === 0 ? "failed" : "completed";
   const failureSummary =
     failed.length > 0
-      ? `${failed.length} of ${total} fix(es) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+      ? `fixes_failed:${failed.length}:${total}${authErrorSeen ? ":1" : ""}`
       : null;
 
   await db.task.update({

@@ -195,9 +195,12 @@ async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
     // the count lines up with `total`/`processed`.
     const failedRowCount = new Set(result.failures.map((f) => f.rowId)).size;
     const finalStatus = result.saved === 0 && failedRowCount > 0 ? "failed" : "completed";
+    // A machine code, not a sentence: this runs detached from the request that
+    // started it and has no merchant locale. `taskErrorText` (app/utils) turns
+    // it into the merchant's language at render time.
     const failureSummary =
       failedRowCount > 0
-        ? `${failedRowCount} of ${result.saved + failedRowCount} row(s) failed`
+        ? `rows_failed:${failedRowCount}:${result.saved + failedRowCount}`
         : null;
 
     await db.task.update({

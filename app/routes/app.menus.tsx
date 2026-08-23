@@ -19,30 +19,23 @@
  *     empty answer looks like from the inside — which is how the wrong claim
  *     got here in the first place.
  *
- * PRIMARY titles are editable too, and the fear that kept them read-only was
- * the right fear about the wrong thing. menuUpdate DOES replace the whole item
- * tree, so a page that wrote its CACHED tree back would be one stale load away
- * from reordering a merchant's navigation — which is why the write path
- * (menu-write.server.ts) never writes the cache: it re-reads the tree from
- * Shopify, substitutes only the titles that changed, refuses the save when
- * that fresh tree no longer matches the one this page was rendered from, and
- * verifies both the echoed titles AND that every item kept its id. The scope
- * was never the obstacle either — write_online_store_navigation has been
- * declared since the URL-redirect feature.
+ * The page is a full menu EDITOR, not a translation surface with a rename
+ * bolted on: drag to reorder and re-nest, add and delete items, edit titles.
+ * All of it is one write (menuUpdate takes the whole item list), so there is
+ * exactly one writer — saveMenuTree — and the rename-only path this started
+ * as was retired rather than kept beside it: two whole-tree writers on one
+ * menu means the second one refuses over the first one's own result.
  *
- * Still NOT offered here, and deliberately: reordering, re-nesting, adding,
- * deleting, and changing where an item points. Those are the parts of
- * menuUpdate that need a tree editor to be safe, and the Shopify admin already
- * has one.
+ * The dangerous half of that mutation is what menu-tree.server.ts is about:
+ * an item not in the list is DELETED, and re-parenting destroys an item's
+ * translations (measured). Neither is visible from here; the page's job is to
+ * SAY what is about to happen — the change summary, the deletion warning, and
+ * the drift refusal that names what somebody else changed.
  *
- * Translations written here remain GLOBAL (no market scope) — but that is now
- * a scope decision rather than an unmeasured one. MEASURED 2026-08-23: a menu
- * item CAN hold a market-scoped translation, and the global read does not
- * return it, so the two layers are genuinely separate. What follows is that a
- * merchant who set one in Shopify's own editor has a value this page neither
- * shows nor purges — the storefront keeps serving it in that market after a
- * rename. Stated here because it is a gap, not an intention; adding the market
- * selector means reading that layer too, not just writing it.
+ * Still NOT offered, and deliberately: changing where an item points (needs a
+ * resource picker per type) and the menu's own title and handle — a handle is
+ * what a theme references, and renaming it unhooks the menu from the
+ * storefront without saying so.
  *
  * The item column is the shared UnifiedItemList, not a bespoke one: below
  * 900px `.desktop-only` hides it and the navbar's compact selector takes over,
@@ -83,13 +76,22 @@ import { createContentLoader } from "~/utils/loader-factory.server";
 import {
   flattenMenuItems,
   diffMenuTranslations,
+  linkGidForMenuItem as linkGidForNode,
   type FlatMenuItem,
 } from "~/services/menu-translations.shared";
+import { menuStructureFingerprint } from "~/services/menu-write.shared";
 import {
-  menuStructureFingerprint,
-  diffMenuTitles,
-  invalidMenuTitle,
-} from "~/services/menu-write.shared";
+  diffMenuTrees,
+  editorNodesFromRawTree,
+  isEmptyMenuTreeDiff,
+  removeNode,
+  updateNode,
+  validateEditorTree,
+  appendNode,
+  idsUnder,
+  type MenuEditorNode,
+} from "~/services/menu-tree.shared";
+import { MenuTreeEditor, newMenuNode } from "~/components/menus/MenuTreeEditor";
 import type { ActionFunctionArgs } from "react-router";
 
 /** What the loader hands the client per Link GID. */
@@ -255,39 +257,26 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   /**
-   * The PRIMARY-language payload: renaming menu items.
+   * The PRIMARY-language payload: the whole item TREE.
    *
-   * A separate field rather than another locale in `changesByLocale`, because
-   * it is a different write entirely — translationsRegister addresses one Link
-   * per call, menuUpdate rewrites the menu's whole item tree. The fingerprint
-   * travels with it: it pins the tree the page was rendered from, and the
-   * server refuses the write when Shopify's current tree no longer matches
-   * (see menu-write.shared.ts).
+   * One payload rather than "renames here, structure there", because
+   * menuUpdate rewrites the whole tree either way — two payloads would be two
+   * sequential whole-tree writes on one menu, and the second one's drift check
+   * would fail against the first one's result. The fingerprint travels with
+   * it: it pins the tree the page was rendered from, and the server refuses
+   * the write when Shopify's current tree no longer matches.
    */
-  let primaryPayload: {
-    menuId: string;
-    fingerprint: string;
-    items: Array<{ menuItemId: string; title: string }>;
-  } | null = null;
+  let treePayload: { menuId: string; fingerprint: string; tree: unknown } | null = null;
   try {
-    const raw = String(formData.get("primaryChanges") || "");
+    const raw = String(formData.get("treeChanges") || "");
     if (raw) {
       const parsed = JSON.parse(raw);
-      const items = Array.isArray(parsed?.items)
-        ? parsed.items
-            .filter(
-              (c: unknown): c is { menuItemId: string; title: string } =>
-                !!c &&
-                typeof (c as { menuItemId?: unknown }).menuItemId === "string" &&
-                typeof (c as { title?: unknown }).title === "string",
-            )
-            .map((c: { menuItemId: string; title: string }) => ({
-              menuItemId: c.menuItemId,
-              title: String(c.title),
-            }))
-        : [];
-      if (typeof parsed?.menuId === "string" && typeof parsed?.fingerprint === "string" && items.length > 0) {
-        primaryPayload = { menuId: parsed.menuId, fingerprint: parsed.fingerprint, items };
+      if (
+        typeof parsed?.menuId === "string" &&
+        typeof parsed?.fingerprint === "string" &&
+        Array.isArray(parsed?.tree)
+      ) {
+        treePayload = { menuId: parsed.menuId, fingerprint: parsed.fingerprint, tree: parsed.tree };
       }
     }
   } catch {
@@ -295,7 +284,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const locales = Object.keys(byLocale).filter((l) => byLocale[l].length > 0);
-  if (locales.length === 0 && !primaryPayload) {
+  if (locales.length === 0 && !treePayload) {
     return Response.json({ success: true, saved: {}, failures: [] });
   }
 
@@ -306,34 +295,44 @@ export async function action({ request }: ActionFunctionArgs) {
   const gateway = new ShopifyApiGateway(admin, session.shop);
 
   /**
-   * The rename runs BEFORE the translations, and the order is not cosmetic.
-   * A confirmed rename may purge that item's translations (the merchant's
-   * stale-translation setting decides), and the digest every translation is
-   * written against belongs to the primary text. Renaming first means the
-   * sweep below reads the digests of the NEW titles and the merchant's freshly
-   * typed translations are written after the purge instead of into it.
+   * The tree write runs BEFORE the translations, and the order is not
+   * cosmetic. A confirmed rename may purge that item's translations, a MOVE
+   * destroys them outright (measured) and the write path restores them itself,
+   * and the digest every translation is written against belongs to the primary
+   * text. Writing the tree first means the sweep below reads the digests of
+   * the NEW titles, and a translation typed in the same session lands after
+   * both the purge and the repair rather than into them.
    */
-  let primaryResult: Awaited<ReturnType<typeof import("~/services/menu-write.server").saveMenuItemTitles>> | null =
-    null;
-  if (primaryPayload) {
-    const { saveMenuItemTitles } = await import("~/services/menu-write.server");
+  let treeResult: Awaited<ReturnType<typeof import("~/services/menu-tree.server").saveMenuTree>> | null = null;
+  if (treePayload) {
+    const { saveMenuTree } = await import("~/services/menu-tree.server");
     const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
-    // An empty list means the LOOKUP failed, never "one locale" — the purge
-    // simply has no scope then, which is the harmless direction.
+    const { fetchShopMarkets } = await import("~/services/sync-utils");
+    // An empty locale list means the LOOKUP failed, never "one locale" — the
+    // repair and the purge then simply have no scope, which is the harmless
+    // direction. fetchShopMarkets degrades to [] the same way, so a shop
+    // without `read_markets` gets the global layer and no error.
     const shopLocales = await getCachedShopLocales(admin, session.shop);
     const foreignLocales = shopLocales
       .filter((l) => !l.primary && (l as { published?: boolean }).published !== false)
       .map((l) => l.locale);
-    primaryResult = await saveMenuItemTitles(gateway, db, session.shop, {
-      menuId: primaryPayload.menuId,
-      fingerprint: primaryPayload.fingerprint,
-      changes: primaryPayload.items,
+    // Bound, exactly like every other caller (product-sync, metaobject-sync):
+    // an inline wrapper here would be a second opinion about the gateway's
+    // signature, and it is the one thing this call does not need.
+    const markets = await fetchShopMarkets(admin.graphql.bind(admin));
+    treeResult = await saveMenuTree(gateway, db, session.shop, {
+      menuId: treePayload.menuId,
+      fingerprint: treePayload.fingerprint,
+      // The client's tree is a claim, not an authority: saveMenuTree validates
+      // every node against Shopify's own fresh read before anything is sent.
+      tree: treePayload.tree as never,
       foreignLocales,
+      marketIds: markets.map((m) => m.id),
     });
   }
 
   if (locales.length === 0) {
-    return Response.json({ success: true, saved: {}, failures: [], primary: primaryResult });
+    return Response.json({ success: true, saved: {}, failures: [], tree: treeResult });
   }
 
   // Digests are re-read server-side and NEVER taken from the client — the same
@@ -355,7 +354,7 @@ export async function action({ request }: ActionFunctionArgs) {
         error: error instanceof Error ? error.message : String(error),
         saved: {},
         failures: [],
-        primary: primaryResult,
+        tree: treeResult,
       },
       { status: 502 },
     );
@@ -403,7 +402,7 @@ export async function action({ request }: ActionFunctionArgs) {
     for (const failure of result.failures) failures.push({ ...failure, locale });
   }
 
-  return Response.json({ success: true, saved, failures, deferred, primary: primaryResult });
+  return Response.json({ success: true, saved, failures, deferred, tree: treeResult });
 }
 
 // ============================================================================
@@ -433,26 +432,46 @@ export default function MenusPage() {
      * line is one refactor away from pulling a server module into the client
      * bundle, which the build refuses and typecheck does not catch.
      */
-    primary?: PrimarySaveResult | null;
+    tree?: TreeSaveResult | null;
   };
-  type PrimarySaveResult = {
+  /**
+   * The tree write's outcome. Re-declared here rather than imported from
+   * menu-tree.server: a type-only import would be erased, but the import line
+   * is one refactor away from pulling a server module into the client bundle,
+   * which the build refuses and typecheck does not catch.
+   */
+  type TreeSaveResult = {
     status:
       | "ok"
       | "menuMissing"
       | "readFailed"
       | "structureChanged"
+      | "invalidTree"
       | "unknownItems"
-      | "tooDeep"
-      | "unwritableItem"
       | "writeFailed";
-    savedItemIds: string[];
-    failures: Array<{ menuItemId: string; message: string }>;
+    diff: {
+      renamed: Array<{ id: string; from: string; to: string }>;
+      reparented: Array<{ id: string }>;
+      reordered: string[];
+      retargeted: Array<{ id: string }>;
+      created: string[];
+      deleted: string[];
+    };
+    createdIds: Record<string, string>;
     reassignedItemIds: Array<{ before: string; after: string }>;
+    problems: Array<{ key: string; code: string; title: string }>;
+    foreignChanges?: {
+      added: string[];
+      removed: string[];
+      renamed: Array<{ from: string; to: string }>;
+      moved: string[];
+    };
+    translationRepair: { restored: number; failed: Array<{ linkId: string; message: string }> };
     purgedLinkIds: string[];
-    /** Removed (item, locale) rows — what the merchant's banner counts. */
     purgedTranslationCount: number;
     message?: string;
   };
+
   /** The manual save bar. */
   const fetcher = useFetcher<SaveResponse>();
   /**
@@ -474,26 +493,27 @@ export default function MenusPage() {
   const [draftByLocale, setDraftByLocale] = useState<Record<string, Record<string, string>>>({});
   const [busyLinkIds, setBusyLinkIds] = useState<Set<string>>(new Set());
   /**
-   * menuItemId -> new PRIMARY title.
+   * menuId -> the tree the merchant is building.
    *
-   * Its own state, not another locale inside `draftByLocale`: those entries are
-   * keyed by LINK GID and become translationsRegister calls, while a primary
-   * edit is keyed by the MenuItem and becomes one menuUpdate over the whole
-   * tree. An item whose Link GID could not be derived can still be renamed, so
-   * the two cannot even share a key.
+   * Per MENU rather than one tree, so switching menus keeps unsaved work — the
+   * same rule the translation drafts follow. Absent means "unchanged": the
+   * base tree is derived from the loader, so a draft is only stored once
+   * something is actually edited.
    */
-  const [primaryDrafts, setPrimaryDrafts] = useState<Record<string, string>>({});
-  /** Exactly which renames the in-flight save submitted, captured at click time. */
-  const submittedTitlesRef = useRef<Record<string, string> | null>(null);
+  const [treeDrafts, setTreeDrafts] = useState<Record<string, MenuEditorNode[]>>({});
+  /** Mints keys for new items. A counter, never the title — two items may share one. */
+  const newNodeSeq = useRef(0);
+  /** Exactly which tree the in-flight save submitted, captured at click time. */
+  const submittedTreeRef = useRef<MenuEditorNode[] | null>(null);
   /**
-   * The last rename's outcome — state, not `fetcher.data`.
+   * The last tree write's outcome — state, not `fetcher.data`.
    *
    * The same reason the auto-save's failures are state: fetcher.data survives
    * until the NEXT submit, and the drift banner offers a Reload button. Read
    * straight from the fetcher, that banner would still be on screen after the
    * merchant pressed it, i.e. a button that visibly does nothing.
    */
-  const [primaryResult, setPrimaryResult] = useState<PrimarySaveResult | null>(null);
+  const [treeResult, setTreeResult] = useState<TreeSaveResult | null>(null);
   /**
    * Values written by the translate / copy buttons while their save is in
    * flight.
@@ -657,51 +677,67 @@ export default function MenusPage() {
   }, [foreignLocales, draftByLocale, visibleLinkIds, savedFor]);
 
   /**
-   * The primary titles as the page was rendered from them — the CACHE tree,
-   * which is also what the fingerprint is built from.
+   * The tree as Shopify holds it, and the tree the merchant is building.
    *
-   * Deliberately not the Link sweep's `primaryTitle`: both come from Shopify
-   * in the same load, but only one of them is the tree the write path compares
-   * against, and a baseline that disagrees with the fingerprint would offer an
-   * edit that the server then refuses as drift.
+   * The BASE comes from the cache the page was rendered from — the same tree
+   * the fingerprint is built from, so what the server compares against and
+   * what the merchant sees are one thing.
    */
-  const primaryTitleById = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const item of (selectedMenu?.flat ?? []) as FlatMenuItem[]) out[item.menuItemId] = item.title;
-    return out;
-  }, [selectedMenu]);
+  const baseTree = useMemo(
+    () => editorNodesFromRawTree(selectedMenu?.items),
+    [selectedMenu],
+  );
+  const tree = (selectedMenuId && treeDrafts[selectedMenuId]) || baseTree;
 
-  /** What is on screen in the primary language. */
-  const primaryValueFor = useCallback(
-    (menuItemId: string): string => primaryDrafts[menuItemId] ?? primaryTitleById[menuItemId] ?? "",
-    [primaryDrafts, primaryTitleById],
+  const setTree = useCallback(
+    (next: MenuEditorNode[]) => {
+      if (!selectedMenuId) return;
+      setTreeDrafts((prev) => ({ ...prev, [selectedMenuId]: next }));
+    },
+    [selectedMenuId],
   );
 
+  const treeDiff = useMemo(() => diffMenuTrees(baseTree, tree), [baseTree, tree]);
+  const treeChanged = !isEmptyMenuTreeDiff(treeDiff);
+  const treeChangeCount =
+    treeDiff.renamed.length +
+    treeDiff.reparented.length +
+    treeDiff.reordered.length +
+    treeDiff.retargeted.length +
+    treeDiff.created.length +
+    treeDiff.deleted.length;
   /**
-   * The renames a save would write, scoped to the visible menu for the same
-   * reason the translations are: a draft parked in another menu must not ride
-   * along on a save the merchant pressed here.
+   * What Shopify would refuse, found while typing rather than on save.
    *
-   * An EMPTY title is dropped rather than sent. menuUpdate carries the whole
-   * tree, so Shopify refusing one blank name would fail every other rename in
-   * the same call; the field says so on its own (see renderItem).
+   * menuUpdate carries the WHOLE tree, so one bad item fails every other edit
+   * with it — which is why this both marks the field and blocks the save.
    */
-  const primaryChanges = useMemo(() => {
-    const scoped: Record<string, string> = {};
-    for (const [menuItemId, value] of Object.entries(primaryDrafts)) {
-      if (!(menuItemId in primaryTitleById)) continue;
-      if (invalidMenuTitle(value)) continue;
-      scoped[menuItemId] = value;
-    }
-    return diffMenuTitles(primaryTitleById, scoped);
-  }, [primaryDrafts, primaryTitleById]);
+  const treeProblems = useMemo(() => validateEditorTree(tree), [tree]);
+  const problemByKey = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const problem of treeProblems) out[problem.key] = problem.code;
+    return out;
+  }, [treeProblems]);
+
+  /** The primary title as the BASE tree holds it — the rename comparison. */
+  const baseTitleById = useMemo(() => {
+    const out: Record<string, string> = {};
+    const walk = (nodes: MenuEditorNode[]) => {
+      for (const n of nodes) {
+        if (n.id) out[n.id] = n.title;
+        walk(n.children ?? []);
+      }
+    };
+    walk(baseTree);
+    return out;
+  }, [baseTree]);
 
   /**
    * The tree the merchant is looking at, as the server will compare it.
    *
-   * Built from the RAW cached items rather than the flattened list: the
-   * fingerprint has to describe positions and nesting, which flattening keeps
-   * only as a label.
+   * Built from the RAW cached items rather than the editor tree: the
+   * fingerprint has to describe the tree BEFORE the edits, which is exactly
+   * what the server re-reads and compares.
    */
   const menuFingerprint = useMemo(
     () => menuStructureFingerprint(selectedMenu?.items),
@@ -709,33 +745,35 @@ export default function MenusPage() {
   );
 
   const changeCount = useMemo(
-    () => primaryChanges.length + Object.values(changesByLocale).reduce((sum, list) => sum + list.length, 0),
-    [primaryChanges, changesByLocale],
+    () => treeChangeCount + Object.values(changesByLocale).reduce((sum, list) => sum + list.length, 0),
+    [treeChangeCount, changesByLocale],
   );
   const isSaving = fetcher.state !== "idle";
 
   const onSave = useCallback(() => {
     if (changeCount === 0) return;
+    // The banner said the tree was blocked; nothing enforced it. menuUpdate
+    // carries the WHOLE tree, so submitting a known-bad item spends a round
+    // trip to be told what we already knew — and takes every other edit in the
+    // same save down with it.
+    if (treeProblems.length > 0) return;
     // Captured HERE, synchronously, not in an effect: an effect that also
     // depends on changesByLocale re-captures while the request is in flight,
     // so a keystroke made during the save would match the response and get
     // deleted from the draft — silently reverting what the merchant just typed.
     submittedRef.current = changesByLocale;
-    submittedTitlesRef.current = Object.fromEntries(primaryChanges.map((c) => [c.menuItemId, c.title]));
-    setPrimaryResult(null);
+    submittedTreeRef.current = treeChanged ? tree : null;
+    setTreeResult(null);
     const fd = new FormData();
     fd.set("changesByLocale", JSON.stringify(changesByLocale));
-    if (primaryChanges.length > 0 && selectedMenuId) {
-      // The fingerprint travels WITH the renames: it is what lets the server
-      // refuse a write-back over a tree somebody else has moved since this
+    if (treeChanged && selectedMenuId) {
+      // The fingerprint travels WITH the tree: it is what lets the server
+      // refuse a write-back over a menu somebody else has moved since this
       // page was rendered.
-      fd.set(
-        "primaryChanges",
-        JSON.stringify({ menuId: selectedMenuId, fingerprint: menuFingerprint, items: primaryChanges }),
-      );
+      fd.set("treeChanges", JSON.stringify({ menuId: selectedMenuId, fingerprint: menuFingerprint, tree }));
     }
     fetcher.submit(fd, { method: "post" });
-  }, [changeCount, changesByLocale, primaryChanges, menuFingerprint, selectedMenuId, fetcher]);
+  }, [changeCount, changesByLocale, treeProblems, treeChanged, tree, menuFingerprint, selectedMenuId, fetcher]);
 
   const onDiscard = useCallback(() => {
     // Only what this save bar would have written. The bar appears for the
@@ -752,16 +790,16 @@ export default function MenusPage() {
       }
       return next;
     });
-    // Same scope rule for the renames: only the visible menu's.
-    setPrimaryDrafts((prev) => {
-      const kept: Record<string, string> = {};
-      for (const [menuItemId, value] of Object.entries(prev)) {
-        if (!(menuItemId in primaryTitleById)) kept[menuItemId] = value;
-      }
-      return kept;
-    });
+    // Same scope rule for the tree: only the visible menu's draft goes.
+    if (selectedMenuId) {
+      setTreeDrafts((prev) => {
+        const next = { ...prev };
+        delete next[selectedMenuId];
+        return next;
+      });
+    }
     setTranslateError(null);
-  }, [visibleLinkIds, primaryTitleById]);
+  }, [visibleLinkIds, selectedMenuId]);
 
   // Confirmed values return through the loader on revalidation, so the draft
   // only drops what was saved — and only where it still equals what was sent.
@@ -785,25 +823,30 @@ export default function MenusPage() {
   }, [fetcher.data]);
 
   /**
-   * The same rule for the renames: drop a draft only where it still equals
-   * what was sent AND Shopify confirmed it. A title edited again while the
-   * save was in flight stays, and so does one that failed.
+   * A confirmed tree save drops the draft — but only if it is still the tree
+   * that was sent.
+   *
+   * The comparison is by reference: the draft is replaced wholesale on every
+   * edit, so an identical reference means nothing has been touched since the
+   * submit. A merchant who kept dragging during the save keeps their work.
    */
   useEffect(() => {
-    const primary = fetcher.data?.primary;
-    const submitted = submittedTitlesRef.current;
-    if (!primary || !submitted) return;
-    setPrimaryResult(primary);
-    setPrimaryDrafts((prev) => {
+    const tree = fetcher.data?.tree;
+    if (!tree) return;
+    setTreeResult(tree);
+    if (tree.status !== "ok") return;
+    const submitted = submittedTreeRef.current;
+    setTreeDrafts((prev) => {
       const next = { ...prev };
-      for (const menuItemId of primary.savedItemIds) {
-        if ((next[menuItemId] ?? "").trim() === submitted[menuItemId]) delete next[menuItemId];
+      for (const [menuId, draft] of Object.entries(prev)) {
+        if (draft === submitted) delete next[menuId];
       }
       return next;
     });
   }, [fetcher.data]);
+
   /**
-   * A finished revalidation retires the last rename report. The refusal it
+   * A finished revalidation retires the last tree report. The refusal it
    * describes was about a tree that has just been replaced, and leaving it up
    * would make the Reload button look broken.
    */
@@ -816,7 +859,7 @@ export default function MenusPage() {
     }
     if (!wasRevalidatingRef.current) return;
     wasRevalidatingRef.current = false;
-    setPrimaryResult(null);
+    setTreeResult(null);
   }, [revalidatorState]);
 
   // ── AI translate / copy, per entry ───────────────────────────────────────
@@ -1090,42 +1133,115 @@ export default function MenusPage() {
 
   // ── Rendering one menu item ──────────────────────────────────────────────
 
-  const renderItem = (item: FlatMenuItem): ReactElement => {
-    const row = item.linkId
-      ? ((linkTranslations || {})[item.linkId] as LinkTranslationDTO | undefined)
-      : undefined;
-    const primaryTitle = row?.primaryTitle ?? item.title;
-    const canTranslate = !!item.linkId && !!row?.translatable && !singleLocaleHint;
-    // Renaming does not go through the Link resource at all, so it depends on
-    // none of the translation preconditions: an item with no derivable Link
-    // GID, or one the truncated sweep never reported, is still renameable.
+  /**
+   * One row's editable field.
+   *
+   * On the PRIMARY language it edits the item's title in the tree; on a
+   * foreign one it edits that item's translation. Same row, same position,
+   * different value — which is why the tree is one state for every language
+   * and only the field changes.
+   */
+  const renderField = (node: MenuEditorNode) => {
+    const linkId = node.id ? linkGidForNode(node.id) : null;
+    const row = linkId ? ((linkTranslations || {})[linkId] as LinkTranslationDTO | undefined) : undefined;
+    const primaryTitle = node.title;
+    const canTranslate = !!linkId && !!row?.translatable && !singleLocaleHint;
     const editable = isPrimary || canTranslate;
-    const value = isPrimary
-      ? primaryValueFor(item.menuItemId)
-      : item.linkId
-        ? valueFor(activeLocale, item.linkId)
-        : "";
-    // Empty is refused in front of the mutation rather than behind it:
-    // menuUpdate carries every other item of the menu, so one blank name would
-    // fail the whole save.
-    const primaryEmpty = isPrimary && !!invalidMenuTitle(value);
-    const busy = !!item.linkId && (busyLinkIds.has(item.linkId) || isAutoSaving(item.linkId));
-    // An unsaved rename blocks this item's translate/copy pair, and the reason
-    // is not tidiness: the source text would be the OLD title (the new one is
-    // not stored yet), and saving afterwards would purge exactly the
-    // translation the button just produced, under the merchant's own
-    // stale-translation setting. Two wrong outcomes for one click.
-    //
-    // Deliberately NOT gated on the tab being the primary one. The rename is a
-    // property of the ITEM, not of the language on screen: a merchant who
-    // renames on the primary tab, switches to French and presses translate
-    // hits both wrong outcomes just the same, and the draft is still pending.
-    const pendingRename =
-      item.menuItemId in primaryDrafts &&
-      (primaryDrafts[item.menuItemId] ?? "").trim() !== (primaryTitleById[item.menuItemId] ?? "").trim();
-    // In the primary language both buttons write into EVERY other language, so
-    // switching them all off leaves them with nothing to write. Disabled with
-    // the reason, never hidden — and never a button that silently does nothing.
+    const value = isPrimary ? node.title : linkId ? valueFor(activeLocale, linkId) : "";
+    const problem = problemByKey[node.key];
+
+    // The app's two translation-state colours, same classes as everywhere
+    // else: BLUE on a primary field whose translation is missing somewhere,
+    // YELLOW on a foreign field that has no value yet. A brand-new item has
+    // neither — it has no Link resource until it is saved.
+    const missingSomewhere =
+      !!linkId && foreignLocales.some((locale) => isMissingIn(locale, linkId));
+    const background = isPrimary
+      ? missingSomewhere
+        ? "bg-missing-translation"
+        : "bg-white"
+      : linkId && isMissingIn(activeLocale, linkId)
+        ? "bg-untranslated"
+        : "bg-white";
+
+    return (
+      <div className={`ai-editable-field-wrapper ${background}`}>
+        <TextField
+          label={
+            <Text as="span" variant="bodySm">
+              {isPrimary ? (node.id ? primaryTitle || t.content?.menuNewItem : t.content?.menuNewItem) : primaryTitle}
+            </Text>
+          }
+          value={value}
+          onChange={(next) => {
+            if (!editable) return;
+            if (isPrimary) {
+              setTree(updateNode(tree, node.key, { title: next }));
+              return;
+            }
+            if (!linkId) return;
+            setDraftValue(activeLocale, linkId, next);
+          }}
+          placeholder={isPrimary ? undefined : primaryTitle}
+          disabled={!editable}
+          error={problem && problem !== "missingTarget" ? problemMessage(problem) : undefined}
+          helpText={
+            // A brand-new item cannot be translated yet: its Link resource
+            // does not exist until Shopify has created the item. Said in
+            // place, because an empty disabled field explains nothing.
+            !isPrimary && !node.id
+              ? t.content?.menuTranslateAfterSave
+              : !isPrimary && (!linkId || !row?.translatable)
+                ? linkSweepTruncated
+                  ? t.content?.menuListIncomplete
+                  : t.content?.menuNotTranslatable
+                : undefined
+          }
+          autoComplete="off"
+        />
+        {/* A NEW item needs a target, and until the resource picker exists
+            (plan phase 3) the one target a merchant can state without one is a
+            URL. Shown for new items only: retargeting an EXISTING item is a
+            different feature with different consequences, and offering half of
+            it here would invite exactly the silent link change that feature
+            has to be careful about. */}
+        {isPrimary && !node.id && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <TextField
+              label={t.content?.menuItemUrl || "URL"}
+              value={node.url ?? ""}
+              onChange={(next) => setTree(updateNode(tree, node.key, { url: next }))}
+              placeholder="https://"
+              error={problem === "missingTarget" ? t.content?.menuTargetRequired : undefined}
+              autoComplete="off"
+            />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /** The per-item translate / copy pair. */
+  const renderRowActions = (node: MenuEditorNode) => {
+    const linkId = node.id ? linkGidForNode(node.id) : null;
+    if (!linkId) return null;
+    const row = (linkTranslations || {})[linkId] as LinkTranslationDTO | undefined;
+    if (!row?.translatable) return null;
+
+    const item: FlatMenuItem = {
+      menuItemId: node.id as string,
+      linkId,
+      title: node.title,
+      depth: 1,
+      path: [1],
+    };
+    const primaryTitle = node.title;
+    const canTranslate = !singleLocaleHint;
+    const busy = busyLinkIds.has(linkId) || isAutoSaving(linkId);
+    // An unsaved title change blocks this item's pair: the source would be the
+    // OLD text (the new one is not stored yet), and saving afterwards would
+    // purge exactly the translation the button just produced.
+    const pendingRename = !!node.id && (baseTitleById[node.id] ?? "") !== node.title;
     const actionHint =
       singleLocaleHint ??
       (pendingRename
@@ -1133,115 +1249,68 @@ export default function MenusPage() {
         : isPrimary
           ? allTargetsOffHint
           : undefined);
-    const actionsBlocked = !canTranslate || pendingRename || !!(isPrimary && allTargetsOffHint);
-
-    // The app's two translation-state colours, same classes as everywhere else:
-    // BLUE on a primary field whose translation is missing somewhere, YELLOW on
-    // a foreign field that has no value yet.
-    const missingSomewhere =
-      !!item.linkId && foreignLocales.some((locale) => isMissingIn(locale, item.linkId as string));
-    const background = isPrimary
-      ? missingSomewhere
-        ? "bg-missing-translation"
-        : "bg-white"
-      : item.linkId && isMissingIn(activeLocale, item.linkId)
-        ? "bg-untranslated"
-        : "bg-white";
+    const blocked = !canTranslate || pendingRename || !!(isPrimary && allTargetsOffHint);
 
     return (
-      <div
-        key={item.menuItemId}
-        style={{ marginLeft: `${(item.depth - 1) * 1.5}rem`, marginBottom: "0.75rem" }}
-      >
-        <div className={`ai-editable-field-wrapper ${background}`}>
-          <TextField
-            // No depth badge: the indentation already shows the nesting, and
-            // "L2" is this app's vocabulary, not the merchant's.
-            label={<Text as="span" variant="bodySm">{`${item.path.join(".")} · ${primaryTitle}`}</Text>}
-            value={value}
-            onChange={(next) => {
-              if (!editable) return;
-              if (isPrimary) {
-                setPrimaryDrafts((prev) => ({ ...prev, [item.menuItemId]: next }));
-                return;
-              }
-              if (!item.linkId) return;
-              setDraftValue(activeLocale, item.linkId, next);
-            }}
-            placeholder={isPrimary ? undefined : primaryTitle}
-            disabled={!editable}
-            error={primaryEmpty ? t.content?.menuTitleRequired : undefined}
-            helpText={
-              // The translatability note belongs to the FOREIGN view only: in
-              // the primary language the field renames the item, which has
-              // nothing to do with whether Shopify hands out its Link.
-              !isPrimary && (!item.linkId || !row?.translatable)
-                ? linkSweepTruncated
-                  ? t.content?.menuListIncomplete
-                  : t.content?.menuNotTranslatable
-                : undefined
+      <>
+        <DisabledActionTooltip hint={actionHint}>
+          <Button
+            size="slim"
+            loading={busy}
+            disabled={blocked || !primaryTitle.trim() || busy}
+            onClick={() =>
+              isPrimary ? translateToAll(item, primaryTitle) : translateFromPrimary(item, primaryTitle)
             }
-            autoComplete="off"
-          />
-        </div>
-
-        {/* Per-entry actions, the same pair every translatable field of the app
-            offers: translate with AI, or take the source over unchanged. In the
-            primary language they act on ALL other languages at once; in a
-            foreign one they act on the language being shown. */}
-        {!!item.linkId && !!row?.translatable && (
-          <div className="ai-field-footer">
-            <div className="ai-field-footer-left" />
-            <div className="ai-field-footer-right">
-              <DisabledActionTooltip hint={actionHint}>
-                <Button
-                  size="slim"
-                  loading={busy}
-                  disabled={actionsBlocked || !primaryTitle.trim() || busy}
-                  onClick={() =>
-                    isPrimary
-                      ? translateToAll(item, primaryTitle)
-                      : translateFromPrimary(item, primaryTitle)
-                  }
-                >
-                  🌍{" "}
-                  {isPrimary
-                    ? t.content?.menuTranslateAll
-                    : t.content?.menuTranslateFromPrimary}
-                </Button>
-              </DisabledActionTooltip>
-              <DisabledActionTooltip hint={actionHint}>
-                <Button
-                  size="slim"
-                  disabled={actionsBlocked || !primaryTitle.trim() || busy}
-                  onClick={() =>
-                    isPrimary ? copyToAll(item, primaryTitle) : copyFromPrimary(item, primaryTitle)
-                  }
-                >
-                  📋 {isPrimary ? t.content?.menuCopyAll : t.content?.menuCopyFromPrimary}
-                </Button>
-              </DisabledActionTooltip>
-            </div>
-          </div>
-        )}
-      </div>
+          >
+            🌍 {isPrimary ? t.content?.menuTranslateAll : t.content?.menuTranslateFromPrimary}
+          </Button>
+        </DisabledActionTooltip>
+        <DisabledActionTooltip hint={actionHint}>
+          <Button
+            size="slim"
+            disabled={blocked || !primaryTitle.trim() || busy}
+            onClick={() => (isPrimary ? copyToAll(item, primaryTitle) : copyFromPrimary(item, primaryTitle))}
+          >
+            📋 {isPrimary ? t.content?.menuCopyAll : t.content?.menuCopyFromPrimary}
+          </Button>
+        </DisabledActionTooltip>
+      </>
     );
   };
 
-  /** The rename half's outcome, or undefined when the last save had none. */
-  const primaryStatus = primaryResult?.status;
+  /** One message per validation code — the field says what is wrong, in place. */
+  const problemMessage = (code: string): string | undefined => {
+    switch (code) {
+      case "emptyTitle":
+        return t.content?.menuTitleRequired;
+      case "missingTarget":
+        return t.content?.menuTargetRequired;
+      case "tooDeep":
+        return t.content?.menuMaxDepthReached;
+      default:
+        return t.content?.menuItemInvalid;
+    }
+  };
 
-  /** Same rule as titleForLink, for the rename failures (keyed by MenuItem). */
-  const titleForMenuItem = useCallback(
-    (menuItemId: string): string => {
-      for (const menu of parsedMenus) {
-        const hit = (menu.flat as FlatMenuItem[]).find((i) => i.menuItemId === menuItemId);
-        if (hit) return hit.title;
-      }
-      return menuItemId.split("/").pop() ?? menuItemId;
-    },
-    [parsedMenus],
-  );
+  /** The tree write's outcome, or undefined when the last save had none. */
+  const treeStatus = treeResult?.status;
+
+  /** The change list over the save button, in the merchant's own words. */
+  const treeSummary = useMemo(() => {
+    if (!treeChanged) return null;
+    const parts: string[] = [];
+    const say = (key: string | undefined, count: number) => {
+      if (count > 0 && key) parts.push(key.replace("{count}", String(count)));
+    };
+    say(t.content?.menuTreeRenamed, treeDiff.renamed.length);
+    say(t.content?.menuTreeMoved, treeDiff.reparented.length);
+    say(t.content?.menuTreeReordered, treeDiff.reordered.length);
+    say(t.content?.menuTreeCreated, treeDiff.created.length);
+    say(t.content?.menuTreeDeleted, treeDiff.deleted.length);
+    return (t.content?.menuTreeSummary || "{count}: {detail}")
+      .replace("{count}", String(treeChangeCount))
+      .replace("{detail}", parts.join(", "));
+  }, [treeChanged, treeChangeCount, treeDiff, t]);
 
   /** A failure has to name the item to be actionable — an id tail is not one. */
   const titleForLink = useCallback(
@@ -1383,7 +1452,7 @@ export default function MenusPage() {
                         so it offers the one action that resolves it instead of
                         asking them to reload the browser (which would throw the
                         draft away). */}
-                    {primaryStatus === "structureChanged" && (
+                    {treeStatus === "structureChanged" && (
                       <Banner
                         tone="warning"
                         action={{
@@ -1392,52 +1461,122 @@ export default function MenusPage() {
                           loading: revalidator.state !== "idle",
                         }}
                       >
-                        <p>{t.content?.menuRenameStructureChanged}</p>
-                      </Banner>
-                    )}
-
-                    {/* Every other rename status. They share one banner because
-                        they share one consequence — nothing was renamed — and
-                        the server's own message says which one it was. */}
-                    {primaryStatus && primaryStatus !== "ok" && primaryStatus !== "structureChanged" && (
-                      <Banner tone="critical">
-                        <p>
-                          {`${t.content?.menuRenameFailed ?? ""} ${primaryResult?.message ?? ""}`.trim()}
-                        </p>
-                      </Banner>
-                    )}
-
-                    {/* The rail the write path exists to keep unfired: if
-                        Shopify ever mints new MenuItem ids on an update, the
-                        renamed items' translations are stranded on the old ids
-                        and nothing but this line can tell the merchant. */}
-                    {(primaryResult?.reassignedItemIds?.length ?? 0) > 0 && (
-                      <Banner tone="critical">
-                        <p>{t.content?.menuRenameIdsReassigned}</p>
-                      </Banner>
-                    )}
-
-                    {(primaryResult?.failures?.length ?? 0) > 0 && (
-                      <Banner tone="critical">
                         <BlockStack gap="100">
-                          <Text as="p">{t.content?.menuRenameFailed}</Text>
-                          {(primaryResult?.failures ?? []).map((f, index) => (
-                            <Text as="p" variant="bodySm" key={`${index}-${f.menuItemId}`}>
-                              {titleForMenuItem(f.menuItemId)}: {f.message}
+                          <Text as="p">{t.content?.menuTreeDriftIntro}</Text>
+                          {/* Named, not counted: "the menu changed" does not
+                              tell a merchant whether reloading costs them
+                              anything. */}
+                          {(treeResult?.foreignChanges?.renamed ?? []).map((r, i) => (
+                            <Text as="p" variant="bodySm" key={`r${i}`}>
+                              {r.from} → {r.to}
+                            </Text>
+                          ))}
+                          {[
+                            ...(treeResult?.foreignChanges?.added ?? []),
+                            ...(treeResult?.foreignChanges?.removed ?? []),
+                            ...(treeResult?.foreignChanges?.moved ?? []),
+                          ].map((title, i) => (
+                            <Text as="p" variant="bodySm" key={`o${i}`}>
+                              {title}
                             </Text>
                           ))}
                         </BlockStack>
                       </Banner>
                     )}
 
-                    {(primaryResult?.purgedTranslationCount ?? 0) > 0 && (
+                    {/* Every other tree status. They share one banner because
+                        they share one consequence — nothing was written — and
+                        the server's own message says which one it was. */}
+                    {treeStatus && treeStatus !== "ok" && treeStatus !== "structureChanged" && (
+                      <Banner tone="critical">
+                        <p>
+                          {`${t.content?.menuTreeSaveFailed ?? ""} ${treeResult?.message ?? ""}`.trim()}
+                        </p>
+                      </Banner>
+                    )}
+
+                    {/* The rail the write path exists to keep unfired: if
+                        Shopify ever mints new MenuItem ids on an update, those
+                        items' translations are stranded on the old ids and
+                        nothing but this line can tell the merchant. */}
+                    {(treeResult?.reassignedItemIds?.length ?? 0) > 0 && (
+                      <Banner tone="critical">
+                        <p>{t.content?.menuRenameIdsReassigned}</p>
+                      </Banner>
+                    )}
+
+                    {/* Measured: re-parenting destroys an item's translations
+                        and its whole branch's. The save puts them back; when
+                        one could not be restored, that is the merchant's to
+                        know rather than ours to bury in a log. */}
+                    {(treeResult?.translationRepair?.failed?.length ?? 0) > 0 && (
+                      <Banner tone="critical">
+                        <p>
+                          {(t.content?.menuTreeRepairFailed || "").replace(
+                            "{count}",
+                            String(treeResult?.translationRepair?.failed?.length ?? 0),
+                          )}
+                        </p>
+                      </Banner>
+                    )}
+
+                    {(treeResult?.translationRepair?.restored ?? 0) > 0 && (
+                      <Banner tone="info">
+                        <p>
+                          {(t.content?.menuTreeRepairDone || "").replace(
+                            "{count}",
+                            String(treeResult?.translationRepair?.restored ?? 0),
+                          )}
+                        </p>
+                      </Banner>
+                    )}
+
+                    {(treeResult?.purgedTranslationCount ?? 0) > 0 && (
                       <Banner tone="info">
                         <p>
                           {(t.content?.menuRenamePurgedTranslations || "").replace(
                             "{count}",
-                            String(primaryResult?.purgedTranslationCount ?? 0),
+                            String(treeResult?.purgedTranslationCount ?? 0),
                           )}
                         </p>
+                      </Banner>
+                    )}
+
+                    {/* Pending work, said before the save rather than after:
+                        what is about to change, and — separately and louder —
+                        what is about to be deleted. */}
+                    {treeSummary && (
+                      <Banner tone="info">
+                        <p>{treeSummary}</p>
+                      </Banner>
+                    )}
+
+                    {treeDiff.deleted.length > 0 && (
+                      <Banner tone="warning">
+                        <p>
+                          {(t.content?.menuDeleteWarning || "").replace(
+                            "{count}",
+                            String(treeDiff.deleted.length),
+                          )}
+                        </p>
+                      </Banner>
+                    )}
+
+                    {(treeProblems.length > 0 || (treeResult?.problems?.length ?? 0) > 0) && (
+                      <Banner tone="critical">
+                        <BlockStack gap="100">
+                          <Text as="p">{t.content?.menuTreeInvalid}</Text>
+                          {/* The server's own refusal names items too — it
+                              validates the tree again against Shopify's fresh
+                              read, and a problem only it can see (an id that
+                              vanished) would otherwise render as a bare
+                              "could not be saved". */}
+                          {(treeResult?.problems ?? []).map((p, index) => (
+                            <Text as="p" variant="bodySm" key={`${index}-${p.key}`}>
+                              {p.title || p.key}: {problemMessage(p.code)}
+                            </Text>
+                          ))}
+                        </BlockStack>
                       </Banner>
                     )}
 
@@ -1491,8 +1630,51 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {selectedMenu.flat.length > 0 && (
-                      <div>{selectedMenu.flat.map(renderItem)}</div>
+                    <MenuTreeEditor
+                      nodes={tree}
+                      onChange={setTree}
+                      // Structure is edited in the PRIMARY language only. It is
+                      // language-independent in Shopify, but a delete pressed on
+                      // a French tab removes the item from every language, and an
+                      // item ADDED there cannot be named — its title field is a
+                      // translation of a primary value that does not exist yet.
+                      structureLocked={!isPrimary}
+                      renderField={renderField}
+                      renderActions={renderRowActions}
+                      onDelete={(node) => setTree(removeNode(tree, node.key))}
+                      onAddChild={(node) => {
+                        // A child is appended to the node the merchant pressed
+                        // on; the top-level button below adds a sibling at the
+                        // end. Both mint their key from a counter, never from
+                        // the title.
+                        newNodeSeq.current += 1;
+                        const child = newMenuNode(newNodeSeq.current);
+                        setTree(
+                          updateNode(tree, node.key, {}).map(function graft(n): MenuEditorNode {
+                            if (n.key === node.key) return { ...n, children: [...(n.children ?? []), child] };
+                            return { ...n, children: (n.children ?? []).map(graft) };
+                          }),
+                        );
+                      }}
+                      strings={{
+                        dragHandle: t.content?.menuDragHandle || "Move",
+                        addChild: t.content?.menuAddChild || "Sub-item",
+                        deleteItem: t.content?.menuDeleteItem || "Delete",
+                        maxDepthReached: t.content?.menuMaxDepthReached || "Three levels",
+                      }}
+                    />
+
+                    {isPrimary && (
+                      <InlineStack>
+                        <Button
+                          onClick={() => {
+                            newNodeSeq.current += 1;
+                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
+                          }}
+                        >
+                          {t.content?.menuAddItem}
+                        </Button>
+                      </InlineStack>
                     )}
                   </BlockStack>
                 ) : (

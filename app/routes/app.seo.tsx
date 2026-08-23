@@ -21,6 +21,7 @@ import { Card, BlockStack, SkeletonBodyText } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { usePlan } from "../contexts/PlanContext";
+import { confirmNavigation } from "../hooks/useSaveBar";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { meetsPlan } from "../utils/planUtils";
 import {
@@ -149,17 +150,29 @@ export default function SeoLayout() {
 
   // Jump to the first section the plan actually allows (fallback: first entry,
   // which then renders SeoSectionLayout's upsell card). Mirrors RubricNavigation.
-  const onSelectRubric = (item: SubNavBarItem) => {
+  /**
+   * Both chip rows ask the save bar first, the way `MainNavigation` does.
+   *
+   * Two SEO sections now hold DRAFTS — the crawl's external-link opt-in and
+   * the llms.txt auto-update — and a chip that navigates without confirming
+   * discards them without a word. `confirmNavigation` resolves immediately
+   * when no bar is up, so this costs nothing on the sections that have none.
+   */
+  const onSelectRubric = async (item: SubNavBarItem) => {
     const rubric: SeoRubricDef | undefined = SEO_RUBRICS.find((r) => r.id === item.id);
     if (!rubric) return;
     const target =
       rubric.entries.find((e) => !isLocked(e) && !isLanguageGated(e)) || rubric.entries[0];
-    if (target) handleNavigate(target.path);
+    if (!target) return;
+    await confirmNavigation();
+    handleNavigate(target.path);
   };
 
-  const onSelectSection = (item: SubNavBarItem) => {
+  const onSelectSection = async (item: SubNavBarItem) => {
     const section = SEO_SECTIONS.find((s) => s.id === item.id);
-    if (section) handleNavigate(section.path);
+    if (!section) return;
+    await confirmNavigation();
+    handleNavigate(section.path);
   };
 
   return (

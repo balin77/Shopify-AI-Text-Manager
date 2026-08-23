@@ -8,10 +8,20 @@ export interface InfoBoxLink {
   label: string;
 }
 
+/**
+ * A message is a TONE and a SENTENCE — there is deliberately no `title`.
+ * The box is a ~600px inline strip in the navigation bar, not a card with
+ * room for a heading, and no renderer ever read the title this state used to
+ * carry: the banner renders `message` and the history list `message`. Of the
+ * call sites that passed one, nearly all passed a generic word ("Error",
+ * "Success", "Validation Error") that the tone colour already says. Dropping
+ * the parameter makes that duplication structurally impossible instead of a
+ * rule someone has to remember — anything the merchant must read belongs in
+ * `message`.
+ */
 export interface InfoBoxState {
   message: string;
   tone: InfoBoxTone;
-  title?: string;
   link?: InfoBoxLink;
   id: string; // Unique ID to track individual messages
   /**
@@ -38,7 +48,7 @@ export interface SyncProgressState {
 
 interface InfoBoxContextType {
   infoBox: InfoBoxState | null;
-  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string, link?: InfoBoxLink, dedupeKey?: string) => void;
+  showInfoBox: (message: string, tone?: InfoBoxTone, link?: InfoBoxLink, dedupeKey?: string) => void;
   hideInfoBox: () => void;
   /**
    * Remove any message (active toast + history) whose `dedupeKey` equals
@@ -75,10 +85,10 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
   infoBoxRef.current = infoBox;
 
   // Queue for messages that arrive while a toast is already showing
-  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink; dedupeKey?: string }>>([]);
+  const messageQueue = useRef<Array<{ message: string; tone: InfoBoxTone; link?: InfoBoxLink; dedupeKey?: string }>>([]);
 
   // Ref-based functions so setTimeout always calls the latest version
-  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; title?: string; link?: InfoBoxLink; dedupeKey?: string }) => void>(undefined);
+  const displayToastRef = useRef<(msg: { message: string; tone: InfoBoxTone; link?: InfoBoxLink; dedupeKey?: string }) => void>(undefined);
   const processQueueRef = useRef<() => void>(undefined);
 
   processQueueRef.current = () => {
@@ -93,7 +103,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
 
   displayToastRef.current = (msg) => {
     const id = `${msg.message}-${msg.tone}-${Date.now()}`;
-    setInfoBox({ message: msg.message, tone: msg.tone, title: msg.title, link: msg.link, id, dedupeKey: msg.dedupeKey });
+    setInfoBox({ message: msg.message, tone: msg.tone, link: msg.link, id, dedupeKey: msg.dedupeKey });
 
     if (autoHideTimer.current) clearTimeout(autoHideTimer.current);
 
@@ -105,7 +115,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", title?: string, link?: InfoBoxLink, dedupeKey?: string) => {
+  const showInfoBox = useCallback((message: string, tone: InfoBoxTone = "success", link?: InfoBoxLink, dedupeKey?: string) => {
     // Don't show if this exact message was recently dismissed
     const messageKey = `${message}-${tone}`;
     if (dismissedMessages.current.has(messageKey)) {
@@ -113,7 +123,7 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
     }
 
     const id = `${message}-${tone}-${Date.now()}`;
-    const entry: InfoBoxHistoryEntry = { message, tone, title, link, id, timestamp: new Date(), dedupeKey };
+    const entry: InfoBoxHistoryEntry = { message, tone, link, id, timestamp: new Date(), dedupeKey };
 
     // Always add to history and increment unread count
     setMessageHistory(prev => [entry, ...prev]);
@@ -121,12 +131,12 @@ export function InfoBoxProvider({ children }: { children: ReactNode }) {
 
     // If a toast is currently showing, queue this one instead of replacing it
     if (infoBoxRef.current) {
-      messageQueue.current.push({ message, tone, title, link, dedupeKey });
+      messageQueue.current.push({ message, tone, link, dedupeKey });
       return;
     }
 
     // No current toast — show immediately
-    displayToastRef.current?.({ message, tone, title, link, dedupeKey });
+    displayToastRef.current?.({ message, tone, link, dedupeKey });
   }, []);
 
   const hideInfoBox = useCallback(() => {

@@ -684,7 +684,10 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
         processed: units,
         completedAt: new Date(),
         result: JSON.stringify(result),
-        error: failedRows > 0 ? `${failedRows} row(s) failed`.substring(0, 1000) : null,
+        // A machine code, translated at render time by `taskErrorText` — this
+        // runner has no merchant locale. No total: `units` counts translated
+        // CELLS, not rows, so it is not the denominator of `failedRows`.
+        error: failedRows > 0 ? `rows_failed:${failedRows}`.substring(0, 1000) : null,
       },
     });
   } catch (err: unknown) {
