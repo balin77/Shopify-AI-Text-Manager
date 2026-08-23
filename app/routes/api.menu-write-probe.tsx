@@ -644,6 +644,29 @@ export interface MenuWriteProbeReport {
     readBack: Record<string, string | null>;
     /** type -> did the stored id equal the one sent? null = not measured. */
     bound: Record<string, boolean | null>;
+    /**
+     * Retargeting an EXISTING item — the operation the target picker performs
+     * and the one thing about it that was still an assumption: when an item is
+     * sent back with a new `type` and NO `resourceId`, does Shopify drop the
+     * old binding, or does the item keep pointing at the product while calling
+     * itself an HTTP link? The write path omits a null `resourceId` rather
+     * than sending it, so "omission clears" has to be true for the picker to
+     * work at all.
+     */
+    retarget: {
+      attempted: boolean;
+      itemId: string | null;
+      fromType: string | null;
+      /** resourceId gone after the item was sent back as HTTP. */
+      resourceIdCleared: boolean | null;
+      /** The url we sent came back. */
+      urlStored: boolean | null;
+      /** Sent back to its original resource type: bound again. */
+      reboundOk: boolean | null;
+      /** …and the HTTP url did NOT survive that. */
+      urlClearedOnRebind: boolean | null;
+      errors: string[];
+    };
     errors: string[];
   };
   typeRoundTrip: {
@@ -943,6 +966,16 @@ export async function action({ request }: ActionFunctionArgs) {
       createErrors: [],
       readBack: {},
       bound: {},
+      retarget: {
+        attempted: false,
+        itemId: null,
+        fromType: null,
+        resourceIdCleared: null,
+        urlStored: null,
+        reboundOk: null,
+        urlClearedOnRebind: null,
+        errors: [],
+      },
       errors: [],
     },
     typeRoundTrip: {
@@ -1445,6 +1478,72 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       for (const [type, id] of Object.entries(samples)) {
         if (!id) report.resourceBound.bound[type] = null;
+      }
+
+      // ── 5c. Retargeting an existing item ─────────────────────────────────
+      // The picker's real operation, and the assumption underneath it: the
+      // write path OMITS a null resourceId rather than sending one, so
+      // "omission clears the old binding" has to hold or a product link
+      // retargeted to a URL would keep pointing at the product.
+      const boundMenuId = report.resourceBound.menuId;
+      const reboundType = boundTypes.find(([type]) => report.resourceBound.bound[type] === true);
+      if (boundMenuId && reboundType) {
+        const rt = report.resourceBound.retarget;
+        rt.attempted = true;
+        rt.fromType = reboundType[0];
+        const retargetUrl = `https://example.com/cp-retarget-${stamp}`;
+        const boundTitle = `CP Bound ${reboundType[0]}`;
+        const boundHandle = `${handle}-bound`;
+        const menuTitle = `ContentPilot write probe bound ${stamp}`;
+
+        const readTree = async () => {
+          const result = await run(MENU_READ_QUERY, { id: boundMenuId });
+          return ((result.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+        };
+        const writeTree = async (items: Array<Record<string, unknown>>) => {
+          const result = await run(MENU_UPDATE_MUTATION, {
+            id: boundMenuId,
+            title: menuTitle,
+            handle: boundHandle,
+            items,
+          });
+          rt.errors.push(...topLevelErrors(result));
+          const payload = result.data?.menuUpdate as { userErrors?: unknown } | undefined;
+          rt.errors.push(...userErrorText(payload?.userErrors));
+        };
+
+        const before = await readTree();
+        rt.itemId = before.find((i) => i.title === boundTitle)?.id ?? null;
+
+        // Exactly what the editor sends: same tree, one item's target
+        // replaced, no resourceId on it at all.
+        await writeTree(
+          toUpdateInput(before, {}).map((node) =>
+            node.title === boundTitle
+              ? { id: node.id, title: boundTitle, type: "HTTP", url: retargetUrl }
+              : node,
+          ),
+        );
+        const afterHttp = (await readTree()).find((i) => i.title === boundTitle);
+        if (afterHttp) {
+          rt.resourceIdCleared = !afterHttp.resourceId;
+          rt.urlStored = afterHttp.url === retargetUrl;
+        }
+
+        // …and back, which is the other direction a merchant takes.
+        const backTree = await readTree();
+        await writeTree(
+          toUpdateInput(backTree, {}).map((node) =>
+            node.title === boundTitle
+              ? { id: node.id, title: boundTitle, type: reboundType[0], resourceId: reboundType[1] }
+              : node,
+          ),
+        );
+        const afterRebind = (await readTree()).find((i) => i.title === boundTitle);
+        if (afterRebind) {
+          rt.reboundOk = afterRebind.resourceId === reboundType[1];
+          rt.urlClearedOnRebind = afterRebind.url !== retargetUrl;
+        }
       }
     } catch (error) {
       report.resourceBound.errors.push(error instanceof Error ? error.message : String(error));
@@ -2083,6 +2182,29 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     if (report.resourceBound.createErrors.length > 0) {
       v.push(`TARGET TYPES: create reported ${report.resourceBound.createErrors.join(" | ")}`);
+    }
+    const rt = report.resourceBound.retarget;
+    if (rt.attempted) {
+      if (rt.resourceIdCleared === true) {
+        v.push(
+          `RETARGET: sending ${rt.fromType} back as HTTP without a resourceId CLEARED the binding` +
+            `${rt.urlStored === true ? " and stored the new url" : rt.urlStored === false ? " but did NOT store the url ⚠️" : ""}.`,
+        );
+      } else if (rt.resourceIdCleared === false) {
+        // The expensive answer: the picker would show an HTTP link that still
+        // points at the product, and the write path would have to send an
+        // explicit null instead of omitting the field.
+        v.push("RETARGET: ⚠️ the old resourceId SURVIVED — omitting the field does not clear a binding.");
+      }
+      if (rt.reboundOk === true) {
+        v.push(
+          `RETARGET: binding it back to ${rt.fromType} worked` +
+            `${rt.urlClearedOnRebind === false ? ", but the old HTTP url survived ⚠️" : "."}`,
+        );
+      } else if (rt.reboundOk === false) {
+        v.push(`RETARGET: ⚠️ binding it back to ${rt.fromType} did not take.`);
+      }
+      for (const e of rt.errors) v.push(`RETARGET: error ${e}`);
     }
   }
   if (report.omission.stillPresentAfterwards === true) {

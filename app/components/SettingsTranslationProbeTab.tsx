@@ -1020,6 +1020,16 @@ interface MenuWriteProbeReport {
     createErrors: string[];
     readBack: Record<string, string | null>;
     bound: Record<string, boolean | null>;
+    retarget: {
+      attempted: boolean;
+      itemId: string | null;
+      fromType: string | null;
+      resourceIdCleared: boolean | null;
+      urlStored: boolean | null;
+      reboundOk: boolean | null;
+      urlClearedOnRebind: boolean | null;
+      errors: string[];
+    };
     errors: string[];
   };
   typeRoundTrip: {
@@ -1189,6 +1199,15 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   }
   for (const e of r.resourceBound.createErrors) lines.push(`  - create error: ${e}`);
   for (const e of r.resourceBound.errors) lines.push(`  - error: ${e}`);
+  const rt = r.resourceBound.retarget;
+  lines.push(`- Retarget an existing item: ${rt.attempted ? `yes (from ${rt.fromType ?? "-"})` : "no"}`);
+  if (rt.attempted) {
+    lines.push(`  - resourceId cleared by omitting it: ${yesNo(rt.resourceIdCleared)}`);
+    lines.push(`  - new url stored: ${yesNo(rt.urlStored)}`);
+    lines.push(`  - bound back to ${rt.fromType ?? "-"}: ${yesNo(rt.reboundOk)}`);
+    lines.push(`  - old http url gone again: ${yesNo(rt.urlClearedOnRebind)}`);
+    for (const e of rt.errors) lines.push(`  - error: ${e}`);
+  }
   lines.push("");
 
   lines.push("## Item types that are neither HTTP nor resource-bound");
