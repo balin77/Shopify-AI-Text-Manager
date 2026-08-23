@@ -1523,15 +1523,6 @@ export class ShopifyContentService {
       // failure here costs a stale translation, never the merchant's text.
       if (selfRetranslated && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
         try {
-          // Read the primary values BACK — the re-translation needs the NEW
-          // text and, to register at all, the NEW digest. A key Shopify no
-          // longer lists is a cleared field, which the reconciliation routes to
-          // the removal by itself.
-          const { valueMap, digestMap } = await this.loadTranslatableContent(resourceId);
-          const primaryContent: Record<string, { value: string; digest?: string | null }> = {};
-          for (const [key, digest] of Object.entries(digestMap)) {
-            primaryContent[key] = { value: valueMap[key] ?? "", digest };
-          }
           const { reconcileAfterPrimarySave } = await import(
             "../../app/services/translations/stale-translation-sync.server"
           );
@@ -1546,8 +1537,10 @@ export class ShopifyContentService {
             // makes.
             contentKind: resourceType === 'Article' || resourceType === 'Blog' ? 'blog' : 'page',
             resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
-            primaryContent,
-            changedKeys: changedTranslationKeys,
+            // The resource's OWN keys — no `resourceId` per entry, so they all
+            // fall on the group's. The new values and their digests are read
+            // back inside; the write above is what invalidated the last ones.
+            changed: changedTranslationKeys.map((key) => ({ key })),
             foreignLocales,
             // The policy read ONCE at the top of this block. A second read
             // inside would fail open to "auto-translate off" and return without

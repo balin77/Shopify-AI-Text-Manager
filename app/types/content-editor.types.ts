@@ -622,10 +622,18 @@ export interface UseContentEditorProps {
   initialItemId?: string;
 
   /**
-   * Optional locale to open in, from `?locale=xx` on a deep link (the SEO
-   * dashboard links here with the locale it was showing). Ignored unless it is
-   * a published foreign locale of this shop — an unknown or stale code falls
-   * back to the primary language rather than opening an empty editor.
+   * Optional locale to open in, from `?contentLocale=xx` on a deep link (the
+   * SEO dashboard links here with the locale it was showing). Ignored unless it
+   * is a foreign locale of this shop — an unknown or stale code falls back to
+   * the primary language rather than opening an empty editor.
+   *
+   * The param has its own name because `?locale=` is NOT free: Shopify appends
+   * the merchant's ADMIN UI language under it on every embedded request, and
+   * `useAppNavigation` copies every param onto every in-app navigation — so
+   * reading `locale` here meant an English-speaking admin on a German shop that
+   * publishes English opened every product on the ENGLISH translation tab, and
+   * a remembered working language could never win against it because the param
+   * was always there.
    */
   initialLocale?: string;
 }

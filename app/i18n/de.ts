@@ -377,7 +377,6 @@ export const de = {
     menuMissingTranslations: "Fehlende Übersetzungen",
     menuTranslateFailed: "Übersetzung fehlgeschlagen",
     menuAllLanguagesOff: "Alle anderen Sprachen sind abgeschaltet (Strg+Klick auf eine Sprache schaltet sie wieder ein).",
-    menuPrimaryEditHint: "Hauptsprache: Ein geänderter Text benennt den Menüpunkt in Shopify um. Reihenfolge, Verschachtelung und Ziele der Punkte werden weiterhin im Shopify-Admin gepflegt.",
     menuTitleRequired: "Ein Menüpunkt braucht einen Namen.",
     menuSaveRenameFirst: "Speichere den neuen Namen zuerst — sonst würde vom alten Text übersetzt und die Übersetzung beim Speichern wieder entfernt.",
     menuNewItem: "Neuer Menüpunkt",
@@ -386,6 +385,7 @@ export const de = {
     menuMaxDepthReached: "Shopify erlaubt drei Ebenen.",
     menuItemInvalid: "Dieser Menüpunkt kann so nicht gespeichert werden.",
     menuDragHandle: "Verschieben",
+    menuReload: "Menüs neu von Shopify laden",
     menuAddItem: "Menüpunkt hinzufügen",
     menuItemUrl: "Ziel-URL",
     menuAddChild: "Unterpunkt",
@@ -2800,6 +2800,10 @@ export const de = {
       externalTruncatedBanner: "Es wurden nur die ersten {max} verschiedenen externen Ziele erfasst. Weitere Links dahinter sind hier nicht aufgeführt.",
       externalUncheckedBanner: "{count} Ziele konnten im Zeitrahmen nicht mehr geprüft werden. Sie sind unten als „Nicht geprüft\" markiert — nicht als in Ordnung.",
       externalChecksLabel: "Externe Links mitprüfen",
+      // Warum "Jetzt scannen" wartet: der Server liest beim Start den
+      // GESPEICHERTEN Wert, ein ungespeicherter Haken würde also ins Leere gehen.
+      externalChecksRefused: "Die Prüfung externer Links gibt es ab dem Pro-Plan — die Einstellung wurde nicht geändert.",
+      externalChecksUnsaved: "Erst speichern — sonst läuft der Scan noch mit der alten Einstellung.",
       externalChecksHelp: "Prüft nach dem Crawl, ob Links auf fremde Websites noch funktionieren. Dabei werden Anfragen an fremde Server geschickt und der Crawl dauert etwas länger (maximal 2 Minuten zusätzlich).",
       // Crawl-Vergleich (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Seit dem letzten Crawl ({date})",
@@ -3763,6 +3767,7 @@ export const de = {
       llmsTitle: "KI-Discovery-Dateien",
       llmsStaleHint: "Mindestens eine der beiden Dateien weicht im Theme vom aktuellen Stand deines Katalogs ab — seit der letzten Erzeugung haben sich Produkte, Kollektionen oder Richtlinien geändert. Erzeuge sie neu, damit KI-Crawler den aktuellen Stand sehen.",
       llmsContents: "Aktueller Stand: {products} Produkte, {collections} Kollektionen, {policies} Richtlinien. Aufgenommen werden die Einträge nach Handle sortiert, maximal 50 pro Typ.",
+      llmsAutoSaveFailed: "Die Einstellung konnte nicht gespeichert werden.",
       llmsAutoLabel: "Discovery-Dateien automatisch aktuell halten",
       llmsAutoDisabled: "Aus — die Dateien ändern sich nur, wenn du unten auf „Dateien aktualisieren“ klickst.",
       llmsAutoOn: "An — kurz nach jedem Öffnen der App und danach etwa halbstündlich, solange sie offen ist, prüfen wir im Hintergrund, ob dein Katalog von den Dateien abweicht, und schreiben sie nur bei einer echten Abweichung neu. Änderungen, die du direkt in Shopify machst, werden dabei mitberücksichtigt.",

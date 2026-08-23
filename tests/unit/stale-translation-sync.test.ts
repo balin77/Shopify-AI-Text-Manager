@@ -20,7 +20,7 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     contentTranslation: {
       deleteMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(async () => ({})),
-      findMany: vi.fn(async (): Promise<Array<{ key: string; locale: string }>> => []),
+      findMany: vi.fn(async (): Promise<Array<{ resourceId?: string; key: string; locale: string }>> => []),
     },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
@@ -33,10 +33,20 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     /** locale → keys Shopify confirms it removed. Default: everything asked for. */
     removeConfirms: null as null | Record<string, string[]>,
     removeCalls: [] as Array<{ keys: string[]; locale: string }>,
+    /** Which Shopify RESOURCE each remove/register call addressed — a group can
+     *  span several, and both mutations take exactly one. */
+    removeTargets: [] as string[],
+    registerTargets: [] as string[],
+    /** The gap re-reads: what the folded removal did not echo back. */
+    rereadCalls: [] as Array<{ keys: string[]; locale: string }>,
+    rereadConfirms: null as null | Record<string, string[]>,
     registerConfirms: null as null | string[],
     registerCalls: [] as Array<{ key: string; locale: string; value: string }>,
   };
-  const ai = { translate: vi.fn(async () => ({})) as any };
+  const ai = {
+    translate: vi.fn(async () => ({})) as any,
+    translateValues: vi.fn(async () => []) as any,
+  };
   const policy = { purgeOnPrimaryChange: true, autoTranslateExternalChanges: false, plan: "max" };
   return { db, shopify, ai, policy };
 });
@@ -44,14 +54,37 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
 vi.mock("../../app/db.server", () => ({ db, default: db }));
 
 vi.mock("../../app/services/bulk-editor/translations.server", () => ({
+  LOCALE_KEY_SEP: "\u0000",
+  // The gap path: keys the folded multi-locale call did not echo go through
+  // `removeAndVerify`, which RE-READS before giving up.
   removeAndVerify: vi.fn(async (_gw: unknown, _id: string, keys: string[], locale: string) => {
-    shopify.removeCalls.push({ keys, locale });
-    const confirmed = shopify.removeConfirms ? (shopify.removeConfirms[locale] ?? []) : keys;
+    shopify.rereadCalls.push({ keys, locale });
+    const confirmed = shopify.rereadConfirms ? (shopify.rereadConfirms[locale] ?? []) : [];
     return { confirmedKeys: new Set(confirmed), userErrors: [] };
   }),
+  // The purge folds locales that ask for exactly the same keys into ONE call,
+  // so the fake records one entry PER LOCALE to keep the assertions about
+  // "each locale's own keys" meaningful.
+  removeAndVerifyAcrossLocales: vi.fn(
+    async (_gw: unknown, resourceId: string, keys: string[], locales: string[]) => {
+      shopify.removeTargets.push(resourceId);
+      const confirmedPairs = new Set<string>();
+      for (const locale of locales) {
+        shopify.removeCalls.push({ keys, locale });
+        const confirmed = shopify.removeConfirms ? (shopify.removeConfirms[locale] ?? []) : keys;
+        for (const key of confirmed) {
+          if (keys.includes(key)) confirmedPairs.add(`${locale}\u0000${key}`);
+        }
+      }
+      return { confirmedPairs, userErrors: [] };
+    },
+  ),
   registerAndVerify: vi.fn(
-    async (_gw: unknown, _id: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
-      for (const input of inputs) shopify.registerCalls.push(input);
+    async (_gw: unknown, resourceId: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
+      for (const input of inputs) {
+        shopify.registerCalls.push(input);
+        shopify.registerTargets.push(resourceId);
+      }
       const confirmed = shopify.registerConfirms ?? inputs.map((i) => i.key);
       return { confirmedKeys: new Set(confirmed), userErrors: [] };
     },
@@ -67,6 +100,9 @@ vi.mock("../../src/services/translation.service", () => ({
   TranslationService: class {
     translateProduct(...args: unknown[]) {
       return ai.translate(...args);
+    }
+    translateValues(...args: unknown[]) {
+      return ai.translateValues(...args);
     }
   },
 }));
@@ -122,6 +158,10 @@ function baseParams(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   shopify.removeCalls = [];
   shopify.registerCalls = [];
+  shopify.removeTargets = [];
+  shopify.registerTargets = [];
+  shopify.rereadCalls = [];
+  shopify.rereadConfirms = null;
   shopify.removeConfirms = null;
   shopify.registerConfirms = null;
   policy.purgeOnPrimaryChange = true;
@@ -130,9 +170,36 @@ beforeEach(() => {
   db.contentTranslation.upsert.mockClear();
   db.contentTranslation.upsert.mockImplementation(async () => ({}));
   ai.translate = vi.fn(async () => ({}));
+  ai.translateValues = vi.fn(async (values: string[]) => values.map((v) => `xx-${v}`));
 });
 
 describe("purge path", () => {
+  it("folds locales that ask for the SAME keys into one call", async () => {
+    // `translationsRemove` takes keys x locales as a cross product, so locales
+    // whose stale key set is identical — the common case by far — go in one
+    // call. Twelve metafields on an eight-locale shop would otherwise be 96
+    // sequential removals inside the merchant's save request.
+    shopify.removeConfirms = null;
+    const id = freshProduct();
+    await reconcileStaleTranslations(
+      baseParams({
+        resourceId: id,
+        translations: [
+          { key: "title", value: "T", locale: "de", marketId: "", outdated: true },
+          { key: "title", value: "T", locale: "fr", marketId: "", outdated: true },
+        ],
+        previousDigests: {
+          [digestBaselineKey("de", "title")]: OLD,
+          [digestBaselineKey("fr", "title")]: OLD,
+        },
+      }),
+    );
+
+    // One Shopify call, both locales on it.
+    expect(shopify.removeTargets).toEqual([id]);
+    expect(shopify.removeCalls.map((c) => c.locale).sort()).toEqual(["de", "fr"]);
+  });
+
   it("removes each locale's OWN keys, never the union across locales", async () => {
     // title is stale in de, body_html in fr. Sending {title, body_html} × {de, fr}
     // would delete fr's current title and de's current body_html on Shopify.
@@ -151,6 +218,25 @@ describe("purge path", () => {
     const deletes = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
     expect(deletes).toHaveLength(1);
     expect(deletes[0]).toMatchObject({ locale: "de", key: { in: ["title"] }, marketId: "" });
+  });
+
+  it("RE-READS a key the removal did not echo, instead of keeping the row forever", async () => {
+    // `translationsRemove` echoes what it DELETED, so a key that carried
+    // nothing on Shopify — a mirror row written when the register found no
+    // digest — comes back empty. Without the re-read its local row survives
+    // forever and the editor keeps serving a foreign value for a cleared field.
+    shopify.removeConfirms = { de: [], fr: [] };
+    shopify.rereadConfirms = { de: ["title"], fr: [] };
+
+    const result = await reconcileStaleTranslations(baseParams());
+
+    expect(shopify.rereadCalls.find((c) => c.locale === "de")?.keys).toEqual(["title"]);
+    // Confirmed by the READ, so the local row goes; fr confirmed nothing and
+    // keeps its row.
+    expect(result.removed).toBe(1);
+    const deletes = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]).toMatchObject({ locale: "de", key: { in: ["title"] } });
   });
 
   it("does nothing at all when the merchant switched the purge off", async () => {
@@ -380,26 +466,51 @@ describe("auto-translation path (Max)", () => {
 describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   const PAGE = "gid://shopify/Page/42";
 
-  /** locale → the keys Shopify reports a GLOBAL translation for. */
+  /** locale → the keys Shopify reports a GLOBAL translation for, on PAGE. */
   let shopifyHas: Record<string, string[]> = {};
+  /** The primary values Shopify reports back after the write, per resource. */
+  let primaryContent: Record<string, Record<string, { value: string; digest: string | null }>> = {};
 
   const saveClient = () => ({
-    graphql: vi.fn(async (_q: string, opts: { variables?: Record<string, unknown> }) => ({
+    graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => ({
       ok: true,
       json: async () => {
+        const ids = (opts?.variables?.resourceIds as string[]) ?? [];
+        if (query.includes("stalePrimaryContent")) {
+          return {
+            data: {
+              translatableResourcesByIds: {
+                edges: ids.map((resourceId) => ({
+                  node: {
+                    resourceId,
+                    translatableContent: Object.entries(primaryContent[resourceId] ?? {}).map(
+                      ([key, entry]) => ({ key, value: entry.value, digest: entry.digest }),
+                    ),
+                  },
+                })),
+              },
+            },
+          };
+        }
         const locale = String(opts?.variables?.locale ?? "");
         const translated = shopifyHas[locale] ?? [];
         return {
           data: {
-            translatableResource: {
-              // Shopify answers with a row per translatable KEY and `value:
-              // null` where that locale has nothing — the shape every sync in
-              // this repo filters on. The fake mirrors it, or the test would
-              // pass on a query that treats untranslated locales as translated.
-              translations: ["title", "body_html"].map((key) => ({
-                key,
-                locale,
-                value: translated.includes(key) ? `existing-${key}` : null,
+            translatableResourcesByIds: {
+              edges: ids.map((resourceId) => ({
+                node: {
+                  resourceId,
+                  // Shopify answers with a row per translatable KEY and `value:
+                  // null` where that locale has nothing — the shape every sync
+                  // in this repo filters on. The fake mirrors it, or the test
+                  // would pass on a query that treats untranslated locales as
+                  // translated.
+                  translations: Object.keys(primaryContent[resourceId] ?? {}).map((key) => ({
+                    key,
+                    locale,
+                    value: translated.includes(key) ? `existing-${key}` : null,
+                  })),
+                },
               })),
             },
           },
@@ -416,11 +527,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       resourceType: "Page",
       contentKind: "page" as const,
       resourceTitle: "About us",
-      primaryContent: {
-        title: { value: "About us", digest: NEW },
-        body_html: { value: "<p>New text</p>", digest: NEW },
-      },
-      changedKeys: ["title", "body_html"],
+      changed: [{ key: "title" }, { key: "body_html" }],
       foreignLocales: ["de", "fr"],
       policy: policy as never,
       ...over,
@@ -432,10 +539,16 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     policy.purgeOnPrimaryChange = false;
     db.contentTranslation.findMany.mockClear();
     db.contentTranslation.findMany.mockResolvedValue([
-      { key: "title", locale: "de" },
-      { key: "body_html", locale: "de" },
+      { resourceId: PAGE, key: "title", locale: "de" },
+      { resourceId: PAGE, key: "body_html", locale: "de" },
     ]);
     shopifyHas = { de: ["title", "body_html"] };
+    primaryContent = {
+      [PAGE]: {
+        title: { value: "About us", digest: NEW },
+        body_html: { value: "<p>New text</p>", digest: NEW },
+      },
+    };
     ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
       [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
     }));
@@ -477,15 +590,21 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls).toHaveLength(2);
-    const where = (db.contentTranslation.findMany.mock.calls.at(-1) as unknown as [{ where: unknown }])[0].where;
-    expect(where).toMatchObject({ marketId: "", resourceType: "Page" });
+    const where = (db.contentTranslation.findMany.mock.calls.at(-1) as unknown as [{ where: any }])[0].where;
+    expect(where).toMatchObject({ marketId: "" });
+    expect(where.OR).toEqual([{ resourceId: PAGE, resourceType: "Page" }]);
   });
 
   it("removes a translation whose primary value was CLEARED", async () => {
     // Nothing to translate, so the AI path cannot deliver it and the storefront
     // must not keep a translation of text that no longer exists.
     shopifyHas = { de: ["body_html"] };
-    db.contentTranslation.findMany.mockResolvedValue([{ key: "body_html", locale: "de" }]);
+    // `translatableContent` omits a key with no value at all — that is how a
+    // cleared field announces itself, and it is NOT the same as a failed read.
+    primaryContent = { [PAGE]: { title: { value: "About us", digest: NEW } } };
+    db.contentTranslation.findMany.mockResolvedValue([
+      { resourceId: PAGE, key: "body_html", locale: "de" },
+    ]);
     const result = await reconcileAfterPrimarySave(
       saveParams({ primaryContent: { title: { value: "About us", digest: NEW } } }),
     );
@@ -556,21 +675,42 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   });
 
   it("falls back to the mirror for a locale whose Shopify read failed", async () => {
-    // Degrading to the old mirror-only reach is acceptable; losing the whole
-    // repair over one failed query is not.
-    // A GraphQL-level error, which is how a real refusal arrives — and unlike a
-    // thrown transport error it is not retried by the gateway, so the test does
-    // not pay three seconds of backoff per locale to prove one branch.
+    // Degrading to the mirror-only reach is acceptable; losing the whole repair
+    // over one failed lookup is not. The DETECTION fails here, the primary
+    // read-back still works — a GraphQL-level error, which is how a real
+    // refusal arrives, and unlike a thrown transport error it is not retried by
+    // the gateway, so the test does not pay backoff to prove one branch.
+    const real = saveClient();
     const client = {
-      graphql: vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ errors: [{ message: "Access denied" }] }),
-      })),
+      graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) =>
+        query.includes("stalePrimaryContent")
+          ? real.graphql(query, opts)
+          : { ok: true, json: async () => ({ errors: [{ message: "Access denied" }] }) },
+      ),
     };
     await reconcileAfterPrimarySave(saveParams({ client: client as never }));
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
+  });
+
+  it("keeps everything when the primary read-back itself fails", async () => {
+    // A failed lookup and "every field was cleared" look identical in the data,
+    // and only one of them may lose its translations. Answering our own blink
+    // with a deletion is the mistake `startFailed` exists to prevent.
+    const client = {
+      graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) =>
+        query.includes("stalePrimaryContent")
+          ? { ok: true, json: async () => ({ errors: [{ message: "Throttled" }] }) }
+          : saveClient().graphql(query, opts),
+      ),
+    };
+    const result = await reconcileAfterPrimarySave(saveParams({ client: client as never }));
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.registerCalls).toEqual([]);
   });
 
   it("claims the resource so a reload cannot queue a second identical run", async () => {
@@ -601,5 +741,184 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       removed: 0,
       retranslating: 0,
     });
+  });
+});
+
+
+/**
+ * A group that spans several Shopify resources — the product's OPTIONS, OPTION
+ * VALUES and METAFIELDS. One merchant action, so one Task row, one batched
+ * detection and one AI request per locale; but `translationsRegister` and
+ * `translationsRemove` each address exactly ONE resource, so the writes fan out
+ * per resource.
+ */
+describe("a group spanning several resources (sub-resources)", () => {
+  const PRODUCT = "gid://shopify/Product/9";
+  const OPTION = "gid://shopify/ProductOption/1";
+  const VALUE = "gid://shopify/ProductOptionValue/2";
+  const METAFIELD = "gid://shopify/Metafield/3";
+
+  let translated: Record<string, string[]>;
+  let primary: Record<string, Record<string, { value: string; digest: string | null }>>;
+
+  const client = () => ({
+    graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => ({
+      ok: true,
+      json: async () => {
+        const ids = (opts?.variables?.resourceIds as string[]) ?? [];
+        if (query.includes("stalePrimaryContent")) {
+          return {
+            data: {
+              translatableResourcesByIds: {
+                edges: ids.map((resourceId) => ({
+                  node: {
+                    resourceId,
+                    translatableContent: Object.entries(primary[resourceId] ?? {}).map(
+                      ([key, entry]) => ({ key, value: entry.value, digest: entry.digest }),
+                    ),
+                  },
+                })),
+              },
+            },
+          };
+        }
+        const locale = String(opts?.variables?.locale ?? "");
+        return {
+          data: {
+            translatableResourcesByIds: {
+              edges: ids.map((resourceId) => ({
+                node: {
+                  resourceId,
+                  translations: Object.keys(primary[resourceId] ?? {}).map((key) => ({
+                    key,
+                    locale,
+                    value: (translated[locale] ?? []).includes(resourceId) ? "alt" : null,
+                  })),
+                },
+              })),
+            },
+          },
+        };
+      },
+    })),
+  });
+
+  const groupParams = (over: Record<string, unknown> = {}) => ({
+    client: client() as never,
+    shop: SHOP,
+    resourceId: PRODUCT,
+    resourceType: "Product",
+    contentKind: "product" as const,
+    resourceTitle: "Kumiko Box",
+    changed: [
+      { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+      { resourceId: VALUE, resourceType: "ProductOptionValue", key: "name" },
+      { resourceId: METAFIELD, resourceType: "Metafield", key: "value" },
+    ],
+    foreignLocales: ["fr"],
+    policy: policy as never,
+    translateAs: { kind: "values" as const, context: "product options", sourceLocale: "de" },
+    ...over,
+  });
+
+  beforeEach(() => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    translated = { fr: [OPTION, VALUE, METAFIELD] };
+    primary = {
+      [OPTION]: { name: { value: "Farbe", digest: NEW } },
+      [VALUE]: { name: { value: "Rot", digest: NEW } },
+      [METAFIELD]: { value: { value: "Massivholz", digest: NEW } },
+    };
+    db.contentTranslation.findMany.mockClear();
+    db.contentTranslation.findMany.mockResolvedValue([]);
+  });
+
+  it("registers on each entry's OWN resource, not on the group's", async () => {
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+    expect(shopify.registerTargets).not.toContain(PRODUCT);
+  });
+
+  it("asks the AI ONCE per locale for the whole group", async () => {
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(ai.translateValues).toHaveBeenCalledTimes(1);
+    expect(ai.translateValues.mock.calls[0][0]).toEqual(["Farbe", "Rot", "Massivholz"]);
+    // The generic prompt, not the content-field one — an option name has no
+    // field to hang SEO limits or per-field instructions on.
+    expect(ai.translate).not.toHaveBeenCalled();
+  });
+
+  it("maps the answer back by INDEX, so two identical values stay apart", async () => {
+    primary[VALUE] = { name: { value: "Farbe", digest: NEW } }; // same text as the option
+    ai.translateValues = vi.fn(async () => ["Couleur", "Teinte", "Bois massif"]);
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    const byResource = Object.fromEntries(
+      shopify.registerCalls.map((c, i) => [shopify.registerTargets[i], c.value]),
+    );
+    expect(byResource[OPTION]).toBe("Couleur");
+    expect(byResource[VALUE]).toBe("Teinte");
+  });
+
+  it("purges per resource when the AI cannot deliver", async () => {
+    ai.translateValues = vi.fn(async () => []);
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.removeTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+  });
+
+  it("REMOVES an entry the generic prompt cannot carry, never re-translates it", async () => {
+    // A multi-line text loses every newline to the prompt's sanitiser and a
+    // list field is raw JSON. Either would be echo-confirmed and mirrored —
+    // corruption recorded as a success, where the previous behaviour was a
+    // plain deletion.
+    await reconcileAfterPrimarySave(
+      groupParams({
+        changed: [
+          { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+          {
+            resourceId: METAFIELD,
+            resourceType: "Metafield",
+            key: "value",
+            retranslatable: false,
+          },
+        ],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).toEqual([OPTION]);
+    expect(shopify.removeTargets).toEqual([METAFIELD]);
+    // ...and it never reached the AI at all.
+    expect(ai.translateValues.mock.calls[0][0]).toEqual(["Farbe"]);
+  });
+
+  it("chunks the values instead of building one oversized prompt", async () => {
+    const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
+    primary = Object.fromEntries(
+      many.map((id, i) => [id, { value: { value: `text-${i}`, digest: NEW } }]),
+    );
+    translated = { fr: many };
+
+    await reconcileAfterPrimarySave(
+      groupParams({
+        changed: many.map((id) => ({ resourceId: id, resourceType: "Metafield", key: "value" })),
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    // 95 values at 40 per request.
+    expect(ai.translateValues).toHaveBeenCalledTimes(3);
+    const sizes = ai.translateValues.mock.calls.map((c: unknown[]) => (c[0] as string[]).length);
+    expect(sizes).toEqual([40, 40, 15]);
   });
 });

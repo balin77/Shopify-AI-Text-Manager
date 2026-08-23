@@ -487,19 +487,24 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
       contentKind: 'page',
       foreignLocales: ['fr'],
     });
-    // The keys are Shopify's, mapped through the ONE canonical field→key map.
-    expect((retranslate.calls[0].changedKeys as string[]).sort()).toEqual(['body_html', 'title']);
+    // The keys are Shopify's, mapped through the ONE canonical field→key map,
+    // and they name no resource of their own — a content type's keys live on
+    // the resource being saved.
+    const changed = retranslate.calls[0].changed as Array<{ key: string; resourceId?: string }>;
+    expect(changed.map((c) => c.key).sort()).toEqual(['body_html', 'title']);
+    expect(changed.every((c) => c.resourceId === undefined)).toBe(true);
   });
 
-  it('passes the NEW primary values and their NEW digests', async () => {
-    // A re-registration needs both: the text to translate and the digest
-    // `translationsRegister` refuses to work without.
+  it('does not read the primary values back itself', async () => {
+    // The repair fetches the new text and its digest from Shopify, batched over
+    // the whole group. A digest handed down from here would be the one the
+    // caller's OWN write just invalidated.
     await savePage();
 
-    expect(retranslate.calls[0].primaryContent).toEqual({
-      title: { value: 'Neuer Titel', digest: 'd-new' },
-      body_html: { value: '<p>Neu</p>', digest: 'b-new' },
-    });
+    expect(retranslate.calls[0].primaryContent).toBeUndefined();
+    expect(
+      admin.graphql.mock.calls.some((call: unknown[]) => String(call[0]).includes('getTranslatableContent')),
+    ).toBe(false);
   });
 
   it('deletes as before when auto-translate is off', async () => {
