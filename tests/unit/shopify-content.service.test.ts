@@ -290,6 +290,7 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
       locale: 'de',
       primaryLocale: 'de',
       updates: { title: 'C', imageAltText: 'Neuer Alt-Text' },
+      changedAltTextIndices: [0],
       db,
       shop,
       ...over,
@@ -356,6 +357,18 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     await save({ updates: { title: 'C' } });
 
     expect(removeAcrossLocales.calls).toEqual([]);
+  });
+
+  it('ignores a primary save that carries an alt the MERCHANT did not change', async () => {
+    // The accept-and-translate flow writes the accepted FOREIGN alt, then
+    // submits its own primary save carrying `imageAltTexts` — with no
+    // `changedAltTextIndices`, because no merchant touched the primary field.
+    // Purging on that would delete the very translation the flow just created
+    // and the ones its translate-to-all-locales step is about to write.
+    await save({ changedAltTextIndices: undefined });
+
+    expect(removeAcrossLocales.calls).toEqual([]);
+    expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
   it('never fails the save when the invalidation throws', async () => {

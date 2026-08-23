@@ -817,7 +817,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
           // 1. Save the accepted foreign alt-text exactly in `L`.
           saveForeignExact();
 
-          // 2. Save the primary base alt-text (this image only, no deletion trigger).
+          // 2. Save the primary base alt-text (this image only). It carries NO
+          //    `changedAltTextIndices`, which is what keeps it out of the
+          //    featured-alt §6.6 purge — that save would otherwise delete the
+          //    foreign alt saved one line above and the ones step 3 is about to
+          //    write (shopify-content.service.ts, `featuredAltChanged`).
           if (primaryTranslated) {
             const primaryForm: Record<string, string> = {
               action: "updateContent",

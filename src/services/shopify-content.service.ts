@@ -878,6 +878,16 @@ export class ShopifyContentService {
     shop: string;
     policyType?: string;
     changedFields?: string[]; // Fields that changed in primary locale - their translations will be deleted
+    /**
+     * Indices of the images whose alt text the MERCHANT changed in the primary
+     * locale — index 0 is the featured image. The same list the product path
+     * has always taken, and the same reason: a save carrying `imageAltTexts` is
+     * not necessarily a merchant edit. The accept-and-translate flow submits a
+     * primary save with `imageAltTexts` of its OWN making, moments after
+     * writing the foreign alt it just accepted; treating that as "the primary
+     * changed" would delete the translation that flow exists to create.
+     */
+    changedAltTextIndices?: number[];
     /** PLAN §Phase 3 — which MERCHANDISING attributes the merchant actually
      *  touched. A separate list from `changedFields` on purpose: that one is
      *  withheld by the accept-and-translate flow (it is about to write the very
@@ -893,7 +903,7 @@ export class ShopifyContentService {
      */
     marketId?: string;
   }) {
-    const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields } = params;
+    const { resourceId, resourceType, locale, primaryLocale, updates, db, shop, policyType, changedFields, changedAltTextIndices } = params;
     const marketId = params.marketId || "";
 
     if (locale !== primaryLocale) {
@@ -1318,13 +1328,19 @@ export class ShopifyContentService {
         "../../app/services/translations/translation-change-policy.server"
       );
       const fieldsChanged = !!changedFields && changedFields.length > 0;
-      // `updates.imageAltText` is only ever present when it CHANGED: the client
-      // filters `imageAltTexts` down to the entries that differ from what it
-      // loaded (useFieldHandlers), and index 0 is the featured image. So its
-      // presence IS the change signal — there is no `imageAltText` field
-      // definition and it never appears in `changedFields`.
+      // Did the MERCHANT change the featured alt in the primary locale? The
+      // presence of `updates.imageAltText` is not enough: the
+      // accept-and-translate flow submits its own primary save carrying
+      // `imageAltTexts`, right after writing the foreign alt it accepted, and
+      // purging on that would delete exactly what it just created (and what its
+      // translate-to-all-locales step is about to write). `changedAltTextIndices`
+      // is the merchant signal — the editor sends it only from a real save, the
+      // translate flow never does — and index 0 is the featured image. It is
+      // the same discriminator the product path has always used, for the same
+      // reason `changedFields` exists beside it.
       const featuredAltChanged =
         updates.imageAltText !== undefined &&
+        !!changedAltTextIndices?.includes(0) &&
         (resourceType === 'Collection' || resourceType === 'Article');
       const changePolicy =
         fieldsChanged || featuredAltChanged

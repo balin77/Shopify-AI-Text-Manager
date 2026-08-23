@@ -377,9 +377,28 @@ describe("auto-translation path (Max)", () => {
 describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   const PAGE = "gid://shopify/Page/42";
 
+  /** locale → the keys Shopify reports a GLOBAL translation for. */
+  let shopifyHas: Record<string, string[]> = {};
+
+  const saveClient = () => ({
+    graphql: vi.fn(async (_q: string, opts: { variables?: Record<string, unknown> }) => ({
+      ok: true,
+      json: async () => {
+        const locale = String(opts?.variables?.locale ?? "");
+        return {
+          data: {
+            translatableResource: {
+              translations: (shopifyHas[locale] ?? []).map((key) => ({ key, locale })),
+            },
+          },
+        };
+      },
+    })),
+  });
+
   function saveParams(over: Record<string, unknown> = {}) {
     return {
-      client: { graphql: vi.fn() } as never,
+      client: saveClient() as never,
       shop: SHOP,
       resourceId: PAGE,
       resourceType: "Page",
@@ -403,6 +422,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       { key: "title", locale: "de" },
       { key: "body_html", locale: "de" },
     ]);
+    shopifyHas = { de: ["title", "body_html"] };
     ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
       [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
     }));
@@ -451,6 +471,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   it("removes a translation whose primary value was CLEARED", async () => {
     // Nothing to translate, so the AI path cannot deliver it and the storefront
     // must not keep a translation of text that no longer exists.
+    shopifyHas = { de: ["body_html"] };
     db.contentTranslation.findMany.mockResolvedValue([{ key: "body_html", locale: "de" }]);
     const result = await reconcileAfterPrimarySave(
       saveParams({ primaryContent: { title: { value: "About us", digest: NEW } } }),
@@ -477,12 +498,44 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   });
 
   it("touches nothing when the resource has no translations at all", async () => {
+    shopifyHas = {};
     db.contentTranslation.findMany.mockResolvedValue([]);
     const result = await reconcileAfterPrimarySave(saveParams());
 
     expect(result).toEqual({ removed: 0, retranslating: 0 });
     expect(shopify.removeCalls).toEqual([]);
     expect(shopify.registerCalls).toEqual([]);
+  });
+
+  it("repairs a translation Shopify holds that the local mirror never saw", async () => {
+    // Written in the Shopify admin, by another app or by an importer. The code
+    // this path replaces reached it because it removed BLINDLY across every
+    // foreign locale; asking only the mirror would trade "deleted" for "left
+    // live on the storefront" — on a type with no webhook to catch it later.
+    db.contentTranslation.findMany.mockResolvedValue([]);
+    shopifyHas = { fr: ["title"] };
+
+    const result = await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(1);
+    expect(shopify.registerCalls).toEqual([
+      expect.objectContaining({ key: "title", locale: "fr" }),
+    ]);
+  });
+
+  it("falls back to the mirror for a locale whose Shopify read failed", async () => {
+    // Degrading to the old mirror-only reach is acceptable; losing the whole
+    // repair over one failed query is not.
+    const client = {
+      graphql: vi.fn(async () => {
+        throw new Error("throttled");
+      }),
+    };
+    await reconcileAfterPrimarySave(saveParams({ client: client as never }));
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
   });
 
   it("never throws — the primary text is already saved", async () => {

@@ -511,7 +511,7 @@ export function AIInstructionsTabs({
                       {autoTranslateActive && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {t.settings.translationPurgeSupersededNote ||
-                            'Für Produkte, Kollektionen, Seiten, Blogs, Artikel und Richtlinien nicht nötig, solange automatisch neu übersetzt wird — bei Metaobjekten, Theme-Texten, Optionen, Metafeldern und Alt-Texten wird weiter gelöscht, weil die bisher nichts automatisch nachübersetzt.'}
+                            'Für Produkte und Kollektionen nicht nötig, solange automatisch neu übersetzt wird, und für Seiten, Blogs, Artikel und Richtlinien beim Bearbeiten im Editor — im Bulk-Editor sowie bei Metaobjekten, Theme-Texten, Optionen, Metafeldern und Alt-Texten wird weiter gelöscht, weil die bisher nichts automatisch nachübersetzt.'}
                         </Text>
                       )}
                     </BlockStack>
@@ -530,7 +530,7 @@ export function AIInstructionsTabs({
                       </Text>
                       <Text as="p" variant="bodySm" tone="subdued">
                         {t.settings.autoTranslateExternalChangesHelp ||
-                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen. Bei Produkten und Kollektionen automatisch beim nächsten Sync; bei Seiten, Blogs, Artikeln und Richtlinien sofort beim Speichern, bei Änderungen von aussen beim nächsten Reload. URL-Handles bleiben ausgenommen.'}
+                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen. Bei Produkten und Kollektionen automatisch beim nächsten Sync; bei Seiten, Blogs, Artikeln und Richtlinien beim Speichern im Editor, bei Änderungen von aussen beim nächsten Reload. URL-Handles bleiben ausgenommen.'}
                       </Text>
                       {!canAutoTranslateExternal && (
                         <Text as="p" variant="bodySm" tone="subdued">

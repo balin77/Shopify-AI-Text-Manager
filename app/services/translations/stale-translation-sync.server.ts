@@ -254,6 +254,74 @@ export const IN_APP_RETRANSLATED_RESOURCE_TYPES: ReadonlySet<string> = new Set([
   "ShopPolicy",
 ]);
 
+/** Separator of a `${locale}\u0000${key}` pair — the same shape
+ * `digestBaselineKey` produces, so the two can be mixed in one set. */
+const PAIR_SEP = "\u0000";
+
+/**
+ * The (locale, key) pairs Shopify actually holds a GLOBAL translation for,
+ * restricted to the keys the caller changed.
+ *
+ * One query PER LOCALE, because `translations(locale:)` takes exactly one and
+ * there is no batched form. That is the price of not being blind: the mirror
+ * cannot see a translation written in the Shopify admin or by another app, and
+ * these resource types have no webhook that would notice later.
+ *
+ * `marketId` is deliberately omitted, which returns the GLOBAL layer only
+ * (CLAUDE.md) — a market override is a separate deliberate value and survives.
+ *
+ * A locale whose query fails contributes NOTHING rather than throwing: the
+ * caller unions this with the local mirror, so a failed read degrades to the
+ * old mirror-only reach instead of losing the whole repair.
+ */
+async function foreignTranslationPairs(
+  client: ShopifyGraphQLClient,
+  resourceId: string,
+  foreignLocales: readonly string[],
+  changedKeys: readonly string[],
+): Promise<Set<string>> {
+  const wanted = new Set(changedKeys);
+  const pairs = new Set<string>();
+  for (const locale of foreignLocales) {
+    try {
+      const response = await client.graphql(
+        `#graphql
+          query staleTranslationTargets($resourceId: ID!, $locale: String!) {
+            translatableResource(resourceId: $resourceId) {
+              translations(locale: $locale) {
+                key
+                locale
+              }
+            }
+          }`,
+        { variables: { resourceId, locale } },
+      );
+      const data = (await response.json()) as {
+        data?: {
+          translatableResource?: {
+            translations?: Array<{ key: string; locale: string }> | null;
+          } | null;
+        };
+        errors?: Array<{ message: string }>;
+      };
+      if (data.errors?.length) throw new Error(data.errors[0].message);
+      for (const row of data.data?.translatableResource?.translations ?? []) {
+        // Shopify answers with the requested locale, but trust the row's own —
+        // it is what the removal and the register will be addressed by.
+        if (wanted.has(row.key)) pairs.add(`${row.locale}${PAIR_SEP}${row.key}`);
+      }
+    } catch (error: unknown) {
+      logger.warn("[StaleTranslations] Could not read translations for a locale — mirror only", {
+        context: "StaleTranslations",
+        resourceId,
+        locale,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return pairs;
+}
+
 /**
  * The in-app counterpart of `reconcileStaleTranslations`: the merchant just
  * rewrote a resource's PRIMARY text in this app, and this is the only event
@@ -299,11 +367,21 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     const policy = await loadTranslationChangePolicy(shop);
     if (!policy.autoTranslateExternalChanges) return NOTHING;
 
-    // Which (locale, key) pairs actually HAVE a translation to repair. Read
-    // from the mirror rather than from Shopify: the alternative is one
-    // `translations(locale:)` query per locale for a question the local rows
-    // already answer, and a pair the mirror does not know is one this app
-    // never wrote and whose digest baseline it could not supply either.
+    // Which (locale, key) pairs actually HAVE a translation to repair — the
+    // UNION of what Shopify reports and what the local mirror holds, and both
+    // halves are load-bearing.
+    //
+    // Shopify is the one that knows: a translation written in the Shopify admin
+    // or by another app has no mirror row here, and the code this path replaces
+    // reached it anyway because it removed BLINDLY across every foreign locale.
+    // Asking only the mirror would have traded "deleted" for "left live on the
+    // storefront" for exactly those rows — the direction this project never
+    // errs in, and on types with no webhook to catch it later.
+    //
+    // The mirror is the fallback: a locale whose read failed answers nothing,
+    // and dropping it would silently do less than before. A pair we once wrote
+    // is evidence enough to repair it.
+    const pairs = await foreignTranslationPairs(params.client, resourceId, foreignLocales, changedKeys);
     const { db } = await import("../../db.server");
     const rows = await db.contentTranslation.findMany({
       where: {
@@ -318,19 +396,17 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
       },
       select: { key: true, locale: true },
     });
-    if (rows.length === 0) return NOTHING;
+    for (const row of rows) pairs.add(digestBaselineKey(row.locale, row.key));
+    if (pairs.size === 0) return NOTHING;
 
-    const seen = new Set<string>();
     const stale: StaleTranslation[] = [];
-    for (const row of rows) {
-      const id = digestBaselineKey(row.locale, row.key);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      const entry = primaryContent[row.key];
+    for (const pair of pairs) {
+      const [locale, key] = pair.split(PAIR_SEP);
+      const entry = primaryContent[key];
       const primaryValue = entry?.value ?? "";
       stale.push({
-        key: row.key,
-        locale: row.locale,
+        key,
+        locale,
         // The two reasons this module already knows, decided from the value we
         // just wrote: text there ⇒ the translation is out of date, nothing
         // there ⇒ the merchant cleared the field. `partitionStaleTranslations`
