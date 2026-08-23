@@ -323,6 +323,8 @@ describe("saveMenuTree", () => {
     });
     captureLinkTranslations.mockResolvedValue([]);
     restoreLinkTranslations.mockResolvedValue({ restored: 0, failed: [] });
+    // The repair took responsibility for this rename.
+    reconcileAfterPrimarySave.mockResolvedValue({ removed: 0, retranslating: 1 });
 
     const tree = [
       { ...baseTree[0] },
@@ -349,6 +351,35 @@ describe("saveMenuTree", () => {
         expectedValue: "Kontakt & Anfahrt",
       },
     ]);
+  });
+
+  it("falls back to the deletion when the repair did NOTHING", async () => {
+    // A throttled read-back, a spent detection budget, a locale whose query
+    // failed — the repair legitimately reports nothing. Menus have no webhook
+    // and no sync, so "nothing happened" means the stale title stays live for
+    // good unless the deletion takes over.
+    loadTranslationChangePolicy.mockResolvedValue({
+      purgeOnPrimaryChange: false,
+      purgeUnreconciledSurfaces: true,
+      autoTranslateExternalChanges: true,
+      plan: "max",
+    });
+    reconcileAfterPrimarySave.mockResolvedValue({ removed: 0, retranslating: 0 });
+    removeAndVerifyAcrossLocales.mockResolvedValue({
+      confirmedPairs: new Set([`en${LOCALE_KEY_SEP}title`]),
+      userErrors: [],
+    });
+    captureLinkTranslations.mockResolvedValue([]);
+    restoreLinkTranslations.mockResolvedValue({ restored: 0, failed: [] });
+
+    const tree = [
+      { ...baseTree[0] },
+      { ...baseTree[1], title: "Kontakt & Anfahrt" },
+    ];
+    const { result } = await runSave(tree, { locales: ["en"] });
+
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    expect(result.purgedTranslationCount).toBe(1);
   });
 
   it("falls back to the deletion when the primary locale is unknown", async () => {

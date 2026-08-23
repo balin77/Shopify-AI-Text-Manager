@@ -1286,11 +1286,19 @@ async function repairStaleTranslations(
         ...new Set([lockId, ...retranslate.map((entry) => entry.resourceId ?? resourceId)]),
       ];
       const savedAtStart = new Map(watched.map((id) => [id, translationSavedAt(id)]));
-      const supersededByMerchant = () =>
-        watched.some((id) => {
-          const now = translationSavedAt(id);
-          return now !== null && now !== savedAtStart.get(id);
-        });
+      const changedSince = (id: string) => {
+        const now = translationSavedAt(id);
+        return now !== null && now !== savedAtStart.get(id);
+      };
+      // PER RESOURCE, not per run. A merchant who renames two menu items and
+      // types one of them's English title has said nothing about the other —
+      // and an all-or-nothing abort left that other item's entries in neither
+      // list, so nothing refreshed them and nothing removed them, on a surface
+      // with no webhook to notice later. A claim on the run's own LOCK still
+      // stops everything: that is the group-level "someone else is writing
+      // here".
+      const supersededByMerchant = (entryResourceId?: string) =>
+        changedSince(lockId) || (!!entryResourceId && changedSince(entryResourceId));
       try {
         const outcome = await retranslateStaleEntries(
           gateway,
@@ -1490,8 +1498,9 @@ async function retranslateStaleEntries(
   gateway: ShopifyApiGateway,
   params: RepairTarget,
   entries: readonly StaleTranslation[],
-  /** "Did a save land after this run started?" — see the caller. */
-  supersededByMerchant: () => boolean,
+  /** "Did a save land after this run started?" — for the RUN when called bare,
+   *  for one resource when given its id. See the caller. */
+  supersededByMerchant: (entryResourceId?: string) => boolean,
 ): Promise<RetranslateOutcome> {
   try {
     return await runRetranslation(gateway, params, entries, supersededByMerchant);
@@ -1511,7 +1520,7 @@ async function runRetranslation(
   gateway: ShopifyApiGateway,
   params: RepairTarget,
   entries: readonly StaleTranslation[],
-  supersededByMerchant: () => boolean,
+  supersededByMerchant: (entryResourceId?: string) => boolean,
 ): Promise<RetranslateOutcome> {
   const { shop, resourceId, resourceType, contentKind, resourceTitle } = params;
   const { db } = await import("../../db.server");
@@ -1594,9 +1603,16 @@ async function runRetranslation(
       // The generic path keys the AI's answer by ENTRY INDEX, not by a field
       // name: two option values can legitimately hold the same text, and a
       // name-keyed map would silently collapse them into one write.
+      // An entry whose OWN resource the merchant has written since this run
+      // started is left alone entirely — not translated, and not pushed into
+      // `failed`, because that list is purged and their value is newer than
+      // anything decided here.
+      const untouched = localeEntries.filter(
+        (entry) => !supersededByMerchant(entry.resourceId ?? resourceId),
+      );
       const translatable = asValues
-        ? localeEntries
-        : localeEntries.filter((entry) => {
+        ? untouched
+        : untouched.filter((entry) => {
             if (keyToField[entry.key]) return true;
             failed.push(entry);
             return false;
@@ -1702,14 +1718,14 @@ async function runRetranslation(
           // flight — a menu rename plus its English title in one save is
           // exactly that — and with one locale the outer check never runs
           // again. Stopping before the write is the whole point of the rule.
-          if (supersededByMerchant()) {
-            logger.info("[StaleTranslations] Merchant saved mid-locale — not registering the rest", {
+          if (supersededByMerchant(ref.resourceId)) {
+            logger.info("[StaleTranslations] Merchant saved mid-locale — not registering this resource", {
               context: "StaleTranslations",
               shop,
               resourceId: ref.resourceId,
               locale,
             });
-            break;
+            continue;
           }
           const { confirmedKeys } = await registerAndVerify(
             gateway,
@@ -1774,14 +1790,19 @@ async function runRetranslation(
     // down, nothing echoed back) is a FAILED run — reporting it as completed
     // would hide the reason the merchant's fields came back untranslated. The
     // entries themselves are already queued for the purge either way.
+    //
+    // Standing down because the MERCHANT wrote is not that: the run did exactly
+    // what it should, and a red task blaming it for their own save is a defect
+    // report about nothing.
+    const stoodDown = registered.length === 0 && failed.length === 0 && supersededByMerchant();
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: registered.length > 0 ? "completed" : "failed",
+        status: registered.length > 0 || stoodDown ? "completed" : "failed",
         progress: 100,
         processed: entries.length,
         completedAt: new Date(),
-        ...(registered.length === 0
+        ...(registered.length === 0 && !stoodDown
           ? { error: "Automatic re-translation produced no usable translation." }
           : {}),
         result: JSON.stringify({ retranslated: registered.length, purged: failed.length }),

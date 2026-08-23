@@ -1061,6 +1061,25 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(shopify.registerTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
   });
 
+  it("stands down for the resource the merchant wrote, and only that one", async () => {
+    // Renaming two items and typing one of them's foreign title says nothing
+    // about the other. An all-or-nothing abort left the other's entries in
+    // neither list — nothing refreshed them, nothing removed them, on a surface
+    // with no webhook to notice later.
+    ai.translateValues = vi.fn(async (values: string[]) => {
+      markTranslationSaved(OPTION); // the merchant, mid-request, on ONE resource
+      return values.map((v) => `xx-${v}`);
+    });
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).not.toContain(OPTION);
+    expect(shopify.registerTargets.sort()).toEqual([METAFIELD, VALUE].sort());
+    // …and the one the merchant wrote is left alone, not purged.
+    expect(shopify.removeTargets).toEqual([]);
+  });
+
   it("chunks the values instead of building one oversized prompt", async () => {
     const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
     primary = Object.fromEntries(

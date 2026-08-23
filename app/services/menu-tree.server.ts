@@ -440,6 +440,8 @@ export async function saveMenuTree(
   // will ever notice — which is precisely why the deletion used to stand
   // regardless of the switch.
   let policy: TranslationChangePolicy | null = null;
+  /** Did the repair actually take responsibility for these renames? */
+  let repairDidSomething = false;
   if (renamedOnly.length > 0 && foreignLocales.length > 0) {
     try {
       policy = await loadTranslationChangePolicy(shop, db);
@@ -498,6 +500,11 @@ export async function saveMenuTree(
       // is a deletion the merchant should see, so it joins the count the purge
       // branch reports rather than leaving it at zero.
       purgedTranslationCount += outcome.removed;
+      // The repair may legitimately do NOTHING — a throttled read-back, a spent
+      // detection budget, a locale whose query failed. Menus have no webhook and
+      // no sync, so "nothing happened" means the stale title stays live for
+      // good; the deletion this branch replaces has to take over instead.
+      repairDidSomething = outcome.removed > 0 || outcome.retranslating > 0;
     } catch (error) {
       // Never fail the save over the repair: the tree write has already gone
       // through, and a thrown error here would report it as broken.
@@ -510,7 +517,7 @@ export async function saveMenuTree(
     }
   }
 
-  if (!retranslateRenames && renamedOnly.length > 0 && foreignLocales.length > 0) {
+  if (!repairDidSomething && renamedOnly.length > 0 && foreignLocales.length > 0) {
     // `purgeUnreconciledSurfaces` is the merchant's stored answer, unmodified —
     // it is what applies wherever nothing re-translates, which is every menu
     // save that did not just take the branch above.
