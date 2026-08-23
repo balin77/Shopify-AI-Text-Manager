@@ -18,14 +18,6 @@ export interface ShopLocale {
   locale: string;
   primary: boolean;
   name?: string;
-  /**
-   * Whether the storefront serves this language. Present on everything the
-   * loader factory delivers (`getCachedShopLocales` selects it) and optional
-   * here only because narrower callers construct this type by hand — so a
-   * reader may use it to REFUSE a locale, never to conclude anything from its
-   * absence.
-   */
-  published?: boolean;
 }
 
 export interface Translation {

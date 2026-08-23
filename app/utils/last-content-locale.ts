@@ -22,9 +22,17 @@
  * turns any transient state into the new stored answer.
  *
  * A stored locale is never trusted on its own: it is checked against the shop's
- * locales, because a language can be removed or unpublished between two
- * sessions, and reopening the editor in one the storefront no longer serves
- * would offer to write translations nobody can see.
+ * locales, because a language can be REMOVED between two sessions and opening
+ * the editor in one that no longer exists means an editor with no way back to
+ * its own language tab.
+ *
+ * It is deliberately not checked for `published`. The editor's language bar
+ * offers every locale the shop HAS, published or not, because translating a
+ * language before publishing it is the normal order of work — gating on
+ * `published` here would refuse to remember exactly the merchant this app is
+ * for. The SEO dashboard and the bulk grid do filter to published locales, and
+ * that is not an inconsistency: they report on what the storefront serves,
+ * while this is the workbench where the not-yet-served is written.
  */
 
 const KEY_PREFIX = "contentpilot_last_content_locale_";
@@ -69,12 +77,7 @@ export function writeLastContentLocale(locale: string): void {
  * Returns `null` for "keep the primary locale", which is also the answer for
  * every doubtful case: a deep link that already named a language, an empty
  * locale list (a FAILED lookup, not a single-language shop), a language the
- * shop no longer has or no longer publishes, and the primary locale itself.
- *
- * `published` REFUSES where it is present and false; where the flag is missing
- * entirely it decides nothing, because an absent key is not a negative answer
- * (the trap CLAUDE.md names for `translatableContent` and `attributesSyncedAt`
- * alike). Everything the loader factory delivers carries it.
+ * shop no longer has, and the primary locale itself.
  */
 export function pickRestoredLocale(input: {
   /** `?contentLocale=` from the URL. */
@@ -99,8 +102,8 @@ export function pickRestoredLocale(input: {
  * honest about what the link will really do.
  *
  * Answers the primary locale for everything it will not honour: no link, the
- * primary locale itself, and a code this shop does not have or no longer
- * publishes (a stale bookmark must not open an empty editor).
+ * primary locale itself, and a code this shop does not have (a stale bookmark
+ * must not open an editor on a language tab that is not there).
  */
 export function resolveInitialLocale(
   initialLocale: string | undefined,
@@ -113,16 +116,15 @@ export function resolveInitialLocale(
 interface ShopLocaleLike {
   locale: string;
   primary?: boolean;
-  published?: boolean;
 }
 
-/** A locale this shop really serves and that is not the primary one; else null. */
+/** A locale this shop has and that is not the primary one; else null. */
 function usableForeignLocale(
   locale: string | null | undefined,
   primaryLocale: string,
   shopLocales: ShopLocaleLike[],
 ): string | null {
   if (!locale || locale === primaryLocale) return null;
-  const known = shopLocales.some((l) => l.locale === locale && !l.primary && l.published !== false);
+  const known = shopLocales.some((l) => l.locale === locale && !l.primary);
   return known ? locale : null;
 }

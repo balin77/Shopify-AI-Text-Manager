@@ -297,6 +297,11 @@ export default function MetaobjectsPage() {
     showInfoBox,
     t,
     initialItemId,
+    // The same deep-link language every other content page honours — the bulk
+    // grid links here with the language its rows were showing. NOT `?locale=`,
+    // which is Shopify's admin-UI-language param (see `initialLocale` in
+    // content-editor.types.ts).
+    initialLocale: searchParams.get("contentLocale") || undefined,
   });
 
   const selectedItemId = editor.state.selectedItemId;

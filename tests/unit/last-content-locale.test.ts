@@ -78,12 +78,11 @@ describe("last-content-locale", () => {
     // the merchant nothing.
     expect(pick({ stored: "fr", initialLocale: "de" })).toBe("fr"); // primary
     expect(pick({ stored: "fr", initialLocale: "it" })).toBe("fr"); // not a shop locale
-    expect(pick({ stored: "fr", initialLocale: "es" })).toBe("fr"); // unpublished
   });
 
-  it("resolveInitialLocale honours only a language the shop really serves", () => {
+  it("resolveInitialLocale honours only a language the shop has", () => {
     expect(resolveInitialLocale("fr", "de", LOCALES)).toBe("fr");
-    expect(resolveInitialLocale("es", "de", LOCALES)).toBe("de"); // unpublished
+    expect(resolveInitialLocale("es", "de", LOCALES)).toBe("es"); // unpublished, still editable
     expect(resolveInitialLocale("it", "de", LOCALES)).toBe("de"); // unknown
     expect(resolveInitialLocale("de", "de", LOCALES)).toBe("de");
     expect(resolveInitialLocale(undefined, "de", LOCALES)).toBe("de");
@@ -94,16 +93,11 @@ describe("last-content-locale", () => {
     expect(pick({ stored: "it" })).toBeNull();
   });
 
-  it("refuses a language the storefront no longer serves", () => {
-    // Unpublished: the editor would offer to write translations nobody can see.
-    expect(pick({ stored: "es" })).toBeNull();
-  });
-
-  it("does not refuse on a MISSING published flag", () => {
-    // An absent key is not a negative answer — narrower callers build this
-    // type by hand, and a silently dead restore is how the ?locale= collision
-    // went unnoticed.
-    expect(pick({ stored: "fr", shopLocales: [{ locale: "de", primary: true }, { locale: "fr" }] })).toBe("fr");
+  it("remembers a language that is not published yet", () => {
+    // Translating before publishing the language is the normal order of work,
+    // and the editor's language bar offers every locale the shop HAS — so a
+    // `published` gate here would refuse exactly the merchant this app is for.
+    expect(pick({ stored: "es" })).toBe("es");
   });
 
   it("refuses everything when the locale lookup failed", () => {
