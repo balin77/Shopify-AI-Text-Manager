@@ -466,12 +466,13 @@ export interface MenuWriteProbeReport {
    * how expensive the repair is, and both are measured here too:
    *
    *   CARRIED — a CHILD of the moved item, whose own parent did not change but
-   *   whose ancestry did. If it loses its translation as well, moving a branch
-   *   costs a re-registration for every item in it, not just for the one the
-   *   merchant dragged.
+   *   whose ancestry did. MEASURED: it loses its translation as well, so
+   *   moving a branch costs a re-registration for every item in it, not just
+   *   for the one the merchant dragged.
    *
    *   RE-REGISTER — can the value simply be written again straight after the
-   *   move? That is the whole mitigation, so it is proven rather than assumed.
+   *   move? MEASURED: yes, with a digest read after the write. That is the
+   *   whole mitigation, and it is proven rather than assumed.
    */
   translationDurability: {
     attempted: boolean;

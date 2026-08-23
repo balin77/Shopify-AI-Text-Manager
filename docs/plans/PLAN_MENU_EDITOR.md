@@ -79,7 +79,14 @@ Vier Punkte, einer pro Hypothese, nach jeder Stufe alle gelesen:
 
 **Damit ist die ausgelieferte Umbenennen-Funktion entlastet**: sie hängt nichts um, also hält ihr Versprechen „Purge aus ⇒ Übersetzungen bleiben". Das war die Frage, wegen der dieser Abschnitt existierte.
 
-**Und für Phase 1 ist es eine Aufgabe, kein Blocker.** Der Editor muss nach jedem Umzug die Übersetzungen des umgehängten Punkts neu registrieren — die Werte hat die Seite ohnehin auf dem Bildschirm (der Live-Sweep), und der Digest wird nach dem Schreibvorgang frisch gelesen. Zwei Details dazu misst der nächste Lauf, weil sie den Preis bestimmen: ob ein **mitgezogenes Kind** seine Übersetzung ebenfalls verliert (dann kostet ein Ast-Umzug eine Registrierung pro Punkt darin), und ob sich der Wert unmittelbar nach dem Umzug **überhaupt zurückschreiben** lässt — die Reparatur wird bewiesen, nicht angenommen.
+**Und für Phase 1 ist es eine Aufgabe, kein Blocker** — mit einem gemessenen Preis:
+
+- **Ein mitgezogenes Kind verliert seine Übersetzung ebenfalls** (Spalte `CARRIED`, im selben Lauf). Betroffen ist also nicht der gezogene Punkt, sondern **er und sein ganzer Ast**. Ein Umzug von drei Ebenen mit fünf Punkten und vier Sprachen sind zwanzig Registrierungen.
+- **Der Wert lässt sich unmittelbar danach zurückschreiben** (`Re-register right after the move: yes`). Die Reparatur ist damit bewiesen, nicht gehofft: Digest nach dem Schreibvorgang frisch lesen, `translationsRegister`, Echo prüfen.
+
+Daraus folgt die Form von Schritt 8 in §4: Die betroffene Menge ist **jeder umgehängte Punkt VEREINIGT mit allen seinen Nachkommen**, nicht nur der gezogene. Sie wird VOR dem Schreibvorgang aus dem Live-Sweep gesichert (nicht aus `ContentTranslation` — ein Shop, der in Shopifys Editor übersetzt hat, hat Werte, die diese App nie geschrieben hat) und danach zurückgeschrieben.
+
+**Ein Rest bleibt und wird benannt statt versteckt:** Die Reparatur kann nur wiederherstellen, was diese App liest — die veröffentlichten Sprachen der globalen Ebene. Ob ein Menüpunkt überhaupt eine **markt-spezifische** Übersetzung tragen kann, ist ungemessen (siehe Dateikopf von `app.menus.tsx`); falls ja, würde ein Umzug sie zerstören und wir könnten sie nicht zurückschreiben. Vor der ersten Auslieferung des Ziehens gehört das gemessen — oder, wenn es dabei bleibt, in eine Warnung.
 
 ---
 
@@ -127,9 +134,10 @@ Das ist bewusst dieselbe Grundhaltung wie im heutigen Schreibweg, nur eine Stufe
 5. menuUpdate, Echo pro Punkt, ID-Prüfung pro Position
 6. Neue IDs nach Position auf die temporären abbilden und zurückgeben
 7. Purge für Punkte mit geändertem Primärtitel (unverändert)
-8. **Übersetzungen der UMGEHÄNGTEN Punkte neu registrieren** (§2.5): Shopify
-   löscht sie beim Elternwechsel, obwohl die ID bleibt. Vorher aus dem
-   Live-Sweep gemerkt, hinterher mit frischem Digest zurückgeschrieben und
+8. **Übersetzungen der umgehängten Punkte UND IHRER NACHKOMMEN neu
+   registrieren** (§2.5): Shopify löscht sie beim Elternwechsel, obwohl die ID
+   bleibt, und ein mitgezogenes Kind trifft es genauso. Vorher aus dem
+   Live-Sweep gesichert, hinterher mit frischem Digest zurückgeschrieben und
    echo-geprüft. Was nicht bestätigt zurückkommt, ist ein Fehler PRO PUNKT —
    der Umbau selbst steht bereits und wird nicht zurückgerollt.
 9. Löschungen: lokale Übersetzungszeilen der entfernten Punkte weg
@@ -234,5 +242,5 @@ Nach Phase 2 muss ein Händler den Shopify-Admin für ein Menü nicht mehr öffn
 1. ~~IDs wandern beim Verschieben~~ — **gemessen, sie bleiben** (§2.1).
 2. ~~Shopify nimmt keine vierte Ebene~~ — **gemessen, genau drei** (§2.3). Die Drag-Projektion klemmt bei 3.
 3. ~~`url` bei ziellosen Typen wird abgelehnt~~ — **gemessen, wird angenommen** (Review-Befund 3 erledigt).
-4. **Das Umhängen löscht die Übersetzung** (§2.5). Kein Kipppunkt mehr, sondern Schritt 8 des Schreibwegs — aber wenn die Rückschreib-Messung ergibt, dass sich der Wert danach NICHT wiederherstellen lässt, wird Ziehen zu einer Operation mit Datenverlust und gehört hinter eine Warnung statt hinter eine Geste.
+4. ~~Das Umhängen löscht die Übersetzung unwiederbringlich~~ — **gemessen: sie lässt sich sofort zurückschreiben** (§2.5). Kein Kipppunkt, sondern Schritt 8 des Schreibwegs. Offen bleibt allein die markt-spezifische Ebene: ob es sie auf Menüs gibt, ist ungemessen, und die Reparatur erreicht sie nicht.
 5. **Zwei Menüs, ein Punkt.** Sollte je der Wunsch aufkommen, Punkte zwischen Menüs zu ziehen: zwei Mutationen ohne gemeinsame Transaktion. Bewusst außerhalb.
