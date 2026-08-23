@@ -218,6 +218,9 @@ export const de = {
     metaobjectsDescription: "Verwalten und übersetzen Sie benutzerdefinierte Metaobjekte",
     metaobjectsNoEntries: "Dieser Metaobjekt-Typ hat keine Einträge zum Anzeigen.",
     metaobjectEntriesNoun: "Einträge",
+    metaobjectEntryNoun: "Eintrag",
+    metaobjectEntriesLoadFailed: "Die Einträge dieses Typs konnten nicht geladen werden.",
+    metaobjectEntryListHint: "Werte mit | trennen",
     metaobjectsSearchEntries: "Einträge durchsuchen...",
     // PLAN_METAOBJECTS_EDITOR — die Eintragskarte
     metaobjectDeleteInUse: "Etwas in Ihrem Shop verweist noch auf diesen Eintrag, deshalb l\u00f6scht Shopify ihn nicht. Entfernen Sie den Verweis zuerst dort.",
@@ -242,6 +245,8 @@ export const de = {
     metaobjectColorBaseConvention: "Vorschlag dieser App, keine Standardfarbe",
     metaobjectEntryPickImage: "Bild wählen",
     metaobjectEntryImagesOnly: "In diesem Feld k\u00f6nnen nur Bilder verwendet werden.",
+    metaobjectEntryUploadFailed: "Der Upload konnte nicht als Datei gespeichert werden.",
+    metaobjectEntryFilesOnly: "Hier können nur Dateien aus Ihrer Mediathek oder ein Upload verwendet werden.",
     metaobjectEntryChangeImage: "Bild ändern",
     metaobjectEntryReadOnlyDefinition: "Einträge dieser Definition können von dieser App nicht geändert werden.",
     metaobjectEntryReadOnlyUnknown: "Ob diese Definition beschreibbar ist, ist unbekannt — bitte neu laden.",

@@ -394,11 +394,95 @@ button of its own.**
   focused. `open` MIRRORS Polaris' own popover state (focus, keystroke, blur,
   Escape) because Polaris exposes none, and `allowMultiple` is what stops it
   closing after each pick — a field that collects several values should stay
-  open for the next one. The freeze is the existing `useScrollLock`
-  ([useScrollLock.ts](app/hooks/useScrollLock.ts), the category picker's), whose allowance here is
-  looked up per EVENT (`.Polaris-PositionedOverlay .Polaris-Popover__Pane`)
-  rather than held in a ref: the pane is portalled out of this component's tree
-  and there is nothing local to attach one to.
+  open for the next one. The freeze itself, and every rule about it, lives in
+  §Overlays — do not restate it here; this bullet is only about the combobox's
+  own open/close behaviour.
+
+## Overlays — every new popover freezes the page behind it, or it flies away
+
+This is the third time the same defect shipped (the category picker, the chip
+combobox, the metaobject colour swatch), so it is a RULE and not a fix: **a
+Polaris `Popover` — and anything else portalled and positioned against an
+activator — must call `useScrollLock` while it is open.** Write it with the
+overlay, not after the report.
+
+The cause is structural and applies to every page of this app. Polaris
+positions a popover ONCE against its activator and re-measures on scrolls it
+can see; the pages here do not scroll the DOCUMENT — `.app-page-content` is a
+non-scrolling frame whose single child scrolls internally, and that child is a
+plain div, not a Polaris `<Scrollable>`, so `PositionedOverlay` never learns
+about it. The activator then slides away under a panel that stays exactly where
+it opened: on a list of cards the merchant opens the third one's picker and the
+panel ends up over the tenth.
+
+- **The hook is [useScrollLock.ts](app/hooks/useScrollLock.ts)** and it cancels the wheel/touch EVENT
+  rather than setting `overflow: hidden` — the scroll containers carry
+  `scrollbar-gutter: stable`, and hiding the overflow gives the gutter back, so
+  the page jumps sideways as the overlay opens. Keyboard scrolling is
+  deliberately untouched: it acts on the focused element, which is inside the
+  overlay.
+- **The allowance is the overlay's own SCROLLING element** — the LIST, never the
+  panel around it: a wheel over a panel's search box would otherwise chain
+  straight through to the page behind it. The allowed element should also carry
+  `overscroll-behavior: contain`, or reaching ITS end chains for the same
+  reason. Which SHAPE the allowance takes depends on who renders the scroller,
+  and there are exactly two cases:
+  - **Your component renders it ⇒ a real `useRef`.** `TaxonomyField` renders
+    its own scrolling list inside the popover and attaches a ref to it. Nothing
+    clever is needed and nothing else is correct.
+  - **Polaris renders it (its `Popover__Pane`) ⇒ a `useMemo`'d object with a
+    `current` GETTER**, because the pane is portalled out of your tree and
+    there is nothing local to attach a ref to. `useScrollLock` reads `.current`
+    at EVENT time, which is what makes a getter work at all.
+- **A getter must be SCOPED to your own overlay, through the activator.** A page
+  renders many of these (25 metaobject cards, each with a swatch and its
+  taxonomy chip lists), and `document.querySelector(".Polaris-Popover__Pane")`
+  answers with whichever pane is first in the DOM. Two can legitimately be open
+  at once: Polaris ignores an outside click for the first 100ms of a popover's
+  enter transition, so clicking two activators quickly leaves both active — and
+  the wrong pane is then the one allowed to scroll. Polaris writes the overlay's
+  id onto the activator as `aria-controls` (`setActivatorAttributes`, on the
+  first focusable node of the activator container), and that id sits on the
+  popover's **Content** element with the Pane INSIDE it — so it is
+  `document.getElementById(id)?.querySelector(".Polaris-Popover__Pane")`, never
+  `closest` (verified against `@shopify/polaris`' `PopoverOverlay`, 2026-08).
+  Keep the document-wide query as the FALLBACK: for one frame Polaris has not
+  written the attribute yet. `MetaobjectEntryCard` is the reference;
+  `ChipCombobox` still uses the bare document-wide query, which costs nothing
+  only because its pane is the sole scroller on the surfaces it appears on.
+- **Gate the lock on the overlay really being on screen** — and the condition is
+  not only "did the merchant open it". Polaris renders no popover at all for an
+  empty option list (`ChipCombobox` gates on `open && suggestions.length > 0`),
+  and the thing that takes an overlay away is often a PARENT prop rather than a
+  click: `MetaobjectEntryCard`'s picker disappears when an entry reload answers
+  `readOnly` or a language tab sets `compact`, neither of which touches the
+  card's own `open` state. The lock lives on `window` and outlives the
+  overlay's unmount, so ungated it leaves a page-wide wheel block around
+  nothing, with no panel left to close it — the merchant's only way out is a
+  reload. Gate the boolean AND reset the state, or the overlay springs open by
+  itself the moment the control returns.
+  [metaobject-entry-card-scroll-lock.test.tsx](tests/unit/metaobject-entry-card-scroll-lock.test.tsx)
+  pins both directions by dispatching a cancelable `wheel` and reading
+  `defaultPrevented`.
+- **A Polaris `Modal` needs none of this — but NOT because Polaris locks the
+  page.** It does try: `Modal` → `Backdrop` → `ScrollLock` →
+  `ScrollLockManager`, which stamps `data-lock-scrolling` on `document.body`
+  and scrolls `body.firstElementChild`. In this app the document never scrolls
+  (`.app-page-content > *` does), so that lock is a **no-op** and the page
+  behind a Polaris Modal keeps scrolling. It does not matter, and the reason is
+  the one to reason from: a Modal is fixed and centred, not positioned against
+  an activator, so there is nothing for a scroll to slide out from under. Any
+  overlay that IS anchored to something — including one opened inside a Modal —
+  needs the lock, Polaris backdrop or not. The rule is about POPOVERS and
+  hand-built anchored overlays, which is also why the reports call them
+  "modals": to the merchant a panel that opens over the page is a modal,
+  whichever component drew it.
+- Current callers: `TaxonomyField` (own ref), `ChipCombobox` (unscoped getter),
+  `MetaobjectEntryCard` (scoped getter, the reference shape). The other
+  `<Popover>` sites in the app — `HelpTrigger`, `MainNavigation`, `BulkCell`,
+  `FilterBar`, `PriceActionsPopover`, `LibraryTab`, `MobileToolbar`,
+  `UnifiedItemList`, `VariantOptionsEditor` — predate the rule and have NOT been
+  swept. Check the list before assuming a surface is covered.
 
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 

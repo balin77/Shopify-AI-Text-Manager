@@ -480,7 +480,16 @@ export interface ContentEditorConfig {
   dynamicFields?: boolean;
 
   /** Function to generate field definitions dynamically from an item */
-  getFieldDefinitions?: (item: TranslatableContentItem) => FieldDefinition[];
+  /**
+   * `t` is the LOOSE `TranslationStrings`, not the strict per-locale type the
+   * two getters above take: the only caller is `useUnifiedContentEditor`,
+   * whose own `t` prop is the loose one. A dynamic field's label and help text
+   * are built here and nowhere else, so without it the only place to put such
+   * a string is an English literal in the config — which is what the metaobject
+   * list hint was. Read a value with a `typeof … === "string"` check: a block
+   * of `TranslationStrings` may legitimately hold a list.
+   */
+  getFieldDefinitions?: (item: TranslatableContentItem, t?: TranslationStrings) => FieldDefinition[];
 
   /** Custom function to get field value from item (for non-standard data structures) */
   getFieldValue?: (item: TranslatableContentItem, fieldKey: string) => string;

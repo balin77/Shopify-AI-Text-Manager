@@ -219,6 +219,9 @@ export const es: Translation = {
     metaobjectsDescription: "Gestiona y traduce metaobjetos personalizados",
     metaobjectsNoEntries: "Este tipo de metaobjeto no tiene entradas para mostrar.",
     metaobjectEntriesNoun: "entradas",
+    metaobjectEntryNoun: "entrada",
+    metaobjectEntriesLoadFailed: "No se pudieron cargar las entradas de este tipo.",
+    metaobjectEntryListHint: "separa los valores con |",
     metaobjectsSearchEntries: "Buscar entradas...",
     // PLAN_METAOBJECTS_EDITOR — la tarjeta de entrada
     metaobjectDeleteInUse: "Algo en tu tienda todav\u00eda hace referencia a esta entrada, por eso Shopify no la elimina. Quita la referencia all\u00ed primero.",
@@ -243,6 +246,8 @@ export const es: Translation = {
     metaobjectColorBaseConvention: "sugerencia de esta app, no un color est\u00e1ndar",
     metaobjectEntryPickImage: "Elegir imagen",
     metaobjectEntryImagesOnly: "En este campo solo se pueden usar im\u00e1genes.",
+    metaobjectEntryUploadFailed: "La subida no se pudo guardar como archivo.",
+    metaobjectEntryFilesOnly: "Aquí solo se pueden usar archivos de tu biblioteca o una subida.",
     metaobjectEntryChangeImage: "Cambiar imagen",
     metaobjectEntryReadOnlyDefinition: "Esta aplicación no puede modificar entradas de esta definición.",
     metaobjectEntryReadOnlyUnknown: "Se desconoce si esta definición admite escritura — vuelve a cargar.",

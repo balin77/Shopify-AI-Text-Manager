@@ -190,6 +190,18 @@
                                      indistinguishable from an open one.
      --app-field-border-radius       the corner, spent by AIEditableField.css.
                                      Polaris' own inputs are already 8px.
+     --app-swatch-radius             the corner of a COLOUR swatch and of the
+                                     native colour picker it opens. Its own
+                                     token and deliberately not the field
+                                     radius: the shape being matched is the
+                                     browser's `<input type="color">`, not this
+                                     app's text inputs, and the swatch, the
+                                     ring the activator draws around it, the
+                                     picker and its base-colour chips all have
+                                     to be the SAME corner or the panel reads
+                                     as three controls for one value. It was
+                                     four separate `6px` literals in three
+                                     files before this line existed.
      --app-field-label-weight        every field label, everywhere. The
                                      AI-editable fields printed a semibold
                                      label and the merchandising controls a
@@ -267,6 +279,7 @@
   --app-field-border-color: #c9cccf;
   --app-field-border-color-disabled: #dfe1e3;
   --app-field-border-radius: 8px;
+  --app-swatch-radius: 6px;
   --app-field-label-weight: 600;
   --app-surface-border-color: #c9cccf;
   --app-content-rule-color: #c9cccf;
@@ -584,6 +597,16 @@
 
 .metaobject-entry-fields__wide {
   max-width: var(--app-entry-wide-field-max-width);
+}
+
+/* The row ABOVE the grid — today the entry's image.
+   Capped at ONE column's width rather than left to fill the card: the field
+   chrome draws its clear button in the top-right corner of the field, so at
+   full card width the bin ends up an arm's length from the 48px tile it
+   empties, while every other field on the card has it right beside the label.
+   One column is also what the field was sized for. */
+.metaobject-entry-fields__lead {
+  max-width: var(--app-entry-field-min-width);
 }
 
 @media (max-width: 899px) {

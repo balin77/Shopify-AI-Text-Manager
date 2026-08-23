@@ -94,7 +94,10 @@ export function HexColorInput({
           height: "34px",
           padding: 0,
           border: "1px solid var(--p-color-border)",
-          borderRadius: "6px",
+          // The swatch corner, from responsive.css. This control and the
+          // header swatch that opens it are one value; two corners read as two
+          // controls.
+          borderRadius: "var(--app-swatch-radius)",
           background: "none",
           cursor: disabled ? "not-allowed" : "pointer",
           flexShrink: 0,
@@ -140,7 +143,11 @@ export function HexColorInput({
                   width: "22px",
                   height: "22px",
                   padding: 0,
-                  borderRadius: "50%",
+                  // Rounded squares, like the picker beside them and the
+                  // header swatch that opened this panel. As circles they made
+                  // one panel show three shapes for one value: a square
+                  // button, a rectangular input and a row of dots.
+                  borderRadius: "var(--app-swatch-radius)",
                   background: colour.hex,
                   cursor: disabled ? "not-allowed" : "pointer",
                   // The ring is the only thing that can mark the chosen one:
