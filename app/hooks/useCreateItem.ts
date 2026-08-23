@@ -35,10 +35,11 @@ export interface CreatedItemInfo {
   synced: boolean;
   notes: string[];
   /**
-   * §2.5a — warning CODES from the chained translate-all, phrased by the
-   * banner. Separate from `notes` because those arrive from the SERVER already
-   * phrased, while these are decided here — and a sentence written here would
-   * be English for a three-language app.
+   * §2.5a/§2.5d — warning CODES decided CLIENT-side and phrased by the banner:
+   * what the AI pass could not write before the create, and a chained
+   * translate-all that did not finish after it. Separate from `notes` because
+   * those arrive from the SERVER already phrased, while a sentence written
+   * here would be English for a three-language app.
    */
   warningCodes?: string[];
 }
@@ -244,6 +245,8 @@ export function useCreateItem({
     /** The form values, kept so the chained translate-all can carry them. */
     values: Record<string, string>;
     translateAfterwards: boolean;
+    /** §2.5d — what the AI pass that ran on this submit could not deliver. */
+    aiWarningCodes: string[];
   } | null>(null);
 
   const create = useCallback(
@@ -255,6 +258,12 @@ export function useCreateItem({
       ruleSources?: unknown[];
       requestId: string;
       translateAfterwards?: boolean;
+      /**
+       * §2.5d — warning CODES from the AI pass the modal ran between the click
+       * and this call. They belong on the created item's banner: the dialog
+       * that could have shown them is closed by the time the create answers.
+       */
+      aiWarningCodes?: string[];
     }) => {
       setSubmitting(true);
       setError(null);
@@ -264,6 +273,7 @@ export function useCreateItem({
         resource: payload.resource,
         values: payload.values,
         translateAfterwards: !!payload.translateAfterwards,
+        aiWarningCodes: payload.aiWarningCodes ?? [],
       };
 
       const formData = new FormData();
@@ -322,6 +332,10 @@ export function useCreateItem({
       // §1.6 — a failed sync is a NOTE, not a failure.
       synced: result.synced !== false,
       notes: Array.isArray(result.notes) ? (result.notes as string[]) : [],
+      // The AI pass ran BEFORE the create, so whatever it could not write is
+      // already known here — and the item exists either way, which is why
+      // these are warnings on a success banner rather than an error.
+      warningCodes: payload.aiWarningCodes.length > 0 ? [...payload.aiWarningCodes] : undefined,
     };
     setCreated(info);
     setOpenResource(null);

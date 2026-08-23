@@ -44,6 +44,11 @@ export interface ChipComboboxProps {
   label: string;
   /** Key into `t.help` — the question mark beside the label. */
   helpKey?: string;
+  /** The explanation as TEXT, for a host that has no `t.help` key (the create
+   *  dialog phrases its own fields). */
+  help?: string;
+  /** Draws the red asterisk. */
+  requiredIndicator?: boolean;
   /** Currently chosen values. */
   selected: string[];
   /** Everything selectable. May be empty — free-text entry still works. */
@@ -80,6 +85,8 @@ export interface ChipComboboxProps {
 export function ChipCombobox({
   label,
   helpKey,
+  help,
+  requiredIndicator,
   selected,
   options,
   onChange,
@@ -244,7 +251,7 @@ export function ChipCombobox({
           the field already HOLDS; it reads perfectly well under the control
           that adds the next one. */}
       <BlockStack gap="200">
-        <FieldLabel label={label} helpKey={helpKey} />
+        <FieldLabel label={label} helpKey={helpKey} help={help} requiredIndicator={requiredIndicator} />
 
         {readOnly ? (
           selected.length === 0 && emptyText ? (

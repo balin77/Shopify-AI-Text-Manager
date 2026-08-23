@@ -8,7 +8,7 @@
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { detailsFieldsForLocale, fieldCard } from "~/services/content-attributes.shared";
 import {
-  isFullWidthDetailsField,
+  isDetailsEditorField,
   isHalfHeightDetailsField,
   splitDetailsFields,
 } from "~/config/details-layout";
@@ -30,7 +30,7 @@ import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Banner, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Banner, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
@@ -835,18 +835,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // needs no span rule of its own, only the gap.
     if (cell.length > 1) return "app-details-field--stack";
     const [field] = cell;
-    return (
-      [
-        isFullWidthDetailsField(field) ? "app-details-field--full" : "",
-        isHalfHeightDetailsField(field) ? "app-details-field--half" : "",
-      ]
-        .filter(Boolean)
-        .join(" ") || undefined
-    );
+    return isHalfHeightDetailsField(field) ? "app-details-field--half" : undefined;
   };
 
-  const renderDetailsFields = (layout: { grid: FieldDefinition[][]; aside: FieldDefinition[] }) => (
-    <div className="app-details-layout">
+  const renderDetailsFields = (layout: {
+    grid: FieldDefinition[][];
+    aside: FieldDefinition[];
+    editor: FieldDefinition[];
+  }) => (
+    <div
+      className={
+        // The collection's rule builder is a form of its own and takes every
+        // pixel past the one column of boxes beside it — not a SHARE of the
+        // row like the sales-channel panel takes. On the row rather than on
+        // either region, because the same grid is the wide one on a product.
+        layout.editor.length > 0 ? "app-details-layout app-details-layout--with-editor" : "app-details-layout"
+      }
+    >
       <div className="app-details-layout__grid">
         {layout.grid.map((cell) => (
           <div key={cell[0].key} className={detailsCellClass(cell)}>
@@ -858,6 +863,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </div>
         ))}
       </div>
+      {layout.editor.length > 0 && (
+        /* The rule builder, beside the boxes rather than across the whole card.
+           It used to span every column, which put the two bare controls on a
+           row of their own underneath with two columns of white next to them —
+           and a spanning cell keeps every track alive, so those columns could
+           not collapse into fewer, wider ones either. As a region it takes the
+           height of the row with it: the stack beside it stretches to match. */
+        <div className="app-details-layout__editor">
+          {layout.editor.map((field) => (
+            <Card key={field.key} background="bg-surface-secondary" padding="300">
+              {renderEditorField(field)}
+            </Card>
+          ))}
+        </div>
+      )}
       {layout.aside.length > 0 && (
         <div className="app-details-layout__aside">
           {/* The channels, the regions and the B2B catalogs are ONE card: they
@@ -1648,10 +1668,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
-                  onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
-                  sendImageToAI={state.sendImageToAI}
-                  images={state.images}
-                  featuredImage={state.featuredImage ?? undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -1704,15 +1720,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             // the desktop bar, and the row says so instead of
                             // pretending otherwise.
                             statusDisabled: foreign || !known || lockedStatus,
+                            // Only the reasons the row CANNOT be tapped. The
+                            // state sentence ("visible in your shop — as long
+                            // as …") stays off the phone: the row already
+                            // names the state, and as a permanent second line
+                            // under the row it is the noise the desktop
+                            // tooltip exists to avoid. A disabled row without
+                            // its reason, on the other hand, is exactly what
+                            // the disabled-control rule forbids.
                             statusHelp: foreign
                               ? t.content?.attributesForeignLocale
                               : !known
                                 ? toggle.unknown
                                 : lockedStatus
                                   ? enums[`status.${value.toUpperCase()}`]
-                                  : checked
-                                    ? statusControl.kind === "status" ? toggle.activeHint : toggle.publishedHint
-                                    : statusControl.kind === "status" ? toggle.draftHint : toggle.unpublishedHint,
+                                  : undefined,
                             onToggleStatus: () =>
                               handlers.handleValueChange(
                                 statusControl.fieldKey,
@@ -1737,7 +1759,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
-                    sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
                     reloadItemTooltip: t.content?.reloadItemTooltip,
                     allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
                     marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
@@ -1830,15 +1851,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                               🗑️ {t.content?.clearAll || "Clear All"}
                             </Button>
                           )}
-                          {/* Send Image to AI checkbox - only in main language for products/collections/blogs with images */}
-                          {(config.contentType === "products" || config.contentType === "collections" || config.contentType === "blogs") &&
-                           (state.images?.length > 0 || state.featuredImage?.url) && (
-                            <Checkbox
-                              label={t.content?.sendImageToAI || "📷 Send image to AI"}
-                              checked={state.sendImageToAI}
-                              onChange={handlers.handleToggleSendImageToAI}
-                            />
-                          )}
                         </>
                       ) : (
                         <>
@@ -1869,13 +1881,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                       )}
                     </InlineStack>
 
-                    {/* Middle: what happens to the ITEM — visible/not, copy it,
-                        delete it. Separated from the translate/clear actions on
-                        the left, which act on its TEXT. Both used to live
-                        elsewhere: the switch among twenty fields, the two
-                        buttons over the item list, where they belonged to
-                        whichever row happened to be selected. */}
-                    <InlineStack gap="300" blockAlign="center">
+                    {/* Right-hand half of the row: what happens to the ITEM —
+                        visible/not, copy it, delete it — followed immediately
+                        by create/reload. Only the translate/clear actions,
+                        which act on the item's TEXT, stay on the left, so the
+                        row reads as two blocks rather than three with a hole
+                        between them. Both halves used to live elsewhere: the
+                        switch among twenty fields, the two buttons over the
+                        item list, where they belonged to whichever row
+                        happened to be selected.
+
+                        This wrapper WRAPS (Polaris' default) while the reload
+                        block inside it stays `nowrap`: on a narrow desktop the
+                        reload block moves to a second line as a unit instead
+                        of the row overflowing its card. `gap="200"` is the
+                        reload block's own 0.5rem, so the seam between the two
+                        does not read as a third group. */}
+                    <InlineStack gap="200" blockAlign="center">
                       {statusControl && selectedItem && (
                         <ItemStatusSwitch
                           kind={statusControl.kind}
@@ -1914,57 +1936,58 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                           </Button>
                         </>
                       )}
-                    </InlineStack>
 
-                    {/* Right: Reload Button (Save/Discard handled by the native
-                        Shopify save bar — see AppSaveBar above) */}
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
-                      {/* Create, where the item list does not list what gets
-                          created — see `createSupport.fromActionBar`. It calls
-                          the SAME `handleAddItem` as the "+" above the list, so
-                          the resource chooser and the prefill still apply and
-                          there is no second create path. */}
-                      {config.createSupport?.fromActionBar && createResources.length > 0 && (
-                        <DisabledActionTooltip hint={createDisabledReason ?? undefined}>
-                          <Button
-                            size="slim"
-                            variant="primary"
-                            icon={PlusIcon}
-                            disabled={!!createDisabledReason}
-                            onClick={handleAddItem}
-                          >
-                            {t.content?.createEntryButtonLabel || "Add entry"}
-                          </Button>
-                        </DisabledActionTooltip>
-                      )}
-                      {/* Deleting the CONTAINER the entries live in — a
-                          metaobject definition. Supplied by the route, and
-                          DISABLED WITH ITS REASON rather than hidden wherever
-                          it cannot be done. */}
-                      {containerAction && (
-                        <DisabledActionTooltip hint={containerAction.disabledReason ?? undefined}>
-                          <Button
-                            size="slim"
-                            tone="critical"
-                            icon={DeleteIcon}
-                            disabled={!!containerAction.disabledReason}
-                            onClick={containerAction.onAction}
-                          >
-                            {containerAction.label}
-                          </Button>
-                        </DisabledActionTooltip>
-                      )}
-                      <ReloadButton
-                        resourceId={selectedItem.id}
-                        resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
-                        locale={state.currentLanguage}
-                        tooltip={t.content?.reloadItemTooltip}
-                        onReloadComplete={handleReloadComplete}
-                        onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
-                        revalidator={revalidator}
-                      />
-                      <HelpTooltip helpKey="mobileToolbarActions" position="below" />
-                    </div>
+                      {/* Create / container delete / reload (Save and Discard
+                          are handled by the native Shopify save bar — see
+                          AppSaveBar above). */}
+                      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexShrink: 0, flexWrap: "nowrap" }}>
+                        {/* Create, where the item list does not list what gets
+                            created — see `createSupport.fromActionBar`. It calls
+                            the SAME `handleAddItem` as the "+" above the list, so
+                            the resource chooser and the prefill still apply and
+                            there is no second create path. */}
+                        {config.createSupport?.fromActionBar && createResources.length > 0 && (
+                          <DisabledActionTooltip hint={createDisabledReason ?? undefined}>
+                            <Button
+                              size="slim"
+                              variant="primary"
+                              icon={PlusIcon}
+                              disabled={!!createDisabledReason}
+                              onClick={handleAddItem}
+                            >
+                              {t.content?.createEntryButtonLabel || "Add entry"}
+                            </Button>
+                          </DisabledActionTooltip>
+                        )}
+                        {/* Deleting the CONTAINER the entries live in — a
+                            metaobject definition. Supplied by the route, and
+                            DISABLED WITH ITS REASON rather than hidden wherever
+                            it cannot be done. */}
+                        {containerAction && (
+                          <DisabledActionTooltip hint={containerAction.disabledReason ?? undefined}>
+                            <Button
+                              size="slim"
+                              tone="critical"
+                              icon={DeleteIcon}
+                              disabled={!!containerAction.disabledReason}
+                              onClick={containerAction.onAction}
+                            >
+                              {containerAction.label}
+                            </Button>
+                          </DisabledActionTooltip>
+                        )}
+                        <ReloadButton
+                          resourceId={selectedItem.id}
+                          resourceType={getReloadResourceType(config.contentType, selectedItem.id)}
+                          locale={state.currentLanguage}
+                          tooltip={t.content?.reloadItemTooltip}
+                          onReloadComplete={handleReloadComplete}
+                          onReloadSuccess={() => showInfoBox(t.content?.reloadSuccess || "Data reloaded successfully!", "success", t.content?.success || "Success!")}
+                          revalidator={revalidator}
+                        />
+                        <HelpTooltip helpKey="mobileToolbarActions" position="below" />
+                      </div>
+                    </InlineStack>
                   </InlineStack>
                 </Card>
                 </div>
@@ -2258,6 +2281,8 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                         valueLabel: t.products?.valueLabel,
                         addValue: t.products?.addValue,
                         removeValue: t.products?.removeValue,
+                        reorderValue: t.products?.reorderValue,
+                        reorderOption: t.products?.reorderOption,
                       }}
                     />
                   </div>
@@ -2713,15 +2738,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.
             options: t.content?.enumLabels,
-            // §2.5b — the SCORE strings come from the sidebar's own block, not
-            // a second copy: the two show the same findings, and a wording
-            // that differs between them reads as two different measurements.
             aiWarnings: t.content?.createModal?.aiWarnings,
-            seoScore: {
-              heading: t.content?.createModal?.seoScoreHeading,
-              outOf: t.content?.createModal?.seoScoreOutOf,
-              issues: t.seo?.issues,
-            },
           }}
           // §2.5b/§2.5c — the AI prompts need a language NAME, and the modal
           // has no locale state of its own. The shop's primary one, because

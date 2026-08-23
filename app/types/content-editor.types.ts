@@ -480,7 +480,16 @@ export interface ContentEditorConfig {
   dynamicFields?: boolean;
 
   /** Function to generate field definitions dynamically from an item */
-  getFieldDefinitions?: (item: TranslatableContentItem) => FieldDefinition[];
+  /**
+   * `t` is the LOOSE `TranslationStrings`, not the strict per-locale type the
+   * two getters above take: the only caller is `useUnifiedContentEditor`,
+   * whose own `t` prop is the loose one. A dynamic field's label and help text
+   * are built here and nowhere else, so without it the only place to put such
+   * a string is an English literal in the config — which is what the metaobject
+   * list hint was. Read a value with a `typeof … === "string"` check: a block
+   * of `TranslationStrings` may legitimately hold a list.
+   */
+  getFieldDefinitions?: (item: TranslatableContentItem, t?: TranslationStrings) => FieldDefinition[];
 
   /** Custom function to get field value from item (for non-standard data structures) */
   getFieldValue?: (item: TranslatableContentItem, fieldKey: string) => string;
@@ -524,7 +533,6 @@ export interface EditorState {
   isLoadingImages?: boolean; // True when loading images on-demand from Shopify
   fallbackFields: Set<string>; // Fields showing fallback values (e.g., handle with primary locale value)
   loadingFieldKeys: Set<string>; // Fields with AI actions currently running (for per-field loading states)
-  sendImageToAI: boolean; // When enabled, sends images to vision-capable AI models
   selectedImageIndex: number; // Currently selected/viewed image index in products
   images: ContentImage[]; // All images for the current item
   featuredImage: ContentImage | null; // Featured image (for collections/blogs/products)
@@ -576,7 +584,6 @@ export interface EditorHandlers {
   handleAcceptAltTextSuggestion: (imageIndex: number) => void;
   handleAcceptAndTranslateAltText: (imageIndex: number) => void;
   handleRejectAltTextSuggestion: (imageIndex: number) => void;
-  handleToggleSendImageToAI: () => void;
   setSelectedImageIndex: (index: number) => void;
 }
 

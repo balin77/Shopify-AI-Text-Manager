@@ -17,6 +17,7 @@ import { ShopifyApiGateway } from "../../services/shopify-api-gateway.service";
 import { getFormInt, getFormJSON, getFormString } from "../../utils/form-data.utils";
 import { isValidLocale } from "../../utils/validation";
 import { sanitizePromptInput } from "../../utils/prompt-sanitizer";
+import { resolveVisionPolicy } from "../../services/ai/vision-policy.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
@@ -183,10 +184,20 @@ export async function handleGenerateAltText(
     // its translations. Same block as the `/api/ai` twin: this action is the
     // OTHER entrance to the same feature.
     const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
-    const altText = await aiServiceWithTask.generateImageAltText(imageUrl, sanitizedProductTitle, prompt, false, {
-      contextTexts: [sanitizedProductTitle],
-      locale: await resolveWrittenLocale(admin, session.shop, formData),
-    });
+    // The shop's own switch, and this is the site that most needed it: it was
+    // hardcoded `false`, so the image manager's "write an alt text" button
+    // described pictures it had never seen, however the merchant had set the
+    // (then per-editor) checkbox two clicks away.
+    const altText = await aiServiceWithTask.generateImageAltText(
+      imageUrl,
+      sanitizedProductTitle,
+      prompt,
+      resolveVisionPolicy(ctx.aiSettings).sendImages,
+      {
+        contextTexts: [sanitizedProductTitle],
+        locale: await resolveWrittenLocale(admin, session.shop, formData),
+      },
+    );
 
     await db.task.update({
       where: { id: task.id },
@@ -259,6 +270,10 @@ export async function handleGenerateAllAltTexts(
 
     const aiServiceWithTask = new AIService(provider, serviceConfig, session.shop, task.id);
 
+    // Read ONCE for the batch: one shop, one answer, and re-resolving it per
+    // image would suggest it could change mid-run.
+    const sendImagesToAI = resolveVisionPolicy(ctx.aiSettings).sendImages;
+
     // One product, one language — resolved once for the whole batch (§2.5e).
     const { resolveWrittenLocale } = await import("~/routes/api-ai-handlers/keyword-prompt");
     const writtenLocale = await resolveWrittenLocale(admin, session.shop, formData);
@@ -272,7 +287,7 @@ export async function handleGenerateAllAltTexts(
           aiInstructions,
           language: mainLanguage,
         });
-        const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt, false, {
+        const altText = await aiServiceWithTask.generateImageAltText(image.url, sanitizedProductTitle, prompt, sendImagesToAI, {
           contextTexts: [sanitizedProductTitle],
           locale: writtenLocale,
         });

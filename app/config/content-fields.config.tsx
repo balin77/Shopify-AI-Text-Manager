@@ -818,9 +818,18 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
   showItemSidebar: false,
   idPrefix: "Type:",
   getPrimaryField: (item) => item.title || item.definitionName || "Untitled",
-  getSubtitle: (item) => {
+  // The NOUN comes from the language bundle, both halves of it. This line used
+  // to hand a German shop "12 entries" — the one string on the type list, in
+  // English, under a heading Shopify itself had already written in English.
+  // The type NAME beside it stays Shopify's: it is what the merchant sees in
+  // their admin, and renaming it here would make the two disagree.
+  getSubtitle: (item, t) => {
     const count = item.contentCount ?? item.metaobjects?.length ?? 0;
-    return `${count} ${count === 1 ? 'entry' : 'entries'}`;
+    const noun =
+      count === 1
+        ? t?.content?.metaobjectEntryNoun || "entry"
+        : t?.content?.metaobjectEntriesNoun || "entries";
+    return `${count} ${noun}`;
   },
 
   // Metaobjects use dynamic fields — one field per ENTRY x FIELD (§6.1).
@@ -847,8 +856,15 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
    * to "" and the next save in a foreign locale would clear them. Same rule as
    * the merchandising attributes, same reason.
    */
-  getFieldDefinitions: (item) => {
+  getFieldDefinitions: (item, t) => {
     if (!item?.metaobjects || !Array.isArray(item.metaobjects)) return [];
+    // Narrowed once, outside the per-entry loop: `TranslationStrings` values
+    // may be lists, and a bundle that has not been filled in yet must fall
+    // back rather than render "[object Object]" under every list field.
+    const listHint =
+      typeof t?.content?.metaobjectEntryListHint === "string"
+        ? t.content.metaobjectEntryListHint
+        : "separate values with |";
     const definitionFields = (item as { fieldDefinitions?: MetaobjectDefinitionFieldLike[] })
       .fieldDefinitions;
 
@@ -884,7 +900,7 @@ export const METAOBJECTS_CONFIG: ContentEditorConfig = {
           // hint that is about the FIELD: how a list is separated. The rich
           // text control writes its own note, and the other three controls
           // never rendered a help text at all.
-          helpText: spec.role === "list" ? "separate values with |" : undefined,
+          helpText: spec.role === "list" ? listHint : undefined,
           // Three types need their own control rather than a text box. The
           // closure is built HERE because this is the only place that has both
           // the field's Shopify type and the item's cached file previews.

@@ -348,12 +348,16 @@ export default function MetaobjectsPage() {
     if (data.success === false || !data.metaobject) {
       // A FAILED load is not "this type has no entries" — the cards would
       // otherwise report an empty type to a merchant who has fifty.
-      setEntryError(typeof data.error === "string" ? data.error : "Could not load the entries of this type.");
+      setEntryError(
+        typeof data.error === "string"
+          ? data.error
+          : t.content?.metaobjectEntriesLoadFailed || "Could not load the entries of this type.",
+      );
       return;
     }
     setLoaded(data.metaobject);
     if (data.metaobject.pagination) setEntryPage(data.metaobject.pagination.page);
-  }, [entryFetcher.state, entryFetcher.data]);
+  }, [entryFetcher.state, entryFetcher.data, t]);
 
   // ── Usage, per visible entry (three-valued — see metaobject-usage.server) ─
   const visibleEntryIds = useMemo(
@@ -599,12 +603,23 @@ export default function MetaobjectsPage() {
       // are tall by nature, and a taxonomy LIST wraps its chips — in a narrow
       // column two of them no longer fit on a line, which is the layout the
       // grid exists to avoid.
+      //
+      // The IMAGE goes above the grid instead (`lead`). It renders a 48px tile
+      // and a button, so in the grid it claimed a whole text box's width for a
+      // thumbnail and pushed the fields that actually hold text — the label
+      // and the pattern reference — onto separate rows. Above them it costs
+      // one short line and the entry reads top-down: colour, picture, words.
       const specByKey = new Map(specs.map((spec) => [spec.compoundKey, spec]));
       // On a LANGUAGE tab, only the fields that actually carry a translation.
       // A colour, a file reference and a taxonomy value have one value per
       // shop, so they render read-only there — controls that cannot be used,
       // three of them per card, on every card. Before this page had cards, a
       // foreign locale was the input and its buttons, and that was right.
+      // Only the FIRST file field leads. A definition may declare several, and
+      // a lead row is capped at one column — three of them would be three
+      // stacked 340px rows above a grid that would have packed them side by
+      // side. "The entry's picture" is one field; the rest are ordinary boxes.
+      let leadTaken = false;
       const bodyFields = rendered
         .filter((r) => r !== colourEntry)
         .filter(
@@ -614,9 +629,12 @@ export default function MetaobjectsPage() {
         )
         .map((r) => {
           const spec = specByKey.get(r.field.key);
+          const lead = spec?.role === "file" && !leadTaken;
+          if (lead) leadTaken = true;
           return {
             key: r.field.key,
             node: r.node,
+            lead,
             wide:
               spec?.role === "textarea" ||
               spec?.role === "richText" ||

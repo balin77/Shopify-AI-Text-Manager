@@ -132,20 +132,16 @@
      copy to all), and at 260 those buttons wrapped into a column of three,
      which is what made an entry three times taller than its content.
 
-     --app-entry-field-gap    the gap between two of those fields. Named
-                              because the wide maximum below is computed from
-                              it and would otherwise drift.
-     --app-entry-wide-field-max-width
-                              the ceiling for the fields that do NOT fit in a
-                              column — a textarea, a rich-text preview, a
-                              taxonomy chip list. They are laid out under the
-                              grid rather than in it, and a chip list stretched
-                              across a 1400px card puts its "Clear" button a
-                              screen away from its label. Two columns' worth is
-                              what a list of chips actually needs. */
+     --app-entry-field-gap    the gap between two of those fields.
+
+     The fields that do NOT belong beside a box — a textarea, a rich-text
+     preview, a taxonomy chip list — carry no width of their own: they are
+     grid items forced to column 1, so they are exactly one column wide on a
+     row of their own and line up with the field above them. A ceiling stated
+     here instead was a second calculation next to the grid's, and the two
+     agreed at exactly one grid width. See `.metaobject-entry-fields__wide`. */
   --app-entry-field-min-width: 340px;
   --app-entry-field-gap: 1rem;
-  --app-entry-wide-field-max-width: calc(2 * var(--app-entry-field-min-width) + var(--app-entry-field-gap));
   --app-value-chip-width: 230px;
   --app-dropdown-panel-max-width: 480px;
   --app-stock-table-max-width: 800px;
@@ -168,12 +164,67 @@
 
      --app-field-border-color        the resting frame. The light grey the
                                      AI-editable fields already used.
+     --app-field-border-color-disabled
+                                     the same frame on a field that cannot be
+                                     edited. Polaris draws NO frame at all on a
+                                     disabled or read-only TextField
+                                     (`border: none`) and a barely-there #ebebeb
+                                     on a disabled Select, so a locked field
+                                     read as text floating on the card with no
+                                     box around it — which is what a merchant
+                                     reported. A box that exists is not the same
+                                     statement as a box you may type in: the
+                                     frame stays, LIGHTER than the resting one,
+                                     and the greyed fill and text keep saying
+                                     "not editable". It has to be its own
+                                     colour rather than the resting token,
+                                     because the AI-editable fields paint their
+                                     translation-state tint over Polaris'
+                                     disabled fill (`!important`, see
+                                     AIEditableField.css) — with a full-strength
+                                     frame on top, a locked field there would be
+                                     indistinguishable from an open one.
      --app-field-border-radius       the corner, spent by AIEditableField.css.
                                      Polaris' own inputs are already 8px.
+     --app-swatch-radius             the corner of a COLOUR swatch and of the
+                                     native colour picker it opens. Its own
+                                     token and deliberately not the field
+                                     radius: the shape being matched is the
+                                     browser's `<input type="color">`, not this
+                                     app's text inputs, and the swatch, the
+                                     ring the activator draws around it, the
+                                     picker and its base-colour chips all have
+                                     to be the SAME corner or the panel reads
+                                     as three controls for one value. It was
+                                     four separate `6px` literals in three
+                                     files before this line existed.
      --app-field-label-weight        every field label, everywhere. The
                                      AI-editable fields printed a semibold
                                      label and the merchandising controls a
                                      regular one, in the same card.
+
+     --app-surface-border-color      the frame of a box that is NOT an input:
+                                     the sidebar's detail panel, the compact
+                                     item selector, the notification button,
+                                     the create-resource tiles, an image tile
+                                     at rest, a variable chip. Its own token
+                                     rather than the field colour even though
+                                     the two hold the same grey today, for the
+                                     reason the widths above are separate
+                                     tokens: "make the input outlines lighter"
+                                     must not also lighten every tile and
+                                     button in the app. They were all written
+                                     out as #c9cccf at some twenty call sites,
+                                     which is what made that one instruction a
+                                     hunt through components.
+
+     --app-content-rule-color        rules drawn INSIDE rendered content — the
+                                     bar on a blockquote, an <hr> — in the body
+                                     editor and the AI suggestion preview. Third
+                                     token for the same reason: that is the
+                                     merchant's text being previewed, not our
+                                     chrome, and a change to the app's frames
+                                     has no business moving it.
 
      --app-attribute-grid-min-width  the auto-fit column of the sales-channel
                                      panel's three lists (channels / regions /
@@ -222,8 +273,12 @@
                                      than clipping. Measured against a card
                                      holding a label and one Polaris input. */
   --app-field-border-color: #c9cccf;
+  --app-field-border-color-disabled: #dfe1e3;
   --app-field-border-radius: 8px;
+  --app-swatch-radius: 6px;
   --app-field-label-weight: 600;
+  --app-surface-border-color: #c9cccf;
+  --app-content-rule-color: #c9cccf;
   --app-attribute-grid-min-width: 180px;
   --app-details-field-min-width: 195px;
   --app-details-grid-gap: 1rem;
@@ -248,6 +303,20 @@
   --app-details-aside-grow: 1.2;
   --app-details-grid-basis: calc(3 * var(--app-details-field-min-width) + 2 * var(--app-details-grid-gap));
   --app-details-aside-basis: calc(1.2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
+
+  /* The row that carries an EDITOR — the collection rule builder — is not a
+     split like the aside's. Two switch lists are worth a quarter of the row;
+     a sort order and a theme template are not, and giving them a SHARE of the
+     width made two short answers 250px wide at 900 and 420px at 1600, where
+     the grid had them at one column before. So the boxes stay ONE column and
+     do not grow, and every pixel past it goes to the editor. Only the wrap
+     point is a number here — the editor's basis, below which the two stop
+     sharing a line and the editor drops underneath. TWO columns, not the three
+     the grid region asks for when it is the wide one: past the wrap the boxes
+     keep their one column with the rest of the line empty beside them, which
+     is the layout this change exists to get rid of, so the pair stays side by
+     side down to a width where the builder's own selects still fit. */
+  --app-details-editor-basis: calc(2 * var(--app-details-field-min-width) + var(--app-details-grid-gap));
 
   /* Height of the app shell. Overridden to `dvh` below where supported: `vh` is
      always the LARGE viewport, so with a mobile browser toolbar showing, a
@@ -293,6 +362,40 @@
 .Polaris-Select__Backdrop {
   border-color: var(--app-field-border-color);
   border-top-color: var(--app-field-border-color);
+}
+
+/* The same frame on a field that cannot be edited — the other half of the rule
+   above, and the reason it needs one at all: Polaris does not merely lighten
+   the frame when a control locks, it takes it away. A disabled TextField gets
+   `border: none`, a read-only one `border-color: transparent`, and a disabled
+   Select an #ebebeb hairline that is invisible on a white card. On the Details
+   card, where a locked vendor sits beside an open title, that read as text
+   floating with no box around it.
+
+   `border` in full, not just `border-color`: `border: none` is the SHORTHAND,
+   so it sets the style to `none` as well and a colour alone would restore
+   nothing. The width is Polaris' own token, so the locked frame is exactly as
+   thick as the resting one and switching a field between the two states cannot
+   move a pixel (the Backdrop is absolutely positioned, so neither can shift the
+   text either way). It carries a literal fallback because it is a FOREIGN
+   token: an unresolvable var makes the whole shorthand invalid at computed-value
+   time, and `border-style` then falls back to its initial `none` — i.e. a
+   Polaris rename would put this exact bug back, silently and only on locked
+   fields, where it is least likely to be noticed.
+
+   The selectors MIRROR Polaris' own, shape for shape, so each one ties on
+   specificity and wins on order — this file loads after Polaris (app.tsx). That
+   is why the read-only pair repeats its class the way Polaris does and why the
+   focused variant is listed separately: Polaris states it at one class more,
+   and a single rule here would lose to it the moment the field takes focus.
+
+   What still says "locked" is the fill and the text colour, both Polaris'. Not
+   restated here — the state is theirs to draw, the box is ours. */
+.Polaris-TextField--disabled > .Polaris-TextField__Backdrop,
+.Polaris-TextField--readOnly.Polaris-TextField--readOnly > .Polaris-TextField__Backdrop,
+.Polaris-TextField--readOnly.Polaris-TextField--readOnly.Polaris-TextField--focus > .Polaris-TextField__Backdrop,
+.Polaris-Select--disabled .Polaris-Select__Backdrop {
+  border: var(--p-border-width-0165, 0.04125rem) solid var(--app-field-border-color-disabled);
 }
 
 /* The other half of the field chrome: one weight for every field LABEL.
@@ -375,14 +478,16 @@
    to its content. Expressed as "the child grows" rather than by naming the
    Polaris class, so a renamed internal cannot silently flatten the row. */
 .app-details-layout__grid > *,
-.app-details-layout__aside {
+.app-details-layout__aside,
+.app-details-layout__editor {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
 .app-details-layout__grid > * > *,
-.app-details-layout__aside > * {
+.app-details-layout__aside > *,
+.app-details-layout__editor > * {
   flex: 1 1 auto;
 }
 
@@ -419,9 +524,46 @@
 }
 
 /* A field that is a whole editor rather than a box — the collection rule
-   builder. It spans the grid whatever the column count is. */
-.app-details-layout__grid > .app-details-field--full {
-  grid-column: 1 / -1;
+   builder. Its own region beside the grid, not a cell spanning it.
+
+   It spanned every column for a release, and that cost the row twice: the two
+   bare controls could not sit NEXT to it, only underneath, with two columns of
+   white beside them — and `auto-fit` collapses only a track that is EMPTY, so
+   a cell keeping every track alive froze the boxes at their minimum width as
+   well. As a region it takes every pixel the one column of boxes beside it
+   does not need. */
+.app-details-layout__editor {
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: var(--app-details-editor-basis);
+  min-width: 0;
+}
+
+/* The row an editor region is on differs from the aside's in two ways: how
+   wide the boxes beside it are, and how tall.
+
+   WIDTH: one column, and no growing. The aside's row splits its width because
+   both sides are worth width; here the boxes are two short answers and the
+   editor is a form, so anything past one column is worth more to the editor
+   than to a `Select`. Stated on the ROW rather than by the grid region
+   asserting a width of its own, because the same grid is the WIDE region on a
+   product. The column is the grid's own minimum, so moving that moves this.
+
+   HEIGHT: `stretch` replaces the container's `flex-start`, so the boxes reach
+   the editor's height instead of ending wherever their own cards do. It
+   applies per LINE, so a wrapped narrow layout still sizes each line to its
+   own content. The grid passes that height down by itself: its rows have an
+   `auto` maximum, which is what lets the default `align-content` share the
+   extra out among them, and a cell's cards already grow to fill the cell they
+   were given. So two bare controls and one rule editor end at one line, which
+   is the whole reason for putting them side by side. */
+.app-details-layout--with-editor {
+  align-items: stretch;
+}
+
+.app-details-layout--with-editor > .app-details-layout__grid {
+  flex-grow: 0;
+  flex-basis: var(--app-details-field-min-width);
 }
 
 /* ── THE METAOBJECT ENTRY CARD'S FIELDS ─────────────────────────────────────
@@ -449,8 +591,33 @@
   align-items: start;
 }
 
+/* A wide field is ONE COLUMN on a row of its own — placed IN the grid, so the
+   width is the grid's answer and not a second calculation beside it.
+
+   It used to sit outside the grid under a fixed `2 * min-width + gap` ceiling,
+   and that number only equals a real column at exactly one grid width: a
+   column is `(W - gap) / n`, so on a colour entry (two boxes, therefore two
+   columns) the taxonomy list below "Label" was wider than "Label" everywhere
+   below ~1408px and narrower above it. Left-aligned and never flush.
+
+   `grid-column: 1` is what keeps it out of the boxes' row: the auto-placement
+   cursor cannot go back to an occupied column 1, so the item starts a new row
+   — without SPANNING, which is what the comment on the grid above warns
+   against (a spanning cell keeps every column alive and `auto-fit` can then no
+   longer collapse the empty ones). No `max-width`: the boxes have none either,
+   and any ceiling of its own is the misalignment coming back. */
 .metaobject-entry-fields__wide {
-  max-width: var(--app-entry-wide-field-max-width);
+  grid-column: 1;
+}
+
+/* The row ABOVE the grid — today the entry's image.
+   Capped at ONE column's width rather than left to fill the card: the field
+   chrome draws its clear button in the top-right corner of the field, so at
+   full card width the bin ends up an arm's length from the 48px tile it
+   empties, while every other field on the card has it right beside the label.
+   One column is also what the field was sized for. */
+.metaobject-entry-fields__lead {
+  max-width: var(--app-entry-field-min-width);
 }
 
 @media (max-width: 899px) {
@@ -621,6 +788,92 @@ html {
   }
 }
 
+/* ── The clear control: the WORD where there is room, the BIN where there is not
+   ─────────────────────────────────────────────────────────────────────────────
+   The word came first. The bin was introduced because "Leeren" / "Clear" /
+   "Vaciar" is up to seven characters on the label's own line, and on a SHORT
+   field — a vendor, a theme template, one cell of the Details grid — it
+   collided with the label it shares that line with. Applied to every field in
+   the app it then also replaced the word on a product title with 700px of
+   empty label row beside it.
+
+   Which shape a field gets is therefore a question about that field's WIDTH,
+   and it is asked with a container query rather than a prop: no caller has to
+   remember it, and it stays right when the window is resized. A media query
+   cannot answer it — the Details card's fields are narrow on the widest
+   desktop there is, which is the whole case.
+
+   The threshold is a literal because a container query condition cannot read a
+   custom property (no `var()` in `@container`) — the same way the media
+   breakpoints in this file are literals. It therefore has to be RE-DERIVED by
+   hand whenever a field grid's minimum moves, and
+   [field-clear-threshold.test.ts](../../tests/unit/field-clear-threshold.test.ts)
+   fails when it stops clearing them. There are THREE field populations, not
+   two, and the first cut's 360px sat inside the third:
+
+     Details grid   `minmax(195px, 1fr)`, gap 16 — an `auto-fit` track tops out
+                    at 195 + 211/n, so ~300px at two columns and ~265 at three;
+                    only the single-column case reaches ~400px, and there the
+                    word genuinely fits.
+     Entry grid     `minmax(min(100%, 340px), 1fr)` — never NARROWER than 340px
+                    while more than one column fits.
+     Content field  500px and up.
+
+   At 360px the entry grid straddled the line: a track opens just under it and
+   then grows past it, so the same card showed the word at a 900px grid, the
+   bin at 1080px and the word again at 1250px — a shape that flickers as the
+   window widens is worse than either shape. 320px clears the Details maximum
+   by ~30px and sits ~20px BELOW the entry grid's minimum, so every population
+   answers the same way at every width. Keep it under `--app-entry-field-min-width`.
+
+   What it measures is the FIELD, not the label row's free space — the
+   collision it stands in for is horizontal, between the button and a label
+   that may be arbitrarily long (a metaobject field label is authored in the
+   merchant's definition). A proxy, and the honest one available: the label's
+   own width is not knowable in CSS.
+
+   Default = the BIN, deliberately. A container query that never applies (an
+   engine without support, a container whose width cannot be resolved) must
+   fall back to the shape that cannot overlap anything — an unknown
+   `container-type` is dropped and the whole at-rule with it, leaving the
+   `display: none` on the word standing.
+
+   The scope must not land on a SHRINK-TO-FIT box: `container-type: inline-size`
+   contains the inline axis, so in an inline-block, a float or a row-flex item
+   the container resolves to zero width and the field collapses with it. Every
+   current site is a block in a block/column-flex/`minmax()`-grid context.
+   `DisabledActionTooltip` defaults to `inline-block` — wrapping a whole FIELD
+   in one is the cheap way to hit this. */
+.app-field-clear-scope {
+  container-type: inline-size;
+  container-name: appfield;
+}
+
+/* The two variants sit side by side in the markup and CSS shows one; the
+   wrapper keeps them on the button's own line wherever it is dropped (the
+   HTML editor puts it in a flex row beside the HTML/preview toggle). */
+.app-field-clear {
+  display: inline-flex;
+}
+
+.app-field-clear--word {
+  display: none;
+}
+
+.app-field-clear--icon {
+  display: inline-flex;
+}
+
+@container appfield (min-width: 320px) {
+  .app-field-clear--word {
+    display: inline-flex;
+  }
+
+  .app-field-clear--icon {
+    display: none;
+  }
+}
+
 /* The "Clear" button floats over a field's top-right corner, sharing the
    label's row. Wherever a button gets inflated to the 44px touch target it
    overhangs that ~24px row and lands on the input — visibly stuck to the box.
@@ -753,6 +1006,25 @@ html {
 }
 .Polaris-Backdrop ~ .Polaris-Backdrop {
   z-index: 1150 !important;
+}
+
+/* EVERY Polaris tooltip, in one place. Polaris puts its overlays on
+   `--p-z-index-2` (400), which loses against this app's own fixed layers —
+   MainNavigation (1000), ContentTypeNavigation (998), the sticky mobile item
+   dropdown (999). A tooltip on any control that happens to sit under one of
+   them (the editor's action bar is the usual one, opening upwards into the
+   language bar and the nav above it) was drawn BEHIND it. The z-index lives on
+   the PositionedOverlay wrapper, which carries no tooltip-specific class of its
+   own — hence `:has()` on the tooltip child, which also keeps popovers and
+   modal overlays out of this rule.
+
+   1300 clears the modal layers above too (1050–1200), which is right: a tooltip
+   on a control INSIDE a dialog has to be readable. No `!important`, on purpose
+   — the selector already outranks Polaris' own, and a call site that passes
+   `zIndexOverride` for a reason must still win as an inline style. Call sites
+   therefore no longer need that prop for the app's own layers. */
+.Polaris-PositionedOverlay:has(> .Polaris-Tooltip-TooltipOverlay) {
+  z-index: 1300;
 }
 
 /* Image Gallery: Keep aspect ratio consistent at all screen sizes */

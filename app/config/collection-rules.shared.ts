@@ -265,9 +265,20 @@ export interface RuleSource {
    * not know — is carried UNCHANGED and never submitted as an update. The raw
    * tree is kept so it can be displayed, and so nothing about it is lost by
    * having passed through this app.
+   *
+   * `manualSelection` is the one reason that is not a shortcoming: the source
+   * has no conditions at all, so there is no rule to render in the first place
+   * — it is the hand-picked membership every collection carries in the 2026-07
+   * model. Handled identically (never diffed, never submitted) and named
+   * separately, because the merchant reads a different sentence.
    */
   unrenderable?: {
-    reason: "subCollections" | "shareableSource" | "unknownCondition" | "unknownSource";
+    reason:
+      | "subCollections"
+      | "shareableSource"
+      | "unknownCondition"
+      | "unknownSource"
+      | "manualSelection";
     raw?: unknown;
   };
 }
@@ -927,7 +938,26 @@ export function fromShopifySources(raw: RawSource[] | null | undefined): RuleSou
     const inclusion = readSide("inclusion", source.inclusion);
     const exclusion = source.exclusion ? readSide("exclusion", source.exclusion) : null;
     if (!inclusion.readable || (exclusion && !exclusion.readable)) {
-      return { ...base, unrenderable: { reason: "unknownCondition", raw: source } };
+      // A source with no conditions on EITHER side is not a rule this editor
+      // failed to read — it is the hand-picked membership that every manual
+      // collection carries from 2026-07 on (`collectionSourcesAreRuleBased`,
+      // measured: twelve manual collections, a conditions source each, zero
+      // conditions, picks in `selections`). The only thing that can have made
+      // such a source unreadable is that `selections` list, so calling it
+      // "a rule this editor cannot show" was a warning about a rule that does
+      // not exist — on the measured shop, on EVERY collection. Same read-only
+      // handling, because the picks must survive a save either way; different
+      // sentence. The condition count is the same expression `isSmart` asks,
+      // deliberately: the two answers must not disagree about one collection.
+      const conditionCount =
+        (source.inclusion?.conditions?.length ?? 0) + (source.exclusion?.conditions?.length ?? 0);
+      return {
+        ...base,
+        unrenderable: {
+          reason: conditionCount === 0 ? "manualSelection" : "unknownCondition",
+          raw: source,
+        },
+      };
     }
 
     return {

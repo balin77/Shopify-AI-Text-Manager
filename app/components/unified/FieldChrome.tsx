@@ -26,12 +26,25 @@ import type { ReactNode } from "react";
 import { Button, InlineStack, Text } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { HelpTooltip } from "../HelpTooltip";
+import { HelpPopover } from "../HelpTrigger";
 import { useI18n } from "../../contexts/I18nContext";
 
 export interface FieldLabelProps {
   label: string;
   /** Key into `t.help`. Absent, or unknown, ⇒ no question mark. */
   helpKey?: string;
+  /**
+   * The explanation as TEXT, for a surface whose strings do not live in
+   * `t.help`.
+   *
+   * The create modal is the one: it takes its whole vocabulary as a `t` prop
+   * (it is rendered for six resource types and phrases their fields from one
+   * block), so it has no key to name. It still has to wear the same label —
+   * bold, red asterisk, question mark right after the words — which is why
+   * this is a second INPUT to the one shape rather than a second shape.
+   * `helpKey` wins if both are given.
+   */
+  help?: string;
   /** The red asterisk Polaris draws for a required field. */
   requiredIndicator?: boolean;
 }
@@ -43,7 +56,7 @@ export interface FieldLabelProps {
  * already wraps in one (the `label` prop of TextField / Select), and a nested
  * label is invalid markup that also breaks the click-to-focus behaviour.
  */
-export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProps) {
+export function FieldLabel({ label, helpKey, help, requiredIndicator }: FieldLabelProps) {
   return (
     // The wrapper is what `.field-clear-overlay ~ * .app-field-label-row`
     // reaches for on mobile: a self-drawn label row has no Polaris
@@ -57,7 +70,7 @@ export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProp
             {requiredIndicator && <span style={{ color: "var(--p-color-text-critical)" }}> *</span>}
           </span>
         </Text>
-        {helpKey && (
+        {(helpKey || help) && (
           /**
            * `preventDefault` because this row is handed to Polaris as a
            * control's `label` prop, so Polaris wraps it in `<label htmlFor>`
@@ -68,7 +81,13 @@ export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProp
            * target) untouched and only drops the label's activation.
            */
           <span onClick={(event) => event.preventDefault()}>
-            <HelpTooltip helpKey={helpKey} />
+            {helpKey ? (
+              <HelpTooltip helpKey={helpKey} />
+            ) : (
+              <HelpPopover label={label}>
+                <Text as="p" variant="bodySm">{help}</Text>
+              </HelpPopover>
+            )}
           </span>
         )}
       </InlineStack>
@@ -89,54 +108,102 @@ export interface FieldClearOverlayProps {
   /**
    * The field this button empties, for its accessible NAME.
    *
-   * The button shows a bin and no words, so the accessible name is the ONLY
-   * name it has — and four of these sit in one Details row (vendor, product
-   * type, collections, tags), where four buttons called "Leeren" tell a screen
-   * reader nothing apart. Sighted users have the field the icon sits in, which
-   * is exactly what the accessible name was missing.
+   * On the bin there is no text at all, so this is the ONLY name it has. On the
+   * word it is still needed: four of these sit in one Details row (vendor,
+   * product type, collections, tags), and four buttons called "Leeren" tell a
+   * screen reader nothing apart. The name OPENS with the visible word, which is
+   * what WCAG's "Label in Name" asks of the word variant.
    */
   fieldLabel?: string;
   children: ReactNode;
 }
 
+export interface FieldClearButtonProps {
+  onClear: () => void;
+  /** The field this button empties, for its accessible NAME. See above. */
+  fieldLabel?: string;
+}
+
 /**
- * Puts the clear button in the top-right corner of the field it wraps — the
+ * The control that empties a field: the WORD where the field is wide enough for
+ * it, a red BIN where it is not.
+ *
+ * The word came first and is still the better label. The bin was introduced
+ * because "Leeren" / "Clear" / "Vaciar" is up to seven characters sitting on
+ * the label's own line, and on a short field — a vendor, a theme template, one
+ * cell of the Details grid — it collided with the label it shares that line
+ * with. That was a fix for SHORT fields that then applied to every field in the
+ * app, including a product title with 700px of empty label row beside it.
+ *
+ * So the shape is a LAYOUT question, and it is answered by the layout: a
+ * container query on the field's own width (`.app-field-clear-scope` in
+ * responsive.css), not by a prop each caller has to remember and not by the
+ * viewport — the Details card's fields are narrow on the widest desktop there
+ * is, which is precisely the case a media query cannot see.
+ *
+ * BOTH shapes are rendered and CSS shows one. That looks like waste and is not:
+ * Polaris derives the button's box from the PROPS, not from what is visible —
+ * `icon && children == null` ⇒ `iconOnly`, which for the plain variant is the
+ * only branch that zeroes the padding and floors the box at
+ * `--p-height-500`/`--p-width-500` (1.25rem = 20px, measured in
+ * @shopify/polaris 13.9.5 — NOT the 32px this app puts on both variants in its
+ * own mobile rule). A single button carrying an icon AND a hidden word is
+ * `iconWithText` forever, so the bin would quietly render in a text-shaped box
+ * on exactly the narrow fields it exists for. `display: none` also takes the
+ * hidden variant out of the accessibility tree and the tab order, so a screen
+ * reader is offered one control, not two.
+ *
+ * It only works INSIDE an `app-field-clear-scope` ancestor. Rendered anywhere
+ * else no `appfield` container matches, the `@container` block never applies,
+ * and the caller gets a permanent bin with no error — `FieldClearOverlay`
+ * carries the class for every field that goes through it, and
+ * `AIEditableHTMLField` sets it on its own root.
+ */
+export function FieldClearButton({ onClear, fieldLabel }: FieldClearButtonProps) {
+  const { t } = useI18n();
+  const clearWord = t.common?.clear || "Clear";
+  // Never undefined on the icon variant: with no text inside the button, an
+  // absent accessible name leaves a control a screen reader can only call
+  // "button". Carried on the word variant too, because four "Leeren" buttons
+  // in one Details row tell a screen reader nothing apart — and it OPENS with
+  // the visible word, which is what WCAG's "Label in Name" asks for.
+  const name = fieldLabel ? `${clearWord}: ${fieldLabel}` : clearWord;
+  // `plain` is what makes it borderless — a bin (or a word) in a bordered box
+  // reads as a second control beside the field rather than as an affordance
+  // of it.
+  const shared = { size: "slim", onClick: onClear, tone: "critical", variant: "plain" } as const;
+  return (
+    <span className="app-field-clear">
+      <span className="app-field-clear--icon">
+        <Button {...shared} icon={DeleteIcon} accessibilityLabel={name} />
+      </span>
+      <span className="app-field-clear--word">
+        <Button {...shared} accessibilityLabel={name}>
+          {clearWord}
+        </Button>
+      </span>
+    </span>
+  );
+}
+
+/**
+ * Puts the clear control in the top-right corner of the field it wraps — the
  * label row's own line, which is empty on every field this app draws.
  *
  * Absolutely positioned rather than laid out beside the label: the label is
  * inside a Polaris control for most fields, and a button in there would be part
  * of the `<label>` element, i.e. a click target that also focuses the input.
  *
- * A red BIN and no word. "Leeren" / "Clear" / "Vaciar" is up to seven
- * characters of button sitting on the label's line, and since every field in
- * the Details card became its own card there are up to six of them on one
- * screen — each eating the width its own label wanted. The bin is the symbol
- * this app already uses for deleting, and the word moves into the accessible
- * name, where it is worth more anyway (see `fieldLabel`).
+ * The wrapper is also the QUERY CONTAINER the word/bin decision reads
+ * (`app-field-clear-scope`): it is the field's own box, so the control knows
+ * how much room the label row has without anyone passing it down.
  */
 export function FieldClearOverlay({ onClear, hasValue, fieldLabel, children }: FieldClearOverlayProps) {
-  const { t } = useI18n();
-  const clearWord = t.common?.clear || "Clear";
   return (
-    <div style={{ position: "relative" }}>
+    <div className="app-field-clear-scope" style={{ position: "relative" }}>
       {onClear && (
         <div className="field-clear-overlay" style={{ position: "absolute", top: 0, right: 0, zIndex: 10 }}>
-          {hasValue && (
-            <Button
-              size="slim"
-              onClick={onClear}
-              tone="critical"
-              // `plain` is what makes it borderless — a bin in a bordered box
-              // reads as a second control beside the field rather than as an
-              // affordance of it.
-              variant="plain"
-              icon={DeleteIcon}
-              // Never undefined: with no text inside the button, an absent
-              // accessible name leaves a control a screen reader can only call
-              // "button".
-              accessibilityLabel={fieldLabel ? `${clearWord}: ${fieldLabel}` : clearWord}
-            />
-          )}
+          {hasValue && <FieldClearButton onClear={onClear} fieldLabel={fieldLabel} />}
         </div>
       )}
       {children}

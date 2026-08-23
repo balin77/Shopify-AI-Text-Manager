@@ -4,6 +4,7 @@ import { AIInstructionPrompt } from "./AIInstructionPrompt";
 import { AISuggestionBanner } from "./AISuggestionBanner";
 import { HelpTooltip } from "./HelpTooltip";
 import { HtmlFormattingToolbar } from "./HtmlFormattingToolbar";
+import { FieldClearButton } from "./unified/FieldChrome";
 import { DisabledActionTooltip } from "./DisabledActionTooltip";
 import { ActionTooltip } from "./ActionTooltip";
 import { aiActionTooltip } from "../utils/ai-action-tooltip";
@@ -240,7 +241,14 @@ export function AIEditableHTMLField({
   };
 
   return (
-    <div className={`ai-editable-html-field ${getBackgroundClass()}`}>
+    // `app-field-clear-scope` makes this field its own query container, which
+    // is what lets the clear control below choose the word or the bin from the
+    // field's own width — the same decision every other field in the app makes
+    // through `FieldClearOverlay`. This editor cannot use that wrapper: its
+    // clear button sits IN the header row beside the HTML/preview toggle, not
+    // absolutely over an empty label line, so it shares the decision and not
+    // the positioning.
+    <div className={`ai-editable-html-field app-field-clear-scope ${getBackgroundClass()}`}>
       <InlineStack align="space-between" blockAlign="center">
         <InlineStack gap="100" blockAlign="center">
           <Text as="span" variant="bodyMd" fontWeight="bold" tone={readOnly ? "subdued" : undefined}>
@@ -252,16 +260,7 @@ export function AIEditableHTMLField({
           <Button size="slim" onClick={onToggleMode}>
             {mode === "html" ? t.products?.preview : t.products?.html}
           </Button>
-          {onClear && value && (
-            <Button
-              size="slim"
-              onClick={onClear}
-              tone="critical"
-              variant="plain"
-            >
-              {t.common?.clear || "Clear"}
-            </Button>
-          )}
+          {onClear && value && <FieldClearButton onClear={onClear} fieldLabel={label} />}
         </InlineStack>
       </InlineStack>
 
@@ -292,7 +291,7 @@ export function AIEditableHTMLField({
             width: "100%",
             minHeight: "200px",
             padding: "12px",
-            border: "1px solid #c9cccf",
+            border: "1px solid var(--app-field-border-color)",
             borderRadius: "8px",
             fontFamily: "monospace",
             fontSize: "14px",
@@ -318,8 +317,8 @@ export function AIEditableHTMLField({
             width: "100%",
             minHeight: "200px",
             padding: "12px",
-            border: "1px solid #c9cccf",
-            borderTop: mode === "rendered" && !previewReadOnly ? "none" : "1px solid #c9cccf",
+            border: "1px solid var(--app-field-border-color)",
+            borderTop: mode === "rendered" && !previewReadOnly ? "none" : "1px solid var(--app-field-border-color)",
             borderRadius: mode === "rendered" && !previewReadOnly ? "0 0 8px 8px" : "8px",
             lineHeight: "1.6",
             ...(previewReadOnly ? { opacity: readOnly ? 0.6 : 1, userSelect: "text" as const } : {}),

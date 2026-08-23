@@ -49,12 +49,20 @@ export type ValueSource =
  * "@@<marketId>" so market overlays never collide with the global ones.
  */
 export function buildLocaleKey(locale: string, marketId: string): string {
-  return marketId ? `${locale}@@${marketId}` : locale;
+  return marketId ? `${locale}${LOCALE_MARKET_SEP}${marketId}` : locale;
 }
+
+/**
+ * The separator, as a constant rather than three string literals. A caller that
+ * has to RECOGNISE a market key — "is this overlay entry global?" — had no way
+ * to ask, wrote its own guess, and silently wiped the market overrides it meant
+ * to spare.
+ */
+export const LOCALE_MARKET_SEP = "@@";
 
 /** Same folding for deletedTranslationKeysRef entries (keyed by translationKey). */
 export function buildDeletedKey(translationKey: string, marketId: string): string {
-  return marketId ? `${translationKey}@@${marketId}` : translationKey;
+  return marketId ? `${translationKey}${LOCALE_MARKET_SEP}${marketId}` : translationKey;
 }
 
 export interface ResolvedField {

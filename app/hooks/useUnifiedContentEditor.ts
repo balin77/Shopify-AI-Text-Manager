@@ -422,12 +422,17 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
   } = useEditorImageManagement({ config, selectedItemId, baseSelectedItem });
 
   // Compute effective field definitions (supports dynamic fields for templates)
+  // `t` reaches the builder because a DYNAMIC field's label and help text are
+  // built here and nowhere else — the metaobject list hint used to be an
+  // English literal in the config for exactly that reason, with no other place
+  // to put it. Same optional-`t` shape `getSubtitle` / `getPrimaryField`
+  // already carry, so a config that does not need it stays unchanged.
   const effectiveFieldDefinitions = useMemo(() => {
     if (config.dynamicFields && config.getFieldDefinitions && selectedItem) {
-      return config.getFieldDefinitions(selectedItem);
+      return config.getFieldDefinitions(selectedItem, t);
     }
     return config.fieldDefinitions;
-  }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem]);
+  }, [config.dynamicFields, config.getFieldDefinitions, config.fieldDefinitions, selectedItem, t]);
 
   const effectiveFieldDefinitionsRef = useLatestRef(effectiveFieldDefinitions);
 
@@ -525,8 +530,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     altTextSuggestions, setAltTextSuggestions,
     originalAltTexts, setOriginalAltTexts,
     imageAltTextsRef, originalAltTextsRef,
-    pendingAltTextAutoSaveRef,
-    sendImageToAI, setSendImageToAI,
+    pendingAltTextAutoSaveRef, localAltTextOverlayRef,
     selectedImageIndex, setSelectedImageIndex,
     handleAltTextChange, handleGenerateAltText, handleGenerateAllAltTexts,
     handleAcceptAltText, handleRejectAltText,
@@ -534,7 +538,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleTranslateAltText, handleTranslateAltTextToAllLocales,
     handleTranslateAllAltTexts, handleTranslateAllAltTextsForLocale,
     handleAcceptAltTextSuggestion, handleAcceptAndTranslateAltText,
-    handleRejectAltTextSuggestion, handleToggleSendImageToAI,
+    handleRejectAltTextSuggestion,
   } = useEditorAltText({
     selectedItem,
     selectedItemId,
@@ -2198,7 +2202,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     aiSuggestions,
     imageAltTexts,
     originalAltTexts,
-    sendImageToAI,
     selectedImageIndex,
     fallbackFields,
     selectedItemIdRef,
@@ -2206,6 +2209,7 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     editableValuesRef,
     imageAltTextsRef,
     originalAltTextsRef,
+    localAltTextOverlayRef,
     fallbackFieldsRef,
     isAcceptAndTranslateFlowRef,
     deletedTranslationKeysRef,
@@ -2398,7 +2402,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     isLoadingImages,
     fallbackFields,
     loadingFieldKeys,
-    sendImageToAI,
     selectedImageIndex,
     images: selectedItem?.images || [],
     featuredImage: selectedItem?.featuredImage || null,
@@ -2446,7 +2449,6 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
     handleAcceptAltTextSuggestion,
     handleAcceptAndTranslateAltText,
     handleRejectAltTextSuggestion,
-    handleToggleSendImageToAI,
     setSelectedImageIndex,
   };
 

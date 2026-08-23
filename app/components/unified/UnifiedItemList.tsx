@@ -469,7 +469,7 @@ export function UnifiedItemList({
         {/* Type icon (emoji) with hover tooltip naming the type. Only rendered
             when the item carries an icon (theme groups, blogs, selling plans). */}
         {item.icon && (
-          <Tooltip content={item.iconTooltip || item.type || ""} zIndexOverride={1200}>
+          <Tooltip content={item.iconTooltip || item.type || ""}>
             <span style={{ fontSize: "1.1rem", flexShrink: 0, lineHeight: 1 }}>{item.icon}</span>
           </Tooltip>
         )}
@@ -650,7 +650,7 @@ export function UnifiedItemList({
                   <Popover
                     active={filterPopoverActive}
                     activator={
-                      <Tooltip content={t.filterTooltip || "Typen filtern"} zIndexOverride={1200}>
+                      <Tooltip content={t.filterTooltip || "Typen filtern"}>
                         <Button
                           icon={FilterIcon}
                           variant="plain"
@@ -689,7 +689,7 @@ export function UnifiedItemList({
                   <Popover
                     active={sortPopoverActive}
                     activator={
-                      <Tooltip content={t.sortTooltip || "Einträge sortieren"} zIndexOverride={1200}>
+                      <Tooltip content={t.sortTooltip || "Einträge sortieren"}>
                         <Button
                           icon={SortIcon}
                           variant="plain"
@@ -732,7 +732,7 @@ export function UnifiedItemList({
                   </Popover>
                 )}
                 {onSyncAll && (
-                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"} zIndexOverride={1200}>
+                  <Tooltip content={t.reloadAllTooltip || "Alle Einträge von Shopify neu laden"}>
                     <Button
                       icon={RefreshIcon}
                       onClick={onSyncAll}
@@ -872,14 +872,14 @@ export function UnifiedItemList({
                       {(item.isBusy || item.hasMissingPrimary || item.hasMissingTranslations) && (
                         <div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px", alignItems: "center" }}>
                           {item.isBusy && (
-                            <Tooltip content={item.busyTooltip || "In progress"} dismissOnMouseOut zIndexOverride={1200}>
+                            <Tooltip content={item.busyTooltip || "In progress"} dismissOnMouseOut>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px" }}>
                                 <Spinner size="small" />
                               </div>
                             </Tooltip>
                           )}
                           {item.hasMissingPrimary && (
-                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut zIndexOverride={1200}>
+                            <Tooltip content={item.missingPrimaryTooltip || "Missing primary content"} dismissOnMouseOut>
                               <div
                                 style={{
                                   width: "12px",
@@ -893,7 +893,7 @@ export function UnifiedItemList({
                             </Tooltip>
                           )}
                           {item.hasMissingTranslations && (
-                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut zIndexOverride={1200}>
+                            <Tooltip content={item.missingTranslationsTooltip || "Missing translations"} dismissOnMouseOut>
                               <div
                                 style={{
                                   width: "12px",
