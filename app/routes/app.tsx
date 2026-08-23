@@ -264,8 +264,14 @@ function AppContent() {
 
     showInfoBox(
       extensionHintMessage,
-      // 'warning' (not 'info') so the hint persists until dismissed instead of
-      // auto-hiding after 5s — it carries an actionable deep-link.
+      // 'warning' (not 'info') so the hint gets the long dwell time rather
+      // than the 5s one — it carries an actionable deep-link. It no longer
+      // stands until dismissed: a toast that never goes away QUEUES every
+      // later message behind it, which is what once made save errors
+      // invisible on a shop with no API key (InfoBoxContext). The nudge is
+      // not lost by hiding — the row keeps its deep-link in the message bell,
+      // which is now always on screen, and that is what the one-shot marker
+      // below is really guaranteeing.
       "warning",
       {
         url: "/app/settings?tab=imagemanager",
