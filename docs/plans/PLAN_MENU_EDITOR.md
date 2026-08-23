@@ -1,6 +1,6 @@
 # Menü-Editor — Plan (ändern und übersetzen auf einem Bildschirm)
 
-**Status:** Phase 0 GEMESSEN und abgeschlossen (2026-08-23, `patis-universe-test-shop`, API 2026-07). Kein Blocker mehr: der Editor ist baubar, und die **eine** Reparatur, die er braucht, ist benannt — Umhängen löscht die Übersetzung des umgehängten Punkts, also muss der Editor sie danach neu registrieren (§2.5). Die ausgelieferte Umbenennen-Funktion ist davon **nicht** betroffen, weil sie nichts umhängt. Vom Editor selbst ist bisher nur das Umbenennen gebaut (§0).
+**Status:** Phase 0 GEMESSEN und ABGESCHLOSSEN (2026-08-23, `patis-universe-test-shop`, API 2026-07). Kein Blocker: der Editor ist baubar, und die **eine** Reparatur, die er braucht, ist benannt und bewiesen — Umhängen löscht die Übersetzungen des Punkts, seines ganzen Astes und auf JEDER Ebene (global wie markt-spezifisch), also registriert der Editor sie danach neu (§2.5, §2.6). Die ausgelieferte Umbenennen-Funktion ist davon **nicht** betroffen, weil sie nichts umhängt. Vom Editor selbst ist bisher nur das Umbenennen gebaut (§0).
 **Ziel:** `/app/menus` wird eine vollständige Alternative zum Shopify-Menü-Editor — Reihenfolge, Verschachtelung, Anlegen, Löschen, Ziel ändern, das Menü selbst umbenennen — **und** die Übersetzung steht dabei in derselben Zeile. Der Zweck ist nicht Funktionsgleichheit mit Shopify, sondern das Wegfallen des Hin-und-Her: heute benennt man im Shopify-Admin um und übersetzt danach hier.
 
 > **Keine neuen Scopes.** `write_online_store_navigation` und `read_translations`/`write_translations` sind vorhanden. Es läuft **kein** Re-Consent an. Das ist die eine Randbedingung, die diesen Plan billig macht — jede Phase unten kostet Arbeit, keine kostet Händler.
@@ -86,14 +86,23 @@ Vier Punkte, einer pro Hypothese, nach jeder Stufe alle gelesen:
 
 Daraus folgt die Form von Schritt 8 in §4: Die betroffene Menge ist **jeder umgehängte Punkt VEREINIGT mit allen seinen Nachkommen**, nicht nur der gezogene. Sie wird VOR dem Schreibvorgang aus dem Live-Sweep gesichert (nicht aus `ContentTranslation` — ein Shop, der in Shopifys Editor übersetzt hat, hat Werte, die diese App nie geschrieben hat) und danach zurückgeschrieben.
 
-### 2.6 Trägt ein Menüpunkt eine MARKT-spezifische Übersetzung — und nimmt der Umzug sie mit?
+### 2.6 Trägt ein Menüpunkt eine MARKT-spezifische Übersetzung? — **JA, und der Umzug nimmt sie mit** (gemessen)
 
-Der letzte Rest, und er hängt direkt an §2.5: Die Reparatur schreibt zurück, was diese App liest — die veröffentlichten Sprachen der **globalen** Ebene. Ein markt-spezifischer Wert, in Shopifys eigenem Editor gesetzt, ist genau das, was sie nicht liest. Zwei Möglichkeiten, und nur eine davon ist harmlos:
+| Frage | Antwort |
+|---|---|
+| Lässt sich eine markt-spezifische Übersetzung auf einem Menüpunkt speichern? | **ja** (Markt „European Union", Locale `de`) |
+| Zeigt die GLOBALE Lesung sie? | **nein** — es sind wirklich zwei Ebenen |
+| Übersteht sie das Umhängen? | **nein**, genau wie die globale |
+| Lässt sie sich danach zurückschreiben? | **ja** |
 
-- **Es gibt sie auf Menüpunkten nicht** ⇒ die Reparatur ist vollständig, und der Dateikopf von `app.menus.tsx` kann seine „ungemessen"-Klausel verlieren.
-- **Es gibt sie** ⇒ ein Zug zerstört Händler-Inhalt, den wir nicht zurückschreiben können — dann muss die Reparatur pro Markt laufen, oder das Ziehen bekommt eine Warnung davor.
+Damit ist die unbequeme Variante eingetreten: **die Reparatur des Editors muss jeden Markt abdecken, nicht nur die globale Ebene.** Und weil diese App die Marktebene auf Menüs heute überhaupt nicht liest, ist das nicht nur mehr Schreiben, sondern zuerst mehr **Lesen**.
 
-Die Sonde misst es am fünften Punkt des Haltbarkeits-Menüs: markt-scoped registrieren, unter derselben Marktkennung zurücklesen (Echo ist keine Speicherung), prüfen dass die **globale** Lesung ihn NICHT zeigt (sonst sind es nicht zwei Ebenen), im selben Schreibvorgang wie alle anderen umhängen, und danach — falls weg — zurückschreiben. `read_markets` ist vorhanden, es läuft kein Re-Consent an.
+Die Kosten bleiben trotzdem beherrschbar, weil `translationsRegister` eine LISTE nimmt: pro betroffenem Punkt genügt **ein** Lesevorgang (frischer Digest) und **ein** Register-Aufruf, der alle (Sprache, Markt)-Paare auf einmal trägt. Ein Ast aus fünf Punkten kostet also fünf plus fünf Aufrufe, nicht fünf mal Sprachen mal Märkte.
+
+**Zwei Folgen, die nicht im Editor liegen und trotzdem hierher gehören:**
+
+1. Der heutige Purge nach einer Umbenennung räumt **nur die globale Ebene** ab (`marketId: ""`). Hat ein Händler in Shopifys Editor eine markt-spezifische Menü-Übersetzung gesetzt, bleibt sie nach einer Umbenennung stehen und der Storefront serviert in diesem Markt weiter den alten Wortlaut. Das ist die konservative Richtung (nichts wird gelöscht, was wir nicht lesen), aber es ist eine Lücke und keine Absicht — vermerkt, nicht versteckt.
+2. Der Dateikopf von `app.menus.tsx` sagt, markt-spezifisches Verhalten sei ungemessen. **Die Speicherung ist es jetzt nicht mehr** — sie funktioniert und ist von der globalen getrennt. Ungemessen bleibt allein, ob die Storefront eine Menü-Übersetzung überhaupt ausliefert; das gilt für die globale Ebene genauso.
 
 ---
 
@@ -142,11 +151,16 @@ Das ist bewusst dieselbe Grundhaltung wie im heutigen Schreibweg, nur eine Stufe
 6. Neue IDs nach Position auf die temporären abbilden und zurückgeben
 7. Purge für Punkte mit geändertem Primärtitel (unverändert)
 8. **Übersetzungen der umgehängten Punkte UND IHRER NACHKOMMEN neu
-   registrieren** (§2.5): Shopify löscht sie beim Elternwechsel, obwohl die ID
-   bleibt, und ein mitgezogenes Kind trifft es genauso. Vorher aus dem
-   Live-Sweep gesichert, hinterher mit frischem Digest zurückgeschrieben und
-   echo-geprüft. Was nicht bestätigt zurückkommt, ist ein Fehler PRO PUNKT —
-   der Umbau selbst steht bereits und wird nicht zurückgerollt.
+   registrieren, auf JEDER Ebene** (§2.5, §2.6): Shopify löscht sie beim
+   Elternwechsel, obwohl die ID bleibt; ein mitgezogenes Kind trifft es
+   genauso, und die markt-spezifische Ebene ebenfalls. Vorher gesichert —
+   global aus dem Live-Sweep, markt-spezifisch aus einem eigenen Lesevorgang
+   NUR für die betroffene Menge — hinterher mit frischem Digest
+   zurückgeschrieben und echo-geprüft. Ein Register-Aufruf pro Punkt trägt alle
+   (Sprache, Markt)-Paare, also kostet ein Ast aus fünf Punkten zehn Aufrufe
+   und nicht fünf mal Sprachen mal Märkte. Was nicht bestätigt zurückkommt, ist
+   ein Fehler PRO PUNKT — der Umbau selbst steht bereits und wird nicht
+   zurückgerollt.
 9. Löschungen: lokale Übersetzungszeilen der entfernten Punkte weg
 ```
 
@@ -249,5 +263,5 @@ Nach Phase 2 muss ein Händler den Shopify-Admin für ein Menü nicht mehr öffn
 1. ~~IDs wandern beim Verschieben~~ — **gemessen, sie bleiben** (§2.1).
 2. ~~Shopify nimmt keine vierte Ebene~~ — **gemessen, genau drei** (§2.3). Die Drag-Projektion klemmt bei 3.
 3. ~~`url` bei ziellosen Typen wird abgelehnt~~ — **gemessen, wird angenommen** (Review-Befund 3 erledigt).
-4. ~~Das Umhängen löscht die Übersetzung unwiederbringlich~~ — **gemessen: sie lässt sich sofort zurückschreiben** (§2.5). Kein Kipppunkt, sondern Schritt 8 des Schreibwegs. Offen bleibt allein die markt-spezifische Ebene: ob es sie auf Menüs gibt, ist ungemessen, und die Reparatur erreicht sie nicht.
+4. ~~Das Umhängen löscht die Übersetzung unwiederbringlich~~ — **gemessen: sie lässt sich sofort zurückschreiben** (§2.5), und das gilt auch für die markt-spezifische Ebene (§2.6). Kein Kipppunkt, sondern Schritt 8 des Schreibwegs — der dafür aber die Marktebene LESEN muss, was diese App auf Menüs bisher nirgends tut.
 5. **Zwei Menüs, ein Punkt.** Sollte je der Wunsch aufkommen, Punkte zwischen Menüs zu ziehen: zwei Mutationen ohne gemeinsame Transaktion. Bewusst außerhalb.
