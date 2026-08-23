@@ -232,6 +232,60 @@ export function contentTranslationMirror(shop: string): TranslationMirror {
   };
 }
 
+/**
+ * `MetaobjectTranslation` — a table of its own, keyed by the entry's GID plus
+ * the FIELD key. `refs` are only ever this one entry, so they are not part of
+ * the where-clause: a metaobject is one Shopify translatable resource carrying
+ * every field of the definition, unlike a product whose sub-resources each have
+ * their own GID.
+ *
+ * The row also carries `type` (the BARE metaobject type, CLAUDE.md) and
+ * `outdated`, which the write resets: a value this app has just re-translated
+ * against the current source is by definition not outdated any more.
+ */
+export function metaobjectTranslationMirror(
+  shop: string,
+  metaobjectId: string,
+  type: string,
+): TranslationMirror {
+  return {
+    async existing(_refs, foreignLocales, keys) {
+      const { db } = await import("../../db.server");
+      const rows = await db.metaobjectTranslation.findMany({
+        where: {
+          shop,
+          metaobjectId,
+          marketId: "",
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { key: true, locale: true },
+      });
+      return rows.map((row: { key: string; locale: string }) => ({
+        resourceId: metaobjectId,
+        key: row.key,
+        locale: row.locale,
+      }));
+    },
+    async remove(_ref, locale, keys) {
+      const { db } = await import("../../db.server");
+      await db.metaobjectTranslation.deleteMany({
+        where: { shop, metaobjectId, locale, marketId: "", key: { in: [...keys] } },
+      });
+    },
+    async write(_ref, locale, key, value) {
+      const { db } = await import("../../db.server");
+      await db.metaobjectTranslation.upsert({
+        where: {
+          shop_metaobjectId_key_locale_marketId: { shop, metaobjectId, key, locale, marketId: "" },
+        },
+        create: { shop, metaobjectId, type, key, value, locale, outdated: false, marketId: "" },
+        update: { value, outdated: false },
+      });
+    },
+  };
+}
+
 /** The mirror a target asks for, or the ContentTranslation default. */
 function mirrorOf(target: RepairTarget): TranslationMirror {
   return target.mirror ?? contentTranslationMirror(target.shop);
@@ -444,6 +498,14 @@ const DETECTION_BUDGET_MS = 5_000;
 
 /** `translatableResourcesByIds` caps its page at 250. */
 const RESOURCE_BATCH = 250;
+
+/**
+ * How many bare values go into ONE `translateBatchValues` prompt. They are
+ * numbered into a single request, so an unbounded group — a product with sixty
+ * metafields, an option with fifty values — would build one oversized prompt
+ * and get back a truncated list.
+ */
+const VALUE_BATCH = 40;
 
 /** `${resourceId}\u0000${locale}\u0000${key}` — one triple of the detection set. */
 function tripleKey(resourceId: string, locale: string, key: string): string {
@@ -824,6 +886,11 @@ async function repairStaleTranslations(
   const { retranslate, purge } = partitionStaleTranslations(
     stale,
     policy.autoTranslateExternalChanges,
+    // The content-field allowlist exists to keep `handle` out. A surface that
+    // translates bare values has no `handle` and no field vocabulary at all —
+    // applying the list there would re-translate nothing while reporting that
+    // it had.
+    { anyKey: !!target.translateAs },
   );
 
   // May a stale translation be REMOVED here? Not the same question as the
@@ -1136,12 +1203,24 @@ async function runRetranslation(
       try {
         let translatedFor: (entry: StaleTranslation, index: number) => string | undefined;
         if (asValues) {
-          const values = await translationService.translateValues(
-            translatable.map((entry) => entry.primaryValue),
-            asValues.sourceLocale,
-            locale,
-            asValues.context,
-          );
+          // CHUNKED: `translateBatchValues` numbers every value into ONE
+          // prompt, and a product can carry sixty metafields. A single
+          // oversized request is the failure this avoids — and because the
+          // answer is mapped back by index, the chunks have to be concatenated
+          // in order, never merged by value.
+          const values: string[] = [];
+          for (const group of chunk(translatable, VALUE_BATCH)) {
+            const part = await translationService.translateValues(
+              group.map((entry) => entry.primaryValue),
+              asValues.sourceLocale,
+              locale,
+              asValues.context,
+            );
+            // A short answer would silently shift every later chunk's mapping,
+            // so it is padded to the length it was asked for; the missing ones
+            // read as untranslated and fall through to the removal.
+            for (let i = 0; i < group.length; i++) values.push(part[i] ?? "");
+          }
           translatedFor = (_entry, index) => values[index];
         } else {
           const fields: Record<string, string> = {};

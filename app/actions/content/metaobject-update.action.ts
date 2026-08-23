@@ -195,6 +195,9 @@ export async function handleMetaobjectUpdate(
   const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
   const gateway = new ShopifyApiGateway(admin, session.shop);
 
+  /** Filled by the same lookup as `foreignLocalesCache` — the language the
+   *  primary values are written in, which the re-translation has to name. */
+  let primaryLocaleCache = "";
   // Declared BEFORE the dispatch below: savePrimary() -> invalidateForeign() ->
   // getForeignLocales() reads it, and a `let` further down would still be in
   // its temporal dead zone at that point.
@@ -356,18 +359,52 @@ export async function handleMetaobjectUpdate(
    */
   async function invalidateForeign(metaobjectId: string, keys: string[]): Promise<void> {
     try {
-      const { isPurgeOnPrimaryChangeEnabled } = await import(
+      const { loadTranslationChangePolicy } = await import(
         "~/services/translations/translation-change-policy.server"
       );
-      // No `reconciled` flag: MetaobjectTranslation is outside the sync's
-      // re-translation entirely, so auto-translate must not switch this off —
-      // nothing would ever refresh the row.
-      if (!(await isPurgeOnPrimaryChangeEnabled(session.shop, db))) return;
+      const policy = await loadTranslationChangePolicy(session.shop, db);
+      const foreignLocales = await getForeignLocales();
+      if (foreignLocales.length === 0) return;
+
+      // With auto-translate on, THIS save is the repair: a metaobject field is
+      // outside every sync and every webhook in this app, so nothing else would
+      // ever refresh the row — which is precisely why the deletion used to
+      // stand regardless of the switch. Now that the save can replace the text,
+      // the merchant's "translate it again" answer applies here too.
+      if (policy.autoTranslateExternalChanges && primaryLocaleCache) {
+        const { reconcileAfterPrimarySave, metaobjectTranslationMirror } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        const entry = entries.get(metaobjectId);
+        await reconcileAfterPrimarySave({
+          client: admin,
+          shop: session.shop,
+          resourceId: metaobjectId,
+          // The Shopify resource IS the entry; its fields are keys on it, not
+          // sub-resources — so no entry names a resource of its own.
+          resourceType: "Metaobject",
+          // A metaobject has no kind of its own in the AI vocabulary; the
+          // prompt comes from `translateAs` anyway, and this only decides the
+          // Task row's label.
+          contentKind: "page",
+          resourceTitle: entry?.type ? `${entry.type} · ${metaobjectId}` : metaobjectId,
+          changed: keys.map((key) => ({ key })),
+          foreignLocales,
+          policy,
+          mirror: metaobjectTranslationMirror(session.shop, metaobjectId, entry?.type ?? ""),
+          translateAs: {
+            kind: "values",
+            context: "metaobject field values",
+            sourceLocale: primaryLocaleCache,
+          },
+        });
+        return;
+      }
+
+      if (!policy.purgeUnreconciledSurfaces) return;
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
         "~/services/bulk-editor/translations.server"
       );
-      const foreignLocales = await getForeignLocales();
-      if (foreignLocales.length === 0) return;
       // Skip Shopify entirely when there is nothing to invalidate — the common
       // case on a shop that never translated this field.
       const existing = await db.metaobjectTranslation.findMany({
@@ -421,7 +458,9 @@ export async function handleMetaobjectUpdate(
     const data = (await response.json()) as {
       data?: { shopLocales?: Array<{ locale: string; primary: boolean; published: boolean }> };
     };
-    foreignLocalesCache = (data.data?.shopLocales ?? [])
+    const shopLocales = data.data?.shopLocales ?? [];
+    primaryLocaleCache = shopLocales.find((l) => l.primary)?.locale ?? "";
+    foreignLocalesCache = shopLocales
       .filter((l) => !l.primary && l.published)
       .map((l) => l.locale);
     return foreignLocalesCache;

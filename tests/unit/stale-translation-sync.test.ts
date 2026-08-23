@@ -33,10 +33,17 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     /** locale → keys Shopify confirms it removed. Default: everything asked for. */
     removeConfirms: null as null | Record<string, string[]>,
     removeCalls: [] as Array<{ keys: string[]; locale: string }>,
+    /** Which Shopify RESOURCE each remove/register call addressed — a group can
+     *  span several, and both mutations take exactly one. */
+    removeTargets: [] as string[],
+    registerTargets: [] as string[],
     registerConfirms: null as null | string[],
     registerCalls: [] as Array<{ key: string; locale: string; value: string }>,
   };
-  const ai = { translate: vi.fn(async () => ({})) as any };
+  const ai = {
+    translate: vi.fn(async () => ({})) as any,
+    translateValues: vi.fn(async () => []) as any,
+  };
   const policy = { purgeOnPrimaryChange: true, autoTranslateExternalChanges: false, plan: "max" };
   return { db, shopify, ai, policy };
 });
@@ -44,14 +51,18 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
 vi.mock("../../app/db.server", () => ({ db, default: db }));
 
 vi.mock("../../app/services/bulk-editor/translations.server", () => ({
-  removeAndVerify: vi.fn(async (_gw: unknown, _id: string, keys: string[], locale: string) => {
+  removeAndVerify: vi.fn(async (_gw: unknown, resourceId: string, keys: string[], locale: string) => {
     shopify.removeCalls.push({ keys, locale });
+    shopify.removeTargets.push(resourceId);
     const confirmed = shopify.removeConfirms ? (shopify.removeConfirms[locale] ?? []) : keys;
     return { confirmedKeys: new Set(confirmed), userErrors: [] };
   }),
   registerAndVerify: vi.fn(
-    async (_gw: unknown, _id: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
-      for (const input of inputs) shopify.registerCalls.push(input);
+    async (_gw: unknown, resourceId: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
+      for (const input of inputs) {
+        shopify.registerCalls.push(input);
+        shopify.registerTargets.push(resourceId);
+      }
       const confirmed = shopify.registerConfirms ?? inputs.map((i) => i.key);
       return { confirmedKeys: new Set(confirmed), userErrors: [] };
     },
@@ -67,6 +78,9 @@ vi.mock("../../src/services/translation.service", () => ({
   TranslationService: class {
     translateProduct(...args: unknown[]) {
       return ai.translate(...args);
+    }
+    translateValues(...args: unknown[]) {
+      return ai.translateValues(...args);
     }
   },
 }));
@@ -122,6 +136,8 @@ function baseParams(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   shopify.removeCalls = [];
   shopify.registerCalls = [];
+  shopify.removeTargets = [];
+  shopify.registerTargets = [];
   shopify.removeConfirms = null;
   shopify.registerConfirms = null;
   policy.purgeOnPrimaryChange = true;
@@ -130,6 +146,7 @@ beforeEach(() => {
   db.contentTranslation.upsert.mockClear();
   db.contentTranslation.upsert.mockImplementation(async () => ({}));
   ai.translate = vi.fn(async () => ({}));
+  ai.translateValues = vi.fn(async (values: string[]) => values.map((v) => `xx-${v}`));
 });
 
 describe("purge path", () => {
@@ -655,5 +672,158 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       removed: 0,
       retranslating: 0,
     });
+  });
+});
+
+
+/**
+ * A group that spans several Shopify resources — the product's OPTIONS, OPTION
+ * VALUES and METAFIELDS. One merchant action, so one Task row, one batched
+ * detection and one AI request per locale; but `translationsRegister` and
+ * `translationsRemove` each address exactly ONE resource, so the writes fan out
+ * per resource.
+ */
+describe("a group spanning several resources (sub-resources)", () => {
+  const PRODUCT = "gid://shopify/Product/9";
+  const OPTION = "gid://shopify/ProductOption/1";
+  const VALUE = "gid://shopify/ProductOptionValue/2";
+  const METAFIELD = "gid://shopify/Metafield/3";
+
+  let translated: Record<string, string[]>;
+  let primary: Record<string, Record<string, { value: string; digest: string | null }>>;
+
+  const client = () => ({
+    graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => ({
+      ok: true,
+      json: async () => {
+        const ids = (opts?.variables?.resourceIds as string[]) ?? [];
+        if (query.includes("stalePrimaryContent")) {
+          return {
+            data: {
+              translatableResourcesByIds: {
+                edges: ids.map((resourceId) => ({
+                  node: {
+                    resourceId,
+                    translatableContent: Object.entries(primary[resourceId] ?? {}).map(
+                      ([key, entry]) => ({ key, value: entry.value, digest: entry.digest }),
+                    ),
+                  },
+                })),
+              },
+            },
+          };
+        }
+        const locale = String(opts?.variables?.locale ?? "");
+        return {
+          data: {
+            translatableResourcesByIds: {
+              edges: ids.map((resourceId) => ({
+                node: {
+                  resourceId,
+                  translations: Object.keys(primary[resourceId] ?? {}).map((key) => ({
+                    key,
+                    locale,
+                    value: (translated[locale] ?? []).includes(resourceId) ? "alt" : null,
+                  })),
+                },
+              })),
+            },
+          },
+        };
+      },
+    })),
+  });
+
+  const groupParams = (over: Record<string, unknown> = {}) => ({
+    client: client() as never,
+    shop: SHOP,
+    resourceId: PRODUCT,
+    resourceType: "Product",
+    contentKind: "product" as const,
+    resourceTitle: "Kumiko Box",
+    changed: [
+      { resourceId: OPTION, resourceType: "ProductOption", key: "name" },
+      { resourceId: VALUE, resourceType: "ProductOptionValue", key: "name" },
+      { resourceId: METAFIELD, resourceType: "Metafield", key: "value" },
+    ],
+    foreignLocales: ["fr"],
+    policy: policy as never,
+    translateAs: { kind: "values" as const, context: "product options", sourceLocale: "de" },
+    ...over,
+  });
+
+  beforeEach(() => {
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeOnPrimaryChange = false;
+    translated = { fr: [OPTION, VALUE, METAFIELD] };
+    primary = {
+      [OPTION]: { name: { value: "Farbe", digest: NEW } },
+      [VALUE]: { name: { value: "Rot", digest: NEW } },
+      [METAFIELD]: { value: { value: "Massivholz", digest: NEW } },
+    };
+    db.contentTranslation.findMany.mockClear();
+    db.contentTranslation.findMany.mockResolvedValue([]);
+  });
+
+  it("registers on each entry's OWN resource, not on the group's", async () => {
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+    expect(shopify.registerTargets).not.toContain(PRODUCT);
+  });
+
+  it("asks the AI ONCE per locale for the whole group", async () => {
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(ai.translateValues).toHaveBeenCalledTimes(1);
+    expect(ai.translateValues.mock.calls[0][0]).toEqual(["Farbe", "Rot", "Massivholz"]);
+    // The generic prompt, not the content-field one — an option name has no
+    // field to hang SEO limits or per-field instructions on.
+    expect(ai.translate).not.toHaveBeenCalled();
+  });
+
+  it("maps the answer back by INDEX, so two identical values stay apart", async () => {
+    primary[VALUE] = { name: { value: "Farbe", digest: NEW } }; // same text as the option
+    ai.translateValues = vi.fn(async () => ["Couleur", "Teinte", "Bois massif"]);
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    const byResource = Object.fromEntries(
+      shopify.registerCalls.map((c, i) => [shopify.registerTargets[i], c.value]),
+    );
+    expect(byResource[OPTION]).toBe("Couleur");
+    expect(byResource[VALUE]).toBe("Teinte");
+  });
+
+  it("purges per resource when the AI cannot deliver", async () => {
+    ai.translateValues = vi.fn(async () => []);
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.removeTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+  });
+
+  it("chunks the values instead of building one oversized prompt", async () => {
+    const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
+    primary = Object.fromEntries(
+      many.map((id, i) => [id, { value: { value: `text-${i}`, digest: NEW } }]),
+    );
+    translated = { fr: many };
+
+    await reconcileAfterPrimarySave(
+      groupParams({
+        changed: many.map((id) => ({ resourceId: id, resourceType: "Metafield", key: "value" })),
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    // 95 values at 40 per request.
+    expect(ai.translateValues).toHaveBeenCalledTimes(3);
+    const sizes = ai.translateValues.mock.calls.map((c: unknown[]) => (c[0] as string[]).length);
+    expect(sizes).toEqual([40, 40, 15]);
   });
 });

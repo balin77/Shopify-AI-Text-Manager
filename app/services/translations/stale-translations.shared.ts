@@ -222,6 +222,18 @@ export function findStaleTranslations(
 export function partitionStaleTranslations(
   stale: readonly StaleTranslation[],
   autoTranslate: boolean,
+  /**
+   * `anyKey` lifts the `AUTO_RETRANSLATABLE_KEYS` allowlist, and only a caller
+   * that translates BARE VALUES may pass it. That list is a vocabulary of
+   * CONTENT-FIELD keys whose one job is to keep `handle` out — a slug is a URL,
+   * and rewriting one unattended moves a storefront page nobody asked to move.
+   * A metafield's `value`, an option's `name` and a metaobject field key are
+   * simply not in it, so applying it there would silently re-translate NOTHING
+   * on those surfaces while reporting that it had. There is no `handle` among
+   * them to protect: they name their own keys, and the caller has already
+   * filtered to the ones it changed.
+   */
+  opts: { anyKey?: boolean } = {},
 ): { retranslate: StaleTranslation[]; purge: StaleTranslation[] } {
   const retranslate: StaleTranslation[] = [];
   const purge: StaleTranslation[] = [];
@@ -230,7 +242,7 @@ export function partitionStaleTranslations(
       autoTranslate &&
       !!entry.primaryValue.trim() &&
       !!entry.digest &&
-      AUTO_RETRANSLATABLE_KEYS.has(entry.key);
+      (opts.anyKey || AUTO_RETRANSLATABLE_KEYS.has(entry.key));
     (canRetranslate ? retranslate : purge).push(entry);
   }
   return { retranslate, purge };
