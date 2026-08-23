@@ -3,7 +3,13 @@
  *
  * dnd-kit has no tree component. The established shape (and the one its own
  * SortableTree example uses) is to FLATTEN the tree into a list, sort that,
- * and express nesting through the horizontal offset of the drag. Everything
+ * and express nesting through the horizontal offset of the drag.
+ *
+ * There is deliberately NO `DragOverlay`: the row being dragged is the row
+ * that moves. The overlay is dnd-kit's usual answer, but it puts a second
+ * object on screen — a floating copy under the cursor while the original stays
+ * in place, dimmed — and with rows this tall that reads as two things moving
+ * at once rather than as one being carried. Everything
  * about that translation — including the depth clamp Shopify measurably
  * enforces — lives in `projectDrop` in menu-tree.shared.ts, so it can be
  * tested without a DOM. This component is the hands: sensors, rendering, and
@@ -22,7 +28,6 @@
 import { useMemo, useState } from "react";
 import {
   DndContext,
-  DragOverlay,
   KeyboardSensor,
   MeasuringStrategy,
   MouseSensor,
@@ -33,6 +38,7 @@ import {
   type DragEndEvent,
   type DragMoveEvent,
   type DragStartEvent,
+  type Modifier,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -41,7 +47,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Button, InlineStack, Text, TextField, Tooltip } from "@shopify/polaris";
+import { Button, Text, TextField, Tooltip } from "@shopify/polaris";
 import {
   MAX_MENU_DEPTH,
   dropIndexAmongSiblings,
@@ -71,6 +77,16 @@ export interface MenuTreeEditorProps {
   onChange: (nodes: MenuEditorNode[]) => void;
   /** Renders the row's editable field — the page owns what a field means. */
   renderField: (node: MenuEditorNode, flat: FlatEditorItem) => React.ReactNode;
+  /**
+   * Renders the row's TARGET control, or nothing where there is none (a
+   * foreign locale does not retarget).
+   *
+   * Its own render prop rather than part of `renderField`, because the two
+   * are placed independently: side by side while there is room, and stacked
+   * with the action row BETWEEN them when there is not — which no single
+   * returned node could express.
+   */
+  renderTarget?: (node: MenuEditorNode, flat: FlatEditorItem) => React.ReactNode;
   /** Renders the row's per-item actions (translate, copy, …). */
   renderActions?: (node: MenuEditorNode, flat: FlatEditorItem) => React.ReactNode;
   onDelete?: (node: MenuEditorNode) => void;
@@ -84,6 +100,7 @@ export function MenuTreeEditor({
   nodes,
   onChange,
   renderField,
+  renderTarget,
   renderActions,
   onDelete,
   onAddChild,
@@ -133,6 +150,50 @@ export function MenuTreeEditor({
     return projectDrop(flat, activeKey, overKey, offsetX, INDENT_WIDTH, active ? subtreeHeight(active) : 1);
   }, [activeKey, overKey, offsetX, flat, nodes]);
 
+  /**
+   * What the dragged row is ALLOWED to do, as a dnd-kit modifier.
+   *
+   * Without it the row follows the raw pointer: out of the list at the top and
+   * bottom, and sideways to any x at all — while its INDENT separately jumped
+   * to whatever depth the projection had settled on. Two horizontal movements
+   * at once, one of them meaningless, and a row that could be parked in the
+   * margin next to a place it can never go.
+   *
+   * So both axes are pinned to what a drop can actually produce:
+   *
+   *   X is held at ZERO. Depth is already shown — `MenuTreeRow` renders the
+   *   PROJECTED depth while dragging, so the row's indent steps between the
+   *   legal positions on its own. Letting the element translate horizontally
+   *   as well only added a second, finer movement that promised placements
+   *   (half a level, four levels in) that the projection would never grant.
+   *
+   *   Y is clamped to the list. `containerNodeRect` is the row's parent — the
+   *   element inside SortableContext — so the row stops at the first and last
+   *   position instead of being carried off past them.
+   *
+   * The projection itself keeps reading the RAW pointer offset (`delta.x`),
+   * which the modifier does not touch: the merchant's intent is still measured
+   * from where they actually moved the mouse, and only the rendering is
+   * constrained. Clamping the input instead would make the depth stick one
+   * step below the pointer.
+   */
+  const modifiers = useMemo(
+    () => [
+      ({ transform, draggingNodeRect, containerNodeRect }: Parameters<Modifier>[0]) => {
+        let y = transform.y;
+        if (draggingNodeRect && containerNodeRect) {
+          const minY = containerNodeRect.top - draggingNodeRect.top;
+          const maxY = containerNodeRect.bottom - draggingNodeRect.bottom;
+          // A row taller than its own list cannot satisfy both bounds; the top
+          // one wins, so the grab point stays visible.
+          y = maxY > minY ? Math.min(Math.max(y, minY), maxY) : minY;
+        }
+        return { ...transform, x: 0, y };
+      },
+    ],
+    [],
+  );
+
   const sensors = useSensors(
     useSensor(MouseSensor),
     useSensor(TouchSensor),
@@ -169,11 +230,10 @@ export function MenuTreeEditor({
     if (next !== nodes) onChange(next);
   };
 
-  const activeNode = activeKey ? findNode(nodes, activeKey) : null;
-
   return (
     <DndContext
       sensors={sensors}
+      modifiers={modifiers}
       collisionDetection={closestCenter}
       // The list changes height when a branch collapses under the cursor, so
       // dnd-kit has to re-measure rather than work from stale rectangles.
@@ -196,6 +256,7 @@ export function MenuTreeEditor({
               item={item}
               depth={activeKey === item.key && projection ? projection.depth : item.depth}
               renderField={renderField}
+              renderTarget={renderTarget}
               renderActions={renderActions}
               onDelete={onDelete}
               onAddChild={onAddChild}
@@ -205,23 +266,6 @@ export function MenuTreeEditor({
           ))}
         </div>
       </SortableContext>
-      {/* The overlay is what the merchant drags: without it the row stays in
-          place and only a gap moves, which reads as a broken drag. */}
-      <DragOverlay>
-        {activeNode ? (
-          <div
-            style={{
-              padding: "0.5rem 0.75rem",
-              background: "var(--p-color-bg-surface, #fff)",
-              border: "1px solid var(--app-surface-border-color)",
-              borderRadius: "8px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-            }}
-          >
-            <Text as="span" variant="bodyMd">{activeNode.title}</Text>
-          </div>
-        ) : null}
-      </DragOverlay>
     </DndContext>
   );
 }
@@ -230,6 +274,7 @@ interface MenuTreeRowProps {
   item: FlatEditorItem;
   depth: number;
   renderField: MenuTreeEditorProps["renderField"];
+  renderTarget?: MenuTreeEditorProps["renderTarget"];
   renderActions?: MenuTreeEditorProps["renderActions"];
   onDelete?: MenuTreeEditorProps["onDelete"];
   onAddChild?: MenuTreeEditorProps["onAddChild"];
@@ -241,6 +286,7 @@ function MenuTreeRow({
   item,
   depth,
   renderField,
+  renderTarget,
   renderActions,
   onDelete,
   onAddChild,
@@ -251,65 +297,106 @@ function MenuTreeRow({
     useSortable({ id: item.key, disabled: structureLocked });
 
   const canAddChild = !structureLocked && depth < MAX_MENU_DEPTH;
+  const target = renderTarget?.(item.node, item);
 
   return (
     <div
       ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-        // The dragged row keeps its space but goes quiet — the overlay above
-        // is the thing that moves.
-        opacity: isDragging ? 0.4 : 1,
-        marginLeft: `${(depth - 1) * INDENT_WIDTH}px`,
-        marginBottom: "0.75rem",
-      }}
+      className="menu-tree-row"
+      style={
+        {
+          transform: CSS.Translate.toString(transform),
+          transition,
+          // The ROW is what the merchant drags. There used to be a `DragOverlay`
+          // — a copy of the title floating under the cursor while the real row
+          // stayed put and dimmed — and it read as two things moving at once.
+          // Without it, `useSortable` translates this element itself, so there
+          // is one object on screen and it is the one being moved. It only has
+          // to sit ABOVE its neighbours on the way past them; dimming it would
+          // now be dimming the thing under the cursor.
+          zIndex: isDragging ? 2 : undefined,
+          position: isDragging ? "relative" : undefined,
+          marginBottom: "0.75rem",
+          // Depth as a VARIABLE, not as a margin on the row.
+          //
+          // A margin here shifted the whole grid, so a nested row's name box
+          // ended further right than a top-level one's and the target column
+          // started at a different x on every line — a ragged right edge down
+          // the middle of the page. The stylesheet spends it on the NAME cell
+          // instead: the left edge moves with the depth, the right edge is the
+          // column boundary and does not move, and every target box therefore
+          // begins at the same place. On a phone, where the two boxes stack and
+          // there is no column to line up, it goes back to being the row's own
+          // indent so the stacked pair reads as one item.
+          "--menu-row-indent": `${(depth - 1) * INDENT_WIDTH}px`,
+        } as React.CSSProperties
+      }
     >
-      <InlineStack gap="200" blockAlign="start" wrap={false}>
-        {!structureLocked && (
-          <div
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            aria-label={strings.dragHandle}
-            style={{
-              cursor: "grab",
-              padding: "0.5rem 0.25rem",
-              // The handle sits beside a Polaris field whose own label row is
-              // above the box; a fixed nudge keeps it on the box's line.
-              marginTop: "1.5rem",
-              color: "var(--p-color-icon-secondary, #6d7175)",
-              touchAction: "none",
-              userSelect: "none",
-            }}
-          >
-            ⠿
-          </div>
-        )}
-        <div style={{ flex: 1, minWidth: 0 }}>{renderField(item.node, item)}</div>
-      </InlineStack>
-      <InlineStack gap="200" align="end" blockAlign="center">
-        {renderActions?.(item.node, item)}
-        {canAddChild && onAddChild && (
-          <Button size="slim" variant="tertiary" onClick={() => onAddChild(item.node)}>
-            {strings.addChild}
-          </Button>
-        )}
-        {!structureLocked && depth >= MAX_MENU_DEPTH && onAddChild && (
-          // Said rather than hidden: a merchant who cannot find "add below"
-          // on the third level should learn why, not hunt for it.
-          <Tooltip content={strings.maxDepthReached}>
-            <Text as="span" variant="bodySm" tone="subdued">
-              {strings.maxDepthReached}
-            </Text>
-          </Tooltip>
-        )}
-        {!structureLocked && onDelete && (
-          <Button size="slim" variant="tertiary" tone="critical" onClick={() => onDelete(item.node)}>
-            {strings.deleteItem}
-          </Button>
-        )}
-      </InlineStack>
+      {/* Name, target and actions are placed by ONE grid rather than
+          stacked, because their arrangement differs between the two widths
+          in a way stacking cannot express: side by side with the actions
+          running underneath both, or one above the other with the actions
+          BETWEEN them. The rules live in MenuTreeRow.css; the modifiers are
+          here because only this component knows whether there is a target at
+          all (a foreign locale has none, and an empty second column would
+          leave the name box at half width) and whether there is a handle to
+          reserve a lane for. */}
+      <div
+        className={[
+          "menu-row-grid",
+          target ? "" : "menu-row-grid--no-target",
+          structureLocked ? "menu-row-grid--no-handle" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        <div className="menu-row-name">
+          {/* The handle lives INSIDE the name cell, absolutely positioned
+              against it. It has to step in with the nesting like everything
+              else in the row — but it cannot do that from a flex lane in
+              front of the grid, because then its own offset would push the
+              grid and the target column would go ragged again, which is the
+              defect the indent was just moved off the row to fix. Out of
+              flow, it indents freely: the cell reserves the lane in its
+              padding, the handle sits at the lane's left edge, and the grid
+              starts at the same x on every row. */}
+          {!structureLocked && (
+            <div
+              ref={setActivatorNodeRef}
+              {...attributes}
+              {...listeners}
+              aria-label={strings.dragHandle}
+              className="menu-row-handle"
+            >
+              ⠿
+            </div>
+          )}
+          {renderField(item.node, item)}
+        </div>
+        {target && <div className="menu-row-target">{target}</div>}
+        <div className="menu-row-actions">
+          {renderActions?.(item.node, item)}
+          {canAddChild && onAddChild && (
+            <Button size="slim" variant="tertiary" onClick={() => onAddChild(item.node)}>
+              {strings.addChild}
+            </Button>
+          )}
+          {!structureLocked && depth >= MAX_MENU_DEPTH && onAddChild && (
+            // Said rather than hidden: a merchant who cannot find "add below"
+            // on the third level should learn why, not hunt for it.
+            <Tooltip content={strings.maxDepthReached}>
+              <Text as="span" variant="bodySm" tone="subdued">
+                {strings.maxDepthReached}
+              </Text>
+            </Tooltip>
+          )}
+          {!structureLocked && onDelete && (
+            <Button size="slim" variant="tertiary" tone="critical" onClick={() => onDelete(item.node)}>
+              {strings.deleteItem}
+            </Button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

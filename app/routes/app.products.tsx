@@ -429,7 +429,11 @@ export default function ProductsPage() {
   const initialItemId = searchParams.get("select") || undefined;
   // Locale of the deep link (the SEO dashboard passes the language it was
   // showing). Validated against the shop's locales inside the editor hook.
-  const initialLocale = searchParams.get("locale") || undefined;
+  // NOT `?locale=` — Shopify appends the merchant's ADMIN UI language under
+  // that name on every embedded request, and useAppNavigation carries every
+  // param along, so reading it here opened the content editor in whatever
+  // language the admin happens to be in (see the initialLocale docstring).
+  const initialLocale = searchParams.get("contentLocale") || undefined;
 
   // Content-Freshness deep-link (PLAN_SEO_SUITE_COMPLETION.md §5.3): the
   // "Mit AI überarbeiten" button on the Freshness panel links here with

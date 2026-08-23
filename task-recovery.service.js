@@ -374,6 +374,13 @@ export class TaskRecoveryService {
     // longer matches the selector, so a later pass cannot re-select /
     // double-refund (idempotent across runs, same guarantee as before).
     //
+    // "When WE flip it" is the whole rule, and it is the WRITE that says so,
+    // not the read: a work item can finish between the SELECT and the guarded
+    // UPDATE below, in which case the update skips it and a refund counted off
+    // the selected rows would hand a merchant their quota back for an image
+    // that converted. Work rows are therefore flipped per shop, so
+    // `updateMany`'s count is attributable to one counter.
+    //
     // The AGGREGATE row spent nothing: its items each spent one and each refund
     // themselves, here or in the processor. Refunding for it too would give a
     // twenty-image batch twenty-one operations back, and refunding for it
@@ -394,23 +401,49 @@ export class TaskRecoveryService {
           take: STUCK_REAP_BATCH,
         });
         if (rows.length === 0) break;
-        const res = await prisma.task.updateMany({
-          where: { id: { in: rows.map((r) => r.id) }, status: { in: NON_TERMINAL } },
-          data: {
-            status: 'failed',
-            // Machine code, not prose: this runs outside any request, so there
-            // is no merchant locale here. The UI translates it via
-            // app/utils/task-error-text.ts (`taskTimedOut`).
-            error: 'task_timed_out',
-            completedAt: new Date(),
-          },
-        });
-        total += res.count;
+        const reapData = {
+          status: 'failed',
+          // Machine code, not prose: this runs outside any request, so there
+          // is no merchant locale here. The UI translates it via
+          // app/utils/task-error-text.ts (`taskTimedOut`).
+          error: 'task_timed_out',
+          completedAt: new Date(),
+        };
+
+        // Everything that owes no refund goes in one statement, as before.
+        const plainIds = [];
+        // Work rows grouped by shop, because that is the granularity a refund
+        // is paid at and therefore the granularity the flip has to be counted at.
+        const workIdsByShop = new Map();
         for (const r of rows) {
           if (isWebpWorkRow(r)) {
-            refundByShop.set(r.shop, (refundByShop.get(r.shop) ?? 0) + 1);
+            const ids = workIdsByShop.get(r.shop);
+            if (ids) ids.push(r.id);
+            else workIdsByShop.set(r.shop, [r.id]);
+          } else {
+            plainIds.push(r.id);
           }
         }
+
+        if (plainIds.length > 0) {
+          const res = await prisma.task.updateMany({
+            where: { id: { in: plainIds }, status: { in: NON_TERMINAL } },
+            data: reapData,
+          });
+          total += res.count;
+        }
+
+        for (const [shop, ids] of workIdsByShop) {
+          const res = await prisma.task.updateMany({
+            where: { id: { in: ids }, status: { in: NON_TERMINAL } },
+            data: reapData,
+          });
+          total += res.count;
+          if (res.count > 0) {
+            refundByShop.set(shop, (refundByShop.get(shop) ?? 0) + res.count);
+          }
+        }
+
         if (rows.length < STUCK_REAP_BATCH) break;
       }
     };

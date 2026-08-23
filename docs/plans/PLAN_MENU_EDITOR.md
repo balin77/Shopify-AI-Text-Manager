@@ -230,9 +230,27 @@ Löschen ist hier die gefährlichste Operation, weil es ein Weglassen ist: kein 
 | zielloser Typ (`FRONTPAGE`, `SEARCH`, `CATALOG`, `COLLECTIONS`, `CUSTOMER_ACCOUNT_PAGE`) | nur Typwahl | trivial |
 | ressourcengebunden (`PRODUCT`, `COLLECTION`, `PAGE`, `BLOG`, `ARTICLE`, `SHOP_POLICY`, `METAOBJECT`) | Ressourcen-Picker | die eigentliche Arbeit |
 
-Für die dritte Klasse existieren im Repo bereits Auswahlmuster (`ChipCombobox`, der Collection-Picker, `TaxonomyValuePicker`), aber kein generischer „wähle eine Ressource dieses Typs"-Picker. Der ist der Aufwandsschwerpunkt dieser Phase — und der Grund, warum sie **zuletzt** kommt: Umsortieren und Umbenennen liefern den Großteil des Nutzens, Umzielen ist der seltenste Vorgang.
+**GEBAUT.** Eine Combobox pro Zeile, auf der Hauptsprache und für JEDEN Punkt — neu wie bestehend. Ein Ziel ist ein Link für alle Sprachen; ein Fremdsprachen-Tab, der es ändern dürfte, böte an, die Navigation des ganzen Shops von einem Übersetzungsbildschirm aus umzuhängen.
 
-Bis dahin gilt für einen Typ ohne Picker dieselbe Regel wie bei den Metaobjekt-Feldern: **benennen, nicht verschweigen** — die Zeile zeigt Typ und Ziel als Text und sagt, dass es im Shopify-Admin geändert wird.
+| Baustein | Was er tut |
+|---|---|
+| [menu-targets.shared.ts](../../app/services/menu-targets.shared.ts) | rein: die drei Klassen (aus den Konstanten des Schreibwegs GELESEN, nicht neu erklärt), welcher Cache eine Gruppe füllt, `looksLikeMenuUrl`, `summarizeMenuTarget`, `menuTargetPatch` |
+| [api.menu-targets.tsx](../../app/routes/api.menu-targets.tsx) | die Suche über alle sieben Gruppen auf einmal, aus dem DB-Cache, plan-gated (direkt per GET erreichbar) |
+| [menu-targets.server.ts](../../app/services/menu-targets.server.ts) | GID → Titel für den Ladevorgang, eine Abfrage pro Ressourcen-TYP statt pro Punkt |
+| [MenuTargetPicker.tsx](../../app/components/menus/MenuTargetPicker.tsx) | die Combobox: Gruppenüberschriften, feste Ziele, URL-Option, Scroll-Lock |
+
+Vier Regeln, jede mit ihrem eigenen Fehlermodus:
+
+1. **Der Picker liest die Typklassen aus dem Schreibweg**, statt sie zu wiederholen. Er kann keinen Typ anbieten, den `validateEditorTree` ablehnt — und weil `menuUpdate` den GANZEN Baum schickt, kostet ein einziger abgelehnter Punkt jede andere Änderung im selben Speichern.
+2. **`menuTargetPatch` baut die Änderung für alle drei Formen.** Kein Aufrufer kann vergessen, beim Wechsel auf einen festen Zielpunkt die `resourceId` zu leeren — ein PRODUCT-Punkt, der FRONTPAGE wird und seine alte `resourceId` behält, ist eine Nutzlast, die Shopify annehmen kann und niemand gemeint hat.
+3. **Ein Ziel, dessen Titel nicht auflöst, zeigt Typ und rohe ID.** Ein leeres Feld läse sich als „kein Ziel", und das nächste Speichern machte das wahr. Der Grund ist fast immer harmlos (die Ressource ist neuer als der letzte Sync), also nennt die Hilfszeile das Neuladen.
+4. **Ein blosses Suchwort bietet sich NICHT als URL an**, ein Pfad und eine absolute URL schon. Sonst stünde bei jedem Anschlag der Fehlgriff ganz oben im Dropdown.
+
+**Was dabei zusätzlich GEMESSEN wurde** (2026-08-23, Live-Shop, API 2026-07): Alle sieben Typen binden ihre `resourceId` und lesen sie zurück — `PRODUCT`, `COLLECTION`, `PAGE`, `BLOG`, `ARTICLE`, `SHOP_POLICY`, `METAOBJECT`. Und das Umzielen selbst, in beide Richtungen: ein gebundener Punkt, als `HTTP` OHNE `resourceId` zurückgeschickt, verliert die Bindung und speichert die neue url; zurück auf seine Ressource gebunden nimmt er sie wieder an und die url ist weg. Das ist die Messung, die dem Schreibweg erlaubt, eine leere `resourceId` WEGZULASSEN statt sie als null zu schicken.
+
+Zwei Dinge daran sind selbst Befunde. Die Sonde misst jeden Typ notfalls in einem eigenen Menü, weil `menuCreate` alles-oder-nichts ist: ein abgelehnter Typ hätte die anderen sechs als „nicht gemessen" gemeldet und den schuldigen nie genannt. Und der erste Anlauf der Sample-Suche fragte nach `Shop.privacyPolicy` — das Feld gibt es in 2026-07 nicht, Richtlinien hängen als schlichte LISTE unter `shop.shopPolicies`. Ein unbekanntes Feld ist ein Fehler auf SCHEMA-Ebene und lässt das ganze Dokument scheitern, also kam `data: null` zurück und alle sieben Typen meldeten „nicht gemessen" aus einer Abfrage, die nie lief. Der Trap, gegen den die Sonde geschrieben ist, in der Sonde selbst.
+
+**Blogs sind die eine benannte Lücke:** diese App hält kein Blog-Modell, ihre Kandidaten kommen als `distinct` über `Article.blogId`/`blogTitle` aus dem Artikel-Cache. Ein Blog ohne einen einzigen Beitrag steht deshalb nicht in der Liste — gesagt in der Liste selbst, statt den Händler suchen zu lassen.
 
 ---
 
@@ -240,7 +258,8 @@ Bis dahin gilt für einen Typ ohne Picker dieselbe Regel wie bei den Metaobjekt-
 
 - **Titel:** editierbar. `menuUpdate` verlangt ihn ohnehin bei jedem Aufruf, der Schreibweg reicht ihn heute nur unverändert durch.
 - **Handle:** **nicht** ohne Warnung. Ein Theme referenziert ein Menü über den Handle (`main-menu`, `footer`); ihn zu ändern hängt das Menü lautlos aus der Storefront aus, und diese App bearbeitet den Theme-Code des Händlers nicht (CLAUDE.md). Vorschlag: anzeigen, editierbar hinter einer Bestätigung, die die Folge benennt — und, weil wir Theme-Dateien LESEN dürfen, mit einer Suche nach dem Handle im veröffentlichten Theme. Findet sie ihn, nennt die Warnung die Datei. Findet sie nichts, sagt sie „nicht gefunden", niemals „wird nicht verwendet" (der `translatableContent`-Trap in einer anderen Kleiderordnung).
-- **Neues Menü anlegen / Menü löschen:** `menuCreate`/`menuDelete` sind gemessen (die Sonde benutzt beide). Klein, aber eigene Phase — ein gelöschtes Menü nimmt jede Übersetzung seiner Punkte mit.
+- **Menü löschen:** ✅ **GEBAUT.** Über den EINEN Löschweg der App (`deleteContentObject`), als dritter Eingang neben dem Unified-Handler und dem Undo nach dem Anlegen — dieselbe Echo-Regel (`deletedMenuId`, nie `userErrors: []`), dieselbe ID/Typ-Prüfung, dasselbe Plan-Gate, derselbe zweistufige Dialog mit Namen tippen. Menüspezifisch ist nur der Cache-Purge: die Übersetzungen hängen an den `Link`-GIDs der PUNKTE, und nichts im Schema verbindet sie mit dem Menü — sie werden also aus dem gecachten Baum eingesammelt, BEVOR die Zeile verschwindet.
+- **Neues Menü anlegen:** offen. `menuCreate` ist gemessen (die Sonde benutzt es). Das ist die verbliebene Asymmetrie: löschen geht, anlegen noch nicht.
 
 ---
 
@@ -252,10 +271,10 @@ Bis dahin gilt für einen Typ ohne Picker dieselbe Regel wie bei den Metaobjekt-
 | **1a** | ✅ **GEBAUT**: `menu-tree.shared.ts` (Diff, betroffene Menge, Validierung), `menu-tree.server.ts` (`saveMenuTree`), `menu-translation-repair.server.ts` (Sichern/Zurückschreiben über Sprachen UND Märkte), 33 Tests | der Server zuerst, damit die Oberfläche gegen etwas Geprüftes gebaut wird |
 | **1b** | ✅ **GEBAUT**: `MenuTreeEditor` (dnd-kit, Klemmung bei 3 UND nach Asthöhe), Anlegen/Löschen/Ziehen, Änderungsliste und Löschwarnung vor dem Speichern, Drift-Banner das die fremden Änderungen NAMENTLICH nennt, Reparatur-Meldungen. Der Umbenennen-Pfad wurde dabei **stillgelegt** — ein Writer pro Menü | — |
 | **2** | ~~Anlegen und Löschen~~ — mit 1b erledigt. Offen bleibt daraus nur die zweite Speicherphase: die Übersetzung eines FRISCH angelegten Punkts kann erst nach seiner Erzeugung geschrieben werden (heute sagt das Feld das und bleibt gesperrt) | braucht die ID-Zuordnung aus Phase 1 |
-| **3** | Ziel ändern (Ressourcen-Picker) | größter Aufwand, geringste Häufigkeit |
+| **3** | ✅ **GEBAUT**: Ziel ändern (Ressourcen-Picker über alle sieben gebundenen Typen, feste Ziele, freie URL), plus die Sondenstufe, die die `resourceId`-Bindung pro Typ misst | größter Aufwand, geringste Häufigkeit |
 | **4** | Menütitel, Handle mit Theme-Prüfung, Menü anlegen/löschen | unabhängig, jederzeit einschiebbar |
 
-Nach Phase 2 muss ein Händler den Shopify-Admin für ein Menü nicht mehr öffnen, außer um ein Ziel umzuhängen. Das ist die Schwelle, auf die es ankommt.
+Nach Phase 3 muss ein Händler den Shopify-Admin für ein Menü nicht mehr öffnen — außer um das Menü selbst anzulegen, zu löschen oder umzubenennen (Phase 4). Das ist die Schwelle, auf die es ankommt.
 
 ---
 

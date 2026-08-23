@@ -61,6 +61,107 @@ export function fieldTranslationKeyMap(resourceType: string): Readonly<Record<st
   return { ...FIELD_TO_TRANSLATION_KEY, description: 'body', body: 'body' };
 }
 
+/** Composite key of the echo lookup — a translation is identified by BOTH its
+ *  locale and its key, exactly as `registerAndVerify` identifies its own. */
+const ECHO_KEY_SEP = '\u0000';
+
+/**
+ * What a `translationsRegister` response PROVES was stored.
+ *
+ * CLAUDE.md: "A save is only successful if Shopify echoes back the keys —
+ * `userErrors` alone is not enough. Historic bug pattern: silent no-op when
+ * Shopify accepted the call but stored nothing." `TRANSLATE_CONTENT` already
+ * selects `translations { locale key value }`, so nothing new goes on the
+ * wire; this is only the reader for it, keyed the way `registerAndVerify`
+ * (app/services/bulk-editor/translations.server.ts) keys its confirmation: on
+ * (locale, key), never on the value — Shopify may normalise what it stores,
+ * and a value that came back different is still a value that came back.
+ */
+interface TranslationEcho {
+  /**
+   * Whether the response answered the question at all.
+   *
+   * An echo ARRAY that came back empty is an answer: "nothing was stored".
+   * A response with no `translationsRegister` payload, or with `translations`
+   * null/absent — a throttled `data: null`, a truncated body — is NOT an
+   * answer: it says we do not know. The three save tiers treat the two
+   * differently on purpose (see their comments), because reading "we do not
+   * know" as "nothing was stored" turns one bad response into a report that
+   * every locale failed.
+   */
+  known: boolean;
+  /**
+   * `locale\0key` → the value Shopify said it STORED under that pair, or
+   * `null` where the echo named the pair but carried no usable value.
+   *
+   * Two different questions, deliberately in one map. PRESENCE of the pair is
+   * the confirmation — that is the echo rule and nothing about it changed.
+   * The VALUE beside it is what the mirror should hold: Shopify normalises
+   * what it stores (a `handle` most visibly, since nothing on the
+   * translate-all path slug-sanitises one before sending it), and mirroring
+   * the SENT value leaves the local row spelling a URL the storefront does
+   * not serve — which `resolvePathsToResources` then fails to resolve and a
+   * translated-handle redirect would point at a 404.
+   *
+   * `null` is NOT "Shopify stored an empty value": an echo entry without a
+   * usable value is a present key and an absent answer about its content, so
+   * the caller falls back to what it sent — exactly what `confirmedValues` in
+   * `registerAndVerify` (app/services/bulk-editor/translations.server.ts) does
+   * with the same case. Empty when `known` is false.
+   */
+  stored: Map<string, string | null>;
+}
+
+function readTranslationEcho(data: any): TranslationEcho {
+  const payload = data?.data?.translationsRegister;
+  const echoed = payload?.translations;
+  if (!payload || !Array.isArray(echoed)) return { known: false, stored: new Map() };
+
+  const stored = new Map<string, string | null>();
+  for (const t of echoed) {
+    if (t && typeof t.key === 'string' && typeof t.locale === 'string') {
+      stored.set(
+        echoKeyOf(t.locale, t.key),
+        typeof t.value === 'string' && t.value !== '' ? t.value : null,
+      );
+    }
+  }
+  return { known: true, stored };
+}
+
+/**
+ * The locale is compared CASE-INSENSITIVELY, and that is not tidiness: the
+ * target locales arrive from client form data and Shopify is documented as
+ * inconsistent about the case of a regional code (the theme-file rule in
+ * CLAUDE.md exists for the same reason — `pt-BR` is served as `pt-br`). A
+ * translation stored under a spelling that differs only in case is the SAME
+ * translation, and reading its echo as a miss would report a whole locale as
+ * refused while the storefront serves it. The KEY is compared exactly:
+ * translatable-content keys are lower-case ASCII by construction, so there is
+ * nothing to normalise and no reason to widen the match.
+ */
+function echoKeyOf(locale: string, translationKey: string): string {
+  return `${locale.toLowerCase()}${ECHO_KEY_SEP}${translationKey}`;
+}
+
+/** Did Shopify echo THIS (locale, key) back? `false` for an unknown echo, so
+ *  every caller has to decide what to do with `known` itself. */
+function echoConfirms(echo: TranslationEcho, locale: string, translationKey: string): boolean {
+  return echo.stored.has(echoKeyOf(locale, translationKey));
+}
+
+/**
+ * The value Shopify said it STORED for this (locale, key) — `null` when the
+ * pair was not echoed at all, and equally when it was echoed without a usable
+ * value. Both mean the same thing to a caller: there is no better answer than
+ * what you sent, so mirror that. The distinction that matters (was it stored?)
+ * is `echoConfirms`, and this is never a substitute for it — a caller that
+ * asked this first would read a normalised-to-nothing echo as a refusal.
+ */
+function echoedValue(echo: TranslationEcho, locale: string, translationKey: string): string | null {
+  return echo.stored.get(echoKeyOf(locale, translationKey)) ?? null;
+}
+
 export class ShopifyContentService {
   private admin: ShopifyAdminClient;
 
@@ -963,6 +1064,21 @@ export class ShopifyContentService {
         }
       }
 
+      /**
+       * The entries Shopify ECHOED back, with the value it echoed — the only
+       * ones the DB mirror below is allowed to hold, and the mirror image of
+       * `confirmedKeys`/`confirmedValues` in `registerAndVerify`.
+       *
+       * Populated ONLY from the response: an entry that was sent and not
+       * echoed never reaches it, which is the whole point (CLAUDE.md: "A save
+       * is only successful if Shopify echoes back the keys — `userErrors`
+       * alone is not enough"). It stays empty when nothing was sent, and the
+       * loop over it then writes nothing, exactly as before.
+       */
+      const confirmedTranslations: typeof translationsInput = [];
+      /** Translation keys Shopify was asked to store and did not confirm. */
+      const unconfirmedKeys: string[] = [];
+
       // Save non-empty translations to Shopify. When a market is selected, add
       // marketId to each TranslationInput so Shopify stores a market-specific
       // override (omitting it means "all markets" = global). Response does not
@@ -987,6 +1103,52 @@ export class ShopifyContentService {
 
         if (data.data?.translationsRegister?.userErrors?.length > 0) {
           throw new Error(data.data.translationsRegister.userErrors[0].message);
+        }
+
+        // The echo decides what was stored — `userErrors: []` describes a call
+        // Shopify ACCEPTED, which is not the same as one it acted on. This is
+        // the single editor's save path, so the silent no-op reached one
+        // merchant editing one field and told them it had worked while the
+        // storefront kept serving nothing.
+        //
+        // This path is a BOTTOM tier, like `saveFieldsIndividually` and unlike
+        // the two batch tiers of translateAllContent: it is one call for one
+        // locale with nothing narrower behind it, and growing a retry ladder
+        // inside a request the merchant is waiting on is not the same trade as
+        // making one in a detached run. So an ABSENT echo ("we do not know" —
+        // a throttled `data: null`, a truncated body) is recorded here as NOT
+        // stored, the same direction the individual tier takes. The recovery
+        // is better here than anywhere else in this file: the editor keeps the
+        // merchant's text on a save it reports as failed, and pressing save
+        // again re-sends an idempotent write.
+        //
+        // The market layer is NOT verifiable from this response: TRANSLATE_CONTENT
+        // does not select `market { id }`, and widening it would change the
+        // response shape for every other caller of the shared document
+        // (TRANSLATE_CONTENT_VERIFIED exists for exactly that reason). So the
+        // echo confirms the (locale, key) pair and the app's own `marketId`
+        // governs the layer, which is the stance `registerAndVerify` takes
+        // when Shopify answers without a market.
+        const echo = readTranslationEcho(data);
+        for (const t of translationsInput) {
+          if (!echoConfirms(echo, t.locale, t.key)) {
+            unconfirmedKeys.push(t.key);
+            continue;
+          }
+          // What Shopify STORED, where it said so. A `null` here is a present
+          // key with no answer about its content, never "it stored nothing" —
+          // mirroring `""` would blank a live translation, so the sent value
+          // stands (see `echoedValue`).
+          const stored = echoedValue(echo, t.locale, t.key);
+          confirmedTranslations.push(stored !== null ? { ...t, value: stored } : t);
+        }
+
+        if (unconfirmedKeys.length > 0) {
+          loggers.translation('error',
+            echo.known
+              ? `[updateContent] Shopify accepted the write for '${locale}' but did not echo every key back — those are NOT saved`
+              : `[updateContent] Shopify answered the write for '${locale}' without an echo — treating the unconfirmed keys as NOT saved`,
+            { resourceId, resourceType, locale, marketId, unconfirmedKeys, echoKnown: echo.known });
         }
       }
 
@@ -1014,8 +1176,12 @@ export class ShopifyContentService {
       const runDbTransaction = async () => {
         // @ts-expect-error Prisma interactive transaction types
         await db.$transaction(async (tx: PrismaClient) => {
-          // Upsert translations saved to Shopify (marketId "" = global)
-          for (const translation of translationsInput) {
+          // Upsert the translations Shopify CONFIRMED it stored (marketId "" =
+          // global), carrying the value IT echoed back rather than the one
+          // that was sent. A row for an un-echoed write is the divergence the
+          // invariant is about: the editor would keep rendering a value the
+          // storefront never got, and no sync corrects a local row downwards.
+          for (const translation of confirmedTranslations) {
             await tx.contentTranslation.upsert({
               where: {
                 shop_resourceId_key_locale_marketId: {
@@ -1044,7 +1210,12 @@ export class ShopifyContentService {
             });
           }
 
-          // Upsert DB-only translations (no digest available, not saved to Shopify)
+          // Upsert DB-only translations (no digest available, never sent to
+          // Shopify). A DIFFERENT case from an un-echoed write and never to be
+          // collapsed into it: CLAUDE.md requires the row to be written even
+          // when Shopify returns no digest, because `translationsRegister`
+          // needs one and Prisma does not. Nothing was refused here — nothing
+          // was asked. The merchant is told about it by the warning below.
           for (const translation of dbOnlyTranslations) {
             await tx.contentTranslation.upsert({
               where: {
@@ -1129,13 +1300,42 @@ export class ShopifyContentService {
         });
       }
 
+      // What the merchant hears. This path has exactly two channels and both
+      // predate this change: `{ success: false, error }` (the editor shows a
+      // critical box and KEEPS the text in the fields, so save can simply be
+      // pressed again) and `{ success: true, warning }` (a warning-toned box
+      // in place of "Changes saved"). An un-echoed write goes through those,
+      // not through a third one of its own.
+      //
+      // Which of the two depends on whether ANY translation of this save was
+      // confirmed. Nothing confirmed ⇒ this save stored nothing, and reporting
+      // it as a success is the exact lie the invariant exists to prevent.
+      // Something confirmed ⇒ a partial save, which is a warning naming the
+      // keys that did not land: the confirmed half is real, and a critical
+      // error over it would invite a merchant to re-type text that is already
+      // live. A cleared field (`translationsToDelete`) is a removal with its
+      // own confirmation path and does not make an unconfirmed write partial.
+      const warnings: string[] = [];
       if (dbOnlyTranslations.length > 0) {
         const fieldNames = dbOnlyTranslations.map((t) => t.key).join(", ");
-        return {
-          success: true,
-          warning: `Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`,
-        };
+        warnings.push(`Some fields (${fieldNames}) could not be sent to Shopify because no digest was available and were saved locally only. They may be overwritten on the next sync — please re-save after a page refresh.`);
       }
+
+      if (unconfirmedKeys.length > 0) {
+        const names = unconfirmedKeys.join(", ");
+        const message = `Shopify accepted the save but did not confirm storing (${names}). Those fields were NOT saved and were not cached locally — please try again.`;
+        if (confirmedTranslations.length === 0) {
+          // A digest-less local row on the same save is not evidence that
+          // anything reached Shopify — it is the one write that deliberately
+          // never went there — so it does not soften this verdict. It is
+          // carried into the message rather than dropped, because the merchant
+          // is about to re-save and needs to know which half went where.
+          return { success: false, error: [message, ...warnings].join(" ") };
+        }
+        warnings.unshift(message);
+      }
+
+      if (warnings.length > 0) return { success: true, warning: warnings.join(" ") };
 
       return { success: true };
     } else {
@@ -1785,8 +1985,37 @@ export class ShopifyContentService {
       locale: string;
       field: string;
       translationKey: string;
+      /** What was SENT. Never rewritten — every tier re-sends the entry it was
+       *  handed, and a value edited here would change what goes on the wire. */
       value: string;
       digest: string;
+      /**
+       * What Shopify said it STORED, where the echo carried it. Absent means
+       * "no better answer than `value`" — either the echo named the key
+       * without a usable value, or the entry has not been confirmed at all.
+       *
+       * It exists because Shopify normalises: nothing on this path
+       * slug-sanitises a `handle` (the AI writes it and `prepareField` only
+       * refuses one identical to the primary handle), so the value the
+       * storefront serves can differ from the one sent. The DB mirror and the
+       * returned translations map both read `confirmedValue ?? value`, which
+       * is what keeps `ContentTranslation` — the table
+       * `resolvePathsToResources` resolves foreign-locale URLs through, and
+       * the one a translated-handle redirect is built from — spelling what
+       * Shopify actually holds.
+       */
+      confirmedValue?: string;
+    };
+
+    /**
+     * The same entry, carrying the value Shopify echoed for it. Returns a NEW
+     * object: the original stays in `allPrepared` with the sent value, because
+     * a tier that falls back re-sends from there and must send what was
+     * prepared.
+     */
+    const asStored = (p: PreparedTranslation, echo: TranslationEcho): PreparedTranslation => {
+      const stored = echoedValue(echo, p.locale, p.translationKey);
+      return stored === null ? p : { ...p, confirmedValue: stored };
     };
 
     // Helper: chunk an array into groups of `size`
@@ -1844,7 +2073,29 @@ export class ShopifyContentService {
             failed.push(p);
             continue;
           }
-          saved.push(p);
+
+          // The echo decides — `userErrors: []` is not a save (CLAUDE.md).
+          // This is the LAST tier: there is no narrower re-send left, so a
+          // response that carries NO echo ("we do not know") counts here as
+          // NOT saved, unlike in the two tiers above where it only triggers
+          // the next one. A false alarm costs a re-run of a write that is
+          // idempotent; the other direction is the invisible divergence the
+          // invariant exists for — the same call the video-schema writer
+          // makes when a throttled `data: null` arrives with empty
+          // `userErrors`. A real network blip does not land here: it throws
+          // or carries `data.errors`, both already failures above.
+          const echo = readTranslationEcho(data);
+          if (!echoConfirms(echo, locale, p.translationKey)) {
+            loggers.translation('error',
+              echo.known
+                ? `Shopify accepted ${p.field} for ${locale} but did not echo it back — NOT saved`
+                : `Shopify answered the ${p.field} write for ${locale} without an echo — treating as NOT saved`,
+              { resourceId, translationKey: p.translationKey, echoKnown: echo.known });
+            recordRejected(locale, p.field);
+            failed.push(p);
+            continue;
+          }
+          saved.push(asStored(p, echo));
         } catch (fieldError) {
           loggers.translation('error', `Failed to save ${p.field} for ${locale}`, { error: fieldError instanceof Error ? fieldError.message : String(fieldError) });
           recordRejected(locale, p.field);
@@ -1885,32 +2136,45 @@ export class ShopifyContentService {
         }
 
         const userErrors = data.data?.translationsRegister?.userErrors || [];
-        if (userErrors.length > 0) {
-          // Parse which items in the input array failed via userErrors[].field path
-          const failedIndices = new Set<number>();
-          for (const err of userErrors) {
-            const idx = parseInt(err.field?.[1], 10);
-            if (!isNaN(idx)) failedIndices.add(idx);
-          }
+        const echo = readTranslationEcho(data);
 
-          if (failedIndices.size > 0 && failedIndices.size < prepared.length) {
-            // Partial failure: some succeeded, only retry failed ones individually
-            const succeeded = prepared.filter((_: PreparedTranslation, i: number) => !failedIndices.has(i));
-            const failedItems = prepared.filter((_: PreparedTranslation, i: number) => failedIndices.has(i));
-            loggers.translation('warn', `Partial batch failure for ${locale}: ${succeeded.length} ok, ${failedItems.length} failed`, {
-              failedFields: failedItems.map(p => p.field), errors: userErrors,
-            });
-            const retried = await saveFieldsIndividually(locale, failedItems);
-            return { saved: [...succeeded, ...retried.saved], failed: retried.failed };
-          } else {
-            // All failed or can't parse indices — retry all individually
-            loggers.translation('error', `Per-locale batch all-fail for ${locale}, falling back to individual`, { errors: userErrors });
-            return await saveFieldsIndividually(locale, prepared);
-          }
+        // "We do not know" is not "nothing was stored": a throttled or
+        // truncated body carries no echo at all, and reading that as a refusal
+        // would report a whole locale as failed off a response that said
+        // nothing. Ask again one entry at a time instead — the re-send is
+        // idempotent and the individual tier can attribute an answer to ONE
+        // field. Same treatment as a top-level GraphQL error above.
+        if (!echo.known) {
+          loggers.translation('warn', `Per-locale batch for ${locale} answered without an echo, falling back to individual`, {
+            fields: prepared.map(p => p.field), errors: userErrors,
+          });
+          return await saveFieldsIndividually(locale, prepared);
         }
 
-        loggers.translation('debug', `Per-locale batch Shopify save successful for ${locale} (${prepared.length} fields)`);
-        return { saved: [...prepared], failed: [] };
+        // Past here the echo IS the answer, and it is the only one: an entry
+        // Shopify refused is an entry it did not echo, so the userErrors
+        // index-parsing this used to do would only be a second, more fragile
+        // opinion about the same question. The errors are still logged.
+        const echoed = prepared.filter(p => echoConfirms(echo, locale, p.translationKey));
+        const unechoed = prepared.filter(p => !echoConfirms(echo, locale, p.translationKey));
+
+        if (unechoed.length === 0) {
+          if (userErrors.length > 0) {
+            loggers.translation('warn', `Per-locale batch for ${locale} reported userErrors yet echoed every key back — trusting the echo`, { errors: userErrors });
+          }
+          loggers.translation('debug', `Per-locale batch Shopify save confirmed for ${locale} (${prepared.length} fields echoed)`);
+          return { saved: prepared.map(p => asStored(p, echo)), failed: [] };
+        }
+
+        // Only the un-echoed entries are re-sent — an entry Shopify already
+        // stored needs no second write. Whatever the individual tier then
+        // confirms is SAVED, not failed: it is that tier, and only that tier,
+        // that records a rejection for the ones it cannot get through.
+        loggers.translation('warn', `Per-locale batch for ${locale}: ${echoed.length} echoed, ${unechoed.length} not — retrying those individually`, {
+          unechoedFields: unechoed.map(p => p.field), errors: userErrors,
+        });
+        const retried = await saveFieldsIndividually(locale, unechoed);
+        return { saved: [...echoed.map(p => asStored(p, echo)), ...retried.saved], failed: retried.failed };
       } catch (err) {
         loggers.translation('error', `Per-locale batch error for ${locale}, falling back to individual`, {
           error: err instanceof Error ? err.message : String(err),
@@ -1919,7 +2183,11 @@ export class ShopifyContentService {
       }
     };
 
-    // Helper: persist saved translations to DB in a single transaction (with 1 retry)
+    // Helper: persist saved translations to DB in a single transaction (with 1 retry).
+    // "Saved" here means ECHOED — a mirror row for a translation Shopify never
+    // stored is the divergence the invariant calls "saving does nothing": the
+    // editor would keep showing the merchant a value the storefront does not
+    // serve, and no sync would ever correct it downwards.
     const persistToDb = async (saved: PreparedTranslation[]): Promise<void> => {
       if (saved.length === 0) return;
 
@@ -1927,10 +2195,14 @@ export class ShopifyContentService {
         // @ts-expect-error Prisma interactive transaction types
         await db.$transaction(async (tx: PrismaClient) => {
           for (const p of saved) {
+            // `confirmedValue ?? value` — the mirror holds what Shopify said
+            // it stored, and falls back to what was sent only where the echo
+            // carried no value to hold.
+            const value = p.confirmedValue ?? p.value;
             await tx.contentTranslation.upsert({
               where: { shop_resourceId_key_locale_marketId: { shop, resourceId, key: p.translationKey, locale: p.locale, marketId: "" } },
-              update: { value: p.value, digest: p.digest, resourceType },
-              create: { shop, resourceId, resourceType, key: p.translationKey, value: p.value, locale: p.locale, digest: p.digest },
+              update: { value, digest: p.digest, resourceType },
+              create: { shop, resourceId, resourceType, key: p.translationKey, value, locale: p.locale, digest: p.digest },
             });
           }
         });
@@ -2085,6 +2357,13 @@ export class ShopifyContentService {
     // `allSaved` lives OUTSIDE the block: a locale where nothing was saved is
     // decided below, and "nothing was prepared at all" (every field rejected
     // before a single Shopify call) is one of the ways that happens.
+    //
+    // All three tiers decide "saved" from the ECHO, never from `userErrors`
+    // alone (CLAUDE.md): `translationsRegister` answers with the translations
+    // it stored, and an accepted call that stored nothing echoes nothing. Only
+    // echoed entries reach `allSaved`, and therefore `allTranslations` and the
+    // DB mirror; an un-echoed one goes to `rejectedFields`, and a locale that
+    // ends with nothing echoed to `failedLocales` further down.
     const allSaved: PreparedTranslation[] = [];
     if (allPrepared.length > 0) {
       const MAX_TRANSLATIONS_PER_CALL = 200;
@@ -2117,7 +2396,26 @@ export class ShopifyContentService {
             break;
           }
 
-          allSaved.push(...chunk);
+          // The echo is the proof (CLAUDE.md), and here it is judged per
+          // CHUNK: a chunk counts only when EVERY entry of it came back.
+          // Anything less — a partial echo, an empty one, or no echo at all —
+          // drops the whole chunk into the per-locale re-send, which is
+          // idempotent and can attribute an answer to one field instead of to
+          // 200 of them. Nothing is RECORDED as refused here on purpose; see
+          // the note at the clear below.
+          const echo = readTranslationEcho(data);
+          const unechoed = chunk.filter(p => !echoConfirms(echo, p.locale, p.translationKey));
+          if (!echo.known || unechoed.length > 0) {
+            loggers.translation('warn',
+              echo.known
+                ? 'Mega-batch chunk was accepted but not fully echoed back, falling back to per-locale batches'
+                : 'Mega-batch chunk answered without an echo, falling back to per-locale batches',
+              { sent: chunk.length, echoed: chunk.length - unechoed.length, echoKnown: echo.known });
+            megaBatchFailed = true;
+            break;
+          }
+
+          allSaved.push(...chunk.map(p => asStored(p, echo)));
         } catch (err) {
           loggers.translation('warn', 'Mega-batch chunk threw, falling back to per-locale batches', {
             error: err instanceof Error ? err.message : String(err),
@@ -2133,8 +2431,13 @@ export class ShopifyContentService {
         // Nothing has been recorded as REFUSED at this point, and that is on
         // purpose: the mega-batch reports one failure for a whole chunk and
         // then re-sends every entry of it per locale, so a failure list
-        // collected here would name fields the re-send goes on to save.
-        // Only the per-locale/individual tiers below record.
+        // collected here would name fields the re-send goes on to save. That
+        // now covers the echo too: an entry this chunk did not echo back is
+        // exactly such a field — un-echoed here, saved and confirmed by the
+        // per-locale call two lines down. Only the per-locale/individual tiers
+        // below record, and `allSaved` is cleared for the same reason (an
+        // echoed entry of an aborted chunk is re-sent rather than trusted, so
+        // one list cannot mix confirmations from two different calls).
 
         const byLocale = new Map<string, PreparedTranslation[]>();
         for (const p of allPrepared) {
@@ -2154,10 +2457,15 @@ export class ShopifyContentService {
         }
       }
 
-      // Populate allTranslations from saved
+      // Populate allTranslations from saved — with the value Shopify STORED
+      // where it echoed one. The editor renders what this map carries, so a
+      // handle Shopify normalised now appears in the field as Shopify spells
+      // it rather than as the AI wrote it. That is the value the storefront
+      // serves, and the alternative is a field disagreeing with both the DB
+      // row beside it and the live URL.
       for (const p of allSaved) {
         if (!allTranslations[p.locale]) allTranslations[p.locale] = {};
-        allTranslations[p.locale][p.field] = p.value;
+        allTranslations[p.locale][p.field] = p.confirmedValue ?? p.value;
       }
 
       // Persist all saved translations to DB in one transaction

@@ -19,11 +19,23 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * The editor state the request was made FROM. Carried through so a parked
+ * answer can be applied to the locale and market the merchant asked from,
+ * not to whichever one they happen to be looking at when they come back —
+ * the same reason `useAISuggestionStore` keys by scope at all.
+ */
+export interface OperationScope {
+  locale: string;
+  marketId: string;
+}
+
 export interface ActiveOperation {
   resourceId: string;
   fieldKey: string;
   action: string;
   targetLocale?: string;
+  scope?: OperationScope;
   startedAt: number;
 }
 
@@ -32,6 +44,7 @@ export interface CompletedResult {
   fieldKey: string;
   action: string;
   result: Record<string, unknown>;
+  scope?: OperationScope;
   completedAt: number;
 }
 
@@ -112,10 +125,11 @@ export function markOperationActive(
   fieldKey: string,
   action: string,
   targetLocale?: string,
+  scope?: OperationScope,
 ) {
   purgeStale(); // opportunistic cleanup on write (safe — not in render path)
   const key = makeKey(resourceId, fieldKey);
-  activeOps.set(key, { resourceId, fieldKey, action, targetLocale, startedAt: Date.now() });
+  activeOps.set(key, { resourceId, fieldKey, action, targetLocale, scope, startedAt: Date.now() });
   completedResults.delete(key); // clear any stale completed result for this field
   notify();
 }
@@ -127,8 +141,12 @@ export function markOperationCompleted(
   result: Record<string, unknown>,
 ) {
   const key = makeKey(resourceId, fieldKey);
+  // The scope travels with the ANSWER, so read it off the active op before
+  // dropping it — the consumer runs long after the request and has no other
+  // way of knowing which locale it was asked from.
+  const scope = activeOps.get(key)?.scope;
   activeOps.delete(key);
-  completedResults.set(key, { resourceId, fieldKey, action, result, completedAt: Date.now() });
+  completedResults.set(key, { resourceId, fieldKey, action, result, scope, completedAt: Date.now() });
   notify();
 }
 

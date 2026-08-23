@@ -7,6 +7,7 @@ import {
   WEBP_ITEM_TASK_TYPE,
   WEBP_PARENT_TASK_TYPE,
 } from "../config/webp-tasks.js";
+import { taskTitleOrFallback } from "../services/tasks/resource-title.server";
 
 interface ConvertWebpBody {
   productId: string;
@@ -135,6 +136,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // written before anything ran would be a fabricated measurement in a blob the
   // Tasks page renders (the "an absent key is omitted, never rendered as 0"
   // rule); the processor fills the counts in as items finish.
+  // ONE lookup for the whole run: the parent row and every item row under it
+  // name the same product, and a per-row resolve here would be an N+1 against
+  // the product cache for a title that never varies. No GID fallback — the
+  // Tasks card renders the numeric id and the Shopify deep link off
+  // `resourceId` itself, so a GID stored here is that fact spelled unreadably.
+  const runResourceTitle = await taskTitleOrFallback(
+    db, session.shop, "product", productId, productTitle,
+  );
+
   const parent = await db.task.create({
     data: {
       shop: session.shop,
@@ -142,7 +152,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       status: "running",
       resourceType: "product",
       resourceId: productId,
-      resourceTitle: productTitle || productId,
+      resourceTitle: runResourceTitle,
       total: images.length,
       processed: 0,
       result: JSON.stringify({ total: images.length }),
@@ -163,7 +173,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         status: "pending",
         resourceType: "product",
         resourceId: productId,
-        resourceTitle: productTitle || productId,
+        resourceTitle: runResourceTitle,
         // The job input, with the SAME keys and the same shape it has always
         // had — the processor, the image manager's spinner and the completion
         // write all read it — plus the parent id. Nothing was removed or

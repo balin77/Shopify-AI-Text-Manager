@@ -172,6 +172,81 @@ const SAMPLE_RESOURCES_QUERY = `#graphql
   }
 `;
 
+/**
+ * One real sample per resource-bound MenuItemType.
+ *
+ * SPLIT into several small queries on purpose, and that is the finding rather
+ * than the tidiness: the first cut asked for everything at once, one field name
+ * was wrong (`Shop.privacyPolicy` does not exist in 2026-07 — policies are a
+ * plain LIST under `shop.shopPolicies`), and an unknown field is a SCHEMA-level
+ * error that fails the WHOLE document. So `data` came back null, no type got a
+ * sample, and all seven reported "not measured" — a failed call read as a
+ * negative answer, in a probe written to avoid exactly that.
+ *
+ * Each connection asks for ONE node; a nested articles-inside-blogs selection
+ * would multiply the cost by the parent page size, the rule the gallery video
+ * sweep follows.
+ */
+const CONNECTION_SAMPLES_QUERY = `#graphql
+  query menuWriteProbeConnectionSamples {
+    products(first: 1) {
+      nodes {
+        id
+      }
+    }
+    collections(first: 1) {
+      nodes {
+        id
+      }
+    }
+    pages(first: 1) {
+      nodes {
+        id
+      }
+    }
+    blogs(first: 1) {
+      nodes {
+        id
+      }
+    }
+    articles(first: 1) {
+      nodes {
+        id
+      }
+    }
+  }
+`;
+
+const POLICY_SAMPLE_QUERY = `#graphql
+  query menuWriteProbePolicySample {
+    shop {
+      shopPolicies {
+        id
+      }
+    }
+  }
+`;
+
+const METAOBJECT_DEFINITION_QUERY = `#graphql
+  query menuWriteProbeMetaobjectDefinitions {
+    metaobjectDefinitions(first: 1) {
+      nodes {
+        type
+      }
+    }
+  }
+`;
+
+const METAOBJECT_SAMPLE_QUERY = `#graphql
+  query menuWriteProbeMetaobjectSample($type: String!) {
+    metaobjects(first: 1, type: $type) {
+      nodes {
+        id
+      }
+    }
+  }
+`;
+
 const LOCALES_QUERY = `#graphql
   query menuWriteProbeLocales {
     shopLocales {
@@ -554,6 +629,51 @@ export interface MenuWriteProbeReport {
     restorable: boolean | null;
     errors: string[];
   };
+  /**
+   * Does `resourceId` bind for EVERY resource-bound type, or only for the two
+   * that were measured before the target picker existed?
+   *
+   * The picker offers seven types. PRODUCT and COLLECTION were measured with
+   * the first probe run; the other five were an assumption, and an assumption
+   * here fails the WHOLE save (menuUpdate is one call for the whole tree), not
+   * just the one item. Per type: no sample on this shop, refused with the
+   * message verbatim, or accepted and read back with the id we sent.
+   */
+  resourceBound: {
+    attempted: boolean;
+    menuId: string | null;
+    /** type -> the sample GID that was sent, or null when the shop has none. */
+    samples: Record<string, string | null>;
+    createErrors: string[];
+    /** type -> what came back: the resourceId Shopify stored, or null. */
+    readBack: Record<string, string | null>;
+    /** type -> did the stored id equal the one sent? null = not measured. */
+    bound: Record<string, boolean | null>;
+    /**
+     * Retargeting an EXISTING item — the operation the target picker performs
+     * and the one thing about it that was still an assumption: when an item is
+     * sent back with a new `type` and NO `resourceId`, does Shopify drop the
+     * old binding, or does the item keep pointing at the product while calling
+     * itself an HTTP link? The write path omits a null `resourceId` rather
+     * than sending it, so "omission clears" has to be true for the picker to
+     * work at all.
+     */
+    retarget: {
+      attempted: boolean;
+      itemId: string | null;
+      fromType: string | null;
+      /** resourceId gone after the item was sent back as HTTP. */
+      resourceIdCleared: boolean | null;
+      /** The url we sent came back. */
+      urlStored: boolean | null;
+      /** Sent back to its original resource type: bound again. */
+      reboundOk: boolean | null;
+      /** …and the HTTP url did NOT survive that. */
+      urlClearedOnRebind: boolean | null;
+      errors: string[];
+    };
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -842,6 +962,25 @@ export async function action({ request }: ActionFunctionArgs) {
       valueBeforeDelete: null,
       resourceStillResolves: null,
       valueAfterDelete: null,
+      errors: [],
+    },
+    resourceBound: {
+      attempted: false,
+      menuId: null,
+      samples: {},
+      createErrors: [],
+      readBack: {},
+      bound: {},
+      retarget: {
+        attempted: false,
+        itemId: null,
+        fromType: null,
+        resourceIdCleared: null,
+        urlStored: null,
+        reboundOk: null,
+        urlClearedOnRebind: null,
+        errors: [],
+      },
       errors: [],
     },
     typeRoundTrip: {
@@ -1267,6 +1406,208 @@ export async function action({ request }: ActionFunctionArgs) {
       } catch (error) {
         report.create.errors.push(error instanceof Error ? error.message : String(error));
       }
+    }
+
+    // ── 5b. Does `resourceId` bind for every resource-bound type? ──────────
+    // Its own menu for the same reason as step 6: one type this shop refuses
+    // must not take the rest of the run with it. And a failure here is worth
+    // measuring precisely, because menuUpdate is one call for the whole tree —
+    // a type the picker offers and the platform refuses fails the merchant's
+    // ENTIRE save, not the one item.
+    try {
+      report.resourceBound.attempted = true;
+      // Each lookup on its own, so one that the schema refuses cannot take the
+      // other six with it — the exact failure this step shipped with once.
+      const samples: Record<string, string | null> = {
+        PRODUCT: null,
+        COLLECTION: null,
+        PAGE: null,
+        BLOG: null,
+        ARTICLE: null,
+        SHOP_POLICY: null,
+        METAOBJECT: null,
+      };
+
+      const connections = await run(CONNECTION_SAMPLES_QUERY);
+      report.resourceBound.errors.push(...topLevelErrors(connections));
+      const nodeId = (key: string) =>
+        (connections.data?.[key] as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
+      samples.PRODUCT = nodeId("products");
+      samples.COLLECTION = nodeId("collections");
+      samples.PAGE = nodeId("pages");
+      samples.BLOG = nodeId("blogs");
+      samples.ARTICLE = nodeId("articles");
+
+      // `shop.shopPolicies` is a plain LIST, not a connection, and there is no
+      // `Shop.privacyPolicy` — measured 2026-08-23 on 2026-07 by getting it
+      // wrong and reading the error.
+      const policies = await run(POLICY_SAMPLE_QUERY);
+      for (const e of topLevelErrors(policies)) report.resourceBound.errors.push(`SHOP_POLICY: ${e}`);
+      samples.SHOP_POLICY =
+        (policies.data?.shop as { shopPolicies?: Array<{ id: string }> } | undefined)?.shopPolicies?.[0]?.id ?? null;
+
+      // Metaobjects need a type argument, so the definition list has to answer
+      // first. No definitions ⇒ no sample ⇒ "not measured", never "refused".
+      const definitions = await run(METAOBJECT_DEFINITION_QUERY);
+      for (const e of topLevelErrors(definitions)) report.resourceBound.errors.push(`METAOBJECT: ${e}`);
+      const definitionType = (
+        definitions.data?.metaobjectDefinitions as { nodes?: Array<{ type: string }> } | undefined
+      )?.nodes?.[0]?.type;
+      if (definitionType) {
+        const metaSample = await run(METAOBJECT_SAMPLE_QUERY, { type: definitionType });
+        for (const e of topLevelErrors(metaSample)) report.resourceBound.errors.push(`METAOBJECT: ${e}`);
+        samples.METAOBJECT =
+          (metaSample.data?.metaobjects as { nodes?: Array<{ id: string }> } | undefined)?.nodes?.[0]?.id ?? null;
+      }
+      report.resourceBound.samples = samples;
+
+      const boundTypes = Object.entries(samples).filter(([, id]) => !!id) as Array<[string, string]>;
+      // Types that ended up in the COMBINED menu — the one the retarget step
+      // below writes to. A type measured by a solo retry lives elsewhere.
+      const inCombinedMenu = new Set<string>();
+      if (boundTypes.length > 0) {
+        const boundHandle = `${handle}-bound`;
+        const created = await run(MENU_CREATE_MUTATION, {
+          title: `ContentPilot write probe bound ${stamp}`,
+          handle: boundHandle,
+          items: boundTypes.map(([type, id]) => ({
+            title: `CP Bound ${type}`,
+            type,
+            resourceId: id,
+          })),
+        });
+        report.resourceBound.createErrors.push(...topLevelErrors(created));
+        const payload = created.data?.menuCreate as
+          | { menu?: { id: string } | null; userErrors?: unknown }
+          | undefined;
+        report.resourceBound.createErrors.push(...userErrorText(payload?.userErrors));
+        report.resourceBound.menuId = payload?.menu?.id ?? null;
+        if (report.resourceBound.menuId) createdMenus.push({ handle: boundHandle, id: report.resourceBound.menuId });
+
+        if (report.resourceBound.menuId) {
+          const readResult = await run(MENU_READ_QUERY, { id: report.resourceBound.menuId });
+          const readItems = ((readResult.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+          for (const [type, sent] of boundTypes) {
+            const row = readItems.find((i) => i.title === `CP Bound ${type}`);
+            const stored = row?.resourceId ?? null;
+            report.resourceBound.readBack[type] = stored;
+            // An item that is not in the read-back at all is UNMEASURED, not
+            // refused: the create may have failed for an unrelated reason and
+            // reporting that as "this type does not bind" is exactly the
+            // failed-call-as-negative-answer trap.
+            report.resourceBound.bound[type] = row ? stored === sent : null;
+            if (row) inCombinedMenu.add(type);
+          }
+        }
+
+        // One create for all seven is cheap and answers on a healthy shop —
+        // but menuCreate is ALL-OR-NOTHING, so a single type the shop refuses
+        // would leave every OTHER type reported as "not measured" and never
+        // name the offending one. So whatever the combined attempt did not
+        // answer is retried one menu at a time. Only then can a `false` mean
+        // "this type refuses" rather than "something in the batch did".
+        for (const [type, sent] of boundTypes) {
+          if (inCombinedMenu.has(type)) continue;
+          const soloHandle = `${handle}-bound-${type.toLowerCase().replace(/_/g, "-")}`;
+          const solo = await run(MENU_CREATE_MUTATION, {
+            title: `ContentPilot write probe bound ${type} ${stamp}`,
+            handle: soloHandle,
+            items: [{ title: `CP Bound ${type}`, type, resourceId: sent }],
+          });
+          const soloErrors = [
+            ...topLevelErrors(solo),
+            ...userErrorText((solo.data?.menuCreate as { userErrors?: unknown } | undefined)?.userErrors),
+          ];
+          const soloId = (solo.data?.menuCreate as { menu?: { id: string } | null } | undefined)?.menu?.id ?? null;
+          if (soloId) createdMenus.push({ handle: soloHandle, id: soloId });
+          if (!soloId) {
+            // The type is what the platform refused, and the message says so.
+            report.resourceBound.bound[type] = false;
+            for (const e of soloErrors) report.resourceBound.createErrors.push(`${type}: ${e}`);
+            continue;
+          }
+          const soloRead = await run(MENU_READ_QUERY, { id: soloId });
+          const soloItems = ((soloRead.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+          const row = soloItems.find((i) => i.title === `CP Bound ${type}`);
+          report.resourceBound.readBack[type] = row?.resourceId ?? null;
+          report.resourceBound.bound[type] = row ? row.resourceId === sent : null;
+        }
+      }
+      for (const [type, id] of Object.entries(samples)) {
+        if (!id) report.resourceBound.bound[type] = null;
+      }
+
+      // ── 5c. Retargeting an existing item ─────────────────────────────────
+      // The picker's real operation, and the assumption underneath it: the
+      // write path OMITS a null resourceId rather than sending one, so
+      // "omission clears the old binding" has to hold or a product link
+      // retargeted to a URL would keep pointing at the product.
+      const boundMenuId = report.resourceBound.menuId;
+      // Only a type that is IN the combined menu can be retargeted there — a
+      // type measured by a solo retry lives in a different menu.
+      const reboundType = boundTypes.find(
+        ([type]) => report.resourceBound.bound[type] === true && inCombinedMenu.has(type),
+      );
+      if (boundMenuId && reboundType) {
+        const rt = report.resourceBound.retarget;
+        rt.attempted = true;
+        rt.fromType = reboundType[0];
+        const retargetUrl = `https://example.com/cp-retarget-${stamp}`;
+        const boundTitle = `CP Bound ${reboundType[0]}`;
+        const boundHandle = `${handle}-bound`;
+        const menuTitle = `ContentPilot write probe bound ${stamp}`;
+
+        const readTree = async () => {
+          const result = await run(MENU_READ_QUERY, { id: boundMenuId });
+          return ((result.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+        };
+        const writeTree = async (items: Array<Record<string, unknown>>) => {
+          const result = await run(MENU_UPDATE_MUTATION, {
+            id: boundMenuId,
+            title: menuTitle,
+            handle: boundHandle,
+            items,
+          });
+          rt.errors.push(...topLevelErrors(result));
+          const payload = result.data?.menuUpdate as { userErrors?: unknown } | undefined;
+          rt.errors.push(...userErrorText(payload?.userErrors));
+        };
+
+        const before = await readTree();
+        rt.itemId = before.find((i) => i.title === boundTitle)?.id ?? null;
+
+        // Exactly what the editor sends: same tree, one item's target
+        // replaced, no resourceId on it at all.
+        await writeTree(
+          toUpdateInput(before, {}).map((node) =>
+            node.title === boundTitle
+              ? { id: node.id, title: boundTitle, type: "HTTP", url: retargetUrl }
+              : node,
+          ),
+        );
+        const afterHttp = (await readTree()).find((i) => i.title === boundTitle);
+        if (afterHttp) {
+          rt.resourceIdCleared = !afterHttp.resourceId;
+          rt.urlStored = afterHttp.url === retargetUrl;
+        }
+
+        // …and back, which is the other direction a merchant takes.
+        const backTree = await readTree();
+        await writeTree(
+          toUpdateInput(backTree, {}).map((node) =>
+            node.title === boundTitle
+              ? { id: node.id, title: boundTitle, type: reboundType[0], resourceId: reboundType[1] }
+              : node,
+          ),
+        );
+        const afterRebind = (await readTree()).find((i) => i.title === boundTitle);
+        if (afterRebind) {
+          rt.reboundOk = afterRebind.resourceId === reboundType[1];
+          rt.urlClearedOnRebind = afterRebind.url !== retargetUrl;
+        }
+      }
+    } catch (error) {
+      report.resourceBound.errors.push(error instanceof Error ? error.message : String(error));
     }
 
     // ── 6. Item types that are neither HTTP nor resource-bound ─────────────
@@ -1885,6 +2226,47 @@ export async function action({ request }: ActionFunctionArgs) {
     v.push("RESOURCE BINDING: ⚠️ the resourceId did NOT survive the round trip.");
   } else {
     v.push("RESOURCE BINDING: not measured (no product or collection to bind to).");
+  }
+  if (report.resourceBound.attempted) {
+    const bound = Object.entries(report.resourceBound.bound);
+    const ok = bound.filter(([, v2]) => v2 === true).map(([t]) => t);
+    const refused = bound.filter(([, v2]) => v2 === false).map(([t]) => t);
+    const unmeasured = bound.filter(([, v2]) => v2 === null).map(([t]) => t);
+    if (ok.length > 0) v.push(`TARGET TYPES: resourceId binds for ${ok.join(", ")}.`);
+    if (refused.length > 0) {
+      // The expensive direction: the picker offers the type, the save fails
+      // for the WHOLE tree. Loud on purpose.
+      v.push(`TARGET TYPES: ⚠️ resourceId did NOT bind for ${refused.join(", ")} — the picker must not offer these.`);
+    }
+    if (unmeasured.length > 0) {
+      v.push(`TARGET TYPES: not measured for ${unmeasured.join(", ")} (this shop has no sample of that resource).`);
+    }
+    if (report.resourceBound.createErrors.length > 0) {
+      v.push(`TARGET TYPES: create reported ${report.resourceBound.createErrors.join(" | ")}`);
+    }
+    const rt = report.resourceBound.retarget;
+    if (rt.attempted) {
+      if (rt.resourceIdCleared === true) {
+        v.push(
+          `RETARGET: sending ${rt.fromType} back as HTTP without a resourceId CLEARED the binding` +
+            `${rt.urlStored === true ? " and stored the new url" : rt.urlStored === false ? " but did NOT store the url ⚠️" : ""}.`,
+        );
+      } else if (rt.resourceIdCleared === false) {
+        // The expensive answer: the picker would show an HTTP link that still
+        // points at the product, and the write path would have to send an
+        // explicit null instead of omitting the field.
+        v.push("RETARGET: ⚠️ the old resourceId SURVIVED — omitting the field does not clear a binding.");
+      }
+      if (rt.reboundOk === true) {
+        v.push(
+          `RETARGET: binding it back to ${rt.fromType} worked` +
+            `${rt.urlClearedOnRebind === false ? ", but the old HTTP url survived ⚠️" : "."}`,
+        );
+      } else if (rt.reboundOk === false) {
+        v.push(`RETARGET: ⚠️ binding it back to ${rt.fromType} did not take.`);
+      }
+      for (const e of rt.errors) v.push(`RETARGET: error ${e}`);
+    }
   }
   if (report.omission.stillPresentAfterwards === true) {
     v.push("OMISSION: an item left out of the list SURVIVED — menuUpdate is not a full replace.");

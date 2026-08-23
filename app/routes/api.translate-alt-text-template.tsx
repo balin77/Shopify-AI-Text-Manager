@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { createAIService, getMissingPreferredKey, noAiKeyResponse } from "./api-ai-handlers/shared";
 import { getTaskExpirationDate } from "../config/constants";
+import { taskTitleOrFallback } from "../services/tasks/resource-title.server";
 
 interface TemplateItem {
   position: number;
@@ -40,6 +41,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const totalSteps = toLocales.length * templates.filter((t) => t.template).length;
   const taskType = toLocales.length > 1 ? "bulkTranslation" : "translation";
 
+  // The client sends a title, but not always: the raw GID this used to fall
+  // back to is unreadable, so the cached product name fills in instead. The
+  // pre-existing "Alt Text Template" literal stays the very last resort, for a
+  // call that carries no product id at all.
+  const resolvedProductTitle =
+    (await taskTitleOrFallback(db, session.shop, "product", productId, productTitle)) ??
+    "Alt Text Template";
+
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -47,7 +56,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       status: "pending",
       resourceType: "products",
       resourceId: productId ?? "unknown",
-      resourceTitle: productTitle ?? productId ?? "Alt Text Template",
+      resourceTitle: resolvedProductTitle,
       fieldType: "altTextTemplate",
       targetLocale: toLocales.length === 1 ? toLocales[0] : undefined,
       progress: 0,

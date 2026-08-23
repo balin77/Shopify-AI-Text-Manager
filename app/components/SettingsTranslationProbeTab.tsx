@@ -1013,6 +1013,25 @@ interface MenuWriteProbeReport {
     restorable: boolean | null;
     errors: string[];
   };
+  resourceBound: {
+    attempted: boolean;
+    menuId: string | null;
+    samples: Record<string, string | null>;
+    createErrors: string[];
+    readBack: Record<string, string | null>;
+    bound: Record<string, boolean | null>;
+    retarget: {
+      attempted: boolean;
+      itemId: string | null;
+      fromType: string | null;
+      resourceIdCleared: boolean | null;
+      urlStored: boolean | null;
+      reboundOk: boolean | null;
+      urlClearedOnRebind: boolean | null;
+      errors: string[];
+    };
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -1167,6 +1186,28 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   lines.push(`- Survives a re-parent: ${yesNo(r.marketScoped.survivesMove)}`);
   lines.push(`- Restorable afterwards: ${yesNo(r.marketScoped.restorable)}`);
   for (const e of r.marketScoped.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  lines.push("## Resource-bound target types (does resourceId bind?)");
+  lines.push(`- Attempted: ${r.resourceBound.attempted ? "yes" : "no"}`);
+  for (const [type, sample] of Object.entries(r.resourceBound.samples)) {
+    const bound = r.resourceBound.bound[type];
+    const verdict = bound === true ? "BOUND" : bound === false ? "NOT BOUND" : "not measured";
+    lines.push(
+      `  - ${type}: ${verdict} (sent=${sample ?? "no sample on this shop"}, read back=${r.resourceBound.readBack[type] ?? "-"})`,
+    );
+  }
+  for (const e of r.resourceBound.createErrors) lines.push(`  - create error: ${e}`);
+  for (const e of r.resourceBound.errors) lines.push(`  - error: ${e}`);
+  const rt = r.resourceBound.retarget;
+  lines.push(`- Retarget an existing item: ${rt.attempted ? `yes (from ${rt.fromType ?? "-"})` : "no"}`);
+  if (rt.attempted) {
+    lines.push(`  - resourceId cleared by omitting it: ${yesNo(rt.resourceIdCleared)}`);
+    lines.push(`  - new url stored: ${yesNo(rt.urlStored)}`);
+    lines.push(`  - bound back to ${rt.fromType ?? "-"}: ${yesNo(rt.reboundOk)}`);
+    lines.push(`  - old http url gone again: ${yesNo(rt.urlClearedOnRebind)}`);
+    for (const e of rt.errors) lines.push(`  - error: ${e}`);
+  }
   lines.push("");
 
   lines.push("## Item types that are neither HTTP nor resource-bound");

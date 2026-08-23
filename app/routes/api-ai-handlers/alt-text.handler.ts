@@ -6,6 +6,7 @@ import { getFormString, getFormJSON } from "~/utils/form-data.utils";
 import { withUserInstruction } from "~/utils/ai-user-instruction.server";
 import { safeJsonParse, isValidLocale, isValidShopifyGID } from "~/utils/validation";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
 import { resolveVisionPolicy } from "~/services/ai/vision-policy.shared";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
@@ -72,6 +73,14 @@ export async function handleGenerateAltText(ctx: AIActionContext): Promise<DataR
   );
 
   // Create task entry with prompt
+  // The client SHOULD send the product title, but the image manager's own
+  // buttons do not always carry one — and a Task row labelled with a raw GID
+  // is one the merchant cannot match to anything they did. Cached title first,
+  // the GID only as the last resort (the card's Shopify deep link hangs off
+  // the same row, so an id still beats an empty subject).
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -79,7 +88,7 @@ export async function handleGenerateAltText(ctx: AIActionContext): Promise<DataR
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: productTitle,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -225,6 +234,14 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
   // Same reasoning as the keyword line: one product, one language, one lookup.
   const writtenLocale = await resolveWrittenLocale(ctx.admin, session.shop, formData);
 
+  // The client SHOULD send the product title, but the image manager's own
+  // buttons do not always carry one — and a Task row labelled with a raw GID
+  // is one the merchant cannot match to anything they did. Cached title first,
+  // the GID only as the last resort (the card's Shopify deep link hangs off
+  // the same row, so an id still beats an empty subject).
+  const bulkTaskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentType, productId, productTitle,
+  );
   const bulkTask = await db.task.create({
     data: {
       shop: session.shop,
@@ -232,7 +249,7 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
       status: "running",
       resourceType: contentType,
       resourceId: productId,
-      resourceTitle: productTitle,
+      resourceTitle: bulkTaskResourceTitle,
       fieldType: "allAltTexts",
       progress: 0,
       total: totalImages,
@@ -389,6 +406,14 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Data
   }
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)
+  // The client SHOULD send the product title, but the image manager's own
+  // buttons do not always carry one — and a Task row labelled with a raw GID
+  // is one the merchant cannot match to anything they did. Cached title first,
+  // the GID only as the last resort (the card's Shopify deep link hangs off
+  // the same row, so an id still beats an empty subject).
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -396,7 +421,7 @@ export async function handleTranslateAltText(ctx: AIActionContext): Promise<Data
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: productTitle || itemId,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       targetLocale,
       progress: 0,
@@ -495,6 +520,14 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
   }
 
   // Create task entry (prompts will be saved by AI service via savePromptToTask)
+  // The client SHOULD send the product title, but the image manager's own
+  // buttons do not always carry one — and a Task row labelled with a raw GID
+  // is one the merchant cannot match to anything they did. Cached title first,
+  // the GID only as the last resort (the card's Shopify deep link hangs off
+  // the same row, so an id still beats an empty subject).
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -502,7 +535,7 @@ export async function handleTranslateAltTextToAllLocales(ctx: AIActionContext): 
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: productTitle || itemId,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -801,6 +834,14 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
   }
 
   // Create task
+  // The client SHOULD send the product title, but the image manager's own
+  // buttons do not always carry one — and a Task row labelled with a raw GID
+  // is one the merchant cannot match to anything they did. Cached title first,
+  // the GID only as the last resort (the card's Shopify deep link hangs off
+  // the same row, so an id still beats an empty subject).
+  const bulkAllTaskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentType, itemId, productTitle,
+  );
   const bulkAllTask = await db.task.create({
     data: {
       shop: session.shop,
@@ -808,7 +849,7 @@ export async function handleTranslateAllAltTextsToAllLocales(ctx: AIActionContex
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: productTitle || itemId,
+      resourceTitle: bulkAllTaskResourceTitle,
       fieldType: "allAltTexts",
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -1071,6 +1112,14 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
   }
 
   // Create task
+  // The client SHOULD send the product title, but the image manager's own
+  // buttons do not always carry one — and a Task row labelled with a raw GID
+  // is one the merchant cannot match to anything they did. Cached title first,
+  // the GID only as the last resort (the card's Shopify deep link hangs off
+  // the same row, so an id still beats an empty subject).
+  const localeTaskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentType, itemId, productTitle,
+  );
   const localeTask = await db.task.create({
     data: {
       shop: session.shop,
@@ -1078,7 +1127,7 @@ export async function handleTranslateAllAltTextsForLocale(ctx: AIActionContext):
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: productTitle || itemId,
+      resourceTitle: localeTaskResourceTitle,
       fieldType: "allAltTexts",
       targetLocale,
       progress: 0,

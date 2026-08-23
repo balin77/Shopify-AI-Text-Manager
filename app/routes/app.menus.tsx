@@ -58,11 +58,16 @@ import {
   Banner,
   Button,
   TextField,
+  Tooltip,
 } from "@shopify/polaris";
+import { RefreshIcon } from "@shopify/polaris-icons";
 import { useI18n } from "../contexts/I18nContext";
 import { PlanAccessGate } from "../components/PlanAccessGate";
 import { AppSaveBar } from "../components/AppSaveBar";
 import { DisabledActionTooltip } from "../components/DisabledActionTooltip";
+import { HelpTooltip } from "../components/HelpTooltip";
+import { useDeleteItem } from "../hooks/useDeleteItem";
+import { DeleteItemModal } from "../components/create/DeleteItemModal";
 import { UnifiedItemList, type UnifiedItem } from "../components/unified/UnifiedItemList";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import { useItemSelector } from "../contexts/ItemSelectorContext";
@@ -72,6 +77,7 @@ import type { ShopLocale, TranslatableItem, ContentType } from "../types/content
 // a page that uses `bg-missing-translation` / `bg-untranslated` / the footer
 // classes without this import renders them as plain unstyled markup.
 import "../styles/AIEditableField.css";
+import "../styles/MenuTreeRow.css";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import {
   flattenMenuItems,
@@ -92,6 +98,10 @@ import {
   type MenuEditorNode,
 } from "~/services/menu-tree.shared";
 import { MenuTreeEditor, newMenuNode } from "~/components/menus/MenuTreeEditor";
+import {
+  MenuTargetPicker,
+  type MenuTargetPickerStrings,
+} from "~/components/menus/MenuTargetPicker";
 import type { ActionFunctionArgs } from "react-router";
 
 /** What the loader hands the client per Link GID. */
@@ -174,8 +184,18 @@ export const loader = createContentLoader({
       .filter((l) => l.published !== false && !l.primary)
       .map((l) => l.locale);
 
+    // Every menu item's `resourceId`, resolved to a title the merchant reads.
+    // Independent of the locale question below and of whether the link sweep
+    // succeeds: a target picker that shows raw GIDs is one nobody can check,
+    // and this is a handful of cache lookups grouped by resource type.
+    const targetTitles = await loadMenuTargetTitles(ctx);
+
     if (foreignLocales.length === 0) {
-      return { linkTranslations: {} as Record<string, LinkTranslationDTO>, linkSweepTruncated: false };
+      return {
+        linkTranslations: {} as Record<string, LinkTranslationDTO>,
+        linkSweepTruncated: false,
+        targetTitles,
+      };
     }
 
     try {
@@ -194,7 +214,7 @@ export const loader = createContentLoader({
           byLocale: row.byLocale,
         };
       }
-      return { linkTranslations, linkSweepTruncated: sweep.truncated };
+      return { linkTranslations, linkSweepTruncated: sweep.truncated, targetTitles };
     } catch (error) {
       // Same rule as the refresh above: a 401 belongs to the loader factory's
       // session recovery, not to this catch.
@@ -208,12 +228,48 @@ export const loader = createContentLoader({
       // An empty map with truncated=true reads as "incomplete", never as
       // "these items are untranslatable" — the exact distinction this page
       // got wrong for years.
-      return { linkTranslations: {} as Record<string, LinkTranslationDTO>, linkSweepTruncated: true };
+      return {
+        linkTranslations: {} as Record<string, LinkTranslationDTO>,
+        linkSweepTruncated: true,
+        targetTitles,
+      };
     }
   },
 
-  errorFallback: { linkTranslations: {} as Record<string, LinkTranslationDTO>, linkSweepTruncated: false },
+  errorFallback: {
+    linkTranslations: {} as Record<string, LinkTranslationDTO>,
+    linkSweepTruncated: false,
+    targetTitles: {} as Record<string, string>,
+  },
 });
+
+/**
+ * GID → title for every target in every menu of the shop.
+ *
+ * Its own function because it must never take the page down: a menu whose
+ * items point at resources this app has not synced still has to render, with
+ * those rows naming the type and the raw id instead of a label. Failure is
+ * therefore an empty map, not a throw.
+ */
+async function loadMenuTargetTitles(ctx: {
+  db: typeof import("~/db.server").db;
+  session: { shop: string };
+}): Promise<Record<string, string>> {
+  try {
+    const { collectMenuResourceIds, resolveMenuTargetTitles } = await import(
+      "~/services/menu-targets.server"
+    );
+    const rows = await ctx.db.menu.findMany({
+      where: { shop: ctx.session.shop },
+      select: { items: true },
+    });
+    const ids: string[] = [];
+    for (const row of rows) collectMenuResourceIds(row.items, ids);
+    return await resolveMenuTargetTitles(ctx.db, ctx.session.shop, ids);
+  } catch {
+    return {};
+  }
+}
 
 // ============================================================================
 // ACTION — save one locale's menu-item translations
@@ -236,6 +292,28 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const formData = await request.formData();
+
+  /**
+   * Deleting a whole menu — the ONE delete path of the app, third entrance.
+   *
+   * Not a menu-local mutation: `deleteContentObject` already owns the echo
+   * rule (Shopify must hand the id back — `userErrors: []` is not success),
+   * the id/type agreement check, the plan gate and the cache purge, and a
+   * second copy of those for menus is how one of them ends up missing. The
+   * purge knows that a menu's translations hang off its ITEMS' Link ids and
+   * has to collect them before the row goes.
+   */
+  if (formData.get("action") === "deleteContent") {
+    const { deleteContentObject } = await import("~/actions/content/delete.actions");
+    return deleteContentObject({
+      admin,
+      session,
+      db,
+      plan: ((settings?.subscriptionPlan || "free") as never),
+      resource: "menu",
+      gid: String(formData.get("resourceId") || ""),
+    });
+  }
 
   // Per-LOCALE payload, not a single locale. The per-entry buttons write into
   // several languages at once ("translate into all languages"), and the native
@@ -410,7 +488,7 @@ export async function action({ request }: ActionFunctionArgs) {
 // ============================================================================
 
 export default function MenusPage() {
-  const { menus, shopLocales, primaryLocale, error, linkTranslations, linkSweepTruncated } =
+  const { menus, shopLocales, primaryLocale, error, linkTranslations, linkSweepTruncated, targetTitles } =
     useLoaderData<typeof loader>();
   const { t, locale: appLocale } = useI18n();
   // The "reload" the drift banner offers. A revalidation, not a page reload:
@@ -465,6 +543,7 @@ export default function MenusPage() {
       removed: string[];
       renamed: Array<{ from: string; to: string }>;
       moved: string[];
+      retargeted: string[];
     };
     translationRepair: { restored: number; failed: Array<{ linkId: string; message: string }> };
     purgedLinkIds: string[];
@@ -689,12 +768,33 @@ export default function MenusPage() {
   );
   const tree = (selectedMenuId && treeDrafts[selectedMenuId]) || baseTree;
 
+  /**
+   * The fingerprint each draft was built ON TOP OF.
+   *
+   * A draft is a set of edits against ONE version of the tree. If Shopify's
+   * version moves underneath it — which is exactly what the reload after a
+   * drift refusal fetches — the draft no longer describes the merchant's
+   * intent: it is missing every foreign change, and because menuUpdate deletes
+   * what it is not sent, saving it would REMOVE an item somebody else just
+   * added. The fingerprint check on the server cannot catch that, because the
+   * page would send the FRESH fingerprint, which matches.
+   *
+   * A ref rather than state: nothing renders from it, and it must be readable
+   * inside the effect below without adding a render pass.
+   */
+  const draftBaseRef = useRef<Record<string, string>>({});
+
   const setTree = useCallback(
     (next: MenuEditorNode[]) => {
       if (!selectedMenuId) return;
+      if (!draftBaseRef.current[selectedMenuId]) {
+        draftBaseRef.current[selectedMenuId] = menuStructureFingerprint(selectedMenu?.items);
+      }
+      // A new edit is the merchant answering the notice; it has said its piece.
+      setDroppedDraftMenus((prev) => (prev.length === 0 ? prev : []));
       setTreeDrafts((prev) => ({ ...prev, [selectedMenuId]: next }));
     },
-    [selectedMenuId],
+    [selectedMenuId, selectedMenu],
   );
 
   const treeDiff = useMemo(() => diffMenuTrees(baseTree, tree), [baseTree, tree]);
@@ -792,6 +892,7 @@ export default function MenusPage() {
     });
     // Same scope rule for the tree: only the visible menu's draft goes.
     if (selectedMenuId) {
+      delete draftBaseRef.current[selectedMenuId];
       setTreeDrafts((prev) => {
         const next = { ...prev };
         delete next[selectedMenuId];
@@ -839,7 +940,12 @@ export default function MenusPage() {
     setTreeDrafts((prev) => {
       const next = { ...prev };
       for (const [menuId, draft] of Object.entries(prev)) {
-        if (draft === submitted) delete next[menuId];
+        if (draft === submitted) {
+          delete next[menuId];
+          // …and the base it was built on, or the next edit would be measured
+          // against a tree two saves old and read as stale on the next reload.
+          delete draftBaseRef.current[menuId];
+        }
       }
       return next;
     });
@@ -861,6 +967,49 @@ export default function MenusPage() {
     wasRevalidatingRef.current = false;
     setTreeResult(null);
   }, [revalidatorState]);
+
+  /**
+   * A draft whose tree moved in Shopify is DROPPED, and the merchant is told.
+   *
+   * This is the other half of the drift refusal. The banner says "somebody
+   * changed this menu, reload" — and the reload used to bring the new tree in
+   * while keeping the old draft on top of it. Two things followed, one
+   * cosmetic and one not: the save bar lit up over a diff the merchant had not
+   * produced, and that diff was their own edit PLUS a reversal of every
+   * foreign change — so saving would have deleted an item somebody else had
+   * just added. The server could not refuse it either, because the page would
+   * by then be sending the FRESH fingerprint.
+   *
+   * A draft built on the SAME tree survives untouched: a reload that changed
+   * nothing must not cost the merchant their unsaved work, which is the whole
+   * reason this button revalidates instead of reloading the page.
+   */
+  const [droppedDraftMenus, setDroppedDraftMenus] = useState<string[]>([]);
+  useEffect(() => {
+    const stale: string[] = [];
+    for (const menu of parsedMenus as Array<{ id: string; title: string; items?: unknown }>) {
+      const base = draftBaseRef.current[menu.id];
+      if (!base) continue;
+      if (base !== menuStructureFingerprint(menu.items)) stale.push(menu.id);
+    }
+    if (stale.length === 0) return;
+    const titles = (parsedMenus as Array<{ id: string; title: string }>)
+      .filter((m) => stale.includes(m.id))
+      .map((m) => m.title);
+    for (const id of stale) delete draftBaseRef.current[id];
+    setTreeDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const id of stale) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setDroppedDraftMenus(titles);
+  }, [parsedMenus]);
 
   // ── AI translate / copy, per entry ───────────────────────────────────────
 
@@ -1058,6 +1207,73 @@ export default function MenusPage() {
     [activeLocale, translateOne, autoSave, withBusy],
   );
 
+  /**
+   * The whole menu at once — the same pair every other content page has.
+   *
+   * Built from the SAME primitives the per-entry buttons use (translateOne +
+   * autoSave), not from a second write path: one echo-verified save either
+   * way, and a bulk run that behaved differently from the single one would be
+   * two features wearing one label. Sequential on purpose — the AI endpoint is
+   * one request per item per language, and firing a menu's worth at once buys
+   * no wall clock while making a failure impossible to attribute.
+   */
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const translateWholeMenu = useCallback(async () => {
+    const items = (selectedMenu?.flat ?? []) as FlatMenuItem[];
+    const targets = isPrimary ? bulkTargetLocales : [activeLocale];
+    if (targets.length === 0) return;
+    setBulkBusy(true);
+    setTranslateError(null);
+    try {
+      for (const item of items) {
+        if (!item.linkId) continue;
+        const row = (linkTranslations || {})[item.linkId] as LinkTranslationDTO | undefined;
+        if (!row?.translatable) continue;
+        const source = row.primaryTitle ?? item.title;
+        if (!source.trim()) continue;
+        const values: Record<string, string> = {};
+        for (const locale of targets) {
+          try {
+            const value = await translateOne(item.linkId, source, locale);
+            if (value) values[locale] = value;
+          } catch (e) {
+            // One item's failure is reported and the run continues: the
+            // alternative is a half-translated menu with no way to tell which
+            // half, which is the per-cell rule the bulk editor follows too.
+            setTranslateError(e instanceof Error ? e.message : String(e));
+          }
+        }
+        autoSave(values, item.linkId);
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [selectedMenu, isPrimary, bulkTargetLocales, activeLocale, linkTranslations, translateOne, autoSave]);
+
+  /**
+   * Empty every translation of this menu — in the active language, or in all
+   * of them from the primary view.
+   *
+   * It only fills the DRAFT with empty values; nothing is removed until the
+   * merchant saves, and Discard puts it all back. That is why there is no
+   * confirmation dialog: the save bar already is one, and it names the count.
+   */
+  const clearWholeMenu = useCallback(() => {
+    const targets = isPrimary ? foreignLocales : [activeLocale];
+    if (targets.length === 0) return;
+    const ids = [...visibleLinkIds];
+    setDraftByLocale((prev) => {
+      const next = { ...prev };
+      for (const locale of targets) {
+        const bucket = { ...(next[locale] ?? {}) };
+        for (const linkId of ids) bucket[linkId] = "";
+        next[locale] = bucket;
+      }
+      return next;
+    });
+  }, [isPrimary, foreignLocales, activeLocale, visibleLinkIds]);
+
   /** Foreign view: take the primary label over as-is, and save. */
   const copyFromPrimary = useCallback(
     (item: FlatMenuItem, sourceText: string) => {
@@ -1141,6 +1357,42 @@ export default function MenusPage() {
    * different value — which is why the tree is one state for every language
    * and only the field changes.
    */
+  /**
+   * Everything the target picker says, in the merchant's language.
+   *
+   * Assembled here and not inside the picker because the picker is a control
+   * and the app's words live in the i18n bundles — the same split every other
+   * component in this tree follows. Memoised on the bundle: a menu renders one
+   * picker per row, and rebuilding seven labels per row per keystroke is the
+   * kind of cost that only shows up on a shop with a large navigation.
+   */
+  const targetPickerStrings = useMemo<MenuTargetPickerStrings>(() => {
+    const c = t.content as Record<string, unknown> | undefined;
+    const str = (key: string, fallback: string) =>
+      typeof c?.[key] === "string" ? (c[key] as string) : fallback;
+    const dict = (key: string) => (c?.[key] as Record<string, string> | undefined) ?? {};
+    return {
+      label: str("menuTargetLabel", "Target"),
+      placeholder: str("menuTargetPlaceholder", "Search or paste a URL …"),
+      useUrl: (value: string) =>
+        str("menuTargetUseUrl", "Use this URL: {url}").replace("{url}", value),
+      groupLabels: dict("menuTargetGroups"),
+      typeNames: dict("menuTargetTypeNames"),
+      targetlessGroup: str("menuTargetFixedGroup", "Fixed destinations"),
+      targetlessLabels: dict("menuTargetTypes"),
+      moreMatches: str("menuTargetMore", "More matches — narrow the search"),
+      lookupFailed: str("menuTargetLookupFailed", "Part of the search failed."),
+      noMatches: str("menuTargetNoMatches", "Nothing found."),
+      searching: str("menuTargetSearching", "Searching …"),
+      unresolved: (type: string, id: string) =>
+        str("menuTargetUnresolved", "{type}: {id}").replace("{type}", type).replace("{id}", id),
+      resolved: (type: string, title: string) =>
+        str("menuTargetResolved", "{type}: {title}").replace("{type}", type).replace("{title}", title),
+      noTarget: str("menuTargetNone", "No target chosen yet."),
+      blogsFromArticles: str("menuTargetBlogsNote", ""),
+    };
+  }, [t]);
+
   const renderField = (node: MenuEditorNode) => {
     const linkId = node.id ? linkGidForNode(node.id) : null;
     const row = linkId ? ((linkTranslations || {})[linkId] as LinkTranslationDTO | undefined) : undefined;
@@ -1199,25 +1451,31 @@ export default function MenusPage() {
           }
           autoComplete="off"
         />
-        {/* A NEW item needs a target, and until the resource picker exists
-            (plan phase 3) the one target a merchant can state without one is a
-            URL. Shown for new items only: retargeting an EXISTING item is a
-            different feature with different consequences, and offering half of
-            it here would invite exactly the silent link change that feature
-            has to be careful about. */}
-        {isPrimary && !node.id && (
-          <div style={{ marginTop: "0.5rem" }}>
-            <TextField
-              label={t.content?.menuItemUrl || "URL"}
-              value={node.url ?? ""}
-              onChange={(next) => setTree(updateNode(tree, node.key, { url: next }))}
-              placeholder="https://"
-              error={problem === "missingTarget" ? t.content?.menuTargetRequired : undefined}
-              autoComplete="off"
-            />
-          </div>
-        )}
       </div>
+    );
+  };
+
+  /**
+   * Where the item POINTS — the row's second box, beside the name.
+   *
+   * On the primary language ONLY, and that is not a layout decision: a target
+   * is one link for every language, so a foreign tab that could change it
+   * would be retargeting the whole shop's navigation from a translation
+   * screen. Returning null is how the row learns it has one box, not two.
+   */
+  const renderTarget = (node: MenuEditorNode) => {
+    if (!isPrimary) return null;
+    const problem = problemByKey[node.key];
+    return (
+      <MenuTargetPicker
+        type={node.type}
+        url={node.url}
+        resourceId={node.resourceId}
+        targetTitles={targetTitles ?? {}}
+        onChange={(patch) => setTree(updateNode(tree, node.key, patch))}
+        error={problem === "missingTarget" ? t.content?.menuTargetRequired : undefined}
+        strings={targetPickerStrings}
+      />
     );
   };
 
@@ -1292,6 +1550,28 @@ export default function MenusPage() {
     }
   };
 
+  /**
+   * Deleting the whole menu.
+   *
+   * The same hook, dialog and server path as every other content delete —
+   * including the two-step confirmation that makes the merchant type the
+   * name. A menu is exactly the case that guard exists for: it takes every
+   * item with it, and each item's translations go with its Link resource for
+   * good (measured — re-creating the item mints a new id, so the values do
+   * not come back).
+   *
+   * On success the selection moves to another menu rather than staying on a
+   * GID that no longer exists, and the loader is re-read.
+   */
+  const deleteMenu = useDeleteItem({
+    onDeleted: () => {
+      setSelectedMenuId(
+        (parsedMenus as Array<{ id: string }>).find((m) => m.id !== selectedMenuId)?.id ?? null,
+      );
+      revalidator.revalidate();
+    },
+  });
+
   /** The tree write's outcome, or undefined when the last save had none. */
   const treeStatus = treeResult?.status;
 
@@ -1305,6 +1585,7 @@ export default function MenusPage() {
     say(t.content?.menuTreeRenamed, treeDiff.renamed.length);
     say(t.content?.menuTreeMoved, treeDiff.reparented.length);
     say(t.content?.menuTreeReordered, treeDiff.reordered.length);
+    say(t.content?.menuTreeRetargeted, treeDiff.retargeted.length);
     say(t.content?.menuTreeCreated, treeDiff.created.length);
     say(t.content?.menuTreeDeleted, treeDiff.deleted.length);
     return (t.content?.menuTreeSummary || "{count}: {detail}")
@@ -1432,6 +1713,89 @@ export default function MenusPage() {
                 </Card>
               )}
 
+              {/* The operations row every content page has: what happens to
+                  the TEXT on the left, what happens to the MENU on the right,
+                  in its own card between the language bar and the content —
+                  the same three-card rhythm as UnifiedContentEditor. */}
+              {selectedMenu && (
+                <Card padding="400">
+                  <InlineStack align="space-between" blockAlign="center" gap="300">
+                    <InlineStack gap="200" blockAlign="center">
+                      <DisabledActionTooltip hint={singleLocaleHint ?? (isPrimary ? allTargetsOffHint : undefined)}>
+                        <Button
+                          size="slim"
+                          loading={bulkBusy}
+                          disabled={bulkBusy || !!singleLocaleHint || !!(isPrimary && allTargetsOffHint)}
+                          onClick={() => void translateWholeMenu()}
+                        >
+                          {bulkBusy
+                            ? (t.content?.translating || "…")
+                            : (t.content?.translateAll || "🌍 Translate All")}
+                        </Button>
+                      </DisabledActionTooltip>
+                      <DisabledActionTooltip hint={singleLocaleHint}>
+                        <Button size="slim" tone="critical" disabled={!!singleLocaleHint} onClick={clearWholeMenu}>
+                          🗑️ {t.content?.clearAll || "Clear All"}
+                        </Button>
+                      </DisabledActionTooltip>
+                    </InlineStack>
+
+                    <InlineStack gap="200" blockAlign="center">
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          onClick={() => {
+                            newNodeSeq.current += 1;
+                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
+                          }}
+                        >
+                          {t.content?.menuAddItem}
+                        </Button>
+                      )}
+                      {/* The whole menu. Only on the primary language: deleting
+                          a menu from a translation tab is not a translation
+                          act. */}
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          tone="critical"
+                          variant="tertiary"
+                          onClick={() =>
+                            deleteMenu.request({
+                              id: selectedMenu.id,
+                              title: selectedMenu.title,
+                              resource: "menu",
+                            })
+                          }
+                        >
+                          {t.content?.menuDeleteMenu || "Delete menu"}
+                        </Button>
+                      )}
+                      {/* Reload is a REVALIDATION here, not a per-item sync
+                          endpoint: the loader re-reads every menu from Shopify
+                          on each run, so re-running it IS the reload — and it
+                          keeps unsaved drafts, which a page reload would not. */}
+                      <Tooltip content={t.content?.menuReload || "Reload"}>
+                        <Button
+                          size="slim"
+                          icon={RefreshIcon}
+                          accessibilityLabel={t.content?.menuReload || "Reload"}
+                          loading={revalidator.state !== "idle"}
+                          onClick={() => revalidator.revalidate()}
+                        />
+                      </Tooltip>
+                      {/* The bar's own ❓, at the far right: five buttons whose
+                          scopes differ (one item, every item, this language,
+                          every language) and whose costs differ — a merchant
+                          should be able to read what "clear all" empties
+                          BEFORE pressing it, not from the undo they do not
+                          have. */}
+                      <HelpTooltip helpKey="menuActionBar" position="below" />
+                    </InlineStack>
+                  </InlineStack>
+                </Card>
+              )}
+
               <Card>
                 {selectedMenu ? (
                   <BlockStack gap="500">
@@ -1441,9 +1805,23 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {isPrimary && (
-                      <Banner tone="info">
-                        <p>{t.content?.menuPrimaryEditHint}</p>
+                    {/* Said, never silent. The reload brought a tree that no
+                        longer matches what the merchant's unsaved edits were
+                        made against, so those edits were dropped — keeping
+                        them would have written a deletion of somebody else's
+                        item. Losing work without being told is the one thing
+                        worse than losing it. */}
+                    {droppedDraftMenus.length > 0 && (
+                      <Banner
+                        tone="warning"
+                        onDismiss={() => setDroppedDraftMenus([])}
+                      >
+                        <p>
+                          {(t.content?.menuDraftDropped || "{menus}").replace(
+                            "{menus}",
+                            droppedDraftMenus.join(", "),
+                          )}
+                        </p>
                       </Banner>
                     )}
 
@@ -1475,6 +1853,7 @@ export default function MenusPage() {
                             ...(treeResult?.foreignChanges?.added ?? []),
                             ...(treeResult?.foreignChanges?.removed ?? []),
                             ...(treeResult?.foreignChanges?.moved ?? []),
+                            ...(treeResult?.foreignChanges?.retargeted ?? []),
                           ].map((title, i) => (
                             <Text as="p" variant="bodySm" key={`o${i}`}>
                               {title}
@@ -1520,16 +1899,10 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {(treeResult?.translationRepair?.restored ?? 0) > 0 && (
-                      <Banner tone="info">
-                        <p>
-                          {(t.content?.menuTreeRepairDone || "").replace(
-                            "{count}",
-                            String(treeResult?.translationRepair?.restored ?? 0),
-                          )}
-                        </p>
-                      </Banner>
-                    )}
+                    {/* The SUCCESSFUL repair says nothing a merchant can act
+                        on: their translations are where they left them, which
+                        is what they expected. Only the FAILED one above is
+                        news. (The restore itself is logged server-side.) */}
 
                     {(treeResult?.purgedTranslationCount ?? 0) > 0 && (
                       <Banner tone="info">
@@ -1640,6 +2013,7 @@ export default function MenusPage() {
                       // translation of a primary value that does not exist yet.
                       structureLocked={!isPrimary}
                       renderField={renderField}
+                      renderTarget={renderTarget}
                       renderActions={renderRowActions}
                       onDelete={(node) => setTree(removeNode(tree, node.key))}
                       onAddChild={(node) => {
@@ -1664,18 +2038,6 @@ export default function MenusPage() {
                       }}
                     />
 
-                    {isPrimary && (
-                      <InlineStack>
-                        <Button
-                          onClick={() => {
-                            newNodeSeq.current += 1;
-                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
-                          }}
-                        >
-                          {t.content?.menuAddItem}
-                        </Button>
-                      </InlineStack>
-                    )}
                   </BlockStack>
                 ) : (
                   <div style={{ textAlign: "center", padding: "4rem 2rem" }}>
@@ -1690,6 +2052,18 @@ export default function MenusPage() {
           </div>
         </div>
       </Page>
+
+      {deleteMenu.target && (
+        <DeleteItemModal
+          open={!!deleteMenu.target}
+          onClose={deleteMenu.cancel}
+          item={deleteMenu.target}
+          onConfirm={deleteMenu.confirm}
+          deleting={deleteMenu.deleting}
+          error={deleteMenu.error}
+          t={t.content?.deleteModal}
+        />
+      )}
     </PlanAccessGate>
   );
 }

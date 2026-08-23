@@ -28,10 +28,15 @@
  * instead of silently reverting the other person's edit.
  */
 
+import { menuTargetKey } from "./menu-tree.shared";
+
 /** A menu item as both the cache JSON and the fresh read expose it. */
 export interface MenuTreeNode {
   id?: unknown;
   title?: unknown;
+  type?: unknown;
+  url?: unknown;
+  resourceId?: unknown;
   items?: unknown;
 }
 
@@ -39,17 +44,22 @@ export interface MenuTreeNode {
  * A stable description of "the tree as it was shown", for detecting that
  * somebody else moved it underneath us.
  *
- * Contains position, id AND title. The first two catch a restructure; the
- * TITLE is in there because the write substitutes titles — an item renamed in
- * the Shopify admin while this page was open would otherwise be quietly reset
- * to the label our page still remembers, which is the one class of data loss
- * this whole feature could cause. Everything else (url, resourceId, tags) is
- * deliberately absent: those are carried over from the fresh read verbatim, so
- * a change to them is preserved by construction and must not block a save.
+ * Contains position, id, TARGET and title. The first two catch a restructure;
+ * the other two are in there because the write SUBSTITUTES them — an item
+ * renamed or retargeted in the Shopify admin while this page was open would
+ * otherwise be quietly reset to what our page still remembers, which is the
+ * one class of data loss this whole feature could cause. `tags` is
+ * deliberately absent: it is carried over from the fresh read verbatim, so a
+ * change to it is preserved by construction and must not block a save.
+ *
+ * The target is `menuTargetKey`'s, not the raw fields: for a resource-bound
+ * item Shopify DERIVES the url from the resource's handle, and a handle change
+ * elsewhere in the shop must not read as somebody having retargeted the menu.
  *
  * Line-oriented rather than hashed: when a save is refused, the two strings
  * can be diffed in a log to say WHAT moved. A menu has tens of items, not
- * thousands, so the size is irrelevant.
+ * thousands, so the size is irrelevant. The TITLE stays LAST because it is the
+ * one field that may contain a tab.
  */
 export function menuStructureFingerprint(items: unknown, maxDepth = 10): string {
   const lines: string[] = [];
@@ -61,11 +71,16 @@ export function menuStructureFingerprint(items: unknown, maxDepth = 10): string 
       const id = typeof node?.id === "string" ? node.id : "";
       if (!id) return;
       const title = typeof node?.title === "string" ? node.title : "";
+      const target = menuTargetKey({
+        type: typeof node?.type === "string" ? node.type : null,
+        url: typeof node?.url === "string" ? node.url : null,
+        resourceId: typeof node?.resourceId === "string" ? node.resourceId : null,
+      });
       const nextPath = [...path, index + 1];
       // Tab-separated: a title may contain anything a merchant can type, and a
       // separator that can appear inside a value makes two different trees
       // able to produce one fingerprint.
-      lines.push(`${nextPath.join(".")}\t${id}\t${title}`);
+      lines.push(`${nextPath.join(".")}\t${id}\t${target}\t${title}`);
       walk(node?.items, depth + 1, nextPath);
     });
   };
@@ -91,23 +106,25 @@ export interface MenuFingerprintDrift {
   removed: string[];
   renamed: Array<{ from: string; to: string }>;
   moved: string[];
+  /** Somebody else changed where an item POINTS. */
+  retargeted: string[];
 }
 
 export function describeFingerprintDrift(before: string, after: string): MenuFingerprintDrift {
   const parse = (fingerprint: string) => {
-    const byId = new Map<string, { path: string; title: string }>();
+    const byId = new Map<string, { path: string; target: string; title: string }>();
     for (const line of fingerprint.split("\n")) {
       if (!line) continue;
-      const [path, id, ...rest] = line.split("\t");
+      const [path, id, target, ...rest] = line.split("\t");
       // A title may legitimately be empty; a line without an id cannot be
       // matched at all and is skipped rather than guessed at.
       if (!id) continue;
-      byId.set(id, { path, title: rest.join("\t") });
+      byId.set(id, { path, target: target ?? "", title: rest.join("\t") });
     }
     return byId;
   };
 
-  const drift: MenuFingerprintDrift = { added: [], removed: [], renamed: [], moved: [] };
+  const drift: MenuFingerprintDrift = { added: [], removed: [], renamed: [], moved: [], retargeted: [] };
   const beforeById = parse(before);
   const afterById = parse(after);
 
@@ -117,7 +134,11 @@ export function describeFingerprintDrift(before: string, after: string): MenuFin
       drift.added.push(now.title);
       continue;
     }
+    // Reported in ONE bucket each, most-specific first: an item that was
+    // renamed AND moved is one thing that happened to it, and listing it twice
+    // makes the report read as two foreign edits.
     if (then.title !== now.title) drift.renamed.push({ from: then.title, to: now.title });
+    else if (then.target !== now.target) drift.retargeted.push(now.title);
     else if (then.path !== now.path) drift.moved.push(now.title);
   }
   for (const [id, then] of beforeById) {

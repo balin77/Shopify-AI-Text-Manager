@@ -13,9 +13,15 @@
  * action instead (the task type keeps its historical name — renaming would
  * break running tasks), which runs it as a detached, heartbeat-updated Task.
  *
- * All grid state lives in the URL (?type=&locale=&market=&q=&f=&sort=&page=
+ * All grid state lives in the URL (?type=&gridLocale=&market=&q=&f=&sort=&page=
  * &pageSize=) and navigation goes through useAppNavigation() so the Shopify
- * session params (host/shop/embedded) survive.
+ * session params (host/shop/embedded) survive. The language is `gridLocale`
+ * and NOT `locale`: that name is Shopify's — it appends the merchant's ADMIN
+ * UI language under it on every embedded request, `resolveMerchantLocale`
+ * renders the app from it, and useAppNavigation carries it everywhere. Writing
+ * the grid's language there switched the whole admin UI for every merchant who
+ * had not stored an app language; reading it meant the grid opened in the
+ * admin's language.
  */
 
 import { data as json, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
@@ -318,7 +324,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // "" (primary) instead of silently mislabeling primary content as a
   // translation; a market requires a foreign locale (primary is always
   // global) and must be one of the ACTIVE markets.
-  const rawLocale = url.searchParams.get("locale") || "";
+  // `gridLocale`, never `locale` — see the header note: `locale` is Shopify's
+  // admin-UI-language param. An old bookmark opens the primary language rather
+  // than a foreign one, because honouring the old name would be
+  // indistinguishable from honouring Shopify's.
+  const rawLocale = url.searchParams.get("gridLocale") || "";
   const locale = locales.some((l) => !l.primary && l.locale === rawLocale) ? rawLocale : "";
   const rawMarket = url.searchParams.get("market") || "";
   const marketId = locale !== "" && markets.some((m) => m.id === rawMarket) ? rawMarket : "";
@@ -1050,6 +1060,26 @@ export default function BulkEditor() {
   /** Navigate with updated grid params (all state is in the URL, §3.3).
    * handleNavigate merges with the current params, so untouched ones —
    * including Shopify's host/shop/embedded — survive. */
+  /**
+   * "Open in editor" carries the grid's language, under the editor's OWN param
+   * name. It used to arrive by accident: the grid's `?locale=` was inherited by
+   * every navigation and the content routes read that same name — which is
+   * exactly the collision that made them open in the merchant's ADMIN UI
+   * language instead (see `initialLocale` in content-editor.types.ts). The
+   * primary locale is left off: it is what the editor opens in anyway, and a
+   * spelled-out one would take precedence over the language the merchant last
+   * worked in.
+   */
+  const editorLinkParams = (id: string) => {
+    const params = new URLSearchParams({ select: id });
+    // Derived here rather than reused from below: this helper is defined above
+    // the component's own `primaryLocaleCode`, and only ever CALLED from a
+    // click handler.
+    const primary = data.locales.find((l) => l.primary)?.locale ?? "";
+    if (locale && locale !== primary) params.set("contentLocale", locale);
+    return params;
+  };
+
   const navigateGrid = (overrides: Record<string, string>) => {
     setQueuedBanner(false);
     const params = new URLSearchParams();
@@ -1082,7 +1112,7 @@ export default function BulkEditor() {
   // (and the merchant's position) survive the switch (Plan §6.4). Selecting
   // the primary language clears the market (primary is always global).
   const handleLocaleChange = (value: string) =>
-    navigateGrid({ locale: value, ...(value === "" ? { market: "" } : {}) });
+    navigateGrid({ gridLocale: value, ...(value === "" ? { market: "" } : {}) });
   const handleMarketChange = (value: string) => navigateGrid({ market: value });
   const goToPage = (nextPage: number) => navigateGrid({ page: String(nextPage) });
   const handleSearchCommit = (q: string) => navigateGrid({ q, page: "1" });
@@ -2289,7 +2319,7 @@ export default function BulkEditor() {
                           // instead of sending a MediaImage gid as a product id.
                           ...(row.type === "image" && !row.productId
                             ? {}
-                            : { searchParams: new URLSearchParams({ select: row.productId ?? row.id }) }),
+                            : { searchParams: editorLinkParams(row.productId ?? row.id) }),
                         })
                       }
                       columnHeading={columnHeading}
@@ -2354,7 +2384,7 @@ export default function BulkEditor() {
                         const row = previewRow;
                         setPreviewRow(null);
                         handleNavigate(TYPE_EDITOR_PATH[row.type], {
-                          searchParams: new URLSearchParams({ select: row.productId ?? row.id }),
+                          searchParams: editorLinkParams(row.productId ?? row.id),
                         });
                       },
                     },

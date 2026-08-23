@@ -34,6 +34,17 @@ export interface DeleteItemModalTexts {
   consequenceIrreversible?: string;
   /** Blog-only: articles go with it. */
   consequenceBlogArticles?: string;
+  /**
+   * Menu-only: every item goes, and its translations are not recoverable.
+   *
+   * Its own line rather than leaning on `consequenceTranslations`, which says
+   * "the translations of this object". A menu's translations sit on its ITEMS,
+   * and the measured part is the one a merchant would not guess: re-creating
+   * an item mints a new id, so the values do not come back with it.
+   */
+  consequenceMenuItems?: string;
+  /** Menu-only: the handle a theme references goes with it. */
+  consequenceMenuStorefront?: string;
   /** Metaobject-only: products may reference the entry as an option value. */
   consequenceMetaobjectUsage?: string;
   /** The TYPE takes its entries with it, and Shopify does not ask about them. */
@@ -106,6 +117,28 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                   {t.consequenceBlogArticles || "Every article in this blog is deleted with it."}
                 </List.Item>
               )}
+              {item.resource === "menu" && (
+                <>
+                  <List.Item>
+                    <Text as="span" fontWeight="semibold">
+                      {t.consequenceMenuItems ||
+                        "Every item in this menu goes with it, and their translations cannot be recovered — a re-created item gets a new id."}
+                    </Text>
+                  </List.Item>
+                  {/* The handle. This app refuses to let a merchant RENAME one
+                      without a warning, because a theme references a menu by it
+                      and renaming silently unhooks the menu from the storefront
+                      — and deleting is the larger version of that same act.
+                      Saying it only for the rename and not here would warn about
+                      the smaller half. */}
+                  <List.Item>
+                    <Text as="span" fontWeight="semibold">
+                      {t.consequenceMenuStorefront ||
+                        "A theme references a menu by its handle (main-menu, footer). Deleting it removes that handle, and any theme section pointing at it renders nothing."}
+                    </Text>
+                  </List.Item>
+                </>
+              )}
               {/* A metaobject entry can be a product's option VALUE. MEASURED
                   (PLAN_METAOBJECTS_EDITOR V5, 2026-08-19): Shopify REFUSES the
                   delete while anything still references it, so no option value
@@ -147,8 +180,17 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
                     "Shopify refuses to delete an entry that a product still uses as an option value — remove it there first."}
                 </List.Item>
               )}
-              <List.Item>{t.consequenceTranslations || "All translations of this item are deleted."}</List.Item>
-              <List.Item>{t.consequenceKeyword || "Its keyword assignment is removed."}</List.Item>
+              {/* Both are false for a MENU and the dialog's own standard is
+                  fifteen lines up: an invented consequence is not a safer
+                  warning, only a false one. A menu row carries no translations
+                  of its own — its items do, which the line above says — and it
+                  can never carry a keyword assignment. */}
+              {item.resource !== "menu" && (
+                <>
+                  <List.Item>{t.consequenceTranslations || "All translations of this item are deleted."}</List.Item>
+                  <List.Item>{t.consequenceKeyword || "Its keyword assignment is removed."}</List.Item>
+                </>
+              )}
               <List.Item>
                 <Text as="span" fontWeight="semibold">
                   {t.consequenceIrreversible || "This cannot be undone."}

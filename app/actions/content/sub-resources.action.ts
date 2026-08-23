@@ -16,6 +16,7 @@ import { getFullErrorMessage } from "../../utils/error-handler";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { subResourceLockId } from "~/services/translations/translation-locks.shared";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
@@ -386,9 +387,17 @@ export async function handleTranslateSubResources(
 
   // Build a descriptive task title based on what's being translated
   const resourceLabels = sourceData.map(s => s.label).join(", ");
-  const taskTitle = resourceLabels.length > 50
+  const subResourceLabel = resourceLabels.length > 50
     ? `${sourceData.length} sub-resource${sourceData.length > 1 ? 's' : ''}`
     : resourceLabels;
+  // The options/metafields alone never said WHICH product they belong to —
+  // the card showed "Farbe, Größe" under a bare "Product" badge. The item
+  // leads; the sub-resources follow it, because `fieldType` here is the
+  // constant "sub-resources" and would otherwise name nothing specific.
+  const itemTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId,
+  );
+  const taskTitle = itemTitle ? `${itemTitle} – ${subResourceLabel}` : subResourceLabel;
 
   // Create task entry for tracking
   const task = await db.task.create({
@@ -573,9 +582,17 @@ export async function handleTranslateSubResourceToAllLocales(
 
   // Build a descriptive task title
   const resourceLabels = sourceData.map(s => s.label).join(", ");
-  const taskTitle = resourceLabels.length > 50
+  const subResourceLabel = resourceLabels.length > 50
     ? `${sourceData.length} sub-resource${sourceData.length > 1 ? 's' : ''}`
     : resourceLabels;
+  // The options/metafields alone never said WHICH product they belong to —
+  // the card showed "Farbe, Größe" under a bare "Product" badge. The item
+  // leads; the sub-resources follow it, because `fieldType` here is the
+  // constant "sub-resources" and would otherwise name nothing specific.
+  const itemTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId,
+  );
+  const taskTitle = itemTitle ? `${itemTitle} – ${subResourceLabel}` : subResourceLabel;
 
   // Create task entry for tracking
   const task = await db.task.create({

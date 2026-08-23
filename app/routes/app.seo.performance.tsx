@@ -520,7 +520,10 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
         status: "pending",
         resourceType: "Product",
         resourceId: image.productId,
-        resourceTitle: image.product?.title || "",
+        // `undefined`, never `""`: an empty string used to blank the Tasks
+        // card's whole resource row — the deep link included — while a null
+        // column lets the card fall back to the id it can still link.
+        resourceTitle: image.product?.title || undefined,
         fieldType: "altText",
         progress: 0,
         expiresAt: getTaskExpirationDate(),

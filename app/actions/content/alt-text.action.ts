@@ -11,6 +11,7 @@ import { TranslationService } from "../../../src/services/translation.service";
 import { ShopifyContentService } from "../../../src/services/shopify-content.service";
 import { decryptApiKey } from "../../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import type { ContentEditorConfig } from "../../types/content-editor.types";
 import { logger } from "../../utils/logger.server";
 import { ShopifyApiGateway } from "../../services/shopify-api-gateway.service";
@@ -158,7 +159,14 @@ export async function handleGenerateAltText(
     language: mainLanguage,
   });
 
-  // Create task entry
+  // The client sends the product title it has on screen; the image manager's
+  // buttons do not always carry one, and an empty subject used to blank the
+  // Tasks card's whole resource row. Cached title as the fallback, and NO id
+  // fallback: the card renders the numeric id and the Shopify deep link off
+  // `resourceId` itself, so a GID here would be that fact spelled unreadably.
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -166,7 +174,7 @@ export async function handleGenerateAltText(
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
-      resourceTitle: productTitle,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -244,7 +252,14 @@ export async function handleGenerateAllAltTexts(
   const mainLanguage = getFormString(formData, "mainLanguage");
   const totalImages = imagesData.length;
 
-  // Create task entry
+  // The client sends the product title it has on screen; the image manager's
+  // buttons do not always carry one, and an empty subject used to blank the
+  // Tasks card's whole resource row. Cached title as the fallback, and NO id
+  // fallback: the card renders the numeric id and the Shopify deep link off
+  // `resourceId` itself, so a GID here would be that fact spelled unreadably.
+  const bulkTaskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId, productTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -252,7 +267,7 @@ export async function handleGenerateAllAltTexts(
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
-      resourceTitle: productTitle,
+      resourceTitle: bulkTaskResourceTitle,
       fieldType: "allAltTexts",
       progress: 0,
       total: totalImages,
@@ -350,7 +365,14 @@ export async function handleTranslateAltText(
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Name the ITEM. This row stored a `resourceId` and no title at all, so the
+  // Tasks card rendered nothing for it — not even the Shopify link. No title
+  // reaches this handler on the wire, so the cached one is read here; the
+  // image is already named by `fieldType` ("Image N alt-text"), which is why
+  // the subject is the plain product name and not a composed string.
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -358,6 +380,7 @@ export async function handleTranslateAltText(
       status: "pending",
       resourceType: contentConfig.resourceType,
       resourceId: itemId,
+      resourceTitle: taskResourceTitle,
       fieldType: `altText_${imageIndex}`,
       targetLocale,
       progress: 0,
@@ -432,8 +455,14 @@ export async function handleTranslateAltTextToAllLocales(
     return json({ success: false, error: "Invalid targetLocales format" }, { status: 400 });
   }
 
-  const resourceTitle = productTitle
-    ? `${productTitle} – Bild ${imageIndex + 1}`
+  // Same fallback as its siblings: the form's title first, the cached one
+  // next. The image number stays in the composed string here because this
+  // row's `fieldType` is "all" and would otherwise never name the image.
+  const itemTitle = await taskTitleOrFallback(
+    db, session.shop, contentConfig.resourceType, itemId, productTitle,
+  );
+  const resourceTitle = itemTitle
+    ? `${itemTitle} – Bild ${imageIndex + 1}`
     : `Bild ${imageIndex + 1}`;
 
   // Create task entry

@@ -13,6 +13,7 @@ import { getFullErrorMessage } from "../../utils/error-handler";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { buildTranslateInstructions } from "~/utils/character-limits";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import { logger } from "../../utils/logger.server";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import type { Session } from "@shopify/shopify-api";
@@ -203,7 +204,13 @@ export async function handleTranslateField(
     return json({ success: false, error: "Invalid target locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Name the ITEM. This row stored a `resourceId` and no title at all, so the
+  // Tasks card rendered nothing for it — not even the Shopify link that would
+  // have let the merchant see which item it was. The client sends no title on
+  // the single-field translate, so the cached one is read here.
+  const taskResourceTitle = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -211,6 +218,7 @@ export async function handleTranslateField(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
+      resourceTitle: taskResourceTitle,
       fieldType,
       targetLocale,
       progress: 0,
@@ -296,7 +304,13 @@ export async function handleTranslateAll(
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Create task entry.
+  // The client sends the title it has on screen; an editor opened by deep link
+  // may not have one yet, and an empty subject used to blank the card's whole
+  // resource row. Cached title as the fallback.
+  const taskResourceTitle2 = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId, contextTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -304,7 +318,7 @@ export async function handleTranslateAll(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
-      resourceTitle: contextTitle,
+      resourceTitle: taskResourceTitle2,
       fieldType: "all",
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -458,7 +472,13 @@ export async function handleTranslateAllForLocale(
     return json({ success: false, error: "Invalid source locale format" }, { status: 400 });
   }
 
-  // Create task entry
+  // Create task entry.
+  // The client sends the title it has on screen; an editor opened by deep link
+  // may not have one yet, and an empty subject used to blank the card's whole
+  // resource row. Cached title as the fallback.
+  const taskResourceTitle3 = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId, contextTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -466,7 +486,7 @@ export async function handleTranslateAllForLocale(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
-      resourceTitle: contextTitle,
+      resourceTitle: taskResourceTitle3,
       targetLocale,
       fieldType: "all",
       progress: 0,
@@ -627,7 +647,13 @@ export async function handleTranslateFieldToAllLocales(
 
   logger.debug('[UnifiedContent] translateFieldToAllLocales', { fieldType, targetLocales: targetLocalesStr });
 
-  // Create task entry
+  // Create task entry.
+  // The client sends the title it has on screen; an editor opened by deep link
+  // may not have one yet, and an empty subject used to blank the card's whole
+  // resource row. Cached title as the fallback.
+  const taskResourceTitle4 = await taskTitleOrFallback(
+    db, session.shop, getEffectiveResourceType(itemId, contentConfig.resourceType), itemId, contextTitle,
+  );
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -635,7 +661,7 @@ export async function handleTranslateFieldToAllLocales(
       status: "pending",
       resourceType: getEffectiveResourceType(itemId, contentConfig.resourceType),
       resourceId: itemId,
-      resourceTitle: contextTitle,
+      resourceTitle: taskResourceTitle4,
       fieldType,
       progress: 0,
       expiresAt: getTaskExpirationDate(),

@@ -1,0 +1,159 @@
+/* ==========================================================================
+   One row of the menu tree editor: name, target, actions.
+
+   Three parts whose ARRANGEMENT — not just their size — changes with the
+   available width, which is why this is a grid with two named area maps and
+   not a flex row that wraps:
+
+     wide    name | target        the two boxes side by side, the buttons
+             actions actions      running underneath both
+
+     narrow  name                 stacked, and the buttons stay under the
+             actions              NAME, not at the bottom: on a phone the
+             target               row is scrolled through with a thumb, and
+                                  a button bar between the two boxes is
+                                  reachable where one below both is not
+
+   The narrow action row is a single scrolling LINE rather than three wrapped
+   ones — the same pattern as the AI action row (.ai-field-footer-right) and
+   the language buttons, for the same reason: a row that wraps turns every
+   menu item into half a screen.
+   ========================================================================== */
+
+.menu-row-grid {
+  display: grid;
+  gap: 0.5rem 1rem;
+  grid-template-columns: 1fr 1fr;
+  grid-template-areas:
+    "name target"
+    "actions actions";
+  align-items: start;
+
+  /* How much of the row's depth indent the NAME CELL spends. Its own variable
+     rather than `--menu-row-indent` used directly, because the mobile rules
+     hand the indent back to the row and zero this one — two readers, one
+     switch, instead of an override in three places. */
+  --menu-row-cell-indent: var(--menu-row-indent, 0px);
+  /* The lane in front of the name box that the drag handle sits in. */
+  --menu-row-handle-lane: 1.5rem;
+}
+
+/* A foreign locale has no handle to make room for. */
+.menu-row-grid--no-handle {
+  --menu-row-handle-lane: 0rem;
+}
+
+/* A foreign locale has no target control. Without this the second column
+   would still be reserved and the name box would sit at half width with
+   nothing beside it. */
+.menu-row-grid--no-target {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "name"
+    "actions";
+}
+
+.menu-row-name {
+  grid-area: name;
+  min-width: 0;
+  /* The anchor for the handle below. */
+  position: relative;
+  /* The depth indent, spent HERE and not on the row: the box's left edge moves
+     with the nesting while its right edge stays on the column boundary, so
+     every target box on the page starts at the same x. Padding rather than
+     margin, so `min-width: 0` still measures the whole cell and a long title
+     cannot push the column apart. The handle's lane is part of the same
+     padding — it is inside this cell, not in front of the grid. */
+  padding-left: calc(var(--menu-row-cell-indent) + var(--menu-row-handle-lane));
+  /* The indent is what shows a depth change during a drag — the element itself
+     is pinned horizontally — so it slides rather than jumping. Instant, it
+     reads as a glitch; at this length it reads as the row snapping into the
+     level it will take. */
+  transition: padding-left 120ms ease;
+}
+
+/*
+ * The drag handle, OUT OF FLOW.
+ *
+ * It has to step in with the nesting like the box it belongs to — but it
+ * cannot do that from a lane in front of the grid: its own offset would push
+ * the grid, and the target column would go ragged again, which is exactly the
+ * defect the indent was moved off the row to fix. Absolutely positioned, it
+ * indents for free, because nothing downstream of it moves.
+ */
+.menu-row-handle {
+  position: absolute;
+  left: var(--menu-row-cell-indent);
+  /* Steps with the box it belongs to, at the same pace. */
+  transition: left 120ms ease;
+  /* The handle belongs beside the input BOX, and a Polaris field puts its
+     label row above that box. */
+  top: 1.5rem;
+  width: var(--menu-row-handle-lane);
+  text-align: left;
+  cursor: grab;
+  color: var(--p-color-icon-secondary, #6d7175);
+  touch-action: none;
+  user-select: none;
+  line-height: 1;
+}
+
+.menu-row-target {
+  grid-area: target;
+  min-width: 0;
+}
+
+.menu-row-actions {
+  grid-area: actions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (max-width: 768px) {
+  .menu-row-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "name"
+      "actions"
+      "target";
+  }
+
+  /* Stacked, there is no target column to line up — so the indent goes back to
+     the whole row and the three parts stay together as one item. Indenting
+     only the name here would leave the target hanging out to its left, which
+     reads as a layout fault rather than as nesting. */
+  .menu-tree-row {
+    margin-left: var(--menu-row-indent, 0);
+  }
+
+  /* Stacked, the row carries the indent — so the cell spends none of it and
+     the handle sits at the cell's own left edge. Its lane stays reserved. */
+  .menu-row-grid {
+    --menu-row-cell-indent: 0px;
+  }
+
+  .menu-row-actions {
+    /* One line that scrolls sideways. `flex-start` and not `flex-end`:
+       justifying to the end pushes the overflow off the START edge, which no
+       amount of scrolling can reach. */
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .menu-row-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Every direct child (a bare Button or a DisabledActionTooltip wrapper)
+     keeps its natural width, so the row scrolls instead of squeezing its
+     labels into two-letter columns. */
+  .menu-row-actions > * {
+    flex: 0 0 auto;
+  }
+}
