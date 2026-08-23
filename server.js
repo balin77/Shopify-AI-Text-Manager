@@ -364,6 +364,28 @@ const server = app.listen(port, host, async () => {
     serverLogger.error("Failed to start GDPR audit log cleanup service", { error: String(error) });
   }
 
+  // Recover pending tasks BEFORE any processor starts claiming work, and
+  // AWAIT it. `recoverRunningWebpTasks` resets a `running` WebP item that died
+  // under 70% progress back to `pending`, on the premise that nothing reached
+  // Shopify yet — but `webpProcessor.start()` begins polling immediately and is
+  // not awaited, so with the old order it could already have claimed that very
+  // item. Recovery then reset a LIVE conversion, and a later poll ran the
+  // destructive sequence on the same image a second time. The ordering is the
+  // fix: a timestamp filter inside the recovery service would be a second
+  // mechanism answering the same question.
+  try {
+    const { TaskRecoveryService } = await import("./task-recovery.service.js");
+    const recoveryService = TaskRecoveryService.getInstance();
+    const result = await recoveryService.recoverPendingTasks();
+    serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
+
+    // Start periodic monitoring for stuck tasks
+    recoveryService.startStuckTaskMonitoring();
+    serverLogger.info("Stuck task monitoring started");
+  } catch (error) {
+    serverLogger.error("Failed to recover tasks", { error: String(error) });
+  }
+
   // Start WebP conversion task processor — gated while app is under Shopify review.
   // Remove this guard once the Image Manager feature set is approved.
   if (process.env.APP_ENV !== "production") {
@@ -377,20 +399,6 @@ const server = app.listen(port, host, async () => {
     }
   } else {
     serverLogger.info("WebP processor service skipped (APP_ENV=production, feature gated for review)");
-  }
-
-  // Recover pending tasks after server restart and start stuck task monitoring
-  try {
-    const { TaskRecoveryService } = await import("./task-recovery.service.js");
-    const recoveryService = TaskRecoveryService.getInstance();
-    const result = await recoveryService.recoverPendingTasks();
-    serverLogger.info(`Task recovery: ${result.recovered} recovered, ${result.failed} marked as failed`);
-
-    // Start periodic monitoring for stuck tasks
-    recoveryService.startStuckTaskMonitoring();
-    serverLogger.info("Stuck task monitoring started");
-  } catch (error) {
-    serverLogger.error("Failed to recover tasks", { error: String(error) });
   }
 
   // Start stale image cleanup service — gated while app is under Shopify review.
