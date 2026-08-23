@@ -697,7 +697,7 @@ export function MainNavigation() {
                         style={{
                           position: "relative",
                           background: "none",
-                          border: "1px solid #c9cccf",
+                          border: "1px solid var(--app-surface-border-color)",
                           borderRadius: "8px",
                           cursor: "pointer",
                           padding: "6px",

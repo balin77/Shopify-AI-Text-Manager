@@ -613,7 +613,7 @@ export function ItemSidebar({
               padding: "1rem",
               background: "#f6f6f7",
               borderRadius: "8px",
-              border: "1px solid #c9cccf",
+              border: "1px solid var(--app-surface-border-color)",
             }}
           >
             <BlockStack gap="200">

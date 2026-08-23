@@ -168,12 +168,55 @@
 
      --app-field-border-color        the resting frame. The light grey the
                                      AI-editable fields already used.
+     --app-field-border-color-disabled
+                                     the same frame on a field that cannot be
+                                     edited. Polaris draws NO frame at all on a
+                                     disabled or read-only TextField
+                                     (`border: none`) and a barely-there #ebebeb
+                                     on a disabled Select, so a locked field
+                                     read as text floating on the card with no
+                                     box around it — which is what a merchant
+                                     reported. A box that exists is not the same
+                                     statement as a box you may type in: the
+                                     frame stays, LIGHTER than the resting one,
+                                     and the greyed fill and text keep saying
+                                     "not editable". It has to be its own
+                                     colour rather than the resting token,
+                                     because the AI-editable fields paint their
+                                     translation-state tint over Polaris'
+                                     disabled fill (`!important`, see
+                                     AIEditableField.css) — with a full-strength
+                                     frame on top, a locked field there would be
+                                     indistinguishable from an open one.
      --app-field-border-radius       the corner, spent by AIEditableField.css.
                                      Polaris' own inputs are already 8px.
      --app-field-label-weight        every field label, everywhere. The
                                      AI-editable fields printed a semibold
                                      label and the merchandising controls a
                                      regular one, in the same card.
+
+     --app-surface-border-color      the frame of a box that is NOT an input:
+                                     the sidebar's detail panel, the compact
+                                     item selector, the notification button,
+                                     the create-resource tiles, an image tile
+                                     at rest, a variable chip. Its own token
+                                     rather than the field colour even though
+                                     the two hold the same grey today, for the
+                                     reason the widths above are separate
+                                     tokens: "make the input outlines lighter"
+                                     must not also lighten every tile and
+                                     button in the app. They were all written
+                                     out as #c9cccf at some twenty call sites,
+                                     which is what made that one instruction a
+                                     hunt through components.
+
+     --app-content-rule-color        rules drawn INSIDE rendered content — the
+                                     bar on a blockquote, an <hr> — in the body
+                                     editor and the AI suggestion preview. Third
+                                     token for the same reason: that is the
+                                     merchant's text being previewed, not our
+                                     chrome, and a change to the app's frames
+                                     has no business moving it.
 
      --app-attribute-grid-min-width  the auto-fit column of the sales-channel
                                      panel's three lists (channels / regions /
@@ -222,8 +265,11 @@
                                      than clipping. Measured against a card
                                      holding a label and one Polaris input. */
   --app-field-border-color: #c9cccf;
+  --app-field-border-color-disabled: #dfe1e3;
   --app-field-border-radius: 8px;
   --app-field-label-weight: 600;
+  --app-surface-border-color: #c9cccf;
+  --app-content-rule-color: #c9cccf;
   --app-attribute-grid-min-width: 180px;
   --app-details-field-min-width: 195px;
   --app-details-grid-gap: 1rem;
@@ -307,6 +353,40 @@
 .Polaris-Select__Backdrop {
   border-color: var(--app-field-border-color);
   border-top-color: var(--app-field-border-color);
+}
+
+/* The same frame on a field that cannot be edited — the other half of the rule
+   above, and the reason it needs one at all: Polaris does not merely lighten
+   the frame when a control locks, it takes it away. A disabled TextField gets
+   `border: none`, a read-only one `border-color: transparent`, and a disabled
+   Select an #ebebeb hairline that is invisible on a white card. On the Details
+   card, where a locked vendor sits beside an open title, that read as text
+   floating with no box around it.
+
+   `border` in full, not just `border-color`: `border: none` is the SHORTHAND,
+   so it sets the style to `none` as well and a colour alone would restore
+   nothing. The width is Polaris' own token, so the locked frame is exactly as
+   thick as the resting one and switching a field between the two states cannot
+   move a pixel (the Backdrop is absolutely positioned, so neither can shift the
+   text either way). It carries a literal fallback because it is a FOREIGN
+   token: an unresolvable var makes the whole shorthand invalid at computed-value
+   time, and `border-style` then falls back to its initial `none` — i.e. a
+   Polaris rename would put this exact bug back, silently and only on locked
+   fields, where it is least likely to be noticed.
+
+   The selectors MIRROR Polaris' own, shape for shape, so each one ties on
+   specificity and wins on order — this file loads after Polaris (app.tsx). That
+   is why the read-only pair repeats its class the way Polaris does and why the
+   focused variant is listed separately: Polaris states it at one class more,
+   and a single rule here would lose to it the moment the field takes focus.
+
+   What still says "locked" is the fill and the text colour, both Polaris'. Not
+   restated here — the state is theirs to draw, the box is ours. */
+.Polaris-TextField--disabled > .Polaris-TextField__Backdrop,
+.Polaris-TextField--readOnly.Polaris-TextField--readOnly > .Polaris-TextField__Backdrop,
+.Polaris-TextField--readOnly.Polaris-TextField--readOnly.Polaris-TextField--focus > .Polaris-TextField__Backdrop,
+.Polaris-Select--disabled .Polaris-Select__Backdrop {
+  border: var(--p-border-width-0165, 0.04125rem) solid var(--app-field-border-color-disabled);
 }
 
 /* The other half of the field chrome: one weight for every field LABEL.

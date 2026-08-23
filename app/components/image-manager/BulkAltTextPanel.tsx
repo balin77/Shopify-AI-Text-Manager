@@ -674,7 +674,7 @@ export function BulkAltTextPanel({ productId, productTitle, variants, shopLocale
                             borderRadius: 4,
                             fontSize: 12,
                             cursor: "pointer",
-                            border: "1px solid #c9cccf",
+                            border: "1px solid var(--app-surface-border-color)",
                             userSelect: "none",
                           }}
                           onMouseDown={(e) => {

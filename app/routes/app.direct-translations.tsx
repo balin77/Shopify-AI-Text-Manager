@@ -1132,7 +1132,7 @@ function CandidatePill({
         alignItems: "center",
         gap: "8px",
         padding: "6px 10px",
-        border: `1px solid ${checked ? "#008060" : "#c9cccf"}`,
+        border: `1px solid ${checked ? "#008060" : "var(--app-surface-border-color)"}`,
         borderRadius: "16px",
         background: checked ? "#f1f8f5" : "white",
       }}
