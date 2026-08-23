@@ -58,6 +58,84 @@ const handlers = () => ({
   onRemoveLinkedValue: vi.fn(),
 });
 
+/**
+ * One drag, driven through dnd-kit's mouse sensor.
+ *
+ * Two things have to be arranged for it, and neither is incidental:
+ *
+ * jsdom gives every element a 0x0 rect at the origin, and dnd-kit decides what
+ * a drag is OVER by comparing rect centres — with every centre at (0, 0) the
+ * answer is whichever droppable registered first, i.e. noise. So the rows are
+ * given real geometry first: one `ROW_HEIGHT` band each, stacked.
+ *
+ * And the mouse sensor only starts a drag once the pointer has moved past its
+ * 8px activation distance, which is what keeps a click on a value's text field
+ * a click. A single jump to the target would arrive with the drag not yet
+ * started, so the move is made in two: one past the threshold, one to the row
+ * being aimed at.
+ *
+ * `data-sortable-id` is what dnd-kit knows each row as — the only trace of a
+ * drag in the DOM that is not an inline style.
+ */
+const ROW_HEIGHT = 40;
+
+function sortableRows(container: HTMLElement, match: string) {
+  const rows = [...container.querySelectorAll("[data-sortable-id]")].filter((node) =>
+    node.getAttribute("data-sortable-id")!.includes(match),
+  ) as HTMLElement[];
+  rows.forEach((node, index) => {
+    const top = index * ROW_HEIGHT;
+    node.getBoundingClientRect = () =>
+      ({
+        top,
+        bottom: top + ROW_HEIGHT,
+        left: 0,
+        right: 200,
+        width: 200,
+        height: ROW_HEIGHT,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+  });
+  return rows;
+}
+
+/** Picks a row up and holds it over `toIndex`, without letting go. */
+async function dragHandleOver(handle: HTMLElement, fromIndex: number, toIndex: number) {
+  const y = (index: number) => index * ROW_HEIGHT + ROW_HEIGHT / 2;
+  fireEvent.mouseDown(handle, { clientX: 10, clientY: y(fromIndex) });
+  // Past the sensor's activation distance...
+  fireEvent.mouseMove(document, { clientX: 10, clientY: y(fromIndex) + 20 });
+  await waitTick();
+  // ...and then onto the row being aimed at.
+  fireEvent.mouseMove(document, { clientX: 10, clientY: y(toIndex) });
+  await waitTick();
+}
+
+/**
+ * Lets go, and waits out dnd-kit's teardown.
+ *
+ * Longer than a tick on purpose: the pointer sensor keeps a capture-phase
+ * `click` listener on the DOCUMENT for a moment after a drag, so that letting
+ * go over a button does not also press it. `cleanup()` unmounts React trees
+ * and does not touch document listeners, so a shorter wait leaves that
+ * listener swallowing the FIRST click of the next test in this file.
+ */
+async function dropHere() {
+  fireEvent.mouseUp(document);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+/** Abandons the drag in flight — the pointer sensor listens for Escape. */
+async function cancelDrag() {
+  fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+}
+
+/** Lets dnd-kit's measuring and its drag-start effects run. */
+const waitTick = () => new Promise((resolve) => setTimeout(resolve, 20));
+
 function ui(overrides: Record<string, unknown> = {}) {
   const spies = handlers();
   const view = render(
@@ -301,20 +379,59 @@ describe("VariantOptionsEditor — colours and order", () => {
   });
 
   it("reports a value drag as a new order", async () => {
-    const { spies } = ui();
+    const { container, spies } = ui();
     fireEvent.click(screen.getByText("Colour"));
     await screen.findByDisplayValue("Red");
 
-    const rows = screen.getAllByDisplayValue(/Red|Blue/).map((input) => input.closest("[draggable]")!);
-    fireEvent.dragStart(rows[0]);
-    fireEvent.dragOver(rows[1]);
-    fireEvent.drop(rows[1]);
+    sortableRows(container, "ProductOptionValue");
+    await dragHandleOver(screen.getByLabelText("Reorder Red"), 0, 1);
+    await dropHere();
 
     // The first value decides which variant the storefront shows first.
     expect(spies.onReorderValues).toHaveBeenCalledWith(OPTION, [
       "gid://shopify/ProductOptionValue/2",
       "gid://shopify/ProductOptionValue/1",
     ]);
+  });
+
+  it("moves the other values aside WHILE the drag is in flight", async () => {
+    // The bug this replaced: a native HTML5 drag reports where the pointer was
+    // when the merchant let go and nothing before that, so dragging a value
+    // across three others looked exactly like dragging it across none — the
+    // only way to find out where it would land was to drop it and read the
+    // result. Nothing here is committed yet; the list has simply rearranged
+    // under the cursor, and that arrangement is what the drop will store.
+    const { container, spies } = ui();
+    fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Red");
+
+    const rows = sortableRows(container, "ProductOptionValue");
+    await dragHandleOver(screen.getByLabelText("Reorder Red"), 0, 1);
+
+    // "Blue" has stepped up into the place "Red" is being dragged out of...
+    expect(rows[1].style.transform).toContain(`-${ROW_HEIGHT}px`);
+    // ...and "Red" is ghosted, so it reads as the one in flight.
+    expect(rows[0].style.opacity).toBe("0.5");
+    // Still a preview: nothing has been reported to the save bar.
+    expect(spies.onReorderValues).not.toHaveBeenCalled();
+
+    await dropHere();
+    expect(spies.onReorderValues).toHaveBeenCalled();
+  });
+
+  it("reports an option drag as a new order", async () => {
+    const { container, spies } = ui();
+
+    sortableRows(container, "ProductOption/");
+    // From the grip, not from the card: the card opens the option on click and
+    // carries the metaobject link, and dnd-kit's activator would make both of
+    // those presentational to a screen reader.
+    await dragHandleOver(screen.getByLabelText("Reorder Colour"), 0, 1);
+    await dropHere();
+
+    // The first option decides which variant the storefront shows first, the
+    // same as the first value does within it.
+    expect(spies.onReorder).toHaveBeenCalledWith([SECOND, OPTION]);
   });
 
   it("offers the metaobject page for a linked option", () => {
@@ -343,21 +460,28 @@ describe("VariantOptionsEditor — colours and order", () => {
 });
 
 describe("VariantOptionsEditor — an abandoned drag", () => {
-  it("does not replay a released value drag on the next drop", () => {
-    // Released over dead space the id stayed set, and the next drop of
-    // anything replayed the move — a reorder the merchant never asked for,
-    // with the save bar going dirty behind it.
-    const { spies } = ui();
+  it("reorders nothing when a drag is abandoned with Escape", async () => {
+    // A preview is only safe to show if backing out of it costs nothing. The
+    // native implementation this replaced kept the dragged id in state after a
+    // release over dead space, so the NEXT drop of anything replayed the move
+    // — a reorder the merchant never asked for, with the save bar going dirty
+    // behind it. Escape ends the drag through `onDragCancel`, which nothing
+    // here listens to, so there is no order to report.
+    const { container, spies } = ui();
     fireEvent.click(screen.getByText("Colour"));
+    await screen.findByDisplayValue("Red");
 
-    const rows = screen.getAllByDisplayValue(/Red|Blue/).map((input) => input.closest("[draggable]")!);
-    fireEvent.dragStart(rows[0]);
-    fireEvent.dragEnd(rows[0]);
+    const rows = sortableRows(container, "ProductOptionValue");
+    await dragHandleOver(screen.getByLabelText("Reorder Red"), 0, 1);
+    // The preview is up...
+    expect(rows[1].style.transform).toContain(`-${ROW_HEIGHT}px`);
 
-    fireEvent.dragOver(rows[1]);
-    fireEvent.drop(rows[1]);
+    await cancelDrag();
 
     expect(spies.onReorderValues).not.toHaveBeenCalled();
+    // ...and it is gone again: nothing left ghosted or displaced.
+    expect(rows[0].style.opacity).toBe("1");
+    expect(rows[1].style.transform).toBe("");
   });
 
   it("does not paint a hex-shaped SIZE", async () => {
@@ -425,7 +549,7 @@ describe("VariantOptionsEditor — the two bugs the merchant saw", () => {
     // storefront shows first. The linked branch used to render a read-only
     // chip list with no handles at all, which is why colours could not move.
     const spies = handlers();
-    render(
+    const view = render(
       <AppProvider i18n={en}>
         <VariantOptionsEditor
           productId="gid://shopify/Product/1"
@@ -441,11 +565,10 @@ describe("VariantOptionsEditor — the two bugs the merchant saw", () => {
     );
     fireEvent.click(screen.getByText("Farbe"));
 
-    const rows = ["Red", "Blue"].map((name) => screen.getByText(name).closest("[draggable]")!);
-    expect(rows[0]).toBeTruthy();
-    fireEvent.dragStart(rows[0]);
-    fireEvent.dragOver(rows[1]);
-    fireEvent.drop(rows[1]);
+    const { container } = view;
+    sortableRows(container, "ProductOptionValue");
+    await dragHandleOver(screen.getByLabelText("Reorder Red"), 0, 1);
+    await dropHere();
 
     expect(spies.onReorderValues).toHaveBeenCalledWith(OPTION, [
       "gid://shopify/ProductOptionValue/2",

@@ -37,6 +37,19 @@
  * variant the storefront shows FIRST, i.e. the one a customer sees before
  * touching anything.
  *
+ * The dragging itself is dnd-kit, not the browser's own HTML5 drag, and that
+ * is not a preference. A native drag reports where the pointer WAS when the
+ * merchant let go and nothing else: the list cannot move until the drop, so
+ * dragging a value across three others looked exactly like dragging it across
+ * none -- the only way to find out where it would land was to drop it and read
+ * the result. dnd-kit slides the other items out of the way while the drag is
+ * in flight, so what is under the cursor IS what the save will store. It also
+ * works from a finger, which a native drag does not: `dragstart` never fires
+ * on a touch device, and the Shopify admin is used on tablets.
+ *
+ * Same library, same sensors and same reading (the item in flight is ghosted)
+ * as the image manager's galleries -- one drag gesture across the app.
+ *
  * -- Swatches ----------------------------------------------------------------
  * A colour value is painted next to its name. Shopify's own per-value swatch
  * is the source wherever there is one; the rest is `resolveSwatch`, which will
@@ -49,7 +62,16 @@
  * editor's ONE save bar carries, the same as the text fields.
  */
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type DragEvent, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   ActionList,
   Badge,
@@ -67,6 +89,25 @@ import {
   Tooltip,
 } from "@shopify/polaris";
 import { DeleteIcon, DragHandleIcon, PlusIcon } from "@shopify/polaris-icons";
+import {
+  DndContext,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCenter,
+  closestCorners,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { useSingleLocaleHint } from "../../contexts/LocaleAvailabilityContext";
 import { variantCountKey } from "../../services/product-options.shared";
@@ -109,6 +150,126 @@ function Swatch({ swatch }: { swatch: ReturnType<typeof resolveSwatch> }) {
         backgroundRepeat: "no-repeat",
       }}
     />
+  );
+}
+
+/**
+ * What a `SortableItem` hands its drag handle, or null where the item cannot
+ * be picked up at all (a value with no Shopify GID, the option card that is
+ * currently open).
+ *
+ * A context rather than a render prop: the handle sits several elements deep
+ * inside a Polaris stack in four different places, and threading a props bag
+ * through each of them is how two of the four end up spelled differently.
+ */
+type SortableHandle = Pick<
+  ReturnType<typeof useSortable>,
+  "attributes" | "listeners" | "setActivatorNodeRef"
+>;
+const DragHandleContext = createContext<SortableHandle | null>(null);
+
+/**
+ * One item of a sortable list.
+ *
+ * `transform` is the whole point: while a drag is in flight dnd-kit gives
+ * every OTHER item the offset it would move by, so the list rearranges under
+ * the cursor and the merchant sees the result before committing to it. The
+ * dragged item is ghosted and lifted above its neighbours, or it disappears
+ * behind the one it is being dragged past.
+ *
+ * `disabled` means "cannot be picked up", never "is not part of the list": the
+ * item stays a DROP TARGET and keeps its rect, because an open option card in
+ * the middle of the list is something the other cards still have to be able to
+ * move across.
+ *
+ * The drag listeners always sit on the `DragHandle` inside, never on this
+ * wrapper. Two reasons, and the second is the one that is easy to miss: a
+ * value row carries a TextField, and a pointer sensor on its container turns
+ * "select the word I want to fix" into a drag -- and dnd-kit's activator
+ * carries `role="button"`, which under ARIA makes everything inside it
+ * presentational. On the collapsed option card that is not theoretical: the
+ * "Metaobject" badge in it is the only in-app route to a linked option's
+ * values, and a screen reader would stop reporting it as a link at all.
+ */
+function SortableItem({
+  id,
+  disabled = false,
+  style,
+  children,
+}: {
+  id: string;
+  disabled?: boolean;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  const sortable = useSortable({
+    id,
+    // Draggable off, droppable ON -- see above.
+    disabled: { draggable: disabled, droppable: false },
+  });
+  const { setNodeRef, transform, transition, isDragging } = sortable;
+
+  return (
+    <div
+      ref={setNodeRef}
+      // What dnd-kit knows this node as. Nothing in the app reads it; it is
+      // what makes a drag inspectable in the DOM at all, since every other
+      // trace of one is inline style.
+      data-sortable-id={id}
+      style={{
+        ...style,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        // The same ghosting the image galleries use, so a drag reads the same
+        // way wherever it happens in this app.
+        opacity: isDragging ? 0.5 : 1,
+        // Lifted, and `relative` because a z-index does nothing on a statically
+        // positioned element -- the chip would slide UNDER the ones it passes.
+        zIndex: isDragging ? 2 : undefined,
+        position: isDragging ? "relative" : undefined,
+      }}
+    >
+      <DragHandleContext.Provider value={disabled ? null : sortable}>
+        {children}
+      </DragHandleContext.Provider>
+    </div>
+  );
+}
+
+/**
+ * The grip in front of a sortable row.
+ *
+ * Outside a `SortableItem`, or inside a disabled one, it draws a SPACER of the
+ * same width instead of nothing: the rows above it start with a handle, and a
+ * pending value that begins 20px further left reads as a rendering fault
+ * rather than as "this one cannot move yet". The add-a-value row below the
+ * list already carried that spacer by hand.
+ *
+ * It is the only thing here that is not `aria-hidden`: the drag listeners live
+ * on it, dnd-kit's `attributes` make it a focusable button, and the keyboard
+ * sensor moves the row from it -- so it needs a name, and one that says which
+ * row it belongs to. Four handles all called "Reorder" tell a screen reader
+ * nothing apart, the same rule the field chrome's bin icons follow.
+ */
+function DragHandle({ label, style }: { label?: string; style?: CSSProperties }) {
+  const handle = useContext(DragHandleContext);
+
+  // The spacer carries no name because it is not a control -- which is also
+  // why the two call sites that can only ever render one pass none.
+  if (!handle) {
+    return <span style={{ width: "var(--app-drag-handle-width)", flex: "0 0 auto", ...style }} aria-hidden />;
+  }
+
+  return (
+    <span
+      ref={handle.setActivatorNodeRef}
+      {...handle.attributes}
+      {...handle.listeners}
+      aria-label={label}
+      style={{ cursor: "grab", display: "flex", flex: "0 0 auto", ...style }}
+    >
+      <Icon source={DragHandleIcon} tone="subdued" />
+    </span>
   );
 }
 
@@ -196,6 +357,22 @@ export function VariantOptionsEditor({
 }: VariantOptionsEditorProps) {
   const singleLocaleHint = useSingleLocaleHint();
 
+  /**
+   * The same three sensors, with the same constraints, as the image galleries.
+   *
+   * The mouse distance keeps a CLICK a click: an option card opens on click
+   * and a value row's text field takes a caret, and both sit under a drag
+   * listener. The touch delay is what lets a finger scroll the page past a
+   * value instead of picking it up. And the keyboard sensor is the only way
+   * anyone not using a pointer can reorder at all -- the native drag this
+   * replaced offered nothing there.
+   */
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
   /** Which option is open. One at a time — Shopify does the same, and two open
    *  editors make the "Done" buttons ambiguous. */
   const [openOptionId, setOpenOptionId] = useState<string | null>(null);
@@ -208,11 +385,6 @@ export function VariantOptionsEditor({
   const [impact, setImpact] = useState<Record<string, number> | null>(null);
   /** Shopify's own swatches, keyed by value GID. Fetched with the counts. */
   const [swatches, setSwatches] = useState<Record<string, OptionValueSwatch>>({});
-  const [dragId, setDragId] = useState<string | null>(null);
-  /** The GID of the value being dragged. A value only ever moves within its
-   *  own option: `moveValue` looks both ids up in ONE option's list and bails
-   *  when either is absent. */
-  const [dragValue, setDragValue] = useState<string | null>(null);
   /** The dragged value order per option id, or absent while untouched. Local,
    *  because a drag has to feel immediate. */
   const [valueOrder, setValueOrder] = useState<Record<string, string[]>>({});
@@ -394,41 +566,6 @@ export function VariantOptionsEditor({
   };
 
   /**
-   * The drag wiring for ONE value row.
-   *
-   * Both branches use it: a metaobject-linked option's values cannot be
-   * renamed here, but their ORDER is a property of the product, not of the
-   * metaobjects, so it is the merchant's to change -- and it decides which
-   * variant the storefront shows first.
-   */
-  const valueDragProps = (option: OptionData, valueId: string) => ({
-    draggable: !!valueId,
-    onDragStart: (event: DragEvent) => {
-      if (!valueId) return;
-      // Stops the OPTION card underneath from being dragged at the same time.
-      event.stopPropagation();
-      // Firefox does not START a drag unless dataTransfer carries something.
-      // Nothing reads it back -- the id is in state -- so it is optional:
-      // where the object is absent the drag still works from state alone.
-      event.dataTransfer?.setData("text/plain", valueId);
-      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-      setDragValue(valueId);
-    },
-    onDragEnd: () => setDragValue(null),
-    onDragOver: (event: DragEvent) => {
-      if (!valueId || !dragValue) return;
-      event.preventDefault();
-      event.stopPropagation();
-    },
-    onDrop: (event: DragEvent) => {
-      if (!valueId || !dragValue) return;
-      event.stopPropagation();
-      moveValue(option, dragValue, valueId);
-      setDragValue(null);
-    },
-  });
-
-  /**
    * Loads the entries a linked option could take, once, when its picker opens.
    *
    * Addressed by ONE of the option's current metaobject GIDs: the cache knows
@@ -558,16 +695,56 @@ export function VariantOptionsEditor({
     maxWidth: "100%",
   };
 
-  /** Moves `fromId` to where `toId` sits, within one option. */
-  const moveValue = (option: OptionData, fromId: string, toId: string) => {
-    if (!fromId || !toId || fromId === toId) return;
-    const ids = valuesOf(option).filter((v) => v.id).map((v) => v.id);
-    const from = ids.indexOf(fromId);
-    const to = ids.indexOf(toId);
+  /**
+   * The value GIDs of one option, in the order shown.
+   *
+   * Only saved ones: a pending add has no ProductOptionValue GID, so it can
+   * neither be given a position nor be addressed by dnd-kit, which needs a
+   * stable unique id per sortable item.
+   */
+  const sortableValueIds = (values: Array<{ id: string }>) =>
+    values.filter((v) => v.id).map((v) => v.id);
+
+  /**
+   * The name a screen reader reads for one value's drag handle.
+   *
+   * The VALUE is in it: a list of handles all called "Reorder value" tells a
+   * screen reader nothing apart, the same rule the field chrome's bin icons
+   * follow. The keyboard sensor moves the row from this control, so this name
+   * is the only thing that says which row is about to move.
+   */
+  const reorderValueLabel = (valueName: string) =>
+    (t.reorderValue || "Reorder {value}").replace("{value}", valueName);
+
+  /**
+   * A landed value drag, within ONE option.
+   *
+   * Values never move between options -- each option's list is its own
+   * `DndContext`, so `over` can only ever be one of its own values.
+   */
+  const reorderValues = (option: OptionData, event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = sortableValueIds(valuesOf(option));
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
     if (from < 0 || to < 0) return;
-    ids.splice(to, 0, ...ids.splice(from, 1));
-    setValueOrder((prev) => ({ ...prev, [option.id]: ids }));
-    onReorderValues?.(option.id, ids);
+    const next = arrayMove(ids, from, to);
+    setValueOrder((prev) => ({ ...prev, [option.id]: next }));
+    onReorderValues?.(option.id, next);
+  };
+
+  /** A landed option drag. */
+  const reorderOptions = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = visible.map((o) => o.id);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    const next = arrayMove(ids, from, to);
+    setOrder(next);
+    onReorder(next);
   };
 
   const deleteValueBody = useCallback(
@@ -632,6 +809,19 @@ export function VariantOptionsEditor({
           </Button>
         </InlineStack>
 
+        {/* `rectSortingStrategy`, not the vertical-list one, and that is not a
+            detail: the vertical strategy displaces every other item by the
+            DRAGGED item's height, which is only a preview as long as the rows
+            are the same size. Here they are not even close -- the open option
+            card is a form several hundred pixels tall and stays in the list as
+            a drop target -- so a collapsed card dragged past it would have
+            shifted it by its own 60px and drawn the two on top of each other,
+            pointing at a slot that is not where the drop would land. That is
+            the failure this whole change exists to remove. `closestCorners`
+            for the same reason: the centre of a card that tall is nowhere near
+            the edge the pointer is actually at. */}
+        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={reorderOptions}>
+        <SortableContext items={visible.map((o) => o.id)} strategy={rectSortingStrategy}>
         {visible.map((option) => {
           const isOpen = openOptionId === option.id;
           const values = valuesOf(option);
@@ -640,42 +830,18 @@ export function VariantOptionsEditor({
 
           if (!isOpen) {
             return (
-              <div
-                key={option.id}
-                draggable
-                onDragStart={(event) => {
-                  // Firefox does not START a drag unless dataTransfer carries
-                  // something. Nothing reads it back -- the id is in state --
-                  // but without this line the option cards do not move at all
-                  // in Firefox.
-                  event.dataTransfer?.setData("text/plain", option.id);
-                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-                  setDragId(option.id);
-                }}
-                // Released over dead space, the id would otherwise stay set and
-                // the NEXT drop -- of anything -- would replay this move.
-                onDragEnd={() => setDragId(null)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={() => {
-                  if (!dragId || dragId === option.id) return;
-                  const ids = visible.map((o) => o.id);
-                  const from = ids.indexOf(dragId);
-                  const to = ids.indexOf(option.id);
-                  if (from < 0 || to < 0) return;
-                  ids.splice(to, 0, ...ids.splice(from, 1));
-                  setOrder(ids);
-                  onReorder(ids);
-                  setDragId(null);
-                }}
-                style={{ cursor: "pointer" }}
-              >
+              <SortableItem key={option.id} id={option.id} style={{ cursor: "pointer" }}>
                 <Card background="bg-surface-secondary" padding="300">
                   <InlineStack gap="300" blockAlign="start" wrap={false}>
-                    {/* The handle is the affordance; the whole row is draggable
-                        so a merchant does not have to hit an 8px target. */}
-                    <span style={{ cursor: "grab", paddingTop: "2px" }} aria-hidden>
-                      <Icon source={DragHandleIcon} tone="subdued" />
-                    </span>
+                    {/* The grip, and nothing else, starts the drag: the rest
+                        of the card opens the option on click, and it holds the
+                        "Metaobject" link. The padding lines the icon up with
+                        the option's name -- the stack is top-aligned, since a
+                        card with two rows of value chips is much taller. */}
+                    <DragHandle
+                      label={(t.reorderOption || "Reorder {value}").replace("{value}", nameOf(option))}
+                      style={{ paddingTop: "2px" }}
+                    />
                     <div style={{ flex: 1, minWidth: 0 }} onClick={() => setOpenOptionId(option.id)}>
                       <BlockStack gap="150">
                         <InlineStack gap="200" blockAlign="center">
@@ -728,12 +894,16 @@ export function VariantOptionsEditor({
                     </div>
                   </InlineStack>
                 </Card>
-              </div>
+              </SortableItem>
             );
           }
 
           return (
-            <Card key={option.id} padding="300">
+            // Still a drop target while it is open -- the other cards have to
+            // be able to move across it -- but not draggable itself: it is a
+            // form, and a drag listener on it would fight every field in it.
+            <SortableItem key={option.id} id={option.id} disabled>
+              <Card padding="300">
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="p" variant="bodyMd" fontWeight="semibold">
@@ -776,11 +946,16 @@ export function VariantOptionsEditor({
                         which variant the storefront shows first. So: draggable,
                         not renameable. */}
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={(event) => reorderValues(option, event)}
+                    >
                     <div style={valueListStyle}>
-                      {values.map((value) => {
+                      <SortableContext items={sortableValueIds(values)} strategy={rectSortingStrategy}>
+                      {values.map((value, index) => {
                         const swatch = resolveSwatch(value.name, swatches[value.id], { isColourOption });
-                        return (
-                          <div key={value.id} style={valueChipStyle} {...valueDragProps(option, value.id)}>
+                        const chip = (
                             <Box
                               background="bg-surface-secondary"
                               borderRadius="200"
@@ -789,11 +964,7 @@ export function VariantOptionsEditor({
                               borderWidth="025"
                             >
                               <InlineStack gap="150" blockAlign="center" wrap={false}>
-                                {value.id && (
-                                  <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
-                                    <Icon source={DragHandleIcon} tone="subdued" />
-                                  </span>
-                                )}
+                                <DragHandle label={reorderValueLabel(value.name)} />
                                 <Swatch swatch={swatch} />
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <Text as="span" variant="bodyMd" truncate>{value.name}</Text>
@@ -816,10 +987,16 @@ export function VariantOptionsEditor({
                                 />
                               </InlineStack>
                             </Box>
-                          </div>
+                        );
+                        return value.id ? (
+                          <SortableItem key={value.id} id={value.id} style={valueChipStyle}>{chip}</SortableItem>
+                        ) : (
+                          <div key={`new-${index}`} style={valueChipStyle}>{chip}</div>
                         );
                       })}
+                      </SortableContext>
                     </div>
+                    </DndContext>
                     {/* Queued entries: shown before the save, or the
                         merchant's own pick would look like it did not
                         register. They carry no ProductOptionValue GID yet, so
@@ -831,6 +1008,12 @@ export function VariantOptionsEditor({
                             <Box background="bg-surface-secondary" borderRadius="200" padding="200"
                               borderColor="border" borderWidth="025">
                               <InlineStack gap="150" blockAlign="center" wrap={false}>
+                                {/* No SortableItem around it, so this draws the
+                                    spacer: an entry with no GID yet cannot be
+                                    given a position, and a chip that starts
+                                    20px left of the ones above reads as a
+                                    rendering fault rather than as "not yet". */}
+                                <DragHandle />
                                 <Swatch
                                   swatch={resolveSwatch(
                                     entry.name,
@@ -902,21 +1085,17 @@ export function VariantOptionsEditor({
                 ) : (
                   <BlockStack gap="200">
                     <Text as="p" variant="bodyMd">{t.valuesLabel || "Option values"}</Text>
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={(event) => reorderValues(option, event)}
+                    >
                     <div style={valueListStyle}>
-                    {values.map((value, index) => (
-                      <div
-                        key={value.id || `new-${index}`}
-                        style={valueChipStyle}
-                        // Only SAVED values can move: a pending add has no
-                        // Shopify id, so it cannot be given a position.
-                        {...valueDragProps(option, value.id)}
-                      >
+                    <SortableContext items={sortableValueIds(values)} strategy={rectSortingStrategy}>
+                    {values.map((value, index) => {
+                      const row = (
                       <InlineStack gap="100" blockAlign="center" wrap={false}>
-                        {value.id && (
-                          <span style={{ cursor: "grab", display: "flex" }} aria-hidden>
-                            <Icon source={DragHandleIcon} tone="subdued" />
-                          </span>
-                        )}
+                        <DragHandle label={reorderValueLabel(value.name)} />
                         <Swatch swatch={resolveSwatch(value.name, swatches[value.id], { isColourOption })} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <TextField
@@ -967,16 +1146,26 @@ export function VariantOptionsEditor({
                           variant="tertiary"
                         />
                       </InlineStack>
-                      </div>
-                    ))}
+                      );
+                      // Only SAVED values can move: a pending add has no
+                      // Shopify id, so there is no position to give it and no
+                      // stable id to address it by.
+                      return value.id ? (
+                        <SortableItem key={value.id} id={value.id} style={valueChipStyle}>{row}</SortableItem>
+                      ) : (
+                        <div key={`new-${index}`} style={valueChipStyle}>{row}</div>
+                      );
+                    })}
+                    </SortableContext>
                     </div>
+                    </DndContext>
 
                     <InlineStack gap="100" blockAlign="center" wrap={false}>
-                      {/* A spacer the width of a drag handle. The value rows
-                          above start with one and this row does not, so
-                          without it the add field sits 20px to their left --
-                          the kind of misalignment that reads as a mistake. */}
-                      <span style={{ width: "var(--app-drag-handle-width)", flex: "0 0 auto" }} aria-hidden />
+                      {/* Outside any SortableItem, so this is the spacer the
+                          width of a drag handle: the value rows above start
+                          with one and this row does not, and without it the add
+                          field sits 20px to their left. */}
+                      <DragHandle />
                       {/* The same width as a value chip, so the row below them
                           lines up with the row above rather than running 150px
                           past it. */}
@@ -1027,9 +1216,12 @@ export function VariantOptionsEditor({
                   </Button>
                 </InlineStack>
               </BlockStack>
-            </Card>
+              </Card>
+            </SortableItem>
           );
         })}
+        </SortableContext>
+        </DndContext>
 
         {/* Options added in this session but not yet saved. Shown as plain
             summaries: their values have no Shopify ids yet, so there is nothing

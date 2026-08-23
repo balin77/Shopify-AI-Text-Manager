@@ -46,6 +46,10 @@ export const en: Translation = {
     valueLabel: "Value",
     addValue: "Add another value",
     removeValue: "Remove value",
+    // {value} is the value's own name: a list of handles all called "Reorder
+    // value" tells a screen reader nothing apart.
+    reorderValue: "Reorder {value}",
+    reorderOption: "Reorder {value}",
     optionWarningNotConfirmed: "Shopify did not confirm the change, so nothing was stored.",
     optionWarningFailed: "Shopify rejected the change.",
     optionWarningNameEmpty: "A variant needs a name.",
