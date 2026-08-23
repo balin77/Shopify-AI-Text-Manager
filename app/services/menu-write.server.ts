@@ -29,17 +29,22 @@
  *      item back its OWN id. A menu item's translations live on
  *      gid://shopify/Link/<the same number> — so if Shopify ever minted new
  *      ids on update, a rename would orphan every translation in that menu and
- *      the next refreshMenuCache would delete the orphaned rows for good. The
- *      probe at /api/menu-write-probe measures this on a throwaway menu; this
- *      check is the rail that makes the measurement enforceable at runtime,
- *      and it reports rather than pretending the save was clean.
+ *      the next refreshMenuCache would delete the orphaned rows for good.
+ *      MEASURED on a live shop (2026-08-23, API 2026-07,
+ *      /api/menu-write-probe): every id came back its own, so this rail fires
+ *      nowhere. It stays because the consequence is unrepairable and the check
+ *      costs one comparison — and it REPORTS rather than pretending the save
+ *      was clean.
  *
  *   5. STALE TRANSLATIONS. A confirmed rename means the text every translation
- *      of that item was written against is gone. That is the same question
- *      every other primary write in this app asks, through the same module
- *      (translation-change-policy) — menus are reconciled by no webhook at all
- *      (they have none), so they ask the UNRECONCILED side of it, and the
- *      merchant's stored choice decides.
+ *      of that item was written against is gone. Shopify does NOT clear them:
+ *      measured in the same run, the translation survived the rename and came
+ *      back outdated: true with a changed digest, i.e. the storefront keeps
+ *      serving the old wording until somebody removes it. So this is the same
+ *      question every other primary write in this app asks, through the same
+ *      module (translation-change-policy) — menus are reconciled by no webhook
+ *      at all (they have none), so they ask the UNRECONCILED side of it, and
+ *      the merchant's stored choice decides.
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -145,6 +150,7 @@ export type MenuTitleSaveStatus =
   | "structureChanged"
   | "unknownItems"
   | "tooDeep"
+  | "unwritableItem"
   | "writeFailed";
 
 export interface MenuTitleSaveResult {
@@ -186,19 +192,30 @@ function flattenIdTitle(items: RawMenuItem[] | null | undefined, depth = 1, path
 /**
  * The fresh tree as menuUpdate input, with the requested titles substituted.
  *
- * Returns null when the tree is deeper than MAX_WRITE_DEPTH. Truncating
- * instead would send a tree that is missing its deepest level — and a missing
- * item is a DELETED item, which is the one mistake this module may never make
- * quietly.
+ * Returns null when the tree cannot be expressed as valid input: deeper than
+ * MAX_WRITE_DEPTH, or an item whose required `type` the read did not return.
+ * Truncating or guessing instead would send a tree that is missing an item —
+ * and a missing item is a DELETED item, which is the one mistake this module
+ * may never make quietly.
  */
+type MapResult =
+  | { items: Array<Record<string, unknown>> }
+  | { refusal: "tooDeep" | "unwritableItem"; itemId?: string };
+
 function mapUpdateInput(
   items: RawMenuItem[] | null | undefined,
   titles: Map<string, string>,
   depth = 1,
-): Array<Record<string, unknown>> | null {
+): MapResult {
   const out: Array<Record<string, unknown>> = [];
   for (const item of items ?? []) {
-    if (depth > MAX_WRITE_DEPTH) return null;
+    if (depth > MAX_WRITE_DEPTH) return { refusal: "tooDeep", itemId: item.id };
+    // MEASURED: MenuItemUpdateInput requires BOTH title and type
+    // (title: String!, type: MenuItemType!). A type the read did not hand back
+    // would fail the mutation at the SCHEMA level — data: null, no userErrors —
+    // and take every other rename in the same call with it, so it is refused
+    // here instead, where the message can name the item.
+    if (!item.type) return { refusal: "unwritableItem", itemId: item.id };
     const node: Record<string, unknown> = {
       id: item.id,
       title: titles.get(item.id) ?? item.title,
@@ -211,12 +228,12 @@ function mapUpdateInput(
     if (item.tags && item.tags.length > 0) node.tags = item.tags;
     if (item.items && item.items.length > 0) {
       const children = mapUpdateInput(item.items, titles, depth + 1);
-      if (children === null) return null;
-      node.items = children;
+      if ("refusal" in children) return children;
+      node.items = children.items;
     }
     out.push(node);
   }
-  return out;
+  return { items: out };
 }
 
 export interface SaveMenuItemTitlesParams {
@@ -294,10 +311,19 @@ export async function saveMenuItemTitles(
     return { status: "ok", savedItemIds: [], failures, reassignedItemIds: [], purgedLinkIds: [] };
   }
 
-  const items = mapUpdateInput(menu.items, titles);
-  if (items === null) {
-    return emptyResult("tooDeep");
+  const mapped = mapUpdateInput(menu.items, titles);
+  if ("refusal" in mapped) {
+    // Two different refusals, and they are kept apart: both mean "nothing was
+    // sent", but a merchant who is told which one can act on exactly one of
+    // them. The item is named because a tree of sixty gives no other clue.
+    return emptyResult(
+      mapped.refusal,
+      mapped.refusal === "tooDeep"
+        ? `This menu is nested deeper than ${MAX_WRITE_DEPTH} levels — renaming would have to rewrite a level this app cannot read.`
+        : `Shopify reported the menu item ${mapped.itemId ?? "(unknown)"} without a link type, which the rename would have to send back.`,
+    );
   }
+  const items = mapped.items;
 
   // ── 4. Write, then verify the echo ───────────────────────────────────────
   let echoed: RawMenuItem[] | null | undefined;

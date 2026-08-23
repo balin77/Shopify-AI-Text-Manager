@@ -335,23 +335,29 @@ describe("saveMenuItemTitles", () => {
   it("refuses a tree deeper than it can read back", async () => {
     // A level the read query does not cover would be MISSING from the
     // write-back, i.e. deleted. Refusing is the only safe answer.
+    // Every level carries a type, or the required-field rail would fire first
+    // and this test would pass for the wrong reason.
     const deep = [
       {
         id: "gid://shopify/MenuItem/1",
         title: "L1",
+        type: "HTTP",
         items: [
           {
             id: "gid://shopify/MenuItem/2",
             title: "L2",
+            type: "HTTP",
             items: [
               {
                 id: "gid://shopify/MenuItem/3",
                 title: "L3",
+                type: "HTTP",
                 items: [
                   {
                     id: "gid://shopify/MenuItem/4",
                     title: "L4",
-                    items: [{ id: "gid://shopify/MenuItem/5", title: "L5", items: [] }],
+                    type: "HTTP",
+                    items: [{ id: "gid://shopify/MenuItem/5", title: "L5", type: "HTTP", items: [] }],
                   },
                 ],
               },
@@ -370,6 +376,25 @@ describe("saveMenuItemTitles", () => {
     });
 
     expect(result.status).toBe("tooDeep");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("refuses an item whose required type the read did not return", async () => {
+    // MEASURED: MenuItemUpdateInput takes title: String! and type: MenuItemType!.
+    // A missing type fails at the schema level, which fails the WHOLE tree —
+    // so it is refused before the mutation, not forwarded.
+    const noType = [{ id: "gid://shopify/MenuItem/10", title: "Produkte", items: [] }];
+    const { gateway, calls } = makeGateway([{ data: { menu: { ...menu, items: noType } } }]);
+
+    const result = await saveMenuItemTitles(gateway, db, SHOP, {
+      menuId: menu.id,
+      fingerprint: menuStructureFingerprint(noType),
+      changes: [{ menuItemId: "gid://shopify/MenuItem/10", title: "Produkte neu" }],
+      foreignLocales: [],
+    });
+
+    expect(result.status).toBe("unwritableItem");
+    expect(result.message).toContain("gid://shopify/MenuItem/10");
     expect(calls).toHaveLength(1);
   });
 
