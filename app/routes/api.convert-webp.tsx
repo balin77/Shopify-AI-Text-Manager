@@ -2,7 +2,11 @@ import { data as json, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { db } from "../db.server";
 import { type Plan } from "../config/plans";
-import { consumeImageOperations } from "../utils/imageOperations.server";
+import { consumeImageOperations, refundImageOperations } from "../utils/imageOperations.server";
+import {
+  WEBP_ITEM_TASK_TYPE,
+  WEBP_PARENT_TASK_TYPE,
+} from "../config/webp-tasks.js";
 
 interface ConvertWebpBody {
   productId: string;
@@ -120,15 +124,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  const tasks = await Promise.all(images.map(img =>
+  // ONE merchant-facing row for the whole run, N work items under it.
+  //
+  // The parent is created FIRST because every item carries its id, and it is
+  // created `running` rather than `pending`: the run IS in flight from the
+  // merchant's point of view, and a pending row of this type is what the
+  // processor picks up as work. `total` is the image count and is the column
+  // that tells a parent from a pre-split row (app/config/webp-tasks.js).
+  // Its result starts as the ONE number that is already true — a `converted: 0`
+  // written before anything ran would be a fabricated measurement in a blob the
+  // Tasks page renders (the "an absent key is omitted, never rendered as 0"
+  // rule); the processor fills the counts in as items finish.
+  const parent = await db.task.create({
+    data: {
+      shop: session.shop,
+      type: WEBP_PARENT_TASK_TYPE,
+      status: "running",
+      resourceType: "product",
+      resourceId: productId,
+      resourceTitle: productTitle || productId,
+      total: images.length,
+      processed: 0,
+      result: JSON.stringify({ total: images.length }),
+    },
+  });
+
+  // allSettled, not all: `Promise.all` rejects on the first failure while the
+  // other creates keep going, so a rejected batch used to leave the item rows
+  // that DID land behind as pending work nobody knew about — they convert, and
+  // a merchant told "it failed" retries and converts them a second time,
+  // deleting the media the first run just made. Whatever really landed is what
+  // the batch is.
+  const settled = await Promise.allSettled(images.map(img =>
     db.task.create({
       data: {
         shop: session.shop,
-        type: "imageWebpConversion",
+        type: WEBP_ITEM_TASK_TYPE,
         status: "pending",
         resourceType: "product",
         resourceId: productId,
         resourceTitle: productTitle || productId,
+        // The job input, with the SAME keys and the same shape it has always
+        // had — the processor, the image manager's spinner and the completion
+        // write all read it — plus the parent id. Nothing was removed or
+        // renamed, so a row written by either build is driven by either
+        // processor.
         result: JSON.stringify({
           sourceUrl: img.url,
           mediaId: img.mediaId,
@@ -136,10 +176,56 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           productId,
           altText: img.altText ?? null,
           position: img.position ?? null,
+          parentTaskId: parent.id,
         }),
       },
     })
   ));
 
-  return json({ taskIds: tasks.map(t => t.id) });
+  const tasks = settled.flatMap(r => (r.status === "fulfilled" ? [r.value] : []));
+
+  if (tasks.length < images.length) {
+    const lost = images.length - tasks.length;
+    const reason = settled.find(r => r.status === "rejected") as PromiseRejectedResult | undefined;
+    console.error(
+      `[api.convert-webp] ${lost} of ${images.length} conversion item(s) could not be created:`,
+      reason?.reason?.message,
+    );
+    // Nothing was converted for those images and nothing ever will be, so the
+    // operations reserved for them go back.
+    await refundImageOperations(session.shop, lost);
+    if (tasks.length === 0) {
+      // A batch with no items would otherwise sit `running` until the reaper
+      // timed it out ten minutes later and called it a timeout. Say what
+      // happened — a machine code, translated at render time — and let the
+      // merchant retry, which is safe because no image was touched.
+      await db.task
+        .update({
+          where: { id: parent.id },
+          data: {
+            status: "failed",
+            progress: 100,
+            completedAt: new Date(),
+            error: "webp_batch_not_started",
+          },
+        })
+        .catch(() => {});
+      return json(
+        { error: "Could not start the conversion", code: "WEBP_BATCH_NOT_STARTED" },
+        { status: 500 },
+      );
+    }
+    // Some items landed: the run is real and its `total` is what it really
+    // covers. Left at the requested count it would settle as "18 of 20
+    // converted" with two images nobody ever attempted.
+    await db.task
+      .update({ where: { id: parent.id }, data: { total: tasks.length } })
+      .catch(() => {});
+  }
+
+  // `taskIds` stays the ITEM ids: it is what this route has always returned.
+  // The only caller (`handleConvertToWebP` in VariantImageManager) ignores the
+  // body entirely and polls by productId, so the addition is for a future
+  // caller, not for that one.
+  return json({ taskIds: tasks.map(t => t.id), batchTaskId: parent.id });
 };

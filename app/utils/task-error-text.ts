@@ -59,6 +59,7 @@ const FALLBACK: Record<string, string> = {
   localeScansFailed: "Every language scan failed ({total} in total) — see the logs for details.",
   aiEmptyValue: "The AI returned an empty value.",
   itemMissing: "This entry no longer exists in the content cache — reload it and try again.",
+  webpBatchNotStarted: "The image conversion could not be started. No image was changed — please try again.",
   slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
   invalidApiKey: "(the AI API key was rejected)",
   someFailed: "Some entries could not be processed — open the task for details.",
@@ -197,6 +198,12 @@ export function taskErrorText(raw: string | null | undefined, t: any): string | 
       return phrase(t, "aiEmptyValue");
     case "item_missing":
       return phrase(t, "itemMissing");
+    // A WebP conversion run whose per-image work items were never written (the
+    // batch has an aggregate row and nothing under it). Its own code rather
+    // than a counted one: no image was attempted, so "0 of 20 failed" would
+    // describe twenty conversions that never started.
+    case "webp_batch_not_started":
+      return phrase(t, "webpBatchNotStarted");
     case "slug_empty": {
       // The locale code is the only thing the runner knows; a name would need a
       // shop lookup this module has no business doing.

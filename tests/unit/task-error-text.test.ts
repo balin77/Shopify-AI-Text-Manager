@@ -96,6 +96,7 @@ describe("taskErrorText — the runners' counted codes", () => {
     ["locale_scans_failed:3", ["3"]],
     ["ai_empty_value", []],
     ["item_missing", []],
+    ["webp_batch_not_started", []],
     ["slug_empty:pt-BR", ["pt-BR"]],
   ];
 

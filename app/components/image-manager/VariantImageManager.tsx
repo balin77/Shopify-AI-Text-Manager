@@ -14,6 +14,7 @@ import { VariantGallerySection } from "./VariantGallerySection";
 import { FilePickerModal, type AddedItem } from "./FilePickerModal";
 import type { StagedItem, VariantWithGallery, ImageMeta, MediaKind } from "./types";
 import { parseExternalVideoUrl, classifyFile, isWebpConvertible } from "../../utils/mediaKind";
+import { isWebpWorkRow } from "../../config/webp-tasks.js";
 import {
   settlingPollDelayMs,
   unsettledMediaEntries,
@@ -644,7 +645,14 @@ export function VariantImageManager({
       try {
         const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(pid)}`);
         const { tasks } = await r.json();
-        const webpTasks = (tasks ?? []).filter((t: { type: string }) => t.type === "imageWebpConversion");
+        // The per-IMAGE rows, and only those: a conversion run also has one
+        // aggregate row on the same product (`imageWebpConversion` with a
+        // `total`), which carries no `mediaId` and would keep this poll's
+        // "still converting" count above zero after the last image landed.
+        // `isWebpWorkRow` also matches the pre-split rows an older build wrote
+        // under the parent type, so a conversion in flight across a deploy
+        // keeps its spinners.
+        const webpTasks = (tasks ?? []).filter(isWebpWorkRow);
         const count = webpTasks.length;
         const prev = webpActiveCountRef.current;
 
@@ -804,7 +812,7 @@ export function VariantImageManager({
           const r = await fetch(`/api/running-field-tasks?resourceId=${encodeURIComponent(productId)}`);
           const { tasks } = await r.json();
           if (cancelled) return;
-          const webpTasks = (tasks ?? []).filter((t: { type: string }) => t.type === "imageWebpConversion");
+          const webpTasks = (tasks ?? []).filter(isWebpWorkRow);
           const gids = new Set<string>(
             webpTasks.map((t: { result?: string }) => {
               try { return JSON.parse(t.result || "{}").mediaId as string; } catch { return null; }

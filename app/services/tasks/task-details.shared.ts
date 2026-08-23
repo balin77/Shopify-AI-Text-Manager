@@ -8,10 +8,18 @@
  * The rules below carry the weight:
  *
  *  1. **Per type, never a JSON dump.** A type with no registered summariser
- *     returns `null`. `imageWebpConversion` and `pageSpeed` deliberately have
- *     NO summariser: their `result` is the job INPUT, not an outcome, so a
+ *     returns `null`. `pageSpeed` and `imageWebpConversionItem` deliberately
+ *     have NO summariser: their `result` is the job INPUT, not an outcome, so a
  *     generic renderer would show a merchant an internal job spec. See the
  *     note above the registry — do not "fix that gap" for either.
+ *
+ *     `imageWebpConversion` used to be in that list for exactly the same
+ *     reason and no longer is, which is the ONE distinction to keep straight
+ *     here: a conversion run is now an aggregate row (`imageWebpConversion`,
+ *     one per run) over N work items (`imageWebpConversionItem`, one per
+ *     image). The items still hold the job spec and stay out; the aggregate
+ *     holds a real outcome — `{converted, failed, total, failures[]}` — and is
+ *     registered.
  *  2. **An absent key is OMITTED, never rendered as 0.** Old rows predate
  *     later fields, and a fabricated 0 is a wrong number — the same rule as
  *     `attributesSyncedAt` / `indexabilityKnown`. `galleryVideos` is the named
@@ -585,6 +593,65 @@ const bulkAiGeneration: Summariser = (blob) => {
 };
 
 /**
+ * The AGGREGATE row of a WebP conversion run — `{converted, failed, total,
+ * failures[]}`, written by webp-processor.service.js as its items finish.
+ *
+ * Every number here is a RECOUNT of the item rows, so a running batch shows a
+ * true partial count and a finished one shows the outcome. `total` is the image
+ * count the run was started with and is the only key present before the first
+ * item finishes; the counts appear as they become facts, which is why they are
+ * pushed through `num` (an absent count is omitted, never a 0).
+ *
+ * The failure list is the only per-IMAGE record a merchant reaches from here:
+ * the aggregate's own `error` carries the count and nothing else, and the item
+ * rows that hold the full message are hidden from the Tasks list. An entry is
+ * named by its POSITION in the product gallery (stored zero-based, counted from
+ * one for a merchant, the same +1 as `altText_<n>` and `failedIndices`) and
+ * falls back to the media GID's numeric tail — a picture the merchant can find
+ * either way. `parts` hands the renderer the pieces so "Image" is translated;
+ * `subject` is the English fallback for a consumer that ignores them.
+ */
+const imageWebpConversion: Summariser = (blob) => {
+  const lines: TaskSummaryLine[] = [];
+  num(lines, blob, "converted", "imagesConverted");
+  num(lines, blob, "failed", "imagesFailed", criticalWhenPositive);
+  num(lines, blob, "total", "imagesTotal");
+
+  const failures: TaskFailureLine[] = [];
+  if (Array.isArray(blob.failures)) {
+    for (const entry of blob.failures) {
+      if (!entry || typeof entry !== "object") continue;
+      const f = entry as Blob;
+      const position = f.position;
+      const message = text(f.message);
+      if (typeof position === "number" && Number.isFinite(position) && position >= 0) {
+        const n = String(Math.trunc(position) + 1);
+        failures.push({ subject: `Image ${n}`, message, parts: { rowType: "image", rowId: n } });
+        continue;
+      }
+      const mediaId = text(f.mediaId);
+      const gid = parseGid(mediaId);
+      if (gid) {
+        failures.push({
+          subject: readableRowId(mediaId, "image"),
+          message,
+          parts: { rowType: "image", rowId: gid.id },
+        });
+        continue;
+      }
+      // Neither a position nor a resolvable media id: the message alone, which
+      // is the documented empty-subject case. A row whose message is empty too
+      // says nothing at all and is dropped rather than rendered as a blank
+      // line under a red heading.
+      if (message) failures.push({ subject: "", message });
+    }
+  }
+
+  if (lines.length === 0 && failures.length === 0) return null;
+  return { lines, failures };
+};
+
+/**
  * Does this entry of a per-locale map hold anything? A seeded-but-never-filled
  * `{}` is the shape the translation write path leaves behind for a locale that
  * reached nothing (see `translationFamily`), and it must not count as a
@@ -799,13 +866,21 @@ const translationFamily: Summariser = (blob) => {
  * `Task.result` holds the job INPUT, not an outcome, so a summariser here
  * would show a merchant an internal job spec. Do not "fix the gap":
  *
- *  - `imageWebpConversion` — `{sourceUrl, mediaId, productImageId, productId,
- *    altText, position}` (api.convert-webp.tsx L132).
+ *  - `imageWebpConversionItem` — `{sourceUrl, mediaId, productImageId,
+ *    productId, altText, position, parentTaskId}` (api.convert-webp.tsx), the
+ *    per-image work item of a conversion run. It is hidden from the Tasks list
+ *    and the notifications anyway; a summariser for it would only be waiting
+ *    for the day somebody unhides it.
  *  - `pageSpeed` — `{url, strategy}`, written IDENTICALLY at task creation
  *    (app.seo.performance.tsx L640) and at completion (L655); it is restore
  *    state, which that route's own loader reads back at L287 to re-attach the
  *    running audit. It calls PageSpeed Insights, not an AI provider, so it has
  *    no prompt either.
+ *
+ * `imageWebpConversion` is PRESENT, and used to be the first name on that list
+ * — it named the per-image row and its result was the job spec above. It now
+ * names the ONE aggregate row of a conversion run, whose result is an outcome,
+ * so the reason for the exclusion moved to the item type with the job spec.
  */
 const SUMMARISERS: Record<string, Summariser> = Object.assign(Object.create(null), {
   seoCrawl,
@@ -824,6 +899,7 @@ const SUMMARISERS: Record<string, Summariser> = Object.assign(Object.create(null
   // TASK_TYPE_ALIASES, exactly as the label map does. Registering the second
   // spelling here as well would be the duplicated map this module refuses.
   bulkAiGeneration,
+  imageWebpConversion,
   translation: translationFamily,
   bulkTranslation: translationFamily,
 });

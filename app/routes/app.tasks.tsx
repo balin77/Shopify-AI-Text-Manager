@@ -27,6 +27,7 @@ import {
   taskSubjectLabel,
 } from "~/services/tasks/task-labels.shared";
 import { hasTaskDetails } from "~/services/tasks/task-details.shared";
+import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
 
 /**
@@ -85,6 +86,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
     // Build where clause
     const where: any = { shop: session.shop };
+
+    // A WebP conversion is ONE merchant-facing task with N work items behind
+    // it. The items carry the per-image job data the processor and the
+    // recovery path need — they are not a report, and twenty of them for one
+    // upload is what this filter exists to keep off the page.
+    where.type = { not: WEBP_ITEM_TASK_TYPE };
 
     // Status filter. The three options are DISJOINT and "Successful" is
     // clean-only: it used to answer `{ in: ["completed", "completed_with_errors"] }`,
