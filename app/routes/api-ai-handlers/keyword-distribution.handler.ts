@@ -383,10 +383,13 @@ async function runSuggestStage(taskId: string, args: SuggestRunArgs): Promise<vo
       progress: 100,
       completedAt: new Date(),
       result: JSON.stringify(result),
+      // Machine codes, translated at render time by `taskErrorText`
+      // (app/utils) — this runner has no merchant locale. The rejected-key
+      // note rides as a flag argument rather than as appended English.
       error: allFailed
-        ? `All ${batches.length} batch call(s) failed${authErrorSeen ? " (invalid AI API key)" : ""}`
+        ? `batches_all_failed:${batches.length}${authErrorSeen ? ":1" : ""}`
         : failedBatches > 0
-          ? `${failedBatches} of ${batches.length} batch call(s) failed — their items received no votes`
+          ? `batches_failed:${failedBatches}:${batches.length}`
           : null,
     },
   });
@@ -698,7 +701,9 @@ async function runApplyStage(taskId: string, args: ApplyRunArgs): Promise<void> 
       progress: 100,
       completedAt: new Date(),
       result: JSON.stringify(result),
-      error: errors > 0 ? `${errors} of ${rows.length} row(s) failed` : null,
+      // A machine code again (see the suggest stage above) — `taskErrorText`
+      // renders it in the merchant's language.
+      error: errors > 0 ? `rows_failed:${errors}:${rows.length}` : null,
     },
   });
 

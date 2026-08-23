@@ -209,7 +209,9 @@ export async function handleTranslateField(ctx: AIActionContext): Promise<DataRe
           data: {
             status: "failed",
             completedAt: new Date(),
-            error: `Slug for locale ${targetLocale} collapsed to an empty/unusable handle after sanitization`,
+            // A machine code for the Tasks card (`taskErrorText`); the HTTP
+            // body below stays an English message for our own client.
+            error: `slug_empty:${targetLocale}`,
           },
         });
         return json(

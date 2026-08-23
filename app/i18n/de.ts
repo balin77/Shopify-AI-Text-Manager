@@ -1799,6 +1799,10 @@ export const de = {
     statusOptions: {
       all: "Alle Aufgaben",
       completed: "Erfolgreich",
+      // `completed_with_errors` verdient eine eigene Option, statt unter
+      // "Erfolgreich" zu verschwinden: ein Lauf, der das meiste gespeichert
+      // und den Rest verloren hat, ist genau das, wonach hier gesucht wird.
+      partial: "Mit Fehlern abgeschlossen",
       failed: "Fehlgeschlagen",
     },
     timeRangeOptions: {
@@ -1921,6 +1925,36 @@ export const de = {
     seoBulkFixCompleted: "SEO-Korrektur abgeschlossen",
     taskTimedOut: "Zeitüberschreitung — die Aufgabe hat zu lange keinen Fortschritt gemeldet und wurde abgebrochen. Bitte erneut starten.",
     taskInterrupted: "Unterbrochen — der Server wurde neu gestartet (z. B. durch ein Deploy), während die Aufgabe lief. Bitte erneut starten.",
+    // Zugänglicher Name der Benachrichtigungsbox in der Navigation — wird
+    // vorgelesen statt der farbigen Umrandung, die allen anderen dasselbe sagt.
+    notificationSuccess: "Erfolgsmeldung",
+    notificationWarning: "Warnmeldung",
+    notificationCritical: "Fehlermeldung",
+    notificationInfo: "Infomeldung",
+    // ── Codes aus `Task.error` (app/utils/task-error-text.ts) ────────────
+    // Ein Runner endet lange nach dem Request, der ihn gestartet hat, und
+    // kennt die Sprache des Händlers nicht — er speichert `<code>:<arg>`,
+    // die Zahlen werden hier eingesetzt. `{count}`/`{total}` sind Anzahlen,
+    // `{language}` ein Sprachcode. `invalidApiKey` hängt an der Zeile, die
+    // es erklärt, und steht nie allein; `someFailed` ist der Rückfall für
+    // einen Code, dessen Zahlen nicht lesbar sind — nie ein halb gefuelltes
+    // Template.
+    taskErrors: {
+      rowsFailed: "{count} Zeile(n) konnte(n) nicht gespeichert werden.",
+      rowsFailedOfTotal: "{count} von {total} Zeile(n) konnte(n) nicht gespeichert werden.",
+      itemsFailed: "Bei {count} von {total} Einträgen ist die Bearbeitung fehlgeschlagen.",
+      imagesFailed: "Bei {count} von {total} Bildern ist die Bearbeitung fehlgeschlagen.",
+      fixesFailed: "{count} von {total} Korrektur(en) sind fehlgeschlagen.",
+      altImagesFailed: "Bei {count} von {total} Bildern ist die Generierung fehlgeschlagen.",
+      batchesAllFailed: "Alle KI-Anfragen sind fehlgeschlagen ({total} insgesamt).",
+      batchesFailed: "{count} von {total} KI-Anfrage(n) sind fehlgeschlagen — die Einträge darin haben keine Keyword-Vorschläge bekommen.",
+      localeScansFailed: "Alle Sprach-Scans sind fehlgeschlagen ({total} insgesamt) — Details stehen im Log.",
+      aiEmptyValue: "Die KI hat einen leeren Wert zurückgegeben.",
+      itemMissing: "Dieser Eintrag ist nicht mehr im Inhalts-Cache — bitte neu laden und erneut versuchen.",
+      slugEmpty: "Der übersetzte URL-Slug für {language} war leer und wurde nicht gespeichert.",
+      invalidApiKey: "(der KI-API-Schlüssel wurde abgelehnt)",
+      someFailed: "Einige Einträge konnten nicht verarbeitet werden — Details stehen in der Aufgabe.",
+    },
     translationCompleted: "Übersetzung abgeschlossen für \"{title}\"",
     fieldTranslationCompleted: "Übersetzung für {field} in \"{title}\" abgeschlossen",
     generationCompleted: "KI-Generierung für {field} in \"{title}\" abgeschlossen",

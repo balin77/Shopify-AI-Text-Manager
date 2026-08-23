@@ -1801,6 +1801,10 @@ export const en: Translation = {
     statusOptions: {
       all: "All Tasks",
       completed: "Successful",
+      // `completed_with_errors` deserves its own option rather than being
+      // folded into "Successful": a run that saved most of its work and lost
+      // the rest is exactly what a merchant comes to this filter for.
+      partial: "Completed with errors",
       failed: "Failed",
     },
     timeRangeOptions: {
@@ -1923,6 +1927,35 @@ export const en: Translation = {
     seoBulkFixCompleted: "SEO fix finished",
     taskTimedOut: "Timed out — the task reported no progress for too long and was cancelled. Please start it again.",
     taskInterrupted: "Interrupted — the server restarted (a deploy, for example) while the task was running. Please start it again.",
+    // Accessible name of the navigation's notification box — read out instead
+    // of the coloured border, which says the same thing to everyone else.
+    notificationSuccess: "Success notification",
+    notificationWarning: "Warning notification",
+    notificationCritical: "Error notification",
+    notificationInfo: "Information notification",
+    // ── Codes stored in `Task.error` (app/utils/task-error-text.ts) ───────
+    // A runner finishes long after the request that started it and has no
+    // merchant locale, so it stores `<code>:<arg>` and the numbers are
+    // substituted here. `{count}`/`{total}` are counts, `{language}` a locale
+    // code. `invalidApiKey` is appended to the line it explains, never shown
+    // on its own; `someFailed` is the fallback for a code whose numbers
+    // cannot be read — never a half-filled template.
+    taskErrors: {
+      rowsFailed: "{count} row(s) could not be saved.",
+      rowsFailedOfTotal: "{count} of {total} row(s) could not be saved.",
+      itemsFailed: "{count} of {total} item(s) failed.",
+      imagesFailed: "{count} of {total} image(s) failed.",
+      fixesFailed: "{count} of {total} fix(es) failed.",
+      altImagesFailed: "{count} of {total} image(s) failed.",
+      batchesAllFailed: "Every AI batch call failed ({total} in total).",
+      batchesFailed: "{count} of {total} AI batch call(s) failed — the entries in them received no keyword suggestions.",
+      localeScansFailed: "Every language scan failed ({total} in total) — see the logs for details.",
+      aiEmptyValue: "The AI returned an empty value.",
+      itemMissing: "This entry no longer exists in the content cache — reload it and try again.",
+      slugEmpty: "The translated URL slug for {language} came out empty and was not saved.",
+      invalidApiKey: "(the AI API key was rejected)",
+      someFailed: "Some entries could not be processed — open the task for details.",
+    },
     translationCompleted: "Translation completed for \"{title}\"",
     fieldTranslationCompleted: "Translation for {field} in \"{title}\" completed",
     generationCompleted: "AI generation for {field} in \"{title}\" completed",

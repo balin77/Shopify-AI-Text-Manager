@@ -1784,6 +1784,10 @@ export const es: Translation = {
     statusOptions: {
       all: "Todas las tareas",
       completed: "Exitosas",
+      // `completed_with_errors` merece una opción propia en lugar de quedar
+      // dentro de "Exitosas": una ejecución que guardó casi todo y perdió el
+      // resto es justo lo que se busca en este filtro.
+      partial: "Completadas con errores",
       failed: "Fallidas",
     },
     timeRangeOptions: {
@@ -1826,7 +1830,7 @@ export const es: Translation = {
       formatting: "Formato de texto",
       insertKeyword: "Inserción de palabra clave",
       altTextTemplateApply: "Plantillas de texto alt",
-      imageWebpConversion: "Conversión de imagen (WebP)",
+      imageWebpConversion: "Conversión de imágenes (WebP)",
       blogArticleRedirects: "Redirecciones de artículos del blog",
       seoRobotsAdvice: "Recomendaciones de robots.txt",
       aiDiscoveryIntro: "Texto introductorio (descubrimiento para IA)",
@@ -1906,6 +1910,36 @@ export const es: Translation = {
     seoBulkFixCompleted: "Corrección SEO finalizada",
     taskTimedOut: "Tiempo agotado — la tarea no informó progreso durante demasiado tiempo y se canceló. Vuelve a iniciarla.",
     taskInterrupted: "Interrumpida — el servidor se reinició (por ejemplo, un despliegue) mientras la tarea estaba en curso. Vuelve a iniciarla.",
+    // Nombre accesible del cuadro de notificaciones de la navegación — se lee
+    // en voz alta en lugar del borde de color, que dice lo mismo a los demás.
+    notificationSuccess: "Notificación de éxito",
+    notificationWarning: "Notificación de advertencia",
+    notificationCritical: "Notificación de error",
+    notificationInfo: "Notificación informativa",
+    // ── Códigos guardados en `Task.error` (app/utils/task-error-text.ts) ──
+    // Un runner termina mucho después de la petición que lo inició y no
+    // conoce el idioma del comerciante, así que guarda `<code>:<arg>` y aquí
+    // se sustituyen los números. `{count}`/`{total}` son cantidades y
+    // `{language}` un código de idioma. `invalidApiKey` se añade a la línea
+    // que explica y nunca aparece sola; `someFailed` es el respaldo para un
+    // código cuyos números no se pueden leer — nunca una plantilla a medio
+    // rellenar.
+    taskErrors: {
+      rowsFailed: "No se pudieron guardar {count} fila(s).",
+      rowsFailedOfTotal: "No se pudieron guardar {count} de {total} fila(s).",
+      itemsFailed: "Fallaron {count} de {total} entrada(s).",
+      imagesFailed: "Fallaron {count} de {total} imagen(es).",
+      fixesFailed: "Fallaron {count} de {total} corrección(es).",
+      altImagesFailed: "Fallaron {count} de {total} imagen(es).",
+      batchesAllFailed: "Fallaron todas las llamadas de IA ({total} en total).",
+      batchesFailed: "Fallaron {count} de {total} llamada(s) de IA — sus entradas no recibieron sugerencias de palabras clave.",
+      localeScansFailed: "Fallaron todos los análisis de idioma ({total} en total) — consulta los registros para ver los detalles.",
+      aiEmptyValue: "La IA devolvió un valor vacío.",
+      itemMissing: "Esta entrada ya no está en la caché de contenido — vuelve a cargarla e inténtalo de nuevo.",
+      slugEmpty: "El slug de URL traducido para {language} quedó vacío y no se guardó.",
+      invalidApiKey: "(la clave de API de IA fue rechazada)",
+      someFailed: "Algunas entradas no se pudieron procesar — abre la tarea para ver los detalles.",
+    },
     translationCompleted: "Traducción completada para \"{title}\"",
     fieldTranslationCompleted: "Traducción para {field} en \"{title}\" completada",
     generationCompleted: "Generación de IA para {field} en \"{title}\" completada",

@@ -157,7 +157,9 @@ Return ONLY the resulting text. No explanation, no quotes, no markdown fences.`;
     if (!result) {
       await db.task.update({
         where: { id: task.id },
-        data: { status: "failed", completedAt: new Date(), error: "AI returned an empty value" },
+        // A machine code for the Tasks card (`taskErrorText`); the HTTP body
+        // below stays an English message — it is read by our own client.
+        data: { status: "failed", completedAt: new Date(), error: "ai_empty_value" },
       });
       return json({ success: false, error: "AI returned an empty value" }, { status: 502 });
     }
