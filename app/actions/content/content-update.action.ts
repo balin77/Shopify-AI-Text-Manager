@@ -517,6 +517,7 @@ export async function handleUpdateContent(
     }
 
     // Get changed fields (for translation deletion when saving primary locale)
+    const changedAltTextIndicesStr = getFormString(formData, "changedAltTextIndices");
     const changedFieldsStr = getFormString(formData, "changedFields");
     const changedFields: string[] | undefined = changedFieldsStr ? safeJsonParse<string[]>(changedFieldsStr, []) : undefined;
 
@@ -536,6 +537,13 @@ export async function handleUpdateContent(
       shop: session.shop,
       policyType,
       changedFields: locale === primaryLocale ? changedFields : undefined, // Only pass for primary locale
+      // Which alt texts the MERCHANT changed — the discriminator that keeps the
+      // featured-alt §6.6 purge off the accept-and-translate flow's own primary
+      // save. Primary locale only, like `changedFields` beside it.
+      changedAltTextIndices:
+        locale === primaryLocale && changedAltTextIndicesStr
+          ? safeJsonParse<number[]>(changedAltTextIndicesStr, [])
+          : undefined,
       changedAttributeFields: locale === primaryLocale ? changedAttributeFields : undefined,
       marketId,
     });

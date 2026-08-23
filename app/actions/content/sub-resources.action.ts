@@ -11,7 +11,9 @@ import { AIService, isAuthError } from "../../../src/services/ai.service";
 import { getFormString } from "../../utils/form-data.utils";
 import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
 import { parseValueOrderPayload } from "~/services/product-options.shared";
+import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
@@ -249,6 +251,14 @@ export async function handleSaveSubResourceTranslations(
         if (translationInputs.length > 0) {
           await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
         }
+
+        // Claim the SUB-RESOURCE the merchant just wrote. A detached
+        // re-translation started by an earlier primary save watches every
+        // resource of its group, and this is how it learns that a hand-written
+        // value landed while it was working — without it the AI overwrites the
+        // merchant minutes later, which is the one outcome
+        // `isTranslationRecentlySaved` exists to prevent.
+        markTranslationSaved(resourceId);
 
         // Delete empty translations for ProductOptionValue. marketIds null =
         // remove the global translation; a market removes only that override.
@@ -973,21 +983,27 @@ export async function handleSavePrimarySubResources(
     // behaviour.
     const changedOptionIds = savedOptions.filter((id) => !failedOptions.includes(id));
     const changedMetafieldIds = savedMetafields.filter((id) => !failedMetafields.includes(id));
-    const { isPurgeOnPrimaryChangeEnabled } = await import(
+    const somethingChanged = changedOptionIds.length > 0 || changedMetafieldIds.length > 0;
+    const { loadTranslationChangePolicy } = await import(
       "~/services/translations/translation-change-policy.server"
     );
-    const purgeStaleTranslations =
-      changedOptionIds.length > 0 || changedMetafieldIds.length > 0
-        // No `reconciled` flag: option / option-value / metafield
-        // translations ride on their own Shopify resources, which the sync's
-        // re-translation never looks at — so the merchant's stored choice
-        // governs here even with auto-translate on.
-        ? await isPurgeOnPrimaryChangeEnabled(session.shop, db)
-        : false;
+    const changePolicy = somethingChanged
+      ? await loadTranslationChangePolicy(session.shop, db)
+      : null;
+    // A sub-resource is repaired by THIS save or by nothing at all: an option,
+    // an option value and a metafield each translate on their OWN Shopify
+    // resource, which no sync and no webhook in this app ever looks at. So with
+    // auto-translate on, the re-translation below IS the repair and the
+    // deletion stands down — read through the policy rather than written as
+    // `false`, because which of the two switches applies is that module's
+    // question, never a call site's.
+    const autoTranslate = !!changePolicy?.autoTranslateExternalChanges;
 
-    if (purgeStaleTranslations && (changedOptionIds.length > 0 || changedMetafieldIds.length > 0)) {
+    // Locales for both passes below, fetched once and only when one can run.
+    let foreignLocales: string[] = [];
+    let shopPrimaryLocale = "";
+    if (somethingChanged && !!changePolicy) {
       try {
-        // Get all shop locales
         const localesResponse = await gateway.graphql(
           `#graphql
             query getShopLocales {
@@ -1000,13 +1016,37 @@ export async function handleSavePrimarySubResources(
         );
         const localesData = await localesResponse.json() as any;
         const shopLocales = localesData.data?.shopLocales || [];
-
-        // Filter out the primary locale, only keep published foreign locales
-        const foreignLocales = shopLocales
+        foreignLocales = shopLocales
           .filter((l: { locale: string; primary: boolean; published: boolean }) => !l.primary && l.published)
           .map((l: { locale: string }) => l.locale);
+        shopPrimaryLocale =
+          shopLocales.find((l: { primary: boolean }) => l.primary)?.locale || "";
+      } catch (err) {
+        // Non-fatal: the sub-resource writes have already gone through, so
+        // failing the save here would report a write that succeeded as broken.
+        logger.warn("[UnifiedContent] Could not load shop locales — sub-resource translations untouched", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
-        if (foreignLocales.length > 0) {
+    // Decided AFTER the lookup, because it depends on its result: without a
+    // known PRIMARY locale there is nothing to translate FROM, and the repair
+    // cannot run — so the deletion has to, or the stale text stays live for
+    // good on a surface nothing else ever revisits.
+    const selfRetranslated = autoTranslate && !!shopPrimaryLocale && foreignLocales.length > 0;
+    const purgeStaleTranslations =
+      !!changePolicy &&
+      (selfRetranslated
+        ? changePolicy.purgeOnPrimaryChange
+        : changePolicy.purgeUnreconciledSurfaces);
+
+    if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
+      try {
+        {
+          // (the `foreignLocales.length > 0` guard now sits on the `if` above —
+          // without it every changed sub-resource fired a
+          // `translationsRemove(locales: [])` on a single-language shop)
           // Delete option translations
           for (const optionId of changedOptionIds) {
             if (!isValidShopifyGID(optionId)) continue;
@@ -1144,6 +1184,112 @@ export async function handleSavePrimarySubResources(
         }
       } catch (err) {
         logger.error("[UnifiedContent] Failed to delete translations for changed sub-resources", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 4b. …or, with auto-translate on, REPLACE the stale translations instead
+    // of deleting them. One group for the whole save: an option, an option
+    // value and a metafield are three Shopify resources but one merchant
+    // action, so they share a Task row, one batched detection and one AI
+    // request per locale. Best-effort — the primary writes above have already
+    // gone through, so nothing here may fail the save.
+    if (selfRetranslated && somethingChanged) {
+      try {
+      const changed: Array<{
+        resourceId: string;
+        resourceType: string;
+        key: string;
+        retranslatable?: boolean;
+      }> = [];
+      for (const optionId of changedOptionIds) {
+        if (!isValidShopifyGID(optionId)) continue;
+        const changes = optionsChanges[optionId];
+        // Same rule as the purge above: only what the merchant actually moved.
+        // An option whose VALUES changed did not necessarily get a new name.
+        if (changes?.name !== undefined) {
+          changed.push({ resourceId: optionId, resourceType: "ProductOption", key: "name" });
+        }
+        for (const valueUpdate of changes?.valueUpdates ?? []) {
+          if (!valueUpdate.id || !isValidShopifyGID(valueUpdate.id)) continue;
+          changed.push({
+            resourceId: valueUpdate.id,
+            resourceType: "ProductOptionValue",
+            key: "name",
+          });
+        }
+      }
+      // A metafield's TYPE decides whether its value can go through the generic
+      // prompt at all: a multi-line text comes back with its newlines stripped
+      // and a list field is raw JSON, and both would be echo-confirmed and
+      // mirrored — a corruption recorded as a success, where the previous
+      // behaviour was a plain deletion. The bulk editor draws the same line.
+      const metafieldTypes = new Map<string, string>(
+        changedMetafieldIds.length > 0
+          ? (
+              await db.productMetafield.findMany({
+                where: { productId, id: { in: changedMetafieldIds } },
+                select: { id: true, type: true },
+              })
+            ).map((row: { id: string; type: string }) => [row.id, row.type])
+          : [],
+      );
+      for (const metafieldId of changedMetafieldIds) {
+        if (!isValidShopifyGID(metafieldId)) continue;
+        changed.push({
+          resourceId: metafieldId,
+          resourceType: "Metafield",
+          key: "value",
+          // An UNKNOWN type (not in the cache) counts as unsafe: guessing
+          // "single line" is the direction that corrupts.
+          retranslatable: isBatchTranslatableValueType(metafieldTypes.get(metafieldId) ?? ""),
+        });
+      }
+
+      if (changed.length > 0) {
+        {
+          const { reconcileAfterPrimarySave } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          await reconcileAfterPrimarySave({
+            client: admin,
+            shop: session.shop,
+            // The GROUP is the product: one Task row the merchant recognises,
+            // one in-flight key, one `markTranslationSaved`. Each entry names
+            // the sub-resource its translation actually lives on.
+            resourceId: productId,
+            resourceType: "Product",
+            contentKind: "product",
+            // Read from the cache rather than taken from the form: the client
+            // does not send a title here, and a Task row labelled with a GID is
+            // one the merchant cannot match to anything they did.
+            resourceTitle:
+              (await db.product.findFirst({
+                where: { shop: session.shop, id: productId },
+                select: { title: true },
+              }))?.title || productId,
+            changed,
+            foreignLocales,
+            policy: changePolicy!,
+            // No field semantics: an option name and a metafield value have no
+            // named field to hang the merchant's per-field instructions or an
+            // SEO character limit on. Same context string the bulk editor
+            // passes for exactly these columns.
+            translateAs: {
+              kind: "values",
+              context: "product options and metafield values",
+              sourceLocale: shopPrimaryLocale,
+            },
+          });
+        }
+      }
+      } catch (err) {
+        // Everything from the metafield-type lookup onwards: the sub-resource
+        // writes have already gone through, so a failure here must not report a
+        // completed save as broken and invite a re-save that repeats every
+        // Shopify write.
+        logger.warn("[UnifiedContent] Sub-resource re-translation failed — translations kept", {
           context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
         });
       }

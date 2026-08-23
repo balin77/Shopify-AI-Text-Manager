@@ -351,8 +351,11 @@ Image URL: ${image.url}${mainLanguage ? `\nLanguage: ${mainLanguage}` : ''}`;
 
   const generatedCount = Object.keys(generatedAltTexts).length;
   const finalStatus = generatedCount === 0 ? "failed" : "completed";
+  // A machine code, translated at render time by `taskErrorText` (app/utils).
+  // The provider's own message is free text and may itself contain colons, so
+  // it is the LAST argument and the reader rejoins everything past the counts.
   const failureSummary = failedIndices.length > 0
-    ? `${failedIndices.length} of ${totalImages} images failed${lastError ? `: ${lastError}` : ""}`
+    ? `alt_images_failed:${failedIndices.length}:${totalImages}${lastError ? `:${lastError}` : ""}`
     : null;
 
   await db.task.update({

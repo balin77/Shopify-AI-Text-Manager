@@ -572,7 +572,12 @@ export async function handleTranslateAllForLocale(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        // A locale that reached NOTHING — the AI refused it, or Shopify did —
+        // is a partial failure, not a success. This used to be hardcoded to
+        // "completed" while the very same update wrote `failedLocales` into
+        // the result blob, so the row contradicted its own payload and the
+        // merchant got a success notification for a run that saved nothing.
+        status: failedLocales.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({
@@ -700,7 +705,9 @@ export async function handleTranslateFieldToAllLocales(
     await db.task.update({
       where: { id: task.id },
       data: {
-        status: "completed",
+        // Same rule as the two siblings above: the result blob already carries
+        // `failedLocales`, so the status has to agree with it.
+        status: failedLocales.length > 0 ? "completed_with_errors" : "completed",
         progress: 100,
         completedAt: new Date(),
         result: JSON.stringify({ translations: flattenedTranslations, fieldType, failedLocales, rejectedFields, skippedFields }),

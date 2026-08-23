@@ -7,6 +7,7 @@
 import type { FetcherWithComponents } from "react-router";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import type { ValidationOverlays } from "~/utils/field-validation.utils";
+import type { InfoBoxLink } from "~/contexts/InfoBoxContext";
 
 export type InfoBoxTone = "success" | "info" | "warning" | "critical";
 
@@ -607,8 +608,9 @@ export interface UseContentEditorProps {
   /** Fetcher from useFetcher() */
   fetcher: FetcherWithComponents<FetcherData>;
 
-  /** ShowInfoBox function */
-  showInfoBox: (message: string, tone?: InfoBoxTone, title?: string) => void;
+  /** ShowInfoBox function — the context's own signature, so the context
+   *  function is assignable here. There is no `title`: see InfoBoxContext. */
+  showInfoBox: (message: string, tone?: InfoBoxTone, link?: InfoBoxLink, dedupeKey?: string) => void;
 
   /** Translation strings object */
   t: TranslationStrings;

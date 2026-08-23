@@ -1,8 +1,13 @@
 /**
- * Renaming menu items — the pure half (no Shopify, no Prisma, no server imports).
+ * The menu tree's FINGERPRINT — the pure half (no Shopify, no Prisma, no
+ * server imports).
  *
- * Translating a menu item and RENAMING it are two different write shapes, and
- * the difference is the reason this module exists:
+ * This module used to hold the rename feature. That feature is gone, absorbed
+ * by the tree editor (menu-tree.shared.ts / menu-tree.server.ts): a rename is
+ * one kind of tree change, and TWO whole-tree writers on one menu is a hazard
+ * rather than a convenience — the second one's drift check would fail against
+ * the first one's own result. What survived is the part both would have
+ * needed, and the reason it exists is unchanged:
  *
  *   A TRANSLATION addresses one Link resource with translationsRegister. One
  *   item, one call, and nothing else in the menu is touched.
@@ -28,12 +33,6 @@ export interface MenuTreeNode {
   id?: unknown;
   title?: unknown;
   items?: unknown;
-}
-
-export interface MenuTitleChange {
-  menuItemId: string;
-  /** The new primary title. Never empty — an unnamed menu entry is not a thing. */
-  title: string;
 }
 
 /**
@@ -76,41 +75,53 @@ export function menuStructureFingerprint(items: unknown, maxDepth = 10): string 
 }
 
 /**
- * What a save would actually rename.
+ * What somebody ELSE changed, read out of the two fingerprints.
  *
- * Diff-only, like every other write path here: menuUpdate rewrites the tree
- * anyway, but sending a "change" for an untouched item would report it as
- * saved, and — because a confirmed rename purges that item's translations
- * under the merchant's stale-translation setting — a no-op edit would then
- * delete translations nobody's text change ever invalidated.
+ * No extra payload and no second read: the fingerprint is already
+ * `path<TAB>id<TAB>title` per line, i.e. exactly the tree the page was
+ * rendered from. Parsing it back turns a bare refusal ("the menu changed")
+ * into something a merchant can act on ("Kontakt was renamed and one item was
+ * added"), which is the difference between reloading confidently and
+ * wondering what one is about to lose.
  *
- * Both sides are trimmed before comparing (a trailing space is not an edit),
- * and the trimmed value is what gets written: Shopify stores what it is sent,
- * so an untrimmed title would come back as a different string and diff dirty
- * forever.
+ * Titles are what the report names — an id tail names nothing.
  */
-export function diffMenuTitles(
-  original: Record<string, string>,
-  draft: Record<string, string>,
-): MenuTitleChange[] {
-  const changes: MenuTitleChange[] = [];
-  for (const [menuItemId, rawValue] of Object.entries(draft)) {
-    const title = rawValue.trim();
-    if (title === (original[menuItemId] ?? "").trim()) continue;
-    changes.push({ menuItemId, title });
-  }
-  return changes;
+export interface MenuFingerprintDrift {
+  added: string[];
+  removed: string[];
+  renamed: Array<{ from: string; to: string }>;
+  moved: string[];
 }
 
-/**
- * Titles a rename may not carry.
- *
- * Empty is the only one, and it is refused rather than passed on: Shopify
- * would reject the whole menuUpdate for it, and that call carries every OTHER
- * item of the menu — so one blank field would fail the entire save, including
- * renames that were perfectly fine. Same reason productUpdate's attribute
- * validation lives in front of the mutation rather than behind it.
- */
-export function invalidMenuTitle(title: string): "empty" | null {
-  return title.trim() === "" ? "empty" : null;
+export function describeFingerprintDrift(before: string, after: string): MenuFingerprintDrift {
+  const parse = (fingerprint: string) => {
+    const byId = new Map<string, { path: string; title: string }>();
+    for (const line of fingerprint.split("\n")) {
+      if (!line) continue;
+      const [path, id, ...rest] = line.split("\t");
+      // A title may legitimately be empty; a line without an id cannot be
+      // matched at all and is skipped rather than guessed at.
+      if (!id) continue;
+      byId.set(id, { path, title: rest.join("\t") });
+    }
+    return byId;
+  };
+
+  const drift: MenuFingerprintDrift = { added: [], removed: [], renamed: [], moved: [] };
+  const beforeById = parse(before);
+  const afterById = parse(after);
+
+  for (const [id, now] of afterById) {
+    const then = beforeById.get(id);
+    if (!then) {
+      drift.added.push(now.title);
+      continue;
+    }
+    if (then.title !== now.title) drift.renamed.push({ from: then.title, to: now.title });
+    else if (then.path !== now.path) drift.moved.push(now.title);
+  }
+  for (const [id, then] of beforeById) {
+    if (!afterById.has(id)) drift.removed.push(then.title);
+  }
+  return drift;
 }

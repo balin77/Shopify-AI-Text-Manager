@@ -2,6 +2,7 @@ import { data as json, type LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { logger } from "~/utils/logger.server";
 import { handlePolledAuthError } from "~/utils/polled-auth-error.server";
+import { WEBP_ITEM_TASK_TYPE } from "~/config/webp-tasks.js";
 
 // Lightweight preview of the currently running tasks, used by the hover card
 // on the "Tasks" navigation badge. Only the top few active tasks are returned
@@ -18,6 +19,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
       const where = {
         shop: session.shop,
+        // A WebP conversion shows up here as its ONE aggregate row, never as
+        // its per-image work items: five image rows of one upload used to fill
+        // the whole preview and read as five separate jobs. Same exclusion as
+        // the badge count and the completion notifications.
+        type: { not: WEBP_ITEM_TASK_TYPE },
         status: { in: ["pending", "queued", "running"] },
       };
 

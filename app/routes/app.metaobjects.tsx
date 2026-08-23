@@ -420,8 +420,7 @@ export default function MetaobjectsPage() {
     onDeleted: (target) => {
       showInfoBox(
         (t.content?.deletedMessage || "“{name}” was deleted.").replace("{name}", target.title || target.id),
-        "success",
-        t.content?.success || "Success!",
+        "success"
       );
       setFocusEntryId(null);
       // A deleted TYPE has no entries left to reload: asking the entry loader
@@ -725,13 +724,13 @@ export default function MetaobjectsPage() {
   // Show loader error
   useEffect(() => {
     if (error) {
-      showInfoBox(error, "critical", t.content?.error || "Error");
+      showInfoBox(error, "critical");
     }
   }, [error, showInfoBox, t]);
 
   useEffect(() => {
     if (entryError) {
-      showInfoBox(entryError, "critical", t.content?.error || "Error");
+      showInfoBox(entryError, "critical");
     }
   }, [entryError, showInfoBox, t]);
 

@@ -20,6 +20,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import crypto from "crypto";
+import { WEBP_ITEM_TASK_TYPE, WEBP_PARENT_TASK_TYPE } from "./app/config/webp-tasks.js";
 
 const prisma = globalThis.__db ?? new PrismaClient();
 if (!globalThis.__db) globalThis.__db = prisma;
@@ -159,10 +160,16 @@ export class StaleImageCleanupService {
     // Phase 2: per-product reconciliation for products that had a WebP conversion
     // in the last 30 days (highest-risk window for orphans).
     const lookbackDate = new Date(Date.now() - RECONCILE_LOOKBACK_MS);
+    // BOTH webp types, and `completed_with_errors` with them: a conversion run
+    // is now one aggregate row over N per-image work items, and a run where
+    // some images failed settles the aggregate as `completed_with_errors` —
+    // exactly the mixed outcome most likely to have left an orphan behind.
+    // Matching only `imageWebpConversion` + completed/failed would have skipped
+    // it, and the item type covers a run whose aggregate row is gone.
     const recentConversions = await prisma.task.findMany({
       where: {
-        type: "imageWebpConversion",
-        status: { in: ["completed", "failed"] },
+        type: { in: [WEBP_PARENT_TASK_TYPE, WEBP_ITEM_TASK_TYPE] },
+        status: { in: ["completed", "completed_with_errors", "failed"] },
         completedAt: { gt: lookbackDate },
       },
       distinct: ["resourceId", "shop"],

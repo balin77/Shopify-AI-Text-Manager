@@ -89,6 +89,27 @@ export function digestBaselineKey(locale: string, key: string): string {
 export interface StaleTranslation {
   key: string;
   locale: string;
+  /**
+   * The Shopify resource this translation actually lives on, when it is NOT the
+   * one being repaired. A product save moves its OPTIONS, OPTION VALUES and
+   * METAFIELDS too, and each of those is its own `translatableResource` with
+   * its own GID — but they are one merchant action, so they are repaired as one
+   * group: one Task row, one batched detection, one AI request per locale.
+   * Absent = the group's own resource, which is every content-type entry.
+   */
+  resourceId?: string;
+  /** `ContentTranslation.resourceType` (or the mirror's equivalent) for the
+   *  row above. Absent = the group's own. */
+  resourceType?: string;
+  /**
+   * `false` forces this entry to the REMOVAL even under auto-translate. The
+   * caller uses it for a value the generic prompt cannot carry — a multi-line
+   * text (newlines are stripped) or a list field (raw JSON) — where a
+   * re-translation would be echo-confirmed and mirrored, i.e. recorded as a
+   * success while the value is corrupt. Removing it is what happened before
+   * auto-translate reached these surfaces, so it is the known-safe answer.
+   */
+  retranslatable?: boolean;
   reason: StaleReason;
   /** The CURRENT primary value ("" when the field was cleared). */
   primaryValue: string;
@@ -210,6 +231,18 @@ export function findStaleTranslations(
 export function partitionStaleTranslations(
   stale: readonly StaleTranslation[],
   autoTranslate: boolean,
+  /**
+   * `anyKey` lifts the `AUTO_RETRANSLATABLE_KEYS` allowlist, and only a caller
+   * that translates BARE VALUES may pass it. That list is a vocabulary of
+   * CONTENT-FIELD keys whose one job is to keep `handle` out — a slug is a URL,
+   * and rewriting one unattended moves a storefront page nobody asked to move.
+   * A metafield's `value`, an option's `name` and a metaobject field key are
+   * simply not in it, so applying it there would silently re-translate NOTHING
+   * on those surfaces while reporting that it had. There is no `handle` among
+   * them to protect: they name their own keys, and the caller has already
+   * filtered to the ones it changed.
+   */
+  opts: { anyKey?: boolean } = {},
 ): { retranslate: StaleTranslation[]; purge: StaleTranslation[] } {
   const retranslate: StaleTranslation[] = [];
   const purge: StaleTranslation[] = [];
@@ -218,7 +251,8 @@ export function partitionStaleTranslations(
       autoTranslate &&
       !!entry.primaryValue.trim() &&
       !!entry.digest &&
-      AUTO_RETRANSLATABLE_KEYS.has(entry.key);
+      entry.retranslatable !== false &&
+      (opts.anyKey || AUTO_RETRANSLATABLE_KEYS.has(entry.key));
     (canRetranslate ? retranslate : purge).push(entry);
   }
   return { retranslate, purge };

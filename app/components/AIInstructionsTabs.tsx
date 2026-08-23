@@ -169,35 +169,53 @@ export function AIInstructionsTabs({
    *  deletion switch (loadTranslationChangePolicy enforces the same). */
   const autoTranslateActive = canAutoTranslateExternal && localAutoTranslateExternal;
   /**
-   * The vision switch saves ITSELF, and is editable on every plan.
+   * The vision pair waits for the Save button, like every other setting in
+   * this app — nothing here is persisted by the act of clicking it.
    *
-   * Two reasons it does not ride on this card's Save button like the
-   * translation knobs do. It is not an instruction: Free and Basic see this
-   * whole card `readOnly` (they use the default instructions), and routing the
-   * switch through that button would take away on those plans a capability
-   * every plan had while it was a checkbox in the editor's toolbar. And a save
-   * from a read-only card would have to send the instruction fields with it —
-   * the action writes `data.x || null` for each, so a payload that omitted
-   * them would WIPE stored instructions. Its own action sends two fields and
-   * touches nothing else. Submitting on change is the pattern the
-   * direct-translations settings rows already use for exactly this shape.
+   * What it does NOT share with the rest of the card is its ACTION. Two
+   * constraints force that. Free and Basic see this card `readOnly` (they use
+   * the default instructions) and this switch has to stay reachable there,
+   * because it was a checkbox in the content editor's toolbar on every plan
+   * before it moved here — so the Save button is rendered for it even when the
+   * texts are locked. And `saveInstructions` writes `data.<field> || null` for
+   * every instruction it knows: a save fired from that read-only card would
+   * blank the lot. `saveAiVision` sends two fields and touches nothing else.
    */
   const [localSendImages, setLocalSendImages] = useState(sendImagesToAI);
   const [localImagesPerRequest, setLocalImagesPerRequest] = useState(
     clampImagesPerRequest(aiImagesPerRequest),
   );
+  const visionChanged =
+    localSendImages !== sendImagesToAI ||
+    localImagesPerRequest !== clampImagesPerRequest(aiImagesPerRequest);
 
-  const saveVision = (next: { sendImages?: boolean; imagesPerRequest?: number }) => {
-    const sendImages = next.sendImages ?? localSendImages;
-    const imagesPerRequest = clampImagesPerRequest(next.imagesPerRequest ?? localImagesPerRequest);
-    setLocalSendImages(sendImages);
-    setLocalImagesPerRequest(imagesPerRequest);
-    const formData = new FormData();
-    formData.append("actionType", "saveAiVision");
-    formData.append("sendImagesToAI", String(sendImages));
-    formData.append("aiImagesPerRequest", String(imagesPerRequest));
-    fetcher.submit(formData, { method: "POST" });
+  /**
+   * ONE request per Save, on the page's own fetcher — never two.
+   *
+   * Two submits on one fetcher abort each other (`router.fetch` starts with
+   * `abortFetcher`), two fetchers racing two `AISettings` upserts collide on
+   * the unique key when the shop has no row yet, and the settings route toasts
+   * and reports errors off the SHARED fetcher only, so anything sent on a
+   * private one succeeds and fails in silence.
+   *
+   * So: where the instruction texts are editable, the vision fields ride along
+   * in that submit like the translation knobs already do. Where they are not
+   * (Free and Basic see this card read-only), the narrow `saveAiVision` action
+   * goes out ALONE — `saveInstructions` writes `data.<field> || null` for every
+   * instruction it knows, so a save fired from a read-only card would blank
+   * the lot.
+   */
+  const appendVision = (formData: FormData) => {
+    formData.append("sendImagesToAI", String(localSendImages));
+    formData.append("aiImagesPerRequest", String(localImagesPerRequest));
   };
+  /** Only when they actually changed: this state is seeded at mount and never
+   *  re-synced, so an instructions-only save that carried it would revert a
+   *  vision change made in another tab. Absent ⇒ the action leaves it alone. */
+  const appendVisionIfChanged = (formData: FormData) => {
+    if (visionChanged) appendVision(formData);
+  };
+
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
 
   const tabs = [
@@ -272,8 +290,28 @@ export function AIInstructionsTabs({
   };
 
   const handleSave = () => {
+    /**
+     * A vision-only change goes out NARROW, on every plan.
+     *
+     * `localInstructions` is seeded once when this card mounts and never
+     * re-synced from props, so a `saveInstructions` fired for the vision
+     * switch would write whatever texts this tab was opened with — over
+     * anything a second tab or another device has stored since. On the
+     * read-only plans it is worse still: those texts are the DEFAULTS the
+     * merchant is merely being shown.
+     */
+    if (readOnly || !instructionsChanged) {
+      if (!visionChanged) return;
+      const visionOnly = new FormData();
+      visionOnly.append("actionType", "saveAiVision");
+      appendVision(visionOnly);
+      fetcher.submit(visionOnly, { method: "POST" });
+      return;
+    }
+
     const formData = new FormData();
     formData.append("actionType", "saveInstructions");
+    appendVisionIfChanged(formData);
 
     // Add all instruction fields to FormData
     Object.entries(localInstructions).forEach(([key, value]) => {
@@ -309,12 +347,13 @@ export function AIInstructionsTabs({
   };
 
   // Check if there are unsaved changes (instructions OR translation mode)
-  const hasChanges =
+  const instructionsChanged =
     JSON.stringify(localInstructions) !== JSON.stringify(instructions) ||
     localTranslationMode !== translationMode ||
     localKeywordAware !== keywordAwareTranslation ||
     localPurgeOnChange !== translationPurgeOnPrimaryChange ||
     (canAutoTranslateExternal && localAutoTranslateExternal !== autoTranslateExternalChanges);
+  const hasChanges = instructionsChanged || visionChanged;
 
   // Propagate hasChanges to parent component
   useEffect(() => {
@@ -329,6 +368,8 @@ export function AIInstructionsTabs({
     setLocalKeywordAware(keywordAwareTranslation);
     setLocalPurgeOnChange(translationPurgeOnPrimaryChange);
     setLocalAutoTranslateExternal(autoTranslateExternalChanges);
+    setLocalSendImages(sendImagesToAI);
+    setLocalImagesPerRequest(clampImagesPerRequest(aiImagesPerRequest));
   };
 
   return (
@@ -340,16 +381,23 @@ export function AIInstructionsTabs({
           <Text as="h2" variant="headingLg">
             {t.settings.aiInstructions}
           </Text>
-          {!readOnly && (
+          {(!readOnly || visionChanged) && (
             <SaveDiscardButtons
               hasChanges={hasChanges}
               onSave={handleSave}
               onDiscard={handleDiscard}
               saveText={t.products?.saveChanges || "Änderungen speichern"}
               discardText={t.content?.discardChanges || "Verwerfen"}
-              action="saveInstructions"
-              fetcherState={fetcher.state}
-              fetcherFormData={fetcher.formData}
+              // Explicit rather than `action` + `fetcherFormData`: that pair
+              // compares `formData.get("action")`, and this card posts its
+              // discriminator as `actionType` — so it never matched and the
+              // Save button never disabled. It also has to cover BOTH submits,
+              // since the vision pair goes through its own fetcher.
+              isSavingCurrentItem={
+                fetcher.state !== "idle" &&
+                (fetcher.formData?.get("actionType") === "saveInstructions" ||
+                  fetcher.formData?.get("actionType") === "saveAiVision")
+              }
             />
           )}
         </InlineStack>
@@ -398,6 +446,63 @@ export function AIInstructionsTabs({
             })}
           </InlineStack>
         </div>
+
+              {/* Content sub-section only. Not a layout preference: the
+            "translations" sub-section mounts SettingsGlossaryTab, which brings
+            its OWN `ui-save-bar`, and only one can be visible — a dirty
+            glossary next to a flipped switch here would leave one of the two
+            drafts with no way to save. */}
+        {subSection === "content" && (
+          <>
+          {/* Vision — FIRST, above everything this card holds: it decides what
+              the AI can SEE, which outranks how it is told to write. One answer
+              for the whole app; every surface that generates text or an alt text
+              reads it server-side.
+
+              OUTSIDE the read-only wrapper below on purpose. That wrapper sets
+              `pointerEvents: none` for Free and Basic (they use the default
+              instructions), and this pair is a capability those plans had on
+              every plan while it was a checkbox in the editor's toolbar — inside
+              it, the switch was simply unclickable there. Being outside also
+              means it shows in both sub-sections, which is right for a setting
+              that is neither about writing nor about translating specifically. */}
+                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                  <BlockStack gap="400">
+                    {/* No ❓ on the heading: the switch below carries the
+                        explanation, and two question marks in one small card
+                        are two places to look for one answer. */}
+                    <Text as="h3" variant="headingMd">
+                      {t.settings.aiVisionHeading || "Images"}
+                    </Text>
+                    <ToggleRow
+                      layout="inline"
+                      label={t.settings.aiVisionToggle || "Let the AI look at the images"}
+                      help={t.settings.aiVisionHelp}
+                      checked={localSendImages}
+                      onChange={setLocalSendImages}
+                    />
+                    {/* Offered only once vision is ON: "how many of nothing"
+                        is not a question, and a live control under a switch
+                        that is off reads as if it did something. */}
+                    {localSendImages && (
+                      <Select
+                        label={t.settings.aiImagesPerRequestLabel || "Images per request"}
+                        options={Array.from(
+                          { length: AI_IMAGES_PER_REQUEST_MAX - AI_IMAGES_PER_REQUEST_MIN + 1 },
+                          (_, i) => {
+                            const n = AI_IMAGES_PER_REQUEST_MIN + i;
+                            return { value: String(n), label: String(n) };
+                          },
+                        )}
+                        value={String(localImagesPerRequest)}
+                        onChange={(v) => setLocalImagesPerRequest(clampImagesPerRequest(Number(v)))}
+                        helpText={t.settings.aiImagesPerRequestHelp}
+                      />
+                    )}
+                  </BlockStack>
+                </div>
+          </>
+        )}
 
         {/* Custom Tab Navigation — only visible in "content" sub-section */}
         {subSection === "content" && (
@@ -549,14 +654,16 @@ export function AIInstructionsTabs({
                       {/* Greyed out rather than hidden, with the reason in
                           place: a switch that disappears reads as a bug. The
                           note must NOT say "deletion is off" flatly — the
-                          precedence only holds where an automatic event
-                          re-translates (products, collections), and saying
+                          precedence only holds where something actually
+                          re-translates (the two webhook types, plus the
+                          content types whose own save now does it), and saying
                           otherwise would describe a destructive behaviour as
-                          disabled while it still runs. */}
+                          disabled while it still runs on metaobjects, theme
+                          texts, options, metafields and alt texts. */}
                       {autoTranslateActive && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {t.settings.translationPurgeSupersededNote ||
-                            'Für Produkte und Kollektionen nicht nötig, solange automatisch neu übersetzt wird — überall sonst wird weiter gelöscht, weil dort nur ein Reload neu übersetzt.'}
+                            'Für Produkte und Kollektionen nicht nötig, solange automatisch neu übersetzt wird, und für Seiten, Blogs, Artikel und Richtlinien beim Bearbeiten im Editor — im Bulk-Editor sowie bei Metaobjekten, Theme-Texten, Optionen, Metafeldern und Alt-Texten wird weiter gelöscht, weil die bisher nichts automatisch nachübersetzt.'}
                         </Text>
                       )}
                     </BlockStack>
@@ -575,7 +682,7 @@ export function AIInstructionsTabs({
                       </Text>
                       <Text as="p" variant="bodySm" tone="subdued">
                         {t.settings.autoTranslateExternalChangesHelp ||
-                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen. Bei Produkten und Kollektionen automatisch beim nächsten Sync, sonst beim nächsten Reload des Eintrags. URL-Handles bleiben ausgenommen.'}
+                          'Ändert sich ein Text in der Hauptsprache — im Shopify-Admin, in einer anderen App, per Import oder hier in ContentPilot —, übersetzt die KI ihn neu, statt die veraltete Übersetzung nur zu löschen. Bei Produkten und Kollektionen automatisch beim nächsten Sync; bei Seiten, Blogs, Artikeln und Richtlinien beim Speichern im Editor, bei Änderungen von aussen beim nächsten Reload. URL-Handles bleiben ausgenommen.'}
                       </Text>
                       {!canAutoTranslateExternal && (
                         <Text as="p" variant="bodySm" tone="subdued">
@@ -634,46 +741,6 @@ export function AIInstructionsTabs({
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
                 </Text>
 
-                {/* Vision. FIRST in the General tab, above the instruction
-                    texts: it decides what the AI can SEE, which outranks how it
-                    is told to write. One answer for the whole app — every
-                    surface that generates text or an alt text reads it
-                    server-side, so there is nothing to set per page any more. */}
-                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                  <BlockStack gap="400">
-                    {/* No ❓ on the heading: the switch below carries the
-                        explanation, and two question marks in one small card
-                        are two places to look for one answer. */}
-                    <Text as="h3" variant="headingMd">
-                      {t.settings.aiVisionHeading || "Images"}
-                    </Text>
-                    <ToggleRow
-                      layout="inline"
-                      label={t.settings.aiVisionToggle || "Let the AI look at the images"}
-                      help={t.settings.aiVisionHelp}
-                      checked={localSendImages}
-                      onChange={(v) => saveVision({ sendImages: v })}
-                    />
-                    {/* Offered only once vision is ON: "how many of nothing"
-                        is not a question, and a live control under a switch
-                        that is off reads as if it did something. */}
-                    {localSendImages && (
-                      <Select
-                        label={t.settings.aiImagesPerRequestLabel || "Images per request"}
-                        options={Array.from(
-                          { length: AI_IMAGES_PER_REQUEST_MAX - AI_IMAGES_PER_REQUEST_MIN + 1 },
-                          (_, i) => {
-                            const n = AI_IMAGES_PER_REQUEST_MIN + i;
-                            return { value: String(n), label: String(n) };
-                          },
-                        )}
-                        value={String(localImagesPerRequest)}
-                        onChange={(v) => saveVision({ imagesPerRequest: Number(v) })}
-                        helpText={t.settings.aiImagesPerRequestHelp}
-                      />
-                    )}
-                  </BlockStack>
-                </div>
 
                 {/* Writing Style Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>

@@ -816,6 +816,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const purgeUpdate =
         rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
 
+      // The vision pair rides along on this card's one Save, like the
+      // translation knobs above — one request, one AISettings upsert, one
+      // answer for the toast to read. `saveAiVision` stays for the read-only
+      // plans, where this branch must not run at all.
+      const rawSendImages = formData.get("sendImagesToAI");
+      const rawImagesPerRequest = formData.get("aiImagesPerRequest");
+      const visionUpdate = {
+        ...(rawSendImages === null ? {} : { sendImagesToAI: rawSendImages === "true" }),
+        ...(rawImagesPerRequest === null
+          ? {}
+          : { aiImagesPerRequest: clampImagesPerRequest(Number(rawImagesPerRequest)) }),
+      };
+
 
       // (The Max gate for autoTranslateExternalChanges already ran above, so
       // `autoTranslateUpdate` is either the entitled change or empty.)
@@ -824,6 +837,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...keywordAwareUpdate,
         ...purgeUpdate,
         ...autoTranslateUpdate,
+        ...visionUpdate,
       };
       if (Object.keys(translationSettingsUpdate).length > 0) {
         await db.aISettings.upsert({
@@ -1426,10 +1440,10 @@ export default function SettingsPage() {
   // Also revalidate root loader so SeoSettingsContext picks up new suffix immediately
   useEffect(() => {
     if (fetcher.data?.success) {
-      showInfoBox(t.common.settingsSaved, "success", t.common.success);
+      showInfoBox(t.common.settingsSaved, "success");
       revalidator.revalidate();
     } else if (fetcher.data && !fetcher.data.success && 'error' in fetcher.data) {
-      showInfoBox(fetcher.data.error as string, "critical", t.common.error);
+      showInfoBox(fetcher.data.error as string, "critical");
     }
   }, [fetcher.data, showInfoBox, t]);
 
@@ -1443,12 +1457,10 @@ export default function SettingsPage() {
     const template =
       t.settings?.corruptedApiKeyWarning ||
       "The stored API key for {provider} could not be decrypted and was cleared. Please re-enter it and save.";
-    const title = t.settings?.corruptedApiKeyTitle || "API key error";
     for (const provider of corruptedApiKeys) {
       showInfoBox(
         template.replace("{provider}", getProviderDisplayName(provider as AIProvider)),
         "critical",
-        title,
         undefined,
         `corrupted-api-key:${provider}`,
       );

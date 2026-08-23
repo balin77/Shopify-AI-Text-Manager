@@ -7,6 +7,12 @@
 import { PrismaClient } from "@prisma/client";
 import { refundImageOperations } from "./image-op-refund.js";
 import {
+  WEBP_NON_TERMINAL_STATUS,
+  WEBP_PARENT_TASK_TYPE,
+  isWebpWorkRow,
+  webpWorkRowWhere,
+} from "./app/config/webp-tasks.js";
+import {
   HEARTBEAT_TASK_TYPES,
   HEARTBEAT_STALL_MS,
   recoverOrphanedRuns,
@@ -33,9 +39,10 @@ const STUCK_CHECK_INTERVAL_MS = parseInt(process.env.STUCK_CHECK_INTERVAL_MS || 
 // R4-H2 (core): a SINGLE global 10-min threshold mis-classifies legitimately
 // long bulk AI work (translating a large catalog across many locales, bulk
 // generation, alt-text-template apply) as "stuck" and kills it mid-run.
-// These task types get a much larger threshold; everything else (incl.
-// imageWebpConversion, which has its own 4-min internal timeout + dedicated
-// recovery) keeps the default. Env-overridable.
+// These task types get a much larger threshold; everything else (incl. the
+// WebP types — a work item has its own 4-min internal timeout + dedicated
+// recovery, and an aggregate row is heartbeated by the processor for as long
+// as any of its items is still open) keeps the default. Env-overridable.
 const LONG_TASK_TIMEOUT_MS = parseInt(process.env.LONG_TASK_TIMEOUT_MS || String(45 * 60 * 1000), 10);
 const LONG_RUNNING_TASK_TYPES = [
   // A renamed blog gets one redirect per article, and Shopify redirects have
@@ -44,7 +51,16 @@ const LONG_RUNNING_TASK_TYPES = [
   // would reap it while it is working (PLAN_CONTENT_CREATION §Phase 3.3).
   'blogArticleRedirects',
   'bulkTranslation',
+  // The SAME task type, spelled two ways, and both must be listed. The
+  // alt-text paths create `bulkAIGeneration` (alt-text.handler.ts L227,
+  // alt-text.action.ts L247); the notification-title generator creates
+  // `bulkAiGeneration` (template-titles.handler.ts L89) — an AI call per batch
+  // over every untitled row, i.e. exactly the minutes-long shape this list
+  // exists for, which was reaped at the 10-minute default and marked stuck
+  // mid-flight. NEITHER may be renamed: running rows carry the old string, and
+  // the reaper matches the string it finds in the database.
   'bulkAIGeneration',
+  'bulkAiGeneration',
   'altTextTemplateApply',
   'translation',
   'aiGeneration',
@@ -161,6 +177,16 @@ export class TaskRecoveryService {
     // is safe to retry or must be flagged for manual review.
     const webpRecovered = await this.recoverRunningWebpTasks();
 
+    // …and keep the aggregate row ABOVE them out of the reaper that runs three
+    // lines down. Nothing bumped its `updatedAt` while the process was down, so
+    // a restart that took longer than the stuck threshold (a slow redeploy)
+    // would flip a batch to `failed` — permanently, since the settlement is
+    // guarded on a non-terminal status — and hand the merchant a red "timed
+    // out" for a run whose twenty images then convert successfully. Its items
+    // were just reset or flagged above; whichever of the two, the processor's
+    // first poll settles the batch from what they really are.
+    await this.touchOpenWebpBatches();
+
     // A detached runner cannot outlive its process, so every `running`
     // heartbeat-type row we find while booting belongs to a process that is
     // gone — no age check here (orphan-run-recovery.js, rule 2). This is what
@@ -224,6 +250,35 @@ export class TaskRecoveryService {
   }
 
   /**
+   * Give every open WebP batch a fresh heartbeat at boot.
+   *
+   * Deliberately unconditional: a batch whose items are ALL terminal is settled
+   * by the processor's next poll (seconds), and one whose items are gone is
+   * failed by the same sweep once past its grace period — so the only thing
+   * this can delay is a verdict that something else is about to write anyway.
+   * The reverse mistake, reaping a live batch, is not recoverable.
+   */
+  async touchOpenWebpBatches() {
+    try {
+      const res = await prisma.task.updateMany({
+        where: {
+          type: WEBP_PARENT_TASK_TYPE,
+          total: { not: null },
+          status: { in: WEBP_NON_TERMINAL_STATUS },
+        },
+        data: { updatedAt: new Date() },
+      });
+      if (res.count > 0) {
+        console.log(`[TaskRecovery] Kept ${res.count} open WebP batch(es) alive across the restart`);
+      }
+      return res.count;
+    } catch (error) {
+      console.error('[TaskRecovery] Failed to heartbeat open WebP batches:', error);
+      return 0;
+    }
+  }
+
+  /**
    * Recover WebP conversion tasks that were "running" at server stop.
    *
    * Step boundaries (progress field, set in webp-processor.service.js processTask):
@@ -232,10 +287,18 @@ export class TaskRecoveryService {
    *   >=90:  old PNG already deleted on Shopify, only DB swap missing -> manual review
    *
    * retryCount is capped at 3 to prevent loops when the underlying source is broken.
+   *
+   * WORK ITEMS ONLY (`webpWorkRowWhere`: the `imageWebpConversionItem` rows this
+   * build creates plus the pre-split rows an older one wrote under the parent
+   * type). The aggregate row deliberately does NOT come through here: its
+   * `progress` is percent-of-batch and has none of the step meaning above, and
+   * resetting it to `pending` would hand the processor an aggregate to run as
+   * an image. An open batch needs no boot recovery — its items are reset or
+   * flagged here, and the processor's first poll settles the parent from them.
    */
   async recoverRunningWebpTasks() {
     const tasks = await prisma.task.findMany({
-      where: { type: 'imageWebpConversion', status: 'running' },
+      where: webpWorkRowWhere({ status: 'running' }),
       select: { id: true, progress: true, retryCount: true, shop: true },
     });
 
@@ -304,12 +367,20 @@ export class TaskRecoveryService {
     const longCutoff = new Date(now - LONG_TASK_TIMEOUT_MS);
     const heartbeatCutoff = new Date(now - HEARTBEAT_STALL_MS);
 
-    // R3-C4: each stuck imageWebpConversion task consumed an image op at
-    // batch creation, so we must refund it when WE flip it to 'failed'.
+    // R3-C4: each stuck WebP WORK ITEM consumed an image op at batch creation,
+    // so we must refund it when WE flip it to 'failed'.
     // We select rows (incl. type+shop), then updateMany ONLY those ids that
     // are still non-terminal, and refund webp rows. Once 'failed' a row no
     // longer matches the selector, so a later pass cannot re-select /
     // double-refund (idempotent across runs, same guarantee as before).
+    //
+    // The AGGREGATE row spent nothing: its items each spent one and each refund
+    // themselves, here or in the processor. Refunding for it too would give a
+    // twenty-image batch twenty-one operations back, and refunding for it
+    // INSTEAD (which is what "one row per conversion" would have meant) would
+    // give the merchant one image's quota back for a run of twenty. That is why
+    // `total` is in the select — it is what tells an aggregate row from a
+    // pre-split row of the same type (app/config/webp-tasks.js).
     const refundByShop = new Map();
     let total = 0;
 
@@ -319,7 +390,7 @@ export class TaskRecoveryService {
       for (;;) {
         const rows = await prisma.task.findMany({
           where,
-          select: { id: true, shop: true, type: true },
+          select: { id: true, shop: true, type: true, total: true },
           take: STUCK_REAP_BATCH,
         });
         if (rows.length === 0) break;
@@ -336,7 +407,7 @@ export class TaskRecoveryService {
         });
         total += res.count;
         for (const r of rows) {
-          if (r.type === 'imageWebpConversion') {
+          if (isWebpWorkRow(r)) {
             refundByShop.set(r.shop, (refundByShop.get(r.shop) ?? 0) + 1);
           }
         }

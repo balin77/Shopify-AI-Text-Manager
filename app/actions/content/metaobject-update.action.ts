@@ -36,6 +36,7 @@
 
 import { data as json } from "react-router";
 import { logger } from "../../utils/logger.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { getFormString } from "../../utils/form-data.utils";
 import { safeJsonParse } from "../../utils/validation";
 import { isMetaobjectLabelField } from "../../constants/shopifyFields";
@@ -43,6 +44,7 @@ import type { ContentActionHandlerContext } from "./alt-text.action";
 import type { DataResponse } from "~/types/data-response";
 import {
   formatMetaobjectFieldValue,
+  isBatchTranslatableValueType,
   isTranslatableMetaobjectFieldType,
   metaobjectFieldRole,
   metaobjectListValueIsAmbiguous,
@@ -195,6 +197,12 @@ export async function handleMetaobjectUpdate(
   const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
   const gateway = new ShopifyApiGateway(admin, session.shop);
 
+  /** Filled by the same lookup as `foreignLocalesCache` — the language the
+   *  primary values are written in, which the re-translation has to name. */
+  let primaryLocaleCache = "";
+  /** Every (entry, field) whose primary value this save moved — collected
+   *  across the entry loop and repaired once. */
+  const staleByEntry: Array<{ metaobjectId: string; key: string; retranslatable: boolean }> = [];
   // Declared BEFORE the dispatch below: savePrimary() -> invalidateForeign() ->
   // getForeignLocales() reads it, and a `let` further down would still be in
   // its temporal dead zone at that point.
@@ -339,10 +347,25 @@ export async function handleMetaobjectUpdate(
       // is stale. Removed on Shopify first and locally only for the (locale,
       // key) pairs Shopify confirmed — an unconfirmed removal keeps the row.
       const staleKeys = result.confirmedKeys.filter((key) => translatableConfirmedKeys.includes(key));
-      if (staleKeys.length > 0) {
-        await invalidateForeign(metaobjectId, staleKeys);
+      for (const key of staleKeys) {
+        // A multi-line text or a list field cannot go through the generic
+        // value prompt (newlines stripped / raw JSON), so it is repaired by
+        // REMOVING its stale translation, exactly as before.
+        // The ONE resolver this file already uses — a definition's `type` is
+        // either a string or `{ name }` depending on when it was cached.
+        const fieldType = fieldTypeOf(key, entry, definitionFields);
+        staleByEntry.push({
+          metaobjectId,
+          key,
+          retranslatable: isBatchTranslatableValueType(fieldType),
+        });
       }
     }
+    // ONE pass for the whole save, never one per entry: a metaobjects page
+    // saves up to 25 cards at once, and a repair per entry would mean 25 Task
+    // rows, 25 detached AI runs and 25 × (locales + 1) inline queries for a
+    // single click.
+    if (staleByEntry.length > 0) await repairForeign(staleByEntry);
     return confirmedTotal;
   }
 
@@ -354,61 +377,139 @@ export async function handleMetaobjectUpdate(
    * asks, through the same module, which fails OPEN so a lookup error keeps
    * the historic behaviour.
    */
-  async function invalidateForeign(metaobjectId: string, keys: string[]): Promise<void> {
+  async function repairForeign(
+    stale: Array<{ metaobjectId: string; key: string; retranslatable: boolean }>,
+  ): Promise<void> {
     try {
-      const { isPurgeOnPrimaryChangeEnabled } = await import(
+      const { loadTranslationChangePolicy } = await import(
         "~/services/translations/translation-change-policy.server"
       );
-      // No `reconciled` flag: MetaobjectTranslation is outside the sync's
-      // re-translation entirely, so auto-translate must not switch this off —
-      // nothing would ever refresh the row.
-      if (!(await isPurgeOnPrimaryChangeEnabled(session.shop, db))) return;
+      const policy = await loadTranslationChangePolicy(session.shop, db);
+      const foreignLocales = await getForeignLocales();
+      if (foreignLocales.length === 0) return;
+
+      // With auto-translate on, THIS save is the repair: a metaobject field is
+      // outside every sync and every webhook in this app, so nothing else would
+      // ever refresh the row — which is precisely why the deletion used to
+      // stand regardless of the switch. Now that the save can replace the text,
+      // the merchant's "translate it again" answer applies here too.
+      //
+      // Without a known PRIMARY locale there is nothing to translate FROM, so
+      // that case falls through to the deletion rather than leaving the stale
+      // text live.
+      if (policy.autoTranslateExternalChanges && primaryLocaleCache) {
+        const { reconcileAfterPrimarySave, metaobjectTranslationMirror } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        // SORTED, so the same set of entries always produces the same group id
+        // — that id is also the in-flight key and the `markTranslationSaved`
+        // target, and two saves of the same cards must queue rather than run
+        // concurrently. Two OVERLAPPING but different sets still get different
+        // keys; that residual needs per-entry in-flight tracking, which the
+        // module does not have.
+        const entryIdsInSave = [...new Set(stale.map((item) => item.metaobjectId))].sort();
+        const typeById = new Map(
+          entryIdsInSave.map((id) => [id, entries.get(id)?.type ?? ""] as const),
+        );
+        const types = [...new Set([...typeById.values()].filter(Boolean))];
+        await reconcileAfterPrimarySave({
+          client: admin,
+          shop: session.shop,
+          // The group's own id is only the Task row's and the in-flight key's;
+          // every entry names the metaobject its fields actually live on, which
+          // is what the register, the removal and the mirror address.
+          resourceId: entryIdsInSave[0],
+          resourceType: "Metaobject",
+          // The AI prompt comes from `translateAs`, so this only decides the
+          // Task label — and `taskResourceType` keeps a metaobject OUT of the
+          // admin-path map, which would otherwise offer /admin/pages/<id>.
+          contentKind: "page",
+          taskResourceType: "metaobject",
+          resourceTitle:
+            entryIdsInSave.length === 1
+              ? types[0] || entryIdsInSave[0]
+              : `${types.join(", ") || "Metaobjects"} (${entryIdsInSave.length})`,
+          changed: stale.map((item) => ({
+            resourceId: item.metaobjectId,
+            resourceType: "Metaobject",
+            key: item.key,
+            retranslatable: item.retranslatable,
+          })),
+          foreignLocales,
+          policy,
+          mirror: metaobjectTranslationMirror(session.shop, typeById),
+          translateAs: {
+            kind: "values",
+            context: "metaobject field values",
+            sourceLocale: primaryLocaleCache,
+          },
+        });
+        return;
+      }
+
+      if (!policy.purgeUnreconciledSurfaces) return;
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
         "~/services/bulk-editor/translations.server"
       );
-      const foreignLocales = await getForeignLocales();
-      if (foreignLocales.length === 0) return;
       // Skip Shopify entirely when there is nothing to invalidate — the common
-      // case on a shop that never translated this field.
+      // case on a shop that never translated these fields. ONE query for the
+      // whole save, then one removal per ENTRY, because `translationsRemove`
+      // addresses exactly one resource.
+      const keysByEntry = new Map<string, string[]>();
+      for (const item of stale) {
+        const list = keysByEntry.get(item.metaobjectId) ?? [];
+        if (!list.includes(item.key)) list.push(item.key);
+        keysByEntry.set(item.metaobjectId, list);
+      }
       const existing = await db.metaobjectTranslation.findMany({
         where: {
           shop: session.shop,
-          metaobjectId,
+          metaobjectId: { in: [...keysByEntry.keys()] },
           marketId: "",
-          key: { in: keys },
+          key: { in: [...new Set(stale.map((item) => item.key))] },
           locale: { in: foreignLocales },
         },
-        select: { key: true, locale: true },
+        select: { metaobjectId: true, key: true, locale: true },
       });
       if (existing.length === 0) return;
 
-      const { confirmedPairs } = await removeAndVerifyAcrossLocales(
-        gateway,
-        metaobjectId,
-        [...new Set(existing.map((e) => e.key))],
-        [...new Set(existing.map((e) => e.locale))],
-        "",
-      );
-      const byLocale = new Map<string, string[]>();
-      for (const row of existing) {
-        if (!confirmedPairs.has(`${row.locale}${LOCALE_KEY_SEP}${row.key}`)) continue;
-        const list = byLocale.get(row.locale) ?? [];
-        list.push(row.key);
-        byLocale.set(row.locale, list);
-      }
-      for (const [rowLocale, rowKeys] of byLocale) {
-        await db.metaobjectTranslation.deleteMany({
-          // Global rows only — mirroring the global-only Shopify removal, so a
-          // market override survives on both sides.
-          where: { shop: session.shop, metaobjectId, key: { in: rowKeys }, locale: rowLocale, marketId: "" },
-        });
+      for (const [metaobjectId, keys] of keysByEntry) {
+        // Only the rows that belong to THIS entry and to a key this save moved:
+        // two entries of one type share key names, so an unfiltered list would
+        // remove a translation nobody flagged.
+        const rows = existing.filter(
+          (row) => row.metaobjectId === metaobjectId && keys.includes(row.key),
+        );
+        if (rows.length === 0) continue;
+
+        const { confirmedPairs } = await removeAndVerifyAcrossLocales(
+          gateway,
+          metaobjectId,
+          [...new Set(rows.map((e) => e.key))],
+          [...new Set(rows.map((e) => e.locale))],
+          "",
+        );
+        const byLocale = new Map<string, string[]>();
+        for (const row of rows) {
+          if (!confirmedPairs.has(`${row.locale}${LOCALE_KEY_SEP}${row.key}`)) continue;
+          const list = byLocale.get(row.locale) ?? [];
+          list.push(row.key);
+          byLocale.set(row.locale, list);
+        }
+        for (const [rowLocale, rowKeys] of byLocale) {
+          await db.metaobjectTranslation.deleteMany({
+            // Global rows only — mirroring the global-only Shopify removal, so
+            // a market override survives on both sides.
+            where: { shop: session.shop, metaobjectId, key: { in: rowKeys }, locale: rowLocale, marketId: "" },
+          });
+        }
       }
     } catch (err: unknown) {
       // Never fail the save over the cleanup — the primary write already
       // happened, and the next re-translate repairs the leftovers.
-      logger.warn("[UnifiedContent] metaobject translation invalidation failed (non-fatal)", {
+      logger.warn("[UnifiedContent] metaobject translation repair failed (non-fatal)", {
         context: "Metaobjects",
-        metaobjectId,
+        entries: stale.length,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -421,7 +522,9 @@ export async function handleMetaobjectUpdate(
     const data = (await response.json()) as {
       data?: { shopLocales?: Array<{ locale: string; primary: boolean; published: boolean }> };
     };
-    foreignLocalesCache = (data.data?.shopLocales ?? [])
+    const shopLocales = data.data?.shopLocales ?? [];
+    primaryLocaleCache = shopLocales.find((l) => l.primary)?.locale ?? "";
+    foreignLocalesCache = shopLocales
       .filter((l) => !l.primary && l.published)
       .map((l) => l.locale);
     return foreignLocalesCache;
@@ -573,6 +676,12 @@ export async function handleMetaobjectUpdate(
           }
           if (inputs.length > 0) {
             const { confirmedKeys, userErrors } = await registerAndVerify(gateway, metaobjectId, inputs);
+            // Claim the ENTRY the merchant just wrote: a detached
+            // re-translation from an earlier primary save watches every
+            // resource of its group and abandons the rest on this mark, which
+            // is what keeps the AI from overwriting a hand-written value
+            // minutes later.
+            markTranslationSaved(metaobjectId);
             for (const input of inputs) {
               if (!confirmedKeys.has(input.key)) {
                 errors.push(

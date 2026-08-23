@@ -227,12 +227,29 @@ export function useEditorAutoSave(props: UseEditorAutoSaveProps): UseEditorAutoS
   // ---------------------------------------------------------------------------
   const getChangedAltTextIndices = useCallback((): number[] => {
     const item = selectedItemRef.current;
-    if (!item || !item.images) return [];
+    if (!item) return [];
 
     const changedIndices: number[] = [];
     for (const [indexStr, currentValue] of Object.entries(imageAltTextsRef.current)) {
       const index = parseInt(indexStr, 10);
-      const originalValue = item.images[index]?.altText || "";
+      // Index 0 falls back to `featuredImage` — the same rule `getImageAtIndex`
+      // follows, and not an edge case: a collection and an article load with
+      // `images: []` and their one image in `featuredImage`, so baselining
+      // against `images[0]` alone read every existing alt as "was empty".
+      // Setting or changing one still reported a change (anything differs from
+      // ""), but CLEARING one did not — and that is the save whose translations
+      // most need to go.
+      //
+      // The fallback is on a MISSING image, never on a missing alt TEXT: a
+      // product whose `images[0]` carries no alt would otherwise be baselined
+      // against the featured image's, and an edit that matches it would go
+      // unreported with its stale translations left standing.
+      const originalImage =
+        item.images?.[index] ??
+        (index === 0
+          ? (item as { featuredImage?: { altText?: string } }).featuredImage
+          : undefined);
+      const originalValue = originalImage?.altText || "";
       if (currentValue !== originalValue) {
         changedIndices.push(index);
       }

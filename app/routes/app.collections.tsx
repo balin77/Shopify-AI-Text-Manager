@@ -248,7 +248,7 @@ export default function CollectionsPage() {
   // Show loader error
   useEffect(() => {
     if (error) {
-      showInfoBox(error, "critical", t.content?.error || "Error");
+      showInfoBox(error, "critical");
     }
   }, [error, showInfoBox, t]);
 

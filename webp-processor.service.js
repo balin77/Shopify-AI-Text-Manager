@@ -1,9 +1,17 @@
 /**
  * WebP Conversion Task Processor
  *
- * Polls the database for pending imageWebpConversion tasks and processes them.
- * Uses sharp for server-side image conversion.
- * Runs as a background service started from server.js.
+ * Polls the database for pending WebP conversion WORK ITEMS and processes them,
+ * one image per row. Uses sharp for server-side image conversion. Runs as a
+ * background service started from server.js.
+ *
+ * A run is TWO kinds of row (app/config/webp-tasks.js): N
+ * `imageWebpConversionItem` rows — the unit of work, of retry, of the per-image
+ * step boundary the boot recovery reads and of the image operation the reaper
+ * refunds — under ONE `imageWebpConversion` row, which is the only one the
+ * merchant sees. This service owns both halves: it runs the items and it
+ * settles the aggregate above them (`settleParent`), because nothing else knows
+ * when the last image of a run has landed.
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -11,6 +19,18 @@ import sharp from "sharp";
 import crypto from "crypto";
 import { PLAN_WEBP_CONCURRENCY, DEFAULT_WEBP_CONCURRENCY } from "./app/config/webp-concurrency.js";
 import { refundImageOperations } from "./image-op-refund.js";
+import {
+  WEBP_FAILURE_LIST_MAX,
+  WEBP_FAILURE_MESSAGE_MAX,
+  WEBP_ITEM_TASK_TYPE,
+  WEBP_NON_TERMINAL_STATUS,
+  WEBP_PARENT_ORPHAN_GRACE_MS,
+  WEBP_PARENT_TASK_TYPE,
+  parseTaskResult,
+  webpBatchStatus,
+  webpParentTaskId,
+  webpWorkRowWhere,
+} from "./app/config/webp-tasks.js";
 
 function isEncryptedToken(data) {
   if (!data) return false;
@@ -203,6 +223,12 @@ export class WebPProcessorService {
   }
 
   async processPendingTasks() {
+    // Settle the aggregate rows FIRST, and outside the early return below: a
+    // run whose last images are `running` has no waiting task at all, so a
+    // sweep placed after that return would never finish the very batch that is
+    // one image from done. It also heartbeats the parents it leaves open.
+    await this.settleOpenParents();
+
     // Heartbeat: bump updatedAt on all waiting WebP tasks so task-recovery's
     // 10-min stuck-task detector doesn't kill them while they wait in the queue.
     // If the worker dies, no heartbeat fires and waiting tasks correctly become
@@ -210,15 +236,21 @@ export class WebPProcessorService {
     // We accept both "pending" (newly created) and "queued" (reset by
     // TaskRecoveryService.resetPendingTasks after a server restart) so restart
     // doesn't silently orphan tasks.
+    //
+    // The selector is `webpWorkRowWhere` everywhere in this service: it matches
+    // the item rows this build creates AND the rows an older build wrote under
+    // the parent type, and it never matches an aggregate row. A parent picked
+    // up as work would fail on "Missing sourceUrl or productId" and refund an
+    // image operation nobody spent.
     await db.task.updateMany({
-      where: { type: "imageWebpConversion", status: { in: ["pending", "queued"] } },
+      where: webpWorkRowWhere({ status: { in: ["pending", "queued"] } }),
       data: { updatedAt: new Date() },
     });
 
     // Find which shops have waiting tasks (oldest waiting task per shop wins ordering).
     const shopsWithPending = await db.task.groupBy({
       by: ["shop"],
-      where: { type: "imageWebpConversion", status: { in: ["pending", "queued"] } },
+      where: webpWorkRowWhere({ status: { in: ["pending", "queued"] } }),
       _min: { createdAt: true },
       orderBy: { _min: { createdAt: "asc" } },
     });
@@ -237,14 +269,14 @@ export class WebPProcessorService {
       const planLimit = PLAN_WEBP_CONCURRENCY[plan] ?? DEFAULT_WEBP_CONCURRENCY;
 
       const running = await db.task.count({
-        where: { shop, type: "imageWebpConversion", status: "running" },
+        where: webpWorkRowWhere({ shop, status: "running" }),
       });
       const freeSlots = Math.max(0, planLimit - running);
       if (freeSlots === 0) continue;
 
       const remaining = GLOBAL_MAX_CONCURRENT - tasksToProcess.length;
       const tasks = await db.task.findMany({
-        where: { shop, type: "imageWebpConversion", status: { in: ["pending", "queued"] } },
+        where: webpWorkRowWhere({ shop, status: { in: ["pending", "queued"] } }),
         take: Math.min(freeSlots, remaining),
         orderBy: { createdAt: "asc" },
       });
@@ -256,7 +288,204 @@ export class WebPProcessorService {
     await Promise.all(tasksToProcess.map(task => this.processTask(task)));
   }
 
+  /**
+   * Every open aggregate row, settled once per poll.
+   *
+   * This is the BACKSTOP, not the primary path: an item settles its own parent
+   * the moment it finishes (see `processTask`). But an item can also reach a
+   * terminal state through paths that know nothing about a parent — the
+   * stuck-task reaper, the boot recovery's "partial Shopify state" branch, a
+   * merchant deleting the row — and a parent nobody ever closes is a task that
+   * runs forever in the merchant's list.
+   */
+  async settleOpenParents() {
+    let parents;
+    try {
+      parents = await db.task.findMany({
+        where: {
+          type: WEBP_PARENT_TASK_TYPE,
+          total: { not: null },
+          status: { in: WEBP_NON_TERMINAL_STATUS },
+        },
+        select: { id: true },
+      });
+    } catch (err) {
+      console.error("[WebPProcessor] Failed to list open conversion batches:", err);
+      return;
+    }
+    for (const parent of parents) {
+      try {
+        await this.settleParent(parent.id);
+      } catch (err) {
+        console.error(`[WebPProcessor] Failed to settle conversion batch ${parent.id}:`, err);
+      }
+    }
+  }
+
+  /**
+   * Recount one aggregate row from its items and write what is true now.
+   *
+   * A RECOUNT, never an increment: the same item can reach `settleParent` twice
+   * (its own completion plus the sweep, or a timed-out step finishing after the
+   * race gave up), and a counter bumped per event drifts. Reading the items is
+   * the only source that cannot.
+   *
+   * The terminal write is an `updateMany` guarded on a non-terminal status, so
+   * a parent the merchant cancelled or the reaper already failed is never
+   * resurrected — the monotonic-finalizer shape the R4-DI9 note in
+   * task-recovery.service.js asks for wherever a reaper's decision has to hold.
+   */
+  async settleParent(parentTaskId) {
+    if (!parentTaskId) return;
+
+    const parent = await db.task.findUnique({
+      where: { id: parentTaskId },
+      select: {
+        id: true,
+        shop: true,
+        status: true,
+        total: true,
+        createdAt: true,
+        resourceId: true,
+      },
+    });
+    if (!parent || !WEBP_NON_TERMINAL_STATUS.includes(parent.status)) return;
+
+    // `result: { contains: id }` is a prefilter — a cuid is unique enough to
+    // make it selective, and `webpParentTaskId` then confirms the row really
+    // names this parent rather than merely mentioning the string. Scoped to the
+    // parent's own shop like every other query in this app, even though a cuid
+    // could not collide across two of them.
+    //
+    // `createdAt` is what keeps this off the whole task history: `result` is an
+    // unindexed TEXT column, so the `contains` is a `LIKE '%…%'` scan, and a
+    // WebP row is created with no `expiresAt` and is therefore never swept by
+    // the task cleanup — the item rows of a busy shop accumulate for good. The
+    // route creates the aggregate row BEFORE its items, so every item of this
+    // batch was written at or after `parent.createdAt`, and `[shop, createdAt]`
+    // is an index. `resourceId` narrows further (a batch is one product) for
+    // nothing but a cheaper comparison.
+    const rows = await db.task.findMany({
+      where: {
+        shop: parent.shop,
+        type: WEBP_ITEM_TASK_TYPE,
+        createdAt: { gte: parent.createdAt },
+        ...(parent.resourceId ? { resourceId: parent.resourceId } : {}),
+        result: { contains: parentTaskId },
+      },
+      select: { id: true, status: true, result: true, error: true },
+    });
+    const items = rows.filter((row) => webpParentTaskId(row.result) === parentTaskId);
+
+    if (items.length === 0) {
+      // Created milliseconds ago, its items not committed yet — the run is
+      // starting, not broken. Only an old parent with no items at all is a
+      // batch that never started.
+      if (Date.now() - new Date(parent.createdAt).getTime() < WEBP_PARENT_ORPHAN_GRACE_MS) {
+        await this.touchParent(parentTaskId);
+        return;
+      }
+      await db.task.updateMany({
+        where: { id: parentTaskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        data: {
+          status: "failed",
+          progress: 100,
+          completedAt: new Date(),
+          error: "webp_batch_not_started",
+        },
+      });
+      return;
+    }
+
+    const open = items.filter((item) => WEBP_NON_TERMINAL_STATUS.includes(item.status));
+    const converted = items.filter((item) => item.status === "completed").length;
+    const failed = items.length - open.length - converted;
+    const total = parent.total ?? items.length;
+
+    const failures = [];
+    for (const item of items) {
+      if (item.status === "completed" || WEBP_NON_TERMINAL_STATUS.includes(item.status)) continue;
+      if (failures.length >= WEBP_FAILURE_LIST_MAX) break;
+      const job = parseTaskResult(item.result) ?? {};
+      failures.push({
+        mediaId: typeof job.mediaId === "string" ? job.mediaId : null,
+        position: typeof job.position === "number" ? job.position : null,
+        // The item's own error can be a full stack (describeError keeps 2000
+        // characters); the aggregate carries a line, not a post-mortem — the
+        // item row is still there and still holds the whole thing.
+        message: typeof item.error === "string" ? item.error.slice(0, WEBP_FAILURE_MESSAGE_MAX) : "",
+      });
+    }
+
+    const result = JSON.stringify({ total, converted, failed, failures });
+
+    if (open.length > 0) {
+      // Still running: report progress and keep the row alive. `progress` on a
+      // parent is percent-of-batch — it is NOT the per-image step boundary the
+      // recovery reads, which is why that recovery only ever looks at items.
+      const done = items.length - open.length;
+      await db.task.updateMany({
+        where: { id: parentTaskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        data: {
+          processed: done,
+          progress: total > 0 ? Math.min(99, Math.round((done / total) * 100)) : 0,
+          result,
+          updatedAt: new Date(),
+        },
+      });
+      return;
+    }
+
+    await db.task.updateMany({
+      where: { id: parentTaskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+      data: {
+        status: webpBatchStatus(converted, failed),
+        progress: 100,
+        processed: items.length,
+        completedAt: new Date(),
+        result,
+        // A machine code, translated at render time (app/utils/task-error-text.ts
+        // `images_failed`) — this runs outside any request and has no merchant
+        // locale. A clean run clears any error a previous pass wrote.
+        error: failed > 0 ? `images_failed:${failed}:${total}` : null,
+      },
+    });
+
+    console.log(
+      `[WebPProcessor] Batch ${parentTaskId} settled: ${converted} converted, ${failed} failed of ${total}`,
+    );
+  }
+
+  /** Keep an open batch out of the stuck-task reaper while its items work. */
+  async touchParent(parentTaskId) {
+    await db.task
+      .updateMany({
+        where: { id: parentTaskId, status: { in: WEBP_NON_TERMINAL_STATUS } },
+        data: { updatedAt: new Date() },
+      })
+      .catch(() => {});
+  }
+
+  /**
+   * One image. The aggregate row above it is settled on EVERY exit — the
+   * `finally` covers the early returns for unusable job data just as much as a
+   * finished conversion, because a parent whose last item died on a malformed
+   * blob would otherwise stay open until the reaper timed it out.
+   */
   async processTask(task) {
+    const parentTaskId = webpParentTaskId(task.result);
+    try {
+      await this._processTaskItem(task);
+    } finally {
+      if (parentTaskId) {
+        await this.settleParent(parentTaskId).catch((err) =>
+          console.error(`[WebPProcessor] Failed to settle conversion batch ${parentTaskId}:`, err),
+        );
+      }
+    }
+  }
+
+  async _processTaskItem(task) {
     let taskData;
     try {
       taskData = JSON.parse(task.result || "{}");

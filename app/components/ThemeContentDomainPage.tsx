@@ -336,8 +336,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
     } catch {
       showInfoBox(
         "Error loading theme content",
-        "critical",
-        t.content?.error || "Error"
+        "critical"
       );
     } finally {
       setIsLoading(false);
@@ -503,7 +502,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
             }, 0);
           })
           .catch(() => {
-            showInfoBox(t.content?.errorLoadingThemeContent || "Error loading theme content", "critical", t.content?.error || "Error");
+            showInfoBox(t.content?.errorLoadingThemeContent || "Error loading theme content", "critical");
           })
           .finally(() => {
             setIsLoading(false);
@@ -1031,7 +1030,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
   // Show loader error
   useEffect(() => {
     if (error) {
-      showInfoBox(error, "critical", t.content?.error || "Error");
+      showInfoBox(error, "critical");
     }
   }, [error, showInfoBox, t]);
 
@@ -1068,7 +1067,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
         .then((r) => r.json())
         .then((res) => {
           if (!res?.success) {
-            showInfoBox(res?.error || "Failed to switch theme", "critical", t.content?.error || "Error");
+            showInfoBox(res?.error || "Failed to switch theme", "critical");
             return;
           }
           // Theme changed → drop caches + selection so the now theme-scoped loader
@@ -1081,7 +1080,7 @@ export function ThemeContentDomainPage({ data, config, apiBasePath, planContentT
           revalidator.revalidate();
         })
         .catch(() => {
-          showInfoBox(t.content?.error || "Error", "critical", t.content?.error || "Error");
+          showInfoBox(t.content?.error || "Error", "critical");
         });
     },
     [selectedThemeId, revalidator, showInfoBox, t]

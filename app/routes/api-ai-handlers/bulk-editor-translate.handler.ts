@@ -392,7 +392,20 @@ interface TranslateResultJson {
   /** Handles that were deliberately NOT written: the translation equalled the
    * primary handle (no separate URL needed) or normalized to nothing. */
   skippedHandles: number;
-  failures: { rowId: string; columnId?: string; message: string }[];
+  /**
+   * FAILURE BOOKKEEPING, not a write record: `locale` (and `marketId` where
+   * the write path recorded one) travel with every entry they are known for.
+   * Without them one cell that failed in three languages produced three
+   * byte-identical lines on the one screen where "which language" is the whole
+   * question — and `applyBulkDiff` had recorded the locale all along.
+   */
+  failures: {
+    rowId: string;
+    columnId?: string;
+    locale?: string;
+    marketId?: string;
+    message: string;
+  }[];
 }
 
 async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<void> {
@@ -464,6 +477,9 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
        * per call, so a failure there must not write off the cell's other
        * languages. */
       const failedCellLocales = new Set<string>();
+      // Deliberately carries NO locale: the short/long batch call covers every
+      // target language of the cell at once, so its failure is the cell's, in
+      // all of them. Naming one would be a claim the run cannot make.
       const failGroup = (cells: TranslateJob["cells"], message: string) => {
         for (const cell of cells) {
           failedColumnIds.add(cell.column.id);
@@ -561,7 +577,9 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             const message = errorMessage(err);
             for (const cell of cellsForLocale) {
               failedCellLocales.add(`${cell.column.id}|${locale}`);
-              failures.push({ rowId: job.rowId, columnId: cell.column.id, message });
+              // This call translated ONE locale; the other languages of the
+              // same cell are untouched, so the entry says which one failed.
+              failures.push({ rowId: job.rowId, columnId: cell.column.id, locale, message });
               processed++;
             }
           }
@@ -580,6 +598,7 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
             failures.push({
               rowId: job.rowId,
               columnId: cell.column.id,
+              locale,
               message: "AI returned no translation.",
             });
             continue;
@@ -638,8 +657,17 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
           !failedCells.has(`${entry.rowId}|${entry.locale}|${entry.columnId}`) &&
           !failedRowLocales.has(`${entry.rowId}|${entry.locale}`),
       ).length;
+      // The verified write path records `locale`/`marketId` per failed cell
+      // (BulkFailure, columns.shared.ts L1396-1400) and stripping them here
+      // threw away the only thing that told two of its lines apart.
       failures.push(
-        ...applyResult.failures.map((f) => ({ rowId: f.rowId, columnId: f.columnId, message: f.message })),
+        ...applyResult.failures.map((f) => ({
+          rowId: f.rowId,
+          columnId: f.columnId,
+          locale: f.locale,
+          marketId: f.marketId,
+          message: f.message,
+        })),
       );
     }
 
@@ -656,7 +684,10 @@ async function runBulkEditorTranslate(taskId: string, args: RunArgs): Promise<vo
         processed: units,
         completedAt: new Date(),
         result: JSON.stringify(result),
-        error: failedRows > 0 ? `${failedRows} row(s) failed`.substring(0, 1000) : null,
+        // A machine code, translated at render time by `taskErrorText` — this
+        // runner has no merchant locale. No total: `units` counts translated
+        // CELLS, not rows, so it is not the denominator of `failedRows`.
+        error: failedRows > 0 ? `rows_failed:${failedRows}`.substring(0, 1000) : null,
       },
     });
   } catch (err: unknown) {

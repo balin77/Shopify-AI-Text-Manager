@@ -4,7 +4,10 @@ import { useLocation } from "react-router";
 export interface CompletedTask {
   id: string;
   type: string;
-  status: "completed" | "failed";
+  // `completed_with_errors` is a terminal state of its own (the translation
+  // paths write it when some locales failed) and reaches the notifications
+  // through /api/recently-completed-tasks alongside the two extremes.
+  status: "completed" | "completed_with_errors" | "failed";
   resourceType: string | null;
   resourceTitle: string | null;
   fieldType: string | null;
