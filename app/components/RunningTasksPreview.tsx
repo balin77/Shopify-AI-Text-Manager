@@ -5,6 +5,7 @@ import {
   taskTypeLabel,
   resourceTypeLabel,
   fieldTypeLabel,
+  taskSubjectLabel,
 } from "../services/tasks/task-labels.shared";
 
 interface RunningTaskPreview {
@@ -157,7 +158,16 @@ export function RunningTasksPreview({ count }: { count: number }) {
                 {(tasks ?? []).map((task) => {
                   const origin = resourceTypeLabel(task.resourceType, t);
                   const field = fieldTypeLabel(task.fieldType, t);
-                  const name = task.resourceTitle || field || taskTypeLabel(task.type, t);
+                  // The DECODED subject wins over the stored one. `seoBulkFix`
+                  // writes a machine string into `resourceTitle`
+                  // ("metaDescriptionMissing:fr", "fixAllForItem:product:8123"),
+                  // which this card rendered verbatim while the Tasks page and
+                  // the toast both named the problem — three surfaces, three
+                  // names for one task. taskSubjectLabel answers null where it
+                  // cannot decode (every `fixAllForItem:…` run), so the
+                  // existing fallbacks stay exactly as they were.
+                  const subject = taskSubjectLabel(task, t);
+                  const name = subject || field || taskTypeLabel(task.type, t);
                   const progress = clampProgress(task.progress);
                   return (
                     <div key={task.id}>

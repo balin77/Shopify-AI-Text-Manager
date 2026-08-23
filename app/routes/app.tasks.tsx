@@ -29,6 +29,46 @@ import {
 import { hasTaskDetails } from "~/services/tasks/task-details.shared";
 import { TaskDetailsPanel } from "~/components/tasks/TaskDetailsPanel";
 
+/**
+ * A `seoBulkFix` run that fixed EVERY problem of one item stores
+ * `fixAllForItem:<itemType>:<numeric id>[:<locale>]` as its `resourceTitle`
+ * (seo-bulk-fix.handler.ts L388). `taskSubjectLabel` answers `null` for it —
+ * correctly, because the string names no dashboard problem code and a machine
+ * string must never be rendered raw — but this card gates its WHOLE resource
+ * row on that answer, so the card stopped naming the item it fixed at all.
+ * Removing the machine string was right; removing the information was not.
+ *
+ * The string carries exactly the two facts a merchant needs, so they are read
+ * out of it and phrased here rather than in `task-labels.shared.ts`, whose
+ * current answer other callers (MainNavigation's toast) depend on: the
+ * resource type through the same label map the badge uses, and the numeric id
+ * — the one the Shopify admin URL carries.
+ */
+const FIX_ALL_FOR_ITEM_PREFIX = "fixAllForItem:";
+
+function fixAllForItemSubject(
+  task: { type?: string | null; resourceTitle?: string | null },
+  t: any,
+): string | null {
+  if (task?.type !== "seoBulkFix") return null;
+  const title = typeof task.resourceTitle === "string" ? task.resourceTitle.trim() : "";
+  if (!title.startsWith(FIX_ALL_FOR_ITEM_PREFIX)) return null;
+  // "<itemType>:<id>[:<locale>]" — the optional locale tail is ignored here;
+  // the card already renders `targetLocale` on its own line.
+  const [itemType, itemId] = title.slice(FIX_ALL_FOR_ITEM_PREFIX.length).split(":");
+  if (!itemId) return null;
+  const resource = resourceTypeLabel(itemType, t) ?? "";
+  const template = typeof t?.tasks?.fixAllSubject === "string" ? t.tasks.fixAllSubject : "";
+  if (!template) return resource ? `${resource} ${itemId}` : itemId;
+  return template
+    .replace("{resource}", resource)
+    .replace("{id}", itemId)
+    // A resource type the label map cannot name leaves a hole, never a
+    // double space in the middle of the sentence.
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -405,30 +445,65 @@ export default function TasksPage() {
                   hasPrompt: Boolean(task.hasPrompt),
                   hasResult: Boolean(task.hasResult),
                 });
-                const subject = taskSubjectLabel(task, t);
+                const subject = taskSubjectLabel(task, t) ?? fixAllForItemSubject(task, t);
                 const resourceLabel = resourceTypeLabel(task.resourceType, t);
                 const fieldLabel = fieldTypeLabel(task.fieldType, t);
                 return (
                 <Card key={task.id}>
                   <BlockStack gap="300">
-                    {/* Header - Clickable to expand/collapse (only where there
-                        is something to expand onto) */}
-                    <div
-                      onClick={expandable ? () => toggleTaskExpanded(task.id) : undefined}
-                      style={expandable ? { cursor: "pointer" } : undefined}
-                    >
+                    {/* Header. The expand affordance sits on the LEFT half
+                        only, never on the row: the row also contains the
+                        Cancel/Delete buttons, and a button nested inside a
+                        `role="button"` is worse than no affordance at all.
+
+                        It is a real control — `role`, `tabIndex`,
+                        `aria-expanded` and Enter/Space — because without them
+                        a keyboard or screen-reader user could not open ANY of
+                        these panels. The glyph is `aria-hidden` (a screen
+                        reader announces "▶" as "black right-pointing
+                        triangle") and the control carries the words instead.
+
+                        The glyph's slot is rendered whether or not the row is
+                        expandable: the arrow appears the moment a running
+                        task's first prompt lands, and a conditionally RENDERED
+                        arrow shifted the heading sideways mid-revalidation. */}
+                    <div>
                       <InlineStack align="space-between" blockAlign="center">
-                        <InlineStack gap="200" blockAlign="center">
-                          {expandable && (
+                        <div
+                          {...(expandable
+                            ? {
+                                role: "button",
+                                tabIndex: 0,
+                                "aria-expanded": isExpanded,
+                                "aria-label": isExpanded
+                                  ? t.tasks.hideDetails
+                                  : t.tasks.viewDetails,
+                                onClick: () => toggleTaskExpanded(task.id),
+                                onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    toggleTaskExpanded(task.id);
+                                  }
+                                },
+                                style: { cursor: "pointer" },
+                              }
+                            : {})}
+                        >
+                          <InlineStack gap="200" blockAlign="center">
                             <Text as="span" variant="headingMd" fontWeight="medium">
-                              {isExpanded ? "▼" : "▶"}
+                              <span
+                                aria-hidden="true"
+                                style={{ display: "inline-block", width: "1.25rem" }}
+                              >
+                                {expandable ? (isExpanded ? "▼" : "▶") : ""}
+                              </span>
                             </Text>
-                          )}
-                          <Text as="h2" variant="headingMd" fontWeight="semibold">
-                            {taskTypeLabel(task.type, t)}
-                          </Text>
-                          {getStatusBadge(task.status)}
-                        </InlineStack>
+                            <Text as="h2" variant="headingMd" fontWeight="semibold">
+                              {taskTypeLabel(task.type, t)}
+                            </Text>
+                            {getStatusBadge(task.status)}
+                          </InlineStack>
+                        </div>
                         <div onClick={(e: React.MouseEvent) => e.stopPropagation()}>
                           <InlineStack gap="200">
                             {(task.status === "pending" || task.status === "running") && (
@@ -456,11 +531,13 @@ export default function TasksPage() {
                     </div>
 
                     {/* Resource Info - Always Visible.
-                        Gated on the SUBJECT, not on the raw resourceTitle:
-                        `taskSubjectLabel` answers null for a seoBulkFix row
-                        whose machine subject names no dashboard problem
-                        ("fixAllForItem:…"), and a badge with nothing beside it
-                        is an empty row. */}
+                        Gated on the SUBJECT, not on the raw resourceTitle: the
+                        seoBulkFix rows store a machine string, and a badge with
+                        nothing beside it is an empty row. A "fix everything for
+                        this item" run names no dashboard problem code, so
+                        `taskSubjectLabel` answers null for it and
+                        `fixAllForItemSubject` phrases the item instead — the
+                        row must still say WHICH product was fixed. */}
                     {subject && (
                       <InlineStack gap="200">
                         {resourceLabel && <Badge tone="info">{resourceLabel}</Badge>}
@@ -546,11 +623,14 @@ export default function TasksPage() {
                         it was asked for). Fetched on expand: the loader ships
                         neither prompt nor result. `updatedAt` is passed in so a
                         running task's log keeps filling in off the page's own
-                        3-second revalidation, without a second timer. */}
+                        3-second revalidation, without a second timer; `status`
+                        so a task that can never move again is never re-fetched
+                        at all. */}
                     {expandable && isExpanded && (
                       <TaskDetailsPanel
                         taskId={task.id}
                         type={task.type}
+                        status={task.status}
                         updatedAt={task.updatedAt}
                         isClient={isClient}
                       />
