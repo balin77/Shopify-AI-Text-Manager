@@ -20,7 +20,7 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     contentTranslation: {
       deleteMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(async () => ({})),
-      findMany: vi.fn(async (): Promise<Array<{ key: string; locale: string }>> => []),
+      findMany: vi.fn(async (): Promise<Array<{ resourceId?: string; key: string; locale: string }>> => []),
     },
     aISettings: { findUnique: vi.fn(async () => ({ preferredProvider: "claude" })) },
     aIInstructions: { findUnique: vi.fn(async () => null) },
@@ -380,26 +380,51 @@ describe("auto-translation path (Max)", () => {
 describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   const PAGE = "gid://shopify/Page/42";
 
-  /** locale → the keys Shopify reports a GLOBAL translation for. */
+  /** locale → the keys Shopify reports a GLOBAL translation for, on PAGE. */
   let shopifyHas: Record<string, string[]> = {};
+  /** The primary values Shopify reports back after the write, per resource. */
+  let primaryContent: Record<string, Record<string, { value: string; digest: string | null }>> = {};
 
   const saveClient = () => ({
-    graphql: vi.fn(async (_q: string, opts: { variables?: Record<string, unknown> }) => ({
+    graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) => ({
       ok: true,
       json: async () => {
+        const ids = (opts?.variables?.resourceIds as string[]) ?? [];
+        if (query.includes("stalePrimaryContent")) {
+          return {
+            data: {
+              translatableResourcesByIds: {
+                edges: ids.map((resourceId) => ({
+                  node: {
+                    resourceId,
+                    translatableContent: Object.entries(primaryContent[resourceId] ?? {}).map(
+                      ([key, entry]) => ({ key, value: entry.value, digest: entry.digest }),
+                    ),
+                  },
+                })),
+              },
+            },
+          };
+        }
         const locale = String(opts?.variables?.locale ?? "");
         const translated = shopifyHas[locale] ?? [];
         return {
           data: {
-            translatableResource: {
-              // Shopify answers with a row per translatable KEY and `value:
-              // null` where that locale has nothing — the shape every sync in
-              // this repo filters on. The fake mirrors it, or the test would
-              // pass on a query that treats untranslated locales as translated.
-              translations: ["title", "body_html"].map((key) => ({
-                key,
-                locale,
-                value: translated.includes(key) ? `existing-${key}` : null,
+            translatableResourcesByIds: {
+              edges: ids.map((resourceId) => ({
+                node: {
+                  resourceId,
+                  // Shopify answers with a row per translatable KEY and `value:
+                  // null` where that locale has nothing — the shape every sync
+                  // in this repo filters on. The fake mirrors it, or the test
+                  // would pass on a query that treats untranslated locales as
+                  // translated.
+                  translations: Object.keys(primaryContent[resourceId] ?? {}).map((key) => ({
+                    key,
+                    locale,
+                    value: translated.includes(key) ? `existing-${key}` : null,
+                  })),
+                },
               })),
             },
           },
@@ -416,11 +441,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       resourceType: "Page",
       contentKind: "page" as const,
       resourceTitle: "About us",
-      primaryContent: {
-        title: { value: "About us", digest: NEW },
-        body_html: { value: "<p>New text</p>", digest: NEW },
-      },
-      changedKeys: ["title", "body_html"],
+      changed: [{ key: "title" }, { key: "body_html" }],
       foreignLocales: ["de", "fr"],
       policy: policy as never,
       ...over,
@@ -432,10 +453,16 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     policy.purgeOnPrimaryChange = false;
     db.contentTranslation.findMany.mockClear();
     db.contentTranslation.findMany.mockResolvedValue([
-      { key: "title", locale: "de" },
-      { key: "body_html", locale: "de" },
+      { resourceId: PAGE, key: "title", locale: "de" },
+      { resourceId: PAGE, key: "body_html", locale: "de" },
     ]);
     shopifyHas = { de: ["title", "body_html"] };
+    primaryContent = {
+      [PAGE]: {
+        title: { value: "About us", digest: NEW },
+        body_html: { value: "<p>New text</p>", digest: NEW },
+      },
+    };
     ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
       [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
     }));
@@ -477,15 +504,21 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls).toHaveLength(2);
-    const where = (db.contentTranslation.findMany.mock.calls.at(-1) as unknown as [{ where: unknown }])[0].where;
-    expect(where).toMatchObject({ marketId: "", resourceType: "Page" });
+    const where = (db.contentTranslation.findMany.mock.calls.at(-1) as unknown as [{ where: any }])[0].where;
+    expect(where).toMatchObject({ marketId: "" });
+    expect(where.OR).toEqual([{ resourceId: PAGE, resourceType: "Page" }]);
   });
 
   it("removes a translation whose primary value was CLEARED", async () => {
     // Nothing to translate, so the AI path cannot deliver it and the storefront
     // must not keep a translation of text that no longer exists.
     shopifyHas = { de: ["body_html"] };
-    db.contentTranslation.findMany.mockResolvedValue([{ key: "body_html", locale: "de" }]);
+    // `translatableContent` omits a key with no value at all — that is how a
+    // cleared field announces itself, and it is NOT the same as a failed read.
+    primaryContent = { [PAGE]: { title: { value: "About us", digest: NEW } } };
+    db.contentTranslation.findMany.mockResolvedValue([
+      { resourceId: PAGE, key: "body_html", locale: "de" },
+    ]);
     const result = await reconcileAfterPrimarySave(
       saveParams({ primaryContent: { title: { value: "About us", digest: NEW } } }),
     );
@@ -556,21 +589,42 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   });
 
   it("falls back to the mirror for a locale whose Shopify read failed", async () => {
-    // Degrading to the old mirror-only reach is acceptable; losing the whole
-    // repair over one failed query is not.
-    // A GraphQL-level error, which is how a real refusal arrives — and unlike a
-    // thrown transport error it is not retried by the gateway, so the test does
-    // not pay three seconds of backoff per locale to prove one branch.
+    // Degrading to the mirror-only reach is acceptable; losing the whole repair
+    // over one failed lookup is not. The DETECTION fails here, the primary
+    // read-back still works — a GraphQL-level error, which is how a real
+    // refusal arrives, and unlike a thrown transport error it is not retried by
+    // the gateway, so the test does not pay backoff to prove one branch.
+    const real = saveClient();
     const client = {
-      graphql: vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ errors: [{ message: "Access denied" }] }),
-      })),
+      graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) =>
+        query.includes("stalePrimaryContent")
+          ? real.graphql(query, opts)
+          : { ok: true, json: async () => ({ errors: [{ message: "Access denied" }] }) },
+      ),
     };
     await reconcileAfterPrimarySave(saveParams({ client: client as never }));
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
+  });
+
+  it("keeps everything when the primary read-back itself fails", async () => {
+    // A failed lookup and "every field was cleared" look identical in the data,
+    // and only one of them may lose its translations. Answering our own blink
+    // with a deletion is the mistake `startFailed` exists to prevent.
+    const client = {
+      graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) =>
+        query.includes("stalePrimaryContent")
+          ? { ok: true, json: async () => ({ errors: [{ message: "Throttled" }] }) }
+          : saveClient().graphql(query, opts),
+      ),
+    };
+    const result = await reconcileAfterPrimarySave(saveParams({ client: client as never }));
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.registerCalls).toEqual([]);
   });
 
   it("claims the resource so a reload cannot queue a second identical run", async () => {

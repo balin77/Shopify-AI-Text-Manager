@@ -91,6 +91,158 @@ export interface RepairTarget {
   contentKind: "product" | "collection" | "blog" | "page";
   /** Shown on the Task row when a re-translation runs. */
   resourceTitle?: string;
+  /**
+   * How the AI is asked for the new text.
+   *
+   * Omitted = the CONTENT-FIELD path: each key maps to a named field
+   * (`title`, `body_html`, …) and one request per locale translates them
+   * together, with the merchant's translate instructions and the SEO length
+   * limits applied per field name. That only works where the keys ARE those
+   * fields.
+   *
+   * A metafield value, an option name, a metaobject field or a theme string
+   * has no field semantics at all — its key is `value`, `name` or a theme
+   * key nobody can write a length limit for. Those pass `{ kind: "values" }`
+   * and go through `translateBatchValues`, the same generic prompt the bulk
+   * editor already uses for exactly these columns, with `context` naming what
+   * the values ARE so the model has something to go on.
+   */
+  translateAs?: {
+    kind: "values";
+    context: string;
+    /**
+     * The language the values are written in — the shop's primary locale. Named
+     * rather than "auto": the caller has just written this text, so the source
+     * is known, and telling the model beats asking it to guess per value.
+     */
+    sourceLocale: string;
+  };
+  /**
+   * Where the confirmed translations are mirrored locally. Omitted = the
+   * `ContentTranslation` table keyed by this resourceId/resourceType, which is
+   * correct for everything Shopify addresses as its own translatable resource
+   * AND that this app mirrors there — including the SUB-RESOURCES, whose rows
+   * sit on their own GID with resourceType "Metafield" / "ProductOption" /
+   * "ProductOptionValue".
+   *
+   * Metaobject fields and theme content keep their translations in tables of
+   * their own (`MetaobjectTranslation`, `ThemeTranslation`), so they pass a
+   * mirror. The SHOPIFY side is identical everywhere — one translations API,
+   * keyed by GID + key + locale — which is why only the mirror is pluggable.
+   */
+  mirror?: TranslationMirror;
+}
+
+/**
+ * The local half of a translation write, per surface. Three operations,
+ * because that is all the repair does to the mirror: ask what is already
+ * there, drop what Shopify confirmed removed, and write back what Shopify
+ * confirmed stored.
+ *
+ * Every implementation is GLOBAL-layer only (`marketId ""` where the table has
+ * the column): a market override is a deliberate separate value and survives a
+ * primary change, the same rule both editors follow.
+ */
+export interface TranslationMirror {
+  /** The (resource, locale, key) triples this store already holds, for the
+   *  union in the in-app detection. */
+  existing(
+    refs: readonly TranslationRef[],
+    foreignLocales: readonly string[],
+    keys: readonly string[],
+  ): Promise<Array<{ resourceId: string; locale: string; key: string }>>;
+  /** Drop the rows for keys Shopify CONFIRMED it removed. */
+  remove(ref: TranslationRef, locale: string, keys: readonly string[]): Promise<void>;
+  /** Write back one translation Shopify CONFIRMED it stored. */
+  write(
+    ref: TranslationRef,
+    locale: string,
+    key: string,
+    value: string,
+    digest: string,
+  ): Promise<void>;
+}
+
+/** One Shopify translatable resource, as the mirror addresses it. */
+export interface TranslationRef {
+  resourceId: string;
+  resourceType: string;
+}
+
+/**
+ * The default mirror: `ContentTranslation`, keyed by the resource's own GID.
+ * Correct for products, collections, pages, articles, blogs, policies, the
+ * sub-resources and MediaImage alts alike — they all live in that one table,
+ * distinguished by `resourceType`.
+ */
+export function contentTranslationMirror(shop: string): TranslationMirror {
+  return {
+    async existing(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      return db.contentTranslation.findMany({
+        where: {
+          shop,
+          marketId: "",
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+          OR: refs.map((ref) => ({ resourceId: ref.resourceId, resourceType: ref.resourceType })),
+        },
+        select: { resourceId: true, key: true, locale: true },
+      });
+    },
+    async remove(ref, locale, keys) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.deleteMany({
+        where: {
+          shop,
+          resourceId: ref.resourceId,
+          resourceType: ref.resourceType,
+          locale,
+          marketId: "",
+          key: { in: [...keys] },
+        },
+      });
+    },
+    async write(ref, locale, key, value, digest) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.upsert({
+        where: {
+          shop_resourceId_key_locale_marketId: {
+            shop,
+            resourceId: ref.resourceId,
+            key,
+            locale,
+            marketId: "",
+          },
+        },
+        create: {
+          shop,
+          resourceId: ref.resourceId,
+          resourceType: ref.resourceType,
+          key,
+          value,
+          locale,
+          digest,
+          marketId: "",
+        },
+        update: { value, digest },
+      });
+    },
+  };
+}
+
+/** The mirror a target asks for, or the ContentTranslation default. */
+function mirrorOf(target: RepairTarget): TranslationMirror {
+  return target.mirror ?? contentTranslationMirror(target.shop);
+}
+
+/** Which resource an entry belongs to — its own, or the group's. */
+function refOf(target: RepairTarget, entry: StaleTranslation): TranslationRef {
+  return {
+    resourceId: entry.resourceId ?? target.resourceId,
+    resourceType: entry.resourceType ?? target.resourceType,
+  };
 }
 
 export interface ReconcileParams extends RepairTarget {
@@ -259,20 +411,22 @@ export const IN_APP_RETRANSLATED_RESOURCE_TYPES: ReadonlySet<string> = new Set([
 const PAIR_SEP = "\u0000";
 
 /**
- * The (locale, key) pairs Shopify actually holds a GLOBAL translation for,
- * restricted to the keys the caller changed.
+ * The (resource, locale, key) triples Shopify actually holds a GLOBAL
+ * translation for, restricted to the keys the caller changed.
  *
- * One query PER LOCALE, because `translations(locale:)` takes exactly one and
- * there is no batched form. That is the price of not being blind: the mirror
- * cannot see a translation written in the Shopify admin or by another app, and
- * these resource types have no webhook that would notice later.
+ * One query PER LOCALE — but over EVERY resource of the group at once
+ * (`translatableResourcesByIds`, the same batched door the product sync uses),
+ * because a product save moves its options, option values and metafields too
+ * and one query per sub-resource per locale would be dozens of calls for a
+ * single save. `translations(locale:)` still takes exactly one locale, so the
+ * locales are what remains to iterate.
  *
  * `marketId` is deliberately omitted, which returns the GLOBAL layer only
  * (CLAUDE.md) — a market override is a separate deliberate value and survives.
  *
  * A locale whose query fails contributes NOTHING rather than throwing: the
  * caller unions this with the local mirror, so a failed read degrades to the
- * old mirror-only reach instead of losing the whole repair. It goes through the
+ * mirror-only reach instead of losing the whole repair. It goes through the
  * GATEWAY, not the raw admin client: this runs inside the merchant's save
  * request, and an unthrottled burst there would answer a rate limit with
  * exactly that silent degradation.
@@ -288,72 +442,188 @@ const PAIR_SEP = "\u0000";
  */
 const DETECTION_BUDGET_MS = 5_000;
 
-async function foreignTranslationPairs(
+/** `translatableResourcesByIds` caps its page at 250. */
+const RESOURCE_BATCH = 250;
+
+/** `${resourceId}\u0000${locale}\u0000${key}` — one triple of the detection set. */
+function tripleKey(resourceId: string, locale: string, key: string): string {
+  return `${resourceId}${PAIR_SEP}${locale}${PAIR_SEP}${key}`;
+}
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+async function foreignTranslationTriples(
   gateway: ShopifyApiGateway,
-  resourceId: string,
+  resourceIds: readonly string[],
   foreignLocales: readonly string[],
-  changedKeys: readonly string[],
+  wantedKeys: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<Set<string>> {
-  const wanted = new Set(changedKeys);
-  const pairs = new Set<string>();
+  const triples = new Set<string>();
   const deadline = Date.now() + DETECTION_BUDGET_MS;
   for (const locale of foreignLocales) {
     if (Date.now() > deadline) {
       logger.warn("[StaleTranslations] Detection budget spent — remaining locales left to the mirror", {
         context: "StaleTranslations",
-        resourceId,
-        reached: pairs.size,
+        resources: resourceIds.length,
+        reached: triples.size,
         skippedFrom: locale,
       });
       break;
     }
+    for (const ids of chunk(resourceIds, RESOURCE_BATCH)) {
+      try {
+        const response = await gateway.graphql(
+          `#graphql
+            query staleTranslationTargets($resourceIds: [ID!]!, $locale: String!, $first: Int!) {
+              translatableResourcesByIds(resourceIds: $resourceIds, first: $first) {
+                edges {
+                  node {
+                    resourceId
+                    translations(locale: $locale) {
+                      key
+                      locale
+                      value
+                    }
+                  }
+                }
+              }
+            }`,
+          { variables: { resourceIds: ids, locale, first: RESOURCE_BATCH } },
+        );
+        const data = (await response.json()) as {
+          data?: {
+            translatableResourcesByIds?: {
+              edges?: Array<{
+                node?: {
+                  resourceId?: string;
+                  translations?: Array<{ key: string; locale: string; value: string | null }> | null;
+                } | null;
+              }> | null;
+            } | null;
+          };
+          errors?: Array<{ message: string }>;
+        };
+        if (data.errors?.length) throw new Error(data.errors[0].message);
+        for (const edge of data.data?.translatableResourcesByIds?.edges ?? []) {
+          const resourceId = edge?.node?.resourceId;
+          if (!resourceId) continue;
+          const wanted = wantedKeys.get(resourceId);
+          if (!wanted) continue;
+          for (const row of edge?.node?.translations ?? []) {
+            if (!wanted.has(row.key)) continue;
+            // A row with NO value is not a translation. Shopify answers this
+            // query with one row per translatable key and `value: null` where
+            // the locale has nothing — the same reason every sync in this repo
+            // filters `t.value != null` before mirroring. Without it every
+            // changed key in every published locale would look translated, and
+            // the run would not repair anything: it would CREATE translations
+            // into locales the merchant deliberately never translated,
+            // unattended and on their own API key.
+            if (!row.value || !row.value.trim()) continue;
+            // Shopify answers with the requested locale, but trust the row's
+            // own — it is what the removal and the register are addressed by.
+            triples.add(tripleKey(resourceId, row.locale, row.key));
+          }
+        }
+      } catch (error: unknown) {
+        logger.warn("[StaleTranslations] Could not read translations for a locale — mirror only", {
+          context: "StaleTranslations",
+          locale,
+          resources: ids.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+  return triples;
+}
+
+/**
+ * The CURRENT primary value and digest of every (resource, key) the caller
+ * changed, read back from Shopify after the write.
+ *
+ * The digest is the load-bearing half: `translationsRegister` refuses without
+ * one, and it must be the digest of the text that is there NOW — the caller's
+ * own write invalidated whatever was cached. `translatableContent` omits a key
+ * with no value at all, which is exactly how a CLEARED field announces itself.
+ *
+ * A resource this could not read is ABSENT from the result, and the caller
+ * skips it entirely rather than treating it as "everything cleared". The
+ * distinction is the `translatableContent` trap in reverse: a failed read and a
+ * resource whose fields were all emptied look identical in the DATA, and only
+ * one of them may lose its translations. Answering our own failed lookup with a
+ * deletion is the same mistake `startFailed` exists to prevent — the next
+ * change event repairs what is genuinely stale, and a translation that survived
+ * one blink is visible and recoverable while a deleted one is not.
+ *
+ * A resource that IS in the result but has no entry for a key is the real
+ * cleared field: Shopify omits a key with no value at all.
+ */
+async function currentPrimaryContent(
+  gateway: ShopifyApiGateway,
+  resourceIds: readonly string[],
+): Promise<Map<string, Record<string, PrimaryContentEntry>>> {
+  const out = new Map<string, Record<string, PrimaryContentEntry>>();
+  for (const ids of chunk(resourceIds, RESOURCE_BATCH)) {
     try {
       const response = await gateway.graphql(
         `#graphql
-          query staleTranslationTargets($resourceId: ID!, $locale: String!) {
-            translatableResource(resourceId: $resourceId) {
-              translations(locale: $locale) {
-                key
-                locale
-                value
+          query stalePrimaryContent($resourceIds: [ID!]!, $first: Int!) {
+            translatableResourcesByIds(resourceIds: $resourceIds, first: $first) {
+              edges {
+                node {
+                  resourceId
+                  translatableContent {
+                    key
+                    value
+                    digest
+                  }
+                }
               }
             }
           }`,
-        { variables: { resourceId, locale } },
+        { variables: { resourceIds: ids, first: RESOURCE_BATCH } },
       );
       const data = (await response.json()) as {
         data?: {
-          translatableResource?: {
-            translations?: Array<{ key: string; locale: string; value: string | null }> | null;
+          translatableResourcesByIds?: {
+            edges?: Array<{
+              node?: {
+                resourceId?: string;
+                translatableContent?: Array<{
+                  key: string;
+                  value: string | null;
+                  digest: string | null;
+                }> | null;
+              } | null;
+            }> | null;
           } | null;
         };
         errors?: Array<{ message: string }>;
       };
       if (data.errors?.length) throw new Error(data.errors[0].message);
-      for (const row of data.data?.translatableResource?.translations ?? []) {
-        if (!wanted.has(row.key)) continue;
-        // A row with NO value is not a translation. Shopify answers this query
-        // with one row per translatable key and `value: null` where the locale
-        // has nothing — the same reason every sync in this repo filters
-        // `t.value != null` before mirroring. Without it every changed key in
-        // every published locale would look translated, and the run would not
-        // repair anything: it would CREATE translations into locales the
-        // merchant deliberately never translated, unattended and on their key.
-        if (!row.value || !row.value.trim()) continue;
-        // Shopify answers with the requested locale, but trust the row's own —
-        // it is what the removal and the register will be addressed by.
-        pairs.add(`${row.locale}${PAIR_SEP}${row.key}`);
+      for (const edge of data.data?.translatableResourcesByIds?.edges ?? []) {
+        const resourceId = edge?.node?.resourceId;
+        if (!resourceId) continue;
+        const map: Record<string, PrimaryContentEntry> = {};
+        for (const item of edge?.node?.translatableContent ?? []) {
+          map[item.key] = { value: item.value ?? "", digest: item.digest };
+        }
+        out.set(resourceId, map);
       }
     } catch (error: unknown) {
-      logger.warn("[StaleTranslations] Could not read translations for a locale — mirror only", {
+      logger.warn("[StaleTranslations] Could not read primary content — those keys fall to removal", {
         context: "StaleTranslations",
-        resourceId,
-        locale,
+        resources: ids.length,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
-  return pairs;
+  return out;
 }
 
 /**
@@ -383,14 +653,18 @@ async function foreignTranslationPairs(
  */
 export async function reconcileAfterPrimarySave(params: RepairTarget & {
   /**
-   * `translatableContent` read back AFTER the primary write — the NEW values
-   * and their NEW digests, which is what a re-registration needs. A key Shopify
-   * no longer lists (or lists with an empty value) is a CLEARED field: there is
-   * nothing to translate, so it falls through to the removal.
+   * What this save rewrote, as (resource, key) pairs. `resourceId` /
+   * `resourceType` default to the group's own, which is every content-type
+   * entry; a product's OPTIONS, OPTION VALUES and METAFIELDS name their own,
+   * because each is its own Shopify translatable resource — one merchant
+   * action, one group, one Task row.
+   *
+   * The caller does NOT supply the new values or their digests: this reads them
+   * back from Shopify itself, batched over the whole group. The digest has to
+   * be the one of the text that is there NOW, and the caller's own write is
+   * what invalidated the last one it saw.
    */
-  primaryContent: Readonly<Record<string, PrimaryContentEntry>>;
-  /** Shopify translation keys whose primary value this save changed. */
-  changedKeys: readonly string[];
+  changed: ReadonlyArray<{ resourceId?: string; resourceType?: string; key: string }>;
   /** Published foreign locales — the primary locale never holds a translation row. */
   foreignLocales: readonly string[];
   /**
@@ -403,12 +677,23 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
    */
   policy: TranslationChangePolicy;
 }): Promise<ReconcileResult> {
-  const { shop, resourceId, resourceType, changedKeys, foreignLocales, primaryContent, policy } =
-    params;
+  const { shop, resourceId, resourceType, changed, foreignLocales, policy } = params;
 
   try {
-    if (changedKeys.length === 0 || foreignLocales.length === 0) return NOTHING;
+    if (changed.length === 0 || foreignLocales.length === 0) return NOTHING;
     if (!policy.autoTranslateExternalChanges) return NOTHING;
+
+    // The group's resources, and which keys were changed on each.
+    const refs = new Map<string, TranslationRef>();
+    const wantedKeys = new Map<string, Set<string>>();
+    for (const item of changed) {
+      const ref = refOf(params, item as StaleTranslation);
+      refs.set(ref.resourceId, ref);
+      const keys = wantedKeys.get(ref.resourceId) ?? new Set<string>();
+      keys.add(item.key);
+      wantedKeys.set(ref.resourceId, keys);
+    }
+    const resourceIds = [...refs.keys()];
 
     // Which (locale, key) pairs actually HAVE a translation to repair — the
     // UNION of what Shopify reports and what the local mirror holds, and both
@@ -425,32 +710,39 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // and dropping it would silently do less than before. A pair we once wrote
     // is evidence enough to repair it.
     const gateway = new ShopifyApiGateway(params.client, shop);
-    const pairs = await foreignTranslationPairs(gateway, resourceId, foreignLocales, changedKeys);
-    const { db } = await import("../../db.server");
-    const rows = await db.contentTranslation.findMany({
-      where: {
-        shop,
-        resourceId,
-        resourceType,
-        // GLOBAL layer only — a market override is a deliberate separate value
-        // and survives a primary change, the same rule as everywhere else.
-        marketId: "",
-        key: { in: [...changedKeys] },
-        locale: { in: [...foreignLocales] },
-      },
-      select: { key: true, locale: true },
-    });
-    for (const row of rows) pairs.add(digestBaselineKey(row.locale, row.key));
-    if (pairs.size === 0) return NOTHING;
+    const allKeys = [...new Set(changed.map((item) => item.key))];
+    const triples = await foreignTranslationTriples(gateway, resourceIds, foreignLocales, wantedKeys);
+    for (const row of await mirrorOf(params).existing([...refs.values()], foreignLocales, allKeys)) {
+      if (wantedKeys.get(row.resourceId)?.has(row.key)) {
+        triples.add(tripleKey(row.resourceId, row.locale, row.key));
+      }
+    }
+    if (triples.size === 0) return NOTHING;
+
+    const primaryByResource = await currentPrimaryContent(gateway, resourceIds);
 
     const stale: StaleTranslation[] = [];
-    for (const pair of pairs) {
-      const [locale, key] = pair.split(PAIR_SEP);
-      const entry = primaryContent[key];
+    let unreadable = 0;
+    for (const triple of triples) {
+      const [itemResourceId, locale, key] = triple.split(PAIR_SEP);
+      const ref = refs.get(itemResourceId);
+      if (!ref) continue;
+      const resourcePrimary = primaryByResource.get(itemResourceId);
+      // Could not read this resource's current text at all — skip it. An
+      // absent read is not evidence that the field was cleared, and answering
+      // our own failed lookup by deleting the merchant's translation is the
+      // one direction this module never errs in.
+      if (!resourcePrimary) {
+        unreadable++;
+        continue;
+      }
+      const entry = resourcePrimary[key];
       const primaryValue = entry?.value ?? "";
       stale.push({
         key,
         locale,
+        resourceId: ref.resourceId,
+        resourceType: ref.resourceType,
         // The two reasons this module already knows, decided from the value we
         // just wrote: text there ⇒ the translation is out of date, nothing
         // there ⇒ the merchant cleared the field. `partitionStaleTranslations`
@@ -461,6 +753,16 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         digest: entry?.digest ?? null,
       });
     }
+
+    if (unreadable > 0) {
+      logger.warn("[StaleTranslations] Some resources could not be read back — their translations kept", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        skipped: unreadable,
+      });
+    }
+    if (stale.length === 0) return NOTHING;
 
     logger.info("[StaleTranslations] Primary text changed in the editor — re-translating", {
       context: "StaleTranslations",
@@ -518,6 +820,7 @@ async function repairStaleTranslations(
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
   const gateway = new ShopifyApiGateway(client, shop);
+  const mirror = mirrorOf(target);
   const { retranslate, purge } = partitionStaleTranslations(
     stale,
     policy.autoTranslateExternalChanges,
@@ -539,7 +842,7 @@ async function repairStaleTranslations(
   // run read our own mark as "the merchant saved" and abandon itself.
   let removed = 0;
   if (mayPurge && purge.length > 0) {
-    removed = await purgeStaleEntries(gateway, shop, resourceId, resourceType, purge);
+    removed = await purgeStaleEntries(gateway, target, mirror, purge);
     // Protect what we just changed from a racing webhook sync that re-fetches
     // Shopify before it is consistent again.
     markTranslationSaved(resourceId);
@@ -588,7 +891,7 @@ async function repairStaleTranslations(
           outcome.failed.length > 0 &&
           !supersededByMerchant()
         ) {
-          await purgeStaleEntries(gateway, shop, resourceId, resourceType, outcome.failed);
+          await purgeStaleEntries(gateway, target, mirror, outcome.failed);
         }
         if (outcome.registered.length > 0) markTranslationSaved(resourceId);
       } catch (error: unknown) {
@@ -649,28 +952,30 @@ async function repairStaleTranslations(
  */
 async function purgeStaleEntries(
   gateway: ShopifyApiGateway,
-  shop: string,
-  resourceId: string,
-  resourceType: string,
+  target: RepairTarget,
+  mirror: TranslationMirror,
   entries: readonly StaleTranslation[],
 ): Promise<number> {
-  const keysByLocale = new Map<string, string[]>();
+  // Per (RESOURCE, locale), not per locale: a group can span several Shopify
+  // resources — a product save moves its options, option values and metafields,
+  // each its own translatableResource — and `translationsRemove` addresses
+  // exactly one.
+  const byResourceLocale = new Map<string, { ref: TranslationRef; locale: string; keys: string[] }>();
   for (const entry of entries) {
-    const list = keysByLocale.get(entry.locale) ?? [];
-    if (!list.includes(entry.key)) list.push(entry.key);
-    keysByLocale.set(entry.locale, list);
+    const ref = refOf(target, entry);
+    const id = `${ref.resourceId}${PAIR_SEP}${entry.locale}`;
+    const group = byResourceLocale.get(id) ?? { ref, locale: entry.locale, keys: [] };
+    if (!group.keys.includes(entry.key)) group.keys.push(entry.key);
+    byResourceLocale.set(id, group);
   }
-  if (keysByLocale.size === 0) return 0;
+  if (byResourceLocale.size === 0) return 0;
 
-  const { db } = await import("../../db.server");
   let removed = 0;
-  for (const [locale, localeKeys] of keysByLocale) {
-    const { confirmedKeys } = await removeAndVerify(gateway, resourceId, localeKeys, locale, "");
+  for (const { ref, locale, keys } of byResourceLocale.values()) {
+    const { confirmedKeys } = await removeAndVerify(gateway, ref.resourceId, keys, locale, "");
     if (confirmedKeys.size === 0) continue;
-    const confirmed = localeKeys.filter((key) => confirmedKeys.has(key));
-    await db.contentTranslation.deleteMany({
-      where: { shop, resourceId, resourceType, locale, marketId: "", key: { in: confirmed } },
-    });
+    const confirmed = keys.filter((key) => confirmedKeys.has(key));
+    await mirror.remove(ref, locale, confirmed);
     // Counted from Shopify's confirmations, not from the DB result: a row the
     // cache never held (or already dropped) is still a translation that is
     // gone from the storefront, and that is what this number reports.
@@ -740,6 +1045,7 @@ async function runRetranslation(
 ): Promise<RetranslateOutcome> {
   const { shop, resourceId, resourceType, contentKind, resourceTitle } = params;
   const { db } = await import("../../db.server");
+  const mirror = mirrorOf(params);
 
   const byLocale = new Map<string, StaleTranslation[]>();
   for (const entry of entries) {
@@ -751,8 +1057,11 @@ async function runRetranslation(
   const registered: StaleTranslation[] = [];
   const failed: StaleTranslation[] = [];
 
+  // Only the content-field path needs the key→field map; the generic value path
+  // has no field semantics to look up (see RepairTarget.translateAs).
+  const asValues = params.translateAs;
   const { fieldTranslationKeyMap } = await import("../../../src/services/shopify-content.service");
-  const keyToField = invertFieldMap(fieldTranslationKeyMap(resourceType));
+  const keyToField = asValues ? {} : invertFieldMap(fieldTranslationKeyMap(resourceType));
 
   const { getTaskExpirationDate } = await import("../../config/constants");
   const { toValidProvider } = await import("../../../src/services/ai.service");
@@ -812,41 +1121,54 @@ async function runRetranslation(
         });
         break;
       }
-      const fields: Record<string, string> = {};
-      const fieldToEntry = new Map<string, StaleTranslation>();
-      for (const entry of localeEntries) {
-        const fieldName = keyToField[entry.key];
-        if (!fieldName) {
-          failed.push(entry);
-          continue;
-        }
-        fields[fieldName] = entry.primaryValue;
-        fieldToEntry.set(fieldName, entry);
-      }
-      if (Object.keys(fields).length === 0) continue;
+      // The generic path keys the AI's answer by ENTRY INDEX, not by a field
+      // name: two option values can legitimately hold the same text, and a
+      // name-keyed map would silently collapse them into one write.
+      const translatable = asValues
+        ? localeEntries
+        : localeEntries.filter((entry) => {
+            if (keyToField[entry.key]) return true;
+            failed.push(entry);
+            return false;
+          });
+      if (translatable.length === 0) continue;
 
       try {
-        const instructions = buildTranslateInstructions(
-          getInstructionWithDefault(aiInstructions, "translateInstructions"),
-          translationMode,
-          Object.keys(fields),
-          { limits: (aiSettings?.seoLimits ?? null) as Record<string, number> | null },
-        );
-        const result = await translationService.translateProduct(
-          fields,
-          [locale],
-          contentKind,
-          instructions,
-          await keywordDirectiveFor(shop, resourceId, locale, aiSettings?.keywordAwareTranslation ?? true),
-        );
-        const translated = result[locale] || {};
+        let translatedFor: (entry: StaleTranslation, index: number) => string | undefined;
+        if (asValues) {
+          const values = await translationService.translateValues(
+            translatable.map((entry) => entry.primaryValue),
+            asValues.sourceLocale,
+            locale,
+            asValues.context,
+          );
+          translatedFor = (_entry, index) => values[index];
+        } else {
+          const fields: Record<string, string> = {};
+          for (const entry of translatable) fields[keyToField[entry.key]] = entry.primaryValue;
+          const instructions = buildTranslateInstructions(
+            getInstructionWithDefault(aiInstructions, "translateInstructions"),
+            translationMode,
+            Object.keys(fields),
+            { limits: (aiSettings?.seoLimits ?? null) as Record<string, number> | null },
+          );
+          const result = await translationService.translateProduct(
+            fields,
+            [locale],
+            contentKind,
+            instructions,
+            await keywordDirectiveFor(shop, resourceId, locale, aiSettings?.keywordAwareTranslation ?? true),
+          );
+          const translated = result[locale] || {};
+          translatedFor = (entry) => translated[keyToField[entry.key]];
+        }
 
         const writes: Array<{
           entry: StaleTranslation;
           input: { key: string; value: string; locale: string; translatableContentDigest: string };
         }> = [];
-        for (const [fieldName, entry] of fieldToEntry) {
-          const value = translated[fieldName];
+        for (const [index, entry] of translatable.entries()) {
+          const value = translatedFor(entry, index);
           if (!value || !value.trim() || !entry.digest) {
             failed.push(entry);
             continue;
@@ -863,58 +1185,50 @@ async function runRetranslation(
         }
         if (writes.length === 0) continue;
 
-        const { confirmedKeys } = await registerAndVerify(
-          gateway,
-          resourceId,
-          writes.map((w) => w.input),
-        );
-        for (const { entry, input } of writes) {
-          if (!confirmedKeys.has(input.key)) {
-            // Shopify did not echo it back — treat it exactly like a failed
-            // translation so the stale row is purged instead of being left
-            // behind on the strength of an unverified write.
-            failed.push(entry);
-            continue;
-          }
-          // Shopify has CONFIRMED this write, so the entry is registered no
-          // matter what the local mirror does. A DB error here must not push it
-          // into `failed` — that list is purged, and purging a translation
-          // Shopify just verified because our own database blinked is the one
-          // outcome that loses merchant content. The next sync re-reads it from
-          // Shopify anyway.
-          registered.push(entry);
-          try {
-            await db.contentTranslation.upsert({
-              where: {
-                shop_resourceId_key_locale_marketId: {
-                  shop,
-                  resourceId,
-                  key: input.key,
-                  locale,
-                  marketId: "",
-                },
-              },
-              create: {
+        // `translationsRegister` addresses ONE resource, so a group spanning
+        // several (a product's options, option values and metafields) writes
+        // once per resource — still one AI request for the whole locale.
+        const byResource = new Map<string, { ref: TranslationRef; writes: typeof writes }>();
+        for (const write of writes) {
+          const ref = refOf(params, write.entry);
+          const group = byResource.get(ref.resourceId) ?? { ref, writes: [] };
+          group.writes.push(write);
+          byResource.set(ref.resourceId, group);
+        }
+
+        for (const { ref, writes: resourceWrites } of byResource.values()) {
+          const { confirmedKeys } = await registerAndVerify(
+            gateway,
+            ref.resourceId,
+            resourceWrites.map((w) => w.input),
+          );
+          for (const { entry, input } of resourceWrites) {
+            if (!confirmedKeys.has(input.key)) {
+              // Shopify did not echo it back — treat it exactly like a failed
+              // translation so the stale row is purged instead of being left
+              // behind on the strength of an unverified write.
+              failed.push(entry);
+              continue;
+            }
+            // Shopify has CONFIRMED this write, so the entry is registered no
+            // matter what the local mirror does. A DB error here must not push
+            // it into `failed` — that list is purged, and purging a translation
+            // Shopify just verified because our own database blinked is the one
+            // outcome that loses merchant content. The next sync re-reads it
+            // from Shopify anyway.
+            registered.push(entry);
+            try {
+              await mirror.write(ref, locale, input.key, input.value, input.translatableContentDigest);
+            } catch (mirrorError: unknown) {
+              logger.warn("[StaleTranslations] Registered on Shopify but not mirrored locally", {
+                context: "StaleTranslations",
                 shop,
-                resourceId,
-                resourceType,
-                key: input.key,
-                value: input.value,
+                resourceId: ref.resourceId,
                 locale,
-                digest: input.translatableContentDigest,
-                marketId: "",
-              },
-              update: { value: input.value, digest: input.translatableContentDigest },
-            });
-          } catch (mirrorError: unknown) {
-            logger.warn("[StaleTranslations] Registered on Shopify but not mirrored locally", {
-              context: "StaleTranslations",
-              shop,
-              resourceId,
-              locale,
-              key: input.key,
-              error: mirrorError instanceof Error ? mirrorError.message : String(mirrorError),
-            });
+                key: input.key,
+                error: mirrorError instanceof Error ? mirrorError.message : String(mirrorError),
+              });
+            }
           }
         }
       } catch (error: unknown) {

@@ -26,6 +26,28 @@ export class TranslationService {
   }
 
   /**
+   * Translate a list of BARE VALUES — no field semantics, no length limits.
+   *
+   * What a metafield value, a product option name, a metaobject field or a
+   * theme string has in common: its translation key is `value` / `name` / an
+   * arbitrary theme key, so there is no named field to hang the merchant's
+   * per-field instructions or an SEO character limit on. `context` is what the
+   * model gets instead — say what the values ARE.
+   *
+   * Order-preserving and 1:1 with the input, which is what lets the caller map
+   * the answer back by INDEX: two option values may legitimately hold the same
+   * text, and a value-keyed map would collapse them.
+   */
+  async translateValues(
+    values: string[],
+    fromLang: string,
+    toLang: string,
+    context: string,
+  ): Promise<string[]> {
+    return await this.aiService.translateBatchValues(values, fromLang, toLang, context);
+  }
+
+  /**
    * Translate a URL slug to multiple locales in a single AI request
    * More efficient than translating one locale at a time
    */

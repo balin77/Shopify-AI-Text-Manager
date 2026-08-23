@@ -89,6 +89,18 @@ export function digestBaselineKey(locale: string, key: string): string {
 export interface StaleTranslation {
   key: string;
   locale: string;
+  /**
+   * The Shopify resource this translation actually lives on, when it is NOT the
+   * one being repaired. A product save moves its OPTIONS, OPTION VALUES and
+   * METAFIELDS too, and each of those is its own `translatableResource` with
+   * its own GID — but they are one merchant action, so they are repaired as one
+   * group: one Task row, one batched detection, one AI request per locale.
+   * Absent = the group's own resource, which is every content-type entry.
+   */
+  resourceId?: string;
+  /** `ContentTranslation.resourceType` (or the mirror's equivalent) for the
+   *  row above. Absent = the group's own. */
+  resourceType?: string;
   reason: StaleReason;
   /** The CURRENT primary value ("" when the field was cleared). */
   primaryValue: string;
