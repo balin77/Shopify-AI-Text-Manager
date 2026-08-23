@@ -956,7 +956,18 @@ interface MenuWriteProbeReport {
     digestChanged: boolean | null;
     errors: string[];
   };
-  cleanup: { deleted: boolean; errors: string[] };
+  typeRoundTrip: {
+    attempted: boolean;
+    menuId: string | null;
+    typesTried: string[];
+    createErrors: string[];
+    read: Array<{ type: string | null; title: string; url: string | null; resourceId: string | null }>;
+    asReadOk: boolean | null;
+    asReadErrors: string[];
+    withoutUrlOk: boolean | null;
+    withoutUrlErrors: string[];
+  };
+  cleanup: { deleted: boolean; typesMenuDeleted: boolean | null; errors: string[] };
   verdict: string[];
 }
 
@@ -1025,6 +1036,20 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   for (const e of r.translation.errors) lines.push(`  - error: ${e}`);
   lines.push("");
 
+  lines.push("## Item types that are neither HTTP nor resource-bound");
+  lines.push(`- Attempted: ${r.typeRoundTrip.attempted ? "yes" : "no"} (${r.typeRoundTrip.typesTried.join(", ") || "-"})`);
+  for (const item of r.typeRoundTrip.read) {
+    lines.push(`  - ${item.type ?? "-"} "${item.title}" url=${item.url ?? "-"} resourceId=${item.resourceId ?? "-"}`);
+  }
+  lines.push(`- Write-back exactly as read: ${yesNo(r.typeRoundTrip.asReadOk)}`);
+  for (const e of r.typeRoundTrip.asReadErrors) lines.push(`  - error: ${e}`);
+  if (r.typeRoundTrip.withoutUrlOk !== null) {
+    lines.push(`- Write-back with url stripped from non-HTTP items: ${yesNo(r.typeRoundTrip.withoutUrlOk)}`);
+    for (const e of r.typeRoundTrip.withoutUrlErrors) lines.push(`  - error: ${e}`);
+  }
+  for (const e of r.typeRoundTrip.createErrors) lines.push(`  - create error: ${e}`);
+  lines.push("");
+
   if (r.setup.errors.length > 0 || r.cleanup.errors.length > 0) {
     lines.push("## Setup / cleanup errors");
     for (const e of r.setup.errors) lines.push(`- setup: ${e}`);
@@ -1066,6 +1091,7 @@ function MenuWriteProbeCard() {
   const tone = (() => {
     if (!report) return "info" as const;
     if (report.setup.created && !report.cleanup.deleted) return "critical" as const;
+    if (report.typeRoundTrip.menuId && report.cleanup.typesMenuDeleted === false) return "critical" as const;
     if (report.verdict.some((v) => v.includes("⚠️") || v.includes("FAILED") || v.includes("BLOCKED"))) return "warning" as const;
     return "success" as const;
   })();
@@ -1081,18 +1107,22 @@ function MenuWriteProbeCard() {
           item left out of the list is deleted, whether a resource-bound item keeps its
           <code> resourceId</code>, and what a rename does to an existing translation. Also
           introspects <code>MenuItemCreateInput</code> / <code>MenuItemUpdateInput</code> from your shop.
+          A second throwaway menu answers whether a whole-tree write-back survives item types that
+          are neither HTTP nor resource-bound (<code>FRONTPAGE</code>, <code>SEARCH</code>, …) — every
+          default main menu has one, and a single refused field fails the entire mutation.
         </Text>
         <Banner tone="warning">
           <Text as="p">
-            This probe WRITES. It creates its own three-level menu under a stamped handle, measures on
-            it (including deleting one of its items) and deletes it again. Your real menus are never
+            This probe WRITES. It creates its own three-level menu under a stamped handle (plus a
+            second, tiny one for the item-type question), measures on them (including deleting one
+            item) and deletes both again. Your real menus are never
             read or written. A menu is only rendered by a theme that references its handle, so the
             throwaway one is invisible in the storefront for the seconds it exists — and if the delete
             ever fails, the report names the handle so you can remove it by hand.
           </Text>
         </Banner>
         <Checkbox
-          label="I understand this creates and deletes a throwaway menu in my shop"
+          label="I understand this creates and deletes two throwaway menus in my shop"
           checked={confirmed}
           onChange={(checked) => setConfirmed(checked)}
         />

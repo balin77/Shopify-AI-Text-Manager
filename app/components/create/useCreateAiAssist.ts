@@ -28,8 +28,6 @@ import { createAiSpecFor, LONG_TEXT_KEY_BY_RESOURCE } from "../../config/create-
 export interface CreateAiAssistOptions {
   /** Display name of the shop's primary language, e.g. "German". */
   mainLanguage: string;
-  /** §0.5 — the editor's own toggle is not in scope here, so the modal owns one. */
-  sendImageToAI: boolean;
 }
 
 export interface GenerateRestResult {
@@ -55,7 +53,7 @@ async function postAi(body: Record<string, string>): Promise<Record<string, unkn
   return data;
 }
 
-export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssistOptions) {
+export function useCreateAiAssist({ mainLanguage }: CreateAiAssistOptions) {
   const [busyField, setBusyField] = useState<string | null>(null);
   /** A warning CODE (`t.aiWarnings.*`), never a sentence. */
   const [aiError, setAiError] = useState<string | null>(null);
@@ -126,8 +124,10 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
               contextDescription,
               mainLanguage,
               explicitKeyword: values.keyword ?? "",
-              sendImageToAI: sendImageToAI && imageUrl ? "true" : "false",
-              ...(sendImageToAI && imageUrl ? { imageUrl } : {}),
+              // The image is OFFERED, never claimed: whether the AI may look
+              // at it is the shop's setting and is answered server-side
+              // ([vision-policy.shared.ts](../../services/ai/vision-policy.shared.ts)).
+              ...(imageUrl ? { imageUrl } : {}),
             });
             const generated = typeof data.generatedContent === "string" ? data.generatedContent : "";
             if (generated.trim()) filled[field.createKey] = generated;
@@ -154,7 +154,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
       if (Object.keys(filled).length === 0 && failed.length > 0) setAiError("allFailed");
       return { filled, failed, stuffingWarning };
     },
-    [mainLanguage, sendImageToAI],
+    [mainLanguage],
   );
 
   /**
@@ -179,7 +179,6 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
           imageUrl,
           productTitle: title,
           mainLanguage,
-          sendImageToAI: sendImageToAI ? "true" : "false",
         });
         if (token !== altToken.current) return null;
         const altText = typeof data.altText === "string" ? data.altText.trim() : "";
@@ -193,7 +192,7 @@ export function useCreateAiAssist({ mainLanguage, sendImageToAI }: CreateAiAssis
         setAltBusy(false);
       }
     },
-    [mainLanguage, sendImageToAI],
+    [mainLanguage],
   );
 
   return {

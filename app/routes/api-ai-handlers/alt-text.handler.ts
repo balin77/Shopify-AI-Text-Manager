@@ -7,6 +7,7 @@ import { withUserInstruction } from "~/utils/ai-user-instruction.server";
 import { safeJsonParse, isValidLocale, isValidShopifyGID } from "~/utils/validation";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "~/utils/logger.server";
+import { resolveVisionPolicy } from "~/services/ai/vision-policy.shared";
 import { TRANSLATE_CONTENT } from "../../graphql/content.mutations";
 import { getInstructionWithDefault } from "~/utils/ai-instructions.utils";
 import { getCharacterLimitRequirement } from "~/utils/character-limits";
@@ -45,7 +46,11 @@ export async function handleGenerateAltText(ctx: AIActionContext): Promise<DataR
   const imageUrl = getFormString(formData, "imageUrl");
   const productTitle = getFormString(formData, "productTitle");
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
-  const sendImageToAI = formData.get("sendImageToAI") === "true";
+  // The SHOP's switch, never the request's claim (this route takes a direct
+  // POST). Alt text is the one caller that ignores `aiImagesPerRequest`: it
+  // describes THIS image, and its siblings would only invite the model to
+  // describe the wrong one.
+  const sendImageToAI = resolveVisionPolicy(ctx.settings).sendImages;
 
   if (!imageUrl) {
     return json({ success: false, error: "No image URL provided" }, { status: 400 });
@@ -174,7 +179,9 @@ export async function handleGenerateAllAltTexts(ctx: AIActionContext): Promise<D
   const productTitle = getFormString(formData, "productTitle");
   const mainLanguage = getFormString(formData, "mainLanguage") || "German";
   const imagesDataJson = getFormString(formData, "imagesData");
-  const sendImageToAI = formData.get("sendImageToAI") === "true";
+  // Same shop switch. The batch still sends ONE image per call — it loops —
+  // so `aiImagesPerRequest` has nothing to say here either.
+  const sendImageToAI = resolveVisionPolicy(ctx.settings).sendImages;
 
   if (!imagesDataJson) {
     return json({ success: false, error: "No images data provided" }, { status: 400 });
