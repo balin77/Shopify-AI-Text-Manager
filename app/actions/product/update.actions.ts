@@ -1602,9 +1602,27 @@ async function updatePrimaryProduct(
         // at all, so there is nothing on the storefront to repair — a product
         // resync fills the id in (CLAUDE.md).
         const imageIdByMedia = new Map<string, string>();
+        const unaddressableImageIds: string[] = [];
         for (const index of changedAltTextIndices) {
           const image = dbProduct?.images?.[index];
-          if (image?.mediaId) imageIdByMedia.set(image.mediaId, image.id);
+          if (!image) continue;
+          if (image.mediaId) imageIdByMedia.set(image.mediaId, image.id);
+          else unaddressableImageIds.push(image.id);
+        }
+
+        // An image the cache cannot address on Shopify gets what it always got:
+        // its local rows go. They cannot be refreshed (there is no resource id
+        // to register against) and leaving them would show the editor a foreign
+        // alt for a primary text that just changed — which is the deletion path
+        // this branch replaces, unchanged for exactly this case.
+        if (unaddressableImageIds.length > 0) {
+          await db.productImageAltTranslation.deleteMany({
+            where: {
+              imageId: { in: unaddressableImageIds },
+              marketId: "",
+              locale: { in: foreignLocales },
+            },
+          });
         }
 
         if (imageIdByMedia.size > 0) {

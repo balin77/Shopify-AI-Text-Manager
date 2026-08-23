@@ -1196,8 +1196,12 @@ async function repairStaleTranslations(
   if (mayPurge && purge.length > 0) {
     removed = await purgeStaleEntries(gateway, target, mirror, purge);
     // Protect what we just changed from a racing webhook sync that re-fetches
-    // Shopify before it is consistent again.
-    markTranslationSaved(resourceId);
+    // Shopify before it is consistent again — under the SAME key as every other
+    // claim in this module. Marking the bare `resourceId` here made a
+    // private-lock repair claim the product after all as soon as one of its
+    // entries was a cleared value, which is exactly what `lockId` exists to
+    // stop.
+    markTranslationSaved(lockId);
   }
 
   // The AI re-translation is DETACHED. Two of the callers (the single-item
@@ -1223,12 +1227,17 @@ async function repairStaleTranslations(
       // only the product would never see the merchant's hand-written value land
       // — the one rule that is supposed to protect it would not fire, and the
       // AI would overwrite it minutes later.
+      // What a merchant write on would make this run stand down: our own lock,
+      // plus every resource whose translations this run is about to replace.
+      //
+      // The group's `resourceId` is included ONLY when it is the lock too. With
+      // a private lock that id belongs to a DIFFERENT repair — an article save
+      // runs the content repair and the featured-alt repair on one id — and its
+      // inline claim would abort this run mid-locale, leaving the rest of the
+      // entries in neither list: neither refreshed nor purged, on a surface
+      // nothing else revisits. A sibling of ours is not the merchant.
       const watched = [
-        ...new Set([
-          lockId,
-          resourceId,
-          ...retranslate.map((entry) => entry.resourceId ?? resourceId),
-        ]),
+        ...new Set([lockId, ...retranslate.map((entry) => entry.resourceId ?? resourceId)]),
       ];
       const savedAtStart = new Map(watched.map((id) => [id, translationSavedAt(id)]));
       const supersededByMerchant = () =>

@@ -946,6 +946,22 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(isTranslationRecentlySaved(fresh)).toBe(false);
   });
 
+  it("a SIBLING repair's own claim does not abort a private-lock run", async () => {
+    // An article save runs the content repair and the featured-alt repair on
+    // one id. With the group id in the watch list, the sibling's inline claim
+    // aborted this run mid-locale and its remaining entries landed in neither
+    // list — neither refreshed nor purged, on a surface nothing else revisits.
+    const fresh = freshProduct();
+    const run = reconcileAfterPrimarySave(
+      groupParams({ resourceId: fresh, lockId: `${fresh}#subResources` }),
+    );
+    markTranslationSaved(fresh); // the sibling, mid-flight
+    await run;
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets.sort()).toEqual([METAFIELD, OPTION, VALUE].sort());
+  });
+
   it("chunks the values instead of building one oversized prompt", async () => {
     const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
     primary = Object.fromEntries(

@@ -990,11 +990,31 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
             contentKind: "page",
             taskResourceType: "templates",
             resourceTitle: themeGroups?.find((g) => g.groupId === groupId)?.groupName || groupId,
-            changed: savedChangedFields.map((key) => ({
-              resourceId: keyToResourceId.get(key) || resourceId,
-              resourceType: "OnlineStoreTheme",
-              key,
-            })),
+            // §5.2 cross-theme guard, the same one the foreign REGISTER path
+            // above applies: a stale or mis-scoped resource id would otherwise
+            // have translations written into a FOREIGN theme by this path while
+            // the sibling path in the very same request refuses the identical
+            // write. Theme-agnostic resources (no embedded theme id) and an
+            // unset selection are allowed, exactly as there.
+            changed: savedChangedFields
+              .map((key) => ({
+                resourceId: keyToResourceId.get(key) || resourceId,
+                resourceType: "OnlineStoreTheme",
+                key,
+              }))
+              .filter((entry) => {
+                const entryThemeId = extractThemeIdFromResourceId(entry.resourceId);
+                if (!selectedThemeId || !entryThemeId || entryThemeId === selectedThemeId) {
+                  return true;
+                }
+                logger.error("[TEMPLATES] Cross-theme re-translation blocked", {
+                  context: "Templates",
+                  resourceId: entry.resourceId,
+                  entryThemeId,
+                  selectedThemeId,
+                });
+                return false;
+              }),
             foreignLocales,
             policy: changePolicy!,
             mirror: themeTranslationMirror(session.shop, groupId, domain),
