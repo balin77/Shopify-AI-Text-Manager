@@ -25,8 +25,8 @@ Was der heutige Schreibweg **nicht** kann und auch nicht können soll: er ist al
 
 Für den Editor ist das eine gute Nachricht: **Umsortieren, Verschachteln, Anlegen, Löschen und Ziel-Ändern sind alle derselbe Aufruf.** Es gibt nichts zusätzlich zu erfinden — nur einen anderen Baum zu schicken. Der ganze Rest dieses Plans dreht sich um zwei Fragen, die daraus entstehen:
 
-1. **Woher kommt der Baum, den wir schicken?** Heute: aus einem frischen Lesevorgang. Künftig: aus dem Editor. Damit verliert der frische Lesevorgang seine Rolle als „Quelle für alles, was wir nicht anfassen" — Positionen sind jetzt genau das, was der Händler anfasst.
-2. **Was ist dann noch eine Drift?** Heute: jede Abweichung ⇒ Absage. Künftig: eine Absage bei jeder fremden Änderung wäre unbrauchbar, weil der Editor länger offen steht. Es braucht eine **Zusammenführung** statt einer Verweigerung.
+1. **Woher kommt der Baum, den wir schicken?** Heute: aus einem frischen Lesevorgang. Künftig: aus dem Editor. Damit verliert der frische Lesevorgang seine Rolle als „Quelle für alles, was wir nicht anfassen" — Positionen sind jetzt genau das, was der Händler anfasst. **Gebaut** (Etappe 1): er bleibt die Quelle für alles PRO PUNKT, was der Editor nicht zeigt — `url`, `resourceId`, `tags` —, während Titel, Position und Elternteil aus dem Editor kommen und das Ziel nur dann, wenn der Händler es wirklich umgehängt hat.
+2. **Was ist dann noch eine Drift?** Der Plan sah eine Drei-Wege-**Zusammenführung** vor. Gebaut ist sie **nicht**, und das ist eine Entscheidung: eine Zusammenführung erzeugt einen Baum, den niemand angesehen hat, und bei einer Mutation, deren Auslassung LÖSCHT, ist das die teure Sorte falsch. Stattdessen wird verweigert **und beschrieben** — `describeFingerprintDrift` liest aus den beiden Fingerprints, was jemand anders umbenannt, hinzugefügt, entfernt oder verschoben hat, ohne eine einzige zusätzliche Abfrage. Der Händler lädt neu (sein Entwurf bleibt) und entscheidet selbst. Die Zusammenführung bleibt möglich, sobald es Belege gibt, dass Händler die Absage überhaupt erreichen.
 
 ---
 
@@ -249,7 +249,8 @@ Bis dahin gilt für einen Typ ohne Picker dieselbe Regel wie bei den Metaobjekt-
 | Phase | Inhalt | Warum in dieser Reihenfolge |
 |---|---|---|
 | **0** | Sonde um §2.1–§2.4 erweitern, einmal laufen lassen | §2.1 kann den Rest umwerfen |
-| **1** | Drei-Bäume-Diff + `saveMenuTree` mit **Reihenfolge und Verschachtelung**; Editor-UI mit dnd-kit; Änderungsliste über dem Speichern | größter Nutzen, keine neuen Eingabemasken |
+| **1a** | ✅ **GEBAUT**: `menu-tree.shared.ts` (Diff, betroffene Menge, Validierung), `menu-tree.server.ts` (`saveMenuTree`), `menu-translation-repair.server.ts` (Sichern/Zurückschreiben über Sprachen UND Märkte), 33 Tests | der Server zuerst, damit die Oberfläche gegen etwas Geprüftes gebaut wird |
+| **1b** | Editor-UI mit dnd-kit (Klemmung bei 3), Änderungsliste über dem Speichern, Löschbestätigung, Drift-Banner mit „neu laden" | — |
 | **2** | Anlegen und Löschen, inkl. zweiphasigem Speichern (§4.1) | braucht die ID-Zuordnung aus Phase 1 |
 | **3** | Ziel ändern (Ressourcen-Picker) | größter Aufwand, geringste Häufigkeit |
 | **4** | Menütitel, Handle mit Theme-Prüfung, Menü anlegen/löschen | unabhängig, jederzeit einschiebbar |
