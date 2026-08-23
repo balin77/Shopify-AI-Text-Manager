@@ -992,6 +992,14 @@ interface MenuWriteProbeReport {
     valueAfterDelete: string | null;
     errors: string[];
   };
+  translationDurability: {
+    attempted: boolean;
+    menuId: string | null;
+    locale: string | null;
+    links: Array<{ role: string; linkId: string }>;
+    observations: Array<{ stage: string; role: string; value: string | null; outdated: boolean | null }>;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -1114,6 +1122,25 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   lines.push(`- Link resource still resolves: ${yesNo(r.deleteTranslation.resourceStillResolves)}`);
   lines.push(`- Value after the delete: ${r.deleteTranslation.valueAfterDelete ?? "(gone)"}`);
   for (const e of r.deleteTranslation.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  lines.push("## Which write kills a translation?");
+  lines.push(`- Attempted: ${r.translationDurability.attempted ? "yes" : "no"} (locale ${r.translationDurability.locale ?? "-"})`);
+  const stages = [...new Set(r.translationDurability.observations.map((o) => o.stage))];
+  const roles = [...new Set(r.translationDurability.observations.map((o) => o.role))];
+  if (stages.length > 0) {
+    lines.push(`| stage | ${roles.join(" | ")} |`);
+    lines.push(`|---|${roles.map(() => "---").join("|")}|`);
+    for (const stage of stages) {
+      const cells = roles.map((role) => {
+        const o = r.translationDurability.observations.find((x) => x.stage === stage && x.role === role);
+        if (!o) return "-";
+        return o.value ? (o.outdated ? "present (outdated)" : "present") : "GONE";
+      });
+      lines.push(`| ${stage} | ${cells.join(" | ")} |`);
+    }
+  }
+  for (const e of r.translationDurability.errors) lines.push(`  - error: ${e}`);
   lines.push("");
 
   lines.push("## Item types that are neither HTTP nor resource-bound");
