@@ -43,6 +43,7 @@ import { logger } from "~/utils/logger.server";
 import { checkAndSyncSubscription, getCurrentSubscription, getTrialInfo } from "~/services/billing.server";
 import { resolveDevPlanMode } from "~/services/dev-plan-override.server";
 import { getImageOperationUsage } from "~/utils/imageOperations.server";
+import { clampImagesPerRequest } from "~/services/ai/vision-policy.shared";
 
 /**
  * Shallow value-equality for the sparse `seoLimits` JSON blob. Used by the
@@ -584,6 +585,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
         // Theme-settings richtext handling: "autofix" | "normalize" | "error"
         themeRichtextMode: settings.themeRichtextMode || 'autofix',
+
+        // May the AI look at the shop's images, and at how many per request?
+        // ONE answer for the whole app, edited in AI instructions → General.
+        sendImagesToAI: settings.sendImagesToAI ?? false,
+        aiImagesPerRequest: clampImagesPerRequest(settings.aiImagesPerRequest),
       },
       instructions: {
         // General (Writing Style Instructions)
@@ -810,6 +816,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const purgeUpdate =
         rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
 
+
       // (The Max gate for autoTranslateExternalChanges already ran above, so
       // `autoTranslateUpdate` is either the entitled change or empty.)
       const translationSettingsUpdate = {
@@ -829,6 +836,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           },
         });
       }
+
+      return json({ success: true, actionType });
+    } else if (actionType === "saveAiVision") {
+      /**
+       * May the AI look at the shop's images, and at how many per request.
+       *
+       * Its OWN action rather than a rider on `saveInstructions`, for two
+       * reasons. Free and Basic see the instructions card read-only — it holds
+       * the default instructions on those plans — and this switch has to stay
+       * reachable there, because it was a checkbox in the content editor's
+       * toolbar on every plan before it moved here. And `saveInstructions`
+       * writes `data.<field> || null` for every instruction it knows: a save
+       * that carried only these two fields would blank the lot.
+       *
+       * Present-or-absent per field, and the count goes through the same clamp
+       * the Select is built from — this action takes a direct POST, so a
+       * stored 500 would be 500 images on every generation.
+       */
+      const rawSendImages = formData.get("sendImagesToAI");
+      const rawImagesPerRequest = formData.get("aiImagesPerRequest");
+      const visionUpdate = {
+        ...(rawSendImages === null ? {} : { sendImagesToAI: rawSendImages === "true" }),
+        ...(rawImagesPerRequest === null
+          ? {}
+          : { aiImagesPerRequest: clampImagesPerRequest(Number(rawImagesPerRequest)) }),
+      };
+      if (Object.keys(visionUpdate).length === 0) {
+        return json({ success: true, actionType });
+      }
+
+      await db.aISettings.upsert({
+        where: { shop: session.shop },
+        update: visionUpdate,
+        create: { shop: session.shop, ...visionUpdate, preferredProvider: "claude" },
+      });
 
       return json({ success: true, actionType });
     } else if (actionType === "saveAppLanguage") {
@@ -1659,6 +1701,8 @@ export default function SettingsPage() {
                     translationPurgeOnPrimaryChange={settings.translationPurgeOnPrimaryChange}
                     autoTranslateExternalChanges={settings.autoTranslateExternalChanges}
                     subscriptionPlan={subscriptionPlan as Plan}
+                    sendImagesToAI={settings.sendImagesToAI}
+                    aiImagesPerRequest={settings.aiImagesPerRequest}
                   />
                 </>
               )}

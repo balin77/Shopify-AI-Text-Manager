@@ -20,7 +20,7 @@ import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { MarketSelector } from "./MarketSelector";
 import { useI18n } from "../../contexts/I18nContext";
-import type { ShopLocale, TranslatableItem, ContentType, ContentImage, MarketInfo } from "../../types/content-editor.types";
+import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../../types/content-editor.types";
 
 interface MobileToolbarProps {
   shopLocales: ShopLocale[];
@@ -66,14 +66,9 @@ interface MobileToolbarProps {
   // Operation handlers (Save/Discard are handled by the native save bar)
   onTranslateAll: () => void;
   onClearAll: () => void;
-  onToggleSendImageToAI?: () => void;
   /** Hides Translate All / Clear All — used for locked app-embed technical groups. */
   disableBulkActions?: boolean;
 
-  // Send image to AI feature
-  sendImageToAI?: boolean;
-  images?: ContentImage[];
-  featuredImage?: ContentImage;
 
   // Global AI action state (from global store, persists across navigation)
   isTranslatingGlobal?: boolean;
@@ -90,8 +85,7 @@ interface MobileToolbarProps {
     translateAll?: string;
     translating?: string;
     clearAll?: string;
-    sendImageToAI?: string;
-    reloadItemTooltip?: string;
+      reloadItemTooltip?: string;
     allMarketsGlobal?: string;
     marketSelectorLabel?: string;
     marketTooltip?: string;
@@ -117,11 +111,7 @@ export function MobileToolbar({
   onTranslateAll,
   onClearAll,
   itemActions,
-  onToggleSendImageToAI,
   disableBulkActions = false,
-  sendImageToAI = false,
-  images = [],
-  featuredImage,
   isTranslatingGlobal = false,
   reloadResourceId,
   reloadResourceType,
@@ -219,17 +209,6 @@ export function MobileToolbar({
                   destructive: true,
                 },
                 ]),
-                // Send image to AI checkbox (only in main language for products/collections/blogs with images)
-                ...((currentLanguage === primaryLocale &&
-                   (contentType === "products" || contentType === "collections" || contentType === "blogs") &&
-                   (images.length > 0 || featuredImage?.url) &&
-                   onToggleSendImageToAI) ? [{
-                  content: `${sendImageToAI ? '✓' : ''} ${t.sendImageToAI || "📷 Send image to AI"}`,
-                  onAction: () => {
-                    onToggleSendImageToAI();
-                    closePopover();
-                  },
-                }] : []),
                 // The item itself: visible or not, copy it, delete it. Same
                 // set and same order as the desktop action bar.
                 ...(itemActions?.onToggleStatus && itemActions.statusLabel ? [{

@@ -52,6 +52,30 @@ model AISettings {
   //   "error"     — never rewrite merchant HTML; surface a clear instruction.
   themeRichtextMode String @default("autofix")
 
+  // May the AI LOOK at the shop's images, and at how many per request?
+  //
+  // ONE answer for the whole app (AI instructions → General). It used to be a
+  // checkbox in the content editor's toolbar that reset to off on every page
+  // load, was absent from the create dialog until recently, and was hardcoded
+  // to FALSE in the alt-text action the image manager posts to — so the same
+  // merchant got three different behaviours depending on which button they
+  // pressed. The client no longer sends the flag at all: it sends the image
+  // URLs it has and the SERVER decides, which is also the only way to gate it
+  // (every AI route takes a direct POST).
+  //
+  // Off by default: vision costs more per call than text, two of the six
+  // providers cannot do it at all, and nobody should pay for a feature they
+  // did not ask for.
+  sendImagesToAI Boolean @default(false)
+
+  // How many images one generation may carry. 1 keeps the historic behaviour
+  // (the selected image, or the featured one). Clamped to
+  // AI_IMAGES_PER_REQUEST_MAX on both sides — each image is a separate cost,
+  // and for Gemini a separate download inside the request. Alt text ignores
+  // this entirely: it describes ONE image, and sending its siblings along
+  // would only invite the model to describe the wrong one.
+  aiImagesPerRequest Int @default(1)
+
   // PLAN_CONTENT_CREATION §Phase 3.3 / §A1 — create a URL redirect when a
   // handle changes.
   //

@@ -30,7 +30,7 @@ import { ItemStatusSwitch } from "./unified/ItemStatusSwitch";
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import type { ReactNode } from "react";
 import type { RenderedGroupField } from "../types/content-editor.types";
-import { Page, Card, Text, BlockStack, InlineStack, Button, Banner, Modal, TextContainer, TextField, Icon, Spinner, Checkbox } from "@shopify/polaris";
+import { Page, Card, Text, BlockStack, InlineStack, Button, Banner, Modal, TextContainer, TextField, Icon, Spinner } from "@shopify/polaris";
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, DeleteIcon } from "@shopify/polaris-icons";
 import { useSeoSettings } from "../contexts/SeoSettingsContext";
 import { UnifiedItemList } from "./unified/UnifiedItemList";
@@ -1668,10 +1668,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                   onTranslateAll={state.currentLanguage === primaryLocale ? handlers.handleTranslateAll : handlers.handleTranslateAllForLocale}
                   onClearAll={state.currentLanguage === primaryLocale ? handlers.handleClearAllClick : handlers.handleClearAllForLocaleClick}
                   disableBulkActions={isEmbedTechnical}
-                  onToggleSendImageToAI={handlers.handleToggleSendImageToAI}
-                  sendImageToAI={state.sendImageToAI}
-                  images={state.images}
-                  featuredImage={state.featuredImage ?? undefined}
                   isTranslatingGlobal={isAllLocalesActionRunning || isPerLocaleActionRunning}
                   reloadResourceId={selectedItem.id}
                   reloadResourceType={getReloadResourceType(config.contentType, selectedItem.id)}
@@ -1757,7 +1753,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                     translateAll: t.content?.translateAll || "🌍 Translate All",
                     translating: t.content?.translating || "Translating...",
                     clearAll: t.content?.clearAll || "Clear All",
-                    sendImageToAI: t.content?.sendImageToAI || "📷 Send image to AI",
                     reloadItemTooltip: t.content?.reloadItemTooltip,
                     allMarketsGlobal: t.content?.market?.allMarketsGlobal || "All markets (global)",
                     marketSelectorLabel: t.content?.market?.selectorLabel || "Market",
@@ -1849,15 +1844,6 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             >
                               🗑️ {t.content?.clearAll || "Clear All"}
                             </Button>
-                          )}
-                          {/* Send Image to AI checkbox - only in main language for products/collections/blogs with images */}
-                          {(config.contentType === "products" || config.contentType === "collections" || config.contentType === "blogs") &&
-                           (state.images?.length > 0 || state.featuredImage?.url) && (
-                            <Checkbox
-                              label={t.content?.sendImageToAI || "📷 Send image to AI"}
-                              checked={state.sendImageToAI}
-                              onChange={handlers.handleToggleSendImageToAI}
-                            />
                           )}
                         </>
                       ) : (

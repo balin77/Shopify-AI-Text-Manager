@@ -390,7 +390,6 @@ export const es: Translation = {
     translateAll: "Traducir todo",
     translating: "Traduciendo...",
     clearAll: "Limpiar todo",
-    sendImageToAI: "Enviar imagen a IA",
     // Traducciones específicas por mercado ("Traducir y adaptar")
     market: {
       allMarketsGlobal: "Todos los mercados (global)",
@@ -825,8 +824,6 @@ export const es: Translation = {
       generateRestHint: "Los prompts se envían a la IA junto con la creación del elemento. Solo se rellenan los campos vacíos: lo que hayas escrito se mantiene.",
       generatedNeedsFixing: "La IA ha escrito su parte, pero algo no encaja todavía: revisa los campos marcados.",
       generatingField: "Escribiendo {field}…",
-      sendImageToAI: "Permitir que la IA vea la imagen",
-      sendImageToAIHint: "Desactivado, la IA solo ve tus textos y no puede decir nada de la imagen que no esté ya en el título. Activado, la imagen viaja con el prompt: cuesta algo más y requiere un modelo capaz de leer imágenes. Si lo activas ahora, también se reescribe el texto alternativo.",
       translateAfterwards: "Traducir después a todos los idiomas",
       translateAfterwardsHint: "Se ejecuta justo después de crearlo, con el indicador de progreso habitual.",
       translatingAfterCreate: "Traduciendo a tus otros idiomas…",
@@ -997,6 +994,12 @@ export const es: Translation = {
     appLanguage: "Idioma de la aplicación",
     translations: "Traducciones",
     keywordAwareTranslation: "Incorporar palabras clave en las traducciones",
+    // Instrucciones de IA → General: UN interruptor para toda la app.
+    aiVisionHeading: "Imágenes",
+    aiVisionToggle: "Permitir que la IA vea las imágenes",
+    aiVisionHelp: "Desactivado, la IA solo ve tus textos y no puede decir de una imagen nada que no esté ya en el título. Activado, la imagen viaja hasta el modelo: cuesta más por solicitud y requiere un modelo capaz de ver (HuggingFace y DeepSeek no pueden). Se aplica en todas partes: el editor, el diálogo de creación, los textos alternativos y el gestor de imágenes.",
+    aiImagesPerRequestLabel: "Imágenes por solicitud",
+    aiImagesPerRequestHelp: "Cuántas imágenes de un producto puede llevar una generación de texto: más imágenes significan más contexto y más coste. La imagen que tengas seleccionada va siempre la primera. Los textos alternativos quedan al margen: allí viaja exactamente la imagen que se describe.",
     keywordAwareTranslationHelp: "Al traducir, el texto se redacta de modo que aparezca la palabra clave registrada para ese idioma de destino, en lugar de traducir el original de forma literal. Los idiomas sin palabras clave propias se traducen sin cambios. Desactívalo si las traducciones deben ser estrictamente fieles.",
     translationChangeHeading: "Al cambiar el idioma principal",
     translationPurgeOnPrimaryChange: "Eliminar las traducciones cuando el texto del idioma principal se modifica o se borra",

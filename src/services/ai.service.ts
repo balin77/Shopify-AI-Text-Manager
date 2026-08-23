@@ -1769,14 +1769,20 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return inputTokens + outputTokens;
   }
 
-  private async askAI(prompt: string, imageUrl?: string): Promise<string> {
+  /**
+   * `imageUrls` rather than one `imageUrl`: how many images a generation may
+   * carry is a merchant setting now (AISettings.aiImagesPerRequest), and the
+   * handlers have already clamped the list by the time it gets here. An empty
+   * or absent list is the text-only path, byte-identical to what it was.
+   */
+  private async askAI(prompt: string, imageUrls?: string[]): Promise<string> {
     // Circuit breaker: a previous call on this instance already saw the
     // provider reject the key — fail fast instead of firing more 401s.
     if (this.authError) throw this.authError;
 
     // Save prompt to database if taskId is provided
     if (this.taskId && this.shop) {
-      await this.savePromptToTask(prompt, imageUrl);
+      await this.savePromptToTask(prompt, imageUrls);
     }
 
     let response: string;
@@ -1784,7 +1790,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     try {
       // If no shop/taskId provided, execute directly (backward compatibility)
       if (!this.shop || !this.taskId) {
-        response = await this.executeAIRequest(prompt, imageUrl);
+        response = await this.executeAIRequest(prompt, imageUrls);
       } else {
         // Use queue for rate-limited execution
         const estimatedTokens = this.estimateTokens(prompt);
@@ -1794,7 +1800,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
           this.taskId,
           this.provider,
           estimatedTokens,
-          () => this.executeAIRequest(prompt, imageUrl)
+          () => this.executeAIRequest(prompt, imageUrls)
         );
       }
     } catch (error) {
@@ -1817,7 +1823,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return AIService.stripMarkdownFence(response);
   }
 
-  private async savePromptToTask(prompt: string, imageUrl?: string): Promise<void> {
+  private async savePromptToTask(prompt: string, imageUrls?: string[]): Promise<void> {
     try {
       const { db } = await import('../../app/db.server');
 
@@ -1844,10 +1850,13 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         }
       }
 
-      // Add image indicator to prompt if image is included
+      // Add image indicator to prompt if images are included. The COUNT is
+      // named as well as the URLs: the task log is where a merchant asks why a
+      // generation cost what it did, and "three images" is the answer.
       let fullPrompt = prompt;
-      if (imageUrl) {
-        fullPrompt = `[📷 Image attached: ${imageUrl}]\n\n${prompt}`;
+      if (imageUrls && imageUrls.length > 0) {
+        const label = imageUrls.length === 1 ? "Image attached" : `${imageUrls.length} images attached`;
+        fullPrompt = `[📷 ${label}: ${imageUrls.join(", ")}]\n\n${prompt}`;
       }
 
       // Add new prompt with timestamp (store full prompt, no truncation)
@@ -1932,7 +1941,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
   private static readonly INPUT_TOO_LONG_MESSAGE =
     'The text is too long for the AI model to process. Please shorten the content and try again.';
 
-  private async executeAIRequest(prompt: string, imageUrl?: string): Promise<string> {
+  private async executeAIRequest(prompt: string, imageUrls?: string[]): Promise<string> {
     let timer: NodeJS.Timeout | undefined;
     try {
       // Backstop timeout: even if a provider SDK ignores its own timeout
@@ -1945,7 +1954,7 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
         );
       });
       return await Promise.race([
-        this._executeAIRequestInner(prompt, imageUrl),
+        this._executeAIRequestInner(prompt, imageUrls),
         timeoutPromise,
       ]);
     } catch (error) {
@@ -1958,7 +1967,31 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
   }
 
-  private async _executeAIRequestInner(prompt: string, imageUrl?: string): Promise<string> {
+  private async _executeAIRequestInner(prompt: string, imageUrls?: string[]): Promise<string> {
+    // One local truth for "is this a vision call": every provider branch below
+    // asks the same question, and a branch that asked it differently is how a
+    // text-only provider would end up with an image in its payload.
+    //
+    // Filtered, not validated-or-thrown. Three of the four vision providers get
+    // the URL and fetch it THEMSELVES, so nothing here ever checked it — which
+    // was harmless only while the paths that carry a merchant-supplied URL had
+    // vision switched off. They no longer do: the image manager offers its
+    // generate button on a tile that is still uploading, whose "URL" is a local
+    // `blob:` preview, and handing that to Claude fails the whole call where it
+    // used to quietly write from the title. So an unusable URL is DROPPED and
+    // the generation goes ahead text-only.
+    //
+    // The bar is `https:` rather than the CDN allowlist `fetchImageAsBase64`
+    // applies: that list exists because on the Gemini path WE do the fetching,
+    // and imposing it here would refuse the staged-upload URL of an image the
+    // merchant attached seconds ago in the create dialog — a real picture that
+    // is not on the CDN yet.
+    const images = (imageUrls ?? []).filter((url) => AIService.isSendableImageUrl(url));
+    const dropped = (imageUrls?.length ?? 0) - images.length;
+    if (dropped > 0) {
+      loggers.ai('warn', '[AI-SERVICE] Dropped image URL(s) the model cannot be given', { dropped });
+    }
+    const hasImages = images.length > 0;
     if (this.provider === 'huggingface' && this.huggingface) {
       // HuggingFace: text-only (no vision support)
       const response = await this.huggingface.chatCompletion({
@@ -1973,16 +2006,19 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       return hfContent;
     } else if (this.provider === 'gemini' && this.gemini) {
       // Gemini: supports vision with URL
-      if (imageUrl) {
+      if (hasImages) {
         try {
+          // Gemini takes the BYTES, so every image is a download inside this
+          // request. In PARALLEL, and that is not a micro-optimisation: each
+          // fetch has its own 30s timeout while the whole call races a 120s
+          // budget from OUTSIDE this function — five sequential slow images
+          // would blow it, and the rejection lands past the catch below, so
+          // the text-only fallback that makes a slow CDN survivable never
+          // runs. Bounded by AI_IMAGES_PER_REQUEST_MAX either way.
+          const encoded = await Promise.all(images.map((url) => this.fetchImageAsBase64(url)));
           const result = await this.gemini.generateContent([
             { text: prompt },
-            {
-              inlineData: {
-                mimeType: 'image/jpeg',
-                data: await this.fetchImageAsBase64(imageUrl),
-              },
-            },
+            ...encoded.map((data) => ({ inlineData: { mimeType: 'image/jpeg', data } })),
           ]);
           const response = await result.response;
           const geminiText = response.text();
@@ -2007,14 +2043,16 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       }
     } else if (this.provider === 'claude' && this.anthropic) {
       // Claude: supports vision with URL
-      if (imageUrl) {
+      if (hasImages) {
         const message = await this.anthropic.messages.create({
           model: this.getModel(),
           max_tokens: 8192,
           messages: [{
             role: 'user',
             content: [
-              { type: 'image', source: { type: 'url', url: imageUrl } },
+              // Images FIRST, then the prompt — the order every branch here
+              // uses, and the one Anthropic documents for multi-image prompts.
+              ...images.map((url) => ({ type: 'image' as const, source: { type: 'url' as const, url } })),
               { type: 'text', text: prompt },
             ],
           }],
@@ -2036,14 +2074,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       }
     } else if (this.provider === 'openai' && this.openai) {
       // GPT-4o: supports vision with URL
-      if (imageUrl) {
+      if (hasImages) {
         const completion = await this.openai.chat.completions.create({
           model: this.getModel(),
           messages: [{
             role: 'user',
             content: [
-              { type: 'image_url', image_url: { url: imageUrl } },
-              { type: 'text', text: prompt },
+              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+              { type: 'text' as const, text: prompt },
             ],
           }],
           max_tokens: 8192,
@@ -2065,14 +2103,14 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
       }
     } else if (this.provider === 'grok' && this.grok) {
       // Grok: supports vision with URL (similar to GPT-4o)
-      if (imageUrl) {
+      if (hasImages) {
         const completion = await this.grok.chat.completions.create({
           model: this.getModel(),
           messages: [{
             role: 'user',
             content: [
-              { type: 'image_url', image_url: { url: imageUrl } },
-              { type: 'text', text: prompt },
+              ...images.map((url) => ({ type: 'image_url' as const, image_url: { url } })),
+              { type: 'text' as const, text: prompt },
             ],
           }],
           max_tokens: 8192,
@@ -2109,6 +2147,24 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     }
 
     throw new Error('No AI provider configured');
+  }
+
+  /**
+   * Can this URL be handed to a provider at all?
+   *
+   * Deliberately weaker than `validateImageUrl` (see the call site): it only
+   * asks whether the string is an absolute `https:` URL, which is what rules
+   * out the `blob:` and `data:` previews a client can hold, plus plain-http and
+   * file URLs. It does NOT throw — a bad URL costs its image, never the
+   * generation.
+   */
+  private static isSendableImageUrl(url: string | null | undefined): url is string {
+    if (typeof url !== 'string' || !url.trim()) return false;
+    try {
+      return new URL(url.trim()).protocol === 'https:';
+    } catch {
+      return false;
+    }
   }
 
   /** Allowed Shopify CDN hostnames for image fetching. */
@@ -2207,30 +2263,36 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
     return directive ? `${prompt}\n\n${directive}` : prompt;
   }
 
+  /**
+   * `imageUrls` is already the merchant's policy applied: the handler read
+   * AISettings and clamped the list, so an empty array here means "no vision
+   * for this shop" as much as it means "this item has no picture". This layer
+   * asks no further questions about it.
+   */
   async generateProductTitle(
     prompt: string,
-    imageUrl?: string,
+    imageUrls?: string[],
     glossary?: { contextTexts: string[]; locale: string },
   ): Promise<string> {
     // The prompt is already built by the caller with AI Instructions
     // Just execute it directly without adding additional instructions
     return await this.askAI(
       glossary ? await this.appendGlossary(prompt, glossary.contextTexts, glossary.locale) : prompt,
-      imageUrl,
+      imageUrls,
     );
   }
 
   async generateProductDescription(
     title: string,
     prompt: string,
-    imageUrl?: string,
+    imageUrls?: string[],
     glossary?: { contextTexts: string[]; locale: string },
   ): Promise<string> {
     // The prompt is already built by the caller with AI Instructions
     // Just execute it directly without adding additional instructions
     return await this.askAI(
       glossary ? await this.appendGlossary(prompt, [title, ...glossary.contextTexts], glossary.locale) : prompt,
-      imageUrl,
+      imageUrls,
     );
   }
 
@@ -2241,6 +2303,12 @@ ${JSON.stringify(jsonStructure, null, 2)}`;
    *
    * `glossary` is optional so the many call sites that have no locale to hand
    * stay byte-identical rather than guessing one.
+   */
+  /**
+   * ONE image, always — the one being described. `aiImagesPerRequest` is
+   * deliberately not consulted: an alt text for image 3 that also carries
+   * images 1, 2, 4 and 5 is an invitation to describe the wrong one.
+   * `sendImageToAI` here is the shop's switch, resolved by the caller.
    */
   async generateImageAltText(imageUrl: string, productTitle?: string, customPrompt?: string, sendImageToAI: boolean = false, glossary?: { contextTexts: string[]; locale: string }): Promise<string> {
     // Sanitize product title if provided
@@ -2265,7 +2333,7 @@ Return only the alt text, without additional explanations. Output the result in 
     // Send image to vision-capable AI models if sendImageToAI is enabled
     return await this.askAI(
       glossary ? await this.appendGlossary(prompt, [sanitizedTitle, ...glossary.contextTexts], glossary.locale) : prompt,
-      sendImageToAI ? imageUrl : undefined,
+      sendImageToAI ? [imageUrl] : undefined,
     );
   }
 
