@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   splitDetailsFields,
   isDetailsAsideField,
-  isFullWidthDetailsField,
+  isDetailsEditorField,
   isHalfHeightDetailsField,
 } from "../../app/config/details-layout";
 import {
@@ -84,17 +84,32 @@ describe("splitDetailsFields", () => {
     expect(layout.grid).toHaveLength(1);
   });
 
-  it("returns two empty regions for an empty field list", () => {
-    expect(splitDetailsFields([])).toEqual({ grid: [], aside: [] });
+  it("returns three empty regions for an empty field list", () => {
+    expect(splitDetailsFields([])).toEqual({ grid: [], aside: [], editor: [] });
+  });
+
+  it("takes the rule editor out of the grid, and out of the stack pairing", () => {
+    // It is a form of its own beside the boxes, not a cell among them — so the
+    // two bare controls behind it still meet each other in ONE cell instead of
+    // one of them opening a stack that the editor then interrupts.
+    const layout = splitDetailsFields([
+      { key: "collectionRules", type: "collectionRules" },
+      half("sortOrder", "select"),
+      half("templateSuffix", "themeTemplate"),
+    ]);
+    expect(cellKeys(layout.grid)).toEqual([["sortOrder", "templateSuffix"]]);
+    expect(layout.editor.map((f) => f.key)).toEqual(["collectionRules"]);
+    expect(layout.aside).toEqual([]);
   });
 });
 
 describe("the two shape predicates", () => {
-  it("routes the channel panel out of the grid and the rule builder across it", () => {
+  it("routes the channel panel and the rule builder out of the grid", () => {
     // A list of switch rows and a rule editor are the two fields here that are
-    // not a box; everything else shares one column width.
+    // not a box; everything else shares one column width. Each is its own
+    // region beside the grid — the panel the narrow one, the editor the wide.
     expect(isDetailsAsideField({ type: "commerce" })).toBe(true);
-    expect(isFullWidthDetailsField({ type: "collectionRules" })).toBe(true);
+    expect(isDetailsEditorField({ type: "collectionRules" })).toBe(true);
   });
 
   it("gives half a card to a field that is one bare control", () => {
@@ -129,16 +144,16 @@ describe("the two shape predicates", () => {
   it("leaves every ordinary field in a column of its own", () => {
     for (const type of ["text", "tags", "collections", "select", "toggle", "money"]) {
       expect(isDetailsAsideField({ type }), type).toBe(false);
-      expect(isFullWidthDetailsField({ type }), type).toBe(false);
+      expect(isDetailsEditorField({ type }), type).toBe(false);
     }
   });
 
-  it("never puts one field in both — the aside is not inside the grid", () => {
-    // `--full` is a grid-column rule; on a field that never reaches the grid it
-    // would be a style with nothing to apply to, and the two answers would be
-    // read as contradicting each other.
+  it("never puts one field in both regions", () => {
+    // The two carry opposite shares of the row — narrow beside a wide grid,
+    // wide beside a narrow one — so a field claiming both would be asking for
+    // two widths at once, and only whichever branch ran first would answer.
     for (const type of ["commerce", "collectionRules"]) {
-      expect(isDetailsAsideField({ type }) && isFullWidthDetailsField({ type }), type).toBe(false);
+      expect(isDetailsAsideField({ type }) && isDetailsEditorField({ type }), type).toBe(false);
     }
   });
 });
@@ -192,9 +207,10 @@ describe("content configs", () => {
     expect(PRODUCTS_CONFIG.fieldDefinitions.map((f) => f.key)).not.toContain("price");
   });
 
-  it("gives the other content types a grid and nothing beside it", () => {
-    // Only a product has sales channels, so every other type is one grid — and
-    // the collection's rule builder is the one field in it that spans.
+  it("gives the other content types a grid and no channel panel", () => {
+    // Only a product has sales channels, so every other type is one grid —
+    // beside which the collection, and only the collection, puts its rule
+    // editor.
     const blogContainerFields = BLOGS_CONFIG.getFieldDefinitions!({ isBlogContainer: true } as never);
     for (const fields of [
       COLLECTIONS_CONFIG.fieldDefinitions,
@@ -208,8 +224,10 @@ describe("content configs", () => {
     }
 
     const collections = splitDetailsFields(detailsCardFields(COLLECTIONS_CONFIG.fieldDefinitions));
-    expect(collections.grid.flat().filter(isFullWidthDetailsField).map((f) => f.key)).toEqual([
-      "collectionRules",
-    ]);
+    expect(collections.editor.map((f) => f.key)).toEqual(["collectionRules"]);
+    // And what is left in the grid is the pair the editor now sits NEXT to:
+    // one cell, two bare controls, the height of the rule builder between them.
+    expect(cellKeys(collections.grid)).toEqual([["sortOrder", "templateSuffix"]]);
+    expect(collections.grid.flat().some(isDetailsEditorField)).toBe(false);
   });
 });

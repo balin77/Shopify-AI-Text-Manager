@@ -8,7 +8,7 @@
 import { isThemeContentType } from "~/utils/content-type-groups";
 import { detailsFieldsForLocale, fieldCard } from "~/services/content-attributes.shared";
 import {
-  isFullWidthDetailsField,
+  isDetailsEditorField,
   isHalfHeightDetailsField,
   splitDetailsFields,
 } from "~/config/details-layout";
@@ -835,18 +835,23 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
     // needs no span rule of its own, only the gap.
     if (cell.length > 1) return "app-details-field--stack";
     const [field] = cell;
-    return (
-      [
-        isFullWidthDetailsField(field) ? "app-details-field--full" : "",
-        isHalfHeightDetailsField(field) ? "app-details-field--half" : "",
-      ]
-        .filter(Boolean)
-        .join(" ") || undefined
-    );
+    return isHalfHeightDetailsField(field) ? "app-details-field--half" : undefined;
   };
 
-  const renderDetailsFields = (layout: { grid: FieldDefinition[][]; aside: FieldDefinition[] }) => (
-    <div className="app-details-layout">
+  const renderDetailsFields = (layout: {
+    grid: FieldDefinition[][];
+    aside: FieldDefinition[];
+    editor: FieldDefinition[];
+  }) => (
+    <div
+      className={
+        // The collection's rule builder is a form of its own and takes every
+        // pixel past the one column of boxes beside it — not a SHARE of the
+        // row like the sales-channel panel takes. On the row rather than on
+        // either region, because the same grid is the wide one on a product.
+        layout.editor.length > 0 ? "app-details-layout app-details-layout--with-editor" : "app-details-layout"
+      }
+    >
       <div className="app-details-layout__grid">
         {layout.grid.map((cell) => (
           <div key={cell[0].key} className={detailsCellClass(cell)}>
@@ -858,6 +863,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
           </div>
         ))}
       </div>
+      {layout.editor.length > 0 && (
+        /* The rule builder, beside the boxes rather than across the whole card.
+           It used to span every column, which put the two bare controls on a
+           row of their own underneath with two columns of white next to them —
+           and a spanning cell keeps every track alive, so those columns could
+           not collapse into fewer, wider ones either. As a region it takes the
+           height of the row with it: the stack beside it stretches to match. */
+        <div className="app-details-layout__editor">
+          {layout.editor.map((field) => (
+            <Card key={field.key} background="bg-surface-secondary" padding="300">
+              {renderEditorField(field)}
+            </Card>
+          ))}
+        </div>
+      )}
       {layout.aside.length > 0 && (
         <div className="app-details-layout__aside">
           {/* The channels, the regions and the B2B catalogs are ONE card: they
@@ -2715,15 +2735,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.
             options: t.content?.enumLabels,
-            // §2.5b — the SCORE strings come from the sidebar's own block, not
-            // a second copy: the two show the same findings, and a wording
-            // that differs between them reads as two different measurements.
             aiWarnings: t.content?.createModal?.aiWarnings,
-            seoScore: {
-              heading: t.content?.createModal?.seoScoreHeading,
-              outOf: t.content?.createModal?.seoScoreOutOf,
-              issues: t.seo?.issues,
-            },
           }}
           // §2.5b/§2.5c — the AI prompts need a language NAME, and the modal
           // has no locale state of its own. The shop's primary one, because

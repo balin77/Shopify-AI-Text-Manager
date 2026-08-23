@@ -39,6 +39,7 @@ import {
   Box,
   Link,
 } from "@shopify/polaris";
+import { ToggleRow } from "../ToggleRow";
 import {
   CONDITION_MATCH_TYPES,
   PRODUCT_STATUSES,
@@ -71,6 +72,8 @@ export interface CollectionRuleBuilderTexts {
   noPreview?: string;
   readOnlyHeading?: string;
   readOnlyBody?: string;
+  manualHeading?: string;
+  manualBody?: string;
   openInAdmin?: string;
   unavailable?: string;
   definitionPlaceholder?: string;
@@ -270,10 +273,13 @@ export function CollectionRuleBuilder({
         )}
 
         {/* Shopify stores this per category value; the form holds one answer
-            for the condition, and a tree that disagrees is read-only instead. */}
+            for the condition, and a tree that disagrees is read-only instead.
+            A yes/no answer, so a pill switch and not a checkbox — see
+            CLAUDE.md, "Field chrome". The status list above stays a checkbox
+            group: that one is "which of these", not "yes or no". */}
         {spec?.read === "category" && (
           <Box minWidth="200px">
-            <Checkbox
+            <ToggleRow
               label={t.includeDescendants || "Including subcategories"}
               checked={condition.includeDescendants === true}
               onChange={(includeDescendants) =>
@@ -329,12 +335,29 @@ export function CollectionRuleBuilder({
       {sources.map((source, sourceIndex) => {
         // §2.4 read-only rule. Displayed, never edited, never submitted.
         if (source.unrenderable) {
+          // A hand-picked membership is the one case that is not a shortfall:
+          // the collection has no rules, so a warning about "a rule this
+          // editor cannot show" describes something that does not exist — and
+          // from 2026-07 on that is what an ordinary manual collection looks
+          // like. Informational, and it says what the source actually is.
+          const manual = source.unrenderable.reason === "manualSelection";
           return (
-            <Banner key={source.id ?? sourceIndex} tone="warning" title={t.readOnlyHeading || "Rule kept unchanged"}>
+            <Banner
+              key={source.id ?? sourceIndex}
+              tone={manual ? "info" : "warning"}
+              title={
+                manual
+                  ? t.manualHeading || "Filled by hand"
+                  : t.readOnlyHeading || "Rule kept unchanged"
+              }
+            >
               <BlockStack gap="200">
                 <Text as="p">
-                  {t.readOnlyBody ||
-                    "This rule uses something this editor cannot show. It is left exactly as it is — edit it in the Shopify admin."}
+                  {manual
+                    ? t.manualBody ||
+                      "This collection has no automatic rules — its products are picked individually. Saving here leaves that selection untouched; change it in the Shopify admin or on each product."
+                    : t.readOnlyBody ||
+                      "This rule uses something this editor cannot show. It is left exactly as it is — edit it in the Shopify admin."}
                 </Text>
                 {adminUrlForCollection && (
                   <Link url={adminUrlForCollection} target="_blank">
