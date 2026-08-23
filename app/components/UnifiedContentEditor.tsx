@@ -2733,15 +2733,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
             // the editor's attribute fields render these very values, so the
             // enum vocabulary lives at the top level and both read it.
             options: t.content?.enumLabels,
-            // §2.5b — the SCORE strings come from the sidebar's own block, not
-            // a second copy: the two show the same findings, and a wording
-            // that differs between them reads as two different measurements.
             aiWarnings: t.content?.createModal?.aiWarnings,
-            seoScore: {
-              heading: t.content?.createModal?.seoScoreHeading,
-              outOf: t.content?.createModal?.seoScoreOutOf,
-              issues: t.seo?.issues,
-            },
           }}
           // §2.5b/§2.5c — the AI prompts need a language NAME, and the modal
           // has no locale state of its own. The shop's primary one, because

@@ -16,9 +16,16 @@
  * **No browser storage for drafts.** localStorage/sessionStorage were removed
  * for App Store compliance; an unfinished form lives in memory and is protected
  * by the close confirmation, not by a persisted draft.
+ *
+ * **Every decision in here is a pill switch, and every explanation is a ❓.**
+ * The three toggles come from [ToggleRow.tsx](../ToggleRow.tsx) and the labels
+ * from `FieldLabel` — one shape for the whole app, and the reason both are
+ * imported rather than drawn here (see CLAUDE.md, "Field chrome"). The AI is
+ * one of those decisions now rather than a button of its own: `handleSubmit`
+ * runs the generation and then creates, on one click.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   BlockStack,
@@ -26,7 +33,6 @@ import {
   TextField,
   Select,
   Button,
-  Checkbox,
   Text,
   Banner,
   Spinner,
@@ -37,15 +43,12 @@ import {
 import { FilePickerModal, type AddedItem } from "../image-manager/FilePickerModal";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
 import { CollectionRuleBuilder } from "./CollectionRuleBuilder";
-import { CreateSeoScore } from "./CreateSeoScore";
+import { FieldLabel } from "../unified/FieldChrome";
+import { ToggleRow } from "../ToggleRow";
 import { TaxonomyValuePicker } from "../metaobjects/TaxonomyValueField";
 import { HexColorInput } from "../metaobjects/HexColorInput";
 import { useCreateAiAssist } from "./useCreateAiAssist";
-import {
-  createAiSpecFor,
-  translatableCreateFields,
-  LONG_TEXT_KEY_BY_RESOURCE,
-} from "~/config/create-ai.shared";
+import { createAiSpecFor, translatableCreateFields } from "~/config/create-ai.shared";
 import {
   conditionKinds,
   newCondition,
@@ -81,7 +84,16 @@ export interface CreateItemModalTexts {
   externalVideoNotAnImage?: string;
   /** The "nothing selected" row of a dynamic picker. */
   noneOption?: string;
-  tagsHint?: string;
+  /**
+   * What a field is FOR, keyed exactly like `CreateFieldDef.labelKey`.
+   *
+   * Rendered in the ❓ beside the label, never as help text under the box:
+   * an explanation a merchant reads once belongs in the question mark (see
+   * CLAUDE.md, "Field chrome"), and three of these sentences used to sit
+   * under three controls of one short form. A key with no entry simply gets
+   * no question mark.
+   */
+  fieldHelp?: Record<string, string>;
   /** §2.3 — everything this app creates is created unpublished. */
   createsUnpublishedNotice?: string;
   defaultRuleSetName?: string;
@@ -102,7 +114,6 @@ export interface CreateItemModalTexts {
   moreFields?: string;
   fewerFields?: string;
   required?: string;
-  handleHint?: string;
   discardConfirm?: string;
   /** Field labels, keyed exactly like `CreateFieldDef.labelKey`. */
   fields?: Record<string, string>;
@@ -118,23 +129,20 @@ export interface CreateItemModalTexts {
   altText?: string;
   /** §2.5c — shown while the alt text writes itself. */
   altTextGenerating?: string;
-  /** §2.5d — says that the keyword does two things, which is the whole point. */
-  keywordHint?: string;
   /** §2.5a-d — the AI block. */
   generateRest?: string;
   generateRestHint?: string;
   generatingField?: string;
   sendImageToAI?: string;
-  keywordStuffed?: string;
-  generateFailed?: string;
+  /** A generated value the validator refuses — the one AI outcome that has to
+   *  be read while the dialog is still open, because nothing was created. */
+  generatedNeedsFixing?: string;
   /** Warning CODES from the AI hook, phrased here. */
   aiWarnings?: Record<string, string>;
   translateAfterwards?: string;
   translateAfterwardsHint?: string;
   /** Why the box is greyed for a blog or a metaobject. */
   translateAfterwardsUnsupported?: string;
-  /** §2.5b — the live score panel. */
-  seoScore?: { heading?: string; outOf?: string; issues?: Record<string, string> };
   collectionTypeLabel?: string;
   collectionManual?: string;
   collectionAutomated?: string;
@@ -232,6 +240,17 @@ export interface CreateSubmitPayload {
    * than a second one, task row and progress UI included.
    */
   translateAfterwards: boolean;
+  /**
+   * What the AI run that ran ON THIS SUBMIT could not deliver, as warning
+   * CODES for the post-create banner.
+   *
+   * The generation happens between the click and the create, so the dialog is
+   * gone by the time anyone could read a notice inside it — and a partial run
+   * that says nothing is exactly the silent failure the per-field failure list
+   * exists to prevent. The codes travel with the payload and end up on the
+   * created item's banner, phrased there.
+   */
+  aiWarningCodes?: string[];
 }
 
 /** Crypto-free unique enough for a per-click dedup key. */
@@ -287,6 +306,17 @@ export function CreateItemModal({
   // §2.5a — off by default. Translating every field of every new object is a
   // real cost in AI calls, so it is an opt-in the merchant sees and ticks.
   const [translateAfterwards, setTranslateAfterwards] = useState(false);
+  /**
+   * §2.5d — "write the rest with AI", as a DECISION rather than a button.
+   *
+   * It used to be a button the merchant pressed, waited out, and only then
+   * pressed Create: two waits and two clicks for one intention. Ticked here,
+   * the prompts go out as part of the create — the click that creates the
+   * item is the click that sends them. Off by default for the same reason as
+   * the translation above: AI calls cost money and nobody should pay for one
+   * they did not ask for.
+   */
+  const [generateWithAi, setGenerateWithAi] = useState(false);
   // §0.5 — the editor's own "send the image to the AI" toggle is not reachable
   // from here, so the dialog owns one. Off by default: sending an image costs
   // more and not every provider is vision-capable.
@@ -297,13 +327,41 @@ export function CreateItemModal({
   const [rulesAdvanced, setRulesAdvanced] = useState(false);
   const ruleErrors = useMemo(() => (rulesOpen ? validateRuleSources(ruleSources) : []), [rulesOpen, ruleSources]);
 
+  /**
+   * What the form holds RIGHT NOW, for the one code path that reads it after
+   * an `await`.
+   *
+   * The AI pass runs between the click and the create — several calls, several
+   * seconds — and the fields stay editable throughout. A `handleSubmit` that
+   * merged and submitted its own pre-await closure would silently throw away
+   * everything typed in the meantime, and let generated text land in a field
+   * the merchant had just filled: exactly the overwrite the "never overwrite"
+   * rule exists to prevent, reintroduced by the ordering rather than by the
+   * merge. An effect with no dependency array runs after every commit, so this
+   * is current by the time any network answer comes back.
+   */
+  const liveFormRef = useRef({
+    values,
+    image,
+    ruleSources,
+    rulesOpen,
+    translateAfterwards,
+  });
+  useEffect(() => {
+    liveFormRef.current = { values, image, ruleSources, rulesOpen, translateAfterwards };
+  });
+
   const ai = useCreateAiAssist({ mainLanguage, sendImageToAI });
-  /** Already-phrased notices from the last AI run (partial failure, stuffing). */
+  /**
+   * The one AI outcome that has to be read INSIDE this dialog: a generated
+   * value the validator refuses. Everything else the run can report travels
+   * to the created item's banner as a code, because the dialog is closed by
+   * then — this case is the exception precisely because nothing was created.
+   */
   const [aiNotices, setAiNotices] = useState<string[]>([]);
   // Null for blogs and metaobjects — see `create-ai.shared.ts` for why those
-  // two are deliberately not offered an AI button.
+  // two are deliberately not offered the AI pass.
   const aiSpec = createAiSpecFor(resource);
-  const longTextKey = resource ? LONG_TEXT_KEY_BY_RESOURCE[resource] ?? "" : "";
   /**
    * §2.5a — can the chained translate-all carry anything for THIS type?
    *
@@ -417,7 +475,14 @@ export function CreateItemModal({
   }, [dynamicOptions, values]);
 
   const canSubmit =
-    !submitting && !blocked && !disabledOptionKey && localErrors.length === 0 && ruleErrors.length === 0;
+    !submitting &&
+    // The AI pass of THIS submit is still running. A second click would start
+    // a second run and, with it, a second create.
+    !ai.generating &&
+    !blocked &&
+    !disabledOptionKey &&
+    localErrors.length === 0 &&
+    ruleErrors.length === 0;
 
   /**
    * Reasons that belong to a field the caller LOCKED, and therefore have no
@@ -477,29 +542,118 @@ export function CreateItemModal({
   const handleClose = useCallback(() => {
     // AppSaveBar convention (§1.4): unsaved input is never dropped silently.
     if (isDirty && !window.confirm(t.discardConfirm || "Discard this draft?")) return;
+    // A generation still in flight has nowhere to write once this closes, and
+    // `handleSubmit` reads the same token to decide it must not create.
+    ai.cancel();
     setValues({});
     setImage(null);
     setTouched(false);
     setShowAdvanced(false);
     onClose();
-  }, [isDirty, onClose, t.discardConfirm]);
+    // `ai.cancel` rather than `ai`: the hook returns a fresh object every
+    // render, and depending on it would rebuild this callback each time.
+  }, [isDirty, onClose, t.discardConfirm, ai.cancel]);
 
-  const handleSubmit = useCallback(() => {
+  /**
+   * §2.5a/§2.5d — generate, then create, on ONE click.
+   *
+   * The AI used to be a button of its own: press it, wait out four calls,
+   * then press Create. Two waits and two clicks for one intention, and the
+   * form sat there in between looking finished. Ticked, the prompts go out as
+   * part of this submit — the click that creates the item is the click that
+   * sends them.
+   *
+   * Sequential rather than in parallel with the create, and that ordering is
+   * the point: the generated text goes INTO the create, so there is one write
+   * to Shopify and one echo rule, and the chained translate-all downstream
+   * carries the generated fields because it reads the same values. Firing the
+   * create first would mean a second write path to patch the object
+   * afterwards, and a translation of fields that were still empty when it
+   * started.
+   */
+  const handleSubmit = useCallback(async () => {
     setTouched(true);
     if (localErrors.length > 0) return;
+
+    const aiWarningCodes: string[] = [];
+
+    if (generateWithAi && aiSpec) {
+      setAiNotices([]);
+      const result = await ai.generateRest(resource, values, image?.url ?? "");
+      // Abandoned — the dialog was closed or reopened while the run was in
+      // flight. Creating now would use a form nobody is looking at any more.
+      if (!result) return;
+
+      /**
+       * Nothing came through at all. Nothing is created either.
+       *
+       * This is the one moment where stopping is FREE: no object exists yet,
+       * so the merchant retries or unticks the box and nothing is left behind.
+       * A PARTIAL run is the opposite case — those fields are written, and
+       * throwing them away to keep the outcome tidy costs the merchant the
+       * work. The hook has already set its `allFailed` warning, which is what
+       * the banner below shows as the visible cause.
+       */
+      if (Object.keys(result.filled).length === 0 && result.failed.length > 0) return;
+
+      // Merged over the LIVE form, never over the closure this call started
+      // with: the fields stayed editable for the seconds the run took, and the
+      // merchant's words outrank the model's wherever both exist.
+      const merged = { ...liveFormRef.current.values };
+      for (const [key, value] of Object.entries(result.filled)) {
+        if ((merged[key] ?? "").trim()) continue;
+        // A handle is a SLUG and the model does not know that grammar. One
+        // with a capital or a space fails `validateCreatePayload` and would
+        // block a create the merchant did not break, so it is normalised with
+        // the same function the placeholder suggests.
+        merged[key] = key === "handle" ? suggestHandle(value) : value;
+      }
+      setValues(merged);
+      liveFormRef.current = { ...liveFormRef.current, values: merged };
+
+      const generatedErrors = validateCreatePayload(resource, withSelectDefaults(merged), runtimeFields);
+      if (generatedErrors.length > 0) {
+        // Shown, not sent. The text is in the form, the errors mark the field,
+        // and the server would reject exactly the same thing one round trip
+        // later — with the dialog already closed.
+        setAiNotices([
+          t.generatedNeedsFixing ||
+            "The AI wrote its part, but something does not fit yet — check the marked fields.",
+        ]);
+        return;
+      }
+
+      // §3.2 — both of these are reported on the created item's banner: this
+      // dialog is gone by the time anyone could read them here, and a partial
+      // run that says nothing is the silent failure the per-field failure list
+      // exists to prevent.
+      if (result.failed.length > 0) aiWarningCodes.push("aiPartial");
+      if (result.stuffingWarning) aiWarningCodes.push("keywordStuffed");
+    }
+
+    // Everything the payload carries comes from the same live snapshot, for
+    // the same reason: an image attached or a rule edited while the AI was
+    // writing is part of what the merchant is creating. Without the AI pass
+    // this is simply the current state.
+    const form = liveFormRef.current;
+    // The rule tree is validated against the live one too — `canSubmit` looked
+    // at the render before the AI pass, and a condition emptied while it ran
+    // would otherwise reach a mutation that fails at the SCHEMA level.
+    if (form.rulesOpen && validateRuleSources(form.ruleSources).length > 0) return;
     onSubmit({
       resource,
-      values: withSelectDefaults(values),
+      values: withSelectDefaults(form.values),
       // Sent only when the merchant actually built rules — an empty tree must
       // not turn a manual collection into an automated one with no rules.
-      ruleSources: rulesOpen && ruleSources.length > 0 ? ruleSources : undefined,
-      imageUrl: image?.url ?? "",
-      imageAlt: image?.alt ?? "",
+      ruleSources: form.rulesOpen && form.ruleSources.length > 0 ? form.ruleSources : undefined,
+      imageUrl: form.image?.url ?? "",
+      imageAlt: form.image?.alt ?? "",
       requestId,
       // Only when the shop CAN translate AND this type has fields the chain
       // can carry. A stale `true` would otherwise promise a translation that
       // never runs.
-      translateAfterwards: translateAfterwards && hasSecondLocale && canChainTranslate,
+      translateAfterwards: form.translateAfterwards && hasSecondLocale && canChainTranslate,
+      aiWarningCodes,
     });
   }, [
     localErrors,
@@ -508,70 +662,15 @@ export function CreateItemModal({
     values,
     image,
     withSelectDefaults,
-    rulesOpen,
-    ruleSources,
+    runtimeFields,
     requestId,
-    translateAfterwards,
     hasSecondLocale,
     canChainTranslate,
+    generateWithAi,
+    aiSpec,
+    ai.generateRest,
+    t,
   ]);
-
-  /**
-   * §2.5a/§2.5d — "write the rest for me".
-   *
-   * Only the EMPTY fields, in the order the spec lists them, each result
-   * feeding the next one's context (see `useCreateAiAssist`). The keyword goes
-   * into the prompt explicitly: there is no item yet, so the usual DB lookup
-   * would come back empty at exactly the moment the merchant has just said
-   * what the thing is about.
-   */
-  const handleGenerateRest = useCallback(async () => {
-    if (!resource) return;
-    setAiNotices([]);
-    const result = await ai.generateRest(resource, values, image?.url ?? "");
-    if (!result) return;
-
-    /**
-     * What did NOT come through.
-     *
-     * A partial run used to be silent: three fields written, the meta
-     * description timed out, and the modal said nothing — so the merchant
-     * created the product believing every field was filled. The per-field
-     * failure list is the whole reason failures are per field, and dropping it
-     * made that design pointless.
-     */
-    const notices: string[] = [];
-    if (result.failed.length > 0 && Object.keys(result.filled).length > 0) {
-      notices.push(
-        (t.generateFailed || "These could not be written: {fields}").replace(
-          "{fields}",
-          result.failed.map((key) => t.fields?.[labelKeyFor(key)] ?? key).join(", "),
-        ),
-      );
-    }
-    // §3.2 — the retry still over-used the keyword. Said HERE of all places:
-    // this is the one entrance where the merchant typed that keyword
-    // themselves a moment ago.
-    if (result.stuffingWarning) {
-      notices.push(t.keywordStuffed || "The text repeats your keyword more often than is good for it — worth a read.");
-    }
-    setAiNotices(notices);
-    if (Object.keys(result.filled).length > 0) {
-      setValues((prev) => {
-        const next = { ...prev };
-        for (const [key, value] of Object.entries(result.filled)) {
-          // Re-checked against the LIVE state, not the snapshot the run
-          // started from: the merchant may have typed into a field while the
-          // generation was running, and their words outrank the model's.
-          if (!(next[key] ?? "").trim()) next[key] = value;
-        }
-        return next;
-      });
-      // Generated values fill fields the merchant has not looked at, so any
-      // validation error still on screen is about the form as it WAS.
-      setTouched(false);
-    }
-  }, [ai, resource, values, image, labelKeyFor, t]);
 
   /**
    * The picker can return video and 3D as well. Swallowing those silently is
@@ -634,6 +733,23 @@ export function CreateItemModal({
 
   const label = (field: CreateFieldDef) => t.fields?.[field.labelKey] ?? field.labelKey;
 
+  /**
+   * The label EVERY control in this dialog wears: the words, a red asterisk
+   * when the field is mandatory, and the ❓ holding what the field is for.
+   *
+   * `FieldLabel` is the app's one label shape (see CLAUDE.md, "Field chrome"),
+   * so the create form and the editor cannot come to look different. The
+   * asterisk is drawn from `field.required` — the same flag the validator
+   * rejects on, so a field cannot be refused without having said so first.
+   */
+  const fieldLabel = (field: CreateFieldDef) => (
+    <FieldLabel
+      label={label(field)}
+      help={t.fieldHelp?.[field.labelKey]}
+      requiredIndicator={field.required}
+    />
+  );
+
 
   const renderField = (field: CreateFieldDef) => {
     const value = values[field.key] ?? "";
@@ -655,7 +771,7 @@ export function CreateItemModal({
       case "image":
         return (
           <BlockStack gap="200" key={field.key}>
-            <Text as="p" variant="bodyMd">{label(field)}</Text>
+            {fieldLabel(field)}
             <InlineStack gap="300" blockAlign="center">
               {image && <Thumbnail source={image.preview} alt="" size="small" />}
               <Button onClick={() => setPickerOpen(true)}>
@@ -691,7 +807,7 @@ export function CreateItemModal({
         return (
           <Select
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             options={withDefault}
             value={value || (field.advanced ? "" : field.options?.[0]?.value || "")}
             onChange={(v) => setValue(field.key, v)}
@@ -707,7 +823,7 @@ export function CreateItemModal({
         return (
           <Select
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             options={[{ value: "", label: t.noneOption || "—" }, ...options]}
             value={value}
             onChange={(v) => setValue(field.key, v)}
@@ -728,7 +844,7 @@ export function CreateItemModal({
         return (
           <TextField
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             multiline={field.kind === "richtext" ? 6 : 3}
@@ -743,7 +859,7 @@ export function CreateItemModal({
         return (
           <TextField
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
@@ -752,24 +868,23 @@ export function CreateItemModal({
             // on a collision it appends "-1" (§1.7). The post-create box
             // reports the handle that actually came BACK.
             placeholder={suggestHandle(values.title ?? "")}
-            helpText={t.handleHint}
           />
         );
 
       // §2.5d — the keyword is not just another text field: it goes into the
       // generation prompt AND becomes the item's primary keyword after the
-      // create. Saying so is what makes anyone fill it in.
+      // create. That is what its ❓ says, and saying it is what makes anyone
+      // fill the field in.
       case "keyword":
         return (
           <TextField
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
             maxLength={field.maxLength}
             error={errorText}
-            helpText={t.keywordHint}
           />
         );
 
@@ -785,7 +900,11 @@ export function CreateItemModal({
         return (
           <TaxonomyValuePicker
             key={field.key}
+            // A STRING: the picker draws the shared label itself (it has four
+            // states, each with its own layout around it), so it takes the
+            // words and the asterisk rather than a finished node.
             label={label(field)}
+            requiredIndicator={field.required}
             value={value}
             onChange={(next) => setValue(field.key, next)}
             metaobjectType={metaobjectType}
@@ -808,8 +927,10 @@ export function CreateItemModal({
       case "color":
         return (
           <BlockStack gap="150" key={field.key}>
-            <Text as="p" variant="bodyMd">{label(field)}</Text>
+            {fieldLabel(field)}
             <HexColorInput
+              // Its own label is hidden — the swatch row draws the visible one
+              // above, and this is the input's accessible name.
               label={label(field)}
               value={value}
               onChange={(v) => setValue(field.key, v)}
@@ -826,12 +947,11 @@ export function CreateItemModal({
         return (
           <TextField
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
             error={errorText}
-            helpText={t.tagsHint || "Comma-separated"}
           />
         );
 
@@ -839,7 +959,7 @@ export function CreateItemModal({
         return (
           <TextField
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
@@ -852,7 +972,7 @@ export function CreateItemModal({
         return (
           <TextField
             key={field.key}
-            label={label(field)}
+            label={fieldLabel(field)}
             value={value}
             onChange={(v) => setValue(field.key, v)}
             autoComplete="off"
@@ -872,11 +992,18 @@ export function CreateItemModal({
         (t.titleFor || "New {resource}").replace("{resource}", t.resourceLabel || spec.titleKey)}
         primaryAction={{
           content: t.create || "Create",
-          onAction: handleSubmit,
-          loading: submitting,
+          // `handleSubmit` awaits the AI pass before it creates; Polaris wants
+          // a void handler, and an unhandled rejection here would be silent.
+          onAction: () => void handleSubmit(),
+          // The generation is part of this click, so the button stays busy for
+          // it — the spinner is not "creating" yet, and the line under the
+          // toggle says which field is being written.
+          loading: submitting || ai.generating,
           disabled: !canSubmit,
         }}
-        secondaryActions={[{ content: t.cancel || "Cancel", onAction: handleClose, disabled: submitting }]}
+        secondaryActions={[
+          { content: t.cancel || "Cancel", onAction: handleClose, disabled: submitting },
+        ]}
       >
         <Modal.Section>
           <BlockStack gap="400">
@@ -970,48 +1097,46 @@ export function CreateItemModal({
 
             {/* §2.5a-d — the AI block. Below the basic fields and the rule
                 editor, above "more fields": it works on what has been typed so
-                far, and offering it first would ask the merchant to press a
-                button before saying what the item is. */}
+                far, and offering it first would ask the merchant to decide
+                before saying what the item is. */}
             {!blocked && aiSpec && (
               <BlockStack gap="200">
-                <InlineStack gap="300" blockAlign="center">
-                  <Button
-                    onClick={handleGenerateRest}
-                    loading={ai.generating}
-                    // A title is the ONLY input every prompt here builds on.
-                    // Without one the model would be inventing the product.
-                    disabled={!values.title?.trim() || submitting}
-                  >
-                    {t.generateRest || "Write the rest with AI"}
-                  </Button>
-                  {ai.generating && (
-                    <InlineStack gap="200" blockAlign="center">
-                      <Spinner size="small" />
-                      <Text as="span" variant="bodySm" tone="subdued">
-                        {/* `t.fields` is keyed by labelKey, NOT by field key.
-                            Looking it up by key made the first (and longest)
-                            call read "Writing descriptionHtml…" in all three
-                            languages. */}
-                        {(t.generatingField || "Writing {field}…").replace(
-                          "{field}",
-                          t.fields?.[labelKeyFor(ai.busyField ?? "")] ?? ai.busyField ?? "",
-                        )}
-                      </Text>
-                    </InlineStack>
-                  )}
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {t.generateRestHint || "Only empty fields are filled — anything you wrote stays."}
-                </Text>
-                {/* §0.5 — the editor's toggle is not reachable from here. Only
-                    offered once an image exists; there is nothing to send
-                    otherwise. */}
+                <ToggleRow
+                  label={t.generateRest || "Write the rest with AI"}
+                  help={t.generateRestHint || "Only empty fields are filled — anything you wrote stays."}
+                  checked={generateWithAi}
+                  onChange={setGenerateWithAi}
+                  disabled={submitting}
+                />
+                {/* §0.5 — the editor's own "send the image" toggle is not
+                    reachable from here, so the dialog owns one. Offered only
+                    once an image exists; there is nothing to send otherwise. */}
                 {image && (
-                  <Checkbox
+                  <ToggleRow
                     label={t.sendImageToAI || "Let the AI look at the image"}
                     checked={sendImageToAI}
                     onChange={setSendImageToAI}
+                    disabled={submitting}
                   />
+                )}
+                {/* Which field is being written, while the submit waits for it.
+                    The run happens between the click and the create, so this
+                    line is the only thing standing between a merchant and a
+                    dialog that looks frozen. */}
+                {ai.generating && (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Spinner size="small" />
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {/* `t.fields` is keyed by labelKey, NOT by field key.
+                          Looking it up by key made the first (and longest)
+                          call read "Writing descriptionHtml…" in all three
+                          languages. */}
+                      {(t.generatingField || "Writing {field}…").replace(
+                        "{field}",
+                        t.fields?.[labelKeyFor(ai.busyField ?? "")] ?? ai.busyField ?? "",
+                      )}
+                    </Text>
+                  </InlineStack>
                 )}
                 {ai.aiError && (
                   <Banner tone="warning" onDismiss={ai.dismissAiError}>
@@ -1032,27 +1157,15 @@ export function CreateItemModal({
               </BlockStack>
             )}
 
-            {/* §2.5b — the same scorer, the same shop limits and the same
-                suffix the sidebar will use, so the number does not change by
-                itself the moment the item is created. */}
-            {!blocked && aiSpec && (
-              <CreateSeoScore
-                title={values.title ?? ""}
-                description={longTextKey ? values[longTextKey] ?? "" : ""}
-                seoTitle={values.seoTitle ?? ""}
-                metaDescription={values.metaDescription ?? ""}
-                hasImage={!!image}
-                imageHasAlt={!!image?.alt.trim()}
-                hasDescriptionField={!!longTextKey}
-                t={t.seoScore ?? {}}
-              />
-            )}
-
             {/* §2.5a — the biggest thing this dialog does that Shopify's
                 cannot. Single-language shops see it DISABLED with a reason,
                 never hidden. */}
             {!blocked && (
               <DisabledActionTooltip
+                // A ToggleRow spans the width and puts its switch at the right
+                // edge; the default shrink-wrapping span would pull it in next
+                // to the label, out of line with the toggles above it.
+                block
                 hint={
                   hasSecondLocale
                     ? canChainTranslate
@@ -1062,12 +1175,12 @@ export function CreateItemModal({
                     : requiresSecondLanguageHint
                 }
               >
-                <Checkbox
+                <ToggleRow
                   label={t.translateAfterwards || "Translate into all languages afterwards"}
+                  help={t.translateAfterwardsHint}
                   checked={translateAfterwards && hasSecondLocale && canChainTranslate}
                   onChange={setTranslateAfterwards}
                   disabled={!hasSecondLocale || !canChainTranslate || submitting}
-                  helpText={hasSecondLocale && canChainTranslate ? t.translateAfterwardsHint : undefined}
                 />
               </DisabledActionTooltip>
             )}

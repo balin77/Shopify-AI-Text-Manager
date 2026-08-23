@@ -30,8 +30,7 @@ import {
   Spinner,
   Collapsible,
 } from "@shopify/polaris";
-import { HelpPopover } from "../components/HelpTrigger";
-import { ToggleSwitch } from "../components/ToggleSwitch";
+import { ToggleRow } from "../components/ToggleRow";
 import { createContentLoader, type LoaderContext } from "~/utils/loader-factory.server";
 import { authenticate } from "../shopify.server";
 import { PlanAccessGate } from "../components/PlanAccessGate";
@@ -857,7 +856,7 @@ export default function DirectTranslationsPage() {
 
                   <Divider />
 
-                  <SettingRow
+                  <ToggleRow
                     label={tt.collectToggle}
                     help={tt.collectHelp}
                     checked={collectOn}
@@ -869,7 +868,7 @@ export default function DirectTranslationsPage() {
 
                   {collectOn && (
                     <>
-                      <SettingRow
+                      <ToggleRow
                         label={tt.ignoreTranslateNoToggle}
                         help={tt.ignoreTranslateNoHelp}
                         checked={ignoreOn}
@@ -878,7 +877,7 @@ export default function DirectTranslationsPage() {
                           submit({ action: "setCollectorSettings", ignoreTranslateNo: String(v) });
                         }}
                       />
-                      <SettingRow
+                      <ToggleRow
                         label={tt.filterByLanguageToggle}
                         help={tt.filterByLanguageHelp}
                         checked={filterOn}
@@ -1082,37 +1081,6 @@ export default function DirectTranslationsPage() {
 // "Found texts" modal
 // ============================================================================
 
-/**
- * Toggle + label + question-mark popover that holds the explanation. Same
- * visual pattern as the help icons on the language bar; replaces the inline
- * helpText that used to sit below the old checkboxes.
- */
-function SettingRow({
-  label,
-  help,
-  checked,
-  onChange,
-}: {
-  label: string;
-  help: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <InlineStack align="space-between" blockAlign="center" gap="200">
-      <InlineStack gap="100" blockAlign="center">
-        <Text as="p" variant="bodyMd">{label}</Text>
-        {/* The shared ❓ ([HelpTrigger.tsx](../components/HelpTrigger.tsx)) —
-            it owns the scroll lock this overlay needs, and the ~320px popover
-            width the other help panels use. */}
-        <HelpPopover label={label} preferredPosition="below">
-          <Text as="p" variant="bodySm">{help}</Text>
-        </HelpPopover>
-      </InlineStack>
-      <ToggleSwitch checked={checked} onChange={onChange} />
-    </InlineStack>
-  );
-}
 
 function CandidatePill({
   item,

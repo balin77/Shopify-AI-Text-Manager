@@ -26,12 +26,25 @@ import type { ReactNode } from "react";
 import { Button, InlineStack, Text } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { HelpTooltip } from "../HelpTooltip";
+import { HelpPopover } from "../HelpTrigger";
 import { useI18n } from "../../contexts/I18nContext";
 
 export interface FieldLabelProps {
   label: string;
   /** Key into `t.help`. Absent, or unknown, ⇒ no question mark. */
   helpKey?: string;
+  /**
+   * The explanation as TEXT, for a surface whose strings do not live in
+   * `t.help`.
+   *
+   * The create modal is the one: it takes its whole vocabulary as a `t` prop
+   * (it is rendered for six resource types and phrases their fields from one
+   * block), so it has no key to name. It still has to wear the same label —
+   * bold, red asterisk, question mark right after the words — which is why
+   * this is a second INPUT to the one shape rather than a second shape.
+   * `helpKey` wins if both are given.
+   */
+  help?: string;
   /** The red asterisk Polaris draws for a required field. */
   requiredIndicator?: boolean;
 }
@@ -43,7 +56,7 @@ export interface FieldLabelProps {
  * already wraps in one (the `label` prop of TextField / Select), and a nested
  * label is invalid markup that also breaks the click-to-focus behaviour.
  */
-export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProps) {
+export function FieldLabel({ label, helpKey, help, requiredIndicator }: FieldLabelProps) {
   return (
     // The wrapper is what `.field-clear-overlay ~ * .app-field-label-row`
     // reaches for on mobile: a self-drawn label row has no Polaris
@@ -57,7 +70,7 @@ export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProp
             {requiredIndicator && <span style={{ color: "var(--p-color-text-critical)" }}> *</span>}
           </span>
         </Text>
-        {helpKey && (
+        {(helpKey || help) && (
           /**
            * `preventDefault` because this row is handed to Polaris as a
            * control's `label` prop, so Polaris wraps it in `<label htmlFor>`
@@ -68,7 +81,13 @@ export function FieldLabel({ label, helpKey, requiredIndicator }: FieldLabelProp
            * target) untouched and only drops the label's activation.
            */
           <span onClick={(event) => event.preventDefault()}>
-            <HelpTooltip helpKey={helpKey} />
+            {helpKey ? (
+              <HelpTooltip helpKey={helpKey} />
+            ) : (
+              <HelpPopover label={label}>
+                <Text as="p" variant="bodySm">{help}</Text>
+              </HelpPopover>
+            )}
           </span>
         )}
       </InlineStack>
