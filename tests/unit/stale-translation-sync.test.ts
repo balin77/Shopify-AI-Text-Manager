@@ -37,6 +37,9 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
      *  span several, and both mutations take exactly one. */
     removeTargets: [] as string[],
     registerTargets: [] as string[],
+    /** The gap re-reads: what the folded removal did not echo back. */
+    rereadCalls: [] as Array<{ keys: string[]; locale: string }>,
+    rereadConfirms: null as null | Record<string, string[]>,
     registerConfirms: null as null | string[],
     registerCalls: [] as Array<{ key: string; locale: string; value: string }>,
   };
@@ -52,6 +55,13 @@ vi.mock("../../app/db.server", () => ({ db, default: db }));
 
 vi.mock("../../app/services/bulk-editor/translations.server", () => ({
   LOCALE_KEY_SEP: "\u0000",
+  // The gap path: keys the folded multi-locale call did not echo go through
+  // `removeAndVerify`, which RE-READS before giving up.
+  removeAndVerify: vi.fn(async (_gw: unknown, _id: string, keys: string[], locale: string) => {
+    shopify.rereadCalls.push({ keys, locale });
+    const confirmed = shopify.rereadConfirms ? (shopify.rereadConfirms[locale] ?? []) : [];
+    return { confirmedKeys: new Set(confirmed), userErrors: [] };
+  }),
   // The purge folds locales that ask for exactly the same keys into ONE call,
   // so the fake records one entry PER LOCALE to keep the assertions about
   // "each locale's own keys" meaningful.
@@ -150,6 +160,8 @@ beforeEach(() => {
   shopify.registerCalls = [];
   shopify.removeTargets = [];
   shopify.registerTargets = [];
+  shopify.rereadCalls = [];
+  shopify.rereadConfirms = null;
   shopify.removeConfirms = null;
   shopify.registerConfirms = null;
   policy.purgeOnPrimaryChange = true;
@@ -206,6 +218,25 @@ describe("purge path", () => {
     const deletes = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
     expect(deletes).toHaveLength(1);
     expect(deletes[0]).toMatchObject({ locale: "de", key: { in: ["title"] }, marketId: "" });
+  });
+
+  it("RE-READS a key the removal did not echo, instead of keeping the row forever", async () => {
+    // `translationsRemove` echoes what it DELETED, so a key that carried
+    // nothing on Shopify — a mirror row written when the register found no
+    // digest — comes back empty. Without the re-read its local row survives
+    // forever and the editor keeps serving a foreign value for a cleared field.
+    shopify.removeConfirms = { de: [], fr: [] };
+    shopify.rereadConfirms = { de: ["title"], fr: [] };
+
+    const result = await reconcileStaleTranslations(baseParams());
+
+    expect(shopify.rereadCalls.find((c) => c.locale === "de")?.keys).toEqual(["title"]);
+    // Confirmed by the READ, so the local row goes; fr confirmed nothing and
+    // keeps its row.
+    expect(result.removed).toBe(1);
+    const deletes = db.contentTranslation.deleteMany.mock.calls.map((c: any[]) => c[0].where);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]).toMatchObject({ locale: "de", key: { in: ["title"] } });
   });
 
   it("does nothing at all when the merchant switched the purge off", async () => {

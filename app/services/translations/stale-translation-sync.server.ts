@@ -54,6 +54,7 @@ import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
 import {
   registerAndVerify,
+  removeAndVerify,
   removeAndVerifyAcrossLocales,
   LOCALE_KEY_SEP,
 } from "../bulk-editor/translations.server";
@@ -718,7 +719,7 @@ async function currentPrimaryContent(
         out.set(resourceId, map);
       }
     } catch (error: unknown) {
-      logger.warn("[StaleTranslations] Could not read primary content — those keys fall to removal", {
+      logger.warn("[StaleTranslations] Could not read primary content — those resources are left alone", {
         context: "StaleTranslations",
         resources: ids.length,
         error: error instanceof Error ? error.message : String(error),
@@ -1125,9 +1126,35 @@ async function purgeStaleEntries(
       locales,
       "",
     );
-    if (confirmedPairs.size === 0) continue;
     for (const locale of locales) {
-      const confirmed = keys.filter((key) => confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`));
+      let confirmed = keys.filter((key) => confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`));
+
+      // A GAP is not a failure, and the multi-locale call cannot tell the
+      // difference on its own. `translationsRemove` echoes what it DELETED, so
+      // a key that carried nothing on Shopify in the first place — a mirror row
+      // written when the register found no digest, the case CLAUDE.md creates
+      // by design — comes back empty and its local row would survive forever,
+      // with the editor still serving a foreign value for a cleared field and
+      // every later save repeating the same no-op.
+      //
+      // `removeAndVerify` is the path that RE-READS on a gap, so the unechoed
+      // keys go through it — one extra call per locale that actually had one,
+      // which is the rare case; the common case stays the single folded call
+      // above. The §6.6 sweep skips this re-read because it runs per row AND
+      // per sub-resource across a whole bulk save; here the group is one
+      // merchant action, so the cost argument does not apply.
+      const unconfirmed = keys.filter((key) => !confirmed.includes(key));
+      if (unconfirmed.length > 0) {
+        const { confirmedKeys } = await removeAndVerify(
+          gateway,
+          ref.resourceId,
+          unconfirmed,
+          locale,
+          "",
+        );
+        confirmed = [...confirmed, ...unconfirmed.filter((key) => confirmedKeys.has(key))];
+      }
+
       if (confirmed.length === 0) continue;
       await mirror.remove(ref, locale, confirmed);
       // Counted from Shopify's confirmations, not from the DB result: a row
@@ -1298,12 +1325,30 @@ async function runRetranslation(
           // in order, never merged by value.
           const values: string[] = [];
           for (const group of chunk(translatable, VALUE_BATCH)) {
-            const part = await translationService.translateValues(
-              group.map((entry) => entry.primaryValue),
-              asValues.sourceLocale,
-              locale,
-              asValues.context,
-            );
+            let part: string[] = [];
+            try {
+              part = await translationService.translateValues(
+                group.map((entry) => entry.primaryValue),
+                asValues.sourceLocale,
+                locale,
+                asValues.context,
+              );
+            } catch (chunkError: unknown) {
+              // Caught PER CHUNK. `translateBatchValues` throws on a length
+              // mismatch, and letting that reach the locale's own catch would
+              // discard every chunk already translated and purge all of them —
+              // ninety-five translations lost over one malformed reply instead
+              // of forty. This chunk's entries stay empty, which routes exactly
+              // them to the removal.
+              logger.warn("[StaleTranslations] A value chunk failed — its entries fall to removal", {
+                context: "StaleTranslations",
+                shop,
+                resourceId,
+                locale,
+                entries: group.length,
+                error: chunkError instanceof Error ? chunkError.message : String(chunkError),
+              });
+            }
             // A short answer would silently shift every later chunk's mapping,
             // so it is padded to the length it was asked for; the missing ones
             // read as untranslated and fall through to the removal.
