@@ -1984,6 +1984,12 @@ export const de = {
     notificationWarning: "Warnmeldung",
     notificationCritical: "Fehlermeldung",
     notificationInfo: "Infomeldung",
+    // Message bell in the top navigation.
+    notificationsTitle: "Nachrichten",
+    notificationsClearAll: "Alle löschen",
+    notificationsEmpty: "Keine Nachrichten",
+    // {unread} is the badge number, {count} the length of the whole list.
+    notificationsBellLabel: "Nachrichten ({unread} ungelesen von {count})",
     // ── Codes aus `Task.error` (app/utils/task-error-text.ts) ────────────
     // Ein Runner endet lange nach dem Request, der ihn gestartet hat, und
     // kennt die Sprache des Händlers nicht — er speichert `<code>:<arg>`,

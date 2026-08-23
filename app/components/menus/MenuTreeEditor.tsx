@@ -46,7 +46,6 @@ import {
   verticalListSortingStrategy,
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { Button, Text, TextField, Tooltip } from "@shopify/polaris";
 import {
   MAX_MENU_DEPTH,
@@ -325,13 +324,33 @@ function MenuTreeRow({
   const canAddChild = !structureLocked && depth < MAX_MENU_DEPTH;
   const target = renderTarget?.(item.node, item);
 
+  /**
+   * The drag is split across two elements, on purpose.
+   *
+   * VERTICALLY the row moves as one thing: the target and the buttons belong
+   * to this item and have to travel with it, or reordering would leave a
+   * merchant looking at a name over somebody else's controls.
+   *
+   * HORIZONTALLY only the NAME moves. Sideways means one thing here — which
+   * level the item sits at — and the indent that expresses it is the name
+   * box's own left edge. Sliding the target along with it would drag it out of
+   * the column every other row's target is aligned in, which is the alignment
+   * the layout was rebuilt for; and the buttons would wander away from the
+   * left margin they are read from.
+   *
+   * `verticalListSortingStrategy` only ever shifts the OTHER rows on y, so
+   * their x is zero and this split costs them nothing.
+   */
+  const dragX = transform?.x ?? 0;
+  const rowTransform = transform ? `translate3d(0, ${transform.y}px, 0)` : undefined;
+
   return (
     <div
       ref={setNodeRef}
       className="menu-tree-row"
       style={
         {
-          transform: CSS.Translate.toString(transform),
+          transform: rowTransform,
           transition,
           // The ROW is what the merchant drags. There used to be a `DragOverlay`
           // — a copy of the title floating under the cursor while the real row
@@ -376,7 +395,10 @@ function MenuTreeRow({
           .filter(Boolean)
           .join(" ")}
       >
-        <div className="menu-row-name">
+        <div
+          className="menu-row-name"
+          style={dragX ? { transform: `translate3d(${dragX}px, 0, 0)`, transition } : undefined}
+        >
           {/* The handle lives INSIDE the name cell, absolutely positioned
               against it. It has to step in with the nesting like everything
               else in the row — but it cannot do that from a flex lane in

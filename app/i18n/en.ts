@@ -1986,6 +1986,12 @@ export const en: Translation = {
     notificationWarning: "Warning notification",
     notificationCritical: "Error notification",
     notificationInfo: "Information notification",
+    // Message bell in the top navigation.
+    notificationsTitle: "Messages",
+    notificationsClearAll: "Clear all",
+    notificationsEmpty: "No messages",
+    // {unread} is the badge number, {count} the length of the whole list.
+    notificationsBellLabel: "Messages ({unread} unread of {count})",
     // ── Codes stored in `Task.error` (app/utils/task-error-text.ts) ───────
     // A runner finishes long after the request that started it and has no
     // merchant locale, so it stores `<code>:<arg>` and the numbers are
