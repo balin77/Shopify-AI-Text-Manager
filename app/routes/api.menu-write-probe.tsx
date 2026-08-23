@@ -344,8 +344,35 @@ export interface MenuWriteProbeReport {
     digestChanged: boolean | null;
     errors: string[];
   };
+  /**
+   * Does a whole-tree write-back survive item types that are neither HTTP nor
+   * resource-bound?
+   *
+   * The write path sends every field Shopify handed it, `url` included. A
+   * default main menu's FRONTPAGE / SEARCH / CATALOG item comes back WITH a
+   * url, and if the mutation refuses that pairing the single userError fails
+   * the entire menuUpdate — no rename in that menu would ever land. Measured
+   * in a SECOND throwaway menu so an item type this shop's schema does not
+   * accept cannot block the measurements above.
+   */
+  typeRoundTrip: {
+    attempted: boolean;
+    menuId: string | null;
+    typesTried: string[];
+    createErrors: string[];
+    /** What Shopify returned for each created item. */
+    read: Array<{ type: string | null; title: string; url: string | null; resourceId: string | null }>;
+    /** Write-back of the tree exactly as read — what the write path does. */
+    asReadOk: boolean | null;
+    asReadErrors: string[];
+    /** Only attempted when the first one failed: same tree, url stripped off non-HTTP items. */
+    withoutUrlOk: boolean | null;
+    withoutUrlErrors: string[];
+  };
   cleanup: {
     deleted: boolean;
+    /** The second menu's own delete. Reported apart: two menus, two outcomes. */
+    typesMenuDeleted: boolean | null;
     errors: string[];
   };
   verdict: string[];
@@ -528,7 +555,18 @@ export async function action({ request }: ActionFunctionArgs) {
       digestChanged: null,
       errors: [],
     },
-    cleanup: { deleted: false, errors: [] },
+    typeRoundTrip: {
+      attempted: false,
+      menuId: null,
+      typesTried: [],
+      createErrors: [],
+      read: [],
+      asReadOk: null,
+      asReadErrors: [],
+      withoutUrlOk: null,
+      withoutUrlErrors: [],
+    },
+    cleanup: { deleted: false, typesMenuDeleted: null, errors: [] },
     verdict: [],
   };
 
@@ -776,7 +814,81 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    // ── 6. The omission test ───────────────────────────────────────────────
+    // ── 6. Item types that are neither HTTP nor resource-bound ─────────────
+    // Its own menu: a type this shop's schema will not create must not take
+    // the omission test below down with it.
+    const SPECIAL_TYPES = ["FRONTPAGE", "SEARCH", "CATALOG", "COLLECTIONS"];
+    const typesToTry = SPECIAL_TYPES.filter(
+      (t) => report.schema.itemTypes.length === 0 || report.schema.itemTypes.includes(t),
+    );
+    if (typesToTry.length > 0) {
+      report.typeRoundTrip.attempted = true;
+      report.typeRoundTrip.typesTried = typesToTry;
+      const typesHandle = `${handle}-types`;
+      try {
+        const created = await run(MENU_CREATE_MUTATION, {
+          title: `ContentPilot write probe types ${stamp}`,
+          handle: typesHandle,
+          items: typesToTry.map((type) => ({ title: `CP Probe ${type}`, type })),
+        });
+        report.typeRoundTrip.createErrors.push(...topLevelErrors(created));
+        const payload = created.data?.menuCreate as
+          | { menu?: { id: string } | null; userErrors?: unknown }
+          | undefined;
+        report.typeRoundTrip.createErrors.push(...userErrorText(payload?.userErrors));
+        report.typeRoundTrip.menuId = payload?.menu?.id ?? null;
+
+        if (report.typeRoundTrip.menuId) {
+          const typesMenuId = report.typeRoundTrip.menuId;
+          const readResult = await run(MENU_READ_QUERY, { id: typesMenuId });
+          const readItems = ((readResult.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+          report.typeRoundTrip.read = readItems.map((i) => ({
+            type: i.type ?? null,
+            title: i.title,
+            url: i.url ?? null,
+            resourceId: i.resourceId ?? null,
+          }));
+
+          // Write-back #1: byte for byte what was read, which is exactly what
+          // menu-write.server.ts sends.
+          const asRead = await run(MENU_UPDATE_MUTATION, {
+            id: typesMenuId,
+            title: `ContentPilot write probe types ${stamp}`,
+            handle: typesHandle,
+            items: toUpdateInput(readItems, {}),
+          });
+          report.typeRoundTrip.asReadErrors.push(...topLevelErrors(asRead));
+          const asReadPayload = asRead.data?.menuUpdate as { userErrors?: unknown } | undefined;
+          report.typeRoundTrip.asReadErrors.push(...userErrorText(asReadPayload?.userErrors));
+          report.typeRoundTrip.asReadOk = report.typeRoundTrip.asReadErrors.length === 0;
+
+          // Write-back #2 only if the first failed: the same tree with `url`
+          // dropped from every non-HTTP item. Two results, one rule — either
+          // the url is the problem or it is not.
+          if (!report.typeRoundTrip.asReadOk) {
+            const stripped = toUpdateInput(readItems, {}).map((node) => {
+              if (node.type === "HTTP") return node;
+              const { url: _dropped, ...rest } = node as Record<string, unknown>;
+              return rest;
+            });
+            const without = await run(MENU_UPDATE_MUTATION, {
+              id: typesMenuId,
+              title: `ContentPilot write probe types ${stamp}`,
+              handle: typesHandle,
+              items: stripped,
+            });
+            report.typeRoundTrip.withoutUrlErrors.push(...topLevelErrors(without));
+            const withoutPayload = without.data?.menuUpdate as { userErrors?: unknown } | undefined;
+            report.typeRoundTrip.withoutUrlErrors.push(...userErrorText(withoutPayload?.userErrors));
+            report.typeRoundTrip.withoutUrlOk = report.typeRoundTrip.withoutUrlErrors.length === 0;
+          }
+        }
+      } catch (error) {
+        report.typeRoundTrip.createErrors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // ── 7. The omission test ───────────────────────────────────────────────
     if (grandchild) {
       report.omission.attempted = true;
       report.omission.omittedItemId = grandchild.id;
@@ -806,6 +918,20 @@ export async function action({ request }: ActionFunctionArgs) {
     // The menu must go even when a step above threw. A leftover probe menu is
     // clutter the merchant did not ask for, and the handle is stamped so it can
     // always be found by hand if this ever fails.
+    if (report.typeRoundTrip.menuId) {
+      try {
+        const deleteResult = await run(MENU_DELETE_MUTATION, { id: report.typeRoundTrip.menuId });
+        report.cleanup.errors.push(...topLevelErrors(deleteResult));
+        const payload = deleteResult.data?.menuDelete as
+          | { deletedMenuId?: string | null; userErrors?: unknown }
+          | undefined;
+        report.cleanup.errors.push(...userErrorText(payload?.userErrors));
+        report.cleanup.typesMenuDeleted = !!payload?.deletedMenuId;
+      } catch (error) {
+        report.cleanup.typesMenuDeleted = false;
+        report.cleanup.errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
     if (report.setup.menuId) {
       try {
         const deleteResult = await run(MENU_DELETE_MUTATION, { id: report.setup.menuId });
@@ -867,6 +993,22 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   } else if (report.translation.attempted) {
     v.push("TRANSLATION: not measured — the probe translation could not be registered.");
+  }
+  if (report.typeRoundTrip.asReadOk === true) {
+    v.push(
+      `ITEM TYPES: a whole-tree write-back with url present is accepted for ${report.typeRoundTrip.typesTried.join(", ")} — the write path may keep sending what it read.`,
+    );
+  } else if (report.typeRoundTrip.asReadOk === false) {
+    v.push(
+      report.typeRoundTrip.withoutUrlOk
+        ? "ITEM TYPES: ⚠️ the write-back is REFUSED while url is present on a non-HTTP item, and accepted without it — the write path must strip url for those types."
+        : "ITEM TYPES: ⚠️ the write-back is REFUSED for these types, and dropping url does not fix it — see the errors below.",
+    );
+  } else if (report.typeRoundTrip.attempted) {
+    v.push("ITEM TYPES: not measured — the second probe menu could not be created.");
+  }
+  if (report.typeRoundTrip.menuId && report.cleanup.typesMenuDeleted === false) {
+    v.push(`⚠️ CLEANUP FAILED — delete the menu "${report.setup.handle}-types" by hand in the Shopify admin.`);
   }
   if (!report.cleanup.deleted && report.setup.created) {
     v.push(`⚠️ CLEANUP FAILED — delete the menu "${report.setup.handle}" by hand in the Shopify admin.`);

@@ -60,11 +60,17 @@ import { logger } from "../utils/logger.server";
 // backticks reaches Shopify verbatim (CLAUDE.md).
 
 /**
- * The write-back selection. Four levels although Shopify documents three: a
- * level this query does not read is a level the write-back would DELETE, so
- * reading one deeper than the documented maximum is the cheap side of that
- * trade. The depth guard in mapUpdateInput refuses anything past it rather
- * than silently truncating the tree.
+ * The write-back selection: four WRITABLE levels, plus a fifth that reads
+ * nothing but ids.
+ *
+ * Shopify documents three levels. Four are read because a level this query
+ * does not read is a level the write-back would DELETE, and one past the
+ * documented maximum is the cheap side of that trade. The FIFTH exists purely
+ * so the depth guard can see what it guards against: with the query stopping
+ * at four, a five-level menu came back looking exactly like a four-level one,
+ * mapUpdateInput never reached depth 5, and the refusal was unreachable — the
+ * deepest items would have been quietly dropped from the input, i.e. deleted.
+ * A guard that cannot observe its own condition is not a guard.
  */
 const MENU_ITEM_WRITE_FIELDS = `
   id
@@ -89,6 +95,9 @@ const MENU_WRITE_READ_QUERY = `#graphql
             ${MENU_ITEM_WRITE_FIELDS}
             items {
               ${MENU_ITEM_WRITE_FIELDS}
+              items {
+                id
+              }
             }
           }
         }
@@ -166,12 +175,29 @@ export interface MenuTitleSaveResult {
   reassignedItemIds: Array<{ before: string; after: string }>;
   /** Link GIDs whose translations were removed because their source text changed. */
   purgedLinkIds: string[];
+  /**
+   * How many (item, locale) rows that removal actually covered.
+   *
+   * Separate from purgedLinkIds.length, which counts ITEMS: on a four-locale
+   * shop one renamed item is four removed translations, and a banner reading
+   * "1 translation removed" over four deletions is a wrong number in the one
+   * direction that matters — it understates what was thrown away.
+   */
+  purgedTranslationCount: number;
   /** Free-text detail for the statuses that are not per-item failures. */
   message?: string;
 }
 
 function emptyResult(status: MenuTitleSaveStatus, message?: string): MenuTitleSaveResult {
-  return { status, savedItemIds: [], failures: [], reassignedItemIds: [], purgedLinkIds: [], message };
+  return {
+    status,
+    savedItemIds: [],
+    failures: [],
+    reassignedItemIds: [],
+    purgedLinkIds: [],
+    purgedTranslationCount: 0,
+    message,
+  };
 }
 
 /** Depth-first list of (id, title) in tree order — the echo check's input. */
@@ -279,6 +305,11 @@ export async function saveMenuItemTitles(
   if (!menu) return emptyResult("menuMissing");
 
   // ── 2. Drift check ───────────────────────────────────────────────────────
+  // Fingerprinted over the same four levels the page's cache query reads. A
+  // fifth level is invisible to BOTH sides, which is exactly why the depth
+  // refusal below exists and why it comes before any mutation: drift detection
+  // cannot cover a level nobody read, so that case is not compared, it is
+  // declined.
   const freshFingerprint = menuStructureFingerprint(menu.items);
   if (freshFingerprint !== fingerprint) {
     logger.info("[MENU-WRITE] Refused a rename — the menu changed in Shopify since the page was loaded", {
@@ -308,7 +339,14 @@ export async function saveMenuItemTitles(
     titles.set(change.menuItemId, change.title.trim());
   }
   if (titles.size === 0) {
-    return { status: "ok", savedItemIds: [], failures, reassignedItemIds: [], purgedLinkIds: [] };
+    return {
+      status: "ok",
+      savedItemIds: [],
+      failures,
+      reassignedItemIds: [],
+      purgedLinkIds: [],
+      purgedTranslationCount: 0,
+    };
   }
 
   const mapped = mapUpdateInput(menu.items, titles);
@@ -392,6 +430,7 @@ export async function saveMenuItemTitles(
 
   // ── 5. The renamed items' translations ───────────────────────────────────
   const purgedLinkIds: string[] = [];
+  let purgedTranslationCount = 0;
   if (savedItemIds.length > 0 && foreignLocales.length > 0) {
     let mayPurge = false;
     try {
@@ -441,6 +480,7 @@ export async function saveMenuItemTitles(
             });
           }
           purgedLinkIds.push(linkId);
+          purgedTranslationCount += confirmedLocales.length;
         } catch (error) {
           // A failed purge never fails the rename: the primary text is already
           // written, and reporting the save as broken would send the merchant
@@ -470,5 +510,5 @@ export async function saveMenuItemTitles(
     purged: purgedLinkIds.length,
   });
 
-  return { status: "ok", savedItemIds, failures, reassignedItemIds, purgedLinkIds };
+  return { status: "ok", savedItemIds, failures, reassignedItemIds, purgedLinkIds, purgedTranslationCount };
 }

@@ -444,6 +444,8 @@ export default function MenusPage() {
     failures: Array<{ menuItemId: string; message: string }>;
     reassignedItemIds: Array<{ before: string; after: string }>;
     purgedLinkIds: string[];
+    /** Removed (item, locale) rows — what the merchant's banner counts. */
+    purgedTranslationCount: number;
     message?: string;
   };
   /** The manual save bar. */
@@ -1108,17 +1110,25 @@ export default function MenusPage() {
     // not stored yet), and saving afterwards would purge exactly the
     // translation the button just produced, under the merchant's own
     // stale-translation setting. Two wrong outcomes for one click.
+    //
+    // Deliberately NOT gated on the tab being the primary one. The rename is a
+    // property of the ITEM, not of the language on screen: a merchant who
+    // renames on the primary tab, switches to French and presses translate
+    // hits both wrong outcomes just the same, and the draft is still pending.
     const pendingRename =
-      isPrimary &&
       item.menuItemId in primaryDrafts &&
       (primaryDrafts[item.menuItemId] ?? "").trim() !== (primaryTitleById[item.menuItemId] ?? "").trim();
     // In the primary language both buttons write into EVERY other language, so
     // switching them all off leaves them with nothing to write. Disabled with
     // the reason, never hidden — and never a button that silently does nothing.
-    const actionHint = isPrimary
-      ? (singleLocaleHint ?? (pendingRename ? t.content?.menuSaveRenameFirst : allTargetsOffHint))
-      : singleLocaleHint;
-    const actionsBlocked = !canTranslate || !!(isPrimary && (allTargetsOffHint || pendingRename));
+    const actionHint =
+      singleLocaleHint ??
+      (pendingRename
+        ? t.content?.menuSaveRenameFirst
+        : isPrimary
+          ? allTargetsOffHint
+          : undefined);
+    const actionsBlocked = !canTranslate || pendingRename || !!(isPrimary && allTargetsOffHint);
 
     // The app's two translation-state colours, same classes as everywhere else:
     // BLUE on a primary field whose translation is missing somewhere, YELLOW on
@@ -1415,12 +1425,12 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {(primaryResult?.purgedLinkIds?.length ?? 0) > 0 && (
+                    {(primaryResult?.purgedTranslationCount ?? 0) > 0 && (
                       <Banner tone="info">
                         <p>
                           {(t.content?.menuRenamePurgedTranslations || "").replace(
                             "{count}",
-                            String(primaryResult?.purgedLinkIds?.length ?? 0),
+                            String(primaryResult?.purgedTranslationCount ?? 0),
                           )}
                         </p>
                       </Banner>
