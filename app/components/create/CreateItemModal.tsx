@@ -11,7 +11,8 @@
  * several, some type-dependent — an editor form with unsatisfiable required
  * fields and a live save bar would be the worse experience. The deviation is
  * deliberate, and it is paid for by respecting the save-bar convention:
- * closing with unsaved input goes through `confirmNavigation()`.
+ * closing with unsaved input takes a second, deliberate click (see
+ * `handleClose`).
  *
  * **No browser storage for drafts.** localStorage/sessionStorage were removed
  * for App Store compliance; an unfinished form lives in memory and is protected
@@ -134,6 +135,7 @@ export interface CreateItemModalTexts {
   generateRestHint?: string;
   generatingField?: string;
   sendImageToAI?: string;
+  sendImageToAIHint?: string;
   /** A generated value the validator refuses — the one AI outcome that has to
    *  be read while the dialog is still open, because nothing was created. */
   generatedNeedsFixing?: string;
@@ -404,6 +406,7 @@ export function CreateItemModal({
   useEffect(() => {
     if (open) {
       setValues(initialValues ?? {});
+      setConfirmingClose(false);
       // A NEW dialog is a new create; only here does a fresh id belong.
       setRequestId(mintRequestId());
       // A generation still in flight from the previous opening must not write
@@ -415,6 +418,10 @@ export function CreateItemModal({
 
   const setValue = useCallback((key: string, value: string) => {
     setValues((prev) => ({ ...prev, [key]: value }));
+    // Typing again answers the question: they are not leaving. Leaving the
+    // red button armed behind a form the merchant is still filling in is how
+    // a stray click discards work that was never meant to go.
+    setConfirmingClose(false);
   }, []);
 
   /**
@@ -539,9 +546,22 @@ export function CreateItemModal({
     });
   }, [extraFieldsKey, chosenExtras]);
 
-  const handleClose = useCallback(() => {
-    // AppSaveBar convention (§1.4): unsaved input is never dropped silently.
-    if (isDirty && !window.confirm(t.discardConfirm || "Discard this draft?")) return;
+  /**
+   * Closing with input in the form is confirmed by a SECOND BUTTON, not by
+   * `window.confirm`.
+   *
+   * The convention it honours is the save bar's (§1.4): unsaved input is never
+   * dropped on one click. The browser dialog did that and nothing else well —
+   * it is chrome from outside the app, it lands at the top of the window far
+   * from the button that summoned it, and inside an embedded Shopify app it
+   * announces the myshopify host to the merchant. So Cancel ARMS a red
+   * "discard" button beside itself and does not close; that button closes.
+   * Deliberately not a second modal over this one: the question is small
+   * enough that an extra layer would be the bigger interruption.
+   */
+  const [confirmingClose, setConfirmingClose] = useState(false);
+
+  const discardAndClose = useCallback(() => {
     // A generation still in flight has nowhere to write once this closes, and
     // `handleSubmit` reads the same token to decide it must not create.
     ai.cancel();
@@ -549,10 +569,19 @@ export function CreateItemModal({
     setImage(null);
     setTouched(false);
     setShowAdvanced(false);
+    setConfirmingClose(false);
     onClose();
     // `ai.cancel` rather than `ai`: the hook returns a fresh object every
     // render, and depending on it would rebuild this callback each time.
-  }, [isDirty, onClose, t.discardConfirm, ai.cancel]);
+  }, [onClose, ai.cancel]);
+
+  const handleClose = useCallback(() => {
+    if (!isDirty) {
+      discardAndClose();
+      return;
+    }
+    setConfirmingClose(true);
+  }, [isDirty, discardAndClose]);
 
   /**
    * §2.5a/§2.5d — generate, then create, on ONE click.
@@ -701,9 +730,30 @@ export function CreateItemModal({
     [ai, resource, values.title],
   );
 
+  /**
+   * The switch can only be turned on AFTER an image exists — it does not
+   * appear before that — and by then the automatic alt text has already been
+   * written, blind, from the title alone. So flipping it on re-runs it: that
+   * is the one moment where "the AI may look at the image" can still change
+   * the answer, and a merchant who ticks it for that reason gets what they
+   * asked for. An alt text they typed themselves is untouched (`autoAltText`
+   * fills only an empty one), and it runs from an EFFECT rather than from the
+   * switch's own handler because the hook captures the flag per render — the
+   * call in the handler would still send the old `false`.
+   */
+  useEffect(() => {
+    if (!sendImageToAI || !image || image.alt.trim()) return;
+    autoAltText(image);
+    // Only when the switch flips: attaching an image already triggers this on
+    // its own, and re-running on every `image` change would fight that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendImageToAI]);
+
   const handlePicked = useCallback((items: AddedItem[]) => {
     const first = items[0];
     setPickerOpen(false);
+    // Same reason as in `setValue`: still working here, so disarm the discard.
+    setConfirmingClose(false);
     if (!first) return;
     if (first.source === "upload") {
       if (first.kind !== "image") {
@@ -777,7 +827,18 @@ export function CreateItemModal({
               <Button onClick={() => setPickerOpen(true)}>
                 {image ? t.changeImage || "Change image" : t.chooseImage || "Choose image"}
               </Button>
-              {image && <Button variant="plain" tone="critical" onClick={() => setImage(null)}>{t.removeImage || "Remove"}</Button>}
+              {image && (
+                <Button
+                  variant="plain"
+                  tone="critical"
+                  onClick={() => {
+                    setImage(null);
+                    setConfirmingClose(false);
+                  }}
+                >
+                  {t.removeImage || "Remove"}
+                </Button>
+              )}
             </InlineStack>
             {image && (
               <TextField
@@ -1003,6 +1064,18 @@ export function CreateItemModal({
         }}
         secondaryActions={[
           { content: t.cancel || "Cancel", onAction: handleClose, disabled: submitting },
+          // Only once Cancel has armed it, and destructive so the second click
+          // is asked for in the button's own colour rather than in a sentence.
+          ...(confirmingClose
+            ? [
+                {
+                  content: t.discardConfirm || "Discard your input",
+                  onAction: discardAndClose,
+                  destructive: true,
+                  disabled: submitting,
+                },
+              ]
+            : []),
         ]}
       >
         <Modal.Section>
@@ -1095,13 +1168,34 @@ export function CreateItemModal({
               </BlockStack>
             )}
 
-            {/* §2.5a-d — the AI block. Below the basic fields and the rule
-                editor, above "more fields": it works on what has been typed so
-                far, and offering it first would ask the merchant to decide
-                before saying what the item is. */}
+            {!blocked && advancedFields.length > 0 && (
+              <BlockStack gap="200">
+                <Button
+                  variant="plain"
+                  disclosure={showAdvanced ? "up" : "down"}
+                  onClick={() => setShowAdvanced((v) => !v)}
+                >
+                  {showAdvanced ? t.fewerFields || "Fewer fields" : t.moreFields || "More fields"}
+                </Button>
+                <Collapsible open={showAdvanced} id="create-advanced-fields">
+                  <Box paddingBlockStart="200">
+                    <BlockStack gap="400">{advancedFields.map(renderField)}</BlockStack>
+                  </Box>
+                </Collapsible>
+              </BlockStack>
+            )}
+            {/* §2.5a-d — the AI block, and with the translation below it the
+                LAST thing in the dialog. Both decisions are about the fields
+                above them — including the ones behind "more fields", which is
+                why that disclosure now comes first: a switch that says "write
+                the rest" has to sit after everything it could write into,
+                or it reads as if it only covered the handful of fields the
+                merchant can see. Offering it first would also ask them to
+                decide before saying what the item even is. */}
             {!blocked && aiSpec && (
               <BlockStack gap="200">
                 <ToggleRow
+                  layout="inline"
                   label={t.generateRest || "Write the rest with AI"}
                   help={t.generateRestHint || "Only empty fields are filled — anything you wrote stays."}
                   checked={generateWithAi}
@@ -1113,7 +1207,9 @@ export function CreateItemModal({
                     once an image exists; there is nothing to send otherwise. */}
                 {image && (
                   <ToggleRow
+                    layout="inline"
                     label={t.sendImageToAI || "Let the AI look at the image"}
+                    help={t.sendImageToAIHint}
                     checked={sendImageToAI}
                     onChange={setSendImageToAI}
                     disabled={submitting}
@@ -1162,9 +1258,8 @@ export function CreateItemModal({
                 never hidden. */}
             {!blocked && (
               <DisabledActionTooltip
-                // A ToggleRow spans the width and puts its switch at the right
-                // edge; the default shrink-wrapping span would pull it in next
-                // to the label, out of line with the toggles above it.
+                // The row lays itself out; the default shrink-wrapping span
+                // would cut its ❓ off the end of a long label.
                 block
                 hint={
                   hasSecondLocale
@@ -1176,6 +1271,7 @@ export function CreateItemModal({
                 }
               >
                 <ToggleRow
+                  layout="inline"
                   label={t.translateAfterwards || "Translate into all languages afterwards"}
                   help={t.translateAfterwardsHint}
                   checked={translateAfterwards && hasSecondLocale && canChainTranslate}
@@ -1185,22 +1281,6 @@ export function CreateItemModal({
               </DisabledActionTooltip>
             )}
 
-            {!blocked && advancedFields.length > 0 && (
-              <BlockStack gap="200">
-                <Button
-                  variant="plain"
-                  disclosure={showAdvanced ? "up" : "down"}
-                  onClick={() => setShowAdvanced((v) => !v)}
-                >
-                  {showAdvanced ? t.fewerFields || "Fewer fields" : t.moreFields || "More fields"}
-                </Button>
-                <Collapsible open={showAdvanced} id="create-advanced-fields">
-                  <Box paddingBlockStart="200">
-                    <BlockStack gap="400">{advancedFields.map(renderField)}</BlockStack>
-                  </Box>
-                </Collapsible>
-              </BlockStack>
-            )}
           </BlockStack>
         </Modal.Section>
       </Modal>

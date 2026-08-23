@@ -46,6 +46,10 @@ export const en: Translation = {
     valueLabel: "Value",
     addValue: "Add another value",
     removeValue: "Remove value",
+    // {value} is the value's own name: a list of handles all called "Reorder
+    // value" tells a screen reader nothing apart.
+    reorderValue: "Reorder {value}",
+    reorderOption: "Reorder {value}",
     optionWarningNotConfirmed: "Shopify did not confirm the change, so nothing was stored.",
     optionWarningFailed: "Shopify rejected the change.",
     optionWarningNameEmpty: "A variant needs a name.",
@@ -386,7 +390,14 @@ export const en: Translation = {
     menuMissingTranslations: "Missing translations",
     menuTranslateFailed: "Translation failed",
     menuAllLanguagesOff: "Every other language is switched off (Ctrl+click a language to switch it back on).",
-    menuPrimaryReadOnly: "This is your primary language. Pick another language above to edit translations.",
+    menuPrimaryEditHint: "Primary language: changing a label renames the menu item in Shopify. Order, nesting and link targets are still managed in the Shopify admin.",
+    menuTitleRequired: "A menu item needs a name.",
+    menuSaveRenameFirst: "Save the new name first — otherwise the translation would be made from the old text and removed again on save.",
+    menuRenameFailed: "Renaming failed",
+    menuRenameStructureChanged: "The menu changed in Shopify since this page was loaded — nothing was renamed. Reload and save again; your edits are kept.",
+    menuReloadAndRetry: "Reload",
+    menuRenameIdsReassigned: "Shopify gave the renamed menu items new ids. Their existing translations are attached to the old ids and have to be entered again.",
+    menuRenamePurgedTranslations: "{count} translation(s) were removed because their source text changed (Settings → Translations).",
     menuNeedsSecondLanguage: "Translating menus requires a second language in your shop.",
     menuNotTranslatable: "Shopify offers no translatable resource for this menu item — it cannot be translated here.",
     menuListIncomplete: "Not every menu link could be loaded from your shop. Items without a field may still be translatable — please reload the page.",
@@ -844,6 +855,7 @@ export const en: Translation = {
       generatedNeedsFixing: "The AI wrote its part, but something does not fit yet — check the marked fields.",
       generatingField: "Writing {field}…",
       sendImageToAI: "Let the AI look at the image",
+      sendImageToAIHint: "Off, the AI only sees your text and can say nothing about the image that is not already in the title. On, the image itself goes along — that costs a little more and needs a model that can read images. Switching it on now also rewrites the alt text.",
       translateAfterwards: "Translate into all languages afterwards",
       translateAfterwardsHint: "Runs right after creating, with the usual progress display.",
       translatingAfterCreate: "Translating into your other languages…",
@@ -862,7 +874,9 @@ export const en: Translation = {
       fewerFields: "Fewer fields",
       required: "Required",
       shopifyDefault: "Shopify default",
-      discardConfirm: "Discard your input?",
+      // Label of the red button that Cancel arms — it used to be the text in
+      // the browser dialog.
+      discardConfirm: "Discard your input",
       fields: {
         title: "Title", description: "Description", body: "Content", summary: "Summary",
         handle: "Handle", seoTitle: "SEO title", metaDescription: "Meta description",

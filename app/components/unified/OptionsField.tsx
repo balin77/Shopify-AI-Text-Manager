@@ -150,6 +150,11 @@ interface OptionsFieldProps {
     linkedBadge?: string;
     addValue?: string;
     removeValue?: string;
+    /** The drag handles' accessible names. `{value}` is the row's own name --
+     *  a list of controls all called "Reorder" tells a screen reader nothing
+     *  apart, and the keyboard sensor moves a row from its handle. */
+    reorderValue?: string;
+    reorderOption?: string;
     linkedNotEditableHint?: string;
     linkedNotEditableHintBefore?: string;
     linkedNotEditableHintAfter?: string;

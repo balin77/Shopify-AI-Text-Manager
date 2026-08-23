@@ -280,6 +280,7 @@ export function CollectionRuleBuilder({
         {spec?.read === "category" && (
           <Box minWidth="200px">
             <ToggleRow
+              layout="inline"
               label={t.includeDescendants || "Including subcategories"}
               checked={condition.includeDescendants === true}
               onChange={(includeDescendants) =>

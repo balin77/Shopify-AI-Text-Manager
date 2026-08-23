@@ -251,10 +251,11 @@ export function hasPrimaryContentMissing(
   // does, so primary content is never "missing".
   if (contentType === 'directTranslations') return false;
 
-  // Menus: the primary labels are Shopify's own menu item titles. This app
-  // does not write them (renaming is menuUpdate's job, not translation), so a
-  // menu can never be missing primary content and the primary locale button
-  // must not pulse orange at a merchant who has nothing to fix here.
+  // Menus: the primary labels are Shopify's own menu item titles, and Shopify
+  // will not store a nameless menu item — so a menu can never be MISSING
+  // primary content, and the primary locale button must not pulse orange at a
+  // merchant who has nothing to fix here. (The page can rename those titles
+  // now; that changes who writes them, not whether one can be absent.)
   if (contentType === 'menus') return false;
 
   // Templates have dynamic fields in translatableContent

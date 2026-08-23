@@ -884,6 +884,254 @@ function MenuTranslationProbeCard() {
   );
 }
 
+// ── Menu WRITE probe ──────────────────────────────────────────────────────
+// The other half of the menu question: translating an item is measured and
+// shipped, EDITING its primary title is not — because menuUpdate takes the
+// whole item tree and nobody here had measured what it does with it. Shapes
+// mirror api.menu-write-probe.tsx, re-declared for the same reason as above
+// (importing a route module drags its server code into the client bundle).
+
+interface MenuWriteProbeItem {
+  id: string;
+  title: string;
+  type: string | null;
+  url: string | null;
+  resourceId: string | null;
+  tags: string[];
+  depth: number;
+  path: string;
+}
+
+interface MenuWriteSchemaField {
+  name: string;
+  type: string;
+  required: boolean;
+}
+
+interface MenuWriteProbeReport {
+  generatedAt: string;
+  shop: string;
+  apiVersion: string;
+  schema: { error?: string; createInput: MenuWriteSchemaField[]; updateInput: MenuWriteSchemaField[]; itemTypes: string[] };
+  setup: {
+    handle: string;
+    menuId: string | null;
+    boundResource: { type: string; id: string; title: string } | null;
+    created: boolean;
+    errors: string[];
+  };
+  baseline: { items: MenuWriteProbeItem[]; resourceIdStoredOnCreate: boolean | null };
+  rename: {
+    attempted: boolean;
+    targetItemId: string | null;
+    targetPath: string | null;
+    newTitle: string | null;
+    echoedTitle: string | null;
+    readBackTitle: string | null;
+    idsStable: boolean | null;
+    idChanges: Array<{ path: string; before: string; after: string }>;
+    collateralTitleChanges: Array<{ path: string; before: string; after: string }>;
+    resourceIdPreserved: boolean | null;
+    itemCountBefore: number;
+    itemCountAfter: number;
+    errors: string[];
+  };
+  omission: {
+    attempted: boolean;
+    omittedItemId: string | null;
+    omittedPath: string | null;
+    stillPresentAfterwards: boolean | null;
+    siblingsSurvived: boolean | null;
+    errors: string[];
+  };
+  translation: {
+    attempted: boolean;
+    locale: string | null;
+    linkId: string | null;
+    linkResolved: boolean | null;
+    registered: boolean | null;
+    valueBeforeRename: string | null;
+    valueAfterRename: string | null;
+    outdatedAfterRename: boolean | null;
+    digestChanged: boolean | null;
+    errors: string[];
+  };
+  cleanup: { deleted: boolean; errors: string[] };
+  verdict: string[];
+}
+
+function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
+  const lines: string[] = [];
+  const yesNo = (v: boolean | null) => (v === null ? "not measured" : v ? "yes" : "no");
+
+  lines.push(`# Menu write probe — ${r.shop}`);
+  lines.push(`Generated: ${r.generatedAt}`);
+  lines.push(`API version: ${r.apiVersion}`);
+  lines.push(`Throwaway menu: ${r.setup.handle} (${r.setup.created ? "created" : "NOT created"}, ${r.cleanup.deleted ? "deleted again" : "NOT deleted"})`);
+  lines.push("");
+
+  lines.push("## Verdict");
+  for (const v of r.verdict) lines.push(`- ${v}`);
+  lines.push("");
+
+  lines.push("## Schema (introspected from the shop)");
+  if (r.schema.error) lines.push(`- Introspection error: ${r.schema.error}`);
+  const printFields = (label: string, fields: MenuWriteSchemaField[]) => {
+    lines.push(`- ${label}: ${fields.length === 0 ? "(none returned)" : ""}`);
+    for (const f of fields) lines.push(`  - ${f.name}: ${f.type}${f.required ? "!" : ""}`);
+  };
+  printFields("MenuItemCreateInput", r.schema.createInput);
+  printFields("MenuItemUpdateInput", r.schema.updateInput);
+  lines.push(`- MenuItemType values: ${r.schema.itemTypes.join(", ") || "(none returned)"}`);
+  lines.push("");
+
+  lines.push("## Baseline tree");
+  for (const item of r.baseline.items) {
+    lines.push(`- ${item.path} (d${item.depth}) "${item.title}" type=${item.type ?? "-"} resourceId=${item.resourceId ?? "-"} id=${item.id}`);
+  }
+  lines.push(`- resourceId stored on create: ${yesNo(r.baseline.resourceIdStoredOnCreate)}`);
+  lines.push("");
+
+  lines.push("## Rename");
+  lines.push(`- Attempted: ${r.rename.attempted ? "yes" : "no"}`);
+  lines.push(`- Target: ${r.rename.targetPath ?? "-"} (${r.rename.targetItemId ?? "-"})`);
+  lines.push(`- New title: ${r.rename.newTitle ?? "-"}`);
+  lines.push(`- Mutation echo: ${r.rename.echoedTitle ?? "(nothing)"}`);
+  lines.push(`- Fresh read-back: ${r.rename.readBackTitle ?? "(nothing)"}`);
+  lines.push(`- Item ids stable: ${yesNo(r.rename.idsStable)}`);
+  for (const c of r.rename.idChanges) lines.push(`  - ${c.path}: ${c.before} -> ${c.after}`);
+  lines.push(`- Collateral title changes: ${r.rename.collateralTitleChanges.length}`);
+  for (const c of r.rename.collateralTitleChanges) lines.push(`  - ${c.path}: "${c.before}" -> "${c.after}"`);
+  lines.push(`- Item count: ${r.rename.itemCountBefore} -> ${r.rename.itemCountAfter}`);
+  lines.push(`- resourceId preserved: ${yesNo(r.rename.resourceIdPreserved)}`);
+  for (const e of r.rename.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  lines.push("## Omission (is an unmentioned item deleted?)");
+  lines.push(`- Attempted: ${r.omission.attempted ? "yes" : "no"}`);
+  lines.push(`- Omitted: ${r.omission.omittedPath ?? "-"} (${r.omission.omittedItemId ?? "-"})`);
+  lines.push(`- Still present afterwards: ${yesNo(r.omission.stillPresentAfterwards)}`);
+  lines.push(`- Siblings survived: ${yesNo(r.omission.siblingsSurvived)}`);
+  for (const e of r.omission.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  lines.push("## Translation across a rename");
+  lines.push(`- Attempted: ${r.translation.attempted ? "yes" : "no"} (locale ${r.translation.locale ?? "-"})`);
+  lines.push(`- Link GID: ${r.translation.linkId ?? "-"} (resolved: ${yesNo(r.translation.linkResolved)})`);
+  lines.push(`- Registered before rename: ${yesNo(r.translation.registered)} -> "${r.translation.valueBeforeRename ?? ""}"`);
+  lines.push(`- Value after rename: ${r.translation.valueAfterRename === null ? "(gone)" : `"${r.translation.valueAfterRename}"`}`);
+  lines.push(`- Flagged outdated: ${yesNo(r.translation.outdatedAfterRename)}`);
+  lines.push(`- Digest changed: ${yesNo(r.translation.digestChanged)}`);
+  for (const e of r.translation.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
+  if (r.setup.errors.length > 0 || r.cleanup.errors.length > 0) {
+    lines.push("## Setup / cleanup errors");
+    for (const e of r.setup.errors) lines.push(`- setup: ${e}`);
+    for (const e of r.cleanup.errors) lines.push(`- cleanup: ${e}`);
+  }
+
+  return lines.join("\n");
+}
+
+function MenuWriteProbeCard() {
+  const [loading, setLoading] = useState(false);
+  const [report, setReport] = useState<MenuWriteProbeReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+
+  const runProbe = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.set("confirm", "true");
+      const r = await fetch("/api/menu-write-probe", { method: "POST", body: fd });
+      const j = (await r.json()) as { report?: MenuWriteProbeReport; error?: string };
+      if (!r.ok || !j.report) {
+        throw new Error(j.error === "gated" ? "Requires the Pro plan" : j.error || `HTTP ${r.status}`);
+      }
+      setReport(j.report);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const markdown = useMemo(() => (report ? formatMenuWriteProbeMarkdown(report) : ""), [report]);
+
+  // A failed CLEANUP outranks every other verdict: it is the one outcome that
+  // leaves something behind in the merchant's shop.
+  const tone = (() => {
+    if (!report) return "info" as const;
+    if (report.setup.created && !report.cleanup.deleted) return "critical" as const;
+    if (report.verdict.some((v) => v.includes("⚠️") || v.includes("FAILED") || v.includes("BLOCKED"))) return "warning" as const;
+    return "success" as const;
+  })();
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h3" variant="headingSm">Menu item renaming (menuUpdate behaviour)</Text>
+        <Text as="p" tone="subdued">
+          Measures what <code>menuUpdate</code> actually does, because that mutation takes the WHOLE
+          item tree: whether a MenuItem keeps its id across an update (its translation lives on
+          <code> gid://shopify/Link/&lt;same number&gt;</code>, so a new id would orphan it), whether an
+          item left out of the list is deleted, whether a resource-bound item keeps its
+          <code> resourceId</code>, and what a rename does to an existing translation. Also
+          introspects <code>MenuItemCreateInput</code> / <code>MenuItemUpdateInput</code> from your shop.
+        </Text>
+        <Banner tone="warning">
+          <Text as="p">
+            This probe WRITES. It creates its own three-level menu under a stamped handle, measures on
+            it (including deleting one of its items) and deletes it again. Your real menus are never
+            read or written. A menu is only rendered by a theme that references its handle, so the
+            throwaway one is invisible in the storefront for the seconds it exists — and if the delete
+            ever fails, the report names the handle so you can remove it by hand.
+          </Text>
+        </Banner>
+        <Checkbox
+          label="I understand this creates and deletes a throwaway menu in my shop"
+          checked={confirmed}
+          onChange={(checked) => setConfirmed(checked)}
+        />
+        <InlineStack gap="200">
+          <Button onClick={runProbe} loading={loading} disabled={!confirmed}>
+            {report ? "Re-run menu write probe" : "Run menu write probe"}
+          </Button>
+        </InlineStack>
+        {error && <Banner tone="critical"><Text as="p">Probe failed: {error}</Text></Banner>}
+        {report && (
+          <BlockStack gap="200">
+            <Banner tone={tone}>
+              <BlockStack gap="100">
+                {report.verdict.map((v, i) => <Text as="p" key={i}>{v}</Text>)}
+              </BlockStack>
+            </Banner>
+            <textarea
+              readOnly
+              value={markdown}
+              style={{
+                width: "100%",
+                minHeight: "320px",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                fontSize: "12px",
+                padding: "12px",
+                border: "1px solid var(--app-field-border-color)",
+                borderRadius: "8px",
+                background: "#fafbfb",
+                resize: "vertical",
+              }}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </BlockStack>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 function IndexNowProbeCard() {
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<IndexNowProbeReport | null>(null);
@@ -1053,6 +1301,8 @@ export function SettingsTranslationProbeTab() {
       <RedirectLocaleProbeCard />
 
       <MenuTranslationProbeCard />
+
+      <MenuWriteProbeCard />
 
       {report?.imageAltDiag && (
         <Card>
