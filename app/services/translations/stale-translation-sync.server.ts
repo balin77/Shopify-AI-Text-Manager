@@ -1012,9 +1012,9 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
      * with a digest that registers cleanly, which would produce an
      * echo-confirmed translation of text the merchant has just replaced, with
      * the deletion already stood down. When this is set and the read-back does
-     * not match it, the entry is treated as UNREADABLE: nothing is translated
-     * and nothing is removed, which is the same conservative answer a failed
-     * read gets.
+     * not match it, the entry is DECLINED: never translated, and removed only
+     * if the merchant's stored deletion answer says so. Skipping it outright
+     * would leave a foreign value live on a surface nothing else revisits.
      */
     expectedValue?: string;
   }>;

@@ -2054,8 +2054,9 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       markTranslationSaved(group.rowId);
       // The single editor's featured-alt repair runs under its OWN key — the
       // parent's lock belongs to that resource's CONTENT repair — so a claim on
-      // the row alone would never reach it.
-      markTranslationSaved(featuredAltLockId(group.rowId));
+      // the row alone would never reach it. Global layer only, for the same
+      // reason as the sub-resource claim below.
+      if (group.marketId === "") markTranslationSaved(featuredAltLockId(group.rowId));
     }
   }
 
@@ -2562,7 +2563,13 @@ async function persistSubResourceTranslations(
     // runs under a private lock (translation-locks.shared.ts) and watches the
     // resources it is about to write, not the product — so a claim on the row
     // alone is invisible to it and the AI would overwrite this value.
-    for (const resourceId of claimed) markTranslationSaved(resourceId);
+    //
+    // GLOBAL layer only: that repair writes global rows, so a MARKET override
+    // can never collide with it, and aborting it over one would leave its
+    // remaining entries in neither list.
+    if (group.marketId === "") {
+      for (const resourceId of claimed) markTranslationSaved(resourceId);
+    }
   }
 
   return failures;
