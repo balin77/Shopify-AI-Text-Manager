@@ -752,6 +752,11 @@ export default function MenusPage() {
 
   const onSave = useCallback(() => {
     if (changeCount === 0) return;
+    // The banner said the tree was blocked; nothing enforced it. menuUpdate
+    // carries the WHOLE tree, so submitting a known-bad item spends a round
+    // trip to be told what we already knew — and takes every other edit in the
+    // same save down with it.
+    if (treeProblems.length > 0) return;
     // Captured HERE, synchronously, not in an effect: an effect that also
     // depends on changesByLocale re-captures while the request is in flight,
     // so a keystroke made during the save would match the response and get
@@ -768,7 +773,7 @@ export default function MenusPage() {
       fd.set("treeChanges", JSON.stringify({ menuId: selectedMenuId, fingerprint: menuFingerprint, tree }));
     }
     fetcher.submit(fd, { method: "post" });
-  }, [changeCount, changesByLocale, treeChanged, tree, menuFingerprint, selectedMenuId, fetcher]);
+  }, [changeCount, changesByLocale, treeProblems, treeChanged, tree, menuFingerprint, selectedMenuId, fetcher]);
 
   const onDiscard = useCallback(() => {
     // Only what this save bar would have written. The bar appears for the
@@ -1179,7 +1184,7 @@ export default function MenusPage() {
           }}
           placeholder={isPrimary ? undefined : primaryTitle}
           disabled={!editable}
-          error={problem ? problemMessage(problem) : undefined}
+          error={problem && problem !== "missingTarget" ? problemMessage(problem) : undefined}
           helpText={
             // A brand-new item cannot be translated yet: its Link resource
             // does not exist until Shopify has created the item. Said in
@@ -1194,6 +1199,24 @@ export default function MenusPage() {
           }
           autoComplete="off"
         />
+        {/* A NEW item needs a target, and until the resource picker exists
+            (plan phase 3) the one target a merchant can state without one is a
+            URL. Shown for new items only: retargeting an EXISTING item is a
+            different feature with different consequences, and offering half of
+            it here would invite exactly the silent link change that feature
+            has to be careful about. */}
+        {isPrimary && !node.id && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <TextField
+              label={t.content?.menuItemUrl || "URL"}
+              value={node.url ?? ""}
+              onChange={(next) => setTree(updateNode(tree, node.key, { url: next }))}
+              placeholder="https://"
+              error={problem === "missingTarget" ? t.content?.menuTargetRequired : undefined}
+              autoComplete="off"
+            />
+          </div>
+        )}
       </div>
     );
   };
@@ -1539,9 +1562,21 @@ export default function MenusPage() {
                       </Banner>
                     )}
 
-                    {treeProblems.length > 0 && (
+                    {(treeProblems.length > 0 || (treeResult?.problems?.length ?? 0) > 0) && (
                       <Banner tone="critical">
-                        <p>{t.content?.menuTreeInvalid}</p>
+                        <BlockStack gap="100">
+                          <Text as="p">{t.content?.menuTreeInvalid}</Text>
+                          {/* The server's own refusal names items too — it
+                              validates the tree again against Shopify's fresh
+                              read, and a problem only it can see (an id that
+                              vanished) would otherwise render as a bare
+                              "could not be saved". */}
+                          {(treeResult?.problems ?? []).map((p, index) => (
+                            <Text as="p" variant="bodySm" key={`${index}-${p.key}`}>
+                              {p.title || p.key}: {problemMessage(p.code)}
+                            </Text>
+                          ))}
+                        </BlockStack>
                       </Banner>
                     )}
 
@@ -1598,6 +1633,12 @@ export default function MenusPage() {
                     <MenuTreeEditor
                       nodes={tree}
                       onChange={setTree}
+                      // Structure is edited in the PRIMARY language only. It is
+                      // language-independent in Shopify, but a delete pressed on
+                      // a French tab removes the item from every language, and an
+                      // item ADDED there cannot be named — its title field is a
+                      // translation of a primary value that does not exist yet.
+                      structureLocked={!isPrimary}
                       renderField={renderField}
                       renderActions={renderRowActions}
                       onDelete={(node) => setTree(removeNode(tree, node.key))}
@@ -1623,16 +1664,18 @@ export default function MenusPage() {
                       }}
                     />
 
-                    <InlineStack>
-                      <Button
-                        onClick={() => {
-                          newNodeSeq.current += 1;
-                          setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
-                        }}
-                      >
-                        {t.content?.menuAddItem}
-                      </Button>
-                    </InlineStack>
+                    {isPrimary && (
+                      <InlineStack>
+                        <Button
+                          onClick={() => {
+                            newNodeSeq.current += 1;
+                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
+                          }}
+                        >
+                          {t.content?.menuAddItem}
+                        </Button>
+                      </InlineStack>
+                    )}
                   </BlockStack>
                 ) : (
                   <div style={{ textAlign: "center", padding: "4rem 2rem" }}>

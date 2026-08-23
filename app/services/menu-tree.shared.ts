@@ -445,14 +445,22 @@ export function projectDrop(
   const dragDepth = indentationWidth > 0 ? Math.round(dragOffsetX / indentationWidth) : 0;
   const projected = active.depth + dragDepth;
 
-  // A node can never be deeper than one below the item above it, and never
-  // shallower than the item below it (which would orphan that one).
-  const ceiling = Math.min(
-    previous ? previous.depth + 1 : 1,
-    MAX_MENU_DEPTH - (activeSubtreeHeight - 1),
+  // Two bounds, and the order between them matters. The CEILING is one below
+  // the item above, further limited by the height of what is being dragged —
+  // a two-level branch dropped at depth 3 would put its child at depth 4,
+  // which Shopify refuses for the whole tree. The FLOOR is the depth of the
+  // item below, which would otherwise be orphaned.
+  //
+  // The ceiling WINS. Applying the floor last (the first cut did) let a deep
+  // next-item push the projection past the ceiling and hand Shopify a tree it
+  // rejects; a temporarily orphaned neighbour is a layout the merchant can
+  // see and fix, a refused save is not.
+  const ceiling = Math.max(
+    1,
+    Math.min(previous ? previous.depth + 1 : 1, MAX_MENU_DEPTH - (activeSubtreeHeight - 1)),
   );
-  const floor = next ? next.depth : 1;
-  const depth = Math.max(1, Math.min(projected, Math.max(ceiling, 1)), floor > 1 ? floor : 1);
+  const floor = Math.min(next ? next.depth : 1, ceiling);
+  const depth = Math.min(ceiling, Math.max(floor, Math.max(1, projected)));
 
   let parentKey: string | null = null;
   if (depth > 1 && previous) {
@@ -469,6 +477,33 @@ export function projectDrop(
     }
   }
   return { depth, parentKey };
+}
+
+/**
+ * Where among its new siblings the dragged item lands.
+ *
+ * Counted on the list AS MOVED — the same rearrangement `projectDrop` uses —
+ * and not on the original one. Slicing the original list up to and including
+ * the over-item is right for a downward drag and wrong for an upward one: it
+ * counts the item being passed as if it were already above, so dragging the
+ * second item onto the first left the order untouched. Confirmed as a defect
+ * in review, which is why it lives here with a test instead of in a handler.
+ */
+export function dropIndexAmongSiblings(
+  visible: FlatEditorItem[],
+  activeKey: string,
+  overKey: string,
+  parentKey: string | null,
+): number {
+  const overIndex = visible.findIndex((i) => i.key === overKey);
+  const activeIndex = visible.findIndex((i) => i.key === activeKey);
+  if (overIndex < 0 || activeIndex < 0) return 0;
+
+  const moved = [...visible];
+  const [moving] = moved.splice(activeIndex, 1);
+  moved.splice(overIndex, 0, moving);
+  const landedAt = moved.findIndex((i) => i.key === activeKey);
+  return moved.slice(0, landedAt).filter((i) => i.parentKey === parentKey && i.key !== activeKey).length;
 }
 
 /** How many levels the subtree under (and including) this node spans. */

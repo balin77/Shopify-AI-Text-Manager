@@ -385,6 +385,7 @@ export const es: Translation = {
     menuItemInvalid: "Este elemento del menú no se puede guardar así.",
     menuDragHandle: "Mover",
     menuAddItem: "Añadir elemento",
+    menuItemUrl: "URL de destino",
     menuAddChild: "Subelemento",
     menuDeleteItem: "Eliminar",
     menuTreeSummary: "{count} cambio(s) en el menú: {detail}",

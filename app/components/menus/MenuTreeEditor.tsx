@@ -44,6 +44,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Button, InlineStack, Text, TextField, Tooltip } from "@shopify/polaris";
 import {
   MAX_MENU_DEPTH,
+  dropIndexAmongSiblings,
   findNode,
   flattenEditorTree,
   moveNode,
@@ -92,6 +93,17 @@ export function MenuTreeEditor({
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [offsetX, setOffsetX] = useState(0);
   const [overKey, setOverKey] = useState<string | null>(null);
+  /**
+   * A keyboard drag REORDERS, it does not re-nest.
+   *
+   * The rows are indented with margin, so moving between two rows of different
+   * depth produces a horizontal delta the projection would read as an intent
+   * to change the parent — and a change of parent destroys that item's
+   * translations (measured). Nobody pressing ArrowDown means that. Depth stays
+   * put until there is a deliberate keyboard gesture for it, and the header
+   * comment no longer claims otherwise.
+   */
+  const [keyboardDrag, setKeyboardDrag] = useState(false);
 
   const flat = useMemo(() => flattenEditorTree(nodes), [nodes]);
 
@@ -127,14 +139,17 @@ export function MenuTreeEditor({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const handleDragStart = ({ active }: DragStartEvent) => {
+  const handleDragStart = ({ active, activatorEvent }: DragStartEvent) => {
     setActiveKey(String(active.id));
     setOverKey(String(active.id));
     setOffsetX(0);
+    setKeyboardDrag(
+      typeof KeyboardEvent !== "undefined" && activatorEvent instanceof KeyboardEvent,
+    );
   };
 
   const handleDragMove = ({ delta, over }: DragMoveEvent) => {
-    setOffsetX(delta.x);
+    if (!keyboardDrag) setOffsetX(delta.x);
     if (over) setOverKey(String(over.id));
   };
 
@@ -144,15 +159,12 @@ export function MenuTreeEditor({
     setActiveKey(null);
     setOverKey(null);
     setOffsetX(0);
+    setKeyboardDrag(false);
     if (!over || !projected) return;
 
-    // Where among its new siblings does it land? The position is read off the
-    // list the merchant was looking at, so what they saw is what they get.
-    const overIndex = visible.findIndex((i) => i.key === String(over.id));
-    const siblings = visible.filter((i) => i.parentKey === projected.parentKey && i.key !== key);
-    const before = visible.slice(0, overIndex + 1).filter((i) => i.parentKey === projected.parentKey && i.key !== key);
-    const index = Math.min(before.length, siblings.length);
-
+    // Where among its new siblings does it land? Pure, tested, and next to the
+    // projection it has to agree with.
+    const index = dropIndexAmongSiblings(visible, key, String(over.id), projected.parentKey);
     const next = moveNode(nodes, key, projected.parentKey, index);
     if (next !== nodes) onChange(next);
   };
@@ -173,6 +185,7 @@ export function MenuTreeEditor({
         setActiveKey(null);
         setOverKey(null);
         setOffsetX(0);
+        setKeyboardDrag(false);
       }}
     >
       <SortableContext items={visible.map((i) => i.key)} strategy={verticalListSortingStrategy}>
