@@ -35,12 +35,19 @@ import {
 export type CreatableResource = "product" | "collection" | "page" | "article" | "blog" | "metaobject";
 
 /**
- * What can be DELETED. The same six, and not by coincidence: the types this
- * app cannot create are the ones Shopify has no create API for (policies are a
- * fixed set of six, theme content is not a resource), and it has no delete API
- * for those either. Aliased rather than re-listed so the two cannot drift.
+ * What can be DELETED.
+ *
+ * The six creatable ones — aliased rather than re-listed so the two cannot
+ * drift — plus two that this app deliberately does not offer a create form
+ * for and can still remove: a metaobject DEFINITION, and a MENU.
+ *
+ * A menu is the odd one and worth the sentence. The menus page is a full tree
+ * editor now, and every other object it can build it could also throw away;
+ * a merchant who created a menu in Shopify (or a probe that left one behind)
+ * had no way to remove it from here at all. It has no create form yet, which
+ * is the asymmetry to close next, not a reason to withhold the delete.
  */
-export type DeletableResource = CreatableResource | "metaobjectDefinition";
+export type DeletableResource = CreatableResource | "metaobjectDefinition" | "menu";
 
 /**
  * The GID type segment each resource's ids carry.
@@ -65,6 +72,7 @@ export const GID_TYPE_BY_RESOURCE: Record<DeletableResource, string> = {
   // `metaobject_type_<type>` row is not a Metaobject GID, and the id check
   // below is what catches a client that confuses them.
   metaobjectDefinition: "MetaobjectDefinition",
+  menu: "Menu",
 };
 
 /**
@@ -77,6 +85,8 @@ export const GID_TYPE_BY_RESOURCE: Record<DeletableResource, string> = {
  */
 export function planContentTypeForDelete(resource: DeletableResource): string {
   if (resource === "metaobjectDefinition") return "metaobjects";
+  // No create spec either — the menus page gates on this same content type.
+  if (resource === "menu") return "menus";
   return CREATE_SPECS[resource].planContentType;
 }
 

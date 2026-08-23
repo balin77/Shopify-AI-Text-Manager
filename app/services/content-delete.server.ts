@@ -26,6 +26,27 @@
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "~/utils/logger.server";
 import type { DeletableResource } from "~/config/create-fields.config";
+import { linkGidForMenuItem } from "~/services/menu-translations.shared";
+
+/**
+ * Every Link GID in a cached menu tree, at any depth.
+ *
+ * `linkGidForMenuItem` returns null for anything that is not a MenuItem GID
+ * and those are dropped: this list becomes a `deleteMany` filter, and a
+ * fabricated id there would delete somebody else's row.
+ */
+function menuLinkGids(items: unknown, out: string[] = []): string[] {
+  if (!Array.isArray(items)) return out;
+  for (const raw of items) {
+    const node = raw as { id?: unknown; items?: unknown };
+    if (typeof node?.id === "string") {
+      const linkId = linkGidForMenuItem(node.id);
+      if (linkId) out.push(linkId);
+    }
+    menuLinkGids(node?.items, out);
+  }
+  return out;
+}
 
 export type { DeletableResource } from "~/config/create-fields.config";
 
@@ -101,6 +122,26 @@ export async function purgeContentFromCache(
             ).count;
           }
           counts.article = (await tx.article.deleteMany({ where: { shop, blogId: gid } })).count;
+        }
+        break;
+
+      case "menu":
+        // The two lines above cleaned up rows keyed by the MENU's own GID, and
+        // a menu has none of those: its translations live on its ITEMS, each
+        // under `gid://shopify/Link/<the MenuItem's number>`. Nothing in the
+        // schema connects those to the menu, so they have to be collected from
+        // the cached tree BEFORE the row goes — a delete-first order would
+        // strand every one of them, the same trap `MetaobjectTranslation`
+        // presented for a definition.
+        {
+          const row = await tx.menu.findFirst({ where: { shop, id: gid }, select: { items: true } });
+          const linkIds = row ? menuLinkGids(row.items) : [];
+          if (linkIds.length > 0) {
+            counts.menuLinkTranslations = (
+              await tx.contentTranslation.deleteMany({ where: { shop, resourceId: { in: linkIds } } })
+            ).count;
+          }
+          counts.menu = (await tx.menu.deleteMany({ where: { shop, id: gid } })).count;
         }
         break;
 

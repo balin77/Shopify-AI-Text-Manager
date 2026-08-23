@@ -34,6 +34,15 @@ export interface DeleteItemModalTexts {
   consequenceIrreversible?: string;
   /** Blog-only: articles go with it. */
   consequenceBlogArticles?: string;
+  /**
+   * Menu-only: every item goes, and its translations are not recoverable.
+   *
+   * Its own line rather than leaning on `consequenceTranslations`, which says
+   * "the translations of this object". A menu's translations sit on its ITEMS,
+   * and the measured part is the one a merchant would not guess: re-creating
+   * an item mints a new id, so the values do not come back with it.
+   */
+  consequenceMenuItems?: string;
   /** Metaobject-only: products may reference the entry as an option value. */
   consequenceMetaobjectUsage?: string;
   /** The TYPE takes its entries with it, and Shopify does not ask about them. */
@@ -104,6 +113,14 @@ export function DeleteItemModal({ open, onClose, item, onConfirm, deleting = fal
               {item.resource === "blog" && (
                 <List.Item>
                   {t.consequenceBlogArticles || "Every article in this blog is deleted with it."}
+                </List.Item>
+              )}
+              {item.resource === "menu" && (
+                <List.Item>
+                  <Text as="span" fontWeight="semibold">
+                    {t.consequenceMenuItems ||
+                      "Every item in this menu goes with it, and their translations cannot be recovered — a re-created item gets a new id."}
+                  </Text>
                 </List.Item>
               )}
               {/* A metaobject entry can be a product's option VALUE. MEASURED

@@ -12,10 +12,13 @@ import { describe, it, expect } from "vitest";
 import {
   CREATE_PRODUCT_STATUSES,
   CREATE_SPECS,
+  GID_TYPE_BY_RESOURCE,
   createSpecFor,
+  isGidOfResource,
   metaobjectCreatability,
   metaobjectFieldDefs,
   metaobjectFieldsPayload,
+  planContentTypeForDelete,
   suggestHandle,
   validateCreatePayload,
 } from "~/config/create-fields.config";
@@ -235,5 +238,23 @@ describe("the specs themselves", () => {
   it("has no spec for resources that cannot be created", () => {
     expect(createSpecFor("policy")).toBeNull();
     expect(createSpecFor("theme")).toBeNull();
+  });
+});
+
+describe("menu — deletable but not creatable", () => {
+  it("has a GID type, so the id/resource agreement check can fire", () => {
+    // The check that stopped the metaobjects tab from sending a
+    // `metaobject_type_<type>` pseudo id into metaobjectDelete.
+    expect(GID_TYPE_BY_RESOURCE.menu).toBe("Menu");
+    expect(isGidOfResource("gid://shopify/Menu/1", "menu")).toBe(true);
+    expect(isGidOfResource("gid://shopify/MenuItem/1", "menu")).toBe(false);
+  });
+
+  it("gates on the menus content type, the same one the page gates on", () => {
+    expect(planContentTypeForDelete("menu")).toBe("menus");
+  });
+
+  it("is NOT creatable — the asymmetry is deliberate and should stay visible", () => {
+    expect((CREATE_SPECS as Record<string, unknown>).menu).toBeUndefined();
   });
 });

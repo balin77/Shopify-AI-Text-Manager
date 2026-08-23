@@ -30,6 +30,7 @@ import {
   DELETE_ARTICLE,
   DELETE_BLOG,
   DELETE_COLLECTION,
+  DELETE_MENU,
   DELETE_METAOBJECT,
   DELETE_METAOBJECT_DEFINITION,
   DELETE_PAGE,
@@ -49,6 +50,7 @@ const DELETABLE: DeletableResource[] = [
   "blog",
   "metaobject",
   "metaobjectDefinition",
+  "menu",
 ];
 
 type GraphQLResponse = { data?: any; errors?: Array<{ message: string }> };
@@ -101,6 +103,16 @@ function deletePlan(resource: DeletableResource, gid: string): {
         variables: { id: gid },
         read: (d) => ({ deletedId: d?.metaobjectDelete?.deletedId, userErrors: d?.metaobjectDelete?.userErrors }),
       };
+    case "menu":
+      // A menu takes every item with it, and each item's translations go with
+      // its Link resource (measured: the Link stops resolving, so re-creating
+      // the item does not bring them back). Nothing about that is visible in
+      // the mutation, which is why the confirmation in front of it says so.
+      return {
+        mutation: DELETE_MENU,
+        variables: { id: gid },
+        read: (d) => ({ deletedId: d?.menuDelete?.deletedMenuId, userErrors: d?.menuDelete?.userErrors }),
+      };
     case "metaobjectDefinition":
       // The most destructive call in this codebase: the TYPE goes, and every
       // entry of it goes with it. Shopify does not ask about the entries, so
@@ -116,11 +128,39 @@ function deletePlan(resource: DeletableResource, gid: string): {
   }
 }
 
+/**
+ * The unified handler's entrance: pull the two fields out of the form and hand
+ * them to the one implementation below.
+ *
+ * A THIRD entrance exists now — the menus page, whose route has its own action
+ * and does not build a `ContentActionHandlerContext` (that type wants a content
+ * config, a Shopify content service and an AI provider, none of which a delete
+ * touches). It calls `deleteContentObject` directly with the four things this
+ * path actually needs, which is why that function takes them as arguments
+ * instead of reaching into a context.
+ */
 export async function handleDeleteContent(ctx: ContentActionHandlerContext, formData: FormData) {
-  const { admin, session, db } = ctx;
+  return deleteContentObject({
+    admin: ctx.admin,
+    session: ctx.session,
+    db: ctx.db,
+    plan: (ctx.aiSettings?.subscriptionPlan || "free") as Plan,
+    resource: getFormString(formData, "resource") as DeletableResource | "",
+    gid: getFormString(formData, "resourceId") || ctx.itemId,
+  });
+}
 
-  const resource = getFormString(formData, "resource") as DeletableResource | "";
-  const gid = getFormString(formData, "resourceId") || ctx.itemId;
+export interface DeleteContentArgs {
+  admin: ContentActionHandlerContext["admin"];
+  session: ContentActionHandlerContext["session"];
+  db: ContentActionHandlerContext["db"];
+  /** The shop's plan, already resolved — this path only reads it. */
+  plan: Plan;
+  resource: DeletableResource | "";
+  gid: string;
+}
+
+export async function deleteContentObject({ admin, session, db, plan, resource, gid }: DeleteContentArgs) {
 
   if (!resource || !DELETABLE.includes(resource)) {
     return json({ success: false, error: `Cannot delete resource type: ${resource || "(missing)"}` }, { status: 400 });
@@ -145,7 +185,6 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
   // this action is directly POST-reachable — the same class as the `/api/ai`
   // handlers, except that this one is now the most destructive thing the app
   // can do. The create path has gated on exactly this since it shipped.
-  const plan = (ctx.aiSettings?.subscriptionPlan || "free") as Plan;
   const planContentType = planContentTypeForDelete(resource);
   if (!canAccessContentType(plan, planContentType as ContentType)) {
     return json(
@@ -258,12 +297,12 @@ export async function handleDeleteContent(ctx: ContentActionHandlerContext, form
   }
 
   try {
-    const plan = deletePlan(resource, gid);
+    const mutationPlan = deletePlan(resource, gid);
     const response = (await admin
-      .graphql(plan.mutation, { variables: plan.variables })
+      .graphql(mutationPlan.mutation, { variables: mutationPlan.variables })
       .then((r) => r.json())) as GraphQLResponse;
 
-    const { deletedId, userErrors } = plan.read(response.data);
+    const { deletedId, userErrors } = mutationPlan.read(response.data);
     const errorText =
       userErrorText(userErrors) || response.errors?.map((e) => e.message).join("; ") || "";
 
