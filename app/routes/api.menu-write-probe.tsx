@@ -200,6 +200,45 @@ const LINK_TRANSLATABLE_QUERY = `#graphql
   }
 `;
 
+/**
+ * The same read, but scoped to a market.
+ *
+ * A separate document rather than an optional argument on the one above: the
+ * measured rule is that translations(marketId: null) returns the GLOBAL layer
+ * ONLY (CLAUDE.md), so the two reads answer different questions and a caller
+ * that passed null by accident would silently get the wrong one.
+ */
+const LINK_TRANSLATABLE_MARKET_QUERY = `#graphql
+  query menuWriteProbeLinkMarket($id: ID!, $locale: String!, $marketId: ID!) {
+    translatableResource(resourceId: $id) {
+      resourceId
+      translatableContent {
+        key
+        value
+        digest
+      }
+      translations(locale: $locale, marketId: $marketId) {
+        key
+        value
+        outdated
+      }
+    }
+  }
+`;
+
+const MARKETS_QUERY = `#graphql
+  query menuWriteProbeMarkets {
+    markets(first: 10) {
+      nodes {
+        id
+        name
+        handle
+        status
+      }
+    }
+  }
+`;
+
 const REGISTER_MUTATION = `#graphql
   mutation menuWriteProbeRegister($resourceId: ID!, $translations: [TranslationInput!]!) {
     translationsRegister(resourceId: $resourceId, translations: $translations) {
@@ -485,6 +524,36 @@ export interface MenuWriteProbeReport {
     reRegisterAfterMove: { attempted: boolean; digestFound: boolean | null; restored: boolean | null };
     errors: string[];
   };
+  /**
+   * Can a menu item carry a MARKET-SCOPED translation — and does a move take
+   * it too?
+   *
+   * The page has always written menu translations on the global layer only,
+   * with the file header saying that market behaviour is unmeasured. That was
+   * harmless while nothing here restructured menus. It stops being harmless
+   * the moment a tree editor moves items: re-parenting destroys translations
+   * (measured), the editor's repair re-registers what THIS APP can read, and a
+   * market-scoped value written in Shopify's own editor is exactly what it
+   * cannot read. So either such a value cannot exist — and the repair is
+   * complete — or it can, and a drag silently destroys merchant content.
+   */
+  marketScoped: {
+    attempted: boolean;
+    /** Why the measurement could not run, when it could not. */
+    reason?: string;
+    marketId: string | null;
+    marketName: string | null;
+    locale: string | null;
+    /** A market-scoped register was echoed AND read back. */
+    storedAtAll: boolean | null;
+    /** Whether the GLOBAL read shows the market value (it must not). */
+    globalReadShowsIt: boolean | null;
+    /** Still there after the item was re-parented. */
+    survivesMove: boolean | null;
+    /** If the move dropped it: can it be written again? */
+    restorable: boolean | null;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -747,6 +816,17 @@ export async function action({ request }: ActionFunctionArgs) {
       errors: [],
     },
     depth: { attempted: false, results: [], maxAccepted: null, readableDepth: 4 },
+    marketScoped: {
+      attempted: false,
+      marketId: null,
+      marketName: null,
+      locale: null,
+      storedAtAll: null,
+      globalReadShowsIt: null,
+      survivesMove: null,
+      restorable: null,
+      errors: [],
+    },
     translationDurability: {
       attempted: false,
       menuId: null,
@@ -1325,7 +1405,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const created = await run(MENU_CREATE_MUTATION, {
           title: `ContentPilot durability probe ${stamp}`,
           handle: durHandle,
-          items: ["CONTROL", "MOVED", "RENAMED", "REORDERED"].map((role) => ({
+          items: ["CONTROL", "MOVED", "RENAMED", "REORDERED", "MARKETED"].map((role) => ({
             title: `CP Probe ${role}`,
             type: "HTTP",
             url: `https://example.com/cp-probe-${role.toLowerCase()}`,
@@ -1428,6 +1508,90 @@ export async function action({ request }: ActionFunctionArgs) {
             for (const e of errs) report.translationDurability.errors.push(`${stage}: ${e}`);
           };
 
+          // ── The market-scoped question ───────────────────────────────
+          // Registered here, on its own item, so it rides the SAME move write
+          // as everything else and the answer is comparable.
+          try {
+            const marketsResult = await run(MARKETS_QUERY);
+            report.marketScoped.errors.push(...topLevelErrors(marketsResult));
+            const markets =
+              (marketsResult.data?.markets as
+                | { nodes?: Array<{ id: string; name: string; status: string }> }
+                | undefined)?.nodes ?? [];
+            // ACTIVE, never the deprecated `enabled` flag (CLAUDE.md).
+            const market = markets.find((m) => m.status === "ACTIVE") ?? null;
+            const marketedLink = byRole.get("MARKETED");
+            if (!market) {
+              report.marketScoped.reason = "This shop has no ACTIVE market — the question cannot be asked here.";
+            } else if (!marketedLink) {
+              report.marketScoped.reason = "The MARKETED probe item has no derivable Link GID.";
+            } else {
+              report.marketScoped.attempted = true;
+              report.marketScoped.marketId = market.id;
+              report.marketScoped.marketName = market.name;
+              report.marketScoped.locale = foreignLocale;
+
+              const read = await run(LINK_TRANSLATABLE_QUERY, { id: marketedLink, locale: foreignLocale });
+              const digest = (
+                read.data?.translatableResource as
+                  | { translatableContent?: Array<{ key: string; digest: string | null }> }
+                  | null
+                  | undefined
+              )?.translatableContent?.find((c) => c.key === "title")?.digest ?? null;
+              if (!digest) {
+                report.marketScoped.reason = "No digest on the MARKETED item — nothing could be registered.";
+              } else {
+                const registered = await run(REGISTER_MUTATION, {
+                  resourceId: marketedLink,
+                  translations: [
+                    {
+                      key: "title",
+                      locale: foreignLocale,
+                      value: `CP-DUR-MARKET-${stamp}`,
+                      translatableContentDigest: digest,
+                      marketId: market.id,
+                    },
+                  ],
+                });
+                report.marketScoped.errors.push(...topLevelErrors(registered));
+                const registerPayload = registered.data?.translationsRegister as
+                  | { userErrors?: unknown }
+                  | undefined;
+                report.marketScoped.errors.push(...userErrorText(registerPayload?.userErrors));
+
+                // Echo is not storage: read it back under the SAME market.
+                const marketRead = await run(LINK_TRANSLATABLE_MARKET_QUERY, {
+                  id: marketedLink,
+                  locale: foreignLocale,
+                  marketId: market.id,
+                });
+                report.marketScoped.errors.push(...topLevelErrors(marketRead));
+                report.marketScoped.storedAtAll = !!(
+                  marketRead.data?.translatableResource as
+                    | { translations?: Array<{ key: string; value: string }> }
+                    | null
+                    | undefined
+                )?.translations?.find((t) => t.key === "title")?.value;
+
+                // And the global layer must NOT show it, or the two layers are
+                // one layer and every rule this app has about them is wrong.
+                const globalRead = await run(LINK_TRANSLATABLE_QUERY, {
+                  id: marketedLink,
+                  locale: foreignLocale,
+                });
+                const globalValue = (
+                  globalRead.data?.translatableResource as
+                    | { translations?: Array<{ key: string; value: string }> }
+                    | null
+                    | undefined
+                )?.translations?.find((t) => t.key === "title")?.value ?? null;
+                report.marketScoped.globalReadShowsIt = globalValue === `CP-DUR-MARKET-${stamp}`;
+              }
+            }
+          } catch (error) {
+            report.marketScoped.errors.push(error instanceof Error ? error.message : String(error));
+          }
+
           await observe("registered");
 
           // W1 — a write that changes NOTHING. If a translation dies here, the
@@ -1439,16 +1603,86 @@ export async function action({ request }: ActionFunctionArgs) {
           // W2 — MOVED goes under CONTROL. Nothing else changes.
           const beforeMove = await readDurMenu();
           const movedItem = flatten(beforeMove).find((i) => roleOf(i.title) === "MOVED");
+          const marketedItem = flatten(beforeMove).find((i) => roleOf(i.title) === "MARKETED");
           if (movedItem) {
-            const rest = beforeMove.filter((i) => i.id !== movedItem.id);
-            const nested = rest.map((node) =>
-              roleOf(node.title) === "CONTROL"
-                ? { ...node, items: [...(node.items ?? []), beforeMove.find((i) => i.id === movedItem.id)!] }
-                : node,
-            );
+            // Both re-parents ride ONE write: MOVED under CONTROL and MARKETED
+            // under REORDERED. Two writes would leave "was it the second write
+            // rather than the move" open all over again.
+            const liftedIds = new Set([movedItem.id, ...(marketedItem ? [marketedItem.id] : [])]);
+            const rest = beforeMove.filter((i) => !liftedIds.has(i.id));
+            const nested = rest.map((node) => {
+              const role = roleOf(node.title);
+              if (role === "CONTROL") {
+                return { ...node, items: [...(node.items ?? []), beforeMove.find((i) => i.id === movedItem.id)!] };
+              }
+              if (role === "REORDERED" && marketedItem) {
+                return { ...node, items: [...(node.items ?? []), beforeMove.find((i) => i.id === marketedItem.id)!] };
+              }
+              return node;
+            });
             await writeTree("move", toUpdateInput(nested, {}));
           }
           await observe("afterMove");
+
+          // Did the market layer go with it? And can it be written back?
+          if (report.marketScoped.attempted && report.marketScoped.marketId) {
+            const marketedLink = byRole.get("MARKETED");
+            const marketId = report.marketScoped.marketId;
+            if (marketedLink) {
+              try {
+                const after = await run(LINK_TRANSLATABLE_MARKET_QUERY, {
+                  id: marketedLink,
+                  locale: foreignLocale,
+                  marketId,
+                });
+                report.marketScoped.survivesMove = !!(
+                  after.data?.translatableResource as
+                    | { translations?: Array<{ key: string; value: string }> }
+                    | null
+                    | undefined
+                )?.translations?.find((t) => t.key === "title")?.value;
+
+                if (report.marketScoped.survivesMove === false) {
+                  const fresh = await run(LINK_TRANSLATABLE_QUERY, { id: marketedLink, locale: foreignLocale });
+                  const digest = (
+                    fresh.data?.translatableResource as
+                      | { translatableContent?: Array<{ key: string; digest: string | null }> }
+                      | null
+                      | undefined
+                  )?.translatableContent?.find((c) => c.key === "title")?.digest ?? null;
+                  if (digest) {
+                    await run(REGISTER_MUTATION, {
+                      resourceId: marketedLink,
+                      translations: [
+                        {
+                          key: "title",
+                          locale: foreignLocale,
+                          value: `CP-DUR-MARKET-REPAIRED-${stamp}`,
+                          translatableContentDigest: digest,
+                          marketId,
+                        },
+                      ],
+                    });
+                    const verify = await run(LINK_TRANSLATABLE_MARKET_QUERY, {
+                      id: marketedLink,
+                      locale: foreignLocale,
+                      marketId,
+                    });
+                    report.marketScoped.restorable = !!(
+                      verify.data?.translatableResource as
+                        | { translations?: Array<{ key: string; value: string }> }
+                        | null
+                        | undefined
+                    )?.translations?.find((t) => t.key === "title")?.value;
+                  } else {
+                    report.marketScoped.restorable = false;
+                  }
+                }
+              } catch (error) {
+                report.marketScoped.errors.push(error instanceof Error ? error.message : String(error));
+              }
+            }
+          }
 
           // W3 — RENAMED is renamed. Its translation should survive as
           // outdated, which is what the earlier run measured.
@@ -1741,6 +1975,28 @@ export async function action({ request }: ActionFunctionArgs) {
           "TRANSLATION DURABILITY: a child that came along with the move KEPT its translation — only the item whose parent actually changed loses it.",
         );
       }
+    }
+    if (report.marketScoped.attempted) {
+      if (report.marketScoped.storedAtAll === false) {
+        v.push(
+          "MARKET LAYER: a market-scoped translation could NOT be stored on a menu item — so a move cannot destroy one, and the editor's repair is complete.",
+        );
+      } else if (report.marketScoped.storedAtAll) {
+        v.push(
+          `MARKET LAYER: a menu item CAN hold a market-scoped translation (${report.marketScoped.marketName ?? "?"})${report.marketScoped.globalReadShowsIt ? " — ⚠️ and the GLOBAL read returns it too, so the two layers are not separate here" : ""}.`,
+        );
+        if (report.marketScoped.survivesMove === false) {
+          v.push(
+            report.marketScoped.restorable
+              ? "MARKET LAYER: ⚠️ a move destroys it as well, and it CAN be written back — so the editor's repair must cover every market, not just the global layer."
+              : "MARKET LAYER: ⚠️⚠️ a move destroys it and it could NOT be written back. Dragging an item would lose market content irrecoverably — that needs a warning in front of the drag.",
+          );
+        } else if (report.marketScoped.survivesMove) {
+          v.push("MARKET LAYER: it SURVIVES the move — only the global layer is dropped.");
+        }
+      }
+    } else if (report.marketScoped.reason) {
+      v.push(`MARKET LAYER: not measured — ${report.marketScoped.reason}`);
     }
     if (report.translationDurability.reRegisterAfterMove.attempted) {
       v.push(

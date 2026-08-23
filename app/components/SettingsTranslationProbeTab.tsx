@@ -1001,6 +1001,18 @@ interface MenuWriteProbeReport {
     reRegisterAfterMove: { attempted: boolean; digestFound: boolean | null; restored: boolean | null };
     errors: string[];
   };
+  marketScoped: {
+    attempted: boolean;
+    reason?: string;
+    marketId: string | null;
+    marketName: string | null;
+    locale: string | null;
+    storedAtAll: boolean | null;
+    globalReadShowsIt: boolean | null;
+    survivesMove: boolean | null;
+    restorable: boolean | null;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -1147,6 +1159,16 @@ function formatMenuWriteProbeMarkdown(r: MenuWriteProbeReport): string {
   for (const e of r.translationDurability.errors) lines.push(`  - error: ${e}`);
   lines.push("");
 
+  lines.push("## Market-scoped translation on a menu item");
+  lines.push(`- Attempted: ${r.marketScoped.attempted ? "yes" : `no — ${r.marketScoped.reason ?? "?"}`}`);
+  lines.push(`- Market: ${r.marketScoped.marketName ?? "-"} (${r.marketScoped.marketId ?? "-"}), locale ${r.marketScoped.locale ?? "-"}`);
+  lines.push(`- Can be stored at all: ${yesNo(r.marketScoped.storedAtAll)}`);
+  lines.push(`- Global read returns it (it must not): ${yesNo(r.marketScoped.globalReadShowsIt)}`);
+  lines.push(`- Survives a re-parent: ${yesNo(r.marketScoped.survivesMove)}`);
+  lines.push(`- Restorable afterwards: ${yesNo(r.marketScoped.restorable)}`);
+  for (const e of r.marketScoped.errors) lines.push(`  - error: ${e}`);
+  lines.push("");
+
   lines.push("## Item types that are neither HTTP nor resource-bound");
   lines.push(`- Attempted: ${r.typeRoundTrip.attempted ? "yes" : "no"} (${r.typeRoundTrip.typesTried.join(", ") || "-"})`);
   for (const item of r.typeRoundTrip.read) {
@@ -1218,7 +1240,8 @@ function MenuWriteProbeCard() {
           introspects <code>MenuItemCreateInput</code> / <code>MenuItemUpdateInput</code> from your shop.
           Further throwaway menus answer what a tree EDITOR would need: whether an item keeps its id
           when it is re-parented (its translation lives on that number, so a new id would lose it),
-          whether an item sent without an id is created and can be found again by position, how deep
+          whether a menu item can hold a market-scoped translation at all (and whether a move takes
+          that one too), whether an item sent without an id is created and can be found again by position, how deep
           Shopify really accepts (documented is three), what becomes of a deleted item&apos;s
           translation, and whether a write-back survives item types that are neither HTTP nor
           resource-bound (<code>FRONTPAGE</code>, <code>SEARCH</code>, …) — every default main menu
