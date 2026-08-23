@@ -53,8 +53,11 @@ const MAXIMAL: [string, unknown][] = [
       externalFound: 1,
       externalChecked: 1,
       externalBroken: 1,
+      externalUnchecked: 1,
+      externalTimedOut: true,
     },
   ],
+  ["seoCrawl", { status: "failed", error: "invalid_domain" }],
   ["seoAudit", { averageScore: 1, totalScanned: 1, totalAvailable: 1, capped: true }],
   [
     "seoJsonLdAudit",
@@ -88,6 +91,10 @@ const MAXIMAL: [string, unknown][] = [
   ["distributeKeywords", { stage: "apply", applied: 1, demotedToSecondary: 1, skipped: 1, errors: 1 }],
   ["seoRobotsAdvice", { advised: 1, total: 1 }],
   ["aiDiscoveryIntro", { file: "llms", chars: 1 }],
+  // Both runners under the one type (the second spelling resolves through
+  // TASK_TYPE_ALIASES, which is the point of listing it as it is created).
+  ["bulkAiGeneration", { generated: 1, failed: 1 }],
+  ["bulkAIGeneration", { generatedAltTexts: { "0": "x" }, failedIndices: [1] }],
   ["translation", { translated: 1, total: 1 }],
   ["translation", { retranslated: 1, purged: 1 }],
   ["translation", { translatedCount: 1, failedCount: 1 }],
@@ -104,6 +111,10 @@ const MAXIMAL: [string, unknown][] = [
     },
   ],
   ["bulkTranslation", { translations: { title: "x" }, targetLocale: "fr" }],
+  // The countable locale shapes: a map whose entries hold something, and a
+  // per-locale translation map that says its keys are locales. A bare `locales`
+  // key list emits no count at all — it substantiates none.
+  ["bulkTranslation", { translations: { fr: "x" }, fieldType: "title" }],
 ];
 
 const EMITTED_LABEL_KEYS = (() => {

@@ -54,8 +54,15 @@ function lookup(bundle: unknown, key: string): string | null {
 /**
  * Task types created under a spelling the i18n bundle does not carry.
  * NEVER add a duplicated i18n key for these — one label, two identifiers.
+ *
+ * EXPORTED because `task-details.shared.ts` resolves the very same question
+ * one layer down: its summariser registry is keyed by task type, and a RAW
+ * lookup there would reintroduce this exact one-letter split (a summariser
+ * registered under `bulkAiGeneration` never firing for a `bulkAIGeneration`
+ * row). A second copy of the map is that bug with an extra step, so there is
+ * one map and this module owns it.
  */
-const TASK_TYPE_ALIASES: Record<string, string> = {
+export const TASK_TYPE_ALIASES: Record<string, string> = {
   // B2: alt-text paths create `bulkAIGeneration`, the label key is
   // `bulkAiGeneration`. One letter, so every bulk alt-text task fell through
   // to its raw name.

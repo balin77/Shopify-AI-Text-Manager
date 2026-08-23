@@ -5,7 +5,7 @@
  * was ever shown. This module turns one of those blobs into display lines,
  * PER TYPE and never generically.
  *
- * Three rules carry the weight:
+ * The rules below carry the weight:
  *
  *  1. **Per type, never a JSON dump.** A type with no registered summariser
  *     returns `null`. `imageWebpConversion` and `pageSpeed` deliberately have
@@ -32,7 +32,18 @@
  *     those is a summary, so `null` is the right answer and the page must
  *     render "details fetched, nothing to summarise" without drawing an empty
  *     box (PLAN §3.2 / §3.3).
+ *  5. **The type is resolved through the SAME alias map the labels use.** This
+ *     module otherwise imports nothing on purpose, and `TASK_TYPE_ALIASES` is
+ *     the one import worth having: `bulkAIGeneration` / `bulkAiGeneration` is
+ *     the one-letter split this whole feature exists to kill (PLAN §B2), and a
+ *     registry looked up RAW would reintroduce it one layer down — a
+ *     summariser registered under the i18n spelling would silently never fire
+ *     for the rows the alt-text paths really create. A second copy of that map
+ *     here is the same bug with an extra step, so it is imported from
+ *     `task-labels.shared.ts`, which owns it.
  */
+
+import { TASK_TYPE_ALIASES } from "./task-labels.shared";
 
 export interface TaskSummaryLine {
   /** Key under `t.tasks.resultLabels` — the component looks it up. */
@@ -50,6 +61,28 @@ export interface TaskFailureLine {
    */
   subject: string;
   message: string;
+  /**
+   * The same identity as `subject`, in PIECES, wherever this module really has
+   * them. `subject` is a machine string by construction — an internal column id
+   * (`field.seoTitle`, where the grid header says "SEO title"), the English
+   * words `Product` / `Market` in a German UI, a bare locale code — and this
+   * module is deliberately i18n-free, so it cannot be the one to fix that.
+   * The RENDERER can: it holds the bundle, `resourceTypeLabel`, the column
+   * descriptors and the locale names.
+   *
+   * `subject` stays exactly what it was, so a consumer that ignores `parts`
+   * renders precisely what it rendered before — this is an addition, never a
+   * replacement. Ids are the NUMERIC tail of a GID (`gid://shopify/Product/8123`
+   * -> `8123`), which is the id the Shopify admin URL carries; a non-GID id is
+   * passed through as it stands.
+   */
+  parts?: {
+    rowType?: string;
+    rowId?: string;
+    columnId?: string;
+    locale?: string;
+    marketId?: string;
+  };
 }
 
 export interface TaskResultSummary {
@@ -154,7 +187,30 @@ function bulkFailures(v: unknown): TaskFailureLine[] {
       scope.push(market ? `${market.type} ${market.id}` : marketId);
     }
     if (scope.length > 0) subject = `${subject} [${scope.join(" · ")}]`;
-    out.push({ subject, message: text(f.message) });
+
+    // The same identity in pieces, for a renderer that can name them (see
+    // `TaskFailureLine.parts`). Every field is omitted where it is absent, so
+    // `parts` never asserts a global layer ("" market) or a primary locale that
+    // the blob did not record.
+    const rowTypeRaw = text(f.rowType);
+    const gid = parseGid(text(f.rowId));
+    const parts: NonNullable<TaskFailureLine["parts"]> = {};
+    if (rowTypeRaw) parts.rowType = rowTypeRaw;
+    else if (gid) parts.rowType = gid.type;
+    const idPart = gid ? gid.id : text(f.rowId);
+    if (idPart) parts.rowId = idPart;
+    if (columnId) parts.columnId = columnId;
+    if (locale) parts.locale = locale;
+    if (marketId) {
+      const market = parseGid(marketId);
+      parts.marketId = market ? market.id : marketId;
+    }
+
+    out.push(
+      Object.keys(parts).length > 0
+        ? { subject, message: text(f.message), parts }
+        : { subject, message: text(f.message) },
+    );
   }
   return out;
 }
@@ -164,6 +220,18 @@ function bulkFailures(v: unknown): TaskFailureLine[] {
 /** CrawlSummary — crawl.service.ts L1376. */
 const seoCrawl: Summariser = (blob) => {
   const lines: TaskSummaryLine[] = [];
+
+  // A FAILED run writes a summary of eleven honest zeros plus an `error`
+  // (crawl.service.ts L1463-1480: `status: "failed", error: "invalid_domain"`,
+  // every count 0). Rendering those zeros as measurements tells a merchant
+  // their storefront has no pages, no broken links and no head drift — a
+  // confident report about a crawl that never left the gate. Only the reason
+  // is a fact, so only the reason is shown.
+  if (blob.status === "failed") {
+    lines.push({ labelKey: "crawlFailedReason", value: text(blob.error), tone: "critical" });
+    return { lines, failures: [] };
+  }
+
   num(lines, blob, "pagesCrawled", "pagesCrawled");
   num(lines, blob, "totalDiscovered", "pagesDiscovered");
   num(lines, blob, "pagesOk", "pagesOk");
@@ -172,9 +240,34 @@ const seoCrawl: Summariser = (blob) => {
   num(lines, blob, "pagesBlocked", "pagesBlocked", warningWhenPositive);
   num(lines, blob, "orphanCount", "orphanPages");
   num(lines, blob, "headDriftCount", "headDrift");
-  num(lines, blob, "externalFound", "externalFound");
-  num(lines, blob, "externalChecked", "externalChecked");
-  num(lines, blob, "externalBroken", "externalBroken", criticalWhenPositive);
+  // The external-link pass is OPT-OUT (`AISettings.seoCrawlExternalLinks`,
+  // crawl-run.server.ts L161-172). With it off the crawl still writes honest
+  // numeric zeros, and "found: 0 / checked: 0 / dead: 0" then reads as "your
+  // shop links nowhere and nothing is broken" — the reverse of what happened.
+  // The blob carries no flag saying which of the two it was, so all three
+  // lines are omitted when every one of them is 0: that is honest under BOTH
+  // readings, and it is the same rule the crawl UI already follows ("with it
+  // off the UI shows '—', never 0"). A run that really found links reports
+  // them as before.
+  const externalKeys = ["externalFound", "externalChecked", "externalBroken"] as const;
+  const anyExternal = externalKeys.some((key) => {
+    const v = blob[key];
+    return typeof v === "number" && Number.isFinite(v) && v > 0;
+  });
+  if (anyExternal) {
+    num(lines, blob, "externalFound", "externalFound");
+    num(lines, blob, "externalChecked", "externalChecked");
+    num(lines, blob, "externalBroken", "externalBroken", criticalWhenPositive);
+  }
+  // "dead: 1" while 440 targets were never reached is the crawler's own
+  // "a missing row is indistinguishable from a healthy one" hazard, so the two
+  // qualifiers ride along whenever they say something: an unchecked COUNT and
+  // the fact that the pass ran out of its budget.
+  const unchecked = blob.externalUnchecked;
+  if (typeof unchecked === "number" && Number.isFinite(unchecked) && unchecked > 0) {
+    lines.push({ labelKey: "externalUnchecked", value: String(unchecked), tone: "warning" });
+  }
+  flag(lines, blob, "externalTimedOut", "externalTimedOut");
   // `status: "capped"` is otherwise invisible — the crawl stopped at its page
   // limit, so every number above describes a prefix of the storefront.
   if (blob.status === "capped") {
@@ -186,7 +279,16 @@ const seoCrawl: Summariser = (blob) => {
 /** {averageScore, totalScanned, totalAvailable, capped} — seo-audit.handler.ts. */
 const seoAudit: Summariser = (blob) => {
   const lines: TaskSummaryLine[] = [];
-  num(lines, blob, "averageScore", "averageScore");
+  // `{averageScore: 0, totalScanned: 0, …}` is what the handler writes when
+  // EVERY locale scan failed (seo-audit.handler.ts L230-236) — the same
+  // all-zero shape a failed crawl writes. A score of 0 over 0 scanned items is
+  // not a bad score, it is no measurement at all, and the merchant reads it as
+  // the former. The scanned count stays: "0 items scanned" is a true statement
+  // about what happened.
+  const scanned = blob.totalScanned;
+  if (!(typeof scanned === "number" && scanned === 0)) {
+    num(lines, blob, "averageScore", "averageScore");
+  }
   num(lines, blob, "totalScanned", "itemsScanned");
   num(lines, blob, "totalAvailable", "itemsAvailable");
   flag(lines, blob, "capped", "capped");
@@ -214,17 +316,27 @@ const seoJsonLdAudit: Summariser = (blob) => {
   return { lines, failures: [] };
 };
 
-/** BulkApplyResult — bulk-editor/columns.shared.ts L1388-1407. */
+/**
+ * BulkApplyResult — bulk-editor/columns.shared.ts L1388-1407.
+ *
+ * The two numbers count DIFFERENT THINGS and each line therefore names its own
+ * unit. `saved` counts row GROUPS with no attributed failure (apply.server.ts
+ * L3137-3141) while `failures` is per CELL, so a 40-row save where 3 rows fail
+ * on 4 columns each is 37 rows and 12 cells — printed as "Saved: 37 / Failed:
+ * 12" that is 49 of 40 rows, directly under the runner's own always-visible
+ * `Task.error` string "3 of 40 row(s) failed". Neither number is wrong; the
+ * unlabelled pairing was.
+ */
 const seoBulkMeta: Summariser = (blob) => {
   const lines: TaskSummaryLine[] = [];
-  num(lines, blob, "saved", "saved");
+  num(lines, blob, "saved", "savedRows");
   const failures = bulkFailures(blob.failures);
   const failedCount = arrayLength(blob.failures);
   if (failedCount !== null) {
     lines.push(
       failedCount > 0
-        ? { labelKey: "failed", value: String(failedCount), tone: "critical" }
-        : { labelKey: "failed", value: "0" },
+        ? { labelKey: "failedFields", value: String(failedCount), tone: "critical" }
+        : { labelKey: "failedFields", value: "0" },
     );
   }
   return { lines, failures };
@@ -270,7 +382,19 @@ const seoBulkFix: Summariser = (blob) => {
       // id: "gid://shopify/Product/8123"}` reads as `Product 8123`. A `{code}`
       // entry is already a word.
       const subject = type || id ? readableRowId(id, type) : code;
-      failures.push({ subject, message: text(f.error) });
+      // Same pieces as the bulk failure list, for the renderer that can name
+      // them. A `{code}` entry has no row identity at all and carries none.
+      const gid = parseGid(id);
+      const parts: NonNullable<TaskFailureLine["parts"]> = {};
+      if (type) parts.rowType = type;
+      else if (gid) parts.rowType = gid.type;
+      const idPart = gid ? gid.id : id;
+      if (idPart) parts.rowId = idPart;
+      failures.push(
+        Object.keys(parts).length > 0
+          ? { subject, message: text(f.error), parts }
+          : { subject, message: text(f.error) },
+      );
     }
   }
   return { lines, failures };
@@ -311,7 +435,13 @@ const altTextTemplateApply: Summariser = (blob) => {
   } else if (Array.isArray(errors)) {
     for (const entry of errors) {
       if (typeof entry !== "string" || !entry.trim()) continue;
-      const match = entry.match(/^(.*?\))\s*:\s*([\s\S]+)$/);
+      // GREEDY to the LAST "): " on the first line. The runner's shape is
+      // `${variant.title} (Position n, GID gid://…): ${message}`
+      // (api.apply-alt-text-templates.tsx L321-372) and a variant title may
+      // itself contain brackets: non-greedy, `Blau (matt) / M (Position 3, GID
+      // …): boom` split after `Blau (matt`, putting the rest of the title, the
+      // position AND the GID into the merchant's error message.
+      const match = entry.match(/^(.*\))\s*:\s*([\s\S]+)$/);
       if (match) failures.push({ subject: match[1].trim(), message: match[2].trim() });
       else failures.push({ subject: "", message: entry.trim() });
     }
@@ -387,6 +517,85 @@ const aiDiscoveryIntro: Summariser = (blob) => {
   num(lines, blob, "chars", "characters");
   return { lines, failures: [] };
 };
+
+/**
+ * `bulkAiGeneration` / `bulkAIGeneration` — ONE summariser for both spellings
+ * and both blobs, because the two spellings are one task type (PLAN §B2) and
+ * the registry resolves the alias before it looks up. The two runners that
+ * share it write different shapes and are told apart by their own keys:
+ *
+ *   - `{generated, failed}` — the notification-title generator
+ *     (template-titles.handler.ts L169), which creates the type as
+ *     `bulkAiGeneration`.
+ *   - `{generatedAltTexts, failedIndices}` — the bulk alt-text generator
+ *     (alt-text.handler.ts L341/L364), which creates it as `bulkAIGeneration`.
+ *     Its non-`/api/ai` twin (alt-text.action.ts L316) writes the same map
+ *     WITHOUT `failedIndices`; that is an absent key, so it reports how many
+ *     landed and claims nothing about what did not.
+ *
+ * `generatedAltTexts` is the PAYLOAD (the generated texts) and is not rendered,
+ * the same rule that keeps `translations` off the screen; its key count is the
+ * "how many landed" number the runner itself uses (L352).
+ *
+ * `failedIndices` is the only record anywhere of WHICH images failed — the
+ * task's own `error` string carries a count and the last message, nothing per
+ * image — so each index becomes a failure line. The stored index is ZERO-based
+ * and merchants count from one, the same +1 the `altText_<n>` field label
+ * applies in `task-labels.shared.ts`.
+ */
+const bulkAiGeneration: Summariser = (blob) => {
+  const lines: TaskSummaryLine[] = [];
+  const failures: TaskFailureLine[] = [];
+
+  num(lines, blob, "generated", "generated");
+  num(lines, blob, "failed", "failed", criticalWhenPositive);
+
+  const generatedAltTexts = blob.generatedAltTexts;
+  if (generatedAltTexts && typeof generatedAltTexts === "object" && !Array.isArray(generatedAltTexts)) {
+    const landed = Object.values(generatedAltTexts as Blob).filter(
+      (v) => typeof v === "string" && v.trim().length > 0,
+    ).length;
+    lines.push({ labelKey: "altTextsGenerated", value: String(landed) });
+  }
+
+  const failedIndices = blob.failedIndices;
+  if (Array.isArray(failedIndices)) {
+    const numbers: number[] = [];
+    for (const entry of failedIndices) {
+      if (typeof entry !== "number" || !Number.isFinite(entry)) continue;
+      numbers.push(Math.trunc(entry) + 1);
+    }
+    lines.push(countedLine("imagesFailed", numbers.length, "critical"));
+    for (const n of numbers) {
+      // The message is empty on purpose: the runner keeps no per-image error
+      // (only the LAST one, in `Task.error`), and inventing one would be a
+      // sentence no runner wrote. `parts` hands the renderer the pieces so the
+      // word in front of the number can be localised — `subject` is the
+      // English fallback for a consumer that ignores it.
+      failures.push({
+        subject: `Image ${n}`,
+        message: "",
+        parts: { rowType: "image", rowId: String(n) },
+      });
+    }
+  }
+
+  if (lines.length === 0 && failures.length === 0) return null;
+  return { lines, failures };
+};
+
+/**
+ * Does this entry of a per-locale map hold anything? A seeded-but-never-filled
+ * `{}` is the shape the translation write path leaves behind for a locale that
+ * reached nothing (see `translationFamily`), and it must not count as a
+ * translated language.
+ */
+function hasContent(value: unknown): boolean {
+  if (typeof value === "string") return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value as Blob).length > 0;
+  return false;
+}
 
 /** The string entries of an array — a locale list, cleaned. */
 function stringList(v: unknown): string[] | null {
@@ -477,17 +686,38 @@ const translationFamily: Summariser = (blob) => {
   num(lines, blob, "retranslated", "retranslated");
   num(lines, blob, "purged", "purged");
 
-  // `locales: Object.keys(allTranslations)` (translation.action.ts L418) is NOT
-  // the list of locales that worked: shopify-content.service.ts L1381 SEEDS
-  // that map with an empty object per target locale before the first AI call,
-  // so a locale that failed outright stays in the key set and only
-  // `failedLocales` records it. Reporting its length as "languages translated"
-  // printed "3" directly above "2 failed" — a fabricated count, the rule-2
-  // failure mode one level up. The failed ones are subtracted here, which also
-  // costs nothing where the runner already excluded them
-  // (sub-resources.action.ts L689 writes `translatedLocales` pre-filtered).
-  const translatedLocales = stringList(blob.locales) ?? stringList(blob.translatedLocales);
-  if (translatedLocales) {
+  // `locales: Object.keys(allTranslations)` (translation.action.ts L382/L418)
+  // is NOT the list of locales that worked, and subtracting `failedLocales`
+  // does not make it one. shopify-content.service.ts L1381 SEEDS that map with
+  // an empty object per target locale before the first AI call and fills it
+  // ONLY from `allSaved` (L1818-1819) — where `savePerLocaleBatch`'s own
+  // `failed` list is discarded, and `failedLocales` is pushed to from the AI
+  // stages alone (L1733/L1753/L1759). So a locale whose every field SHOPIFY
+  // refused stays a key with an empty map and appears in neither list: the
+  // panel said "Languages translated: 3 / failed: 0" for a run where two
+  // thirds reached nothing.
+  //
+  // The key NAMES therefore substantiate no number at all, and this module's
+  // own rule is that an absent number beats a wrong one — so the line is
+  // OMITTED for that shape. Where the blob carries the map itself, a locale
+  // counts when its entry really holds something. `translatedLocales`
+  // (sub-resources.action.ts L689) is a different key written pre-filtered by
+  // its runner and stays countable.
+  //
+  // The write path is where this is really fixed (the save failures would have
+  // to reach `failedLocales`); that is a runner decision, not a display one.
+  const localesValue = blob.locales;
+  const localeMap =
+    localesValue && typeof localesValue === "object" && !Array.isArray(localesValue)
+      ? (localesValue as Blob)
+      : null;
+  const translatedLocales = localeMap ? null : stringList(blob.translatedLocales);
+  if (localeMap) {
+    const achieved = Object.entries(localeMap).filter(
+      ([locale, value]) => !failedSet.has(locale) && hasContent(value),
+    );
+    lines.push({ labelKey: "localesTranslated", value: String(achieved.length) });
+  } else if (translatedLocales) {
     const achieved = translatedLocales.filter((locale) => !failedSet.has(locale));
     lines.push({ labelKey: "localesTranslated", value: String(achieved.length) });
   } else if (blob.translations && typeof blob.translations === "object" && !Array.isArray(blob.translations)) {
@@ -577,7 +807,7 @@ const translationFamily: Summariser = (blob) => {
  *    running audit. It calls PageSpeed Insights, not an AI provider, so it has
  *    no prompt either.
  */
-const SUMMARISERS: Record<string, Summariser> = {
+const SUMMARISERS: Record<string, Summariser> = Object.assign(Object.create(null), {
   seoCrawl,
   seoAudit,
   seoJsonLdAudit,
@@ -590,9 +820,24 @@ const SUMMARISERS: Record<string, Summariser> = {
   distributeKeywords,
   seoRobotsAdvice,
   aiDiscoveryIntro,
+  // ONE entry for both spellings — `bulkAIGeneration` reaches it through
+  // TASK_TYPE_ALIASES, exactly as the label map does. Registering the second
+  // spelling here as well would be the duplicated map this module refuses.
+  bulkAiGeneration,
   translation: translationFamily,
   bulkTranslation: translationFamily,
-};
+});
+
+/**
+ * The registry lookup, through the SAME alias map the labels use (rule 5 at
+ * the top of this file). A raw lookup would register a summariser under one
+ * spelling of a type created under another — the `bulkAIGeneration` /
+ * `bulkAiGeneration` split, one layer below the labels where it was found.
+ */
+function summariserFor(type: unknown): Summariser | undefined {
+  if (typeof type !== "string" || !type) return undefined;
+  return SUMMARISERS[TASK_TYPE_ALIASES[type] ?? type] ?? SUMMARISERS[type];
+}
 
 export function summariseTaskResult(
   type: string,
@@ -601,7 +846,7 @@ export function summariseTaskResult(
   if (typeof type !== "string" || !type) return null;
   if (typeof result !== "string" || !result.trim()) return null;
 
-  const summarise = SUMMARISERS[type];
+  const summarise = summariserFor(type);
   if (!summarise) return null;
 
   let parsed: unknown;
@@ -634,6 +879,10 @@ export function summariseTaskResult(
  * registered type whose stored result is a payload, a sentence or a truncated
  * blob still yields `null` from `summariseTaskResult` (rule 4 at the top of
  * this file) — the consumer must render that case without an empty box.
+ *
+ * It asks the registry through the alias map for the same reason the summary
+ * does: the two must answer about the SAME type, or a row draws an arrow onto
+ * nothing (or, worse, hides one that has content).
  */
 export function hasTaskDetails(input: {
   type: string;
@@ -641,5 +890,5 @@ export function hasTaskDetails(input: {
   hasResult: boolean;
 }): boolean {
   if (input?.hasPrompt === true) return true;
-  return input?.hasResult === true && Boolean(SUMMARISERS[input?.type]);
+  return input?.hasResult === true && Boolean(summariserFor(input?.type));
 }

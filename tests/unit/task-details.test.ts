@@ -325,7 +325,7 @@ describe("summariseTaskResult — the translation family", () => {
     expect(summary?.failures).toEqual([{ subject: "", message: "it" }]);
   });
 
-  it("translateAll: the failed locales are named, not just counted", () => {
+  it("translateAll: the failed locales are named, and NO number is invented", () => {
     // translation.action.ts L416 — the shape behind completed_with_errors.
     const summary = summariseTaskResult(
       "bulkTranslation",
@@ -337,17 +337,16 @@ describe("summariseTaskResult — the translation family", () => {
         skippedFields: {},
       }),
     );
-    expect(keys(summary)).toEqual([
-      "localesTranslated",
-      "localesFailed",
-      "fieldsRejected",
-      "fieldsSkipped",
-    ]);
-    // `locales` is the TARGET list — shopify-content.service.ts L1381 seeds the
-    // map with one empty entry per target locale BEFORE the first AI call, so
-    // a locale that failed outright is still in it. Reporting its raw length
-    // would print "3 translated" directly above "2 failed".
-    expect(valueOf(summary, "localesTranslated")).toBe("2");
+    // `locales` is `Object.keys(allTranslations)`: the map is SEEDED with one
+    // empty entry per target locale (shopify-content.service.ts L1381) and
+    // filled only from `allSaved` (L1818-1819), where `savePerLocaleBatch`'s
+    // own failures are discarded — while `failedLocales` is pushed to from the
+    // AI stages ALONE (L1733/L1753/L1759). A locale whose every field Shopify
+    // refused is therefore in neither list, and no arithmetic over key NAMES
+    // can find it: "3 translated / 0 failed" for a run that reached one third.
+    // A number that is wrong is worse than a number that is absent.
+    expect(keys(summary)).toEqual(["localesFailed", "fieldsRejected", "fieldsSkipped"]);
+    expect(keys(summary)).not.toContain("localesTranslated");
     expect(summary?.failures).toEqual([
       { subject: "", message: "it" },
       { subject: "", message: "nl" },
@@ -355,6 +354,31 @@ describe("summariseTaskResult — the translation family", () => {
     // Present-but-empty records are a real 0, untoned.
     expect(summary?.lines).toContainEqual({ labelKey: "fieldsRejected", value: "0" });
     expect(summary?.lines).toContainEqual({ labelKey: "fieldsSkipped", value: "0" });
+  });
+
+  it("a `locales` MAP is countable where the bare key list is not", () => {
+    // The same key, carrying the entries themselves: a locale that holds
+    // something was really translated, a seeded `{}` was not. No runner writes
+    // this shape today; the rule is "count what is substantiated", so it must
+    // count when the substance is there.
+    const summary = summariseTaskResult(
+      "bulkTranslation",
+      json({
+        locales: { fr: { title: "Boîte" }, de: {}, it: { title: "Scatola" } },
+        failedLocales: ["it"],
+      }),
+    );
+    expect(valueOf(summary, "localesTranslated")).toBe("1");
+  });
+
+  it("a runner-filtered locale LIST is still counted", () => {
+    // sub-resources.action.ts L689 writes `translatedLocales` pre-filtered, so
+    // that key means what it says.
+    const summary = summariseTaskResult(
+      "translation",
+      json({ translatedLocales: ["fr", "de"], failedLocales: ["it"] }),
+    );
+    expect(valueOf(summary, "localesTranslated")).toBe("2");
   });
 
   it("rejected and skipped fields name the FIELDS, per locale", () => {
@@ -580,7 +604,9 @@ describe("summariseTaskResult — the translation family", () => {
         rejectedFields: { fr: "not-an-array", de: [], it: ["title", 3] },
       }),
     );
-    expect(valueOf(summary, "localesTranslated")).toBe("1");
+    // A bare `locales` LIST substantiates no count at all (see above), garbage
+    // or not — so there is nothing here for the garbage to reach.
+    expect(keys(summary)).not.toContain("localesTranslated");
     expect(valueOf(summary, "localesFailed")).toBe("1");
     // `fr` has no array and `de` an empty one — neither is a named field.
     expect(valueOf(summary, "fieldsRejected")).toBe("1");
@@ -620,6 +646,7 @@ describe("summariseTaskResult — seoBulkFix carries two failure shapes", () => 
         failed: [{ code: "metaDescriptionMissing", error: "Not AI-fixable: metaDescriptionMissing" }],
       }),
     );
+    // A `{code}` entry has no row identity at all, so it carries no `parts`.
     expect(summary?.failures).toEqual([
       { subject: "metaDescriptionMissing", message: "Not AI-fixable: metaDescriptionMissing" },
     ]);
@@ -676,6 +703,37 @@ describe("summariseTaskResult — altTextTemplateApply.errors is a string[]", ()
     ]);
   });
 
+  it("a variant title with brackets keeps its whole name in the subject", () => {
+    // The runner's shape is `${variant.title} (Position n, GID …): ${message}`
+    // and a title may contain brackets of its own. Split at the FIRST ")", the
+    // subject was "Blau (matt" and the rest of the title, the position and the
+    // GID were prepended to the merchant's error message.
+    const summary = summariseTaskResult(
+      "altTextTemplateApply",
+      json({
+        attempted: 1,
+        errors: [
+          "Blau (matt) / M (Position 3, GID gid://shopify/MediaImage/123): Alt text could not be saved",
+        ],
+      }),
+    );
+    expect(summary?.failures).toEqual([
+      {
+        subject: "Blau (matt) / M (Position 3, GID gid://shopify/MediaImage/123)",
+        message: "Alt text could not be saved",
+      },
+    ]);
+  });
+
+  it("a message that itself ends in a bracket is not eaten by the split", () => {
+    const summary = summariseTaskResult(
+      "altTextTemplateApply",
+      json({ attempted: 1, errors: ["Blau / M (Position 2): boom (see logs)"] }),
+    );
+    expect(summary?.failures[0].subject).toBe("Blau / M (Position 2)");
+    expect(summary?.failures[0].message).toBe("boom (see logs)");
+  });
+
   it("a line that does not match the shape keeps its whole text as the message", () => {
     const summary = summariseTaskResult(
       "altTextTemplateApply",
@@ -728,8 +786,10 @@ describe("summariseTaskResult — the bulk failure list is the only record there
 
   it("seoBulkMeta distinguishes a cell failure from a row-level one", () => {
     const summary = summariseTaskResult("seoBulkMeta", json({ saved: 37, failures: [CELL, ROW] }));
-    expect(keys(summary)).toEqual(["saved", "failed"]);
-    expect(summary?.lines).toContainEqual({ labelKey: "failed", value: "2", tone: "critical" });
+    // The two counts are in DIFFERENT units — rows saved, cells failed — so
+    // each line names its own. Unlabelled, a 40-row save reads as 49 of 40.
+    expect(keys(summary)).toEqual(["savedRows", "failedFields"]);
+    expect(summary?.lines).toContainEqual({ labelKey: "failedFields", value: "2", tone: "critical" });
     expect(summary?.failures[0].subject).toBe("Product 8123 · seo.metaDescription");
     expect(summary?.failures[1].subject).toBe("Page 55");
     expect(summary?.failures[0].subject).not.toBe(summary?.failures[1].subject);
@@ -748,7 +808,7 @@ describe("summariseTaskResult — the bulk failure list is the only record there
 
   it("seoBulkMeta omits the failed line when the blob carries no failures key", () => {
     const summary = summariseTaskResult("seoBulkMeta", json({ saved: 40 }));
-    expect(keys(summary)).toEqual(["saved"]);
+    expect(keys(summary)).toEqual(["savedRows"]);
     expect(summary?.failures).toEqual([]);
   });
 
@@ -774,7 +834,7 @@ describe("summariseTaskResult — the bulk failure list is the only record there
   it("a non-array failures value yields no failure lines", () => {
     const summary = summariseTaskResult("seoBulkMeta", json({ saved: 1, failures: "boom" }));
     expect(summary?.failures).toEqual([]);
-    expect(keys(summary)).toEqual(["saved"]);
+    expect(keys(summary)).toEqual(["savedRows"]);
   });
 });
 
@@ -867,6 +927,292 @@ describe("hasTaskDetails", () => {
   });
 });
 
+// ── 9b. the alias — one type, two spellings ─────────────────────────────────
+
+/**
+ * The one-letter split this whole feature exists to kill (PLAN §B2), one layer
+ * below where it was found: the registry is keyed by task type, so a RAW
+ * lookup would silently never fire for the spelling the runners really create.
+ * `TASK_TYPE_ALIASES` is imported from `task-labels.shared.ts` — one map, not
+ * two — and BOTH entry points resolve through it.
+ */
+describe("the summariser registry resolves the task-type alias", () => {
+  const ALT_TEXT_BLOB = json({ generatedAltTexts: { "0": "Blue mug" }, failedIndices: [1] });
+
+  it("bulkAIGeneration reaches the summariser registered as bulkAiGeneration", () => {
+    const aliased = summariseTaskResult("bulkAIGeneration", ALT_TEXT_BLOB);
+    expect(aliased).not.toBeNull();
+    expect(keys(aliased)).toEqual(["altTextsGenerated", "imagesFailed"]);
+    // Both spellings answer identically — that is what "one entry" means.
+    expect(summariseTaskResult("bulkAiGeneration", ALT_TEXT_BLOB)).toEqual(aliased);
+  });
+
+  it("hasTaskDetails answers about the same type the summary does", () => {
+    expect(hasTaskDetails({ type: "bulkAIGeneration", hasPrompt: false, hasResult: true })).toBe(
+      true,
+    );
+    expect(hasTaskDetails({ type: "bulkAiGeneration", hasPrompt: false, hasResult: true })).toBe(
+      true,
+    );
+  });
+});
+
+// ── 9c. bulkAiGeneration: two runners under one type ────────────────────────
+
+describe("summariseTaskResult — bulkAiGeneration carries two blobs", () => {
+  it("the notification-title generator: {generated, failed}", () => {
+    const summary = summariseTaskResult("bulkAiGeneration", json({ generated: 18, failed: 2 }));
+    expect(summary?.lines).toEqual([
+      { labelKey: "generated", value: "18" },
+      { labelKey: "failed", value: "2", tone: "critical" },
+    ]);
+    expect(summary?.failures).toEqual([]);
+  });
+
+  it("the bulk alt-text generator counts the payload and drops it", () => {
+    const summary = summariseTaskResult(
+      "bulkAIGeneration",
+      json({
+        generatedAltTexts: { "0": "Blue mug", "1": "  ", "2": "Red mug" },
+        failedIndices: [],
+      }),
+    );
+    // The generated TEXTS are a payload, never a summary — only how many
+    // landed, and a blank one did not.
+    expect(summary?.lines).toEqual([
+      { labelKey: "altTextsGenerated", value: "2" },
+      { labelKey: "imagesFailed", value: "0" },
+    ]);
+    expect(JSON.stringify(summary)).not.toContain("Blue mug");
+  });
+
+  it("failedIndices are the only record of WHICH images failed, and count from 1", () => {
+    const summary = summariseTaskResult(
+      "bulkAIGeneration",
+      json({ generatedAltTexts: { "0": "Blue mug" }, failedIndices: [1, 3] }),
+    );
+    expect(summary?.lines).toContainEqual({
+      labelKey: "imagesFailed",
+      value: "2",
+      tone: "critical",
+    });
+    // Stored zero-based, read one-based — the `altText_<n>` rule.
+    expect(summary?.failures).toEqual([
+      { subject: "Image 2", message: "", parts: { rowType: "image", rowId: "2" } },
+      { subject: "Image 4", message: "", parts: { rowType: "image", rowId: "4" } },
+    ]);
+  });
+
+  it("the second alt-text writer carries no failedIndices, and none is invented", () => {
+    // alt-text.action.ts L316 writes the map alone.
+    const summary = summariseTaskResult(
+      "bulkAIGeneration",
+      json({ generatedAltTexts: { "0": "Blue mug", "1": "Red mug" } }),
+    );
+    expect(summary?.lines).toEqual([{ labelKey: "altTextsGenerated", value: "2" }]);
+    expect(keys(summary)).not.toContain("imagesFailed");
+    expect(summary?.failures).toEqual([]);
+  });
+
+  it("garbage in either key is dropped rather than rendered", () => {
+    const summary = summariseTaskResult(
+      "bulkAIGeneration",
+      json({ generatedAltTexts: ["a"], failedIndices: [0, "x", null] }),
+    );
+    // An ARRAY is not the runner's map, so it is not counted at all.
+    expect(keys(summary)).toEqual(["imagesFailed"]);
+    expect(summary?.failures).toHaveLength(1);
+    expect(summariseTaskResult("bulkAiGeneration", json({ other: 1 }))).toBeNull();
+  });
+});
+
+// ── 9d. the crawl's external-link pass and its failed runs ──────────────────
+
+describe("summariseTaskResult — seoCrawl external links", () => {
+  it("omits all three lines when every one of them is 0", () => {
+    // `AISettings.seoCrawlExternalLinks` off writes honest zeros, and the blob
+    // carries no flag saying so — "found 0 / checked 0 / dead 0" then reads as
+    // "your shop links nowhere and nothing is broken".
+    const summary = summariseTaskResult(
+      "seoCrawl",
+      json({
+        status: "ok",
+        pagesCrawled: 12,
+        externalFound: 0,
+        externalChecked: 0,
+        externalBroken: 0,
+      }),
+    );
+    expect(keys(summary)).toEqual(["pagesCrawled"]);
+  });
+
+  it("reports them as before as soon as one of them is not 0", () => {
+    const summary = summariseTaskResult(
+      "seoCrawl",
+      json({ status: "ok", externalFound: 44, externalChecked: 40, externalBroken: 0 }),
+    );
+    expect(keys(summary)).toEqual(["externalFound", "externalChecked", "externalBroken"]);
+    // A real 0 among real numbers is a measurement and stays.
+    expect(valueOf(summary, "externalBroken")).toBe("0");
+  });
+
+  it("a dead-link count with unreached targets says so", () => {
+    const summary = summariseTaskResult(
+      "seoCrawl",
+      json({
+        status: "ok",
+        externalFound: 500,
+        externalChecked: 60,
+        externalBroken: 1,
+        externalUnchecked: 440,
+        externalTimedOut: true,
+      }),
+    );
+    expect(summary?.lines).toContainEqual({
+      labelKey: "externalUnchecked",
+      value: "440",
+      tone: "warning",
+    });
+    expect(summary?.lines).toContainEqual({
+      labelKey: "externalTimedOut",
+      value: "",
+      tone: "warning",
+    });
+  });
+
+  it("neither qualifier appears when it says nothing", () => {
+    const summary = summariseTaskResult(
+      "seoCrawl",
+      json({ externalFound: 4, externalUnchecked: 0, externalTimedOut: false }),
+    );
+    expect(keys(summary)).not.toContain("externalUnchecked");
+    expect(keys(summary)).not.toContain("externalTimedOut");
+  });
+});
+
+describe("summariseTaskResult — a run that failed measured nothing", () => {
+  it("a failed crawl shows its reason and none of its eleven zeros", () => {
+    const summary = summariseTaskResult(
+      "seoCrawl",
+      json({
+        status: "failed",
+        error: "invalid_domain",
+        pagesCrawled: 0,
+        totalDiscovered: 0,
+        pagesOk: 0,
+        pagesBroken: 0,
+        pagesServerError: 0,
+        pagesBlocked: 0,
+        orphanCount: 0,
+        headDriftCount: 0,
+        externalFound: 0,
+        externalChecked: 0,
+        externalBroken: 0,
+      }),
+    );
+    expect(summary?.lines).toEqual([
+      { labelKey: "crawlFailedReason", value: "invalid_domain", tone: "critical" },
+    ]);
+  });
+
+  it("a failed crawl without a stored reason still says it failed", () => {
+    const summary = summariseTaskResult("seoCrawl", json({ status: "failed", pagesCrawled: 0 }));
+    expect(summary?.lines).toEqual([
+      { labelKey: "crawlFailedReason", value: "", tone: "critical" },
+    ]);
+  });
+
+  it("seoAudit suppresses a score nothing was measured for", () => {
+    // Every locale scan failed — seo-audit.handler.ts L230-236 writes zeros.
+    const summary = summariseTaskResult(
+      "seoAudit",
+      json({ averageScore: 0, totalScanned: 0, totalAvailable: 0, capped: false }),
+    );
+    expect(keys(summary)).toEqual(["itemsScanned", "itemsAvailable"]);
+    expect(valueOf(summary, "itemsScanned")).toBe("0");
+  });
+
+  it("a real score over a real scan is untouched", () => {
+    expect(
+      keys(summariseTaskResult("seoAudit", json({ averageScore: 0, totalScanned: 12 }))),
+    ).toEqual(["averageScore", "itemsScanned"]);
+  });
+});
+
+// ── 9e. failure identity in pieces ──────────────────────────────────────────
+
+describe("failure lines carry their identity in parts as well as in subject", () => {
+  it("a bulk cell hands the renderer every piece it has", () => {
+    const summary = summariseTaskResult(
+      "seoBulkMeta",
+      json({
+        saved: 0,
+        failures: [
+          {
+            rowId: "gid://shopify/Product/8123",
+            rowType: "product",
+            columnId: "field.seoTitle",
+            locale: "fr",
+            marketId: "gid://shopify/Market/42",
+            message: "boom",
+          },
+        ],
+      }),
+    );
+    // The subject is UNCHANGED — a consumer that ignores `parts` renders
+    // exactly what it rendered before.
+    expect(summary?.failures[0].subject).toBe(
+      "Product 8123 · field.seoTitle [fr · Market 42]",
+    );
+    expect(summary?.failures[0].parts).toEqual({
+      rowType: "product",
+      rowId: "8123",
+      columnId: "field.seoTitle",
+      locale: "fr",
+      marketId: "42",
+    });
+  });
+
+  it("a piece the blob does not carry is absent, never asserted", () => {
+    const summary = summariseTaskResult(
+      "bulkEditorTranslate",
+      json({ failures: [{ rowId: "gid://shopify/Page/55", message: "pageUpdate failed" }] }),
+    );
+    // No rowType travelled: the GID's own type segment names the row.
+    expect(summary?.failures[0].parts).toEqual({ rowType: "Page", rowId: "55" });
+  });
+
+  it("a non-GID row id is passed through as it stands", () => {
+    const summary = summariseTaskResult(
+      "seoBulkMeta",
+      json({ failures: [{ rowId: "refund-policy", rowType: "policy", message: "x" }] }),
+    );
+    expect(summary?.failures[0].parts).toEqual({ rowType: "policy", rowId: "refund-policy" });
+  });
+
+  it("seoBulkFix hands over its {type, id} too", () => {
+    const summary = summariseTaskResult(
+      "seoBulkFix",
+      json({
+        failed: [{ type: "product", id: "gid://shopify/Product/8123", error: "gone" }],
+      }),
+    );
+    expect(summary?.failures[0].subject).toBe("Product 8123");
+    expect(summary?.failures[0].parts).toEqual({ rowType: "product", rowId: "8123" });
+  });
+});
+
+// ── 9f. the registry is not an ordinary object ──────────────────────────────
+
+describe("the registry has no prototype", () => {
+  it("an inherited property is not a task type", () => {
+    for (const inherited of ["constructor", "toString", "hasOwnProperty", "valueOf"]) {
+      expect(hasTaskDetails({ type: inherited, hasPrompt: false, hasResult: true })).toBe(false);
+      expect(summariseTaskResult(inherited, json({ saved: 1 }))).toBeNull();
+    }
+  });
+});
+
 // ── 10. the emitted vocabulary ──────────────────────────────────────────────
 
 /**
@@ -895,8 +1241,12 @@ describe("the emitted label vocabulary", () => {
         externalFound: 1,
         externalChecked: 1,
         externalBroken: 1,
+        externalUnchecked: 1,
+        externalTimedOut: true,
       },
     ],
+    // A failed run reports its reason and nothing else.
+    ["seoCrawl", { status: "failed", error: "invalid_domain", pagesCrawled: 0 }],
     ["seoAudit", { averageScore: 1, totalScanned: 1, totalAvailable: 1, capped: true }],
     [
       "seoJsonLdAudit",
@@ -932,6 +1282,8 @@ describe("the emitted label vocabulary", () => {
       { stage: "apply", applied: 1, demotedToSecondary: 1, skipped: 1, errors: 1 },
     ],
     ["seoRobotsAdvice", { advised: 1, total: 1 }],
+    ["bulkAiGeneration", { generated: 1, failed: 1 }],
+    ["bulkAIGeneration", { generatedAltTexts: { "0": "x" }, failedIndices: [1] }],
     ["aiDiscoveryIntro", { file: "llms", chars: 1 }],
     ["translation", { translated: 1, total: 1 }],
     ["translation", { retranslated: 1, purged: 1 }],
@@ -949,9 +1301,11 @@ describe("the emitted label vocabulary", () => {
       },
     ],
     ["bulkTranslation", { translations: { title: "x" }, targetLocale: "fr" }],
+    ["bulkTranslation", { translations: { fr: "x" }, fieldType: "title" }],
   ];
 
   const EXPECTED = [
+    "altTextsGenerated",
     "applied",
     "attempted",
     "averageScore",
@@ -959,13 +1313,17 @@ describe("the emitted label vocabulary", () => {
     "capped",
     "characters",
     "crawlCapped",
+    "crawlFailedReason",
     "demotedToSecondary",
     "errors",
     "externalBroken",
     "externalChecked",
     "externalFound",
+    "externalTimedOut",
+    "externalUnchecked",
     "failed",
     "failedBatches",
+    "failedFields",
     "fieldsRejected",
     "fieldsSkipped",
     "fieldsTranslated",
@@ -973,7 +1331,9 @@ describe("the emitted label vocabulary", () => {
     "galleryVideoProducts",
     "galleryVideosMissingDate",
     "galleryVideosVimeo",
+    "generated",
     "headDrift",
+    "imagesFailed",
     "internalLinksCapped",
     "items",
     "itemsAvailable",
@@ -996,7 +1356,7 @@ describe("the emitted label vocabulary", () => {
     "retranslated",
     "rulesAdvised",
     "rulesTotal",
-    "saved",
+    "savedRows",
     "skipped",
     "skippedDrafts",
     "skippedHandles",
