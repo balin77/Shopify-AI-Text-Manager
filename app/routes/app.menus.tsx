@@ -75,6 +75,7 @@ import type { ShopLocale, TranslatableItem, ContentType } from "../types/content
 // a page that uses `bg-missing-translation` / `bg-untranslated` / the footer
 // classes without this import renders them as plain unstyled markup.
 import "../styles/AIEditableField.css";
+import "../styles/MenuTreeRow.css";
 import { createContentLoader } from "~/utils/loader-factory.server";
 import {
   flattenMenuItems,
@@ -743,12 +744,33 @@ export default function MenusPage() {
   );
   const tree = (selectedMenuId && treeDrafts[selectedMenuId]) || baseTree;
 
+  /**
+   * The fingerprint each draft was built ON TOP OF.
+   *
+   * A draft is a set of edits against ONE version of the tree. If Shopify's
+   * version moves underneath it — which is exactly what the reload after a
+   * drift refusal fetches — the draft no longer describes the merchant's
+   * intent: it is missing every foreign change, and because menuUpdate deletes
+   * what it is not sent, saving it would REMOVE an item somebody else just
+   * added. The fingerprint check on the server cannot catch that, because the
+   * page would send the FRESH fingerprint, which matches.
+   *
+   * A ref rather than state: nothing renders from it, and it must be readable
+   * inside the effect below without adding a render pass.
+   */
+  const draftBaseRef = useRef<Record<string, string>>({});
+
   const setTree = useCallback(
     (next: MenuEditorNode[]) => {
       if (!selectedMenuId) return;
+      if (!draftBaseRef.current[selectedMenuId]) {
+        draftBaseRef.current[selectedMenuId] = menuStructureFingerprint(selectedMenu?.items);
+      }
+      // A new edit is the merchant answering the notice; it has said its piece.
+      setDroppedDraftMenus((prev) => (prev.length === 0 ? prev : []));
       setTreeDrafts((prev) => ({ ...prev, [selectedMenuId]: next }));
     },
-    [selectedMenuId],
+    [selectedMenuId, selectedMenu],
   );
 
   const treeDiff = useMemo(() => diffMenuTrees(baseTree, tree), [baseTree, tree]);
@@ -846,6 +868,7 @@ export default function MenusPage() {
     });
     // Same scope rule for the tree: only the visible menu's draft goes.
     if (selectedMenuId) {
+      delete draftBaseRef.current[selectedMenuId];
       setTreeDrafts((prev) => {
         const next = { ...prev };
         delete next[selectedMenuId];
@@ -893,7 +916,12 @@ export default function MenusPage() {
     setTreeDrafts((prev) => {
       const next = { ...prev };
       for (const [menuId, draft] of Object.entries(prev)) {
-        if (draft === submitted) delete next[menuId];
+        if (draft === submitted) {
+          delete next[menuId];
+          // …and the base it was built on, or the next edit would be measured
+          // against a tree two saves old and read as stale on the next reload.
+          delete draftBaseRef.current[menuId];
+        }
       }
       return next;
     });
@@ -915,6 +943,49 @@ export default function MenusPage() {
     wasRevalidatingRef.current = false;
     setTreeResult(null);
   }, [revalidatorState]);
+
+  /**
+   * A draft whose tree moved in Shopify is DROPPED, and the merchant is told.
+   *
+   * This is the other half of the drift refusal. The banner says "somebody
+   * changed this menu, reload" — and the reload used to bring the new tree in
+   * while keeping the old draft on top of it. Two things followed, one
+   * cosmetic and one not: the save bar lit up over a diff the merchant had not
+   * produced, and that diff was their own edit PLUS a reversal of every
+   * foreign change — so saving would have deleted an item somebody else had
+   * just added. The server could not refuse it either, because the page would
+   * by then be sending the FRESH fingerprint.
+   *
+   * A draft built on the SAME tree survives untouched: a reload that changed
+   * nothing must not cost the merchant their unsaved work, which is the whole
+   * reason this button revalidates instead of reloading the page.
+   */
+  const [droppedDraftMenus, setDroppedDraftMenus] = useState<string[]>([]);
+  useEffect(() => {
+    const stale: string[] = [];
+    for (const menu of parsedMenus as Array<{ id: string; title: string; items?: unknown }>) {
+      const base = draftBaseRef.current[menu.id];
+      if (!base) continue;
+      if (base !== menuStructureFingerprint(menu.items)) stale.push(menu.id);
+    }
+    if (stale.length === 0) return;
+    const titles = (parsedMenus as Array<{ id: string; title: string }>)
+      .filter((m) => stale.includes(m.id))
+      .map((m) => m.title);
+    for (const id of stale) delete draftBaseRef.current[id];
+    setTreeDrafts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const id of stale) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    setDroppedDraftMenus(titles);
+  }, [parsedMenus]);
 
   // ── AI translate / copy, per entry ───────────────────────────────────────
 
@@ -1356,26 +1427,31 @@ export default function MenusPage() {
           }
           autoComplete="off"
         />
-        {/* Where the item POINTS. On the primary language only: a target is
-            one link for every language, and a foreign tab that offered to
-            change it would be offering to change the whole shop's navigation
-            from a translation screen. Every item gets it, new and existing —
-            retargeting is the last thing that still forced a trip to the
-            Shopify admin. */}
-        {isPrimary && (
-          <div style={{ marginTop: "0.5rem" }}>
-            <MenuTargetPicker
-              type={node.type}
-              url={node.url}
-              resourceId={node.resourceId}
-              targetTitles={targetTitles ?? {}}
-              onChange={(patch) => setTree(updateNode(tree, node.key, patch))}
-              error={problem === "missingTarget" ? t.content?.menuTargetRequired : undefined}
-              strings={targetPickerStrings}
-            />
-          </div>
-        )}
       </div>
+    );
+  };
+
+  /**
+   * Where the item POINTS — the row's second box, beside the name.
+   *
+   * On the primary language ONLY, and that is not a layout decision: a target
+   * is one link for every language, so a foreign tab that could change it
+   * would be retargeting the whole shop's navigation from a translation
+   * screen. Returning null is how the row learns it has one box, not two.
+   */
+  const renderTarget = (node: MenuEditorNode) => {
+    if (!isPrimary) return null;
+    const problem = problemByKey[node.key];
+    return (
+      <MenuTargetPicker
+        type={node.type}
+        url={node.url}
+        resourceId={node.resourceId}
+        targetTitles={targetTitles ?? {}}
+        onChange={(patch) => setTree(updateNode(tree, node.key, patch))}
+        error={problem === "missingTarget" ? t.content?.menuTargetRequired : undefined}
+        strings={targetPickerStrings}
+      />
     );
   };
 
@@ -1599,17 +1675,6 @@ export default function MenusPage() {
                 <Card padding="400">
                   <InlineStack align="space-between" blockAlign="center" gap="300">
                     <InlineStack gap="200" blockAlign="center">
-                      {isPrimary && (
-                        <Button
-                          size="slim"
-                          onClick={() => {
-                            newNodeSeq.current += 1;
-                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
-                          }}
-                        >
-                          {t.content?.menuAddItem}
-                        </Button>
-                      )}
                       <DisabledActionTooltip hint={singleLocaleHint ?? (isPrimary ? allTargetsOffHint : undefined)}>
                         <Button
                           size="slim"
@@ -1630,6 +1695,17 @@ export default function MenusPage() {
                     </InlineStack>
 
                     <InlineStack gap="200" blockAlign="center">
+                      {isPrimary && (
+                        <Button
+                          size="slim"
+                          onClick={() => {
+                            newNodeSeq.current += 1;
+                            setTree(appendNode(tree, newMenuNode(newNodeSeq.current)));
+                          }}
+                        >
+                          {t.content?.menuAddItem}
+                        </Button>
+                      )}
                       {/* Reload is a REVALIDATION here, not a per-item sync
                           endpoint: the loader re-reads every menu from Shopify
                           on each run, so re-running it IS the reload — and it
@@ -1661,6 +1737,26 @@ export default function MenusPage() {
                     {foreignLocales.length === 0 && (
                       <Banner tone="info">
                         <p>{t.content?.menuNeedsSecondLanguage}</p>
+                      </Banner>
+                    )}
+
+                    {/* Said, never silent. The reload brought a tree that no
+                        longer matches what the merchant's unsaved edits were
+                        made against, so those edits were dropped — keeping
+                        them would have written a deletion of somebody else's
+                        item. Losing work without being told is the one thing
+                        worse than losing it. */}
+                    {droppedDraftMenus.length > 0 && (
+                      <Banner
+                        tone="warning"
+                        onDismiss={() => setDroppedDraftMenus([])}
+                      >
+                        <p>
+                          {(t.content?.menuDraftDropped || "{menus}").replace(
+                            "{menus}",
+                            droppedDraftMenus.join(", "),
+                          )}
+                        </p>
                       </Banner>
                     )}
 
@@ -1852,6 +1948,7 @@ export default function MenusPage() {
                       // translation of a primary value that does not exist yet.
                       structureLocked={!isPrimary}
                       renderField={renderField}
+                      renderTarget={renderTarget}
                       renderActions={renderRowActions}
                       onDelete={(node) => setTree(removeNode(tree, node.key))}
                       onAddChild={(node) => {

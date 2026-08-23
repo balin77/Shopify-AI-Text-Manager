@@ -436,6 +436,7 @@ export const es: Translation = {
     menuTreeSaveFailed: "No se pudo guardar el menú",
     menuTreeInvalid: "Corrige los elementos marcados — Shopify escribe el menú entero, así que un solo error arrastraría todos los demás cambios.",
     menuTreeDriftIntro: "El menú cambió en Shopify desde que se cargó esta página — no se escribió nada:",
+    menuDraftDropped: "El menú cambió en Shopify ({menus}). Tus cambios sin guardar se descartaron — describían la versión anterior y al guardarlos habrían eliminado los cambios ajenos. Vuelve a hacerlos, por favor.",
     menuTreeRepairFailed: "No se pudieron restaurar {count} traducción(es) tras el movimiento. Shopify las elimina al reubicar un elemento; revisa los elementos afectados.",
     menuTreeRepairDone: "Se restauraron automáticamente {count} traducción(es) tras el movimiento.",
     menuRenameFailed: "No se pudo renombrar",

@@ -436,6 +436,7 @@ export const de = {
     menuTreeSaveFailed: "Das Menü konnte nicht gespeichert werden",
     menuTreeInvalid: "Bitte korrigiere die markierten Menüpunkte — Shopify schreibt das Menü immer als Ganzes, ein einziger Fehler würde alle anderen Änderungen mitreißen.",
     menuTreeDriftIntro: "Das Menü hat sich in Shopify geändert, seit diese Seite geladen wurde — es wurde nichts geschrieben:",
+    menuDraftDropped: "Das Menü wurde in Shopify geändert ({menus}). Deine noch nicht gespeicherten Änderungen daran wurden verworfen — sie hätten sich auf den alten Stand bezogen und dabei die fremden Änderungen wieder entfernt. Bitte noch einmal vornehmen.",
     menuTreeRepairFailed: "{count} Übersetzung(en) konnten nach dem Verschieben nicht wiederhergestellt werden. Shopify löscht sie beim Umhängen; bitte prüfe die betroffenen Punkte.",
     menuTreeRepairDone: "{count} Übersetzung(en) wurden nach dem Verschieben automatisch wiederhergestellt.",
     menuRenameFailed: "Umbenennen fehlgeschlagen",
