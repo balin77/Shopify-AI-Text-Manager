@@ -634,16 +634,35 @@ export default function DirectTranslationsPage() {
     });
   }, [submit, isNew, selectedId, draftSource, currentLanguage, draftTarget, selectedMarketId]);
 
+  /**
+   * Its OWN fetcher, and that is not a preference.
+   *
+   * The bar can cover two independent drafts, and `router.fetch` begins by
+   * ABORTING whatever is in flight on the same fetcher key — so saving both at
+   * once on the page's fetcher killed the collector request mid-air, silently.
+   * A second fetcher lets them fly together; the effect below reports its
+   * failure the same way the page reports any other.
+   */
+  const collectorFetcher = useFetcher<{ success?: boolean; error?: string }>();
   const saveCollectorSettings = useCallback(() => {
     // All three in ONE request: they are one decision with two refinements, and
     // the action already takes them as a single present-or-absent patch.
-    submit({
-      action: "setCollectorSettings",
-      collect: String(collectOn),
-      ignoreTranslateNo: String(ignoreOn),
-      filterByLanguage: String(filterOn),
-    });
-  }, [submit, collectOn, ignoreOn, filterOn]);
+    const fd = new FormData();
+    fd.append("action", "setCollectorSettings");
+    fd.append("collect", String(collectOn));
+    fd.append("ignoreTranslateNo", String(ignoreOn));
+    fd.append("filterByLanguage", String(filterOn));
+    collectorFetcher.submit(fd, { method: "POST" });
+  }, [collectorFetcher, collectOn, ignoreOn, filterOn]);
+
+  // Never silent: the page's own error surface, for the one save that does not
+  // go through the shared fetcher the effect below watches.
+  useEffect(() => {
+    if (collectorFetcher.state !== "idle" || !collectorFetcher.data) return;
+    if (collectorFetcher.data.success === false) {
+      showInfoBox(collectorFetcher.data.error || t.common?.error || "Error", "critical");
+    }
+  }, [collectorFetcher.state, collectorFetcher.data, showInfoBox, t]);
 
   /** The bar covers two independent drafts; each half is saved only if it is
    *  the one that changed. */

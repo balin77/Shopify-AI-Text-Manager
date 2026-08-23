@@ -2630,6 +2630,10 @@ export const en: Translation = {
       externalTruncatedBanner: "Only the first {max} distinct external targets were recorded. Any links beyond that are not listed here.",
       externalUncheckedBanner: "{count} targets could not be checked within the time budget. They are marked \"Not checked\" below — not as fine.",
       externalChecksLabel: "Also check external links",
+      // Why "Scan now" waits: the server reads the STORED value when it
+      // starts, so an unsaved tick would simply not apply.
+      externalChecksRefused: "Checking external links is available from the Pro plan — the setting was not changed.",
+      externalChecksUnsaved: "Save first — otherwise the scan still runs with the old setting.",
       externalChecksHelp: "After the crawl, checks whether links to other websites still work. This sends requests to servers we do not control and makes the crawl take a little longer (at most 2 extra minutes).",
       // Crawl comparison (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Since the last crawl ({date})",

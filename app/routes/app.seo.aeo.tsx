@@ -1053,27 +1053,6 @@ export default function SeoAeo() {
                         </Text>
                       </BlockStack>
                     </InlineStack>
-                    {llmsAutoChanged && (
-                      <InlineStack align="end">
-                        <SaveDiscardButtons
-                          hasChanges
-                          onSave={() =>
-                            autoFetcher.submit(
-                              { actionType: "setLlmsAutoUpdate", enabled: String(llmsAutoDraft) },
-                              { method: "post" },
-                            )
-                          }
-                          onDiscard={() => setLlmsAutoDraft(data.llmsAutoUpdate)}
-                          saveText={t.common?.save || "Save"}
-                          discardText={t.content?.discardChanges || "Discard"}
-                          // Explicit: the `action` prop is compared against
-                          // `formData.get("action")` and this page posts its
-                          // discriminator as `actionType`, so the match never
-                          // fired and a second click could write twice.
-                          isSavingCurrentItem={autoFetcher.state !== "idle"}
-                        />
-                      </InlineStack>
-                    )}
                   </BlockStack>
                 </Box>
 
@@ -1303,6 +1282,29 @@ export default function SeoAeo() {
           </Card>
         </BlockStack>
       )}
+
+      {/* The page's ONE save bar, at page level rather than inside the step it
+          belongs to: it is the native App Bridge bar, and unmounting it while
+          the draft is still dirty (switching step tiles) hides the bar and
+          leaves a change nobody can save or even see any more. The draft lives
+          in page state, so the bar has to as well. */}
+      <SaveDiscardButtons
+        hasChanges={llmsAutoChanged}
+        onSave={() =>
+          autoFetcher.submit(
+            { actionType: "setLlmsAutoUpdate", enabled: String(llmsAutoDraft) },
+            { method: "post" },
+          )
+        }
+        onDiscard={() => setLlmsAutoDraft(data.llmsAutoUpdate)}
+        saveText={t.common?.save || "Save"}
+        discardText={t.content?.discardChanges || "Discard"}
+        // Explicit: the `action` prop is compared against
+        // `formData.get("action")` and this page posts its discriminator as
+        // `actionType`, so the match never fired and a second click could
+        // write twice.
+        isSavingCurrentItem={autoFetcher.state !== "idle"}
+      />
     </SeoSectionLayout>
   );
 }

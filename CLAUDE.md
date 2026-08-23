@@ -253,8 +253,15 @@ button of its own.**
   once and never re-synced, so letting a vision-only save carry them writes
   stale text over newer stored text. Where a group of switches is one decision,
   ONE Save covers the group, rendered outside the branch that hides the
-  dependent switches — otherwise turning the first one off takes the Save
-  button away with them. What is NOT covered by this rule: a per-ROW edit in a
+  dependent switches — and outside the STEP or tab it belongs to when the draft
+  lives in page state, or switching tiles unmounts the bar and the change
+  becomes invisible and unsaveable. Two more that only show up in use: a save
+  bar covering two independent drafts must submit them on two DIFFERENT
+  fetchers (`router.fetch` aborts whatever is in flight on the same key, so the
+  first save dies silently), and a draft that changes what a BUTTON on the same
+  page will do has to block that button until it is saved — the crawl reads the
+  STORED `seoCrawlExternalLinks` when it starts, so "tick, then Scan now" would
+  otherwise run without the checks the box claims are on. What is NOT covered by this rule: a per-ROW edit in a
   data table (the metafield definition list, a keyword's priority select). That
   is record data edited in place, not a setting, and a draft over N rows is a
   different interaction.

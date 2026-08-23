@@ -17,7 +17,7 @@ import {
   DEFAULT_GENERAL_INSTRUCTIONS,
   type EntityType
 } from "../constants/aiInstructionsDefaults";
-import { useFetcher, type FetcherWithComponents } from "react-router";
+import type { FetcherWithComponents } from "react-router";
 import { useI18n } from "../contexts/I18nContext";
 import { meetsPlan, type Plan } from "../utils/planUtils";
 import { PLAN_DISPLAY_NAMES } from "../config/plans";
@@ -181,7 +181,6 @@ export function AIInstructionsTabs({
    * every instruction it knows: a save fired from that read-only card would
    * blank the lot. `saveAiVision` sends two fields and touches nothing else.
    */
-  const visionFetcher = useFetcher<{ success?: boolean }>();
   const [localSendImages, setLocalSendImages] = useState(sendImagesToAI);
   const [localImagesPerRequest, setLocalImagesPerRequest] = useState(
     clampImagesPerRequest(aiImagesPerRequest),
@@ -190,15 +189,25 @@ export function AIInstructionsTabs({
     localSendImages !== sendImagesToAI ||
     localImagesPerRequest !== clampImagesPerRequest(aiImagesPerRequest);
 
-  const saveVision = () => {
-    const formData = new FormData();
-    formData.append("actionType", "saveAiVision");
+  /**
+   * ONE request per Save, on the page's own fetcher — never two.
+   *
+   * Two submits on one fetcher abort each other (`router.fetch` starts with
+   * `abortFetcher`), two fetchers racing two `AISettings` upserts collide on
+   * the unique key when the shop has no row yet, and the settings route toasts
+   * and reports errors off the SHARED fetcher only, so anything sent on a
+   * private one succeeds and fails in silence.
+   *
+   * So: where the instruction texts are editable, the vision fields ride along
+   * in that submit like the translation knobs already do. Where they are not
+   * (Free and Basic see this card read-only), the narrow `saveAiVision` action
+   * goes out ALONE — `saveInstructions` writes `data.<field> || null` for every
+   * instruction it knows, so a save fired from a read-only card would blank
+   * the lot.
+   */
+  const appendVision = (formData: FormData) => {
     formData.append("sendImagesToAI", String(localSendImages));
     formData.append("aiImagesPerRequest", String(localImagesPerRequest));
-    // Its own fetcher: the instruction save's answer is read by this card's
-    // save state, and a second answer arriving on the same fetcher would be
-    // consumed as if it were that one.
-    visionFetcher.submit(formData, { method: "POST" });
   };
 
   const [htmlModes, setHtmlModes] = useState<Record<string, "html" | "rendered">>({});
@@ -275,22 +284,20 @@ export function AIInstructionsTabs({
   };
 
   const handleSave = () => {
-    if (visionChanged) saveVision();
-    /**
-     * Only the half that actually changed is written.
-     *
-     * A read-only card has nothing else to save at all — submitting the
-     * instruction fields from there would write the DEFAULTS this merchant is
-     * merely being shown, as if they had authored them. And on every other
-     * plan, a vision-only change must not drag `localInstructions` along: that
-     * copy is seeded once when the card mounts and never re-synced, so it can
-     * write stale texts over newer stored ones. The narrow `saveAiVision`
-     * action exists precisely so this does not have to.
-     */
-    if (readOnly || !instructionsChanged) return;
+    if (readOnly) {
+      // Nothing else on this card is editable here, and the instruction fields
+      // would be the DEFAULTS this merchant is merely being shown.
+      if (!visionChanged) return;
+      const visionOnly = new FormData();
+      visionOnly.append("actionType", "saveAiVision");
+      appendVision(visionOnly);
+      fetcher.submit(visionOnly, { method: "POST" });
+      return;
+    }
 
     const formData = new FormData();
     formData.append("actionType", "saveInstructions");
+    appendVision(formData);
 
     // Add all instruction fields to FormData
     Object.entries(localInstructions).forEach(([key, value]) => {
@@ -373,8 +380,9 @@ export function AIInstructionsTabs({
               // Save button never disabled. It also has to cover BOTH submits,
               // since the vision pair goes through its own fetcher.
               isSavingCurrentItem={
-                visionFetcher.state !== "idle" ||
-                (fetcher.state !== "idle" && fetcher.formData?.get("actionType") === "saveInstructions")
+                fetcher.state !== "idle" &&
+                (fetcher.formData?.get("actionType") === "saveInstructions" ||
+                  fetcher.formData?.get("actionType") === "saveAiVision")
               }
             />
           )}
@@ -424,6 +432,54 @@ export function AIInstructionsTabs({
             })}
           </InlineStack>
         </div>
+
+              {/* Vision — FIRST, above everything this card holds: it decides what
+            the AI can SEE, which outranks how it is told to write. One answer
+            for the whole app; every surface that generates text or an alt text
+            reads it server-side.
+
+            OUTSIDE the read-only wrapper below on purpose. That wrapper sets
+            `pointerEvents: none` for Free and Basic (they use the default
+            instructions), and this pair is a capability those plans had on
+            every plan while it was a checkbox in the editor's toolbar — inside
+            it, the switch was simply unclickable there. Being outside also
+            means it shows in both sub-sections, which is right for a setting
+            that is neither about writing nor about translating specifically. */}
+              <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
+                <BlockStack gap="400">
+                  {/* No ❓ on the heading: the switch below carries the
+                      explanation, and two question marks in one small card
+                      are two places to look for one answer. */}
+                  <Text as="h3" variant="headingMd">
+                    {t.settings.aiVisionHeading || "Images"}
+                  </Text>
+                  <ToggleRow
+                    layout="inline"
+                    label={t.settings.aiVisionToggle || "Let the AI look at the images"}
+                    help={t.settings.aiVisionHelp}
+                    checked={localSendImages}
+                    onChange={setLocalSendImages}
+                  />
+                  {/* Offered only once vision is ON: "how many of nothing"
+                      is not a question, and a live control under a switch
+                      that is off reads as if it did something. */}
+                  {localSendImages && (
+                    <Select
+                      label={t.settings.aiImagesPerRequestLabel || "Images per request"}
+                      options={Array.from(
+                        { length: AI_IMAGES_PER_REQUEST_MAX - AI_IMAGES_PER_REQUEST_MIN + 1 },
+                        (_, i) => {
+                          const n = AI_IMAGES_PER_REQUEST_MIN + i;
+                          return { value: String(n), label: String(n) };
+                        },
+                      )}
+                      value={String(localImagesPerRequest)}
+                      onChange={(v) => setLocalImagesPerRequest(clampImagesPerRequest(Number(v)))}
+                      helpText={t.settings.aiImagesPerRequestHelp}
+                    />
+                  )}
+                </BlockStack>
+              </div>
 
         {/* Custom Tab Navigation — only visible in "content" sub-section */}
         {subSection === "content" && (
@@ -660,46 +716,6 @@ export function AIInstructionsTabs({
                   {t.settings.generalTabDescription || 'These instructions control how the "Format" function behaves. The Format function preserves your original text and only applies formatting changes.'}
                 </Text>
 
-                {/* Vision. FIRST in the General tab, above the instruction
-                    texts: it decides what the AI can SEE, which outranks how it
-                    is told to write. One answer for the whole app — every
-                    surface that generates text or an alt text reads it
-                    server-side, so there is nothing to set per page any more. */}
-                <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>
-                  <BlockStack gap="400">
-                    {/* No ❓ on the heading: the switch below carries the
-                        explanation, and two question marks in one small card
-                        are two places to look for one answer. */}
-                    <Text as="h3" variant="headingMd">
-                      {t.settings.aiVisionHeading || "Images"}
-                    </Text>
-                    <ToggleRow
-                      layout="inline"
-                      label={t.settings.aiVisionToggle || "Let the AI look at the images"}
-                      help={t.settings.aiVisionHelp}
-                      checked={localSendImages}
-                      onChange={setLocalSendImages}
-                    />
-                    {/* Offered only once vision is ON: "how many of nothing"
-                        is not a question, and a live control under a switch
-                        that is off reads as if it did something. */}
-                    {localSendImages && (
-                      <Select
-                        label={t.settings.aiImagesPerRequestLabel || "Images per request"}
-                        options={Array.from(
-                          { length: AI_IMAGES_PER_REQUEST_MAX - AI_IMAGES_PER_REQUEST_MIN + 1 },
-                          (_, i) => {
-                            const n = AI_IMAGES_PER_REQUEST_MIN + i;
-                            return { value: String(n), label: String(n) };
-                          },
-                        )}
-                        value={String(localImagesPerRequest)}
-                        onChange={(v) => setLocalImagesPerRequest(clampImagesPerRequest(Number(v)))}
-                        helpText={t.settings.aiImagesPerRequestHelp}
-                      />
-                    )}
-                  </BlockStack>
-                </div>
 
                 {/* Writing Style Instructions */}
                 <div style={{ padding: "1rem", background: "#f6f6f7", borderRadius: "8px" }}>

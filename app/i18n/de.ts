@@ -2633,6 +2633,10 @@ export const de = {
       externalTruncatedBanner: "Es wurden nur die ersten {max} verschiedenen externen Ziele erfasst. Weitere Links dahinter sind hier nicht aufgeführt.",
       externalUncheckedBanner: "{count} Ziele konnten im Zeitrahmen nicht mehr geprüft werden. Sie sind unten als „Nicht geprüft\" markiert — nicht als in Ordnung.",
       externalChecksLabel: "Externe Links mitprüfen",
+      // Warum "Jetzt scannen" wartet: der Server liest beim Start den
+      // GESPEICHERTEN Wert, ein ungespeicherter Haken würde also ins Leere gehen.
+      externalChecksRefused: "Die Prüfung externer Links gibt es ab dem Pro-Plan — die Einstellung wurde nicht geändert.",
+      externalChecksUnsaved: "Erst speichern — sonst läuft der Scan noch mit der alten Einstellung.",
       externalChecksHelp: "Prüft nach dem Crawl, ob Links auf fremde Websites noch funktionieren. Dabei werden Anfragen an fremde Server geschickt und der Crawl dauert etwas länger (maximal 2 Minuten zusätzlich).",
       // Crawl-Vergleich (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Seit dem letzten Crawl ({date})",

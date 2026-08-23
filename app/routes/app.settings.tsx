@@ -816,6 +816,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const purgeUpdate =
         rawPurge === null ? {} : { translationPurgeOnPrimaryChange: rawPurge === "true" };
 
+      // The vision pair rides along on this card's one Save, like the
+      // translation knobs above — one request, one AISettings upsert, one
+      // answer for the toast to read. `saveAiVision` stays for the read-only
+      // plans, where this branch must not run at all.
+      const rawSendImages = formData.get("sendImagesToAI");
+      const rawImagesPerRequest = formData.get("aiImagesPerRequest");
+      const visionUpdate = {
+        ...(rawSendImages === null ? {} : { sendImagesToAI: rawSendImages === "true" }),
+        ...(rawImagesPerRequest === null
+          ? {}
+          : { aiImagesPerRequest: clampImagesPerRequest(Number(rawImagesPerRequest)) }),
+      };
+
 
       // (The Max gate for autoTranslateExternalChanges already ran above, so
       // `autoTranslateUpdate` is either the entitled change or empty.)
@@ -824,6 +837,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         ...keywordAwareUpdate,
         ...purgeUpdate,
         ...autoTranslateUpdate,
+        ...visionUpdate,
       };
       if (Object.keys(translationSettingsUpdate).length > 0) {
         await db.aISettings.upsert({

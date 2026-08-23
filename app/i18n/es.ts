@@ -2613,6 +2613,10 @@ export const es: Translation = {
       externalTruncatedBanner: "Solo se registraron los primeros {max} destinos externos distintos. Los enlaces posteriores no aparecen aquí.",
       externalUncheckedBanner: "{count} destinos no se pudieron comprobar dentro del tiempo disponible. Abajo aparecen como «Sin comprobar», no como correctos.",
       externalChecksLabel: "Comprobar también los enlaces externos",
+      // Por qué "Escanear ahora" espera: el servidor lee el valor GUARDADO al
+      // iniciar, así que una casilla sin guardar no se aplicaría.
+      externalChecksRefused: "La comprobación de enlaces externos está disponible a partir del plan Pro: el ajuste no se ha cambiado.",
+      externalChecksUnsaved: "Guarda primero: si no, el escaneo se ejecuta con el ajuste anterior.",
       externalChecksHelp: "Tras el rastreo, comprueba si los enlaces a otros sitios web siguen funcionando. Esto envía peticiones a servidores que no controlamos y alarga un poco el rastreo (2 minutos adicionales como máximo).",
       // Comparación de rastreos (PLAN_SEO_CRAWL_EXPANSION §7.2)
       diffTitle: "Desde el último rastreo ({date})",
