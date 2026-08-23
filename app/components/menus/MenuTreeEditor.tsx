@@ -38,6 +38,7 @@ import {
   type DragEndEvent,
   type DragMoveEvent,
   type DragStartEvent,
+  type Modifier,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -149,6 +150,50 @@ export function MenuTreeEditor({
     return projectDrop(flat, activeKey, overKey, offsetX, INDENT_WIDTH, active ? subtreeHeight(active) : 1);
   }, [activeKey, overKey, offsetX, flat, nodes]);
 
+  /**
+   * What the dragged row is ALLOWED to do, as a dnd-kit modifier.
+   *
+   * Without it the row follows the raw pointer: out of the list at the top and
+   * bottom, and sideways to any x at all — while its INDENT separately jumped
+   * to whatever depth the projection had settled on. Two horizontal movements
+   * at once, one of them meaningless, and a row that could be parked in the
+   * margin next to a place it can never go.
+   *
+   * So both axes are pinned to what a drop can actually produce:
+   *
+   *   X is held at ZERO. Depth is already shown — `MenuTreeRow` renders the
+   *   PROJECTED depth while dragging, so the row's indent steps between the
+   *   legal positions on its own. Letting the element translate horizontally
+   *   as well only added a second, finer movement that promised placements
+   *   (half a level, four levels in) that the projection would never grant.
+   *
+   *   Y is clamped to the list. `containerNodeRect` is the row's parent — the
+   *   element inside SortableContext — so the row stops at the first and last
+   *   position instead of being carried off past them.
+   *
+   * The projection itself keeps reading the RAW pointer offset (`delta.x`),
+   * which the modifier does not touch: the merchant's intent is still measured
+   * from where they actually moved the mouse, and only the rendering is
+   * constrained. Clamping the input instead would make the depth stick one
+   * step below the pointer.
+   */
+  const modifiers = useMemo(
+    () => [
+      ({ transform, draggingNodeRect, containerNodeRect }: Parameters<Modifier>[0]) => {
+        let y = transform.y;
+        if (draggingNodeRect && containerNodeRect) {
+          const minY = containerNodeRect.top - draggingNodeRect.top;
+          const maxY = containerNodeRect.bottom - draggingNodeRect.bottom;
+          // A row taller than its own list cannot satisfy both bounds; the top
+          // one wins, so the grab point stays visible.
+          y = maxY > minY ? Math.min(Math.max(y, minY), maxY) : minY;
+        }
+        return { ...transform, x: 0, y };
+      },
+    ],
+    [],
+  );
+
   const sensors = useSensors(
     useSensor(MouseSensor),
     useSensor(TouchSensor),
@@ -188,6 +233,7 @@ export function MenuTreeEditor({
   return (
     <DndContext
       sensors={sensors}
+      modifiers={modifiers}
       collisionDetection={closestCenter}
       // The list changes height when a branch collapses under the cursor, so
       // dnd-kit has to re-measure rather than work from stale rectangles.

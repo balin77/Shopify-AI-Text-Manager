@@ -65,6 +65,11 @@
      cannot push the column apart. The handle's lane is part of the same
      padding — it is inside this cell, not in front of the grid. */
   padding-left: calc(var(--menu-row-cell-indent) + var(--menu-row-handle-lane));
+  /* The indent is what shows a depth change during a drag — the element itself
+     is pinned horizontally — so it slides rather than jumping. Instant, it
+     reads as a glitch; at this length it reads as the row snapping into the
+     level it will take. */
+  transition: padding-left 120ms ease;
 }
 
 /*
@@ -79,6 +84,8 @@
 .menu-row-handle {
   position: absolute;
   left: var(--menu-row-cell-indent);
+  /* Steps with the box it belongs to, at the same pace. */
+  transition: left 120ms ease;
   /* The handle belongs beside the input BOX, and a Polaris field puts its
      label row above that box. */
   top: 1.5rem;
