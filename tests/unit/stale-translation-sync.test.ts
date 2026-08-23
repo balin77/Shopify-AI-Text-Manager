@@ -410,6 +410,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
       },
       changedKeys: ["title", "body_html"],
       foreignLocales: ["de", "fr"],
+      policy: policy as never,
       ...over,
     };
   }
@@ -487,10 +488,12 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     // Both paths must be mutually exclusive at BOTH ends: a second
     // translationsRemove for rows that are already gone echoes nothing back and
     // logs as an unconfirmed removal.
-    policy.autoTranslateExternalChanges = false;
-    policy.purgeOnPrimaryChange = true;
-
-    const result = await reconcileAfterPrimarySave(saveParams());
+    // The switch is re-checked on the policy the CALLER hands in — never on a
+    // second read of its own, which would fail open to "off" and return without
+    // doing anything while the caller has already stood its purge down.
+    const result = await reconcileAfterPrimarySave(
+      saveParams({ policy: { ...policy, autoTranslateExternalChanges: false } as never }),
+    );
 
     expect(result).toEqual({ removed: 0, retranslating: 0 });
     expect(shopify.removeCalls).toEqual([]);

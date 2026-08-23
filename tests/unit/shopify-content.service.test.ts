@@ -328,11 +328,25 @@ describe('ShopifyContentService.updateContent() — featured-image alt invalidat
     expect(where.locale.in).toEqual(['fr']);
   });
 
-  it('talks to Shopify only when a translation actually exists', async () => {
+  it('asks for every foreign locale, not only the ones the mirror knows', async () => {
+    // An alt text translated in Shopify's own editor has no row here. Gating on
+    // the mirror would leave exactly those live on the storefront describing an
+    // alt text that no longer exists — the same reasoning the field path
+    // follows, which has always removed blindly across the foreign locales.
     db.contentTranslation.findMany.mockResolvedValue([]);
+    removeAcrossLocales.confirms = ['it\u0000alt']; // only `it` really had one
     await save();
 
-    expect(removeAcrossLocales.calls).toEqual([]);
+    expect(removeAcrossLocales.calls[0].locales.sort()).toEqual(['fr', 'it']);
+    // ...and only what Shopify confirmed is deleted locally.
+    expect(db.contentTranslation.deleteMany.mock.calls.at(-1)[0].where.locale.in).toEqual(['it']);
+  });
+
+  it('writes no local delete when Shopify confirms nothing', async () => {
+    removeAcrossLocales.confirms = [];
+    await save();
+
+    expect(removeAcrossLocales.calls).toHaveLength(1);
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 

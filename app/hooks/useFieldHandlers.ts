@@ -63,6 +63,10 @@ export interface FieldHandlerProps {
   selectedItemRef: { current: TranslatableContentItem | undefined };
   editableValuesRef: { current: Record<string, string> };
   imageAltTextsRef: { current: Record<number, string> };
+  /** Locale (or `locale::market`) → index → alt text, from useEditorAltText.
+   *  Checked BEFORE the loaded item, so a primary save has to drop what the
+   *  server just deleted here as well. */
+  localAltTextOverlayRef: { current: Record<string, Record<number, string>> };
   originalAltTextsRef: { current: Record<number, string> };
   fallbackFieldsRef: { current: Set<string> };
   isAcceptAndTranslateFlowRef: { current: boolean };
@@ -208,6 +212,7 @@ export function useFieldHandlers(props: FieldHandlerProps): FieldHandlers {
     selectedItemRef,
     editableValuesRef,
     imageAltTextsRef,
+    localAltTextOverlayRef,
     originalAltTextsRef,
     fallbackFieldsRef,
     isAcceptAndTranslateFlowRef,
@@ -296,6 +301,36 @@ const handleSave = () => {
         debugLog.translationClear(`Marked translations for field "${fieldKey}" (key: ${field.translationKey}) as deleted`);
       }
     });
+
+    // The same invalidation for the ALT texts of the images whose primary alt
+    // changed: the server deletes their foreign translations (globally — a
+    // market override survives), and both places the editor reads them from
+    // would otherwise keep serving the deleted value for the rest of the
+    // session, with a save from that view writing it straight back.
+    if (changedAltTextIndices.length > 0) {
+      for (const key of Object.keys(localAltTextOverlayRef.current)) {
+        // Global layer only — a market key is `locale::market` (buildLocaleKey).
+        if (key.includes("::")) continue;
+        if (key === primaryLocale) continue;
+        for (const index of changedAltTextIndices) {
+          delete localAltTextOverlayRef.current[key][index];
+        }
+      }
+      const images: Array<{ altTextTranslations?: Array<{ locale: string; marketId?: string }> }> =
+        selectedItem.images && selectedItem.images.length > 0
+          ? selectedItem.images
+          : selectedItem.featuredImage
+            ? [selectedItem.featuredImage]
+            : [];
+      for (const index of changedAltTextIndices) {
+        const img = images[index];
+        if (!img?.altTextTranslations) continue;
+        img.altTextTranslations = img.altTextTranslations.filter(
+          (t: { locale: string; marketId?: string }) =>
+            t.locale === primaryLocale || (t.marketId ?? "") !== "",
+        );
+      }
+    }
 
     // Cache the saved values in a ref that survives revalidation.
     // resolve() checks savedPrimaryValuesRef first for primary locale.

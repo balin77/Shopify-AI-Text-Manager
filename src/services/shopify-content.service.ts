@@ -482,25 +482,18 @@ export class ShopifyContentService {
     const { resourceId, resourceType, shop, db, foreignLocales } = params;
     if (foreignLocales.length === 0) return;
     try {
-      // Only talk to Shopify when there is something to invalidate — the common
-      // case is a shop that never translated this alt text at all.
-      const existing = await db.contentTranslation.findMany({
-        where: {
-          shop,
-          resourceId,
-          resourceType,
-          key: 'image_alt_text',
-          marketId: "",
-          locale: { in: [...foreignLocales] },
-        },
-        select: { locale: true },
-      });
-      if (existing.length === 0) return;
-
+      // Sent for EVERY published foreign locale, not only the ones the local
+      // mirror knows about. An alt text translated in Shopify's own editor (or
+      // by another app) has no row here, and gating on the mirror would leave
+      // exactly those live on the storefront describing an alt text that no
+      // longer exists — the same reasoning the field path follows, which has
+      // always removed blindly across the foreign locales. The echo then says
+      // what was really there, and only that is deleted locally, so asking for
+      // a locale that carries nothing costs one no-op and never a wrong delete.
       const imageResourceId = await this.fetchFeaturedImageResourceId(resourceId, resourceType);
       if (!imageResourceId) return;
 
-      const locales = [...new Set(existing.map((row: { locale: string }) => row.locale))];
+      const locales = [...foreignLocales];
       const { ShopifyApiGateway } = await import("../../app/services/shopify-api-gateway.service");
       const { removeAndVerifyAcrossLocales, LOCALE_KEY_SEP } = await import(
         "../../app/services/bulk-editor/translations.server"
@@ -1488,6 +1481,10 @@ export class ShopifyContentService {
             primaryContent,
             changedKeys: changedTranslationKeys,
             foreignLocales,
+            // The policy read ONCE at the top of this block. A second read
+            // inside would fail open to "auto-translate off" and return without
+            // doing anything, while the purge above has already stood down.
+            policy: changePolicy!,
           });
         } catch (retranslateError: unknown) {
           loggers.translation('warn', '[updateContent] Re-translation after primary save failed — translations kept', {

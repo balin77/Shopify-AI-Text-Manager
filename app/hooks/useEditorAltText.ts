@@ -70,6 +70,10 @@ interface UseEditorAltTextReturn {
   imageAltTextsRef: React.MutableRefObject<Record<number, string>>;
   originalAltTextsRef: React.MutableRefObject<Record<number, string>>;
   pendingAltTextAutoSaveRef: React.MutableRefObject<Record<number, string> | null>;
+  /** Locale (or `locale::market`) → index → alt text. Exposed so a PRIMARY save
+   *  can drop what the server just deleted — the overlay is read before the
+   *  loaded item, so a stale entry survives the purge and gets written back. */
+  localAltTextOverlayRef: React.MutableRefObject<Record<string, Record<number, string>>>;
   sendImageToAI: boolean;
   setSendImageToAI: React.Dispatch<React.SetStateAction<boolean>>;
   selectedImageIndex: number;
@@ -1044,6 +1048,11 @@ export function useEditorAltText(props: UseEditorAltTextProps): UseEditorAltText
     imageAltTextsRef,
     originalAltTextsRef,
     pendingAltTextAutoSaveRef,
+    // Exposed so a PRIMARY save can drop what the server just deleted: the
+    // overlay is checked BEFORE the loaded item, so without this it keeps
+    // rendering a foreign alt text that no longer exists for the rest of the
+    // session — and a save from that view writes it back.
+    localAltTextOverlayRef,
     sendImageToAI,
     setSendImageToAI,
     selectedImageIndex,

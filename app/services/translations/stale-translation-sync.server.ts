@@ -272,10 +272,13 @@ const PAIR_SEP = "\u0000";
  *
  * A locale whose query fails contributes NOTHING rather than throwing: the
  * caller unions this with the local mirror, so a failed read degrades to the
- * old mirror-only reach instead of losing the whole repair.
+ * old mirror-only reach instead of losing the whole repair. It goes through the
+ * GATEWAY, not the raw admin client: this runs inside the merchant's save
+ * request, once per published locale, and an unthrottled burst there would
+ * answer a rate limit with exactly that silent degradation.
  */
 async function foreignTranslationPairs(
-  client: ShopifyGraphQLClient,
+  gateway: ShopifyApiGateway,
   resourceId: string,
   foreignLocales: readonly string[],
   changedKeys: readonly string[],
@@ -284,7 +287,7 @@ async function foreignTranslationPairs(
   const pairs = new Set<string>();
   for (const locale of foreignLocales) {
     try {
-      const response = await client.graphql(
+      const response = await gateway.graphql(
         `#graphql
           query staleTranslationTargets($resourceId: ID!, $locale: String!) {
             translatableResource(resourceId: $resourceId) {
@@ -337,11 +340,12 @@ async function foreignTranslationPairs(
  * re-translated nor removed — live on the storefront, describing text that no
  * longer exists.
  *
- * AUTO-TRANSLATE ONLY, checked here and not only at the call site. Without it
- * the caller's own purge loop is the repair; running this one as well would
- * send a second `translationsRemove` for rows that are already gone, which
- * echoes nothing back and logs as an unconfirmed removal. The two paths are
- * mutually exclusive at BOTH ends on purpose.
+ * AUTO-TRANSLATE ONLY, re-checked here on the policy the caller HANDS IN (never
+ * a second read of its own — see `policy`). Without that switch the caller's own
+ * purge loop is the repair; running this one as well would send a second
+ * `translationsRemove` for rows that are already gone, which echoes nothing back
+ * and logs as an unconfirmed removal. The two paths are mutually exclusive at
+ * BOTH ends on purpose.
  *
  * BEST-EFFORT: the primary write has already happened, so every failure is
  * logged and swallowed. The merchant's text is saved either way.
@@ -358,13 +362,21 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
   changedKeys: readonly string[];
   /** Published foreign locales — the primary locale never holds a translation row. */
   foreignLocales: readonly string[];
+  /**
+   * The policy the CALLER already read to decide it was skipping its own purge.
+   * Passing it is not an optimisation: a second read fails OPEN to
+   * "auto-translate off", which returns NOTHING — and the caller has by then
+   * already stood its deletion down, so a transient DB error would leave the
+   * resource with neither the purge nor the repair, on a type nothing else
+   * notices. One read, one decision.
+   */
+  policy: TranslationChangePolicy;
 }): Promise<ReconcileResult> {
-  const { shop, resourceId, resourceType, changedKeys, foreignLocales, primaryContent } = params;
+  const { shop, resourceId, resourceType, changedKeys, foreignLocales, primaryContent, policy } =
+    params;
 
   try {
     if (changedKeys.length === 0 || foreignLocales.length === 0) return NOTHING;
-
-    const policy = await loadTranslationChangePolicy(shop);
     if (!policy.autoTranslateExternalChanges) return NOTHING;
 
     // Which (locale, key) pairs actually HAVE a translation to repair — the
@@ -381,7 +393,8 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // The mirror is the fallback: a locale whose read failed answers nothing,
     // and dropping it would silently do less than before. A pair we once wrote
     // is evidence enough to repair it.
-    const pairs = await foreignTranslationPairs(params.client, resourceId, foreignLocales, changedKeys);
+    const gateway = new ShopifyApiGateway(params.client, shop);
+    const pairs = await foreignTranslationPairs(gateway, resourceId, foreignLocales, changedKeys);
     const { db } = await import("../../db.server");
     const rows = await db.contentTranslation.findMany({
       where: {
