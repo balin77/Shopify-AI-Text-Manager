@@ -3,7 +3,13 @@
  *
  * dnd-kit has no tree component. The established shape (and the one its own
  * SortableTree example uses) is to FLATTEN the tree into a list, sort that,
- * and express nesting through the horizontal offset of the drag. Everything
+ * and express nesting through the horizontal offset of the drag.
+ *
+ * There is deliberately NO `DragOverlay`: the row being dragged is the row
+ * that moves. The overlay is dnd-kit's usual answer, but it puts a second
+ * object on screen — a floating copy under the cursor while the original stays
+ * in place, dimmed — and with rows this tall that reads as two things moving
+ * at once rather than as one being carried. Everything
  * about that translation — including the depth clamp Shopify measurably
  * enforces — lives in `projectDrop` in menu-tree.shared.ts, so it can be
  * tested without a DOM. This component is the hands: sensors, rendering, and
@@ -22,7 +28,6 @@
 import { useMemo, useState } from "react";
 import {
   DndContext,
-  DragOverlay,
   KeyboardSensor,
   MeasuringStrategy,
   MouseSensor,
@@ -180,8 +185,6 @@ export function MenuTreeEditor({
     if (next !== nodes) onChange(next);
   };
 
-  const activeNode = activeKey ? findNode(nodes, activeKey) : null;
-
   return (
     <DndContext
       sensors={sensors}
@@ -217,23 +220,6 @@ export function MenuTreeEditor({
           ))}
         </div>
       </SortableContext>
-      {/* The overlay is what the merchant drags: without it the row stays in
-          place and only a gap moves, which reads as a broken drag. */}
-      <DragOverlay>
-        {activeNode ? (
-          <div
-            style={{
-              padding: "0.5rem 0.75rem",
-              background: "var(--p-color-bg-surface, #fff)",
-              border: "1px solid var(--app-surface-border-color)",
-              borderRadius: "8px",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-            }}
-          >
-            <Text as="span" variant="bodyMd">{activeNode.title}</Text>
-          </div>
-        ) : null}
-      </DragOverlay>
     </DndContext>
   );
 }
@@ -275,9 +261,15 @@ function MenuTreeRow({
         {
           transform: CSS.Translate.toString(transform),
           transition,
-          // The dragged row keeps its space but goes quiet — the overlay above
-          // is the thing that moves.
-          opacity: isDragging ? 0.4 : 1,
+          // The ROW is what the merchant drags. There used to be a `DragOverlay`
+          // — a copy of the title floating under the cursor while the real row
+          // stayed put and dimmed — and it read as two things moving at once.
+          // Without it, `useSortable` translates this element itself, so there
+          // is one object on screen and it is the one being moved. It only has
+          // to sit ABOVE its neighbours on the way past them; dimming it would
+          // now be dimming the thing under the cursor.
+          zIndex: isDragging ? 2 : undefined,
+          position: isDragging ? "relative" : undefined,
           marginBottom: "0.75rem",
           // Depth as a VARIABLE, not as a margin on the row.
           //
