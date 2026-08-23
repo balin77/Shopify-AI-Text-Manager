@@ -103,6 +103,25 @@ export interface RepairTarget {
    * prevent. Defaults to `contentKind`, which is right wherever the two agree.
    */
   taskResourceType?: string;
+  /**
+   * The key this run CLAIMS and watches under, when that must not be the
+   * resource id itself. Defaults to `resourceId`.
+   *
+   * Claiming is how a repair tells the sync "I am handling this resource"
+   * (`isTranslationRecentlySaved`) and how two runs for the same thing queue
+   * instead of racing. But a product carries SEVERAL independent repairs — its
+   * own fields via the `products/update` webhook, its sub-resources and its alt
+   * texts from their own saves — and if the alt repair claims the product, the
+   * webhook's field reconciliation bails for 30 seconds and those field
+   * translations are neither purged nor refreshed, permanently, because the
+   * sync has already advanced their digest baseline. A private key keeps the
+   * Task row on the product (where the merchant can recognise it) while leaving
+   * the product's own lock alone.
+   *
+   * The WATCH list still covers the resource and every entry, so a merchant
+   * save on any of them still aborts the run.
+   */
+  lockId?: string;
   /** Shown on the Task row when a re-translation runs. */
   resourceTitle?: string;
   /**
@@ -1109,7 +1128,7 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // first. It lands before the detached run reads its own baseline, which is
     // the ordering the inline purge already relies on, so the run cannot mistake
     // this for a merchant write and abandon itself.
-    markTranslationSaved(resourceId);
+    markTranslationSaved(params.lockId ?? resourceId);
 
     return await repairStaleTranslations(params, stale, policy);
   } catch (error: unknown) {
@@ -1146,6 +1165,7 @@ async function repairStaleTranslations(
   policy: TranslationChangePolicy,
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
+  const lockId = target.lockId ?? resourceId;
   const gateway = new ShopifyApiGateway(client, shop);
   const mirror = mirrorOf(target);
   const { retranslate, purge } = partitionStaleTranslations(
@@ -1204,8 +1224,11 @@ async function repairStaleTranslations(
       // — the one rule that is supposed to protect it would not fire, and the
       // AI would overwrite it minutes later.
       const watched = [
-        resourceId,
-        ...new Set(retranslate.map((entry) => entry.resourceId ?? resourceId)),
+        ...new Set([
+          lockId,
+          resourceId,
+          ...retranslate.map((entry) => entry.resourceId ?? resourceId),
+        ]),
       ];
       const savedAtStart = new Map(watched.map((id) => [id, translationSavedAt(id)]));
       const supersededByMerchant = () =>
@@ -1235,7 +1258,7 @@ async function repairStaleTranslations(
         ) {
           await purgeStaleEntries(gateway, target, mirror, outcome.failed);
         }
-        if (outcome.registered.length > 0) markTranslationSaved(resourceId);
+        if (outcome.registered.length > 0) markTranslationSaved(lockId);
       } catch (error: unknown) {
         logger.warn("[StaleTranslations] Detached re-translation run failed", {
           context: "StaleTranslations",

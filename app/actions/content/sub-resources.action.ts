@@ -1260,6 +1260,10 @@ export async function handleSavePrimarySubResources(
             // the sub-resource its translation actually lives on.
             resourceId: productId,
             resourceType: "Product",
+            // Same reason as the alt-text repair: the Task row names the
+            // product, the lock does not, so the product's OWN field
+            // reconciliation on the next webhook is not blocked by this.
+            lockId: `${productId}#subResources`,
             contentKind: "product",
             // Read from the cache rather than taken from the form: the client
             // does not send a title here, and a Task row labelled with a GID is

@@ -1616,6 +1616,13 @@ async function updatePrimaryProduct(
             shop,
             resourceId: productId,
             resourceType: "Product",
+            // The Task row stays on the PRODUCT; the lock does not. Claiming
+            // the product here would make the `products/update` webhook's field
+            // reconciliation bail for 30 seconds, and with auto-translate on
+            // that leaves the title's translations neither purged nor
+            // refreshed — permanently, since the sync has advanced their
+            // digest baseline by then.
+            lockId: `${productId}#altText`,
             contentKind: "product",
             resourceTitle: (data.data.productUpdate.product?.title as string) || productId,
             changed: [...imageIdByMedia.keys()].map((mediaId) => ({

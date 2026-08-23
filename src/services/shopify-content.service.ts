@@ -1383,7 +1383,13 @@ export class ShopifyContentService {
       const needsForeignLocales =
         (purgeChangedFields && changedTranslationKeys.length > 0) ||
         (selfRetranslated && changedTranslationKeys.length > 0) ||
-        (featuredAltChanged && !!changePolicy?.purgeUnreconciledSurfaces);
+        // BOTH featured-alt outcomes need the locales — the deletion to scope
+        // it, the re-translation to know what to translate into. Asking only
+        // about the deletion left a shop with auto-translate ON and the stored
+        // purge OFF with neither.
+        (featuredAltChanged &&
+          (!!changePolicy?.purgeUnreconciledSurfaces ||
+            !!changePolicy?.autoTranslateExternalChanges));
       let foreignLocales: string[] = [];
       if (needsForeignLocales) {
         try {
@@ -1482,6 +1488,11 @@ export class ShopifyContentService {
               // parent row both editors read.
               resourceId,
               resourceType,
+              // The alt repair must not claim the resource its own CONTENT
+              // repair runs under: an article save fires both, and the second
+              // claim would move the timestamp the first run captured and abort
+              // it after one locale, leaving the rest in neither list.
+              lockId: `${resourceId}#featuredAlt`,
               contentKind: resourceType === 'Article' ? 'blog' : 'collection',
               resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
               changed: [{ resourceId: imageResourceId, resourceType: 'MediaImage', key: 'alt' }],

@@ -909,6 +909,43 @@ describe("a group spanning several resources (sub-resources)", () => {
     expect(ai.translateValues.mock.calls[0][0]).toEqual(["Farbe"]);
   });
 
+  it("REMOVES a value the single-line prompt would flatten", async () => {
+    // A theme setting carries no type metadata, only a key, so the VALUE is
+    // what gets asked. `translateBatchValues` sanitises with allowNewlines:
+    // false and has no rule that preserves markup, so a multi-line value comes
+    // back flattened and a value with tags comes back with them rewritten —
+    // echo-confirmed and mirrored, i.e. corruption recorded as a success.
+    primary = {
+      [OPTION]: { name: { value: "Zeile eins\nZeile zwei", digest: NEW } },
+      [VALUE]: { name: { value: "<p>Absatz</p>", digest: NEW } },
+      [METAFIELD]: { value: { value: "Massivholz", digest: NEW } },
+    };
+
+    await reconcileAfterPrimarySave(groupParams());
+    await awaitDetachedRetranslations();
+
+    expect(shopify.registerTargets).toEqual([METAFIELD]);
+    expect(shopify.removeTargets.sort()).toEqual([OPTION, VALUE].sort());
+    expect(ai.translateValues.mock.calls[0][0]).toEqual(["Massivholz"]);
+  });
+
+  it("claims a PRIVATE lock so the product's own reconciliation is not blocked", async () => {
+    // The Task row names the product; the lock must not, or the
+    // products/update webhook's field reconciliation bails for 30 seconds and
+    // those translations are neither purged nor refreshed — permanently, since
+    // the sync has advanced their digest baseline by then.
+    // A fresh id: the save-lock map is module-level, and an earlier test in
+    // this block claims PRODUCT under its own (default) lock.
+    const fresh = freshProduct();
+    await reconcileAfterPrimarySave(
+      groupParams({ resourceId: fresh, lockId: `${fresh}#subResources` }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(isTranslationRecentlySaved(`${fresh}#subResources`)).toBe(true);
+    expect(isTranslationRecentlySaved(fresh)).toBe(false);
+  });
+
   it("chunks the values instead of building one oversized prompt", async () => {
     const many = Array.from({ length: 95 }, (_, i) => `gid://shopify/Metafield/m${i}`);
     primary = Object.fromEntries(

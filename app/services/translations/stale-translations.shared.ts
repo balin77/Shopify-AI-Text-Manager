@@ -228,6 +228,27 @@ export function findStaleTranslations(
  * one, and a translation we cannot register would leave the storefront showing
  * the stale text we set out to remove.
  */
+/**
+ * Can this value go through the generic single-line prompt at all?
+ *
+ * A TYPE check is not always available — a theme setting carries no type
+ * metadata, only a key — so the VALUE is asked instead, which is the question
+ * anyway: `translateBatchValues` sanitises with `allowNewlines: false`, so
+ * anything multi-line comes back flattened, and it has no rule that preserves
+ * markup, so a value carrying tags comes back with them rewritten or dropped.
+ * Both would be echo-confirmed and mirrored, i.e. corruption recorded as a
+ * success. A value this refuses keeps the behaviour that predates
+ * auto-translate on these surfaces: its stale translation is REMOVED.
+ *
+ * Deliberately conservative in the same direction as `isBatchTranslatableValueType`,
+ * which stays as the TYPE-level guard where a type is known — this is the
+ * value-level backstop for the surfaces where it is not.
+ */
+export function survivesValuePrompt(value: string): boolean {
+  if (/[\r\n]/.test(value)) return false;
+  return !/<[a-zA-Z][^>]*>/.test(value);
+}
+
 export function partitionStaleTranslations(
   stale: readonly StaleTranslation[],
   autoTranslate: boolean,
@@ -252,7 +273,7 @@ export function partitionStaleTranslations(
       !!entry.primaryValue.trim() &&
       !!entry.digest &&
       entry.retranslatable !== false &&
-      (opts.anyKey || AUTO_RETRANSLATABLE_KEYS.has(entry.key));
+      (opts.anyKey ? survivesValuePrompt(entry.primaryValue) : AUTO_RETRANSLATABLE_KEYS.has(entry.key));
     (canRetranslate ? retranslate : purge).push(entry);
   }
   return { retranslate, purge };
