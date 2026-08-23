@@ -170,6 +170,18 @@
                                      AI-editable fields already used.
      --app-field-border-radius       the corner, spent by AIEditableField.css.
                                      Polaris' own inputs are already 8px.
+     --app-swatch-radius             the corner of a COLOUR swatch and of the
+                                     native colour picker it opens. Its own
+                                     token and deliberately not the field
+                                     radius: the shape being matched is the
+                                     browser's `<input type="color">`, not this
+                                     app's text inputs, and the swatch, the
+                                     ring the activator draws around it, the
+                                     picker and its base-colour chips all have
+                                     to be the SAME corner or the panel reads
+                                     as three controls for one value. It was
+                                     four separate `6px` literals in three
+                                     files before this line existed.
      --app-field-label-weight        every field label, everywhere. The
                                      AI-editable fields printed a semibold
                                      label and the merchandising controls a
@@ -223,6 +235,7 @@
                                      holding a label and one Polaris input. */
   --app-field-border-color: #c9cccf;
   --app-field-border-radius: 8px;
+  --app-swatch-radius: 6px;
   --app-field-label-weight: 600;
   --app-attribute-grid-min-width: 180px;
   --app-details-field-min-width: 195px;

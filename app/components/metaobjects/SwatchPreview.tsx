@@ -18,11 +18,18 @@
 
 import { resolveSwatch, type OptionValueSwatch } from "~/services/product-option-swatch.shared";
 
-/** The colour input's own radius — see the note above. Kept next to the size
- *  it belongs to rather than scaled from it: a swatch and the picker it opens
- *  have to LOOK the same, and a derived radius drifts the moment either
- *  changes size. */
-const SWATCH_RADIUS = "6px";
+/**
+ * The corner, from the ONE place app-wide formatting lives (`:root` in
+ * responsive.css), exactly like `--app-page-padding` and the field chrome.
+ *
+ * A TS constant here was the first cut and it was already drifting: the card's
+ * activator ring restated `6px`, `HexColorInput` restated it for the native
+ * picker, and the app's own `--app-field-border-radius` is 8px. Four literals
+ * for one visual relationship — the swatch, the ring around it, the picker it
+ * opens and that picker's chips must all share a corner or the panel reads as
+ * three controls for one value.
+ */
+const SWATCH_RADIUS = "var(--app-swatch-radius)";
 
 interface Props {
   /** The entry's display name — the fallback source for a colour word / hex. */

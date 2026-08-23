@@ -22,7 +22,7 @@
  *   merchant has typed the entry's name into a confirmation dialog.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BlockStack, Badge, Button, Card, InlineStack, Popover, Text, Tooltip } from "@shopify/polaris";
 import { SwatchPreview } from "./SwatchPreview";
 import { useScrollLock } from "~/hooks/useScrollLock";
@@ -165,16 +165,54 @@ export function MetaobjectEntryCard({
    * component does not render it (Polaris portals it out of the tree), so
    * there is nothing here to attach one to. `useScrollLock` reads `.current`
    * at event time, which is exactly what makes the getter work.
+   *
+   * Scoped to THIS card's popover through the activator, not
+   * `document.querySelector(".Polaris-Popover__Pane")`: a type page renders 25
+   * of these cards and the taxonomy chip lists open panes of their own, and a
+   * document-wide query answers with whichever pane is first in the DOM. Two
+   * can legitimately coexist -- Polaris ignores an outside click for the first
+   * 100ms of its enter transition, so a merchant clicking two swatches quickly
+   * has both open. Polaris writes the overlay's id onto the activator as
+   * `aria-controls`, and that id sits on the popover's CONTENT element with the
+   * Pane INSIDE it (verified against @shopify/polaris' PopoverOverlay) -- hence
+   * `querySelector` and not `closest`. The global selector stays as the
+   * fallback for the frame before Polaris has written the attribute.
    */
+  const activatorRef = useRef<HTMLButtonElement | null>(null);
   const paneRef = useMemo(
     () => ({
       get current() {
-        return document.querySelector<HTMLElement>(".Polaris-PositionedOverlay .Polaris-Popover__Pane");
+        const overlayId = activatorRef.current?.getAttribute("aria-controls");
+        const own = overlayId
+          ? document.getElementById(overlayId)?.querySelector<HTMLElement>(".Polaris-Popover__Pane")
+          : null;
+        return (
+          own ??
+          document.querySelector<HTMLElement>(".Polaris-PositionedOverlay .Polaris-Popover__Pane")
+        );
       },
     }),
     [],
   );
-  useScrollLock(colorOpen, paneRef);
+
+  /**
+   * Is the picker actually ON SCREEN? The Popover below renders only while the
+   * card is editable, and both conditions come from the PARENT -- an entry
+   * reload that answers `readOnly`, or a switch to a language tab, takes the
+   * control away without touching this component's state.
+   *
+   * Without this the card kept `colorOpen === true` with no popover left: the
+   * window-wide wheel/touch block stayed registered around an overlay that had
+   * unmounted, so nothing on the page scrolled any more and there was no panel
+   * to close -- only a reload recovered. The state is reset as well as gated,
+   * or the picker would spring open again by itself the moment the entry
+   * became writable.
+   */
+  const colorPickerOpen = colorOpen && !compact && !!colorControl;
+  useEffect(() => {
+    if (colorOpen && (compact || !colorControl)) setColorOpen(false);
+  }, [colorOpen, compact, colorControl]);
+  useScrollLock(colorPickerOpen, paneRef);
 
   /**
    * The colour the swatch paints, preferring what the merchant has TYPED over
@@ -206,9 +244,11 @@ export function MetaobjectEntryCard({
     return !METAOBJECT_HEX_PATTERN.test(value.startsWith("#") ? value : `#${value}`);
   }, [colorControl, colorValue]);
 
-  // The card's two regions. Split here rather than in the caller: which shape
-  // a field has is a LAYOUT question, and the page that renders the cards
-  // already answers enough of them.
+  // The card's THREE regions, in the order they are drawn: lead, grid, wide.
+  // Split here rather than in the caller: which shape a field has is a LAYOUT
+  // question, and the page that renders the cards already answers enough of
+  // them. A field is in exactly one region — `lead` wins over `wide`, so a
+  // caller that marks both cannot land a field in two.
   const leadFields = useMemo(() => children.filter((child) => child.lead), [children]);
   const boxFields = useMemo(() => children.filter((child) => !child.lead && !child.wide), [children]);
   const wideFields = useMemo(() => children.filter((child) => !child.lead && child.wide), [children]);
@@ -267,11 +307,12 @@ export function MetaobjectEntryCard({
               // the header is a title row, and a colour picker parked in it
               // permanently would push the name off a narrow screen.
               <Popover
-                active={colorOpen}
+                active={colorPickerOpen}
                 onClose={() => setColorOpen(false)}
                 activator={
                   <button
                     type="button"
+                    ref={activatorRef}
                     onClick={() => setColorOpen((open) => !open)}
                     aria-label={t.editColor || "Change colour"}
                     style={{
@@ -282,9 +323,10 @@ export function MetaobjectEntryCard({
                       lineHeight: 0,
                       display: "flex",
                       alignItems: "center",
-                      // The swatch's own radius, so the focus/invalid ring
-                      // traces the square rather than a circle around it.
-                      borderRadius: "6px",
+                      // The swatch's OWN corner token, so the focus/invalid
+                      // ring traces the square instead of drawing a circle
+                      // around it.
+                      borderRadius: "var(--app-swatch-radius)",
                       // A red ring, because the reason itself is behind a
                       // popover the merchant has to open.
                       outline: colorInvalid ? "2px solid var(--p-color-border-critical)" : undefined,
@@ -374,11 +416,14 @@ export function MetaobjectEntryCard({
           // controls that are mostly one line tall — on a type with 25 entries
           // that is a page nobody can survey.
           //
-          // The two regions, and the widths they spend, live in responsive.css.
-          // Order inside each one is the definition's, untouched: the only
-          // thing this split reorders is "boxes before lists", which is what
-          // keeps the boxes packed into full rows instead of leaving one of
-          // them stranded on a line of its own behind a spanning cell.
+          // The three regions, and the widths they spend, live in
+          // responsive.css. Order INSIDE each one is the definition's,
+          // untouched; the split itself reorders two things, and both are
+          // deliberate. "Boxes before lists" keeps the boxes packed into full
+          // rows instead of leaving one stranded on a line of its own behind a
+          // spanning cell. And the LEAD field is hoisted above everything —
+          // the entry's picture, which in the grid claimed a whole text column
+          // for a 48px tile.
           <BlockStack gap="400">
             {leadFields.map((child) => (
               <div key={child.key} className="metaobject-entry-fields__lead">

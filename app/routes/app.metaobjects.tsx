@@ -615,6 +615,11 @@ export default function MetaobjectsPage() {
       // shop, so they render read-only there — controls that cannot be used,
       // three of them per card, on every card. Before this page had cards, a
       // foreign locale was the input and its buttons, and that was right.
+      // Only the FIRST file field leads. A definition may declare several, and
+      // a lead row is capped at one column — three of them would be three
+      // stacked 340px rows above a grid that would have packed them side by
+      // side. "The entry's picture" is one field; the rest are ordinary boxes.
+      let leadTaken = false;
       const bodyFields = rendered
         .filter((r) => r !== colourEntry)
         .filter(
@@ -624,10 +629,12 @@ export default function MetaobjectsPage() {
         )
         .map((r) => {
           const spec = specByKey.get(r.field.key);
+          const lead = spec?.role === "file" && !leadTaken;
+          if (lead) leadTaken = true;
           return {
             key: r.field.key,
             node: r.node,
-            lead: spec?.role === "file",
+            lead,
             wide:
               spec?.role === "textarea" ||
               spec?.role === "richText" ||
