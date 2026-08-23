@@ -626,6 +626,10 @@ export async function handleTranslateAltTextToAllLocales(
 
           // Only save to DB if Shopify succeeded
           if (shopifySaved) {
+            // The detached alt repair watches the MEDIA resource it is about to
+            // write (translation-locks.shared.ts); without this claim it never
+            // sees the merchant write and overwrites it minutes later.
+            markTranslationSaved(dbImage.mediaId);
             try {
               const existing = await db.productImageAltTranslation.findUnique({
                 where: { imageId_locale_marketId: { marketId: "",  imageId: dbImage.id, locale } },
