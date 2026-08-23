@@ -44,14 +44,6 @@ import { DisabledActionTooltip } from "../DisabledActionTooltip";
 /** Shopify's ProductStatus, in the order the admin lists them. */
 const PRODUCT_STATUSES = ["ACTIVE", "DRAFT", "UNLISTED", "ARCHIVED"] as const;
 
-/**
- * The action bar sits UNDER the language bar, so a tooltip opening upwards
- * lands on top of it — and Polaris' own tooltip layer (the 400s) loses against
- * this app's layers (fixed nav 1000, sticky bars 999). 1200 is the number the
- * item list already uses for exactly this; keep the two in step.
- */
-const TOOLTIP_Z_INDEX = 1200;
-
 export interface ItemStatusSwitchTexts {
   active?: string;
   activeHint?: string;
@@ -157,19 +149,11 @@ export function ItemStatusSwitch({
   // An ENABLED one must NOT go through it: its wrapper sets
   // `pointer-events: none` on the child, which would make the Select unusable.
   return disabled ? (
-    <DisabledActionTooltip hint={hint} zIndexOverride={TOOLTIP_Z_INDEX}>
-      {control}
-    </DisabledActionTooltip>
+    <DisabledActionTooltip hint={hint}>{control}</DisabledActionTooltip>
   ) : (
     // `activatorWrapper="div"`: the control IS a div, and Polaris' default
     // `span` wrapper would nest it in an inline element.
-    <Tooltip
-      content={hint}
-      dismissOnMouseOut
-      preferredPosition="above"
-      zIndexOverride={TOOLTIP_Z_INDEX}
-      activatorWrapper="div"
-    >
+    <Tooltip content={hint} dismissOnMouseOut preferredPosition="above" activatorWrapper="div">
       {control}
     </Tooltip>
   );

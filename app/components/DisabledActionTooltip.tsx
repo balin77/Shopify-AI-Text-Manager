@@ -27,10 +27,6 @@ interface DisabledActionTooltipProps {
   /** The child lays itself out across the full width (a `ToggleRow`), so the
    *  wrapper must not shrink-wrap it. */
   block?: boolean;
-  /** Polaris' tooltip z-index (400s) loses against this app's own layers —
-   *  the fixed nav (1000) and the sticky bars around 999. Pass the same 1200
-   *  the item list already uses when the tooltip has such a layer above it. */
-  zIndexOverride?: number;
 }
 
 export function DisabledActionTooltip({
@@ -38,18 +34,12 @@ export function DisabledActionTooltip({
   children,
   preferredPosition = "above",
   block = false,
-  zIndexOverride,
 }: DisabledActionTooltipProps) {
   if (!hint) return <>{children}</>;
 
   const display = block ? "block" : "inline-block";
   return (
-    <Tooltip
-      content={hint}
-      dismissOnMouseOut
-      preferredPosition={preferredPosition}
-      zIndexOverride={zIndexOverride}
-    >
+    <Tooltip content={hint} dismissOnMouseOut preferredPosition={preferredPosition}>
       <span style={{ display, cursor: "not-allowed" }}>
         <span style={{ display, pointerEvents: "none" }}>{children}</span>
       </span>

@@ -1720,15 +1720,21 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
                             // the desktop bar, and the row says so instead of
                             // pretending otherwise.
                             statusDisabled: foreign || !known || lockedStatus,
+                            // Only the reasons the row CANNOT be tapped. The
+                            // state sentence ("visible in your shop — as long
+                            // as …") stays off the phone: the row already
+                            // names the state, and as a permanent second line
+                            // under the row it is the noise the desktop
+                            // tooltip exists to avoid. A disabled row without
+                            // its reason, on the other hand, is exactly what
+                            // the disabled-control rule forbids.
                             statusHelp: foreign
                               ? t.content?.attributesForeignLocale
                               : !known
                                 ? toggle.unknown
                                 : lockedStatus
                                   ? enums[`status.${value.toUpperCase()}`]
-                                  : checked
-                                    ? statusControl.kind === "status" ? toggle.activeHint : toggle.publishedHint
-                                    : statusControl.kind === "status" ? toggle.draftHint : toggle.unpublishedHint,
+                                  : undefined,
                             onToggleStatus: () =>
                               handlers.handleValueChange(
                                 statusControl.fieldKey,
