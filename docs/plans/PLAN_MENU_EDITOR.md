@@ -1,6 +1,6 @@
 # Menü-Editor — Plan (ändern und übersetzen auf einem Bildschirm)
 
-**Status:** Phase 0 GEMESSEN (2026-08-23, `patis-universe-test-shop`, API 2026-07) — mit **einem offenen Befund**, der Phase 1 blockiert: eine Übersetzung war nach dem Umbenennen noch da und nach dem nächsten Schreibvorgang weg, obwohl die ID die ganze Zeit dieselbe blieb. Welcher Schreibvorgang sie tötet, misst die erweiterte Sonde (§2.5). Vom Editor selbst ist bisher nur das Umbenennen gebaut (§0).
+**Status:** Phase 0 GEMESSEN und abgeschlossen (2026-08-23, `patis-universe-test-shop`, API 2026-07). Kein Blocker mehr: der Editor ist baubar, und die **eine** Reparatur, die er braucht, ist benannt — Umhängen löscht die Übersetzung des umgehängten Punkts, also muss der Editor sie danach neu registrieren (§2.5). Die ausgelieferte Umbenennen-Funktion ist davon **nicht** betroffen, weil sie nichts umhängt. Vom Editor selbst ist bisher nur das Umbenennen gebaut (§0).
 **Ziel:** `/app/menus` wird eine vollständige Alternative zum Shopify-Menü-Editor — Reihenfolge, Verschachtelung, Anlegen, Löschen, Ziel ändern, das Menü selbst umbenennen — **und** die Übersetzung steht dabei in derselben Zeile. Der Zweck ist nicht Funktionsgleichheit mit Shopify, sondern das Wegfallen des Hin-und-Her: heute benennt man im Shopify-Admin um und übersetzt danach hier.
 
 > **Keine neuen Scopes.** `write_online_store_navigation` und `read_translations`/`write_translations` sind vorhanden. Es läuft **kein** Re-Consent an. Das ist die eine Randbedingung, die diesen Plan billig macht — jede Phase unten kostet Arbeit, keine kostet Händler.
@@ -58,20 +58,28 @@ Dokumentiert sind drei Ebenen. Der Schreibweg liest vier und verweigert fünf. O
 
 **Ergebnis:** Die Übersetzung geht mit dem Punkt; seine Link-Ressource löst danach überhaupt nicht mehr auf. Ein versehentliches Löschen ist durch Wiederanlegen **nicht** reparierbar (der neue Punkt bekommt eine neue ID, §2.2) — das gehört in den Warntext der Löschbestätigung (§7).
 
-### 2.5 WELCHER Schreibvorgang tötet eine Übersetzung? — **offen, und der einzige Blocker**
+### 2.5 WELCHER Schreibvorgang tötet eine Übersetzung? — **nur das Umhängen** (gemessen)
 
-Gemessen: nach dem Umbenennen war die Übersetzung noch da (`outdated: true`), nach dem nächsten Schreibvorgang — dem Verschieben — war sie weg. Die ID blieb durchgehend dieselbe, wir lesen also dieselbe Link-GID. Vier Ursachen kommen infrage, mit gegensätzlichen Folgen:
+Vier Punkte, einer pro Hypothese, nach jeder Stufe alle gelesen:
 
-| Ursache | Folge |
-|---|---|
-| (a) Umhängen löscht sie | der Editor muss nach jedem Umzug neu registrieren |
-| (b) Umsortieren löscht sie | dasselbe, für **jeden** Drag |
-| (c) **Jeder weitere** `menuUpdate` löscht sie | die **ausgelieferte** Umbenennen-Funktion verliert Übersetzungen, sobald ein zweiter Save das Menü anfasst |
-| (d) Eine **outdated** Übersetzung wird vom nächsten Schreibvorgang eingesammelt | die ausgelieferte Funktion verspricht „bleibt erhalten" und hält es nicht |
+| Stufe | KONTROLLE | UMGEHÄNGT | UMBENANNT | UMSORTIERT |
+|---|---|---|---|---|
+| registriert | da | da | da | da |
+| nach No-op-Write | da | da | da | da |
+| nach dem Umhängen | da | **weg** | da | da |
+| nach dem Umbenennen | da | weg | da (outdated) | da |
+| nach dem Write danach | da | weg | da (outdated) | da |
+| nach dem Umsortieren | da | weg | da (outdated) | da |
 
-Die Sonde trennt sie mit einem eigenen Menü aus vier Punkten — einer wird nie angefasst (Kontrolle), einer umgehängt, einer umbenannt und danach in Ruhe gelassen, einer nur umsortiert — und liest nach **jeder** Stufe alle vier. Die Tabelle im Report zeigt dann, welcher Schreibvorgang welchen Wert genommen hat.
+**Ergebnis: (a).** Nur ein Wechsel des ELTERNTEILS löscht. Die drei Verneinungen sind dabei so viel wert wie der Befund selbst:
 
-**Bis das beantwortet ist**, gilt für die ausgelieferte Funktion: „Der Händler hat den Purge abgeschaltet, also bleiben seine Übersetzungen" ist auf Menüs **unbewiesen**. Bei (c) oder (d) wäre es falsch, und die Antwort ist ein Fix, kein Kommentar.
+- **(c) widerlegt** — ein unberührter Punkt übersteht fünf Whole-Tree-Writes. Ein `menuUpdate` an sich ist harmlos.
+- **(d) widerlegt** — eine outdated Übersetzung übersteht zwei weitere Writes. Shopify sammelt sie nicht ein.
+- **(b) widerlegt** — Umsortieren beim selben Elternteil behält sie.
+
+**Damit ist die ausgelieferte Umbenennen-Funktion entlastet**: sie hängt nichts um, also hält ihr Versprechen „Purge aus ⇒ Übersetzungen bleiben". Das war die Frage, wegen der dieser Abschnitt existierte.
+
+**Und für Phase 1 ist es eine Aufgabe, kein Blocker.** Der Editor muss nach jedem Umzug die Übersetzungen des umgehängten Punkts neu registrieren — die Werte hat die Seite ohnehin auf dem Bildschirm (der Live-Sweep), und der Digest wird nach dem Schreibvorgang frisch gelesen. Zwei Details dazu misst der nächste Lauf, weil sie den Preis bestimmen: ob ein **mitgezogenes Kind** seine Übersetzung ebenfalls verliert (dann kostet ein Ast-Umzug eine Registrierung pro Punkt darin), und ob sich der Wert unmittelbar nach dem Umzug **überhaupt zurückschreiben** lässt — die Reparatur wird bewiesen, nicht angenommen.
 
 ---
 
@@ -119,7 +127,12 @@ Das ist bewusst dieselbe Grundhaltung wie im heutigen Schreibweg, nur eine Stufe
 5. menuUpdate, Echo pro Punkt, ID-Prüfung pro Position
 6. Neue IDs nach Position auf die temporären abbilden und zurückgeben
 7. Purge für Punkte mit geändertem Primärtitel (unverändert)
-8. Löschungen: lokale Übersetzungszeilen der entfernten Punkte weg
+8. **Übersetzungen der UMGEHÄNGTEN Punkte neu registrieren** (§2.5): Shopify
+   löscht sie beim Elternwechsel, obwohl die ID bleibt. Vorher aus dem
+   Live-Sweep gemerkt, hinterher mit frischem Digest zurückgeschrieben und
+   echo-geprüft. Was nicht bestätigt zurückkommt, ist ein Fehler PRO PUNKT —
+   der Umbau selbst steht bereits und wird nicht zurückgerollt.
+9. Löschungen: lokale Übersetzungszeilen der entfernten Punkte weg
 ```
 
 Schritt 6 ist der einzige wirklich neue Mechanismus, und er ist der Grund für Schritt 5s Positionsvergleich: Wir haben den Baum selbst geschickt, kennen also die Position jedes neuen Punkts und lesen seine ID an genau dieser Stelle aus der Antwort.
@@ -218,7 +231,8 @@ Nach Phase 2 muss ein Händler den Shopify-Admin für ein Menü nicht mehr öffn
 
 ## 11. Was den Plan kippen würde
 
-1. **IDs wandern beim Verschieben** (§2.1). Dann ist jeder Umzug ein Übersetzungsverlust, und Phase 1 braucht eine Migration, bevor sie ausgeliefert werden darf.
-2. **Shopify nimmt keine vierte Ebene** und der Editor klemmt bei drei — kein Problem, aber es muss gemessen sein, bevor eine Drag-Projektion eine Zahl behauptet.
-3. **`url` bei zielosen Typen wird abgelehnt** (offene Frage aus dem Review, Sonde erweitert). Betrifft schon den heutigen Umbenennen-Pfad: eine abgelehnte Paarung lässt die ganze `menuUpdate` scheitern.
-4. **Zwei Menüs, ein Punkt.** Sollte je der Wunsch aufkommen, Punkte zwischen Menüs zu ziehen: zwei Mutationen ohne gemeinsame Transaktion. Bewusst außerhalb.
+1. ~~IDs wandern beim Verschieben~~ — **gemessen, sie bleiben** (§2.1).
+2. ~~Shopify nimmt keine vierte Ebene~~ — **gemessen, genau drei** (§2.3). Die Drag-Projektion klemmt bei 3.
+3. ~~`url` bei ziellosen Typen wird abgelehnt~~ — **gemessen, wird angenommen** (Review-Befund 3 erledigt).
+4. **Das Umhängen löscht die Übersetzung** (§2.5). Kein Kipppunkt mehr, sondern Schritt 8 des Schreibwegs — aber wenn die Rückschreib-Messung ergibt, dass sich der Wert danach NICHT wiederherstellen lässt, wird Ziehen zu einer Operation mit Datenverlust und gehört hinter eine Warnung statt hinter eine Geste.
+5. **Zwei Menüs, ein Punkt.** Sollte je der Wunsch aufkommen, Punkte zwischen Menüs zu ziehen: zwei Mutationen ohne gemeinsame Transaktion. Bewusst außerhalb.

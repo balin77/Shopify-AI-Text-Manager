@@ -455,10 +455,23 @@ export interface MenuWriteProbeReport {
    *                                           "your translations are kept"
    *                                           and does not keep them
    *
-   * One menu with four items separates them: one item is never touched
-   * (control), one is re-parented, one is renamed and then left alone through
-   * a further write, one is only reordered. Every stage reads all four, so the
-   * report shows exactly which write dropped which value.
+   * One menu separates them: one item is never touched (control), one is
+   * re-parented, one is renamed and then left alone through a further write,
+   * one is only reordered. Every stage reads all of them, so the report shows
+   * exactly which write dropped which value.
+   *
+   * MEASURED 2026-08-23: only RE-PARENTING drops it. The control survived five
+   * whole-tree writes, an outdated translation survived two further ones, and
+   * reordering within the same parent kept it. Two follow-up questions decide
+   * how expensive the repair is, and both are measured here too:
+   *
+   *   CARRIED — a CHILD of the moved item, whose own parent did not change but
+   *   whose ancestry did. If it loses its translation as well, moving a branch
+   *   costs a re-registration for every item in it, not just for the one the
+   *   merchant dragged.
+   *
+   *   RE-REGISTER — can the value simply be written again straight after the
+   *   move? That is the whole mitigation, so it is proven rather than assumed.
    */
   translationDurability: {
     attempted: boolean;
@@ -467,6 +480,8 @@ export interface MenuWriteProbeReport {
     /** role -> the Link GID watched for it. */
     links: Array<{ role: string; linkId: string }>;
     observations: Array<{ stage: string; role: string; value: string | null; outdated: boolean | null }>;
+    /** Writing the value back right after the move — the proposed repair. */
+    reRegisterAfterMove: { attempted: boolean; digestFound: boolean | null; restored: boolean | null };
     errors: string[];
   };
   typeRoundTrip: {
@@ -737,6 +752,7 @@ export async function action({ request }: ActionFunctionArgs) {
       locale: null,
       links: [],
       observations: [],
+      reRegisterAfterMove: { attempted: false, digestFound: null, restored: null },
       errors: [],
     },
     deleteTranslation: {
@@ -1312,6 +1328,19 @@ export async function action({ request }: ActionFunctionArgs) {
             title: `CP Probe ${role}`,
             type: "HTTP",
             url: `https://example.com/cp-probe-${role.toLowerCase()}`,
+            // The moved item carries a child, so the report can tell "the item
+            // I dragged" apart from "everything that came with it".
+            ...(role === "MOVED"
+              ? {
+                  items: [
+                    {
+                      title: "CP Probe CARRIED",
+                      type: "HTTP",
+                      url: "https://example.com/cp-probe-carried",
+                    },
+                  ],
+                }
+              : {}),
           })),
         });
         report.translationDurability.errors.push(...topLevelErrors(created));
@@ -1446,6 +1475,45 @@ export async function action({ request }: ActionFunctionArgs) {
             await writeTree("reorder", toUpdateInput([reordered, ...others], {}));
           }
           await observe("afterReorder");
+
+          // Can the dropped value simply be written again? If yes, the tree
+          // editor's repair is "re-register after a move", and Phase 1 can be
+          // built on it. If no, moving an item is a translation loss with no
+          // remedy and the editor has to say so before the drag.
+          const movedLink = byRole.get("MOVED");
+          if (movedLink && !report.translationDurability.observations.find(
+            (o) => o.stage === "afterReorder" && o.role === "MOVED",
+          )?.value) {
+            report.translationDurability.reRegisterAfterMove.attempted = true;
+            const read = await run(LINK_TRANSLATABLE_QUERY, { id: movedLink, locale: foreignLocale });
+            const digest = (
+              read.data?.translatableResource as
+                | { translatableContent?: Array<{ key: string; digest: string | null }> }
+                | null
+                | undefined
+            )?.translatableContent?.find((c) => c.key === "title")?.digest ?? null;
+            report.translationDurability.reRegisterAfterMove.digestFound = !!digest;
+            if (digest) {
+              await run(REGISTER_MUTATION, {
+                resourceId: movedLink,
+                translations: [
+                  {
+                    key: "title",
+                    locale: foreignLocale,
+                    value: `CP-DUR-REPAIRED-${stamp}`,
+                    translatableContentDigest: digest,
+                  },
+                ],
+              });
+              const verify = await run(LINK_TRANSLATABLE_QUERY, { id: movedLink, locale: foreignLocale });
+              report.translationDurability.reRegisterAfterMove.restored = !!(
+                verify.data?.translatableResource as
+                  | { translations?: Array<{ key: string; value: string }> }
+                  | null
+                  | undefined
+              )?.translations?.find((t) => t.key === "title")?.value;
+            }
+          }
         }
       } catch (error) {
         report.translationDurability.errors.push(error instanceof Error ? error.message : String(error));
@@ -1662,6 +1730,24 @@ export async function action({ request }: ActionFunctionArgs) {
       v.push("TRANSLATION DURABILITY: re-parenting keeps the moved item's translation.");
     }
 
+    if (at("registered", "CARRIED")) {
+      if (lost("CARRIED", "afterMove", "afterNoopWrite")) {
+        v.push(
+          "TRANSLATION DURABILITY: ⚠️ a CHILD that merely came along with the move lost its translation too — moving a branch costs a re-registration for every item in it.",
+        );
+      } else if (at("afterMove", "CARRIED")?.value) {
+        v.push(
+          "TRANSLATION DURABILITY: a child that came along with the move KEPT its translation — only the item whose parent actually changed loses it.",
+        );
+      }
+    }
+    if (report.translationDurability.reRegisterAfterMove.attempted) {
+      v.push(
+        report.translationDurability.reRegisterAfterMove.restored
+          ? "TRANSLATION DURABILITY: the dropped value can be written again straight after the move — the repair works, and the editor can do it per moved item."
+          : `TRANSLATION DURABILITY: ⚠️ the value could NOT be written again after the move (${report.translationDurability.reRegisterAfterMove.digestFound ? "digest was there" : "no digest"}) — moving an item is an unrepairable translation loss.`,
+      );
+    }
     if (lost("REORDERED", "afterReorder", "afterWriteFollowingRename")) {
       v.push("TRANSLATION DURABILITY: ⚠️ REORDERING alone drops the translation — even a same-parent drag.");
     } else if (at("afterReorder", "REORDERED")?.value) {
