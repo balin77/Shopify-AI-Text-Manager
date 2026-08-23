@@ -41,7 +41,7 @@ import {
   sortableKeyboardCoordinates,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Button, InlineStack, Text, TextField, Tooltip } from "@shopify/polaris";
+import { Button, Text, TextField, Tooltip } from "@shopify/polaris";
 import {
   MAX_MENU_DEPTH,
   dropIndexAmongSiblings,
@@ -294,65 +294,71 @@ function MenuTreeRow({
         } as React.CSSProperties
       }
     >
-      <InlineStack gap="200" blockAlign="start" wrap={false}>
-        {!structureLocked && (
-          <div
-            ref={setActivatorNodeRef}
-            {...attributes}
-            {...listeners}
-            aria-label={strings.dragHandle}
-            style={{
-              cursor: "grab",
-              padding: "0.5rem 0.25rem",
-              // The handle sits beside a Polaris field whose own label row is
-              // above the box; a fixed nudge keeps it on the box's line.
-              marginTop: "1.5rem",
-              color: "var(--p-color-icon-secondary, #6d7175)",
-              touchAction: "none",
-              userSelect: "none",
-            }}
-          >
-            ⠿
-          </div>
-        )}
-        {/* Name, target and actions are placed by ONE grid rather than
-            stacked, because their arrangement differs between the two widths
-            in a way stacking cannot express: side by side with the actions
-            running underneath both, or one above the other with the actions
-            BETWEEN them. The rules live in menus.css; the modifier is here
-            because only this component knows whether there is a target at
-            all — a foreign locale has none, and an empty second column would
-            leave the name box at half width for no reason. */}
-        <div
-          className={`menu-row-grid${target ? "" : " menu-row-grid--no-target"}`}
-          style={{ flex: 1, minWidth: 0 }}
-        >
-          <div className="menu-row-name">{renderField(item.node, item)}</div>
-          {target && <div className="menu-row-target">{target}</div>}
-          <div className="menu-row-actions">
-            {renderActions?.(item.node, item)}
-            {canAddChild && onAddChild && (
-              <Button size="slim" variant="tertiary" onClick={() => onAddChild(item.node)}>
-                {strings.addChild}
-              </Button>
-            )}
-            {!structureLocked && depth >= MAX_MENU_DEPTH && onAddChild && (
-              // Said rather than hidden: a merchant who cannot find "add below"
-              // on the third level should learn why, not hunt for it.
-              <Tooltip content={strings.maxDepthReached}>
-                <Text as="span" variant="bodySm" tone="subdued">
-                  {strings.maxDepthReached}
-                </Text>
-              </Tooltip>
-            )}
-            {!structureLocked && onDelete && (
-              <Button size="slim" variant="tertiary" tone="critical" onClick={() => onDelete(item.node)}>
-                {strings.deleteItem}
-              </Button>
-            )}
-          </div>
+      {/* Name, target and actions are placed by ONE grid rather than
+          stacked, because their arrangement differs between the two widths
+          in a way stacking cannot express: side by side with the actions
+          running underneath both, or one above the other with the actions
+          BETWEEN them. The rules live in MenuTreeRow.css; the modifiers are
+          here because only this component knows whether there is a target at
+          all (a foreign locale has none, and an empty second column would
+          leave the name box at half width) and whether there is a handle to
+          reserve a lane for. */}
+      <div
+        className={[
+          "menu-row-grid",
+          target ? "" : "menu-row-grid--no-target",
+          structureLocked ? "menu-row-grid--no-handle" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        <div className="menu-row-name">
+          {/* The handle lives INSIDE the name cell, absolutely positioned
+              against it. It has to step in with the nesting like everything
+              else in the row — but it cannot do that from a flex lane in
+              front of the grid, because then its own offset would push the
+              grid and the target column would go ragged again, which is the
+              defect the indent was just moved off the row to fix. Out of
+              flow, it indents freely: the cell reserves the lane in its
+              padding, the handle sits at the lane's left edge, and the grid
+              starts at the same x on every row. */}
+          {!structureLocked && (
+            <div
+              ref={setActivatorNodeRef}
+              {...attributes}
+              {...listeners}
+              aria-label={strings.dragHandle}
+              className="menu-row-handle"
+            >
+              ⠿
+            </div>
+          )}
+          {renderField(item.node, item)}
         </div>
-      </InlineStack>
+        {target && <div className="menu-row-target">{target}</div>}
+        <div className="menu-row-actions">
+          {renderActions?.(item.node, item)}
+          {canAddChild && onAddChild && (
+            <Button size="slim" variant="tertiary" onClick={() => onAddChild(item.node)}>
+              {strings.addChild}
+            </Button>
+          )}
+          {!structureLocked && depth >= MAX_MENU_DEPTH && onAddChild && (
+            // Said rather than hidden: a merchant who cannot find "add below"
+            // on the third level should learn why, not hunt for it.
+            <Tooltip content={strings.maxDepthReached}>
+              <Text as="span" variant="bodySm" tone="subdued">
+                {strings.maxDepthReached}
+              </Text>
+            </Tooltip>
+          )}
+          {!structureLocked && onDelete && (
+            <Button size="slim" variant="tertiary" tone="critical" onClick={() => onDelete(item.node)}>
+              {strings.deleteItem}
+            </Button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
