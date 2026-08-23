@@ -27,6 +27,7 @@ import type {
 } from "../types/content-editor.types";
 import type { TransitionResult } from "./useUiDataLoader";
 import { aiImageCandidates } from "../services/ai/vision-policy.shared";
+import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 
 // ============================================================================
 // TYPES
@@ -835,10 +836,11 @@ const handleTranslateFieldToAllLocales = (fieldKey: string, options?: { auto?: b
 
         if (failedFieldLocales2.length > 0) {
           const failedList = failedFieldLocales2.join(", ");
+          const counts2 = partialLocaleCounts(translations, failedFieldLocales2);
           messages.push(
             String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-              .replace("{successCount}", String(translationCount))
-              .replace("{totalCount}", String(translationCount + failedFieldLocales2.length))
+              .replace("{successCount}", String(counts2.succeeded))
+              .replace("{totalCount}", String(counts2.total))
               .replace("{failedLocales}", failedList)
           );
         }

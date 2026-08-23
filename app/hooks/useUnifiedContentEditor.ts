@@ -45,6 +45,7 @@ import { useTaskCount } from "../contexts/TaskCountContext";
 import { translateErrorMessage } from "../utils/editor-error-messages";
 import { readLastSelectedId } from "../utils/last-selected-item";
 import { buildRedirectMessage, redirectNoteOf } from "../utils/handle-redirect-message";
+import { partialLocaleCounts } from "../services/translations/partial-result.shared";
 import { useFieldHandlers } from "./useFieldHandlers";
 import {
   markOperationActive,
@@ -1355,10 +1356,12 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
           if (failed.length > 0) {
             const failedList = failed.join(", ");
-            const totalLocales = Object.keys(translations).length + failed.length;
-            const successCount = Object.keys(translations).filter(
-              (l: string) => Object.keys((translations as Record<string, Record<string, string>>)[l] || {}).length > 0
-            ).length;
+            // One rule, one module: the map is SEEDED with every target locale,
+            // so adding the failed list to its key count counted failures twice.
+            const { succeeded: successCount, total: totalLocales } = partialLocaleCounts(
+              translations as Record<string, unknown>,
+              failed,
+            );
             messages.push(
               String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
                 .replace("{successCount}", String(successCount))
@@ -1755,10 +1758,14 @@ export function useUnifiedContentEditor(props: UseContentEditorProps): UseConten
 
               if (failedFieldLocales.length > 0) {
                 const failedList = failedFieldLocales.join(", ");
+                const counts = partialLocaleCounts(
+                  translations as Record<string, unknown>,
+                  failedFieldLocales,
+                );
                 messages.push(
                   String(t.content?.translatePartialLocales || "Translation partially completed: {successCount}/{totalCount} language(s) succeeded. Language(s) {failedLocales} failed.")
-                    .replace("{successCount}", String(Object.keys(translations).length))
-                    .replace("{totalCount}", String(Object.keys(translations).length + failedFieldLocales.length))
+                    .replace("{successCount}", String(counts.succeeded))
+                    .replace("{totalCount}", String(counts.total))
                     .replace("{failedLocales}", failedList)
                 );
               }

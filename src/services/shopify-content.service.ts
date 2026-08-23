@@ -1383,6 +1383,23 @@ export class ShopifyContentService {
       allTranslations[locale] = {};
     }
 
+    /**
+     * The two lists the merchant is shown, written through ONE recorder each.
+     * Both STAGES report here: the prepare/AI stage (no key mapping, no
+     * digest, an empty AI value) and the SAVE stage (Shopify refused the
+     * write). Deduped, because a field can be reached twice — a batch that
+     * throws mid-loop is retried per locale, and a per-locale batch retries
+     * its refused entries individually.
+     */
+    const recordRejected = (locale: string, field: string) => {
+      if (!rejectedFields[locale]) rejectedFields[locale] = [];
+      if (!rejectedFields[locale].includes(field)) rejectedFields[locale].push(field);
+    };
+    const recordSkipped = (locale: string, field: string) => {
+      if (!skippedFields[locale]) skippedFields[locale] = [];
+      if (!skippedFields[locale].includes(field)) skippedFields[locale].push(field);
+    };
+
     // Separate short and long fields
     const SHORT_FIELD_KEYS = ['title', 'seoTitle', 'handle', 'productType'];
     const shortFields: Record<string, string> = {};
@@ -1416,8 +1433,7 @@ export class ShopifyContentService {
       const translationKey = keyMapping[field];
       if (!translationKey) {
         loggers.translation('warn', `No keyMapping for field '${field}' — translation NOT saved`);
-        if (!rejectedFields[locale]) rejectedFields[locale] = [];
-        rejectedFields[locale].push(field);
+        recordRejected(locale, field);
         return null;
       }
 
@@ -1426,8 +1442,7 @@ export class ShopifyContentService {
         const sourceHandle = fields['handle'];
         if (sourceHandle && value.trim() === sourceHandle.trim()) {
           loggers.translation('warn', `Skipping handle for locale '${locale}' — same as primary locale handle`);
-          if (!skippedFields[locale]) skippedFields[locale] = [];
-          skippedFields[locale].push(field);
+          recordSkipped(locale, field);
           return null;
         }
       }
@@ -1449,8 +1464,7 @@ export class ShopifyContentService {
 
       if (!digest) {
         loggers.translation('warn', `No digest for '${translationKey}'. Translation NOT saved.`);
-        if (!rejectedFields[locale]) rejectedFields[locale] = [];
-        rejectedFields[locale].push(field);
+        recordRejected(locale, field);
         return null;
       }
 
@@ -1493,8 +1507,7 @@ export class ShopifyContentService {
         } else {
           // AI returned empty/null for this field — report as rejected so the user is informed
           loggers.translation('warn', `AI returned empty value for field '${field}' in locale '${locale}' — not saved`);
-          if (!rejectedFields[locale]) rejectedFields[locale] = [];
-          rejectedFields[locale].push(field);
+          recordRejected(locale, field);
         }
       }
       return prepared;
@@ -1518,16 +1531,14 @@ export class ShopifyContentService {
           const data = await response.json();
           if (data.errors?.length > 0 || data.data?.translationsRegister?.userErrors?.length > 0) {
             loggers.translation('error', `Shopify rejected ${p.field} for ${locale}`, { errors: data.errors || data.data?.translationsRegister?.userErrors });
-            if (!rejectedFields[locale]) rejectedFields[locale] = [];
-            rejectedFields[locale].push(p.field);
+            recordRejected(locale, p.field);
             failed.push(p);
             continue;
           }
           saved.push(p);
         } catch (fieldError) {
           loggers.translation('error', `Failed to save ${p.field} for ${locale}`, { error: fieldError instanceof Error ? fieldError.message : String(fieldError) });
-          if (!rejectedFields[locale]) rejectedFields[locale] = [];
-          rejectedFields[locale].push(p.field);
+          recordRejected(locale, p.field);
           failed.push(p);
         }
       }
@@ -1762,9 +1773,12 @@ export class ShopifyContentService {
     }
 
     // === STEP 3: Save all translations to Shopify (3-tier: mega-batch → per-locale → individual) ===
+    // `allSaved` lives OUTSIDE the block: a locale where nothing was saved is
+    // decided below, and "nothing was prepared at all" (every field rejected
+    // before a single Shopify call) is one of the ways that happens.
+    const allSaved: PreparedTranslation[] = [];
     if (allPrepared.length > 0) {
       const MAX_TRANSLATIONS_PER_CALL = 200;
-      const allSaved: PreparedTranslation[] = [];
 
       // Tier 1: Mega-batch — all locales × fields in as few calls as possible
       const chunks = chunkArray(allPrepared, MAX_TRANSLATIONS_PER_CALL);
@@ -1807,6 +1821,11 @@ export class ShopifyContentService {
       if (megaBatchFailed) {
         // Tier 2+3: Per-locale batches with smart fallback to individual saves
         allSaved.length = 0; // Clear partial mega-batch results (idempotent re-send is safe)
+        // Nothing has been recorded as REFUSED at this point, and that is on
+        // purpose: the mega-batch reports one failure for a whole chunk and
+        // then re-sends every entry of it per locale, so a failure list
+        // collected here would name fields the re-send goes on to save.
+        // Only the per-locale/individual tiers below record.
 
         const byLocale = new Map<string, PreparedTranslation[]>();
         for (const p of allPrepared) {
@@ -1817,6 +1836,12 @@ export class ShopifyContentService {
         for (const [locale, localePrepared] of byLocale) {
           const result = await savePerLocaleBatch(locale, localePrepared);
           allSaved.push(...result.saved);
+          // A field SHOPIFY refused is a field the merchant has to hear about.
+          // Every exit of `savePerLocaleBatch` already routes its failures
+          // through `saveFieldsIndividually`, which records them — this loop
+          // re-records from the returned list so the report does not depend on
+          // that internal detail. `recordRejected` dedupes.
+          for (const p of result.failed) recordRejected(locale, p.field);
         }
       }
 
@@ -1830,6 +1855,43 @@ export class ShopifyContentService {
       await persistToDb(allSaved);
 
       loggers.translation('debug', `Shopify+DB save complete: ${allSaved.length}/${allPrepared.length} translations saved`);
+    }
+
+    // === A locale where NOTHING was saved is a FAILED locale ===
+    // Until this existed, `failedLocales` was pushed to from the AI stages
+    // alone: the save stage discarded its failures, so a run where the AI
+    // succeeded and SHOPIFY refused every write (a stale digest, userErrors —
+    // the case the echo invariant exists for) was written
+    // `status: "completed"` with `failedLocales: []`, and the merchant was
+    // told it had worked.
+    //
+    // DELIBERATE CONSEQUENCE, approved by the owner: the call sites in
+    // translation.action.ts read `failedLocales.length > 0` as
+    // `completed_with_errors`, so those runs now report a PARTIAL FAILURE
+    // where they used to report a clean success. Nothing about what is written
+    // to Shopify or to the DB changes — only what the run reports about itself.
+    if (hasShortFields || hasLongFields) {
+      const savedPerLocale = new Map<string, number>();
+      for (const p of allSaved) savedPerLocale.set(p.locale, (savedPerLocale.get(p.locale) ?? 0) + 1);
+      const preparedPerLocale = new Map<string, number>();
+      for (const p of allPrepared) preparedPerLocale.set(p.locale, (preparedPerLocale.get(p.locale) ?? 0) + 1);
+
+      for (const locale of targetLocales) {
+        if ((savedPerLocale.get(locale) ?? 0) > 0) continue;
+        // A locale whose only field was DELIBERATELY skipped (a handle equal
+        // to the primary one) saved nothing and failed at nothing. The skip is
+        // reported on its own and must not read as a failure — the same rule
+        // the task summariser follows when it renders `skippedFields` as a
+        // warning rather than as a failure line.
+        const onlySkipped =
+          (preparedPerLocale.get(locale) ?? 0) === 0 &&
+          (rejectedFields[locale]?.length ?? 0) === 0 &&
+          (skippedFields[locale]?.length ?? 0) > 0;
+        if (onlySkipped) continue;
+        // Matches the AI stages' own guard — a locale that already failed
+        // there must not be counted twice.
+        if (!failedLocales.includes(locale)) failedLocales.push(locale);
+      }
     }
 
     // Prevent webhook-triggered syncs from overwriting these fresh translations

@@ -163,3 +163,126 @@ describe('ShopifyContentService.updateContent() — Article primary-locale branc
     expect(options.variables.article.metafields).toBeUndefined();
   });
 });
+
+/**
+ * translateAllContent() — a locale whose writes SHOPIFY refused must reach
+ * `failedLocales`.
+ *
+ * The save stage used to discard `savePerLocaleBatch`'s `failed` list, so a run
+ * where the AI succeeded and every `translationsRegister` came back with
+ * `userErrors` was returned with `failedLocales: []` — the call sites in
+ * translation.action.ts read that as `status: "completed"` and the merchant was
+ * told it had worked. These pin the three answers the fix has to give:
+ * refused ⇒ failed, saved ⇒ not failed, and a DELIBERATE skip ⇒ not failed.
+ */
+describe('ShopifyContentService.translateAllContent() — failure reporting', () => {
+  const productId = 'gid://shopify/Product/42';
+
+  /**
+   * One admin mock for both documents the run uses: the digest query and the
+   * register mutation. `registerResponse` decides what Shopify answers to the
+   * write, which is the whole variable under test.
+   */
+  function makeTranslateAdmin(registerResponse: any) {
+    const graphql = vi.fn().mockImplementation(async (document: string) => ({
+      ok: true,
+      json: async () => {
+        if (document.includes('translationsRegister')) return registerResponse;
+        return {
+          data: {
+            translatableResource: {
+              translatableContent: [
+                { key: 'body_html', digest: 'digest-body', value: 'Vase aus Ton' },
+              ],
+            },
+          },
+        };
+      },
+    }));
+    return { graphql };
+  }
+
+  function makeDb() {
+    return {
+      $transaction: vi.fn(async (fn: any) => fn({ contentTranslation: { upsert: vi.fn() } })),
+      contentTranslation: { upsert: vi.fn() },
+    } as any;
+  }
+
+  /** The AI half always succeeds here — only the SAVE half varies. */
+  const translationService = {
+    translateProduct: vi.fn(async (fields: Record<string, string>, locales: string[]) => {
+      const out: Record<string, Record<string, string>> = {};
+      for (const locale of locales) out[locale] = { description: `[${locale}] ${fields.description}` };
+      return out;
+    }),
+  };
+
+  const params = (admin: any, db: any) => ({
+    resourceId: productId,
+    resourceType: 'Product',
+    shop,
+    fields: { description: 'Vase aus Ton' },
+    translationService: translationService as any,
+    db,
+    targetLocales: ['fr', 'de'],
+    sourceLocale: 'en',
+  });
+
+  beforeEach(() => {
+    translationService.translateProduct.mockClear();
+  });
+
+  it('reports every locale Shopify refused, and reports the refused field', async () => {
+    const admin = makeTranslateAdmin({
+      data: { translationsRegister: { userErrors: [{ field: ['translations', '0'], message: 'Digest is stale' }], translations: [] } },
+    });
+    const service = new ShopifyContentService(admin as any);
+
+    const result = await service.translateAllContent(params(admin, makeDb()) as any);
+
+    expect(result.failedLocales.sort()).toEqual(['de', 'fr']);
+    expect(result.rejectedFields.fr).toEqual(['description']);
+    expect(result.rejectedFields.de).toEqual(['description']);
+    // Nothing was stored, so nothing may be reported as translated.
+    expect(result.translations.fr).toEqual({});
+  });
+
+  it('reports nothing when Shopify accepts the writes', async () => {
+    const admin = makeTranslateAdmin({
+      data: { translationsRegister: { userErrors: [], translations: [{ locale: 'fr', key: 'body_html', value: 'x' }] } },
+    });
+    const service = new ShopifyContentService(admin as any);
+
+    const result = await service.translateAllContent(params(admin, makeDb()) as any);
+
+    expect(result.failedLocales).toEqual([]);
+    expect(result.rejectedFields).toEqual({});
+    expect(result.translations.fr.description).toBe('[fr] Vase aus Ton');
+  });
+
+  it('does not call a locale failed whose only field was DELIBERATELY skipped', async () => {
+    // A handle equal to the primary one is skipped by design (a routing
+    // conflict avoided, not a loss), so the locale saved nothing and failed at
+    // nothing. Registering never happens — the run has nothing to send.
+    const admin = makeTranslateAdmin({ data: { translationsRegister: { userErrors: [], translations: [] } } });
+    const service = new ShopifyContentService(admin as any);
+    const shortFieldService = {
+      translateShortFieldsBatch: vi.fn(async (fields: Record<string, string>, _src: string, locales: string[]) => {
+        const out: Record<string, Record<string, string>> = {};
+        for (const locale of locales) out[locale] = { handle: fields.handle };
+        return out;
+      }),
+      translateProduct: vi.fn(),
+    };
+
+    const result = await service.translateAllContent({
+      ...params(admin, makeDb()),
+      fields: { handle: 'kumiko-box' },
+      translationService: shortFieldService as any,
+    } as any);
+
+    expect(result.failedLocales).toEqual([]);
+    expect(result.skippedFields.fr).toEqual(['handle']);
+  });
+});
