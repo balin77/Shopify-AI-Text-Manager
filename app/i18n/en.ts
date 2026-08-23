@@ -446,6 +446,7 @@ export const en: Translation = {
     menuTreeSaveFailed: "The menu could not be saved",
     menuTreeInvalid: "Please fix the marked menu items — Shopify always writes the menu as a whole, so one bad item would take every other change with it.",
     menuTreeDriftIntro: "The menu changed in Shopify since this page was loaded — nothing was written:",
+    menuDraftDropped: "The menu changed in Shopify ({menus}). Your unsaved edits to it were discarded — they described the old version, and saving them would have removed the other changes. Please make them again.",
     menuTreeRepairFailed: "{count} translation(s) could not be restored after the move. Shopify deletes them when an item is re-parented; please check the affected items.",
     menuTreeRepairDone: "{count} translation(s) were restored automatically after the move.",
     menuRenameFailed: "Renaming failed",
