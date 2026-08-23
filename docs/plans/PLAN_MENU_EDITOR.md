@@ -1,6 +1,6 @@
 # Menü-Editor — Plan (ändern und übersetzen auf einem Bildschirm)
 
-**Status:** Phase 0 (Messung) GEBAUT — die Sonde beantwortet §2.1–§2.4, gelaufen ist sie noch nicht. Vom Editor selbst ist bisher nur das Umbenennen gebaut (siehe §0).
+**Status:** Phase 0 GEMESSEN (2026-08-23, `patis-universe-test-shop`, API 2026-07) — mit **einem offenen Befund**, der Phase 1 blockiert: eine Übersetzung war nach dem Umbenennen noch da und nach dem nächsten Schreibvorgang weg, obwohl die ID die ganze Zeit dieselbe blieb. Welcher Schreibvorgang sie tötet, misst die erweiterte Sonde (§2.5). Vom Editor selbst ist bisher nur das Umbenennen gebaut (§0).
 **Ziel:** `/app/menus` wird eine vollständige Alternative zum Shopify-Menü-Editor — Reihenfolge, Verschachtelung, Anlegen, Löschen, Ziel ändern, das Menü selbst umbenennen — **und** die Übersetzung steht dabei in derselben Zeile. Der Zweck ist nicht Funktionsgleichheit mit Shopify, sondern das Wegfallen des Hin-und-Her: heute benennt man im Shopify-Admin um und übersetzt danach hier.
 
 > **Keine neuen Scopes.** `write_online_store_navigation` und `read_translations`/`write_translations` sind vorhanden. Es läuft **kein** Re-Consent an. Das ist die eine Randbedingung, die diesen Plan billig macht — jede Phase unten kostet Arbeit, keine kostet Händler.
@@ -34,32 +34,44 @@ Für den Editor ist das eine gute Nachricht: **Umsortieren, Verschachteln, Anleg
 
 Die Sonde beantwortet heute fünf Fragen (§0). Der Editor hängt an **vier weiteren**, und die erste davon kann den ganzen Plan kippen.
 
-### 2.1 Behält ein Punkt seine ID, wenn er VERSCHOBEN wird? (kippt den Plan)
+### 2.1 Behält ein Punkt seine ID, wenn er VERSCHOBEN wird? — **JA** (gemessen 2026-08-23)
 
 Beim Umbenennen ist die ID-Stabilität gemessen. Beim **Verschieben** ist sie es nicht — und sie ist dort wichtiger: Die Übersetzung hängt an `Link/<Zahl>`. Vergibt Shopify beim Umhängen eine neue ID, verliert **jeder Umzug** die Übersetzungen des Punkts, und `refreshMenuCache`s Orphan-Cleanup löscht die Zeilen beim nächsten Laden endgültig.
 
-- **Messung:** Im Wegwerf-Menü einen Punkt der Tiefe 2 nach Tiefe 1 heben, einen anderen unter einen anderen Elternteil hängen, die Reihenfolge zweier Geschwister tauschen — danach IDs pro Position vergleichen und die vorher registrierte Übersetzung nachlesen.
-- **Wenn IDs wandern:** Der Editor braucht einen Migrationsschritt (alte Link-GID → neue, Übersetzungen umschreiben, echo-verifiziert), und Verschieben wird zu einer Operation mit Datenrisiko. Dann würde ich Verschieben **hinter** eine ausdrückliche Bestätigung stellen, nicht hinter einen Drag.
+**Ergebnis:** Der Punkt (Tiefe 2 → 1) behielt seine ID, sein Kind behielt seine, und die unbeteiligten Geschwister behielten ihre, obwohl sich jede Position änderte. **Ein Baum-Editor darf frei ziehen** — die ID-Seite der Frage ist beantwortet.
 
-### 2.2 Legt ein Item OHNE `id` wirklich einen neuen Punkt an?
+**Aber die Übersetzung war danach weg**, auf derselben Link-GID. Das ist §2.5 und der einzige offene Blocker.
+
+### 2.2 Legt ein Item OHNE `id` wirklich einen neuen Punkt an? — **JA** (gemessen)
 
 `MenuItemUpdateInput.id` ist optional (gemessen). Das ist mit hoher Wahrscheinlichkeit der Anlege-Weg, aber „wahrscheinlich" ist in diesem Repo kein Befund.
 
-- **Messung:** Baum mit einem zusätzlichen Item ohne `id` schicken; kommt es mit einer frischen ID zurück, und stehen die Geschwister unverändert?
-- **Nebenfrage, die den Speicherweg formt:** Die Antwort liefert die neuen IDs **nach Position**. Also muss der Editor seine temporären IDs über die Position auf die echten abbilden — dieselbe Pfad-Zuordnung, die die Echo-Prüfung heute schon macht.
+**Ergebnis:** Ja. Der neue Punkt kam an **exakt der Position** zurück, an der er geschickt wurde, keine bestehende ID änderte sich, und seine Link-Ressource löst **sofort** auf — die zweite Speicherphase (§4.1) hat also etwas zum Schreiben. Die Zuordnung temporäre ID → echte ID über die Position ist damit belegt, nicht angenommen.
 
-### 2.3 Wie tief geht Shopify wirklich?
+### 2.3 Wie tief geht Shopify wirklich? — **DREI** (gemessen)
 
 Dokumentiert sind drei Ebenen. Der Schreibweg liest vier und verweigert fünf. Ob Shopify eine vierte Ebene **annimmt**, ist ungemessen — und der Editor muss beim Ziehen irgendwo abriegeln.
 
-- **Messung:** Ein Menü mit vier und eines mit fünf Ebenen anlegen. Was abgelehnt wird, sagt die Fehlermeldung.
-- **Folge:** Der gemessene Wert wird zur EINEN Konstante, gegen die sowohl die Drag-Projektion klemmt als auch der Server verweigert. Nicht zwei Zahlen an zwei Stellen.
+**Ergebnis:** Drei Ebenen werden angenommen und vom frischen Lesevorgang bestätigt; vier und fünf werden abgelehnt, wörtlich mit `items: Menu has more than 3 levels of nesting`. Die Drag-Projektion klemmt also bei **3**. Der Schreibweg verweigert erst ab 5 — großzügiger als die Plattform, was in Ordnung ist: `tooDeep` ist damit eine Schiene, die nirgends feuert, und sie bleibt, weil die Folge (eine ungelesene Ebene wird gelöscht) unreparierbar wäre.
 
-### 2.4 Was passiert mit den Übersetzungen eines gelöschten Punkts?
+### 2.4 Was passiert mit den Übersetzungen eines gelöschten Punkts? — **weg** (gemessen)
 
-Lokal räumt `refreshMenuCache` auf. Auf Shopify-Seite ist es ungemessen — und für die Frage relevant, ob ein versehentliches Löschen mit einem sofortigen Wiederanlegen reparierbar ist (es ist es nicht, wenn die neue ID eine andere ist; siehe §2.1).
+**Ergebnis:** Die Übersetzung geht mit dem Punkt; seine Link-Ressource löst danach überhaupt nicht mehr auf. Ein versehentliches Löschen ist durch Wiederanlegen **nicht** reparierbar (der neue Punkt bekommt eine neue ID, §2.2) — das gehört in den Warntext der Löschbestätigung (§7).
 
-**Alle vier Fragen gehören in dieselbe Sonde**, in dasselbe Wegwerf-Menü, in einem Lauf. Eine Sonde, die man dreimal startet, wird zweimal nicht gestartet.
+### 2.5 WELCHER Schreibvorgang tötet eine Übersetzung? — **offen, und der einzige Blocker**
+
+Gemessen: nach dem Umbenennen war die Übersetzung noch da (`outdated: true`), nach dem nächsten Schreibvorgang — dem Verschieben — war sie weg. Die ID blieb durchgehend dieselbe, wir lesen also dieselbe Link-GID. Vier Ursachen kommen infrage, mit gegensätzlichen Folgen:
+
+| Ursache | Folge |
+|---|---|
+| (a) Umhängen löscht sie | der Editor muss nach jedem Umzug neu registrieren |
+| (b) Umsortieren löscht sie | dasselbe, für **jeden** Drag |
+| (c) **Jeder weitere** `menuUpdate` löscht sie | die **ausgelieferte** Umbenennen-Funktion verliert Übersetzungen, sobald ein zweiter Save das Menü anfasst |
+| (d) Eine **outdated** Übersetzung wird vom nächsten Schreibvorgang eingesammelt | die ausgelieferte Funktion verspricht „bleibt erhalten" und hält es nicht |
+
+Die Sonde trennt sie mit einem eigenen Menü aus vier Punkten — einer wird nie angefasst (Kontrolle), einer umgehängt, einer umbenannt und danach in Ruhe gelassen, einer nur umsortiert — und liest nach **jeder** Stufe alle vier. Die Tabelle im Report zeigt dann, welcher Schreibvorgang welchen Wert genommen hat.
+
+**Bis das beantwortet ist**, gilt für die ausgelieferte Funktion: „Der Händler hat den Purge abgeschaltet, also bleiben seine Übersetzungen" ist auf Menüs **unbewiesen**. Bei (c) oder (d) wäre es falsch, und die Antwort ist ein Fix, kein Kommentar.
 
 ---
 

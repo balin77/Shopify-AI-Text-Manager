@@ -436,6 +436,39 @@ export interface MenuWriteProbeReport {
     valueAfterDelete: string | null;
     errors: string[];
   };
+  /**
+   * WHICH write kills a menu item's translation?
+   *
+   * Measured 2026-08-23: after a rename the translation is still there
+   * (outdated), and after the NEXT write — one that re-parented the item — it
+   * is gone. The item kept its id throughout, so the Link GID we read is the
+   * same one. Four candidate causes, and they have opposite consequences:
+   *
+   *   (a) re-parenting drops it            -> the tree editor must re-register
+   *                                           after every move
+   *   (b) reordering drops it              -> the same, for every drag at all
+   *   (c) ANY further menuUpdate drops it  -> the SHIPPED rename feature loses
+   *                                           translations whenever a second
+   *                                           save touches the menu
+   *   (d) an OUTDATED translation is
+   *       dropped by the next write        -> the shipped feature promises
+   *                                           "your translations are kept"
+   *                                           and does not keep them
+   *
+   * One menu with four items separates them: one item is never touched
+   * (control), one is re-parented, one is renamed and then left alone through
+   * a further write, one is only reordered. Every stage reads all four, so the
+   * report shows exactly which write dropped which value.
+   */
+  translationDurability: {
+    attempted: boolean;
+    menuId: string | null;
+    locale: string | null;
+    /** role -> the Link GID watched for it. */
+    links: Array<{ role: string; linkId: string }>;
+    observations: Array<{ stage: string; role: string; value: string | null; outdated: boolean | null }>;
+    errors: string[];
+  };
   typeRoundTrip: {
     attempted: boolean;
     menuId: string | null;
@@ -698,6 +731,14 @@ export async function action({ request }: ActionFunctionArgs) {
       errors: [],
     },
     depth: { attempted: false, results: [], maxAccepted: null, readableDepth: 4 },
+    translationDurability: {
+      attempted: false,
+      menuId: null,
+      locale: null,
+      links: [],
+      observations: [],
+      errors: [],
+    },
     deleteTranslation: {
       attempted: false,
       linkId: null,
@@ -1255,6 +1296,162 @@ export async function action({ request }: ActionFunctionArgs) {
         }
       }
     }
+    // ── 7b. WHICH write kills a translation? ───────────────────────────────
+    // Its own menu with four items, one per hypothesis. Everything is read
+    // after every stage, because the interesting answer is not "it is gone"
+    // but "it went away HERE and the others did not".
+    if (foreignLocale) {
+      report.translationDurability.attempted = true;
+      report.translationDurability.locale = foreignLocale;
+      const durHandle = `${handle}-dur`;
+      try {
+        const created = await run(MENU_CREATE_MUTATION, {
+          title: `ContentPilot durability probe ${stamp}`,
+          handle: durHandle,
+          items: ["CONTROL", "MOVED", "RENAMED", "REORDERED"].map((role) => ({
+            title: `CP Probe ${role}`,
+            type: "HTTP",
+            url: `https://example.com/cp-probe-${role.toLowerCase()}`,
+          })),
+        });
+        report.translationDurability.errors.push(...topLevelErrors(created));
+        const payload = created.data?.menuCreate as
+          | { menu?: { id: string } | null; userErrors?: unknown }
+          | undefined;
+        report.translationDurability.errors.push(...userErrorText(payload?.userErrors));
+        report.translationDurability.menuId = payload?.menu?.id ?? null;
+        if (report.translationDurability.menuId) {
+          createdMenus.push({ handle: durHandle, id: report.translationDurability.menuId });
+        }
+
+        const durMenuId = report.translationDurability.menuId;
+        if (durMenuId) {
+          const readDurMenu = async (): Promise<RawItem[]> => {
+            const result = await run(MENU_READ_QUERY, { id: durMenuId });
+            return ((result.data?.menu as { items?: RawItem[] } | null)?.items ?? []) as RawItem[];
+          };
+          const roleOf = (title: string) => title.replace("CP Probe ", "").split(" ")[0];
+
+          const initial = await readDurMenu();
+          const byRole = new Map<string, string>();
+          for (const item of flatten(initial)) {
+            const linkId = linkGidForMenuItem(item.id);
+            if (linkId) byRole.set(roleOf(item.title), linkId);
+          }
+          report.translationDurability.links = [...byRole].map(([role, linkId]) => ({ role, linkId }));
+
+          // Register one translation per item.
+          for (const [role, linkId] of byRole) {
+            const read = await run(LINK_TRANSLATABLE_QUERY, { id: linkId, locale: foreignLocale });
+            const digest = (
+              read.data?.translatableResource as
+                | { translatableContent?: Array<{ key: string; digest: string | null }> }
+                | null
+                | undefined
+            )?.translatableContent?.find((c) => c.key === "title")?.digest ?? null;
+            if (!digest) {
+              report.translationDurability.errors.push(`No digest for ${role} — it cannot take part.`);
+              continue;
+            }
+            const registered = await run(REGISTER_MUTATION, {
+              resourceId: linkId,
+              translations: [
+                {
+                  key: "title",
+                  locale: foreignLocale,
+                  value: `CP-DUR-${role}-${stamp}`,
+                  translatableContentDigest: digest,
+                },
+              ],
+            });
+            report.translationDurability.errors.push(...topLevelErrors(registered));
+          }
+
+          /** Reads every watched link and records one observation per role. */
+          const observe = async (stage: string) => {
+            for (const [role, linkId] of byRole) {
+              const read = await run(LINK_TRANSLATABLE_QUERY, { id: linkId, locale: foreignLocale });
+              const row = (
+                read.data?.translatableResource as
+                  | { translations?: Array<{ key: string; value: string; outdated: boolean }> }
+                  | null
+                  | undefined
+              )?.translations?.find((t) => t.key === "title");
+              report.translationDurability.observations.push({
+                stage,
+                role,
+                value: row?.value ?? null,
+                outdated: row?.outdated ?? null,
+              });
+            }
+          };
+          const writeTree = async (stage: string, items: Array<Record<string, unknown>>) => {
+            const result = await run(MENU_UPDATE_MUTATION, {
+              id: durMenuId,
+              title: `ContentPilot durability probe ${stamp}`,
+              handle: durHandle,
+              items,
+            });
+            const errs = [...topLevelErrors(result)];
+            const p = result.data?.menuUpdate as { userErrors?: unknown } | undefined;
+            errs.push(...userErrorText(p?.userErrors));
+            for (const e of errs) report.translationDurability.errors.push(`${stage}: ${e}`);
+          };
+
+          await observe("registered");
+
+          // W1 — a write that changes NOTHING. If a translation dies here, the
+          // cause is the write itself, and the shipped rename feature is
+          // affected too.
+          await writeTree("noop", toUpdateInput(await readDurMenu(), {}));
+          await observe("afterNoopWrite");
+
+          // W2 — MOVED goes under CONTROL. Nothing else changes.
+          const beforeMove = await readDurMenu();
+          const movedItem = flatten(beforeMove).find((i) => roleOf(i.title) === "MOVED");
+          if (movedItem) {
+            const rest = beforeMove.filter((i) => i.id !== movedItem.id);
+            const nested = rest.map((node) =>
+              roleOf(node.title) === "CONTROL"
+                ? { ...node, items: [...(node.items ?? []), beforeMove.find((i) => i.id === movedItem.id)!] }
+                : node,
+            );
+            await writeTree("move", toUpdateInput(nested, {}));
+          }
+          await observe("afterMove");
+
+          // W3 — RENAMED is renamed. Its translation should survive as
+          // outdated, which is what the earlier run measured.
+          const beforeRename = await readDurMenu();
+          const renamedItem = flatten(beforeRename).find((i) => roleOf(i.title) === "RENAMED");
+          if (renamedItem) {
+            await writeTree(
+              "rename",
+              toUpdateInput(beforeRename, { renameId: renamedItem.id, renameTo: `CP Probe RENAMED neu ${stamp}` }),
+            );
+          }
+          await observe("afterRename");
+
+          // W4 — another write that changes nothing. THIS is the one that
+          // separates "outdated translations are collected on the next write"
+          // from "the move did it".
+          await writeTree("noop2", toUpdateInput(await readDurMenu(), {}));
+          await observe("afterWriteFollowingRename");
+
+          // W5 — REORDERED swaps to the front. Position only, same parent.
+          const beforeReorder = await readDurMenu();
+          const reordered = beforeReorder.find((i) => roleOf(i.title) === "REORDERED");
+          if (reordered) {
+            const others = beforeReorder.filter((i) => i.id !== reordered.id);
+            await writeTree("reorder", toUpdateInput([reordered, ...others], {}));
+          }
+          await observe("afterReorder");
+        }
+      } catch (error) {
+        report.translationDurability.errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
     // ── 8. How deep does Shopify accept? (§2.3) ────────────────────────────
     // Shopify documents three levels. The editor's drag has to clamp somewhere
     // and the write path has to refuse somewhere; both need a MEASURED number,
@@ -1435,6 +1632,48 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     } else {
       v.push("CREATE: ⚠️ an item without an id did NOT appear — adding items needs another route.");
+    }
+  }
+  if (report.translationDurability.attempted) {
+    const at = (stage: string, role: string) =>
+      report.translationDurability.observations.find((o) => o.stage === stage && o.role === role);
+    const lost = (role: string, stage: string, previous: string) =>
+      !!at(previous, role)?.value && !at(stage, role)?.value;
+
+    // The control decides which of the four hypotheses is even in play, so it
+    // is reported first and in its own words.
+    if (lost("CONTROL", "afterNoopWrite", "registered")) {
+      v.push(
+        "TRANSLATION DURABILITY: ⚠️⚠️ a menuUpdate that changes NOTHING already destroys an untouched item's translation. Every save on this page loses translations — the shipped rename feature included.",
+      );
+    } else if (!at("afterReorder", "CONTROL")?.value && at("registered", "CONTROL")?.value) {
+      v.push(
+        "TRANSLATION DURABILITY: ⚠️ the untouched control item lost its translation somewhere along the run — see the stage table for which write did it.",
+      );
+    } else if (at("afterReorder", "CONTROL")?.value) {
+      v.push("TRANSLATION DURABILITY: an untouched item keeps its translation across five whole-tree writes.");
+    }
+
+    if (lost("MOVED", "afterMove", "afterNoopWrite")) {
+      v.push(
+        "TRANSLATION DURABILITY: ⚠️ RE-PARENTING drops the moved item's translation (its id survives). A tree editor must re-register after every move.",
+      );
+    } else if (at("afterMove", "MOVED")?.value) {
+      v.push("TRANSLATION DURABILITY: re-parenting keeps the moved item's translation.");
+    }
+
+    if (lost("REORDERED", "afterReorder", "afterWriteFollowingRename")) {
+      v.push("TRANSLATION DURABILITY: ⚠️ REORDERING alone drops the translation — even a same-parent drag.");
+    } else if (at("afterReorder", "REORDERED")?.value) {
+      v.push("TRANSLATION DURABILITY: reordering within the same parent keeps the translation.");
+    }
+
+    if (lost("RENAMED", "afterWriteFollowingRename", "afterRename")) {
+      v.push(
+        "TRANSLATION DURABILITY: ⚠️⚠️ an OUTDATED translation is destroyed by the NEXT write. The shipped rename feature promises to keep translations when the merchant switched the purge off, and does not keep them.",
+      );
+    } else if (at("afterWriteFollowingRename", "RENAMED")?.value) {
+      v.push("TRANSLATION DURABILITY: an outdated translation survives further writes.");
     }
   }
   if (report.depth.attempted) {
