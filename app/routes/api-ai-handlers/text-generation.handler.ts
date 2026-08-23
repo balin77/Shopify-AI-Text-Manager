@@ -12,6 +12,7 @@ import { getInstructionWithDefault, getWritingStyleInstructions } from "~/utils/
 import { METAOBJECT_LABEL_FIELD_KEYS } from "~/constants/shopifyFields";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { getTaskExpirationDate } from "~/config/constants";
+import { resolveTaskResourceTitle } from "~/services/tasks/resource-title.server";
 import { logger } from "~/utils/logger.server";
 import { sanitizeSlug } from "~/utils/slug.utils";
 import {
@@ -72,6 +73,18 @@ Return only the formatted text, without explanations.`;
 
   // Create task entry with prompt
   const taskFieldLabel3 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle3 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel3 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -79,7 +92,7 @@ Return only the formatted text, without explanations.`;
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel3,
+      resourceTitle: taskResourceTitle3,
       fieldType: taskFieldLabel3,
       progress: 0,
       // prompt is saved by AI service via savePromptToTask
@@ -281,6 +294,18 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const taskFieldLabel4 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle4 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel4 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -288,7 +313,7 @@ export async function handleGenerateAIText(ctx: AIActionContext): Promise<DataRe
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel4,
+      resourceTitle: taskResourceTitle4,
       fieldType: taskFieldLabel4,
       progress: 0,
       expiresAt: getTaskExpirationDate(),
@@ -584,6 +609,18 @@ Do NOT:
 
   // Create task entry (prompt is saved by AI service via savePromptToTask)
   const taskFieldLabel5 = contentType === 'templates' ? extractReadableName(fieldType) : fieldType;
+  // The SUBJECT is the item, never a second copy of the field: this row used
+  // to store the field label in both columns, so the card printed the field
+  // name twice and never said WHICH product it came from. The client sends no
+  // title on this path, so the cached one is read here; an uncached item (or a
+  // theme/template group, which is not a cached item at all) leaves the column
+  // null and the card simply omits the line.
+  // Theme content has no cached ITEM this route can name — for `templates` the
+  // `itemId` is a `group_<groupId>` string, not a GID — so those rows keep the
+  // readable field name they have always carried rather than losing a subject.
+  const taskResourceTitle5 =
+    (await resolveTaskResourceTitle(db, session.shop, contentType, itemId)) ??
+    (contentType === 'templates' ? taskFieldLabel5 : undefined);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -591,7 +628,7 @@ Do NOT:
       status: "pending",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: taskFieldLabel5,
+      resourceTitle: taskResourceTitle5,
       fieldType: taskFieldLabel5,
       progress: 0,
       expiresAt: getTaskExpirationDate(),

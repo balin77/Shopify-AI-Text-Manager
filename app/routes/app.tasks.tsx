@@ -71,6 +71,30 @@ function fixAllForItemSubject(
 }
 
 
+
+/**
+ * A row that stored a `resourceId` but no title used to render NOTHING — no
+ * badge, no subject, and no Shopify deep link, because the whole resource row
+ * was gated on the resolved subject. Every per-item creation site now names
+ * its item, but rows written by older builds (and the 3-day retention window
+ * they sit in) still carry the gap, so the id itself becomes the subject: the
+ * numeric tail of the GID, which is exactly what the admin URL beside it
+ * carries and what the Shopify admin shows in its own address bar.
+ *
+ * Deliberately no invented wording — the app ships in three languages and a
+ * hand-written English word here would be untranslated on two of them.
+ */
+function resourceIdSubject(resourceId: string | null | undefined): string | null {
+  if (typeof resourceId !== "string") return null;
+  // A GID with a numeric tail and nothing else. That is deliberately the SAME
+  // shape `getShopifyAdminUrl` requires, so the subject and the link it
+  // becomes can never disagree — and it keeps internal ids that are not
+  // Shopify objects (theme content's `group_<groupId>`) off the card, where
+  // they would be machine text pretending to be a name.
+  const numeric = resourceId.trim().match(/^gid:\/\/shopify\/[A-Za-z0-9_]+\/(\d+)$/);
+  return numeric ? `#${numeric[1]}` : null;
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
 
@@ -461,6 +485,10 @@ export default function TasksPage() {
                   hasResult: Boolean(task.hasResult),
                 });
                 const subject = taskSubjectLabel(task, t) ?? fixAllForItemSubject(task, t);
+                // The badge and the deep link belong to the ITEM, not to the
+                // title: a row with a resourceId must always offer the way to
+                // look at it, even when nothing named it.
+                const subjectLine = subject ?? resourceIdSubject(task.resourceId);
                 const resourceLabel = resourceTypeLabel(task.resourceType, t);
                 const fieldLabel = fieldTypeLabel(task.fieldType, t);
                 return (
@@ -546,14 +574,20 @@ export default function TasksPage() {
                     </div>
 
                     {/* Resource Info - Always Visible.
-                        Gated on the SUBJECT, not on the raw resourceTitle: the
-                        seoBulkFix rows store a machine string, and a badge with
-                        nothing beside it is an empty row. A "fix everything for
-                        this item" run names no dashboard problem code, so
-                        `taskSubjectLabel` answers null for it and
-                        `fixAllForItemSubject` phrases the item instead — the
-                        row must still say WHICH product was fixed. */}
-                    {subject && (
+                        Gated on the SUBJECT LINE, not on the raw
+                        resourceTitle: the seoBulkFix rows store a machine
+                        string, and a badge with nothing beside it is an empty
+                        row. A "fix everything for this item" run names no
+                        dashboard problem code, so `taskSubjectLabel` answers
+                        null for it and `fixAllForItemSubject` phrases the item
+                        instead — the row must still say WHICH product was
+                        fixed. And a row that has a resourceId but no title
+                        falls back to the id, so the badge and the admin link
+                        survive: gating those on the TITLE meant a task whose
+                        item nobody had named showed no way to go and look at
+                        it. Rows with no resourceId at all (the site-wide SEO
+                        runs) still render nothing here, which is right. */}
+                    {subjectLine && (
                       <InlineStack gap="200">
                         {resourceLabel && <Badge tone="info">{resourceLabel}</Badge>}
                         {(() => {
@@ -567,13 +601,13 @@ export default function TasksPage() {
                                 style={{ color: "#008060", textDecoration: "none" }}
                                 onClick={(e: React.MouseEvent) => e.stopPropagation()}
                               >
-                                {subject}
+                                {subjectLine}
                               </a>
                             );
                           }
                           return (
                             <Text as="p" variant="bodyMd">
-                              {subject}
+                              {subjectLine}
                             </Text>
                           );
                         })()}

@@ -30,6 +30,7 @@ import type { AIActionContext } from "./shared";
 import { errorMessage, createAIService, CONTENT_CONFIGS } from "./shared";
 import { getFormString } from "~/utils/form-data.utils";
 import { getTaskExpirationDate } from "~/config/constants";
+import { resolveTaskResourceTitle } from "~/services/tasks/resource-title.server";
 import { getCharacterCeilingRequirement } from "~/utils/character-limits";
 import { sanitizePromptInput, isValidFieldType } from "~/utils/prompt-sanitizer";
 import { analyzeOnPage } from "~/services/seo/keywords.service";
@@ -123,6 +124,10 @@ Return ONLY the resulting text. No explanation, no quotes, no markdown fences.`;
   // Task row like every other AI action: it is what carries the prompt into
   // the Tasks-tab audit trail (the AI service writes it via savePromptToTask)
   // and what createAIService needs to attribute the call.
+  // The SUBJECT is the item. This row stored the field's English label as its
+  // subject and the field key beside it, so the card named the field twice —
+  // once unlocalised — and the product never.
+  const taskResourceTitle = await resolveTaskResourceTitle(db, session.shop, contentType, itemId);
   const task = await db.task.create({
     data: {
       shop: session.shop,
@@ -130,7 +135,11 @@ Return ONLY the resulting text. No explanation, no quotes, no markdown fences.`;
       status: "running",
       resourceType: contentType,
       resourceId: itemId,
-      resourceTitle: field?.label || fieldType,
+      resourceTitle: taskResourceTitle ?? undefined,
+      // The KEY, not `field.label`. `CONTENT_CONFIGS` labels are hardcoded
+      // English ("Product Title"), while `fieldTypeLabel` resolves the stored
+      // value through `t.tasks.fieldType` at RENDER time — so a label written
+      // here is a label a German merchant reads in English forever.
       fieldType,
       progress: 20,
       expiresAt: getTaskExpirationDate(),

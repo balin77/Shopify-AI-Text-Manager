@@ -13,6 +13,7 @@ import { ShopifyContentService } from "../../src/services/shopify-content.servic
 import { sanitizeSlug } from "../utils/slug.utils";
 import { tryDecryptApiKey } from "../utils/encryption.server";
 import { getTaskExpirationDate } from "~/config/constants";
+import { taskTitleOrFallback } from "~/services/tasks/resource-title.server";
 import type { ContentEditorConfig } from "../types/content-editor.types";
 import { logger } from "../utils/logger.server";
 import { ShopifyApiGateway } from "../services/shopify-api-gateway.service";
@@ -192,7 +193,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const sanitizedContextDescription = sanitizePromptInput(contextDescription || "", { fieldType: "description", allowNewlines: true });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
-    // Create task entry
+    // The client sends the title it has on screen; where it does not, the
+    // cached one is read rather than leaving the Tasks card with no subject
+    // and therefore no resource row at all.
+    const taskResourceTitle = await taskTitleOrFallback(
+      db, session.shop, contentConfig.resourceType, itemId, contextTitle,
+    );
     const task = await db.task.create({
       data: {
         shop: session.shop,
@@ -200,7 +206,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         status: "pending",
         resourceType: contentConfig.resourceType,
         resourceId: itemId,
-        resourceTitle: contextTitle,
+        resourceTitle: taskResourceTitle,
         fieldType,
         progress: 0,
         expiresAt: getTaskExpirationDate(),
@@ -445,7 +451,12 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
     const sanitizedContextDescription = sanitizePromptInput(contextDescription || "", { fieldType: "description", allowNewlines: true });
     const mainLanguage = getFormString(formData, "mainLanguage");
 
-    // Create task entry
+    // The client sends the title it has on screen; where it does not, the
+    // cached one is read rather than leaving the Tasks card with no subject
+    // and therefore no resource row at all.
+    const formatTaskResourceTitle = await taskTitleOrFallback(
+      db, session.shop, contentConfig.resourceType, itemId, contextTitle,
+    );
     const task = await db.task.create({
       data: {
         shop: session.shop,
@@ -453,7 +464,7 @@ export async function handleUnifiedContentActions(config: UnifiedContentActionsC
         status: "pending",
         resourceType: contentConfig.resourceType,
         resourceId: itemId,
-        resourceTitle: contextTitle,
+        resourceTitle: formatTaskResourceTitle,
         fieldType,
         progress: 0,
         expiresAt: getTaskExpirationDate(),
