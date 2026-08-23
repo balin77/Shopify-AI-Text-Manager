@@ -400,6 +400,7 @@ export const en: Translation = {
     menuItemInvalid: "This menu item cannot be saved as it is.",
     menuDragHandle: "Move",
     menuAddItem: "Add menu item",
+    menuItemUrl: "Target URL",
     menuAddChild: "Sub-item",
     menuDeleteItem: "Delete",
     menuTreeSummary: "{count} change(s) to the menu: {detail}",

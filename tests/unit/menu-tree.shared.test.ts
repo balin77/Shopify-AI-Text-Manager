@@ -14,6 +14,7 @@ import {
   MAX_MENU_DEPTH,
   appendNode,
   diffMenuTrees,
+  dropIndexAmongSiblings,
   idsUnder,
   moveNode,
   projectDrop,
@@ -243,11 +244,62 @@ describe("projectDrop", () => {
     expect(projection.depth).toBe(MAX_MENU_DEPTH - 1);
   });
 
+  it("lets the CEILING win over the floor", () => {
+    // Confirmed as a defect in review: applying the floor last let a deeper
+    // next-item push the projection past the height clamp, handing Shopify a
+    // fourth level it refuses for the whole tree. A temporarily orphaned
+    // neighbour is a layout the merchant can see; a refused save is not.
+    const list: MenuEditorNode[] = [
+      node("a", "A", [node("b", "B", [node("c", "C")])]),
+      node("d", "D", [node("e", "E")]),
+    ];
+    const projection = projectDrop(
+      flattenEditorTree(list),
+      "d",
+      "c",
+      400,
+      40,
+      /* D carries a child, so it may not go deeper than 2 */ 2,
+    );
+    expect(projection.depth).toBeLessThanOrEqual(MAX_MENU_DEPTH - 1);
+  });
+
   it("stays at the top level for an unknown key rather than guessing", () => {
     expect(projectDrop(flat(), "nope", "gid://shopify/MenuItem/1", 0, 40)).toEqual({
       depth: 1,
       parentKey: null,
     });
+  });
+});
+
+describe("dropIndexAmongSiblings", () => {
+  const flatTop = () =>
+    flattenEditorTree([node("a", "A"), node("b", "B"), node("c", "C")]);
+
+  it("moves an item UPWARD — the case that silently did nothing", () => {
+    // Confirmed in review: counting on the original list treats the item being
+    // passed as if it were already above, so B dropped on A stayed put.
+    expect(dropIndexAmongSiblings(flatTop(), "b", "a", null)).toBe(0);
+  });
+
+  it("moves an item downward", () => {
+    expect(dropIndexAmongSiblings(flatTop(), "a", "c", null)).toBe(2);
+  });
+
+  it("counts only the new siblings", () => {
+    const flat = flattenEditorTree([node("a", "A", [node("a1", "A1")]), node("b", "B")]);
+    // B sits BELOW A1 and is dragged up onto it, so it takes A1's place and
+    // pushes it down: first child, not second. The same upward rule as above —
+    // written down here because the opposite reading is the intuitive one and
+    // it is wrong.
+    expect(dropIndexAmongSiblings(flat, "b", "a1", "a")).toBe(0);
+    // From ABOVE, the item lands after the one it was dropped on.
+    const other = flattenEditorTree([node("a", "A", [node("a1", "A1"), node("a2", "A2")])]);
+    expect(dropIndexAmongSiblings(other, "a1", "a2", "a")).toBe(1);
+  });
+
+  it("answers 0 for a key that is not in the list", () => {
+    expect(dropIndexAmongSiblings(flatTop(), "nope", "a", null)).toBe(0);
   });
 });
 
