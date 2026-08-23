@@ -52,7 +52,11 @@ import {
 } from "../../utils/translation-save-lock.server";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
-import { registerAndVerify, removeAndVerify } from "../bulk-editor/translations.server";
+import {
+  registerAndVerify,
+  removeAndVerifyAcrossLocales,
+  LOCALE_KEY_SEP,
+} from "../bulk-editor/translations.server";
 import {
   loadTranslationChangePolicy,
   type TranslationChangePolicy,
@@ -242,11 +246,11 @@ export function contentTranslationMirror(shop: string): TranslationMirror {
 }
 
 /**
- * `MetaobjectTranslation` — a table of its own, keyed by the entry's GID plus
- * the FIELD key. `refs` are only ever this one entry, so they are not part of
- * the where-clause: a metaobject is one Shopify translatable resource carrying
- * every field of the definition, unlike a product whose sub-resources each have
- * their own GID.
+ * `MetaobjectTranslation` — a table of its own, keyed by the ENTRY's GID plus
+ * the field key. A metaobject is one Shopify translatable resource carrying
+ * every field of its definition, so a single entry's fields never fan out the
+ * way a product's sub-resources do; one SAVE can still touch several entries,
+ * which is why the refs are read rather than closed over.
  *
  * The row also carries `type` (the BARE metaobject type, CLAUDE.md) and
  * `outdated`, which the write resets: a value this app has just re-translated
@@ -983,11 +987,21 @@ async function repairStaleTranslations(
       // single locale. Its entries end up in neither list, so nothing
       // re-translates and nothing removes them, permanently, because the
       // sync has already advanced their digest baseline.
-      const savedAtStart = translationSavedAt(resourceId);
-      const supersededByMerchant = () => {
-        const now = translationSavedAt(resourceId);
-        return now !== null && now !== savedAtStart;
-      };
+      // Watched per RESOURCE, not only per group: a sub-resource translation is
+      // saved on the OPTION's or the METAFIELD's own GID, so a run watching
+      // only the product would never see the merchant's hand-written value land
+      // — the one rule that is supposed to protect it would not fire, and the
+      // AI would overwrite it minutes later.
+      const watched = [
+        resourceId,
+        ...new Set(retranslate.map((entry) => entry.resourceId ?? resourceId)),
+      ];
+      const savedAtStart = new Map(watched.map((id) => [id, translationSavedAt(id)]));
+      const supersededByMerchant = () =>
+        watched.some((id) => {
+          const now = translationSavedAt(id);
+          return now !== null && now !== savedAtStart.get(id);
+        });
       try {
         const outcome = await retranslateStaleEntries(
           gateway,
@@ -1073,10 +1087,11 @@ async function purgeStaleEntries(
   mirror: TranslationMirror,
   entries: readonly StaleTranslation[],
 ): Promise<number> {
-  // Per (RESOURCE, locale), not per locale: a group can span several Shopify
-  // resources — a product save moves its options, option values and metafields,
-  // each its own translatableResource — and `translationsRemove` addresses
-  // exactly one.
+  // Per (RESOURCE, locale) first, because `translationsRemove` addresses exactly
+  // one resource and this set is genuinely per (locale, key): a locale that was
+  // re-translated after the primary change is not stale, and a key can be stale
+  // in one locale while another holds a current translation. Sending the union
+  // would delete a translation nobody flagged.
   const byResourceLocale = new Map<string, { ref: TranslationRef; locale: string; keys: string[] }>();
   for (const entry of entries) {
     const ref = refOf(target, entry);
@@ -1087,16 +1102,39 @@ async function purgeStaleEntries(
   }
   if (byResourceLocale.size === 0) return 0;
 
-  let removed = 0;
+  // ...then FOLDED by identical key set, which is the common case by far: the
+  // same fields went stale in every locale. `translationsRemove` takes keys ×
+  // locales as a cross product, so folding only locales that ask for exactly
+  // the same keys keeps the per-(locale, key) precision above while turning
+  // twelve metafields on an eight-locale shop back into twelve calls instead of
+  // ninety-six — sequential ones, inside the merchant's save request.
+  const folded = new Map<string, { ref: TranslationRef; locales: string[]; keys: string[] }>();
   for (const { ref, locale, keys } of byResourceLocale.values()) {
-    const { confirmedKeys } = await removeAndVerify(gateway, ref.resourceId, keys, locale, "");
-    if (confirmedKeys.size === 0) continue;
-    const confirmed = keys.filter((key) => confirmedKeys.has(key));
-    await mirror.remove(ref, locale, confirmed);
-    // Counted from Shopify's confirmations, not from the DB result: a row the
-    // cache never held (or already dropped) is still a translation that is
-    // gone from the storefront, and that is what this number reports.
-    removed += confirmed.length;
+    const signature = `${ref.resourceId}${PAIR_SEP}${[...keys].sort().join(PAIR_SEP)}`;
+    const group = folded.get(signature) ?? { ref, locales: [], keys };
+    group.locales.push(locale);
+    folded.set(signature, group);
+  }
+
+  let removed = 0;
+  for (const { ref, locales, keys } of folded.values()) {
+    const { confirmedPairs } = await removeAndVerifyAcrossLocales(
+      gateway,
+      ref.resourceId,
+      keys,
+      locales,
+      "",
+    );
+    if (confirmedPairs.size === 0) continue;
+    for (const locale of locales) {
+      const confirmed = keys.filter((key) => confirmedPairs.has(`${locale}${LOCALE_KEY_SEP}${key}`));
+      if (confirmed.length === 0) continue;
+      await mirror.remove(ref, locale, confirmed);
+      // Counted from Shopify's confirmations, not from the DB result: a row
+      // the cache never held (or already dropped) is still a translation that
+      // is gone from the storefront, and that is what this number reports.
+      removed += confirmed.length;
+    }
   }
   return removed;
 }

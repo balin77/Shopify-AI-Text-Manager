@@ -51,12 +51,24 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
 vi.mock("../../app/db.server", () => ({ db, default: db }));
 
 vi.mock("../../app/services/bulk-editor/translations.server", () => ({
-  removeAndVerify: vi.fn(async (_gw: unknown, resourceId: string, keys: string[], locale: string) => {
-    shopify.removeCalls.push({ keys, locale });
-    shopify.removeTargets.push(resourceId);
-    const confirmed = shopify.removeConfirms ? (shopify.removeConfirms[locale] ?? []) : keys;
-    return { confirmedKeys: new Set(confirmed), userErrors: [] };
-  }),
+  LOCALE_KEY_SEP: "\u0000",
+  // The purge folds locales that ask for exactly the same keys into ONE call,
+  // so the fake records one entry PER LOCALE to keep the assertions about
+  // "each locale's own keys" meaningful.
+  removeAndVerifyAcrossLocales: vi.fn(
+    async (_gw: unknown, resourceId: string, keys: string[], locales: string[]) => {
+      shopify.removeTargets.push(resourceId);
+      const confirmedPairs = new Set<string>();
+      for (const locale of locales) {
+        shopify.removeCalls.push({ keys, locale });
+        const confirmed = shopify.removeConfirms ? (shopify.removeConfirms[locale] ?? []) : keys;
+        for (const key of confirmed) {
+          if (keys.includes(key)) confirmedPairs.add(`${locale}\u0000${key}`);
+        }
+      }
+      return { confirmedPairs, userErrors: [] };
+    },
+  ),
   registerAndVerify: vi.fn(
     async (_gw: unknown, resourceId: string, inputs: Array<{ key: string; locale: string; value: string }>) => {
       for (const input of inputs) {
@@ -150,6 +162,32 @@ beforeEach(() => {
 });
 
 describe("purge path", () => {
+  it("folds locales that ask for the SAME keys into one call", async () => {
+    // `translationsRemove` takes keys x locales as a cross product, so locales
+    // whose stale key set is identical — the common case by far — go in one
+    // call. Twelve metafields on an eight-locale shop would otherwise be 96
+    // sequential removals inside the merchant's save request.
+    shopify.removeConfirms = null;
+    const id = freshProduct();
+    await reconcileStaleTranslations(
+      baseParams({
+        resourceId: id,
+        translations: [
+          { key: "title", value: "T", locale: "de", marketId: "", outdated: true },
+          { key: "title", value: "T", locale: "fr", marketId: "", outdated: true },
+        ],
+        previousDigests: {
+          [digestBaselineKey("de", "title")]: OLD,
+          [digestBaselineKey("fr", "title")]: OLD,
+        },
+      }),
+    );
+
+    // One Shopify call, both locales on it.
+    expect(shopify.removeTargets).toEqual([id]);
+    expect(shopify.removeCalls.map((c) => c.locale).sort()).toEqual(["de", "fr"]);
+  });
+
   it("removes each locale's OWN keys, never the union across locales", async () => {
     // title is stale in de, body_html in fr. Sending {title, body_html} × {de, fr}
     // would delete fr's current title and de's current body_html on Shopify.

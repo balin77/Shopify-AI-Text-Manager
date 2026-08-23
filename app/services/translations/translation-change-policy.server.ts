@@ -55,12 +55,17 @@ export interface TranslationChangePolicy {
    */
   purgeOnPrimaryChange: boolean;
   /**
-   * The same question for a surface no automatic event repairs: metaobject
-   * fields, theme content, product options / option values / metafields, image
-   * alt-texts — and the webhook-less content types above. Auto-translate does
-   * NOT suppress the deletion there, because nothing would refresh those
-   * translations and a translation of text that no longer exists would stay on
-   * the storefront for good. This is the merchant's stored choice, unmodified.
+   * The same question for a surface NOTHING repairs: theme content, image
+   * alt-texts, menu titles. Auto-translate does NOT suppress the deletion
+   * there, because nothing would refresh those translations and a translation
+   * of text that no longer exists would stay on the storefront for good. This
+   * is the merchant's stored choice, unmodified.
+   *
+   * Metaobject fields and the product sub-resources USED to be on this side and
+   * no longer are: their own save now performs the repair
+   * (`reconcileAfterPrimarySave`), so they ask `purgeOnPrimaryChange` whenever
+   * that repair can actually run. A new purge site must ask which of the two it
+   * is rather than copying a neighbour.
    */
   purgeUnreconciledSurfaces: boolean;
   /**
@@ -131,11 +136,13 @@ export async function loadTranslationChangePolicy(
  * The one question every in-app purge site asks before deleting a foreign
  * translation for a changed/cleared primary value.
  *
- * @param opts.reconciled  Will an automatic event re-translate THIS surface?
- *   `true` only for the resource's own translatable fields on **Product and
- *   Collection** — the types with an update webhook. Everything else — the
- *   webhook-less content types, metaobject fields, theme content, options,
- *   option values, metafields, alt-texts — leaves it unset,
+ * @param opts.reconciled  Will anything re-translate THIS surface — an
+ *   automatic event, or the very save that is asking? `true` for the resource's
+ *   own translatable fields on **Product and Collection** (the types with an
+ *   update webhook), and for the surfaces whose SAVE performs the repair while
+ *   auto-translate is on: the webhook-less content types, the product
+ *   sub-resources and metaobject fields. What is left — theme content,
+ *   alt-texts, menu titles — leaves it unset,
  *   and then auto-translate does NOT switch the deletion off: nothing would
  *   refresh those translations afterwards, so the stale text would simply stay
  *   live. Defaults to the safe answer, so a new purge site that forgets the

@@ -13,6 +13,7 @@ import { isValidLocale, isValidShopifyGID } from "../../utils/validation";
 import { parseValueOrderPayload } from "~/services/product-options.shared";
 import { isBatchTranslatableValueType } from "~/services/metaobject-fields.shared";
 import { getFullErrorMessage } from "../../utils/error-handler";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { getTaskExpirationDate } from "~/config/constants";
 import { logger } from "../../utils/logger.server";
 import type { ContentActionHandlerContext } from "./alt-text.action";
@@ -250,6 +251,14 @@ export async function handleSaveSubResourceTranslations(
         if (translationInputs.length > 0) {
           await shopifyContentService.saveTranslations(resourceId, translationInputs, marketId);
         }
+
+        // Claim the SUB-RESOURCE the merchant just wrote. A detached
+        // re-translation started by an earlier primary save watches every
+        // resource of its group, and this is how it learns that a hand-written
+        // value landed while it was working — without it the AI overwrites the
+        // merchant minutes later, which is the one outcome
+        // `isTranslationRecentlySaved` exists to prevent.
+        markTranslationSaved(resourceId);
 
         // Delete empty translations for ProductOptionValue. marketIds null =
         // remove the global translation; a market removes only that override.
@@ -1187,6 +1196,7 @@ export async function handleSavePrimarySubResources(
     // request per locale. Best-effort — the primary writes above have already
     // gone through, so nothing here may fail the save.
     if (selfRetranslated && somethingChanged) {
+      try {
       const changed: Array<{
         resourceId: string;
         resourceType: string;
@@ -1238,7 +1248,7 @@ export async function handleSavePrimarySubResources(
       }
 
       if (changed.length > 0) {
-        try {
+        {
           const { reconcileAfterPrimarySave } = await import(
             "~/services/translations/stale-translation-sync.server"
           );
@@ -1272,11 +1282,16 @@ export async function handleSavePrimarySubResources(
               sourceLocale: shopPrimaryLocale,
             },
           });
-        } catch (err) {
-          logger.warn("[UnifiedContent] Sub-resource re-translation failed — translations kept", {
-            context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
-          });
         }
+      }
+      } catch (err) {
+        // Everything from the metafield-type lookup onwards: the sub-resource
+        // writes have already gone through, so a failure here must not report a
+        // completed save as broken and invite a re-save that repeats every
+        // Shopify write.
+        logger.warn("[UnifiedContent] Sub-resource re-translation failed — translations kept", {
+          context: "UnifiedContent", error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 

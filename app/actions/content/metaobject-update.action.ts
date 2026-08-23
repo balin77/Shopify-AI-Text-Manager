@@ -36,6 +36,7 @@
 
 import { data as json } from "react-router";
 import { logger } from "../../utils/logger.server";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 import { getFormString } from "../../utils/form-data.utils";
 import { safeJsonParse } from "../../utils/validation";
 import { isMetaobjectLabelField } from "../../constants/shopifyFields";
@@ -675,6 +676,12 @@ export async function handleMetaobjectUpdate(
           }
           if (inputs.length > 0) {
             const { confirmedKeys, userErrors } = await registerAndVerify(gateway, metaobjectId, inputs);
+            // Claim the ENTRY the merchant just wrote: a detached
+            // re-translation from an earlier primary save watches every
+            // resource of its group and abandons the rest on this mark, which
+            // is what keeps the AI from overwriting a hand-written value
+            // minutes later.
+            markTranslationSaved(metaobjectId);
             for (const input of inputs) {
               if (!confirmedKeys.has(input.key)) {
                 errors.push(
