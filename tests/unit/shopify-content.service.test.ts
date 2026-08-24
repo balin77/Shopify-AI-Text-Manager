@@ -86,7 +86,7 @@ const { retranslate } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../app/services/translations/stale-translation-sync.server', () => ({
-  IN_APP_RETRANSLATED_RESOURCE_TYPES: new Set(['Page', 'Article', 'Blog', 'ShopPolicy']),
+  IN_APP_RETRANSLATED_RESOURCE_TYPES: new Set(['Page', 'Article', 'Blog', 'ShopPolicy', 'Product', 'Collection']),
   featuredImageAltMirror: vi.fn(() => ({ existing: vi.fn(), remove: vi.fn(), write: vi.fn() })),
   reconcileAfterPrimarySave: vi.fn(async (args: Record<string, unknown>) => {
     retranslate.calls.push(args);
@@ -542,10 +542,13 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
     expect(db.contentTranslation.deleteMany).toHaveBeenCalled();
   });
 
-  it('leaves a Collection to its webhook rather than starting a second run', async () => {
-    // collections/update already runs the sync-side reconciliation; a run
-    // started here would queue a duplicate AI run behind a repair that has
-    // already happened.
+  it('repairs a Collection here too — its webhook cannot prove a change on a row with no translations', async () => {
+    // It was left to collections/update for one release, on the argument that
+    // a run started here would duplicate one. That webhook proves a change by
+    // comparing digests stored ON TRANSLATION ROWS: a collection nobody has
+    // translated carries no baseline, so its webhook proves nothing about it,
+    // forever. The repair claims the row when it starts, and the webhook
+    // arriving from this very save bails on that claim.
     await service.updateContent({
       resourceId: 'gid://shopify/Collection/3',
       resourceType: 'Collection',
@@ -557,7 +560,13 @@ describe('ShopifyContentService.updateContent() — re-translation on the webhoo
       shop,
     });
 
-    expect(retranslate.calls).toEqual([]);
+    expect(retranslate.calls).toHaveLength(1);
+    expect(retranslate.calls[0]).toMatchObject({
+      resourceId: 'gid://shopify/Collection/3',
+      resourceType: 'Collection',
+      contentKind: 'collection',
+      foreignLocales: ['fr'],
+    });
     expect(removedFromShopify).toEqual([]); // purgeOnPrimaryChange is false under auto-translate
   });
 

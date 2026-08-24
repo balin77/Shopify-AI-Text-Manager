@@ -44,7 +44,6 @@ import {
 } from "../translations/translation-locks.shared";
 import {
   collectBulkRepair,
-  promoteClaimedGroups,
   recordBulkForeignWrite,
   recordBulkMarketWrite,
   flushBulkRepairs,
@@ -2525,18 +2524,12 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
-        // …and that shield is exactly what makes the incoming
-        // `products/update` webhook skip this row's field reconciliation for
-        // 30 seconds. Where we block the webhook, the repair is OURS: see
-        // rule 3 in retranslate.server.ts. Recorded for EVERY layer, because
-        // `isTranslationRecentlySaved` knows nothing about markets and a
-        // market write blocks the webhook just as well.
-        deps.repairPlan.claimedRows.add(resourceId);
-        // …and WHAT was written. The claim above makes this row's repair ours;
-        // this is what keeps that repair off the very value the merchant just
-        // typed — see `alreadyWritten` in stale-translation-sync.server.ts.
+        // …and WHAT was written. This row's repair is ours (rule 3 in
+        // retranslate.server.ts); this is what keeps that repair off the very
+        // value the merchant just typed — see `alreadyWritten` in
+        // stale-translation-sync.server.ts.
         //
-        // GLOBAL layer only, and for the opposite reason to the claim above:
+        // GLOBAL layer only, and for the opposite reason to the mark above:
         // the repair writes global rows, so a MARKET override is not the value
         // it would overwrite. Recording one silenced the repair for a GLOBAL
         // translation nobody had touched — neither refreshed nor removed, since
@@ -2681,7 +2674,6 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
-        deps.repairPlan.claimedRows.add(resourceId);
         // A CLEARED value is just as deliberate: the merchant emptied this
         // translation in this save, so the repair must not write it back.
         // Global layer only, exactly as above.
@@ -3618,12 +3610,8 @@ export async function applyBulkDiff(
 
   // Auto-translation LAST, when every primary write of the save is through:
   // the repair reads the new text back from Shopify, and a group flushed
-  // mid-run would translate half a row. The two webhook-backed row types are
-  // sorted out here rather than at collection time, because a row is CLAIMED by
-  // its foreign group while the candidate comes from its primary one, and the
-  // two are persisted in whatever order the client sent them.
+  // mid-run would translate half a row.
   // Never throws — every row above is already saved.
-  promoteClaimedGroups(repairPlan);
   let flushed = { started: 0, translations: 0, skipped: 0 };
   try {
     flushed = await flushBulkRepairs({

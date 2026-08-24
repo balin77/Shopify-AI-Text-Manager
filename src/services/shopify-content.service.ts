@@ -1577,14 +1577,17 @@ export class ShopifyContentService {
           : null;
 
       // Does an automatic re-translation reach THIS resource's own fields?
-      //  - Collection: yes, through the collections/update webhook.
-      //  - Page / Article / Blog / ShopPolicy: no webhook exists, so the only
-      //    event that will ever notice is the save happening right now. With
-      //    auto-translate on, that repair is `reconcileAfterPrimarySave` below
-      //    — which is what makes them reconciled BY THIS SAVE and lets the
-      //    deletion stand down. Without it they were deleted and nothing ever
-      //    refreshed them, so a Max shop got the new text on a product and a
-      //    blank field on a page for the very same edit.
+      // With auto-translate on the answer is now yes for EVERY type this
+      // service saves, the webhook-backed Collection included: the repair is
+      // `reconcileAfterPrimarySave` below, and it is what makes the resource
+      // reconciled BY THIS SAVE and lets the deletion stand down.
+      //
+      // Collection was excluded until a merchant showed why that could not
+      // hold: its webhook's gate proves a change from digests stored ON
+      // TRANSLATION ROWS, so a collection nobody has translated yet carries no
+      // baseline and the webhook can prove nothing about it — forever. The
+      // repair claims the row when it starts, which is what keeps the webhook
+      // from running a second one (IN_APP_RETRANSLATED_RESOURCE_TYPES).
       const { IN_APP_RETRANSLATED_RESOURCE_TYPES } = await import(
         "../../app/services/translations/stale-translation-sync.server"
       );
@@ -1817,7 +1820,12 @@ export class ShopifyContentService {
             // an article and its blog are both "blog"; a policy has no kind of
             // its own and rides with "page", the same choice the policy sync
             // makes.
-            contentKind: resourceType === 'Article' || resourceType === 'Blog' ? 'blog' : 'page',
+            contentKind:
+              resourceType === 'Article' || resourceType === 'Blog'
+                ? 'blog'
+                : resourceType === 'Collection'
+                  ? 'collection'
+                  : 'page',
             resourceTitle: (updatedResource as { title?: string } | undefined)?.title,
             // The resource's OWN keys — no `resourceId` per entry, so they all
             // fall on the group's. The new values and their digests are read

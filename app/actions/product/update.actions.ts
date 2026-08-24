@@ -1342,7 +1342,12 @@ async function updatePrimaryProduct(
   // nor the deletion.
   let altForeignLocales: string[] = [];
   let altPrimaryLocale = "";
-  if (changedAltTextIndices.length > 0 && changePolicy) {
+  // The product's OWN fields need the same list when the auto-translation is on
+  // — the repair below translates into every published foreign locale — so the
+  // one lookup serves both. It stays gated on there being something to do.
+  const contentRepairPossible =
+    changedFields.length > 0 && !!changePolicy?.autoTranslateExternalChanges;
+  if ((changedAltTextIndices.length > 0 || contentRepairPossible) && changePolicy) {
     try {
       const { fetchShopLocales } = await import("~/services/sync-utils");
       const shopLocales = await fetchShopLocales(gateway.graphql.bind(gateway));
@@ -1511,6 +1516,67 @@ async function updatePrimaryProduct(
         error: translationError instanceof Error ? translationError.message : String(translationError),
       });
       // Don't fail the request - primary update succeeded
+    }
+  }
+
+  // The product's OWN fields, with the auto-translation on: REPLACE the stale
+  // translations instead of deleting them — and write the ones that were never
+  // there.
+  //
+  // This used to be the `products/update` webhook's job alone, and for a
+  // product that HAS translations it still does it (the claim below makes the
+  // webhook stand down for this save's own run, and a later one finds the
+  // digests the repair wrote and proves nothing). What the webhook can never do
+  // is repair a product nobody has translated yet: its gate compares digests
+  // stored ON TRANSLATION ROWS, so with no rows there is no baseline and
+  // nothing can be proven — which is exactly the state a merchant is in when
+  // they switch the feature on. So the save owes the repair here too.
+  //
+  // Best-effort by contract: the primary write is already through, so a failure
+  // may not fail the save.
+  if (contentRepairPossible && altForeignLocales.length > 0) {
+    try {
+      const fieldToKeyMap: Record<string, string> = {
+        title: "title",
+        description: "body_html",
+        handle: "handle",
+        seoTitle: "meta_title",
+        metaDescription: "meta_description",
+        productType: "product_type",
+      };
+      const changedKeys = [
+        ...new Set(
+          changedFields
+            .map((field) => fieldToKeyMap[field])
+            .filter((key): key is string => !!key),
+        ),
+      ];
+      if (changedKeys.length > 0) {
+        const { reconcileAfterPrimarySave } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        await reconcileAfterPrimarySave({
+          client: gateway,
+          shop,
+          resourceId: productId,
+          resourceType: "Product",
+          contentKind: "product",
+          resourceTitle: (data.data.productUpdate.product?.title as string) || productId,
+          // No `lockId`: this claims the PRODUCT itself, which is the point —
+          // it is what makes the `products/update` webhook arriving from this
+          // very save skip the reconciliation instead of queueing a second run
+          // behind ours. The alt-text repair beside it claims a private key for
+          // the opposite reason: it repairs a MediaImage, not the product.
+          changed: changedKeys.map((key) => ({ key })),
+          foreignLocales: altForeignLocales,
+          policy: changePolicy!,
+        });
+      }
+    } catch (repairError: unknown) {
+      loggers.product("warn", "Auto-translation of the changed fields could not start", {
+        productId,
+        error: repairError instanceof Error ? repairError.message : String(repairError),
+      });
     }
   }
 

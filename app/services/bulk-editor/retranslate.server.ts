@@ -18,37 +18,34 @@
  *
  * 1. ONE GROUP PER (row, surface) — the same grouping the single editor uses,
  *    never one per cell. A product whose title, three metafields and two alt
- *    texts changed is at most three groups (content, sub-resources, alt texts)
- *    — the content one only if rule 3's exception applies, so normally two —
- *    which is one Task row and one AI request per locale each: exactly what the
- *    same edit made one product at a time would cost.
+ *    texts changed is three groups (content, sub-resources, alt texts), which is
+ *    one Task row and one AI request per locale each: exactly what the same edit
+ *    made one product at a time would cost.
  *
- * 2. A CAP on the number of groups (`MAX_REPAIR_GROUPS`, per pool — see rule 3,
- *    so at most twice that many runs from one save). A save may carry 500 cells
- *    over hundreds of rows, and every group is an unattended, detached AI run on
- *    the merchant's own API key. Past the cap nothing is collected, and what
- *    then happens depends on the surface: most fall back to the merchant's
- *    stored deletion answer, exactly as they behaved before this module existed,
- *    while a PROMOTED group past its budget keeps its stale translations (its
- *    purge stood down and its webhook was made to bail). Either way the overflow
- *    is REPORTED rather than silently dropped.
+ * 2. A CAP on the number of groups (`MAX_REPAIR_GROUPS`). A save may carry 500
+ *    cells over hundreds of rows, and every group is an unattended, detached AI
+ *    run on the merchant's own API key. Past the cap nothing is collected and
+ *    the surface falls back to the merchant's stored deletion answer, exactly as
+ *    it behaved before this module existed — REPORTED rather than silently
+ *    dropped.
  *
- * 3. PRODUCT and COLLECTION content rows are the webhook's, not ours —
- *    starting a run here would queue a duplicate behind a repair that has
- *    already happened (`retranslationsInFlight` queues, it never drops). The
- *    ONE exception is a row this save also CLAIMED: a foreign content write
- *    marks the row (`markTranslationSaved`), and `reconcileStaleTranslations`
- *    bails wholesale on that mark for 30 seconds — so the webhook arriving from
- *    this very save does nothing, and with the purge off the row's other
- *    locales would stay stale for good. Where we blocked the webhook, we owe
- *    the repair.
+ * 3. PRODUCT and COLLECTION content rows are collected like every other surface.
+ *    They were the webhook's for one release, on the argument that a run started
+ *    here would queue a duplicate behind a repair that has already happened. It
+ *    does not happen: the sync-side gate proves a change by comparing digests
+ *    stored ON TRANSLATION ROWS, so a row nobody ever translated has no baseline
+ *    and its webhook can prove nothing — which is exactly the row a merchant
+ *    switches the feature on for. The duplicate is prevented by the CLAIM
+ *    instead: the repair marks the row before it starts and
+ *    `reconcileStaleTranslations` bails wholesale on that mark, so the webhook
+ *    arriving from this very save stands down.
  *
  * 4. WHAT THE SAVE WROTE goes in as `alreadyWritten` and lands in neither list:
- *    rule 3 hands us the repair of a row whose foreign value the merchant may
- *    have typed in the SAME save, and re-translating over it is the one thing
- *    that exception must not do. GLOBAL layer only — a market override is not a
- *    value the repair could overwrite, and recording one silences it for a
- *    global translation nobody touched.
+ *    a row whose foreign value the merchant may have typed in the SAME save is
+ *    ours to repair, and re-translating over it is the one thing we must not do.
+ *    GLOBAL layer only — a market override is not a value the repair could
+ *    overwrite, and recording one silences it for a global translation nobody
+ *    touched.
  *
  * 5. A GROUP IS NOT PRE-CHECKED against its mirror any more. It used to be —
  *    one DB query, and an empty answer skipped the group before a single
@@ -123,20 +120,6 @@ export interface BulkRepairGroup {
 
 export interface BulkRepairPlan {
   groups: Map<string, BulkRepairGroup>;
-  /**
-   * The two webhook-backed row types' CONTENT groups, kept OUT of `groups` and
-   * out of the cap until `promoteClaimedGroups` decides which of them are ours.
-   *
-   * They are collected at all only because the claim that makes them ours
-   * (a foreign write on the same row) can land after the candidate does. Left
-   * in the capped pool they filled it with groups that were then thrown away:
-   * thirteen product rows that each changed a base field and a metafield spent
-   * every slot on content groups nobody ran, and from row thirteen on the
-   * SUB-RESOURCE candidates were refused and their translations deleted. A
-   * budget spent on work that never happened must not cost a merchant their
-   * translations.
-   */
-  webhookOwned: Map<string, BulkRepairGroup>;
   /** Group KEYS the cap refused — reported, never silently dropped. Keys, not
    *  calls: ten metafields of one product past the cap are ONE refused group. */
   overflow: Set<string>;
@@ -144,11 +127,6 @@ export interface BulkRepairPlan {
    *  its sub-resources and its alt texts is three groups and ONE row, and the
    *  merchant is told about rows. */
   overflowRows: Set<string>;
-  /**
-   * Rows a foreign CONTENT write claimed in this save. Only these make a
-   * product/collection content group ours to repair (rule 3 above).
-   */
-  claimedRows: Set<string>;
   /**
    * Every FOREIGN translation this save wrote itself, as (resource, locale,
    * key). Handed to the repair as `alreadyWritten`, which leaves them in
@@ -171,10 +149,8 @@ export interface BulkRepairPlan {
 export function newBulkRepairPlan(): BulkRepairPlan {
   return {
     groups: new Map(),
-    webhookOwned: new Map(),
     overflow: new Set(),
     overflowRows: new Set(),
-    claimedRows: new Set(),
     claimedWrites: [],
     marketWrites: new Set(),
   };
@@ -228,17 +204,20 @@ export function collectBulkRepair(
 ): boolean {
   if (args.entries.length === 0) return false;
   const key = groupKey(args.surface, args.ownerId);
-  // A product's or collection's OWN fields belong to its update webhook unless
-  // this save blocks it — decided at the flush, so until then they wait in
-  // their own uncapped pool (see `BulkRepairPlan.webhookOwned`).
-  const webhookOwned =
-    args.surface === "content" && (args.rowType === "product" || args.rowType === "collection");
-  const pool = webhookOwned ? plan.webhookOwned : plan.groups;
+  // EVERY surface is collected the same way, a product's and a collection's own
+  // fields included. They used to wait in a pool of their own until the flush
+  // decided whether this save had blocked their update webhook — the exclusion
+  // that assumed the webhook repairs them. It does not when there is nothing to
+  // detect: the sync-side gate reads digests stored ON TRANSLATION ROWS, so a
+  // row nobody has ever translated carries no baseline and its webhook can
+  // prove nothing, forever. The repair CLAIMS the row when it starts, which is
+  // what makes the webhook stand down instead (IN_APP_RETRANSLATED_RESOURCE_TYPES).
+  const pool = plan.groups;
   let group = pool.get(key);
   if (!group) {
     // The cap counts GROUPS and is checked before a new one is opened: adding
     // entries to a group that already exists costs no extra run.
-    if (!webhookOwned && pool.size >= MAX_REPAIR_GROUPS) {
+    if (pool.size >= MAX_REPAIR_GROUPS) {
       plan.overflow.add(key);
       plan.overflowRows.add(args.ownerId);
       return false;
@@ -263,42 +242,6 @@ export function collectBulkRepair(
     for (const [media, imageId] of args.imageIdByMedia) group.imageIdByMedia.set(media, imageId);
   }
   return true;
-}
-
-/**
- * Move the webhook-backed content groups this save CLAIMED into the pool that
- * runs, and forget the rest — their webhook repairs them, and a second run
- * would queue a duplicate behind it (rule 3). Called once, before the flush,
- * because a row is claimed by its FOREIGN group while the candidate comes from
- * its PRIMARY one and the two are persisted in whatever order the client sent
- * them.
- *
- * The promoted ones get their OWN budget rather than competing for the other
- * pool's: a claimed row is owed a repair (its webhook has been made to bail and
- * nothing else will notice), while the surfaces in `groups` have already stood
- * their deletion down and would otherwise be evicted into "neither refreshed
- * nor removed". So a save starts at most MAX_REPAIR_GROUPS of each.
- *
- * A claimed row past that budget is counted into `overflow` and keeps its stale
- * translations: nothing deleted them (auto-translate turns that purge off) and
- * its webhook was made to bail, so it is genuinely untouched until the next
- * change event. That is why `overflow` is reported as "not re-translated"
- * rather than as "deleted" — the two outcomes it covers are different.
- */
-export function promoteClaimedGroups(plan: BulkRepairPlan): number {
-  let promoted = 0;
-  for (const [key, group] of plan.webhookOwned) {
-    if (!plan.claimedRows.has(group.ownerId)) continue;
-    if (promoted >= MAX_REPAIR_GROUPS) {
-      plan.overflow.add(key);
-      plan.overflowRows.add(group.ownerId);
-      continue;
-    }
-    plan.groups.set(key, group);
-    promoted++;
-  }
-  plan.webhookOwned.clear();
-  return promoted;
 }
 
 /** The merchant-facing kind the AI prompt and the Tasks tab speak. */

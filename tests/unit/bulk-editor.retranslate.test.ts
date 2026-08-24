@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   collectBulkRepair,
-  promoteClaimedGroups,
   newBulkRepairPlan,
   MAX_REPAIR_GROUPS,
 } from "~/services/bulk-editor/retranslate.server";
@@ -68,7 +67,13 @@ describe("collectBulkRepair", () => {
     expect(plan.groups.size).toBe(2);
   });
 
-  it("a product's own CONTENT waits in the uncapped pool, not in the one that runs", () => {
+  it("collects a product's own CONTENT like every other surface", () => {
+    // It waited in a pool of its own for one release, on the argument that the
+    // `products/update` webhook repairs it. That webhook proves a change from
+    // digests stored on TRANSLATION ROWS, so a product nobody has translated
+    // yet carries no baseline and its webhook can prove nothing — forever,
+    // which is exactly the row a merchant switches the feature on for. The
+    // repair claims the row instead, and the webhook stands down on that.
     const plan = newBulkRepairPlan();
     collectBulkRepair(plan, {
       surface: "content",
@@ -76,8 +81,7 @@ describe("collectBulkRepair", () => {
       rowType: "product",
       entries: [{ resourceId: PRODUCT_ID, resourceType: "Product", key: "title" }],
     });
-    expect(plan.groups.size).toBe(0);
-    expect(plan.webhookOwned.size).toBe(1);
+    expect(plan.groups.size).toBe(1);
   });
 
   it("refuses a NEW group past the cap and counts the overflow — an existing one still grows", () => {
@@ -122,100 +126,6 @@ describe("collectBulkRepair", () => {
     ).toBe(false);
     expect(plan.groups.size).toBe(0);
     expect(plan.overflow.size).toBe(0);
-  });
-});
-
-describe("promoteClaimedGroups", () => {
-  it("forgets an UNCLAIMED product/collection content group — its webhook repairs it", () => {
-    const plan = newBulkRepairPlan();
-    collectBulkRepair(plan, {
-      surface: "content",
-      ownerId: PRODUCT_ID,
-      rowType: "product",
-      entries: [{ resourceId: PRODUCT_ID, resourceType: "Product", key: "title" }],
-    });
-    // It never entered the capped pool in the first place.
-    expect(plan.groups.size).toBe(0);
-    expect(plan.webhookOwned.size).toBe(1);
-    expect(promoteClaimedGroups(plan)).toBe(0);
-    expect(plan.groups.size).toBe(0);
-  });
-
-  it("PROMOTES it when this save claimed the row — the claim is what makes the webhook bail", () => {
-    const plan = newBulkRepairPlan();
-    collectBulkRepair(plan, {
-      surface: "content",
-      ownerId: PRODUCT_ID,
-      rowType: "product",
-      entries: [{ resourceId: PRODUCT_ID, resourceType: "Product", key: "title" }],
-    });
-    plan.claimedRows.add(PRODUCT_ID);
-    expect(promoteClaimedGroups(plan)).toBe(1);
-    expect(plan.groups.size).toBe(1);
-  });
-
-  it("does not spend the other pool's budget: webhook-owned rows never fill it", () => {
-    // The bug this replaces: thirteen product rows that each changed a base
-    // field AND a metafield filled all 25 slots with content groups that were
-    // then thrown away, and the SUB-RESOURCE candidates from row 13 on were
-    // refused — their translations deleted for a budget nothing had used.
-    const plan = newBulkRepairPlan();
-    for (let i = 0; i < 40; i++) {
-      const id = `gid://shopify/Product/${i}`;
-      collectBulkRepair(plan, {
-        surface: "content",
-        ownerId: id,
-        rowType: "product",
-        entries: [{ resourceId: id, resourceType: "Product", key: "title" }],
-      });
-      expect(
-        collectBulkRepair(plan, {
-          surface: "subResource",
-          ownerId: id,
-          rowType: "product",
-          entries: [{ resourceId: `gid://shopify/Metafield/${i}`, resourceType: "Metafield", key: "value" }],
-        }),
-      ).toBe(i < MAX_REPAIR_GROUPS);
-    }
-    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
-    expect(plan.overflow.size).toBe(40 - MAX_REPAIR_GROUPS);
-  });
-
-  it("bounds the promoted pool too, and counts what it refused", () => {
-    const plan = newBulkRepairPlan();
-    for (let i = 0; i < MAX_REPAIR_GROUPS + 3; i++) {
-      const id = `gid://shopify/Collection/${i}`;
-      collectBulkRepair(plan, {
-        surface: "content",
-        ownerId: id,
-        rowType: "collection",
-        entries: [{ resourceId: id, resourceType: "Collection", key: "title" }],
-      });
-      plan.claimedRows.add(id);
-    }
-    expect(promoteClaimedGroups(plan)).toBe(MAX_REPAIR_GROUPS);
-    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
-    // The three that did not fit keep their stale translations — nothing
-    // deleted them and their webhook was made to bail — so they are reported.
-    expect(plan.overflow.size).toBe(3);
-  });
-
-  it("never touches a surface the webhook cannot reach", () => {
-    const plan = newBulkRepairPlan();
-    collectBulkRepair(plan, {
-      surface: "subResource",
-      ownerId: PRODUCT_ID,
-      rowType: "product",
-      entries: [{ resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" }],
-    });
-    collectBulkRepair(plan, {
-      surface: "content",
-      ownerId: "gid://shopify/Page/1",
-      rowType: "page",
-      entries: [{ resourceId: "gid://shopify/Page/1", resourceType: "Page", key: "title" }],
-    });
-    expect(promoteClaimedGroups(plan)).toBe(0);
-    expect(plan.groups.size).toBe(2);
   });
 });
 
@@ -782,7 +692,7 @@ describe("applyBulkDiff with auto-translate on", () => {
     expect(loud.retranslation).toMatchObject({ started: 1, translations: 4, capped: 0 });
   });
 
-  it("a product's OWN fields start nothing — its update webhook runs that repair", async () => {
+  it("repairs a product's OWN fields too — its webhook cannot prove anything on a row with no translations", async () => {
     const { admin } = mockAdmin((query) => {
       if (query.includes("productUpdate(")) {
         return { data: { productUpdate: { product: { id: PRODUCT_ID }, userErrors: [] } } };
@@ -812,6 +722,17 @@ describe("applyBulkDiff with auto-translate on", () => {
       ],
     );
 
-    expect(reconcileAfterPrimarySave).not.toHaveBeenCalled();
+    // The claim the repair makes when it starts is what keeps the
+    // `products/update` webhook from running a second one.
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    const call = reconcileAfterPrimarySave.mock.calls[0][0] as unknown as {
+      resourceType: string;
+      lockId?: string;
+      changed: { key: string }[];
+    };
+    expect(call.resourceType).toBe("Product");
+    expect(call.changed.map((entry) => entry.key)).toEqual(["title"]);
+    // No private lock: claiming the PRODUCT is the point here.
+    expect(call.lockId).toBeUndefined();
   });
 });

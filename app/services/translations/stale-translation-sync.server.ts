@@ -950,16 +950,33 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
  * nothing ever refreshed them, so on a Max shop the same edit produced the new
  * text on a product and a blank field on a page.
  *
- * Product and Collection are deliberately ABSENT: their update webhook already
- * runs the sync-side reconciliation, and starting a second run from the save
- * would queue a duplicate AI run behind it (the in-flight map never drops one)
- * for a repair that has already happened.
+ * PRODUCT and COLLECTION are on this list too, and they were deliberately off
+ * it until a merchant showed why they cannot be. The argument for excluding
+ * them was that their update webhook runs the sync-side reconciliation anyway,
+ * so a run started from the save would queue a duplicate behind a repair that
+ * has already happened. True — but only for a resource that HAS translations.
+ * The sync-side gate proves the primary text moved by comparing digests stored
+ * ON TRANSLATION ROWS, so a product nobody has ever translated carries no
+ * baseline, nothing can be proven about it, and the webhook's repair is not
+ * "already happening": it can never happen. That is exactly the state a
+ * merchant is in when they switch the feature on, which made "translate
+ * automatically" do nothing at all on the content they most wanted it for.
+ *
+ * The duplicate the exclusion protected against is prevented by the CLAIM
+ * instead: `reconcileAfterPrimarySave` marks the resource before it starts and
+ * `reconcileStaleTranslations` bails wholesale on that mark, so the webhook
+ * arriving seconds later stands down — the same mechanism the bulk editor's
+ * `claimedRows` exception has always relied on. A webhook that arrives after
+ * the window finds the digests the repair has just written and proves nothing,
+ * which is the same answer by a different route.
  */
 export const IN_APP_RETRANSLATED_RESOURCE_TYPES: ReadonlySet<string> = new Set([
   "Page",
   "Article",
   "Blog",
   "ShopPolicy",
+  "Product",
+  "Collection",
 ]);
 
 /** Separator of a `${locale}\u0000${key}` pair — the same shape

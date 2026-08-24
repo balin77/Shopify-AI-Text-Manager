@@ -677,18 +677,23 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     }));
   });
 
-  it("names the webhook-less content types and NOT the two the sync already repairs", () => {
-    // Product and Collection have an update webhook, so starting a second run
-    // from the save would queue a duplicate AI run behind a repair that has
-    // already happened.
+  it("names EVERY content type the save repairs — the two with a webhook included", () => {
+    // Product and Collection were off this list on the argument that their
+    // update webhook already runs the repair. It cannot: the sync-side gate
+    // proves a change from digests stored ON TRANSLATION ROWS, so a resource
+    // nobody has ever translated has no baseline and its webhook proves
+    // nothing, forever — which is exactly the state a merchant is in when they
+    // switch the feature on. The duplicate that exclusion prevented is now
+    // prevented by the CLAIM: the repair marks the resource before it starts
+    // and the sync-side entry point bails wholesale on that mark.
     expect([...IN_APP_RETRANSLATED_RESOURCE_TYPES].sort()).toEqual([
       "Article",
       "Blog",
+      "Collection",
       "Page",
+      "Product",
       "ShopPolicy",
     ]);
-    expect(IN_APP_RETRANSLATED_RESOURCE_TYPES.has("Product")).toBe(false);
-    expect(IN_APP_RETRANSLATED_RESOURCE_TYPES.has("Collection")).toBe(false);
   });
 
   it("translates every changed key into every published locale, not only the ones that had a translation", async () => {
