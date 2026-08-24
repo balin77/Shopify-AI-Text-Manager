@@ -188,6 +188,7 @@ import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 import { SeoCrawlAutoRunService } from "./services/seo/crawl-auto-run.service";
+import { TranslationDriftAutoRunService } from "./services/translations/translation-drift-auto-run.service";
 
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
@@ -232,6 +233,9 @@ const enhancedAuthenticate = {
     IndexNowAutoSubmitService.getInstance().start();
     SeoAuditAutoRunService.getInstance().start();
     SeoCrawlAutoRunService.getInstance().start();
+    // The change event Shopify does not send for pages, articles, blogs and
+    // policies — see translation-drift-auto-run.service.ts.
+    TranslationDriftAutoRunService.getInstance().start();
 
     return { admin, session };
   }

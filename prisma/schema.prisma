@@ -216,6 +216,10 @@ model AISettings {
   // Separate from lastAutoAuditAt on purpose: the two sweeps run at different
   // cadences (daily audit vs weekly crawl) and one stamp cannot express both.
   lastAutoCrawlAt     DateTime?
+  // Backoff stamp for the translation-drift sweep — the change event Shopify
+  // does not send for pages, articles, blogs and policies. Its own column
+  // because it has its own cadence; one stamp cannot express two.
+  lastTranslationScanAt DateTime?
 
   // Keyword-aware translation: a translation into a foreign locale is
   // phrased so THAT locale's own tracked keyword survives, instead of being
@@ -292,6 +296,7 @@ model AISettings {
   @@index([subscriptionPlan, lastAutoAuditAt])
   // Same, for the weekly crawl sweep (crawl-auto-run.service.ts).
   @@index([subscriptionPlan, lastAutoCrawlAt])
+  @@index([subscriptionPlan, lastTranslationScanAt])
 }
 
 // Product metafield definitions a merchant has explicitly enabled for the
