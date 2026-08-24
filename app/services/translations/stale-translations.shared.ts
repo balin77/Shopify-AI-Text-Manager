@@ -138,6 +138,16 @@ export interface StaleTranslation {
    * auto-translate reached these surfaces, so it is the known-safe answer.
    */
   retranslatable?: boolean;
+  /**
+   * This (locale, key) holds NO translation today — the entry exists to CREATE
+   * one (`findStaleTranslations`' fill). It is never a removal, in either
+   * direction: `partitionStaleTranslations` drops it outright when the
+   * auto-translation is off (where every other entry becomes a purge), and the
+   * fallback purge that follows a failed AI run skips it. Sending a removal for
+   * a translation that does not exist echoes nothing back, costs a re-read per
+   * locale, and reports removals the merchant never had.
+   */
+  filled?: boolean;
   reason: StaleReason;
   /** The CURRENT primary value ("" when the field was cleared). */
   primaryValue: string;
@@ -213,11 +223,23 @@ export function findStaleTranslations(
   const primaryKnown = Object.keys(primaryContent).length > 0;
   const seen = new Set<string>();
   const stale: StaleTranslation[] = [];
-  /** (locale, key) pairs that already carry a GLOBAL translation — the fill
-   *  below adds the locales this set does NOT hold. */
+  /**
+   * (locale, key) pairs that already CARRY A VALUE on the global layer — the
+   * fill below adds the locales this set does not hold.
+   *
+   * The value check is the whole point and not a defence: `translations(locale:)`
+   * answers with a row per translatable KEY and `value: null` where that locale
+   * has nothing, and every sync in this repo hands those rows straight through
+   * (only the drift sweep filters them). Counting them as translated made the
+   * fill a no-op on exactly the shops it is for — a shop publishing de and it
+   * with only de translated reported it as "already has one" and stayed empty,
+   * which is the merchant report this exists to fix.
+   */
   const translated = new Set<string>();
   for (const row of translations) {
-    if ((row.marketId ?? "") === "") translated.add(`${row.locale}\u0000${row.key}`);
+    if ((row.marketId ?? "") !== "") continue;
+    if (!row.value || !row.value.trim()) continue;
+    translated.add(`${row.locale}\u0000${row.key}`);
   }
 
   for (const row of translations) {
@@ -286,6 +308,10 @@ export function findStaleTranslations(
           reason: "outdated",
           primaryValue: entry?.value ?? "",
           digest: entry?.digest ?? null,
+          // KNOWN to hold no translation — see the flag's own note: it keeps
+          // this entry out of every removal, including the fallback purge a
+          // failed AI run triggers.
+          filled: true,
         };
         // Only a candidate that will really be TRANSLATED is emitted: a purge
         // entry here would address a translation that does not exist.
@@ -400,6 +426,12 @@ export function partitionStaleTranslations(
   const purge: StaleTranslation[] = [];
   const declined: StaleTranslation[] = [];
   for (const entry of stale) {
+    // A fill has nothing to fall back to: with the auto-translation off it is
+    // not a purge candidate, it is not a candidate at all. Structural rather
+    // than a rule in a comment, because `fillLocales` is the caller's option
+    // and only the flag can stop a caller that passed it under the wrong switch
+    // from turning every filled entry into a removal of nothing.
+    if (entry.filled && !autoTranslate) continue;
     const verdict = classifyStaleTranslation(entry, autoTranslate, opts);
     if (verdict === "retranslate") retranslate.push(entry);
     else if (verdict === "declined") declined.push(entry);

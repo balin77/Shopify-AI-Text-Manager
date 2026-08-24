@@ -132,6 +132,7 @@ import { ColumnPickerModal } from "../components/bulk-editor/ColumnPickerModal";
 import { FilterBar } from "../components/bulk-editor/FilterBar";
 import { PriceActionsPopover } from "../components/bulk-editor/PriceActionsPopover";
 import type { DataResponse } from "~/types/data-response";
+import { publishedForeignLocales } from "~/services/translations/stale-translations.shared";
 
 async function loadPlan(db: any, shop: string): Promise<Plan> {
   const settings = await db.aISettings.findUnique({
@@ -381,7 +382,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       moType,
       // Primary-view "missing translation" (blue) colour needs the published
       // foreign locales (already loaded above).
-      foreignLocales: shopLocales.filter((l) => l.published && !l.primary).map((l) => l.locale),
+      foreignLocales: publishedForeignLocales(shopLocales),
     }),
     // Currency suffix for the money columns (Plan §5.2) — variant view only;
     // process-cached, so this is one query per shop per boot.
@@ -474,9 +475,7 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   // primary-save stale-translation invalidation (cached read).
   const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
   const shopLocalesForSave = await getCachedShopLocales(admin, shop).catch(() => []);
-  const foreignLocales = shopLocalesForSave
-    .filter((l) => l.published && !l.primary)
-    .map((l) => l.locale);
+  const foreignLocales = publishedForeignLocales(shopLocalesForSave);
   // The source language of the auto-translation's value prompts (option names,
   // metafield values, alt texts). A failed lookup answers [] — never a wrong
   // locale — and those surfaces then follow the stored deletion answer.

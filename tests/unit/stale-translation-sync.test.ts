@@ -358,6 +358,26 @@ describe("auto-translation path (Max)", () => {
     expect(shopify.removeCalls.map((c) => c.locale).sort()).toEqual(["de", "fr"]);
   });
 
+  it("does NOT purge a FILLED entry when the AI fails — there is nothing to remove", async () => {
+    // A fill exists to create a translation. Sending its removal echoes nothing
+    // back, costs a gap re-read per locale, and reports removals the merchant
+    // never had. The locale that really held a stale translation still goes.
+    ai.translate = vi.fn(async () => {
+      throw new Error("provider down");
+    });
+
+    await reconcileStaleTranslations(
+      baseParams({
+        translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+        foreignLocales: ["de", "it"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
+  });
+
   it("falls back to the purge for a key Shopify did not echo back", async () => {
     ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
       [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
@@ -1077,14 +1097,25 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await awaitDetachedRetranslations();
   });
 
-  it("never throws — the primary text is already saved", async () => {
-    // Both keys cleared, so the evidence lookup runs — and fails.
-    primaryContent = { [PAGE]: {} };
+  it("never throws, and a failed EVIDENCE lookup degrades instead of losing the repair", async () => {
+    // The mirror is only asked about candidates that would be REMOVED. Letting
+    // its failure escape would discard the entries that will be TRANSLATED and
+    // never needed it — and the caller has already stood its own purge down, so
+    // those keys would be neither refreshed nor removed.
+    primaryContent = { [PAGE]: { title: { value: "About us", digest: NEW } } };
+    shopifyHas = { de: ["body_html"] };
     db.contentTranslation.findMany.mockRejectedValue(new Error("connection lost"));
-    await expect(reconcileAfterPrimarySave(saveParams())).resolves.toEqual({
-      removed: 0,
-      retranslating: 0,
-    });
+
+    const result = await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual([
+      "de:title",
+      "fr:title",
+    ]);
+    // Shopify's half of the evidence still stands on its own.
+    expect(shopify.removeCalls).toEqual([{ keys: ["body_html"], locale: "de" }]);
   });
 });
 

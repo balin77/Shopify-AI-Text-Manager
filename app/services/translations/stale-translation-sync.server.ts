@@ -1306,7 +1306,6 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     const resourceIds = [...refs.keys()];
 
     const gateway = gatewayFor(params.client, shop);
-    const allKeys = [...new Set(changed.map((item) => item.key))];
 
     // The CURRENT primary text of everything this save changed. It is read
     // FIRST because it decides everything below: the digest a register needs is
@@ -1362,12 +1361,16 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         // a foreign value live on a surface nothing else ever revisits.
         const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
         const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
+        // Counted per (resource, KEY), never per locale: this number is read
+        // when diagnosing a theme write that Shopify had not re-indexed yet,
+        // and multiplying it by the locale count says nothing about how many
+        // writes were behind.
+        if (staleReadBack) declinedByReadBack++;
         for (const locale of foreignLocales) {
           // The caller wrote this exact translation in this exact save. Neither
           // list: re-translating it would overwrite what the merchant just
           // typed, and removing it would delete it.
           if (untouchable.has(tripleKey(itemResourceId, locale, key))) continue;
-          if (staleReadBack) declinedByReadBack++;
           const candidate: StaleTranslation = {
             key,
             locale,
@@ -1433,10 +1436,28 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
         locales,
         evidenceKeys,
       );
-      for (const row of await mirrorOf(params).existing(evidenceRefs, locales, allKeys)) {
-        if (evidenceKeys.get(row.resourceId)?.has(row.key)) {
-          existing.add(tripleKey(row.resourceId, row.locale, row.key));
+      // Its Shopify half degrades per locale by design; this half has to as
+      // well. `stale` already holds every entry that will be TRANSLATED and
+      // never needed the mirror at all, so letting a DB blink escape to the
+      // function's catch would discard them — and the caller has by then stood
+      // its own purge down, so those keys would be neither refreshed nor
+      // removed, on a type with no webhook to notice later.
+      const evidenceKeyList = [
+        ...new Set([...evidenceKeys.values()].flatMap((keys) => [...keys])),
+      ];
+      try {
+        for (const row of await mirrorOf(params).existing(evidenceRefs, locales, evidenceKeyList)) {
+          if (evidenceKeys.get(row.resourceId)?.has(row.key)) {
+            existing.add(tripleKey(row.resourceId, row.locale, row.key));
+          }
         }
+      } catch (error: unknown) {
+        logger.warn("[StaleTranslations] Mirror evidence lookup failed — Shopify's answer stands alone", {
+          context: "StaleTranslations",
+          shop,
+          resourceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
       for (const candidate of needEvidence) {
         if (existing.has(tripleKey(candidate.resourceId ?? resourceId, candidate.locale, candidate.key))) {
@@ -1773,6 +1794,11 @@ async function purgeStaleEntries(
   // would delete a translation nobody flagged.
   const byResourceLocale = new Map<string, { ref: TranslationRef; locale: string; keys: string[] }>();
   for (const entry of entries) {
+    // A FILL has no translation to remove — it exists to create one. It reaches
+    // here through the fallback purge after a failed AI run, and sending the
+    // removal anyway echoes nothing back, costs a gap re-read per locale, and
+    // reports removals for translations the merchant never had.
+    if (entry.filled) continue;
     const ref = refOf(target, entry);
     const id = `${ref.resourceId}${PAIR_SEP}${entry.locale}`;
     const group = byResourceLocale.get(id) ?? { ref, locale: entry.locale, keys: [] };

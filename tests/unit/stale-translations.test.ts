@@ -270,6 +270,46 @@ describe("findStaleTranslations — the fill", () => {
     expect(refused.map((s) => s.locale)).toEqual(["fr"]);
   });
 
+  it("fills a locale whose row came back with NO VALUE — that row is not a translation", () => {
+    // `translations(locale:)` answers with a row per translatable KEY and
+    // `value: null` where the locale has nothing, and every sync in this repo
+    // hands those rows straight through. Counting them as "already translated"
+    // made the fill a no-op on exactly the shops it is for: a shop publishing
+    // de and it with only de translated stayed empty in it forever.
+    const stale = findStaleTranslations(
+      [
+        translation({ locale: "de" }),
+        { key: "title", value: null as unknown as string, locale: "it", marketId: "" },
+        { key: "title", value: "   ", locale: "es", marketId: "" },
+      ],
+      primary({ title: "Box" }),
+      moved,
+      { fillLocales: ["de", "it", "es"] },
+    );
+    expect(stale.map((s) => s.locale).sort()).toEqual(["de", "es", "it"]);
+  });
+
+  it("marks a filled entry, and the partition DROPS it when the auto-translation is off", () => {
+    // A fill has nothing to fall back to: with the switch off it is not a purge
+    // candidate, it is not a candidate at all — a removal for a translation
+    // that does not exist echoes nothing back and reports a deletion the
+    // merchant never had.
+    const stale = findStaleTranslations(
+      [translation({ locale: "de" })],
+      primary({ title: "Box" }),
+      moved,
+      { fillLocales: ["de", "it"] },
+    );
+    const filled = stale.find((s) => s.locale === "it");
+    expect(filled?.filled).toBe(true);
+    expect(stale.find((s) => s.locale === "de")?.filled).toBeUndefined();
+
+    const off = partitionStaleTranslations(stale, false);
+    expect(off.purge.map((e) => e.locale)).toEqual(["de"]);
+    expect(off.retranslate).toEqual([]);
+    expect(off.declined).toEqual([]);
+  });
+
   it("changes nothing when no fill locales are given", () => {
     const stale = findStaleTranslations([translation({ locale: "fr" })], primary({ title: "Box" }), moved);
     expect(stale.map((s) => s.locale)).toEqual(["fr"]);
