@@ -14,6 +14,7 @@ import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
 import { translationSavedAt } from "~/utils/translation-save-lock.server";
 import {
   featuredAltLockId,
+  marketLayerLockId,
   subResourceLockId,
 } from "~/services/translations/translation-locks.shared";
 import {
@@ -1122,7 +1123,7 @@ describe("applyBulkDiff — foreign writes claim their OWN lock, never the row",
     expect(translationSavedAt(COLLECTION)).toBeNull();
   });
 
-  it("a MARKET-layer write claims nothing — a mark would abort the global repair it can never collide with", async () => {
+  it("a MARKET-layer write claims the market key — invisible to the repair, visible to the sync", async () => {
     const COLLECTION = "gid://shopify/Collection/lock-alt-market";
     const IMAGE = "gid://shopify/CollectionImage/lock-alt-market-1";
     const MARKET = "gid://shopify/Market/9";
@@ -1146,7 +1147,7 @@ describe("applyBulkDiff — foreign writes claim their OWN lock, never the row",
       throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
     });
 
-    await applyBulkDiff(
+    const result = await applyBulkDiff(
       { db: mockDb() as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
       [
         {
@@ -1160,7 +1161,70 @@ describe("applyBulkDiff — foreign writes claim their OWN lock, never the row",
       ],
     );
 
+    // Without this the whole test passes vacuously: a refused write claims
+    // nothing either, and every assertion below would still be green.
+    expect(result.failures).toEqual([]);
+    expect(translationSavedAt(marketLayerLockId(featuredAltLockId(COLLECTION)))).not.toBeNull();
+    // The repair writes GLOBAL rows and must not stand down over a layer it
+    // can never collide with.
     expect(translationSavedAt(featuredAltLockId(COLLECTION))).toBeNull();
     expect(translationSavedAt(COLLECTION)).toBeNull();
+  });
+
+  it("a MARKET-layer sub-resource write claims the market key only", async () => {
+    const PRODUCT = "gid://shopify/Product/lock-sub-market";
+    const METAFIELD = "gid://shopify/Metafield/lock-sub-market-1";
+    const MARKET = "gid://shopify/Market/11";
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { value: "d-value" });
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "value", locale: LOCALE, value: "Soie", market: { id: MARKET } }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = {
+      ...mockDb(),
+      productMetafield: {
+        findMany: vi.fn(async () => [
+          { id: METAFIELD, productId: PRODUCT, namespace: "custom", key: "care" },
+        ]),
+      },
+      productOption: { findMany: vi.fn(async () => []) },
+    };
+    const columns = columnsByType();
+    columns.product = buildColumnsForType(
+      "product",
+      [{ namespace: "custom", key: "care", type: "single_line_text_field" }],
+      fullCaps,
+    );
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columns },
+      [
+        {
+          rowId: PRODUCT,
+          rowType: "product",
+          locale: LOCALE,
+          marketId: MARKET,
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Soie",
+        },
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(translationSavedAt(marketLayerLockId(subResourceLockId(PRODUCT)))).not.toBeNull();
+    expect(translationSavedAt(subResourceLockId(PRODUCT))).toBeNull();
+    expect(translationSavedAt(METAFIELD)).toBeNull();
+    expect(translationSavedAt(PRODUCT)).toBeNull();
   });
 });

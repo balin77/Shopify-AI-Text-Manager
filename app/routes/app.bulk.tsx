@@ -466,11 +466,19 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
   // Phase 4b: the published foreign locales are the target set for the
   // primary-save stale-translation invalidation (cached read).
   const { getCachedShopLocales } = await import("../utils/shop-locales-cache.server");
-  const foreignLocales = (await getCachedShopLocales(admin, shop).catch(() => []))
+  const shopLocalesForSave = await getCachedShopLocales(admin, shop).catch(() => []);
+  const foreignLocales = shopLocalesForSave
     .filter((l) => l.published && !l.primary)
     .map((l) => l.locale);
+  // The source language of the auto-translation's value prompts (option names,
+  // metafield values, alt texts). A failed lookup answers [] — never a wrong
+  // locale — and those surfaces then follow the stored deletion answer.
+  const primaryLocale = shopLocalesForSave.find((l) => l.primary)?.locale;
 
-  const result = await applyBulkDiff({ db, shop, admin, columnsByType, foreignLocales }, diff);
+  const result = await applyBulkDiff(
+    { db, shop, admin, columnsByType, foreignLocales, primaryLocale },
+    diff,
+  );
   return json<ActionResult>({ ok: true, saved: result.saved, failures: result.failures });
 };
 
