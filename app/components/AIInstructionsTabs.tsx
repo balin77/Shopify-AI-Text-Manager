@@ -658,12 +658,15 @@ export function AIInstructionsTabs({
                           re-translates (the two webhook types, plus the
                           content types whose own save now does it), and saying
                           otherwise would describe a destructive behaviour as
-                          disabled while it still runs on metaobjects, theme
-                          texts, options, metafields and alt texts. */}
+                          disabled while it still runs: on the bulk editor's
+                          groups past MAX_REPAIR_GROUPS, and everywhere a
+                          save's own repair cannot run at all (no primary
+                          locale, an unresolvable image, a value the prompt
+                          would corrupt). */}
                       {autoTranslateActive && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {t.settings.translationPurgeSupersededNote ||
-                            'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern im Editor. Nur im Bulk-Editor wird weiter gelöscht.'}
+                            'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern, im Editor wie im Bulk-Editor. Ein Speichern im Bulk-Editor startet höchstens 25 solche Läufe; darüber hinaus wird gelöscht.'}
                         </Text>
                       )}
                     </BlockStack>
