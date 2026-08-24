@@ -34,13 +34,30 @@
      hand the indent back to the row and zero this one — two readers, one
      switch, instead of an override in three places. */
   --menu-row-cell-indent: var(--menu-row-indent, 0px);
-  /* The lane in front of the name box that the drag handle sits in. */
-  --menu-row-handle-lane: 1.5rem;
+  /* The lane in front of the name box that the drag handle sits in — which is
+     also the handle's hit area. 24px was a glyph with almost no target around
+     it: fine to look at, hard to grab. */
+  --menu-row-handle-lane: 2rem;
+  /* The handle's own height. Its width is the lane. */
+  --menu-row-handle-size: 2rem;
 }
 
 /* A foreign locale has no handle to make room for. */
 .menu-row-grid--no-handle {
   --menu-row-handle-lane: 0rem;
+}
+
+/*
+ * A finger is not a pointer. On a touch screen the handle becomes a full
+ * 44px target — the size below which a control is measurably hard to hit —
+ * and the lane widens with it. This is the same control, not a second one:
+ * only the two numbers change.
+ */
+@media (pointer: coarse) {
+  .menu-row-grid {
+    --menu-row-handle-lane: 2.75rem;
+    --menu-row-handle-size: 2.75rem;
+  }
 }
 
 /* A foreign locale has no target control. Without this the second column
@@ -80,15 +97,29 @@
   position: absolute;
   left: var(--menu-row-cell-indent);
   /* The handle belongs beside the input BOX, and a Polaris field puts its
-     label row above that box. */
-  top: 1.5rem;
+     label row above that box. The height is centred on that line rather than
+     starting at it, so the target grows in both directions. */
+  top: calc(1.5rem - (var(--menu-row-handle-size) - 1rem) / 2);
   width: var(--menu-row-handle-lane);
-  text-align: left;
+  height: var(--menu-row-handle-size);
+  /* The glyph centred in a target big enough to hit. Grid rather than a line
+     height, so the box can grow without the character drifting off its
+     middle. */
+  display: grid;
+  place-items: center;
+  font-size: 1.125rem;
   cursor: grab;
   color: var(--p-color-icon-secondary, #6d7175);
   touch-action: none;
   user-select: none;
   line-height: 1;
+  /* A drag in progress should look held, not still hoverable. */
+  border-radius: 4px;
+}
+
+.menu-row-handle:active {
+  cursor: grabbing;
+  background: var(--p-color-bg-surface-secondary, #f1f2f3);
 }
 
 .menu-row-target {
