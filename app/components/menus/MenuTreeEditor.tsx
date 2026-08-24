@@ -218,7 +218,26 @@ export function MenuTreeEditor({
 
   const sensors = useSensors(
     useSensor(MouseSensor),
-    useSensor(TouchSensor),
+    useSensor(TouchSensor, {
+      /**
+       * Press and hold, THEN drag — and that is what makes the sideways drag
+       * work on a phone at all.
+       *
+       * Without a constraint the sensor starts on touchstart, and the mobile
+       * browser is still running its own pan heuristic over the first few
+       * moves: it decides from them whether the gesture is a scroll, and once
+       * it has decided on the vertical axis it keeps the horizontal component
+       * for itself. `touch-action: none` on the handle stops the page from
+       * actually scrolling, so the drag looked like it worked — vertically —
+       * while the x delta never arrived and the depth could not change.
+       *
+       * With a delay the sensor claims the whole gesture before the first move
+       * is interpreted, so both axes are ours. `tolerance` is how far the
+       * finger may creep during the hold without cancelling it: a finger is
+       * not a mouse and never holds perfectly still.
+       */
+      activationConstraint: { delay: 200, tolerance: 8 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
