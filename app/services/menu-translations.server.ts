@@ -406,6 +406,15 @@ export async function refreshMenuCache(
   db: PrismaClient,
   shop: string,
 ): Promise<number> {
+  // Taken BEFORE the read, and used at the very end to keep the orphan cleanup
+  // from judging rows it cannot have seen. Everything between here and the
+  // deleteMany — the read itself plus one upsert per menu — is a window in
+  // which a menu item can be created and translated, and a translation of an
+  // item that did not exist when this snapshot was taken is not an orphan of
+  // it. This used to run only when someone opened /app/menus; on the 60s
+  // scheduler the window comes around often enough to matter.
+  const snapshotAt = new Date();
+
   const response = await gateway.graphql(MENUS_WITH_ITEMS_QUERY, {
     variables: { first: MENU_FETCH_LIMIT },
   });
@@ -447,17 +456,24 @@ export async function refreshMenuCache(
   }
 
   if (menus.length === 0) {
-    // Same guard syncAllMenus applies: an empty answer over a non-empty cache
-    // is a failed read far more often than it is a shop that deleted every
-    // menu, and acting on it would delete the merchant's translations.
+    // An empty answer over a non-empty cache is a failed read far more often
+    // than it is a shop that deleted every menu, and acting on it would delete
+    // the merchant's translations.
+    //
+    // This THROWS rather than returning 0, and the difference is the whole
+    // point: the callers are a page loader and three sync phases. The loader
+    // catches anything non-Response and serves the cached menus, so it degrades
+    // exactly as before. The sync phases record a phase failure — which is what
+    // this is. Returning 0 would let initial-sync mark phase 8 successful and
+    // set the completion marker, and /api/sync-content report "0 menus" with no
+    // failure, i.e. show a merchant whose read is broken that they have no
+    // menus. Not deleting anything is only half the guarantee; the other half
+    // is not calling a failed read a result.
     const localCount = await db.menu.count({ where: { shop } });
     if (localCount > 0) {
-      logger.warn("[MENU-TRANSLATIONS] Shopify returned 0 menus over a non-empty cache — nothing deleted", {
-        context: "MenuTranslations",
-        shop,
-        localCount,
-      });
-      return menus.length;
+      throw new Error(
+        `Shopify returned 0 menus but ${localCount} exist locally - aborting to prevent data loss`,
+      );
     }
   }
 
@@ -486,7 +502,12 @@ export async function refreshMenuCache(
     return menus.length;
   }
   const orphaned = await db.contentTranslation.deleteMany({
-    where: { shop, resourceType: MENU_LINK_RESOURCE_TYPE, resourceId: { notIn: liveLinkIds } },
+    where: {
+      shop,
+      resourceType: MENU_LINK_RESOURCE_TYPE,
+      resourceId: { notIn: liveLinkIds },
+      updatedAt: { lt: snapshotAt },
+    },
   });
   if (orphaned.count > 0) {
     logger.info("[MENU-TRANSLATIONS] Removed translations of deleted menu items", {

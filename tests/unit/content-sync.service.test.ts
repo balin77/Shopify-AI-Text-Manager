@@ -129,6 +129,25 @@ describe('ContentSyncService.syncAllMenus()', () => {
     expect(count).toBe(2);
   });
 
+  it('accepts an admin that is ALREADY a gateway without wrapping it again', async () => {
+    // BackgroundSyncService constructs us with its own gateway
+    // (`new ContentSyncService(this.gateway, …)`). A gateway around a gateway
+    // is not a no-op — each keeps its own queue and its own 3 retries — so
+    // syncAllMenus reuses the one it was given. This pins that the instanceof
+    // branch is actually reachable and still works end to end; the retry
+    // amplification it prevents is only observable under a simulated throttle
+    // and is not asserted here.
+    const { ShopifyApiGateway } = await import('~/services/shopify-api-gateway.service');
+    const rawAdmin = makeAdmin([menuNode]);
+    const gateway = new ShopifyApiGateway(rawAdmin as never, shop);
+
+    const count = await new ContentSyncService(gateway as never, shop).syncAllMenus();
+
+    expect(count).toBe(1);
+    expect(rawAdmin.graphql).toHaveBeenCalledTimes(1);
+    expect(mockMenuUpsert).toHaveBeenCalledOnce();
+  });
+
   it('propagates GraphQL errors instead of reporting an empty shop', async () => {
     const admin = makeAdmin(null, 'Menu not accessible');
 

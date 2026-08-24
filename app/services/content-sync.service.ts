@@ -917,11 +917,6 @@ export class ContentSyncService {
    * Delegating also brings two things this path never had: the whole shop in
    * ONE query instead of 1 + N, and the orphan cleanup of `Link` translations
    * whose menu item is gone — which until now only ever ran on a page visit.
-   *
-   * One deliberate change of signal: "Shopify returned 0 menus over a
-   * non-empty cache" used to throw here and now logs a warning and returns 0,
-   * because that is what the one remaining rule does. The guard that matters
-   * is identical either way — neither version deletes anything.
    */
   async syncAllMenus(): Promise<number> {
     logger.debug(`[ContentSync] Syncing all menus...`);
@@ -930,11 +925,18 @@ export class ContentSyncService {
     const { ShopifyApiGateway } = await import("./shopify-api-gateway.service");
     const { refreshMenuCache } = await import("./menu-translations.server");
 
-    const count = await refreshMenuCache(
-      new ShopifyApiGateway(this.admin, this.shop),
-      db,
-      this.shop,
-    );
+    // Wrap only if the caller did not already hand us a gateway.
+    // BackgroundSyncService constructs us with ITS gateway
+    // (`new ContentSyncService(this.gateway, …)`), and a gateway around a
+    // gateway is not a no-op: each keeps its own queue and its own 3 retries,
+    // so one throttled query becomes up to 16 admin calls with a second of
+    // sleep between them, all of it blocking the sync phase behind it.
+    const gateway =
+      this.admin instanceof ShopifyApiGateway
+        ? this.admin
+        : new ShopifyApiGateway(this.admin, this.shop);
+
+    const count = await refreshMenuCache(gateway, db, this.shop);
 
     logger.debug(`[ContentSync] Synced ${count} menus`);
     return count;
