@@ -338,6 +338,18 @@ const seoJsonLdAudit: Summariser = (blob) => {
 const seoBulkMeta: Summariser = (blob) => {
   const lines: TaskSummaryLine[] = [];
   num(lines, blob, "saved", "savedRows");
+  // Auto-translate (retranslate.server.ts): background runs this save started,
+  // and the rows whose stale translations were DELETED instead because the save
+  // had already opened MAX_REPAIR_GROUPS of them. The second line is the one
+  // that has to exist — a merchant told "everything is re-translated" who then
+  // finds empty fields on row 30 cannot learn from the grid that a cap applied.
+  // Absent on a result from before the field existed, which reads as "not
+  // reported", never as zero.
+  const retranslation = blob.retranslation;
+  if (retranslation && typeof retranslation === "object" && !Array.isArray(retranslation)) {
+    num(lines, retranslation as Blob, "started", "retranslationsStarted");
+    num(lines, retranslation as Blob, "capped", "retranslationsCapped", warningWhenPositive);
+  }
   const failures = bulkFailures(blob.failures);
   const failedCount = arrayLength(blob.failures);
   if (failedCount !== null) {

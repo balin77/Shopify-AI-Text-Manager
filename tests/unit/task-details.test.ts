@@ -69,6 +69,23 @@ describe("summariseTaskResult — malformed input", () => {
     expect(summariseTaskResult("seoCrawl", "{}")).toBeNull();
     expect(summariseTaskResult("seoAudit", "{}")).toBeNull();
     expect(summariseTaskResult("seoBulkMeta", "{}")).toBeNull();
+    // The bulk editor's auto-translation block: absent means NOT REPORTED (a
+    // result stored before the field existed, or a shop without the feature),
+    // never "nothing was re-translated and nothing was deleted".
+    const withoutBlock = summariseTaskResult("seoBulkMeta", json({ saved: 1, failures: [] }));
+    expect(withoutBlock?.lines.map((l) => l.labelKey)).not.toContain("retranslationsStarted");
+    expect(withoutBlock?.lines.map((l) => l.labelKey)).not.toContain("retranslationsCapped");
+    const withBlock = summariseTaskResult(
+      "seoBulkMeta",
+      json({ saved: 1, failures: [], retranslation: { started: 3, skipped: 0, capped: 2 } }),
+    );
+    expect(withBlock?.lines).toEqual(
+      expect.arrayContaining([
+        { labelKey: "retranslationsStarted", value: "3" },
+        // A cap that BIT is a warning: those rows lost their translations.
+        { labelKey: "retranslationsCapped", value: "2", tone: "warning" },
+      ]),
+    );
     // Values of the wrong TYPE are not lines either.
     expect(summariseTaskResult("seoCrawl", json({ pagesCrawled: "12", pagesOk: null }))).toBeNull();
     expect(summariseTaskResult("seoCrawl", json({ pagesCrawled: NaN }))).toBeNull();

@@ -418,7 +418,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 type ActionResult =
-  | { ok: true; saved: number; failures: BulkFailure[] }
+  | {
+      ok: true;
+      saved: number;
+      failures: BulkFailure[];
+      /** Background re-translations this save started, and how many rows were
+       *  DELETED instead because the per-save cap was reached. */
+      retranslation?: { started: number; skipped: number; capped: number };
+    }
   | { ok: false; error: string };
 
 export const action = async ({ request }: ActionFunctionArgs): Promise<DataResponse> => {
@@ -479,7 +486,12 @@ export const action = async ({ request }: ActionFunctionArgs): Promise<DataRespo
     { db, shop, admin, columnsByType, foreignLocales, primaryLocale },
     diff,
   );
-  return json<ActionResult>({ ok: true, saved: result.saved, failures: result.failures });
+  return json<ActionResult>({
+    ok: true,
+    saved: result.saved,
+    failures: result.failures,
+    ...(result.retranslation ? { retranslation: result.retranslation } : {}),
+  });
 };
 
 /** Deep-link target per content type for the row's "open in editor" action.
@@ -632,6 +644,9 @@ export default function BulkEditor() {
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
   const [lastSavedCount, setLastSavedCount] = useState<number | null>(null);
+  const [lastRetranslation, setLastRetranslation] = useState<
+    { started: number; skipped: number; capped: number } | null
+  >(null);
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
   const [overBudgetBanner, setOverBudgetBanner] = useState(false);
@@ -915,6 +930,7 @@ export default function BulkEditor() {
       });
       setLastFailures(saveFetcher.data.failures);
       setLastSavedCount(saveFetcher.data.saved);
+      setLastRetranslation(saveFetcher.data.retranslation ?? null);
       // Undo snapshots taken before the save describe a pre-save world —
       // popping one would resurrect just-saved values as dirty edits (§8.4).
       undoStackRef.current = [];
@@ -2133,11 +2149,32 @@ export default function BulkEditor() {
                 )}
                 {lastSavedCount !== null && (
                   <Banner tone={failedRowCount > 0 ? "warning" : "success"}>
-                    {failedRowCount > 0
-                      ? b.saveSuccessWithFailures
-                          .replace("{saved}", String(lastSavedCount))
-                          .replace("{failed}", String(failedRowCount))
-                      : b.saveSuccess.replace("{count}", String(lastSavedCount))}
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm">
+                        {failedRowCount > 0
+                          ? b.saveSuccessWithFailures
+                              .replace("{saved}", String(lastSavedCount))
+                              .replace("{failed}", String(failedRowCount))
+                          : b.saveSuccess.replace("{count}", String(lastSavedCount))}
+                      </Text>
+                      {/* Auto-translate is a Max feature that spends the
+                          merchant's own AI credit unattended, so a save that
+                          started runs says so — and a save that hit the cap
+                          says which rows lost their translations instead,
+                          because "everything is re-translated" plus silently
+                          empty fields on row 30 is not a state anyone can
+                          diagnose from the grid. */}
+                      {lastRetranslation && lastRetranslation.started > 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {b.retranslationStarted.replace("{count}", String(lastRetranslation.started))}
+                        </Text>
+                      )}
+                      {lastRetranslation && lastRetranslation.capped > 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {b.retranslationCapped.replace("{count}", String(lastRetranslation.capped))}
+                        </Text>
+                      )}
+                    </BlockStack>
                   </Banner>
                 )}
                 {bannerFailures.length > 0 && (

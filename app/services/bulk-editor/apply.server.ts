@@ -3424,8 +3424,9 @@ export async function applyBulkDiff(
   // two are persisted in whatever order the client sent them.
   // Never throws — every row above is already saved.
   dropWebhookOwnedGroups(repairPlan);
+  let retranslation: BulkApplyResult["retranslation"];
   try {
-    await flushBulkRepairs({
+    const flushed = await flushBulkRepairs({
       db,
       shop,
       gateway,
@@ -3434,6 +3435,9 @@ export async function applyBulkDiff(
       policy: changePolicy,
       plan: repairPlan,
     });
+    if (flushed.started > 0 || flushed.skipped > 0 || repairPlan.overflow > 0) {
+      retranslation = { ...flushed, capped: repairPlan.overflow };
+    }
   } catch (err: unknown) {
     logger.warn("[BULK] Auto-translation flush failed — stale rows kept", {
       context: "Bulk",
@@ -3450,5 +3454,5 @@ export async function applyBulkDiff(
     failedRows: new Set(failures.map((f) => f.rowId)).size,
   });
 
-  return { saved, failures };
+  return { saved, failures, ...(retranslation ? { retranslation } : {}) };
 }
