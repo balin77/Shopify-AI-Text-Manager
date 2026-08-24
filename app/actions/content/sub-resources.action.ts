@@ -1060,6 +1060,45 @@ export async function handleSavePrimarySubResources(
         : changePolicy.purgeUnreconciledSurfaces);
 
     if (purgeStaleTranslations && somethingChanged && foreignLocales.length > 0) {
+      // The MARKET overrides of every sub-resource this save moved. Nothing
+      // re-translates one (the repair writes global rows only), so once the
+      // option name or the metafield value changes the override is as stale as
+      // the global row beside it — and a sub-resource is outside every webhook
+      // and every sync-side reconciliation in this app, so nothing else looks
+      // again. Option VALUES are covered by the option's own entry below only
+      // where their ids are known; the removal loop addresses each id itself.
+      try {
+        const { purgeMarketOverrides } = await import(
+          "~/services/translations/market-layer-purge.server"
+        );
+        const { contentTranslationMirror } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        const mirror = contentTranslationMirror(session.shop);
+        const refs = [
+          ...changedOptionIds
+            .filter((id) => isValidShopifyGID(id))
+            .map((id) => ({ resourceId: id, resourceType: "ProductOption" })),
+          ...changedMetafieldIds
+            .filter((id) => isValidShopifyGID(id))
+            .map((id) => ({ resourceId: id, resourceType: "Metafield" })),
+        ];
+        if (refs.length > 0) {
+          await purgeMarketOverrides({
+            gateway,
+            mirror,
+            refs,
+            locales: foreignLocales,
+            // `name` for an option, `value` for a metafield — the mirror row
+            // carries whichever its own resource type uses, and asking for both
+            // costs nothing because the lookup is one query over the set.
+            keys: ["name", "value"],
+            context: "subResource",
+          });
+        }
+      } catch {
+        // Logged inside; a stale override never fails a save that succeeded.
+      }
       try {
         {
           // (the `foreignLocales.length > 0` guard now sits on the `if` above —

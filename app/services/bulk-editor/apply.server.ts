@@ -52,6 +52,8 @@ import {
 } from "./retranslate.server";
 import { isBatchTranslatableValueType } from "../metaobject-fields.shared";
 import type { TranslationChangePolicy } from "../translations/translation-change-policy.server";
+// TYPE only — the module is imported dynamically where it is used.
+import type { TranslationMirror } from "../translations/stale-translation-sync.server";
 import {
   loadDigestsForRows,
   fetchDigestsForResource,
@@ -313,6 +315,47 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
  * the Shopify admin) rather than failing the cell.
  */
 /**
+ * The MARKET overrides of a changed primary value.
+ *
+ * Nothing re-translates an override — every repair in this app writes global
+ * rows only — so when the text it describes moves it is exactly as stale as the
+ * global row beside it, and until this existed nothing removed it either. It
+ * runs on the paths that did NOT hand the change to the repair; where they did,
+ * the repair purges the market layer itself.
+ *
+ * Keys and locales are the CHANGE, not what the global lookup found: an
+ * override can sit on a (locale, key) that has no global translation at all, so
+ * a purge driven by that lookup would walk straight past it.
+ *
+ * Best-effort, like every §6.6 site — the primary write has already succeeded.
+ */
+async function purgeBulkMarketOverrides(
+  deps: PersistDeps,
+  mirror: TranslationMirror,
+  refs: Array<{ resourceId: string; resourceType: string }>,
+  keys: readonly string[],
+  context: string,
+): Promise<void> {
+  try {
+    const { purgeMarketOverrides } = await import("../translations/market-layer-purge.server");
+    await purgeMarketOverrides({
+      gateway: deps.gateway,
+      mirror,
+      refs,
+      locales: deps.foreignLocales,
+      keys,
+      context,
+    });
+  } catch (err: unknown) {
+    logger.warn("[BULK] Market-override purge could not run — those rows stay", {
+      context: "Bulk",
+      surface: context,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Which repair a §6.6 candidate belongs to, and record it. Returns FALSE when
  * the caller must fall back to its own purge: the group cap was reached, or the
  * row type has no repair at all.
@@ -431,6 +474,22 @@ async function invalidateStaleForeignTranslations(
 
   const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
   const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+
+  // The market layer FIRST: it is driven by the changed keys and every
+  // published locale, so it must not sit behind the global lookup's early exit.
+  {
+    const { contentTranslationMirror, metaobjectTranslationMirror } = await import(
+      "../translations/stale-translation-sync.server"
+    );
+    await purgeBulkMarketOverrides(
+      deps,
+      isMetaobject ? metaobjectTranslationMirror(shop, new Map()) : contentTranslationMirror(shop),
+      [{ resourceId, resourceType: contentResourceType }],
+      keys,
+      isMetaobject ? "metaobject" : contentResourceType,
+    );
+  }
+
   try {
     // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
     // entirely when there is nothing to invalidate (the common case on shops
@@ -540,6 +599,23 @@ async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: s
       if (collected) return;
     }
     if (!deps.purgeStaleSubResourceTranslations) return;
+
+    // The market layer, before the global lookup's early exit — two stores, the
+    // same split the write path makes.
+    {
+      const { contentTranslationMirror, productImageAltMirror } = await import(
+        "../translations/stale-translation-sync.server"
+      );
+      await purgeBulkMarketOverrides(
+        deps,
+        cacheRow
+          ? productImageAltMirror(new Map([[mediaId, cacheRow.id]]))
+          : contentTranslationMirror(deps.shop),
+        [{ resourceId: mediaId, resourceType: "MediaImage" }],
+        ["alt"],
+        "MediaImage",
+      );
+    }
 
     const existing = cacheId
       ? await db.productImageAltTranslation.findMany({
@@ -1712,6 +1788,28 @@ async function invalidateStaleFeaturedImageAltTranslations(
     }
   }
   if (!deps.purgeStaleSubResourceTranslations) return;
+
+  // The market layer of the featured alt. Its rows live on the PARENT under
+  // `image_alt_text` while Shopify is addressed on the IMAGE under `alt` — the
+  // mirror rewrites both halves, which is exactly why it is used here too.
+  try {
+    const imageResourceId = await fetchFeaturedImageId(deps, rowType, parentId);
+    if (imageResourceId) {
+      const { featuredImageAltMirror } = await import(
+        "../translations/stale-translation-sync.server"
+      );
+      await purgeBulkMarketOverrides(
+        deps,
+        featuredImageAltMirror(shop, parentId, resourceType),
+        [{ resourceId: imageResourceId, resourceType: "MediaImage" }],
+        ["alt"],
+        "image_alt_text",
+      );
+    }
+  } catch {
+    // The lookup failed; the global removal below still tries.
+  }
+
   try {
     // Only touch Shopify when there is actually something to invalidate — the
     // common case is a shop that never translated this alt text.

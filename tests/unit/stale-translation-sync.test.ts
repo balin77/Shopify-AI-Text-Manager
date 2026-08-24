@@ -20,7 +20,14 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
     contentTranslation: {
       deleteMany: vi.fn(async () => ({ count: 1 })),
       upsert: vi.fn(async () => ({})),
-      findMany: vi.fn(async (): Promise<Array<{ resourceId?: string; key: string; locale: string }>> => []),
+      // Takes the query: the market-override purge asks this same table for
+      // `marketId: { not: "" }`, so a fake that ignores `where` would answer the
+      // detection's rows to both and issue removals nobody asked for.
+      findMany: vi.fn(
+        async (
+          _args?: unknown,
+        ): Promise<Array<{ resourceId?: string; key: string; locale: string; marketId?: string }>> => [],
+      ),
     },
     productImageAltTranslation: {
       findMany: vi.fn(async (): Promise<Array<{ imageId: string; locale: string }>> => []),
@@ -42,6 +49,8 @@ const { db, shopify, ai, policy } = vi.hoisted(() => {
      *  span several, and both mutations take exactly one. */
     removeTargets: [] as string[],
     registerTargets: [] as string[],
+    /** Non-global layers a removal addressed — the market-override purge. */
+    removeMarkets: [] as string[],
     /** The gap re-reads: what the folded removal did not echo back. */
     rereadCalls: [] as Array<{ keys: string[]; locale: string }>,
     rereadConfirms: null as null | Record<string, string[]>,
@@ -76,8 +85,9 @@ vi.mock("../../app/services/bulk-editor/translations.server", () => ({
   // so the fake records one entry PER LOCALE to keep the assertions about
   // "each locale's own keys" meaningful.
   removeAndVerifyAcrossLocales: vi.fn(
-    async (_gw: unknown, resourceId: string, keys: string[], locales: string[]) => {
+    async (_gw: unknown, resourceId: string, keys: string[], locales: string[], marketId?: string) => {
       shopify.removeTargets.push(resourceId);
+      if (marketId) shopify.removeMarkets.push(marketId);
       const confirmedPairs = new Set<string>();
       for (const locale of locales) {
         shopify.removeCalls.push({ keys, locale });
@@ -171,6 +181,7 @@ beforeEach(() => {
   shopify.removeCalls = [];
   shopify.registerCalls = [];
   shopify.removeTargets = [];
+  shopify.removeMarkets = [];
   shopify.registerTargets = [];
   shopify.rereadCalls = [];
   shopify.rereadConfirms = null;
@@ -575,10 +586,16 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
     db.contentTranslation.findMany.mockClear();
-    db.contentTranslation.findMany.mockResolvedValue([
-      { resourceId: PAGE, key: "title", locale: "de" },
-      { resourceId: PAGE, key: "body_html", locale: "de" },
-    ]);
+    db.contentTranslation.findMany.mockReset();
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      // Global rows for the detection; no market overrides unless a test says so.
+      args?.where?.marketId === ""
+        ? [
+            { resourceId: PAGE, key: "title", locale: "de" },
+            { resourceId: PAGE, key: "body_html", locale: "de" },
+          ]
+        : [],
+    );
     shopifyHas = { de: ["title", "body_html"] };
     primaryContent = {
       [PAGE]: {
@@ -649,9 +666,65 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await awaitDetachedRetranslations();
 
     expect(shopify.registerCalls).toHaveLength(2);
-    const where = (db.contentTranslation.findMany.mock.calls.at(-1) as unknown as [{ where: any }])[0].where;
-    expect(where).toMatchObject({ marketId: "" });
+    // The DETECTION's own lookup — the GLOBAL one. The market-override purge
+    // queries the same table for `marketId: { not: "" }`, so picking the last
+    // call would assert against that instead.
+    const calls = db.contentTranslation.findMany.mock.calls as unknown as [{ where: any }][];
+    const where = calls.map((call) => call[0].where).find((w) => w.marketId === "");
+    expect(where).toBeDefined();
     expect(where.OR).toEqual([{ resourceId: PAGE, resourceType: "Page" }]);
+  });
+
+  it("removes the MARKET overrides of the same keys — nothing else ever refreshes them", async () => {
+    // A market override is a deliberately different wording, so the repair
+    // never re-translates it. That is exactly why it has to GO when the text it
+    // describes moves: nothing else would ever notice, and it would keep
+    // describing text that no longer exists on that market's storefront.
+    const MARKET = "gid://shopify/Market/5";
+    db.contentTranslation.findMany.mockImplementation(async (args: any) => {
+      // The detection's own lookup is the GLOBAL one; the override purge asks
+      // the same table for everything that is NOT global.
+      if (args?.where?.marketId === "") {
+        return [
+          { resourceId: PAGE, key: "title", locale: "de" },
+          { resourceId: PAGE, key: "body_html", locale: "de" },
+        ];
+      }
+      return [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }];
+    });
+
+    const result = await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    // The global rows were REFRESHED, not deleted…
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls.every((c) => c.locale === "de")).toBe(true);
+    // …and the market override was removed on ITS OWN layer.
+    expect(shopify.removeMarkets).toEqual([MARKET]);
+    expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
+    expect(
+      db.contentTranslation.deleteMany.mock.calls.some(
+        (call: any) => call[0]?.where?.marketId === MARKET,
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves the market overrides alone when the merchant switched BOTH answers off", async () => {
+    policy.autoTranslateExternalChanges = false;
+    policy.purgeOnPrimaryChange = false;
+    policy.purgeUnreconciledSurfaces = false;
+    const MARKET = "gid://shopify/Market/5";
+    db.contentTranslation.findMany.mockImplementation(async (args: any) => {
+      if (args?.where?.marketId === "") return [{ resourceId: PAGE, key: "title", locale: "de" }];
+      return [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }];
+    });
+
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
+    // "don't delete" means don't delete — on both layers.
+    expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.removeMarkets).toEqual([]);
   });
 
   it("removes a translation whose primary value was CLEARED", async () => {

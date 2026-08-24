@@ -186,6 +186,32 @@ export interface TranslationMirror {
   ): Promise<Array<{ resourceId: string; locale: string; key: string }>>;
   /** Drop the rows for keys Shopify CONFIRMED it removed. */
   remove(ref: TranslationRef, locale: string, keys: readonly string[]): Promise<void>;
+  /**
+   * The MARKET-layer rows this store holds for those keys and locales, each
+   * with the market it belongs to.
+   *
+   * A market override is a deliberately different wording for one market, so
+   * nothing in this app ever re-translates it — but when the primary text it
+   * describes moves, it is exactly as stale as the global row beside it, and
+   * for a long time nothing removed it either. `purgeMarketOverrides`
+   * (market-layer-purge.server.ts) is what does, and this is where it looks.
+   *
+   * Reported in SHOPIFY terms — the resource the removal addresses and the key
+   * it sends — exactly like `existing`, because two of these stores keep their
+   * rows under a different id and key than Shopify does.
+   */
+  marketRows(
+    refs: readonly TranslationRef[],
+    foreignLocales: readonly string[],
+    keys: readonly string[],
+  ): Promise<Array<{ resourceId: string; locale: string; key: string; marketId: string }>>;
+  /** Drop ONE market layer's rows for keys Shopify CONFIRMED it removed. */
+  removeMarket(
+    ref: TranslationRef,
+    locale: string,
+    keys: readonly string[],
+    marketId: string,
+  ): Promise<void>;
   /** Write back one translation Shopify CONFIRMED it stored. */
   write(
     ref: TranslationRef,
@@ -233,6 +259,35 @@ export function contentTranslationMirror(shop: string): TranslationMirror {
           resourceType: ref.resourceType,
           locale,
           marketId: "",
+          key: { in: [...keys] },
+        },
+      });
+    },
+    async marketRows(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const byId = new Map(refs.map((ref) => [ref.resourceId, ref.resourceType] as const));
+      const rows = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          marketId: { not: "" },
+          OR: refs.map((ref) => ({ resourceId: ref.resourceId, resourceType: ref.resourceType })),
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { resourceId: true, key: true, locale: true, marketId: true },
+      });
+      return rows.filter((row: { resourceId: string }) => byId.has(row.resourceId));
+    },
+    async removeMarket(ref, locale, keys, marketId) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.deleteMany({
+        where: {
+          shop,
+          resourceId: ref.resourceId,
+          resourceType: ref.resourceType,
+          locale,
+          marketId,
           key: { in: [...keys] },
         },
       });
@@ -314,6 +369,40 @@ export function metaobjectTranslationMirror(
         },
       });
     },
+    async marketRows(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.metaobjectTranslation.findMany({
+        where: {
+          shop,
+          metaobjectId: { in: refs.map((ref) => ref.resourceId) },
+          marketId: { not: "" },
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { metaobjectId: true, key: true, locale: true, marketId: true },
+      });
+      return rows.map(
+        (row: { metaobjectId: string; key: string; locale: string; marketId: string }) => ({
+          resourceId: row.metaobjectId,
+          key: row.key,
+          locale: row.locale,
+          marketId: row.marketId,
+        }),
+      );
+    },
+    async removeMarket(ref, locale, keys, marketId) {
+      const { db } = await import("../../db.server");
+      await db.metaobjectTranslation.deleteMany({
+        where: {
+          shop,
+          metaobjectId: ref.resourceId,
+          locale,
+          marketId,
+          key: { in: [...keys] },
+        },
+      });
+    },
     async write(ref, locale, key, value) {
       const { db } = await import("../../db.server");
       await db.metaobjectTranslation.upsert({
@@ -386,6 +475,35 @@ export function productImageAltMirror(
       const { db } = await import("../../db.server");
       await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId: "" } });
     },
+    async marketRows(refs, foreignLocales) {
+      const imageIds = refs
+        .map((ref) => imageIdByMedia.get(ref.resourceId))
+        .filter((id): id is string => !!id);
+      if (imageIds.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.productImageAltTranslation.findMany({
+        where: {
+          imageId: { in: imageIds },
+          marketId: { not: "" },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { imageId: true, locale: true, marketId: true },
+      });
+      return rows
+        .map((row: { imageId: string; locale: string; marketId: string }) => ({
+          resourceId: mediaByImageId.get(row.imageId) ?? "",
+          locale: row.locale,
+          key: "alt",
+          marketId: row.marketId,
+        }))
+        .filter((row: { resourceId: string }) => !!row.resourceId);
+    },
+    async removeMarket(ref, locale, _keys, marketId) {
+      const imageId = imageIdByMedia.get(ref.resourceId);
+      if (!imageId) return;
+      const { db } = await import("../../db.server");
+      await db.productImageAltTranslation.deleteMany({ where: { imageId, locale, marketId } });
+    },
     async write(ref, locale, _key, value) {
       const imageId = imageIdByMedia.get(ref.resourceId);
       if (!imageId) return;
@@ -440,6 +558,34 @@ export function featuredImageAltMirror(
       const { db } = await import("../../db.server");
       await db.contentTranslation.deleteMany({
         where: { shop, resourceId: parentId, resourceType: parentType, key: DB_KEY, locale, marketId: "" },
+      });
+    },
+    async marketRows(refs, foreignLocales) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      const rows = await db.contentTranslation.findMany({
+        where: {
+          shop,
+          resourceId: parentId,
+          resourceType: parentType,
+          key: DB_KEY,
+          marketId: { not: "" },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { locale: true, marketId: true },
+      });
+      // The IMAGE's id and Shopify's key, for the same reason `existing` does.
+      return rows.map((row: { locale: string; marketId: string }) => ({
+        resourceId: refs[0].resourceId,
+        locale: row.locale,
+        key: "alt",
+        marketId: row.marketId,
+      }));
+    },
+    async removeMarket(_ref, locale, _keys, marketId) {
+      const { db } = await import("../../db.server");
+      await db.contentTranslation.deleteMany({
+        where: { shop, resourceId: parentId, resourceType: parentType, key: DB_KEY, locale, marketId },
       });
     },
     async write(_ref, locale, _key, value, digest) {
@@ -510,6 +656,36 @@ export function themeTranslationMirror(
           groupId,
           domain,
           marketId: "",
+          resourceId: ref.resourceId,
+          locale,
+          key: { in: [...keys] },
+        },
+      });
+    },
+    async marketRows(refs, foreignLocales, keys) {
+      if (refs.length === 0) return [];
+      const { db } = await import("../../db.server");
+      return db.themeTranslation.findMany({
+        where: {
+          shop,
+          groupId,
+          domain,
+          marketId: { not: "" },
+          resourceId: { in: refs.map((ref) => ref.resourceId) },
+          key: { in: [...keys] },
+          locale: { in: [...foreignLocales] },
+        },
+        select: { resourceId: true, key: true, locale: true, marketId: true },
+      });
+    },
+    async removeMarket(ref, locale, keys, marketId) {
+      const { db } = await import("../../db.server");
+      await db.themeTranslation.deleteMany({
+        where: {
+          shop,
+          groupId,
+          domain,
+          marketId,
           resourceId: ref.resourceId,
           locale,
           key: { in: [...keys] },
@@ -703,7 +879,10 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
       autoTranslate: policy.autoTranslateExternalChanges,
     });
 
-    return await repairStaleTranslations(params, stale, policy);
+    return await repairStaleTranslations(params, stale, policy, {
+      keys: [...new Set(stale.map((entry) => entry.key))],
+      locales: [...new Set(translations.map((row) => row.locale))],
+    });
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Reconciliation failed — stale rows kept", {
       context: "StaleTranslations",
@@ -1192,7 +1371,12 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // this for a merchant write and abandon itself.
     markTranslationSaved(params.lockId ?? resourceId);
 
-    return await repairStaleTranslations(params, stale, policy);
+    return await repairStaleTranslations(params, stale, policy, {
+      // The caller's OWN change, not what the detection found: an override can
+      // sit on a (locale, key) that has no global translation at all.
+      keys: [...new Set(changed.map((item) => item.key))],
+      locales: [...foreignLocales],
+    });
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Post-save re-translation failed — translations kept", {
       context: "StaleTranslations",
@@ -1225,6 +1409,17 @@ async function repairStaleTranslations(
   target: RepairTarget,
   stale: readonly StaleTranslation[],
   policy: TranslationChangePolicy,
+  /**
+   * The FULL change, for the market-override purge — every key the primary
+   * write touched and every published foreign locale, not the subset the
+   * detection found a GLOBAL translation for.
+   *
+   * The two differ in exactly the case that matters: a merchant can hold a
+   * market override for a locale they never translated globally. That pair is
+   * absent from `stale` by construction, so a purge driven by `stale` would
+   * walk straight past the override it exists to remove.
+   */
+  scope: { keys: readonly string[]; locales: readonly string[] },
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
   const lockId = target.lockId ?? resourceId;
@@ -1259,6 +1454,47 @@ async function repairStaleTranslations(
   // what the automation could not deliver, which is a different promise.
   const toPurge =
     declined.length > 0 && policy.purgeUnreconciledSurfaces ? [...purge, ...declined] : purge;
+
+  // The MARKET layer of everything this change touches, BEFORE the global
+  // decisions below — and over the re-translated entries as well as the purged
+  // ones. Nothing in this app re-translates an override (the repair writes
+  // global rows only, deliberately), so when the primary text moves it is
+  // exactly as stale as the global row beside it and nothing else would ever
+  // notice: it kept describing text that no longer exists, on the storefront,
+  // for good. `declined` is NOT in the set — there we refused to try, so the
+  // merchant's stored "don't delete" still stands, on both layers.
+  //
+  // Best-effort and mirror-driven: on a shop with no overrides it is one DB
+  // query and no Shopify call at all (market-layer-purge.server.ts).
+  // `declined` is excluded from the SET but not from the scope: what we refused
+  // to try keeps the merchant's stored answer on both layers. That is why the
+  // gate is `mayPurge` (something is being done about this change) while the
+  // keys and locales come from the caller's full change.
+  if (mayPurge && (retranslate.length > 0 || toPurge.length > 0)) {
+    try {
+      const { purgeMarketOverrides } = await import("./market-layer-purge.server");
+      const refsById = new Map<string, TranslationRef>();
+      for (const entry of [...retranslate, ...toPurge]) {
+        const ref = refOf(target, entry);
+        refsById.set(ref.resourceId, ref);
+      }
+      await purgeMarketOverrides({
+        gateway,
+        mirror,
+        refs: [...refsById.values()],
+        locales: scope.locales,
+        keys: scope.keys,
+        context: resourceType,
+      });
+    } catch (error: unknown) {
+      logger.warn("[StaleTranslations] Market-override purge could not run", {
+        context: "StaleTranslations",
+        shop,
+        resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   let removed = 0;
   if (mayPurge && toPurge.length > 0) {

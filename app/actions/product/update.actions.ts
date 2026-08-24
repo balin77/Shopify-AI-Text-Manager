@@ -1503,6 +1503,39 @@ async function updatePrimaryProduct(
         });
 
         if (dbProduct?.images) {
+          // The MARKET overrides of these alt texts. Nothing re-translates one —
+          // the repair writes global rows only — so once the primary alt moves
+          // the override is as stale as the global row beside it, and an alt
+          // text sits outside every webhook this app listens to.
+          try {
+            const marketImageIdByMedia = new Map<string, string>();
+            for (const index of changedAltTextIndices) {
+              const image = dbProduct.images[index];
+              if (image?.mediaId) marketImageIdByMedia.set(image.mediaId, image.id);
+            }
+            if (marketImageIdByMedia.size > 0) {
+              const { purgeMarketOverrides } = await import(
+                "~/services/translations/market-layer-purge.server"
+              );
+              const { productImageAltMirror } = await import(
+                "~/services/translations/stale-translation-sync.server"
+              );
+              await purgeMarketOverrides({
+                gateway,
+                mirror: productImageAltMirror(marketImageIdByMedia),
+                refs: [...marketImageIdByMedia.keys()].map((mediaId) => ({
+                  resourceId: mediaId,
+                  resourceType: "MediaImage",
+                })),
+                locales: foreignLocales,
+                keys: ["alt"],
+                context: "altText",
+              });
+            }
+          } catch {
+            // Logged inside; never fails a primary write that already succeeded.
+          }
+
           // Collect all Shopify API calls first, then batch DB deletes in a transaction
           const shopifyDeletePromises: Promise<void>[] = [];
           const imageIdsToDeleteTranslations: string[] = [];

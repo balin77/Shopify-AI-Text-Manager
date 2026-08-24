@@ -601,6 +601,34 @@ export class ShopifyContentService {
         "../../app/services/bulk-editor/translations.server"
       );
       const gateway = new ShopifyApiGateway(this.admin, shop);
+
+      // The MARKET overrides of this alt go too: nothing re-translates one (the
+      // repair writes global rows only), so once the primary alt moves it is as
+      // stale as the global row and nothing else would ever notice. Its rows sit
+      // on the PARENT under `image_alt_text` while Shopify is addressed on the
+      // IMAGE under `alt`, which is why the mirror does the addressing.
+      try {
+        const { purgeMarketOverrides } = await import(
+          "../../app/services/translations/market-layer-purge.server"
+        );
+        const { featuredImageAltMirror } = await import(
+          "../../app/services/translations/stale-translation-sync.server"
+        );
+        await purgeMarketOverrides({
+          gateway,
+          mirror: featuredImageAltMirror(shop, resourceId, resourceType),
+          refs: [{ resourceId: imageResourceId, resourceType: 'MediaImage' }],
+          locales,
+          keys: ['alt'],
+          context: 'image_alt_text',
+        });
+      } catch (marketError: unknown) {
+        loggers.translation('warn', `[updateContent] Market-override purge failed — those rows stay`, {
+          resourceId,
+          error: marketError instanceof Error ? marketError.message : String(marketError),
+        });
+      }
+
       const { confirmedPairs } = await removeAndVerifyAcrossLocales(
         gateway,
         imageResourceId,
@@ -1617,6 +1645,35 @@ export class ShopifyContentService {
       // With the purge off the old translations stay and Shopify flags them
       // "outdated" in its own editor instead.
       if (purgeChangedFields && changedTranslationKeys.length > 0 && foreignLocales.length > 0) {
+        // The MARKET overrides of the same keys. Nothing re-translates one — the
+        // repair writes global rows only, deliberately — so once the primary
+        // text moves the override is as stale as the global row beside it, and
+        // nothing else would ever notice. It runs HERE and not in the repair
+        // because this branch is the case where no repair happens; where one
+        // does, it purges the market layer itself.
+        try {
+          const { purgeMarketOverrides } = await import(
+            "../../app/services/translations/market-layer-purge.server"
+          );
+          const { contentTranslationMirror } = await import(
+            "../../app/services/translations/stale-translation-sync.server"
+          );
+          const { ShopifyApiGateway } = await import("../../app/services/shopify-api-gateway.service");
+          await purgeMarketOverrides({
+            gateway: new ShopifyApiGateway(this.admin, shop),
+            mirror: contentTranslationMirror(shop),
+            refs: [{ resourceId, resourceType }],
+            locales: foreignLocales,
+            keys: changedTranslationKeys,
+            context: resourceType,
+          });
+        } catch (marketError: unknown) {
+          loggers.translation('warn', 'Market-override purge failed — those rows stay', {
+            resourceId,
+            error: marketError instanceof Error ? marketError.message : String(marketError),
+          });
+        }
+
         // Delete from Shopify
         await this.deleteAllTranslationsForKeys({
           resourceId,
@@ -1625,9 +1682,9 @@ export class ShopifyContentService {
         });
 
         // Delete from database (single batch call instead of N×M loop).
-        // Scoped to global (marketId "") to mirror the global-only Shopify
-        // removal above: market-specific overrides survive both sides (Shopify
-        // flags them outdated), matching the plan's market-independence rule.
+        // Scoped to global (marketId "") because that is what the removal above
+        // sent; the MARKET layer was handled separately, before it, and needs
+        // its own echo per market to be deleted safely.
         await db.contentTranslation.deleteMany({
           where: {
             shop,

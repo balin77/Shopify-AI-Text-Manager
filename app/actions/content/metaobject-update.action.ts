@@ -477,6 +477,30 @@ export async function handleMetaobjectUpdate(
         // Only the rows that belong to THIS entry and to a key this save moved:
         // two entries of one type share key names, so an unfiltered list would
         // remove a translation nobody flagged.
+        // The MARKET overrides of these fields go regardless of what the
+        // GLOBAL lookup found: an override can sit on a (locale, key) with no
+        // global translation at all, and nothing ever re-translates one — the
+        // repair writes global rows only — so once the field's text moves it is
+        // stale with nobody left to notice.
+        try {
+          const { purgeMarketOverrides } = await import(
+            "~/services/translations/market-layer-purge.server"
+          );
+          const { metaobjectTranslationMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          await purgeMarketOverrides({
+            gateway,
+            mirror: metaobjectTranslationMirror(session.shop, new Map()),
+            refs: [{ resourceId: metaobjectId, resourceType: "Metaobject" }],
+            locales: foreignLocales,
+            keys,
+            context: "metaobject",
+          });
+        } catch {
+          // Logged inside; a stale override never fails a save that succeeded.
+        }
+
         const rows = existing.filter(
           (row) => row.metaobjectId === metaobjectId && keys.includes(row.key),
         );

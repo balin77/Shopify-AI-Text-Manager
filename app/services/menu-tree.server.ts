@@ -527,6 +527,28 @@ export async function saveMenuTree(
         const linkId = linkGidForMenuItem(menuItemId);
         if (!linkId) continue;
         try {
+          // A renamed item's MARKET overrides go too — a menu title is one of
+          // the surfaces the repair never re-translates on that layer, and a
+          // menu has no webhook to notice later.
+          try {
+            const { purgeMarketOverrides } = await import(
+              "./translations/market-layer-purge.server"
+            );
+            const { contentTranslationMirror } = await import(
+              "./translations/stale-translation-sync.server"
+            );
+            await purgeMarketOverrides({
+              gateway,
+              mirror: contentTranslationMirror(shop),
+              refs: [{ resourceId: linkId, resourceType: "Link" }],
+              locales: foreignLocales,
+              keys: [MENU_LINK_KEY],
+              context: "menu",
+            });
+          } catch {
+            // Logged inside; never fails the menu write that already happened.
+          }
+
           const removal = await removeAndVerifyAcrossLocales(
             gateway,
             linkId,

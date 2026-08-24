@@ -950,6 +950,36 @@ export async function handleUpdateContent(ctx: TemplatesActionContext): Promise<
         .map((l: { locale: string }) => l.locale);
 
       if (foreignLocales.length > 0) {
+        // The MARKET overrides of these keys. Nothing re-translates one — every
+        // repair in this app writes global rows only — so once the theme text
+        // moves the override is as stale as the global row beside it, and a
+        // theme string has nothing else that ever revisits it.
+        try {
+          const { purgeMarketOverrides } = await import(
+            "~/services/translations/market-layer-purge.server"
+          );
+          const { themeTranslationMirror } = await import(
+            "~/services/translations/stale-translation-sync.server"
+          );
+          const { ShopifyApiGateway } = await import("~/services/shopify-api-gateway.service");
+          const marketGateway = new ShopifyApiGateway(admin, session.shop);
+          for (const [resId, keys] of changedKeysByResource) {
+            await purgeMarketOverrides({
+              gateway: marketGateway,
+              mirror: themeTranslationMirror(session.shop, groupId, domain),
+              refs: [{ resourceId: resId, resourceType: "OnlineStoreTheme" }],
+              locales: foreignLocales,
+              keys,
+              context: "theme",
+            });
+          }
+        } catch (marketError) {
+          logger.warn("[TEMPLATES] Market-override purge failed — those rows stay", {
+            context: "Templates",
+            error: marketError instanceof Error ? marketError.message : String(marketError),
+          });
+        }
+
         for (const [resId, keys] of changedKeysByResource) {
           try {
             const removeResponse = await admin.graphql(REMOVE_TRANSLATIONS, {
