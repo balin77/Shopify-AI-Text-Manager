@@ -181,6 +181,25 @@ describe("promoteClaimedGroups", () => {
     expect(plan.overflow.size).toBe(40 - MAX_REPAIR_GROUPS);
   });
 
+  it("bounds the promoted pool too, and counts what it refused", () => {
+    const plan = newBulkRepairPlan();
+    for (let i = 0; i < MAX_REPAIR_GROUPS + 3; i++) {
+      const id = `gid://shopify/Collection/${i}`;
+      collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: id,
+        rowType: "collection",
+        entries: [{ resourceId: id, resourceType: "Collection", key: "title" }],
+      });
+      plan.claimedRows.add(id);
+    }
+    expect(promoteClaimedGroups(plan)).toBe(MAX_REPAIR_GROUPS);
+    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
+    // The three that did not fit keep their stale translations — nothing
+    // deleted them and their webhook was made to bail — so they are reported.
+    expect(plan.overflow.size).toBe(3);
+  });
+
   it("never touches a surface the webhook cannot reach", () => {
     const plan = newBulkRepairPlan();
     collectBulkRepair(plan, {

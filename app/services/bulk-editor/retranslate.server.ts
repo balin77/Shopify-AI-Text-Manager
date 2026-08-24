@@ -217,8 +217,13 @@ export function collectBulkRepair(
  * pool's: a claimed row is owed a repair (its webhook has been made to bail and
  * nothing else will notice), while the surfaces in `groups` have already stood
  * their deletion down and would otherwise be evicted into "neither refreshed
- * nor removed". So a save starts at most MAX_REPAIR_GROUPS of each, and a
- * claimed row past that budget follows the cap's normal answer.
+ * nor removed". So a save starts at most MAX_REPAIR_GROUPS of each.
+ *
+ * A claimed row past that budget is counted into `overflow` and keeps its stale
+ * translations: nothing deleted them (auto-translate turns that purge off) and
+ * its webhook was made to bail, so it is genuinely untouched until the next
+ * change event. That is why `overflow` is reported as "not re-translated"
+ * rather than as "deleted" — the two outcomes it covers are different.
  */
 export function promoteClaimedGroups(plan: BulkRepairPlan): number {
   let promoted = 0;
