@@ -7,7 +7,7 @@ import { TRANSLATE_CONTENT, UPDATE_PAGE, UPDATE_ARTICLE, UPDATE_SHOP_POLICY, UPD
 import { GET_TRANSLATIONS, GET_TRANSLATABLE_CONTENT, GET_MARKETS } from "../../app/graphql/content.queries";
 import { loggers } from '../../app/utils/logger.server';
 import { markTranslationSaved } from '../../app/utils/translation-save-lock.server';
-import { featuredAltLockId } from '../../app/services/translations/translation-locks.shared';
+import { featuredAltLockId, marketLayerLockId } from '../../app/services/translations/translation-locks.shared';
 import { isAuthError, localeName } from './ai.service';
 import { attributeInputFor as buildAttributeInput } from '../../app/services/content-attributes.shared';
 import {
@@ -1196,7 +1196,13 @@ export class ShopifyContentService {
       // Mark this resource as recently saved so webhook syncs don't overwrite.
       // Moved before DB transaction: Shopify is already updated at this point,
       // so webhook protection must be active even if the DB transaction fails.
-      markTranslationSaved(resourceId);
+      //
+      // A MARKET write marks its OWN key: a repair writes GLOBAL rows, so an
+      // override can never collide with one, while a mark it could see would
+      // abort an in-flight run for nothing and leave its remaining locales in
+      // neither list (translation-locks.shared.ts). The syncs that rewrite the
+      // market layer ask for both keys by name.
+      markTranslationSaved(marketId ? marketLayerLockId(resourceId) : resourceId);
 
       // Update database using transaction for consistency.
       // If this fails, Shopify already has the correct state — retry once,
@@ -1594,8 +1600,13 @@ export class ShopifyContentService {
       const selfRetranslated =
         !!changePolicy?.autoTranslateExternalChanges &&
         IN_APP_RETRANSLATED_RESOURCE_TYPES.has(resourceType);
+      // With the repair in force the stored deletion answer is superseded by
+      // `purgeOnPrimaryChange` (which that switch forces off); without it the
+      // resource is unreconciled and the merchant's own answer stands. The
+      // `|| resourceType === 'Collection'` this used to carry is gone with the
+      // exclusion it belonged to — a collection is `selfRetranslated` now.
       const purgeChangedFields = !!changePolicy && (
-        selfRetranslated || resourceType === 'Collection'
+        selfRetranslated
           ? changePolicy.purgeOnPrimaryChange
           : changePolicy.purgeUnreconciledSurfaces
       );

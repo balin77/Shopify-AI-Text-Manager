@@ -27,7 +27,10 @@ import {
 } from "~/services/content-attributes.shared";
 import { logger, loggers } from "~/utils/logger.server";
 import { markTranslationSaved } from "~/utils/translation-save-lock.server";
-import { altTextLockId } from "~/services/translations/translation-locks.shared";
+import { altTextLockId, marketLayerLockId } from "~/services/translations/translation-locks.shared";
+// THE field to translation-key map (CLAUDE.md: never re-declare it — the
+// historic local copies drifted).
+import { FIELD_TO_TRANSLATION_KEY } from "../../../src/services/shopify-content.service";
 import type { ActionContext } from "./shared/action-context";
 import { getFormString, getFormStringOrNull, getFormJSON } from "~/utils/form-data.utils";
 import { isValidLocale, safeJsonParse } from "~/utils/validation";
@@ -901,8 +904,13 @@ async function updateTranslatedProduct(
       }
     });
 
-    // Mark this product as recently saved so webhook syncs don't overwrite
-    markTranslationSaved(productId);
+    // Mark this product as recently saved so webhook syncs don't overwrite —
+    // and a MARKET write marks its own key. A repair writes GLOBAL rows only,
+    // so a market override can never collide with one; a mark it could see
+    // would abort an in-flight run for nothing and leave that run's remaining
+    // locales in neither list (translation-locks.shared.ts). The syncs that
+    // rewrite the market layer ask for both keys by name.
+    markTranslationSaved(marketId ? marketLayerLockId(productId) : productId);
 
     loggers.product("info", "Saved translations to DB (ContentTranslation)", {
       productId,
@@ -1373,18 +1381,8 @@ async function updatePrimaryProduct(
   // Delete translations for changed fields in all foreign languages
   if (changedFields.length > 0 && purgeStaleTranslations) {
     try {
-      // Map field names to Shopify translation keys
-      const fieldToKeyMap: Record<string, string> = {
-        title: "title",
-        description: "body_html",
-        handle: "handle",
-        seoTitle: "meta_title",
-        metaDescription: "meta_description",
-        productType: "product_type",
-      };
-
       const translationKeysToDelete = changedFields
-        .map((field) => fieldToKeyMap[field])
+        .map((field) => FIELD_TO_TRANSLATION_KEY[field])
         .filter((key): key is string => !!key);
 
       if (translationKeysToDelete.length > 0) {
@@ -1418,12 +1416,11 @@ async function updatePrimaryProduct(
           // The MARKET overrides of the same keys, first and on their own
           // layer. Nothing re-translates one (the repair writes global rows
           // only), so once the primary text moves the override is as stale as
-          // the global row below it — and this save marks the product
-          // (`markTranslationSaved`), so the `products/update` webhook's
-          // reconciliation bails and by the time its shield lifts the global
-          // rows and their digest baselines are gone. Nothing else would ever
-          // look again. Without this the bulk editor purged a product's
-          // overrides on a title edit and the single editor did not.
+          // the global row below it — and this branch is the one where the
+          // global rows are being DELETED, so after it nothing is left that
+          // would ever make anyone look at this resource again. Without it the
+          // bulk editor purged a product's overrides on a title edit and the
+          // single editor did not.
           try {
             const { purgeMarketOverrides } = await import(
               "~/services/translations/market-layer-purge.server"
@@ -1536,18 +1533,13 @@ async function updatePrimaryProduct(
   // may not fail the save.
   if (contentRepairPossible && altForeignLocales.length > 0) {
     try {
-      const fieldToKeyMap: Record<string, string> = {
-        title: "title",
-        description: "body_html",
-        handle: "handle",
-        seoTitle: "meta_title",
-        metaDescription: "meta_description",
-        productType: "product_type",
-      };
+      // The SAME map the purge above uses — they are the two branches of one
+      // decision, so a second copy here would purge a field on one switch
+      // setting and re-translate it on the other.
       const changedKeys = [
         ...new Set(
           changedFields
-            .map((field) => fieldToKeyMap[field])
+            .map((field) => FIELD_TO_TRANSLATION_KEY[field])
             .filter((key): key is string => !!key),
         ),
       ];

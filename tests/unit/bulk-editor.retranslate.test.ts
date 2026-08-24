@@ -119,6 +119,66 @@ describe("collectBulkRepair", () => {
     expect(plan.overflow.size).toBe(1);
   });
 
+  it("lets a DELETION-fallback group displace a product's content group at the cap", () => {
+    // The pool fills in persist order — base fields first, sub-resources and
+    // alt texts after — so without this rule thirteen rows that each changed a
+    // title and a metafield spent every slot on content groups and had their
+    // METAFIELD translations deleted from row thirteen on. A refused content
+    // group of a product loses nothing (its deletion answer is
+    // `purgeOnPrimaryChange`, which auto-translate forces off); a refused
+    // sub-resource group is DELETED.
+    const plan = newBulkRepairPlan();
+    for (let i = 0; i < MAX_REPAIR_GROUPS; i++) {
+      const id = `gid://shopify/Product/${i}`;
+      expect(
+        collectBulkRepair(plan, {
+          surface: "content",
+          ownerId: id,
+          rowType: "product",
+          entries: [{ resourceId: id, resourceType: "Product", key: "title" }],
+        }),
+      ).toBe(true);
+    }
+    // The pool is full of free-to-refuse groups; the expensive one still gets in.
+    expect(
+      collectBulkRepair(plan, {
+        surface: "subResource",
+        ownerId: PRODUCT_ID,
+        rowType: "product",
+        entries: [{ resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" }],
+      }),
+    ).toBe(true);
+    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
+    expect([...plan.groups.values()].some((g) => g.surface === "subResource")).toBe(true);
+    // …and the displaced one is REPORTED, never silently dropped.
+    expect(plan.overflow.size).toBe(1);
+    expect(plan.overflowRows.size).toBe(1);
+  });
+
+  it("does NOT displace a page's content group — refusing that one deletes too", () => {
+    // A webhook-less type's content follows the merchant's stored deletion
+    // answer when it is refused, so it is not free to refuse.
+    const plan = newBulkRepairPlan();
+    for (let i = 0; i < MAX_REPAIR_GROUPS; i++) {
+      const id = `gid://shopify/Page/${i}`;
+      collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: id,
+        rowType: "page",
+        entries: [{ resourceId: id, resourceType: "Page", key: "title" }],
+      });
+    }
+    expect(
+      collectBulkRepair(plan, {
+        surface: "subResource",
+        ownerId: PRODUCT_ID,
+        rowType: "product",
+        entries: [{ resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" }],
+      }),
+    ).toBe(false);
+    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
+  });
+
   it("records nothing for an empty entry list", () => {
     const plan = newBulkRepairPlan();
     expect(

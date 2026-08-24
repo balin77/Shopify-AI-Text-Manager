@@ -428,12 +428,28 @@ function collectRepairForKeys(
   // `variant` carries no translatable column at all, and `image` never reaches
   // here — invalidateStaleImageAltTranslations owns that surface.
   if (rowType === "variant" || rowType === "image") return false;
-  return collectBulkRepair(deps.repairPlan, {
+  const collected = collectBulkRepair(deps.repairPlan, {
     surface: "content",
     ownerId: resourceId,
     rowType,
     entries,
   });
+  // CLAIM THE ROW NOW, not at the flush.
+  //
+  // A product's or collection's own fields are repaired by this save, and the
+  // only thing stopping its `products/update` webhook from starting a SECOND
+  // AI run for the same resource is that claim. The repair makes one when it
+  // starts — but the flush is the last thing `applyBulkDiff` does, and the
+  // webhook of row 1 fires the moment row 1 is written: on a save of 25 rows it
+  // arrives, finds nothing claimed, and reconciles tens of seconds before the
+  // flush. `retranslationsInFlight` then QUEUES our run behind it rather than
+  // dropping it, so every locale is translated and registered twice on the
+  // merchant's own key. Marking here is what the removed two-pool design was
+  // approximating: the claim has to land with the WRITE, not with the repair.
+  if (collected && (rowType === "product" || rowType === "collection")) {
+    markTranslationSaved(resourceId);
+  }
+  return collected;
 }
 
 interface InvalidateOptions {
@@ -2524,10 +2540,9 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
-        // …and WHAT was written. This row's repair is ours (rule 3 in
-        // retranslate.server.ts); this is what keeps that repair off the very
-        // value the merchant just typed — see `alreadyWritten` in
-        // stale-translation-sync.server.ts.
+        // …and WHAT was written. This row's repair is ours, and this is what
+        // keeps it off the very value the merchant just typed — see
+        // `alreadyWritten` in stale-translation-sync.server.ts.
         //
         // GLOBAL layer only, and for the opposite reason to the mark above:
         // the repair writes global rows, so a MARKET override is not the value

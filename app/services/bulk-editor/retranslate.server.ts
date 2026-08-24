@@ -131,7 +131,7 @@ export interface BulkRepairPlan {
    * Every FOREIGN translation this save wrote itself, as (resource, locale,
    * key). Handed to the repair as `alreadyWritten`, which leaves them in
    * neither list — re-translating a value the merchant typed in this very save
-   * is the one thing rule 3's exception must not do.
+   * is the one thing the repair must not do.
    */
   claimedWrites: Array<{ resourceId: string; locale: string; key: string }>;
   /**
@@ -188,6 +188,28 @@ function groupKey(surface: BulkRepairSurface, ownerId: string): string {
 }
 
 /**
+ * Is this the ONE group class whose refusal costs the merchant nothing?
+ *
+ * A product's or collection's own CONTENT is: with the auto-translation on
+ * their deletion answer is `purgeOnPrimaryChange`, which that switch forces
+ * off, so a refused group leaves the translations exactly where they were.
+ * Every other surface — sub-resources, alt texts, metaobject fields, and the
+ * content of the webhook-less types — falls back to the merchant's stored
+ * deletion answer, so refusing one can DELETE translations.
+ */
+function yieldsToDeletion(surface: BulkRepairSurface, rowType: BulkRowType): boolean {
+  return surface === "content" && (rowType === "product" || rowType === "collection");
+}
+
+/** The key of a collected group that may be displaced, if there is one. */
+function yieldableGroupKey(pool: ReadonlyMap<string, BulkRepairGroup>): string | null {
+  for (const [key, group] of pool) {
+    if (yieldsToDeletion(group.surface, group.rowType)) return key;
+  }
+  return null;
+}
+
+/**
  * Record a surface whose primary text this save changed, for repair instead of
  * deletion. Returns FALSE when the caller must fall back to its own purge —
  * the cap is reached, or there was nothing to record.
@@ -218,9 +240,29 @@ export function collectBulkRepair(
     // The cap counts GROUPS and is checked before a new one is opened: adding
     // entries to a group that already exists costs no extra run.
     if (pool.size >= MAX_REPAIR_GROUPS) {
-      plan.overflow.add(key);
-      plan.overflowRows.add(args.ownerId);
-      return false;
+      // …but not every refusal costs the same, and the pool fills in the order
+      // the row's cells are persisted — base fields FIRST, sub-resources and
+      // alt texts after. A refused product/collection CONTENT group loses
+      // nothing: its deletion answer is `purgeOnPrimaryChange`, which
+      // auto-translate forces off, so its translations simply stay. A refused
+      // SUB-RESOURCE or ALT-TEXT group falls back to the merchant's stored
+      // deletion answer and its translations are DELETED. Filling the budget
+      // with the free refusals and denying it to the expensive ones is how
+      // thirteen rows that each changed a base field and a metafield lost their
+      // metafield translations from row thirteen on — the same merchant-visible
+      // outcome the two-pool design was built for, reached by another route.
+      // So a group that would be deleted DISPLACES one that would not.
+      const yielded = yieldableGroupKey(pool);
+      if (!yieldsToDeletion(args.surface, args.rowType) && yielded) {
+        const displaced = pool.get(yielded)!;
+        pool.delete(yielded);
+        plan.overflow.add(yielded);
+        plan.overflowRows.add(displaced.ownerId);
+      } else {
+        plan.overflow.add(key);
+        plan.overflowRows.add(args.ownerId);
+        return false;
+      }
     }
     group = {
       surface: args.surface,

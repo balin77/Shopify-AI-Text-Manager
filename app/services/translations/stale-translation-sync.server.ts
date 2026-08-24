@@ -965,8 +965,9 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
  * The duplicate the exclusion protected against is prevented by the CLAIM
  * instead: `reconcileAfterPrimarySave` marks the resource before it starts and
  * `reconcileStaleTranslations` bails wholesale on that mark, so the webhook
- * arriving seconds later stands down — the same mechanism the bulk editor's
- * `claimedRows` exception has always relied on. A webhook that arrives after
+ * arriving seconds later stands down. The bulk editor claims the row where it
+ * WRITES it rather than where it repairs it, because its flush is the last
+ * thing a save does and the first row's webhook arrives long before that. A webhook that arrives after
  * the window finds the digests the repair has just written and proves nothing,
  * which is the same answer by a different route.
  */
