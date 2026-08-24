@@ -430,7 +430,11 @@ describe("applyBulkDiff with auto-translate on", () => {
     expect(call.changed[0].retranslatable).toBe(false);
   });
 
-  it("skips a surface the mirror says holds no translation — before any Shopify call", async () => {
+  it("repairs a surface whose mirror is EMPTY — the first translation is a translation too", async () => {
+    // This used to be skipped: one mirror query, no rows, no repair, which kept
+    // the reach where the deletion it replaced had it. It is also exactly why a
+    // merchant with empty translations saw nothing happen on every primary
+    // edit, so the pre-check is gone and the fill writes the first one.
     mirrorRows = [];
     const { admin } = mockAdmin((query, variables) => {
       if (query.includes("metafieldsSet(")) {
@@ -475,7 +479,7 @@ describe("applyBulkDiff with auto-translate on", () => {
       ],
     );
 
-    expect(reconcileAfterPrimarySave).not.toHaveBeenCalled();
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
   });
 
   it("hands the repair what THIS save wrote, so it cannot overwrite it", async () => {

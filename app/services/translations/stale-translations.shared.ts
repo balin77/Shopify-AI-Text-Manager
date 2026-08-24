@@ -60,7 +60,31 @@
  * partial fetch looks identical to "every field cleared"), so rule 2 is
  * skipped entirely in that case rather than reporting the whole resource
  * stale.
+ *
+ * THE FILL — "auto-translate" means translate, not only refresh. Everything
+ * above answers "which existing translations moved out from under their source",
+ * because a translation row is where the digest baseline lives. A locale that
+ * was never translated has no row, so it can never be the one that notices, and
+ * for a shop with the auto-translation on that read as the feature being off:
+ * the primary text changed, the languages that had a translation got the new
+ * one, and the languages that had none stayed empty forever. `fillLocales`
+ * closes it — once a key has PROVEN itself through the gate above, every
+ * published locale that holds no translation of it gets one too. Only entries
+ * that will really be translated are filled; see the option's own note.
  */
+
+/**
+ * The locales the FILL translates into: published, and not the primary one — a
+ * primary locale never holds a translation row, and an unpublished locale is on
+ * no storefront. Written once because every sync derives it from the same
+ * `shopLocales` shape and a call site that filtered only on `primary` would
+ * translate into a language the shop does not serve.
+ */
+export function publishedForeignLocales(
+  locales: ReadonlyArray<{ locale: string; primary?: boolean; published?: boolean }>,
+): string[] {
+  return locales.filter((l) => l.published && !l.primary).map((l) => l.locale);
+}
 
 /** One `translatableContent` entry: the primary value plus its digest. */
 export interface PrimaryContentEntry {
@@ -169,10 +193,32 @@ export function findStaleTranslations(
   translations: readonly SyncedTranslation[],
   primaryContent: Readonly<Record<string, PrimaryContentEntry>>,
   previousDigests: Readonly<Record<string, string | null | undefined>> = {},
+  /**
+   * THE FILL. `fillLocales` turns "refresh what is there" into what the switch
+   * is called: a key this function PROVED moved also yields an entry for every
+   * published locale that holds NO translation of it yet, so a shop with the
+   * auto-translation on gets the new text in every language rather than only in
+   * the ones that happened to be translated before.
+   *
+   * Only the caller that has the shop's published foreign locales may pass it,
+   * and only when the auto-translation is really in force — a fill entry is by
+   * construction one that will be TRANSLATED (`classifyStaleTranslation` decides,
+   * so the rule cannot drift from the partition), never one that will be
+   * removed: there is nothing to remove where nothing exists, and sending the
+   * removal anyway would be an unechoed no-op logged as an unconfirmed removal
+   * for every locale the merchant never translated.
+   */
+  opts: { fillLocales?: readonly string[]; anyKey?: boolean } = {},
 ): StaleTranslation[] {
   const primaryKnown = Object.keys(primaryContent).length > 0;
   const seen = new Set<string>();
   const stale: StaleTranslation[] = [];
+  /** (locale, key) pairs that already carry a GLOBAL translation — the fill
+   *  below adds the locales this set does NOT hold. */
+  const translated = new Set<string>();
+  for (const row of translations) {
+    if ((row.marketId ?? "") === "") translated.add(`${row.locale}\u0000${row.key}`);
+  }
 
   for (const row of translations) {
     if ((row.marketId ?? "") !== "") continue; // global layer only
@@ -218,6 +264,38 @@ export function findStaleTranslations(
       primaryValue,
       digest: entry?.digest ?? null,
     });
+  }
+
+  // THE FILL. A key is only filled once it has PROVEN itself above — same gate,
+  // same two signals, same evidence — so this can never translate a key on a
+  // resource whose source text nobody touched. What it adds is the locales that
+  // had nothing to prove it with: a translation row is where the digest
+  // baseline lives, so a locale that was never translated can never be the one
+  // that notices, and requiring it to be is what made "translate automatically"
+  // mean "refresh what is already there".
+  if (opts.fillLocales?.length) {
+    const provenKeys = [...new Set(stale.map((entry) => entry.key))];
+    for (const key of provenKeys) {
+      const entry = primaryContent[key];
+      for (const locale of opts.fillLocales) {
+        const id = `${locale}\u0000${key}`;
+        if (translated.has(id) || seen.has(id)) continue;
+        const candidate: StaleTranslation = {
+          key,
+          locale,
+          reason: "outdated",
+          primaryValue: entry?.value ?? "",
+          digest: entry?.digest ?? null,
+        };
+        // Only a candidate that will really be TRANSLATED is emitted: a purge
+        // entry here would address a translation that does not exist.
+        if (classifyStaleTranslation(candidate, true, { anyKey: opts.anyKey }) !== "retranslate") {
+          continue;
+        }
+        seen.add(id);
+        stale.push(candidate);
+      }
+    }
   }
 
   return stale;
@@ -269,49 +347,63 @@ export function survivesValuePrompt(value: string): boolean {
  * one, and a translation we cannot register would leave the storefront showing
  * the stale text we set out to remove.
  */
+export type StaleVerdict = "retranslate" | "purge" | "declined";
+
+/**
+ * Which of the three a single entry belongs to. Split out of the partition
+ * below because two callers need the SAME answer for one entry rather than for
+ * a set: `findStaleTranslations`' fill only emits a candidate it knows will be
+ * translated, and a second copy of these rules would decide differently within
+ * one release.
+ *
+ * `anyKey` lifts the `AUTO_RETRANSLATABLE_KEYS` allowlist, and only a caller
+ * that translates BARE VALUES may pass it. That list is a vocabulary of
+ * CONTENT-FIELD keys whose one job is to keep `handle` out — a slug is a URL,
+ * and rewriting one unattended moves a storefront page nobody asked to move.
+ * A metafield's `value`, an option's `name` and a metaobject field key are
+ * simply not in it, so applying it there would silently re-translate NOTHING
+ * on those surfaces while reporting that it had. There is no `handle` among
+ * them to protect: they name their own keys, and the caller has already
+ * filtered to the ones it changed.
+ */
+export function classifyStaleTranslation(
+  entry: StaleTranslation,
+  autoTranslate: boolean,
+  opts: { anyKey?: boolean } = {},
+): StaleVerdict {
+  if (!autoTranslate || !entry.primaryValue.trim() || !entry.digest) {
+    // Nothing to translate, or nothing to register it against. The automation
+    // cannot deliver these no matter what we do.
+    return "purge";
+  }
+  // The caller's own refusal, on EVERY surface: it is a deliberate decline,
+  // not a failure, so it keeps the merchant's stored answer.
+  if (entry.retranslatable === false) return "declined";
+  if (opts.anyKey) {
+    // A value surface: we DECLINE anything the single-line prompt would
+    // mangle — see `declined` on the partition's return type for why that is
+    // not the same as a failure.
+    return survivesValuePrompt(entry.primaryValue) ? "retranslate" : "declined";
+  }
+  // A content surface: the allowlist keeps `handle` out, and that exclusion is
+  // deliberately a PURGE — a slug the merchant cannot have re-translated must
+  // not keep describing a URL that moved (CLAUDE.md).
+  return AUTO_RETRANSLATABLE_KEYS.has(entry.key) ? "retranslate" : "purge";
+}
+
 export function partitionStaleTranslations(
   stale: readonly StaleTranslation[],
   autoTranslate: boolean,
-  /**
-   * `anyKey` lifts the `AUTO_RETRANSLATABLE_KEYS` allowlist, and only a caller
-   * that translates BARE VALUES may pass it. That list is a vocabulary of
-   * CONTENT-FIELD keys whose one job is to keep `handle` out — a slug is a URL,
-   * and rewriting one unattended moves a storefront page nobody asked to move.
-   * A metafield's `value`, an option's `name` and a metaobject field key are
-   * simply not in it, so applying it there would silently re-translate NOTHING
-   * on those surfaces while reporting that it had. There is no `handle` among
-   * them to protect: they name their own keys, and the caller has already
-   * filtered to the ones it changed.
-   */
   opts: { anyKey?: boolean } = {},
 ): { retranslate: StaleTranslation[]; purge: StaleTranslation[]; declined: StaleTranslation[] } {
   const retranslate: StaleTranslation[] = [];
   const purge: StaleTranslation[] = [];
   const declined: StaleTranslation[] = [];
   for (const entry of stale) {
-    if (!autoTranslate || !entry.primaryValue.trim() || !entry.digest) {
-      // Nothing to translate, or nothing to register it against. The
-      // automation cannot deliver these no matter what we do.
-      purge.push(entry);
-      continue;
-    }
-    // The caller's own refusal, on EVERY surface: it is a deliberate decline,
-    // not a failure, so it keeps the merchant's stored answer.
-    if (entry.retranslatable === false) {
-      declined.push(entry);
-      continue;
-    }
-    if (opts.anyKey) {
-      // A value surface: we DECLINE anything the single-line prompt would
-      // mangle — see `declined` on the return type for why that is not the
-      // same as a failure.
-      (survivesValuePrompt(entry.primaryValue) ? retranslate : declined).push(entry);
-      continue;
-    }
-    // A content surface: the allowlist keeps `handle` out, and that exclusion
-    // is deliberately a PURGE — a slug the merchant cannot have re-translated
-    // must not keep describing a URL that moved (CLAUDE.md).
-    (AUTO_RETRANSLATABLE_KEYS.has(entry.key) ? retranslate : purge).push(entry);
+    const verdict = classifyStaleTranslation(entry, autoTranslate, opts);
+    if (verdict === "retranslate") retranslate.push(entry);
+    else if (verdict === "declined") declined.push(entry);
+    else purge.push(entry);
   }
   return { retranslate, purge, declined };
 }

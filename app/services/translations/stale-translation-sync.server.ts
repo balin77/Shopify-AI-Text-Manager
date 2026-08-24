@@ -65,6 +65,7 @@ import {
   type TranslationChangePolicy,
 } from "./translation-change-policy.server";
 import {
+  classifyStaleTranslation,
   digestBaselineKey,
   findStaleTranslations,
   partitionStaleTranslations,
@@ -766,6 +767,18 @@ export interface ReconcileParams extends RepairTarget {
    * is considered stale.
    */
   previousDigests: Readonly<Record<string, string | null | undefined>>;
+  /**
+   * The shop's PUBLISHED foreign locales, for the fill: a key this sync proved
+   * moved is translated into every one of them, not only into the ones that
+   * already carried a translation (see `findStaleTranslations`' `fillLocales`).
+   * Only used when the merchant's auto-translation is really in force.
+   *
+   * Optional because it is the caller's knowledge, not this function's, and a
+   * caller that cannot supply it keeps the older "refresh what is there"
+   * behaviour rather than guessing a locale list out of the rows it happens to
+   * hold — those are exactly the locales the fill is supposed to look past.
+   */
+  foreignLocales?: readonly string[];
 }
 
 export interface ReconcileResult {
@@ -865,11 +878,26 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
     // saved. A genuinely stale row is caught by the next change event.
     if (isTranslationRecentlySaved(resourceId)) return NOTHING;
 
-    const stale = findStaleTranslations(translations, primaryContent, previousDigests);
+    // Detection runs FIRST and without the fill, because it is pure and the
+    // policy read is a database round trip: a resource where nothing moved —
+    // which is nearly every webhook — must not pay for one. The fill can only
+    // ADD locales to keys this pass already proved, so an empty answer here is
+    // an empty answer with it too.
+    let stale = findStaleTranslations(translations, primaryContent, previousDigests);
     if (stale.length === 0) return NOTHING;
 
     const policy = await loadTranslationChangePolicy(shop);
     if (!policy.purgeOnPrimaryChange && !policy.autoTranslateExternalChanges) return NOTHING;
+
+    // Now that the switch is known: translate the proven keys into the locales
+    // that hold nothing yet as well. Same input, same gate — the second call is
+    // pure and in-memory, and re-running it is what keeps the cheap exit above.
+    if (policy.autoTranslateExternalChanges && params.foreignLocales?.length) {
+      stale = findStaleTranslations(translations, primaryContent, previousDigests, {
+        fillLocales: params.foreignLocales,
+        anyKey: !!params.translateAs,
+      });
+    }
 
     logger.info("[StaleTranslations] Primary text changed outside the editor — reconciling", {
       context: "StaleTranslations",
@@ -883,7 +911,15 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
 
     return await repairStaleTranslations(params, stale, policy, {
       keys: [...new Set(stale.map((entry) => entry.key))],
-      locales: [...new Set(translations.map((row) => row.locale))],
+      // Every locale this shop could hold an override in: the rows the sync
+      // fetched (all layers, so a market-only locale is in there) plus the
+      // published ones the caller named, which is what the fill translates into.
+      locales: [
+        ...new Set([
+          ...translations.map((row) => row.locale),
+          ...(params.foreignLocales ?? []),
+        ]),
+      ],
       // A market override Shopify reports as NOT outdated was re-translated
       // against the new source after the change: it is current, and the purge
       // must walk past it. This is the only path that HAS that evidence — the
@@ -1269,9 +1305,101 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     }
     const resourceIds = [...refs.keys()];
 
-    // Which (locale, key) pairs actually HAVE a translation to repair — the
-    // UNION of what Shopify reports and what the local mirror holds, and both
-    // halves are load-bearing.
+    const gateway = gatewayFor(params.client, shop);
+    const allKeys = [...new Set(changed.map((item) => item.key))];
+
+    // The CURRENT primary text of everything this save changed. It is read
+    // FIRST because it decides everything below: the digest a register needs is
+    // the one of the text that is there NOW, and the caller's own write is what
+    // invalidated the last digest it saw.
+    const primaryByResource = await currentPrimaryContent(gateway, resourceIds);
+
+    const untouchable = new Set(
+      (params.alreadyWritten ?? []).map((item) =>
+        tripleKey(item.resourceId ?? resourceId, item.locale, item.key),
+      ),
+    );
+
+    // Every (resource, key, locale) this save could owe a translation for — the
+    // FULL cross product of what changed and the shop's published foreign
+    // locales, NOT the pairs that already carry a translation.
+    //
+    // That is the difference between "refresh" and "translate". Asking which
+    // pairs are translated already answers a question about the PAST, and a
+    // shop with the auto-translation on read it as the feature being off: the
+    // merchant rewrote a page, the two languages that happened to have a
+    // translation got the new text, and the six that had none stayed empty
+    // forever — while the same switch on a product filled nothing either.
+    //
+    // Existence still decides ONE thing, below: whether a REMOVAL is worth
+    // sending. There is nothing to remove where nothing exists, and the
+    // unechoed no-op would be logged as an unconfirmed removal for every locale
+    // the merchant never translated.
+    const stale: StaleTranslation[] = [];
+    /** Candidates that would be REMOVED or DECLINED rather than translated —
+     *  only worth keeping if a translation is really there. */
+    const needEvidence: StaleTranslation[] = [];
+    let unreadableResources = 0;
+    let declinedByReadBack = 0;
+    for (const [itemResourceId, ref] of refs) {
+      const resourcePrimary = primaryByResource.get(itemResourceId);
+      // Could not read this resource's current text at all — skip it. An absent
+      // read is not evidence that the field was cleared, and answering our own
+      // failed lookup by deleting the merchant's translation is the one
+      // direction this module never errs in.
+      if (!resourcePrimary) {
+        unreadableResources++;
+        continue;
+      }
+      for (const key of wantedKeys.get(itemResourceId) ?? []) {
+        const entry = resourcePrimary[key];
+        const primaryValue = entry?.value ?? "";
+        // The read-back does not agree with what the caller says it wrote, so
+        // Shopify has not caught up with the write yet. Translating this would
+        // register an echo-confirmed translation of the OLD text — so it is a
+        // DECLINE: we refuse to try, and the merchant's stored answer decides
+        // whether the stale translation goes. Skipping it outright would leave
+        // a foreign value live on a surface nothing else ever revisits.
+        const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
+        const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
+        for (const locale of foreignLocales) {
+          // The caller wrote this exact translation in this exact save. Neither
+          // list: re-translating it would overwrite what the merchant just
+          // typed, and removing it would delete it.
+          if (untouchable.has(tripleKey(itemResourceId, locale, key))) continue;
+          if (staleReadBack) declinedByReadBack++;
+          const candidate: StaleTranslation = {
+            key,
+            locale,
+            resourceId: ref.resourceId,
+            resourceType: ref.resourceType,
+            // The two reasons this module already knows, decided from the value
+            // we just wrote: text there ⇒ the translation is out of date,
+            // nothing there ⇒ the merchant cleared the field.
+            // `partitionStaleTranslations` routes the second one to the removal
+            // by itself (no source, no translation), so this is a label rather
+            // than a second decision.
+            reason: primaryValue.trim() ? "outdated" : "primary-empty",
+            primaryValue,
+            digest: entry?.digest ?? null,
+            retranslatable: !staleReadBack && !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
+          };
+          // The verdict comes from the SAME classifier the repair partitions
+          // with, so "will this be translated" cannot drift from what actually
+          // happens to it.
+          if (classifyStaleTranslation(candidate, true, { anyKey: !!params.translateAs }) === "retranslate") {
+            stale.push(candidate);
+          } else {
+            needEvidence.push(candidate);
+          }
+        }
+      }
+    }
+
+    // Only now, and only for the candidates that would be REMOVED: does a
+    // translation exist to remove? The answer is the UNION of what Shopify
+    // reports and what the local mirror holds, and both halves are
+    // load-bearing.
     //
     // Shopify is the one that knows: a translation written in the Shopify admin
     // or by another app has no mirror row here, and the code this path replaces
@@ -1283,78 +1411,47 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     // The mirror is the fallback: a locale whose read failed answers nothing,
     // and dropping it would silently do less than before. A pair we once wrote
     // is evidence enough to repair it.
-    const gateway = gatewayFor(params.client, shop);
-    const allKeys = [...new Set(changed.map((item) => item.key))];
-    const triples = await foreignTranslationTriples(gateway, resourceIds, foreignLocales, wantedKeys);
-    for (const row of await mirrorOf(params).existing([...refs.values()], foreignLocales, allKeys)) {
-      if (wantedKeys.get(row.resourceId)?.has(row.key)) {
-        triples.add(tripleKey(row.resourceId, row.locale, row.key));
+    //
+    // It is asked for the narrowed set, and on the common save — a text edit
+    // with a value in it — for nothing at all: every candidate is translated,
+    // so the whole per-locale sweep is skipped rather than paid for.
+    if (needEvidence.length > 0) {
+      const evidenceKeys = new Map<string, Set<string>>();
+      const evidenceLocales = new Set<string>();
+      for (const candidate of needEvidence) {
+        const id = candidate.resourceId ?? resourceId;
+        const keys = evidenceKeys.get(id) ?? new Set<string>();
+        keys.add(candidate.key);
+        evidenceKeys.set(id, keys);
+        evidenceLocales.add(candidate.locale);
+      }
+      const evidenceRefs = [...evidenceKeys.keys()].map((id) => refs.get(id)!).filter(Boolean);
+      const locales = [...evidenceLocales];
+      const existing = await foreignTranslationTriples(
+        gateway,
+        [...evidenceKeys.keys()],
+        locales,
+        evidenceKeys,
+      );
+      for (const row of await mirrorOf(params).existing(evidenceRefs, locales, allKeys)) {
+        if (evidenceKeys.get(row.resourceId)?.has(row.key)) {
+          existing.add(tripleKey(row.resourceId, row.locale, row.key));
+        }
+      }
+      for (const candidate of needEvidence) {
+        if (existing.has(tripleKey(candidate.resourceId ?? resourceId, candidate.locale, candidate.key))) {
+          stale.push(candidate);
+        }
       }
     }
-    if (triples.size === 0) return NOTHING;
 
-    const primaryByResource = await currentPrimaryContent(gateway, resourceIds);
-
-    const stale: StaleTranslation[] = [];
-    let unreadable = 0;
-    let declinedByReadBack = 0;
-    const untouchable = new Set(
-      (params.alreadyWritten ?? []).map((item) =>
-        tripleKey(item.resourceId ?? resourceId, item.locale, item.key),
-      ),
-    );
-    for (const triple of triples) {
-      const [itemResourceId, locale, key] = triple.split(PAIR_SEP);
-      const ref = refs.get(itemResourceId);
-      if (!ref) continue;
-      // The caller wrote this exact translation in this exact save. Neither
-      // list: re-translating it would overwrite what the merchant just typed,
-      // and removing it would delete it.
-      if (untouchable.has(triple)) continue;
-      const resourcePrimary = primaryByResource.get(itemResourceId);
-      // Could not read this resource's current text at all — skip it. An
-      // absent read is not evidence that the field was cleared, and answering
-      // our own failed lookup by deleting the merchant's translation is the
-      // one direction this module never errs in.
-      if (!resourcePrimary) {
-        unreadable++;
-        continue;
-      }
-      const entry = resourcePrimary[key];
-      const primaryValue = entry?.value ?? "";
-      // The read-back does not agree with what the caller says it wrote, so
-      // Shopify has not caught up with the write yet. Translating this would
-      // register an echo-confirmed translation of the OLD text — so it is a
-      // DECLINE: we refuse to try, and the merchant's stored answer decides
-      // whether the stale translation goes. Skipping it outright would leave a
-      // foreign value live on a surface nothing else ever revisits.
-      const expectedValue = expected.get(`${itemResourceId}${PAIR_SEP}${key}`);
-      const staleReadBack = expectedValue !== undefined && expectedValue !== primaryValue;
-      if (staleReadBack) declinedByReadBack++;
-      stale.push({
-        key,
-        locale,
-        resourceId: ref.resourceId,
-        resourceType: ref.resourceType,
-        // The two reasons this module already knows, decided from the value we
-        // just wrote: text there ⇒ the translation is out of date, nothing
-        // there ⇒ the merchant cleared the field. `partitionStaleTranslations`
-        // routes the second one to the removal by itself (no source, no
-        // translation), so this is a label rather than a second decision.
-        reason: primaryValue.trim() ? "outdated" : "primary-empty",
-        primaryValue,
-        digest: entry?.digest ?? null,
-        retranslatable: !staleReadBack && !removeOnly.has(`${itemResourceId}${PAIR_SEP}${key}`),
-      });
-    }
-
-    if (unreadable > 0 || declinedByReadBack > 0) {
+    if (unreadableResources > 0 || declinedByReadBack > 0) {
       logger.warn("[StaleTranslations] Some entries could not be read back as written", {
         context: "StaleTranslations",
         shop,
         resourceId,
         // Skipped entirely — a resource we could not read at all.
-        unreadable,
+        unreadableResources,
         // Read, but not yet showing what the caller wrote: declined, so the
         // merchant's stored deletion answer decides.
         staleReadBack: declinedByReadBack,

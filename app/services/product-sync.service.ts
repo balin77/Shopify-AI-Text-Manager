@@ -26,6 +26,7 @@ import {
   type ShopifyProductCollections,
 } from './attribute-sync.shared';
 import { subResourceLockId, altTextLockId, marketLayerLockId } from "./translations/translation-locks.shared";
+import { publishedForeignLocales } from "./translations/stale-translations.shared";
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -1132,6 +1133,10 @@ export class ProductSyncService {
           translations: allTranslations,
           primaryContent: translationResult.primaryContent,
           previousDigests,
+          // The FILL: a key this sync proved moved is translated into every
+          // published language, not only into the ones that already carried a
+          // translation (stale-translations.shared.ts).
+          foreignLocales: publishedForeignLocales(locales),
         });
       }
 

@@ -50,12 +50,16 @@
  *    value the repair could overwrite, and recording one silences it for a
  *    global translation nobody touched.
  *
- * 5. EVERY GROUP IS PRE-CHECKED against its own mirror: one DB query, and an
- *    empty answer skips it before a single Shopify call, where the repair's own
- *    detection asks Shopify once PER LOCALE. It keeps this path's reach exactly
- *    where the deletion it replaces had it — that one short-circuited on an
- *    empty mirror too — so a translation written in the Shopify admin with no
- *    row here is not repaired by a bulk save, as it was not deleted by one.
+ * 5. A GROUP IS NOT PRE-CHECKED against its mirror any more. It used to be —
+ *    one DB query, and an empty answer skipped the group before a single
+ *    Shopify call, which kept this path's reach where the deletion it replaces
+ *    had it. That is precisely what made "translate automatically" mean
+ *    "refresh what is already there": a row whose translations were still empty
+ *    stayed empty after every primary edit, on every surface this module
+ *    covers. The repair FILLS now, so the first translation is the one thing
+ *    the pre-check must not stand in front of — and it no longer buys anything
+ *    either, since the repair asks Shopify per locale only when a removal is on
+ *    the table.
  *
  * 6. NOTHING HERE MAY FAIL THE SAVE: every row is already written by the time
  *    this runs, so a repair that cannot start logs and leaves the stale rows.
@@ -508,31 +512,23 @@ export async function flushBulkRepairs(params: {
         mirror = metaobjectTranslationMirror(shop, typeById);
       }
 
-      // Does this surface hold ANY foreign translation to repair? One DB query
-      // against the same mirror the repair would use, and a `no` skips the
-      // group before a single Shopify call — the repair's own detection asks
-      // Shopify once PER LOCALE, which on a shop that never translated this
-      // surface is a round trip per locale per row for a certain nothing.
+      // A group with no mirror is one whose store this module cannot name — it
+      // is REPORTED as skipped, never silently dropped.
       //
-      // It also keeps this path's REACH exactly where the deletion it replaces
-      // had it: that one short-circuited on an empty mirror too. A translation
-      // written in the Shopify admin with no row here is therefore not repaired
-      // by a bulk save — as it was not deleted by one before.
-      const refs = [
-        ...new Map(
-          group.entries.map((entry) => [
-            entry.resourceId,
-            { resourceId: entry.resourceId, resourceType: entry.resourceType },
-          ]),
-        ).values(),
-      ];
-      const keys = [...new Set(group.entries.map((entry) => entry.key))];
+      // What is deliberately NOT asked here any more: "does this surface hold
+      // any translation at all". That pre-check existed to keep this path's
+      // reach where the deletion it replaces had it — that one short-circuited
+      // on an empty mirror — and it is exactly what made the merchant's report
+      // true: a row whose translations were still empty stayed empty after
+      // every edit, because the repair was skipped before it could write the
+      // first one. "Translate automatically" has to include the first
+      // translation. The cost that bought it is gone too: with the fill the
+      // repair only queries Shopify per locale when a REMOVAL is on the table,
+      // so a group whose keys all carry a value now costs one read-back.
       if (!mirror) {
         skipped++;
         continue;
       }
-      const existing = await mirror.existing(refs, foreignLocales, keys);
-      if (existing.length === 0) continue;
 
       const outcome = await reconcileAfterPrimarySave({
         client: gateway,

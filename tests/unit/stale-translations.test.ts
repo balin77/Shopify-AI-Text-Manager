@@ -178,6 +178,104 @@ describe("findStaleTranslations — scope", () => {
   });
 });
 
+/**
+ * THE FILL — "auto-translate" has to mean translate, not only refresh.
+ *
+ * Everything above answers "which EXISTING translations moved out from under
+ * their source", because a translation row is where the digest baseline lives.
+ * A locale that was never translated has no row, so it can never be the one
+ * that notices — and on a half-translated shop that read as the switch being
+ * off: the primary text changed, the two languages that had a translation got
+ * the new one, and the six that had none stayed empty forever.
+ */
+describe("findStaleTranslations — the fill", () => {
+  it("translates a proven key into a locale that holds NO translation of it", () => {
+    const stale = findStaleTranslations(
+      [translation({ locale: "fr" })],
+      primary({ title: "Box" }),
+      moved,
+      { fillLocales: ["fr", "de", "it"] },
+    );
+    expect(stale.map((s) => s.locale).sort()).toEqual(["de", "fr", "it"]);
+    expect(stale.every((s) => s.key === "title" && s.primaryValue === "Box")).toBe(true);
+  });
+
+  it("fills NOTHING when no key got through the gate — the fill adds locales, never keys", () => {
+    // Same input, but the digest did not move: the fill may only widen a key
+    // this function already proved, or one price edit would translate a whole
+    // catalogue on the merchant's own API key.
+    const stale = findStaleTranslations(
+      [translation({ locale: "fr" })],
+      primary({ title: "Box" }, OLD),
+      { [digestBaselineKey("fr", "title")]: OLD },
+      { fillLocales: ["fr", "de", "it"] },
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it("does not fill a locale that already has a translation — that row is judged on its own evidence", () => {
+    // `de` holds a translation whose digest did NOT move, so it is current and
+    // must be left alone; the fill must not sneak it back in under `fr`'s
+    // evidence.
+    const stale = findStaleTranslations(
+      [translation({ locale: "fr" }), translation({ locale: "de", outdated: false })],
+      primary({ title: "Box" }),
+      { [digestBaselineKey("fr", "title")]: OLD },
+      { fillLocales: ["fr", "de"] },
+    );
+    expect(stale.map((s) => s.locale)).toEqual(["fr"]);
+  });
+
+  it("never fills a key that would be REMOVED rather than translated", () => {
+    // A cleared field, a missing digest and a `handle` all end in the purge —
+    // and there is nothing to purge in a locale that holds no translation, so a
+    // fill entry there would only send an unechoed removal that logs as
+    // unconfirmed.
+    const cleared = findStaleTranslations(
+      [translation({ key: "body_html", locale: "fr" })],
+      // `title` moved and is filled; `body_html` was cleared (no entry at all).
+      primary({ title: "Box" }),
+      moved,
+      { fillLocales: ["fr", "de"] },
+    );
+    expect(cleared.filter((s) => s.locale === "de")).toEqual([]);
+
+    const handle = findStaleTranslations(
+      [translation({ key: "handle", locale: "fr" })],
+      primary({ handle: "box" }),
+      moved,
+      { fillLocales: ["fr", "de"] },
+    );
+    expect(handle.map((s) => s.locale)).toEqual(["fr"]);
+  });
+
+  it("fills a bare-value surface only where the generic prompt can carry the value", () => {
+    // `anyKey` is the value surfaces' lift of the content-field allowlist; the
+    // value-level refusal (markup, newlines) still stands, and a refused value
+    // is a DECLINE, so filling it would promise a translation nothing delivers.
+    const filled = findStaleTranslations(
+      [translation({ key: "some_theme_key", locale: "fr" })],
+      primary({ some_theme_key: "Add to cart" }),
+      moved,
+      { fillLocales: ["fr", "de"], anyKey: true },
+    );
+    expect(filled.map((s) => s.locale).sort()).toEqual(["de", "fr"]);
+
+    const refused = findStaleTranslations(
+      [translation({ key: "some_theme_key", locale: "fr" })],
+      primary({ some_theme_key: "<p>Add to cart</p>" }),
+      moved,
+      { fillLocales: ["fr", "de"], anyKey: true },
+    );
+    expect(refused.map((s) => s.locale)).toEqual(["fr"]);
+  });
+
+  it("changes nothing when no fill locales are given", () => {
+    const stale = findStaleTranslations([translation({ locale: "fr" })], primary({ title: "Box" }), moved);
+    expect(stale.map((s) => s.locale)).toEqual(["fr"]);
+  });
+});
+
 describe("partitionStaleTranslations", () => {
   const outdatedTitle = {
     key: "title",

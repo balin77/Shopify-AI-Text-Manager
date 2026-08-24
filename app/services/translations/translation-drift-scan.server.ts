@@ -309,6 +309,11 @@ export async function scanTranslationDrift(params: {
           translations,
           primaryContent,
           previousDigests,
+          // The FILL: the sweep already knows the shop's published foreign
+          // locales — it queries a `translations(locale:)` alias per locale —
+          // so a key it proved moved is translated into all of them, not only
+          // into the ones that happened to hold a translation before.
+          foreignLocales,
         });
       }
       if (!next) {

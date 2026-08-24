@@ -308,6 +308,44 @@ describe("auto-translation path (Max)", () => {
     expect(db.contentTranslation.upsert).toHaveBeenCalledTimes(2);
   });
 
+  it("FILLS a locale that had no translation of the changed key at all", async () => {
+    // The sync side of the same promise: `it` holds nothing, so no digest
+    // baseline of its own can ever prove anything about it — the evidence comes
+    // from the locale that IS translated, and the new text goes to both.
+    ai.translate = vi.fn(async (fields: Record<string, string>, locales: string[]) => ({
+      [locales[0]]: Object.fromEntries(Object.keys(fields).map((k) => [k, `translated-${k}`])),
+    }));
+
+    const result = await reconcileStaleTranslations(
+      baseParams({
+        translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+        foreignLocales: ["de", "it"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls.map((c) => c.locale).sort()).toEqual(["de", "it"]);
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
+  it("fills nothing when this sync proved no key moved", async () => {
+    // The fill widens a proven key to more locales; it is never itself the
+    // evidence. Without the gate one price edit — `products/update` fires for
+    // those too — would translate a whole catalogue unattended.
+    const result = await reconcileStaleTranslations(
+      baseParams({
+        primaryContent: { title: { value: "Box", digest: OLD }, body_html: { value: "<p>Box</p>", digest: OLD } },
+        foreignLocales: ["de", "fr", "it"],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(shopify.registerCalls).toEqual([]);
+  });
+
   it("falls back to the purge when the AI fails — the stale text must not survive", async () => {
     ai.translate = vi.fn(async () => {
       throw new Error("provider down");
@@ -552,8 +590,16 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
                   // null` where that locale has nothing — the shape every sync
                   // in this repo filters on. The fake mirrors it, or the test
                   // would pass on a query that treats untranslated locales as
-                  // translated.
-                  translations: Object.keys(primaryContent[resourceId] ?? {}).map((key) => ({
+                  // translated. The key list is the union of what the primary
+                  // content holds and what any locale is translated for: a
+                  // CLEARED field has no primary entry left and is exactly the
+                  // case where the existence lookup matters.
+                  translations: [
+                    ...new Set([
+                      ...Object.keys(primaryContent[resourceId] ?? {}),
+                      ...Object.values(shopifyHas).flat(),
+                    ]),
+                  ].map((key) => ({
                     key,
                     locale,
                     value: translated.includes(key) ? `existing-${key}` : null,
@@ -585,6 +631,9 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   beforeEach(() => {
     policy.autoTranslateExternalChanges = true;
     policy.purgeOnPrimaryChange = false;
+    // Reset explicitly: several tests below flip it, and leaving it to test
+    // ORDER is how a deletion assertion comes to pass for the wrong reason.
+    policy.purgeUnreconciledSurfaces = true;
     db.contentTranslation.findMany.mockClear();
     db.contentTranslation.findMany.mockReset();
     db.contentTranslation.findMany.mockImplementation(async (args: any) =>
@@ -622,15 +671,41 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(IN_APP_RETRANSLATED_RESOURCE_TYPES.has("Collection")).toBe(false);
   });
 
-  it("re-translates the changed keys instead of deleting them", async () => {
+  it("translates every changed key into every published locale, not only the ones that had a translation", async () => {
+    // THE FILL. Shopify holds a German translation and no French one; the
+    // merchant asked for "translate automatically", so both get the new text.
+    // Repairing only what already existed answered a question about the PAST
+    // and read, on any half-translated shop, as the switch being off.
     const result = await reconcileAfterPrimarySave(saveParams());
     await awaitDetachedRetranslations();
 
-    expect(result.retranslating).toBe(2);
+    expect(result.retranslating).toBe(4);
     expect(result.removed).toBe(0);
     expect(shopify.removeCalls).toEqual([]);
-    expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
-    expect(shopify.registerCalls.every((c) => c.locale === "de")).toBe(true);
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual([
+      "de:body_html",
+      "de:title",
+      "fr:body_html",
+      "fr:title",
+    ]);
+  });
+
+  it("asks NOBODY which locales are translated when every entry will be translated", async () => {
+    // Existence only ever decided whether a REMOVAL is worth sending. With the
+    // fill, a save whose keys all carry a value has no removal to send at all —
+    // so the per-locale Shopify sweep and the mirror lookup are skipped rather
+    // than paid for on every save.
+    const params = saveParams();
+    await reconcileAfterPrimarySave(params);
+    await awaitDetachedRetranslations();
+
+    const graphql = (params.client as unknown as { graphql: { mock: { calls: unknown[][] } } }).graphql;
+    const queries = graphql.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(queries.some((q: string) => q.includes("stalePrimaryContent"))).toBe(true);
+    expect(queries.some((q: string) => q.includes("staleTranslationTargets"))).toBe(false);
+    expect(db.contentTranslation.findMany.mock.calls.some((c: any) => c[0]?.where?.marketId === "")).toBe(
+      false,
+    );
   });
 
   it("leaves a (resource, locale, key) the SAVE itself wrote in neither list", async () => {
@@ -649,6 +724,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
 
     // 4 candidates minus the one the merchant wrote.
     expect(result.retranslating).toBe(3);
+    expect(shopify.registerCalls).toHaveLength(3);
     expect(shopify.registerCalls.some((c) => c.locale === "de" && c.key === "title")).toBe(false);
     expect(shopify.registerCalls.some((c) => c.locale === "fr" && c.key === "title")).toBe(true);
     // And it is not removed either — neither list.
@@ -661,14 +737,22 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     // miss: a mirror row with no digest would pass no gate and its translation
     // would be neither refreshed nor removed — live, describing text that no
     // longer exists. `previousDigests` is not even a parameter here, and the
-    // rows the lookup returns carry no digest of their own.
+    // rows the mirror returns carry no digest of their own.
     await reconcileAfterPrimarySave(saveParams());
     await awaitDetachedRetranslations();
 
-    expect(shopify.registerCalls).toHaveLength(2);
-    // The DETECTION's own lookup — the GLOBAL one. The market-override purge
+    expect(shopify.registerCalls).toHaveLength(4);
+  });
+
+  it("scopes the EVIDENCE lookup to this resource when a removal is on the table", async () => {
+    // The mirror is still asked — but only for the candidates that would be
+    // REMOVED, and only for their own resource. The market-override purge
     // queries the same table for `marketId: { not: "" }`, so picking the last
     // call would assert against that instead.
+    primaryContent = { [PAGE]: { title: { value: "About us", digest: NEW } } };
+    await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
+
     const calls = db.contentTranslation.findMany.mock.calls as unknown as [{ where: any }][];
     const where = calls.map((call) => call[0].where).find((w) => w.marketId === "");
     expect(where).toBeDefined();
@@ -696,9 +780,10 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     const result = await reconcileAfterPrimarySave(saveParams());
     await awaitDetachedRetranslations();
 
-    // The global rows were REFRESHED, not deleted…
-    expect(result.retranslating).toBe(2);
-    expect(shopify.registerCalls.every((c) => c.locale === "de")).toBe(true);
+    // The global rows were REFRESHED (and the untranslated locale filled), not
+    // deleted…
+    expect(result.retranslating).toBe(4);
+    expect(shopify.registerCalls).toHaveLength(4);
     // …and the market override was removed on ITS OWN layer.
     expect(shopify.removeMarkets).toEqual([MARKET]);
     expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
@@ -786,14 +871,19 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     db.contentTranslation.findMany.mockResolvedValue([
       { resourceId: PAGE, key: "body_html", locale: "de" },
     ]);
-    const result = await reconcileAfterPrimarySave(
-      saveParams({ primaryContent: { title: { value: "About us", digest: NEW } } }),
-    );
+    const result = await reconcileAfterPrimarySave(saveParams());
     await awaitDetachedRetranslations();
 
+    // The cleared key goes where a translation really exists — German — and
+    // nowhere else: French holds none, and a removal there would be an
+    // unechoed no-op logged as an unconfirmed removal.
     expect(result.removed).toBe(1);
     expect(shopify.removeCalls).toEqual([{ keys: ["body_html"], locale: "de" }]);
-    expect(shopify.registerCalls).toEqual([]);
+    // The key that still HAS a value is translated into both locales.
+    expect(shopify.registerCalls.map((c) => `${c.locale}:${c.key}`).sort()).toEqual([
+      "de:title",
+      "fr:title",
+    ]);
   });
 
   it("does nothing when auto-translate is off — the caller's own purge is the repair", async () => {
@@ -812,47 +902,65 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
   });
 
-  it("touches nothing when the resource has no translations at all", async () => {
+  it("TRANSLATES a resource that had no translation at all — that is what the switch promises", async () => {
+    // The case the merchant reported: a page whose translations were empty
+    // stayed empty after every primary edit, because the repair only ever
+    // refreshed rows that existed. Nothing exists here, and all four entries
+    // are written.
     shopifyHas = {};
     db.contentTranslation.findMany.mockResolvedValue([]);
     const result = await reconcileAfterPrimarySave(saveParams());
+    await awaitDetachedRetranslations();
 
-    expect(result).toEqual({ removed: 0, retranslating: 0 });
+    expect(result.retranslating).toBe(4);
     expect(shopify.removeCalls).toEqual([]);
+    expect(shopify.registerCalls).toHaveLength(4);
+  });
+
+  it("still does nothing when the save changed no key, or the shop has no foreign locale", async () => {
+    expect(await reconcileAfterPrimarySave(saveParams({ changed: [] }))).toEqual({
+      removed: 0,
+      retranslating: 0,
+    });
+    expect(await reconcileAfterPrimarySave(saveParams({ foreignLocales: [] }))).toEqual({
+      removed: 0,
+      retranslating: 0,
+    });
     expect(shopify.registerCalls).toEqual([]);
   });
 
-  it("ignores a locale Shopify reports with no value — that is not a translation", async () => {
+  it("does not REMOVE in a locale Shopify reports with no value — that is not a translation", async () => {
     // `translations(locale:)` answers with a row per translatable key and a null
-    // value where the locale has nothing. Taking those as translations would not
-    // repair anything: it would CREATE translations into locales the merchant
-    // deliberately never translated, unattended and on their own API key.
+    // value where the locale has nothing. Taking those as translations would
+    // send a removal into every locale the merchant never translated: an
+    // unechoed no-op, logged as an unconfirmed removal.
     db.contentTranslation.findMany.mockResolvedValue([]);
-    shopifyHas = { de: ["title"] }; // fr has rows, all of them empty
+    // Both keys CLEARED, so every candidate needs evidence. Only German has a
+    // value; the French rows come back with `value: null`.
+    primaryContent = { [PAGE]: {} };
+    shopifyHas = { de: ["title", "body_html"] };
 
     await reconcileAfterPrimarySave(saveParams());
     await awaitDetachedRetranslations();
 
-    expect(shopify.registerCalls).toEqual([
-      expect.objectContaining({ key: "title", locale: "de" }),
-    ]);
+    expect(shopify.removeCalls).toEqual([{ keys: ["title", "body_html"], locale: "de" }]);
+    expect(shopify.registerCalls).toEqual([]);
   });
 
-  it("repairs a translation Shopify holds that the local mirror never saw", async () => {
+  it("removes a translation Shopify holds that the local mirror never saw", async () => {
     // Written in the Shopify admin, by another app or by an importer. The code
     // this path replaces reached it because it removed BLINDLY across every
     // foreign locale; asking only the mirror would trade "deleted" for "left
     // live on the storefront" — on a type with no webhook to catch it later.
     db.contentTranslation.findMany.mockResolvedValue([]);
+    primaryContent = { [PAGE]: {} };
     shopifyHas = { fr: ["title"] };
 
-    const result = await reconcileAfterPrimarySave(saveParams());
+    const result = await reconcileAfterPrimarySave(saveParams({ changed: [{ key: "title" }] }));
     await awaitDetachedRetranslations();
 
-    expect(result.retranslating).toBe(1);
-    expect(shopify.registerCalls).toEqual([
-      expect.objectContaining({ key: "title", locale: "fr" }),
-    ]);
+    expect(result.removed).toBe(1);
+    expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "fr" }]);
   });
 
   it("falls back to the mirror for a locale whose Shopify read failed", async () => {
@@ -861,6 +969,10 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     // read-back still works — a GraphQL-level error, which is how a real
     // refusal arrives, and unlike a thrown transport error it is not retried by
     // the gateway, so the test does not pay backoff to prove one branch.
+    primaryContent = { [PAGE]: {} };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.marketId === "" ? [{ resourceId: PAGE, key: "title", locale: "de" }] : [],
+    );
     const real = saveClient();
     const client = {
       graphql: vi.fn(async (query: string, opts: { variables?: Record<string, unknown> }) =>
@@ -872,7 +984,7 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     await reconcileAfterPrimarySave(saveParams({ client: client as never }));
     await awaitDetachedRetranslations();
 
-    expect(shopify.registerCalls.map((c) => c.key).sort()).toEqual(["body_html", "title"]);
+    expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
   });
 
   it("never TRANSLATES a key whose read-back does not match what the caller wrote", async () => {
@@ -891,8 +1003,8 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     );
     await awaitDetachedRetranslations();
 
-    expect(result.retranslating).toBe(1);
-    expect(shopify.registerCalls.map((c) => c.key)).toEqual(["body_html"]);
+    expect(result.retranslating).toBe(2);
+    expect(shopify.registerCalls.map((c) => c.key)).toEqual(["body_html", "body_html"]);
   });
 
   it("...and DECLINES it, so the merchant's stored deletion answer decides", async () => {
@@ -909,6 +1021,11 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
 
     shopify.removeCalls = [];
     policy.purgeUnreconciledSurfaces = false;
+    // A second resource, because the first one is now claimed by the run above
+    // — and it needs its own primary content: with no value at all the entry
+    // would be a PURGE (nothing to translate) rather than the DECLINE this
+    // asserts about.
+    primaryContent[`${PAGE}-b`] = { title: { value: "About us", digest: NEW } };
     await reconcileAfterPrimarySave(
       saveParams({
         resourceId: `${PAGE}-b`,
@@ -961,7 +1078,9 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   });
 
   it("never throws — the primary text is already saved", async () => {
-    db.contentTranslation.findMany.mockRejectedValueOnce(new Error("connection lost"));
+    // Both keys cleared, so the evidence lookup runs — and fails.
+    primaryContent = { [PAGE]: {} };
+    db.contentTranslation.findMany.mockRejectedValue(new Error("connection lost"));
     await expect(reconcileAfterPrimarySave(saveParams())).resolves.toEqual({
       removed: 0,
       retranslating: 0,

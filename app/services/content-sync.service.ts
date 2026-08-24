@@ -11,6 +11,7 @@ import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
 import { featuredAltLockId, marketLayerLockId } from '~/services/translations/translation-locks.shared';
+import { publishedForeignLocales } from '~/services/translations/stale-translations.shared';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
@@ -240,6 +241,10 @@ export class ContentSyncService {
           translations: ownTranslations,
           primaryContent,
           previousDigests,
+          // The FILL: a key this sync proved moved is translated into every
+          // published language, not only into the ones that already carried a
+          // translation (stale-translations.shared.ts).
+          foreignLocales: publishedForeignLocales(locales),
         });
       }
 
@@ -372,6 +377,10 @@ export class ContentSyncService {
           translations: ownTranslations,
           primaryContent,
           previousDigests,
+          // The FILL: a key this sync proved moved is translated into every
+          // published language, not only into the ones that already carried a
+          // translation (stale-translations.shared.ts).
+          foreignLocales: publishedForeignLocales(locales),
         });
       }
 
@@ -1162,6 +1171,7 @@ export class ContentSyncService {
       translations: allTranslations,
       primaryContent,
       previousDigests,
+      foreignLocales: publishedForeignLocales(locales),
     });
 
     const translations = await db.contentTranslation.findMany({
