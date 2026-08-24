@@ -14,7 +14,7 @@
  * `collectBulkRepair` where they would otherwise purge; `flushBulkRepairs`
  * turns what was collected into repair calls once, at the end of the save.
  *
- * Three rules shape it, and each is a cost the single editor never has to pay:
+ * Six rules shape it, and each is a cost the single editor never has to pay:
  *
  * 1. ONE GROUP PER (row, surface) — the same grouping the single editor uses,
  *    never one per cell. A product whose title, three metafields and two alt
@@ -23,12 +23,15 @@
  *    which is one Task row and one AI request per locale each: exactly what the
  *    same edit made one product at a time would cost.
  *
- * 2. A CAP on the number of groups (`MAX_REPAIR_GROUPS`). A save may carry 500
- *    cells over hundreds of rows, and every group is an unattended, detached AI
- *    run on the merchant's own API key. Past the cap nothing is collected: the
- *    surface falls back to the merchant's stored deletion answer, exactly as it
- *    behaved before this module existed, and the overflow is REPORTED rather
- *    than silently dropped.
+ * 2. A CAP on the number of groups (`MAX_REPAIR_GROUPS`, per pool — see rule 3,
+ *    so at most twice that many runs from one save). A save may carry 500 cells
+ *    over hundreds of rows, and every group is an unattended, detached AI run on
+ *    the merchant's own API key. Past the cap nothing is collected, and what
+ *    then happens depends on the surface: most fall back to the merchant's
+ *    stored deletion answer, exactly as they behaved before this module existed,
+ *    while a PROMOTED group past its budget keeps its stale translations (its
+ *    purge stood down and its webhook was made to bail). Either way the overflow
+ *    is REPORTED rather than silently dropped.
  *
  * 3. PRODUCT and COLLECTION content rows are the webhook's, not ours —
  *    starting a run here would queue a duplicate behind a repair that has
@@ -39,6 +42,23 @@
  *    this very save does nothing, and with the purge off the row's other
  *    locales would stay stale for good. Where we blocked the webhook, we owe
  *    the repair.
+ *
+ * 4. WHAT THE SAVE WROTE goes in as `alreadyWritten` and lands in neither list:
+ *    rule 3 hands us the repair of a row whose foreign value the merchant may
+ *    have typed in the SAME save, and re-translating over it is the one thing
+ *    that exception must not do. GLOBAL layer only — a market override is not a
+ *    value the repair could overwrite, and recording one silences it for a
+ *    global translation nobody touched.
+ *
+ * 5. EVERY GROUP IS PRE-CHECKED against its own mirror: one DB query, and an
+ *    empty answer skips it before a single Shopify call, where the repair's own
+ *    detection asks Shopify once PER LOCALE. It keeps this path's reach exactly
+ *    where the deletion it replaces had it — that one short-circuited on an
+ *    empty mirror too — so a translation written in the Shopify admin with no
+ *    row here is not repaired by a bulk save, as it was not deleted by one.
+ *
+ * 6. NOTHING HERE MAY FAIL THE SAVE: every row is already written by the time
+ *    this runs, so a repair that cannot start logs and leaves the stale rows.
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -46,6 +66,10 @@ import type { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { BulkRowType } from "./columns.shared";
 import { CONTENT_RESOURCE_TYPE_BY_ROW_TYPE } from "./translations.server";
 import type { TranslationChangePolicy } from "../translations/translation-change-policy.server";
+// TYPE only: the module itself is imported dynamically inside the flush, so
+// nothing here pulls the repair (and its AI stack) into a caller that only
+// collects.
+import type { TranslationMirror } from "../translations/stale-translation-sync.server";
 import {
   altTextLockId,
   featuredAltLockId,
@@ -109,8 +133,12 @@ export interface BulkRepairPlan {
    */
   webhookOwned: Map<string, BulkRepairGroup>;
   /** Group KEYS the cap refused — reported, never silently dropped. Keys, not
-   *  calls: ten metafields of one product past the cap are ONE refused row. */
+   *  calls: ten metafields of one product past the cap are ONE refused group. */
   overflow: Set<string>;
+  /** The ROWS behind those groups. A product that overflows on its content,
+   *  its sub-resources and its alt texts is three groups and ONE row, and the
+   *  merchant is told about rows. */
+  overflowRows: Set<string>;
   /**
    * Rows a foreign CONTENT write claimed in this save. Only these make a
    * product/collection content group ours to repair (rule 3 above).
@@ -130,6 +158,7 @@ export function newBulkRepairPlan(): BulkRepairPlan {
     groups: new Map(),
     webhookOwned: new Map(),
     overflow: new Set(),
+    overflowRows: new Set(),
     claimedRows: new Set(),
     claimedWrites: [],
   };
@@ -181,6 +210,7 @@ export function collectBulkRepair(
     // entries to a group that already exists costs no extra run.
     if (!webhookOwned && pool.size >= MAX_REPAIR_GROUPS) {
       plan.overflow.add(key);
+      plan.overflowRows.add(args.ownerId);
       return false;
     }
     group = {
@@ -231,6 +261,7 @@ export function promoteClaimedGroups(plan: BulkRepairPlan): number {
     if (!plan.claimedRows.has(group.ownerId)) continue;
     if (promoted >= MAX_REPAIR_GROUPS) {
       plan.overflow.add(key);
+      plan.overflowRows.add(group.ownerId);
       continue;
     }
     plan.groups.set(key, group);
@@ -319,9 +350,9 @@ export async function flushBulkRepairs(params: {
   primaryLocale?: string;
   policy: TranslationChangePolicy;
   plan: BulkRepairPlan;
-}): Promise<{ started: number; skipped: number }> {
+}): Promise<{ started: number; translations: number; skipped: number }> {
   const { db, shop, gateway, foreignLocales, primaryLocale, policy, plan } = params;
-  if (plan.groups.size === 0) return { started: 0, skipped: 0 };
+  if (plan.groups.size === 0) return { started: 0, translations: 0, skipped: 0 };
 
   const {
     reconcileAfterPrimarySave,
@@ -341,6 +372,7 @@ export async function flushBulkRepairs(params: {
   const alreadyWritten = plan.claimedWrites;
 
   let started = 0;
+  let translations = 0;
   let skipped = 0;
   for (const group of plan.groups.values()) {
     const resourceTitle = titles.get(group.ownerId) || group.ownerId;
@@ -352,12 +384,11 @@ export async function flushBulkRepairs(params: {
     /** Everything but the shared fields — null = this group cannot run. */
     const shape = (():
       | {
-          resourceId?: string;
           resourceType: string;
           lockId?: string;
           contentKind?: "product" | "collection" | "blog" | "page";
           taskResourceType?: string;
-          mirror: unknown;
+          mirror: TranslationMirror | null;
           translateAs?: { kind: "values"; context: string; sourceLocale: string };
         }
       | null => {
@@ -470,12 +501,14 @@ export async function flushBulkRepairs(params: {
         ).values(),
       ];
       const keys = [...new Set(group.entries.map((entry) => entry.key))];
-      const existing = await (
-        mirror as { existing: (r: typeof refs, l: readonly string[], k: string[]) => Promise<unknown[]> }
-      ).existing(refs, foreignLocales, keys);
+      if (!mirror) {
+        skipped++;
+        continue;
+      }
+      const existing = await mirror.existing(refs, foreignLocales, keys);
       if (existing.length === 0) continue;
 
-      await reconcileAfterPrimarySave({
+      const outcome = await reconcileAfterPrimarySave({
         client: gateway,
         shop,
         resourceId: group.ownerId,
@@ -486,12 +519,20 @@ export async function flushBulkRepairs(params: {
         foreignLocales,
         alreadyWritten,
         policy,
-        mirror: mirror as never,
+        mirror,
         ...(shape.lockId ? { lockId: shape.lockId } : {}),
         ...(shape.taskResourceType ? { taskResourceType: shape.taskResourceType } : {}),
         ...(shape.translateAs ? { translateAs: shape.translateAs } : {}),
       });
-      started++;
+      // Counted from what the repair actually took on, never from the fact that
+      // it was CALLED: it starts no Task and no run when nothing is left to
+      // translate — every entry refused as un-promptable, every triple already
+      // written by this save, an unreadable read-back. Reporting those as
+      // started sent the merchant to a Tasks tab with nothing in it.
+      if (outcome.retranslating > 0) {
+        started++;
+        translations += outcome.retranslating;
+      }
     } catch (error: unknown) {
       skipped++;
       logger.warn("[BULK] Auto-translation repair could not start — stale rows kept", {
@@ -508,9 +549,10 @@ export async function flushBulkRepairs(params: {
       context: "Bulk",
       shop,
       started,
+      translations,
       skipped,
       overflow: plan.overflow.size,
     });
   }
-  return { started, skipped };
+  return { started, translations, skipped };
 }
