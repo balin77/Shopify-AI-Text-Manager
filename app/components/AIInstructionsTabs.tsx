@@ -666,7 +666,7 @@ export function AIInstructionsTabs({
                       {autoTranslateActive && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {t.settings.translationPurgeSupersededNote ||
-                            'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern, im Editor wie im Bulk-Editor. Ein Speichern im Bulk-Editor startet höchstens 25 solche Läufe; darüber hinaus wird gelöscht.'}
+                            'Nicht nötig, solange automatisch neu übersetzt wird — bei Produkten und Kollektionen beim nächsten Sync, bei allem anderen beim Speichern, im Editor wie im Bulk-Editor. Im Bulk-Editor ist die Zahl der Läufe pro Speichern begrenzt; darüber hinaus wird gelöscht.'}
                         </Text>
                       )}
                     </BlockStack>

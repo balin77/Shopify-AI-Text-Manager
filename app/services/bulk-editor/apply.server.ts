@@ -44,7 +44,8 @@ import {
 } from "../translations/translation-locks.shared";
 import {
   collectBulkRepair,
-  dropWebhookOwnedGroups,
+  promoteClaimedGroups,
+  recordBulkForeignWrite,
   flushBulkRepairs,
   newBulkRepairPlan,
   type BulkRepairPlan,
@@ -416,18 +417,20 @@ async function invalidateStaleForeignTranslations(
   if (deps.policy.autoTranslateExternalChanges) {
     if (collectRepairForKeys(deps, rowType, resourceId, keys, opts)) return;
   }
-  if (!mayPurge) return;
-
-  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
-  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
-
   // Image rows keep their translations in ProductImageAltTranslation — one key
   // ("alt") on one resource, so the generic key/locale bookkeeping below would
-  // be pure overhead.
+  // be pure overhead. It dispatches BEFORE the purge gate: that function owns
+  // both answers for its surface, and behind the gate its whole auto-translate
+  // branch was unreachable on a shop with the deletion switched off — the one
+  // surface where the switch would have done nothing at all.
   if (rowType === "image" && !resourceTypeOverride) {
     await invalidateStaleImageAltTranslations(deps, resourceId);
     return;
   }
+  if (!mayPurge) return;
+
+  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
+  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
   try {
     // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
     // entirely when there is nothing to invalidate (the common case on shops
@@ -2279,6 +2282,12 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           ? featuredAltLockId(group.rowId)
           : marketLayerLockId(featuredAltLockId(group.rowId)),
       );
+      // The repair addresses the IMAGE resource, so that is the id this write
+      // has to be recorded under. The write above resolved (and cached) it.
+      const writtenImageId = deps.featuredImageIds.get(group.rowId);
+      if (writtenImageId) {
+        recordBulkForeignWrite(deps.repairPlan, writtenImageId, group.locale, "alt");
+      }
     }
   }
 
@@ -2383,6 +2392,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // `isTranslationRecentlySaved` knows nothing about markets and a
         // market write blocks the webhook just as well.
         deps.repairPlan.claimedRows.add(resourceId);
+        // …and WHAT was written. The claim above makes this row's repair ours;
+        // this is what keeps that repair off the very value the merchant just
+        // typed — see `alreadyWritten` in stale-translation-sync.server.ts.
+        recordBulkForeignWrite(deps.repairPlan, resourceId, locale, write.key);
         // What Shopify ECHOED, not what was sent. The same rule the theme path
         // already follows for autofix-normalised richtext: mirroring the raw
         // value diverges the DB from the storefront, and for `handle` it would
@@ -2515,6 +2528,9 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         }
         markTranslationSaved(resourceId);
         deps.repairPlan.claimedRows.add(resourceId);
+        // A CLEARED value is just as deliberate: the merchant emptied this
+        // translation in this save, so the repair must not write it back.
+        recordBulkForeignWrite(deps.repairPlan, resourceId, locale, clear.key);
         // A cleared handle: the locale is served under the PRIMARY handle
         // again, so the dead translated URL gets a redirect there.
         if (clear.key === "handle") confirmedHandle = "";
@@ -2785,7 +2801,10 @@ async function persistSubResourceTranslations(
     for (const pair of pairs) {
       const error = await writeSubResourceTranslation(pair.target, pair.value, deps);
       if (error && !cellFailed) cellFailed = error;
-      if (!error) claimed.push(pair.target.resourceId);
+      if (!error) {
+        claimed.push(pair.target.resourceId);
+        recordBulkForeignWrite(deps.repairPlan, pair.target.resourceId, group.locale, pair.target.key);
+      }
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
     // The SUB-RESOURCES themselves, and the private lock their repair runs
@@ -3419,11 +3438,11 @@ export async function applyBulkDiff(
   // Auto-translation LAST, when every primary write of the save is through:
   // the repair reads the new text back from Shopify, and a group flushed
   // mid-run would translate half a row. The two webhook-backed row types are
-  // dropped here rather than at collection time, because a row is CLAIMED by
+  // sorted out here rather than at collection time, because a row is CLAIMED by
   // its foreign group while the candidate comes from its primary one, and the
   // two are persisted in whatever order the client sent them.
   // Never throws — every row above is already saved.
-  dropWebhookOwnedGroups(repairPlan);
+  promoteClaimedGroups(repairPlan);
   let retranslation: BulkApplyResult["retranslation"];
   try {
     const flushed = await flushBulkRepairs({
@@ -3435,8 +3454,8 @@ export async function applyBulkDiff(
       policy: changePolicy,
       plan: repairPlan,
     });
-    if (flushed.started > 0 || flushed.skipped > 0 || repairPlan.overflow > 0) {
-      retranslation = { ...flushed, capped: repairPlan.overflow };
+    if (flushed.started > 0 || flushed.skipped > 0 || repairPlan.overflow.size > 0) {
+      retranslation = { ...flushed, capped: repairPlan.overflow.size };
     }
   } catch (err: unknown) {
     logger.warn("[BULK] Auto-translation flush failed — stale rows kept", {

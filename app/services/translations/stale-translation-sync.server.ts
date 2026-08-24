@@ -1031,6 +1031,19 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
   /** Published foreign locales — the primary locale never holds a translation row. */
   foreignLocales: readonly string[];
   /**
+   * (resource, locale, key) triples this SAVE wrote a FOREIGN value for itself
+   * — left alone entirely: not re-translated, not removed.
+   *
+   * The merchant typed that value, in this very save, for this very key. It is
+   * the same rule as `isTranslationRecentlySaved`, at the granularity the
+   * situation actually has: a bulk save that changes a product's primary title
+   * AND its German one has said something about German and nothing about
+   * French, so aborting the whole run would leave French stale while acting on
+   * German would overwrite what they just typed. `resourceId` defaults to the
+   * group's own.
+   */
+  alreadyWritten?: ReadonlyArray<{ resourceId?: string; locale: string; key: string }>;
+  /**
    * The policy the CALLER already read to decide it was skipping its own purge.
    * Passing it is not an optimisation: a second read fails OPEN to
    * "auto-translate off", which returns NOTHING — and the caller has by then
@@ -1095,10 +1108,19 @@ export async function reconcileAfterPrimarySave(params: RepairTarget & {
     const stale: StaleTranslation[] = [];
     let unreadable = 0;
     let declinedByReadBack = 0;
+    const untouchable = new Set(
+      (params.alreadyWritten ?? []).map((item) =>
+        tripleKey(item.resourceId ?? resourceId, item.locale, item.key),
+      ),
+    );
     for (const triple of triples) {
       const [itemResourceId, locale, key] = triple.split(PAIR_SEP);
       const ref = refs.get(itemResourceId);
       if (!ref) continue;
+      // The caller wrote this exact translation in this exact save. Neither
+      // list: re-translating it would overwrite what the merchant just typed,
+      // and removing it would delete it.
+      if (untouchable.has(triple)) continue;
       const resourcePrimary = primaryByResource.get(itemResourceId);
       // Could not read this resource's current text at all — skip it. An
       // absent read is not evidence that the field was cleared, and answering

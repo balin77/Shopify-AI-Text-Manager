@@ -18,9 +18,10 @@
  *
  * 1. ONE GROUP PER (row, surface) — the same grouping the single editor uses,
  *    never one per cell. A product whose title, three metafields and two alt
- *    texts changed is three groups (content, sub-resources, alt texts), which
- *    is three Task rows and three AI requests per locale: exactly what the same
- *    edit made one product at a time would cost.
+ *    texts changed is at most three groups (content, sub-resources, alt texts)
+ *    — the content one only if rule 3's exception applies, so normally two —
+ *    which is one Task row and one AI request per locale each: exactly what the
+ *    same edit made one product at a time would cost.
  *
  * 2. A CAP on the number of groups (`MAX_REPAIR_GROUPS`). A save may carry 500
  *    cells over hundreds of rows, and every group is an unattended, detached AI
@@ -93,17 +94,56 @@ export interface BulkRepairGroup {
 
 export interface BulkRepairPlan {
   groups: Map<string, BulkRepairGroup>;
-  /** Groups the cap refused — reported, never silently dropped. */
-  overflow: number;
+  /**
+   * The two webhook-backed row types' CONTENT groups, kept OUT of `groups` and
+   * out of the cap until `promoteClaimedGroups` decides which of them are ours.
+   *
+   * They are collected at all only because the claim that makes them ours
+   * (a foreign write on the same row) can land after the candidate does. Left
+   * in the capped pool they filled it with groups that were then thrown away:
+   * thirteen product rows that each changed a base field and a metafield spent
+   * every slot on content groups nobody ran, and from row thirteen on the
+   * SUB-RESOURCE candidates were refused and their translations deleted. A
+   * budget spent on work that never happened must not cost a merchant their
+   * translations.
+   */
+  webhookOwned: Map<string, BulkRepairGroup>;
+  /** Group KEYS the cap refused — reported, never silently dropped. Keys, not
+   *  calls: ten metafields of one product past the cap are ONE refused row. */
+  overflow: Set<string>;
   /**
    * Rows a foreign CONTENT write claimed in this save. Only these make a
    * product/collection content group ours to repair (rule 3 above).
    */
   claimedRows: Set<string>;
+  /**
+   * Every FOREIGN translation this save wrote itself, as (resource, locale,
+   * key). Handed to the repair as `alreadyWritten`, which leaves them in
+   * neither list — re-translating a value the merchant typed in this very save
+   * is the one thing rule 3's exception must not do.
+   */
+  claimedWrites: Array<{ resourceId: string; locale: string; key: string }>;
 }
 
 export function newBulkRepairPlan(): BulkRepairPlan {
-  return { groups: new Map(), overflow: 0, claimedRows: new Set() };
+  return {
+    groups: new Map(),
+    webhookOwned: new Map(),
+    overflow: new Set(),
+    claimedRows: new Set(),
+    claimedWrites: [],
+  };
+}
+
+/** Record a foreign translation this save wrote — see `claimedWrites`. */
+export function recordBulkForeignWrite(
+  plan: BulkRepairPlan,
+  resourceId: string,
+  locale: string,
+  key: string,
+): void {
+  if (!locale || !key) return;
+  plan.claimedWrites.push({ resourceId, locale, key });
 }
 
 const KEY_SEP = "|";
@@ -129,12 +169,18 @@ export function collectBulkRepair(
 ): boolean {
   if (args.entries.length === 0) return false;
   const key = groupKey(args.surface, args.ownerId);
-  let group = plan.groups.get(key);
+  // A product's or collection's OWN fields belong to its update webhook unless
+  // this save blocks it — decided at the flush, so until then they wait in
+  // their own uncapped pool (see `BulkRepairPlan.webhookOwned`).
+  const webhookOwned =
+    args.surface === "content" && (args.rowType === "product" || args.rowType === "collection");
+  const pool = webhookOwned ? plan.webhookOwned : plan.groups;
+  let group = pool.get(key);
   if (!group) {
     // The cap counts GROUPS and is checked before a new one is opened: adding
     // entries to a group that already exists costs no extra run.
-    if (plan.groups.size >= MAX_REPAIR_GROUPS) {
-      plan.overflow++;
+    if (!webhookOwned && pool.size >= MAX_REPAIR_GROUPS) {
+      plan.overflow.add(key);
       return false;
     }
     group = {
@@ -144,7 +190,7 @@ export function collectBulkRepair(
       entries: [],
       ...(args.imageIdByMedia ? { imageIdByMedia: new Map(args.imageIdByMedia) } : {}),
     };
-    plan.groups.set(key, group);
+    pool.set(key, group);
   }
   const seen = new Set(group.entries.map((entry) => `${entry.resourceId}${KEY_SEP}${entry.key}`));
   for (const entry of args.entries) {
@@ -160,22 +206,33 @@ export function collectBulkRepair(
 }
 
 /**
- * Drop the content groups of the two webhook-backed row types that this save
- * did NOT claim — the webhook repairs those, and a second run would queue a
- * duplicate behind it (rule 3). Called once, before the flush, because a row is
- * claimed by its FOREIGN group while the candidate comes from its PRIMARY one
- * and the two are persisted in whatever order the client sent them.
+ * Move the webhook-backed content groups this save CLAIMED into the pool that
+ * runs, and forget the rest — their webhook repairs them, and a second run
+ * would queue a duplicate behind it (rule 3). Called once, before the flush,
+ * because a row is claimed by its FOREIGN group while the candidate comes from
+ * its PRIMARY one and the two are persisted in whatever order the client sent
+ * them.
+ *
+ * The promoted ones get their OWN budget rather than competing for the other
+ * pool's: a claimed row is owed a repair (its webhook has been made to bail and
+ * nothing else will notice), while the surfaces in `groups` have already stood
+ * their deletion down and would otherwise be evicted into "neither refreshed
+ * nor removed". So a save starts at most MAX_REPAIR_GROUPS of each, and a
+ * claimed row past that budget follows the cap's normal answer.
  */
-export function dropWebhookOwnedGroups(plan: BulkRepairPlan): number {
-  let dropped = 0;
-  for (const [key, group] of plan.groups) {
-    if (group.surface !== "content") continue;
-    if (group.rowType !== "product" && group.rowType !== "collection") continue;
-    if (plan.claimedRows.has(group.ownerId)) continue;
-    plan.groups.delete(key);
-    dropped++;
+export function promoteClaimedGroups(plan: BulkRepairPlan): number {
+  let promoted = 0;
+  for (const [key, group] of plan.webhookOwned) {
+    if (!plan.claimedRows.has(group.ownerId)) continue;
+    if (promoted >= MAX_REPAIR_GROUPS) {
+      plan.overflow.add(key);
+      continue;
+    }
+    plan.groups.set(key, group);
+    promoted++;
   }
-  return dropped;
+  plan.webhookOwned.clear();
+  return promoted;
 }
 
 /** The merchant-facing kind the AI prompt and the Tasks tab speak. */
@@ -276,114 +333,69 @@ export async function flushBulkRepairs(params: {
     byType.set(group.rowType, list);
   }
   const titles = await loadOwnerTitles(db, shop, byType);
+  const alreadyWritten = plan.claimedWrites;
 
   let started = 0;
   let skipped = 0;
   for (const group of plan.groups.values()) {
     const resourceTitle = titles.get(group.ownerId) || group.ownerId;
     const contentKind = contentKindFor(group.rowType);
+    const rowResourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType];
     const valuePrompt = (context: string) =>
       primaryLocale ? { kind: "values" as const, context, sourceLocale: primaryLocale } : null;
 
-    try {
-      switch (group.surface) {
-        case "content": {
-          await reconcileAfterPrimarySave({
-            client: gateway,
-            shop,
-            resourceId: group.ownerId,
-            resourceType: CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType],
-            contentKind,
-            resourceTitle,
-            changed: group.entries,
-            foreignLocales,
-            policy,
-            mirror: contentTranslationMirror(shop),
-          });
-          started++;
-          break;
+    /** Everything but the shared fields — null = this group cannot run. */
+    const shape = (():
+      | {
+          resourceId?: string;
+          resourceType: string;
+          lockId?: string;
+          contentKind?: "product" | "collection" | "blog" | "page";
+          taskResourceType?: string;
+          mirror: unknown;
+          translateAs?: { kind: "values"; context: string; sourceLocale: string };
         }
+      | null => {
+      switch (group.surface) {
+        case "content":
+          return { resourceType: rowResourceType, mirror: contentTranslationMirror(shop) };
         case "metaobject": {
           const prompt = valuePrompt("metaobject field values");
-          if (!prompt) {
-            skipped++;
-            break;
-          }
-          const typeById = new Map<string, string>();
-          for (const entry of group.entries) typeById.set(entry.resourceId, "");
-          for (const row of await db.metaobject.findMany({
-            where: { shop, id: { in: [...typeById.keys()] } },
-            select: { id: true, type: true },
-          })) {
-            typeById.set(row.id, row.type);
-          }
-          await reconcileAfterPrimarySave({
-            client: gateway,
-            shop,
-            resourceId: group.ownerId,
+          if (!prompt) return null;
+          return {
             resourceType: "Metaobject",
             // The AI prompt comes from `translateAs`, so this only decides the
             // Task label — and `taskResourceType` keeps a metaobject OUT of the
             // admin-path map, which would otherwise offer /admin/pages/<id>.
             contentKind: "page",
             taskResourceType: "metaobject",
-            resourceTitle,
-            changed: group.entries,
-            foreignLocales,
-            policy,
-            mirror: metaobjectTranslationMirror(shop, typeById),
+            mirror: null, // resolved below: it needs the entries' types
             translateAs: prompt,
-          });
-          started++;
-          break;
+          };
         }
         case "subResource": {
           const prompt = valuePrompt("product option and metafield values");
-          if (!prompt) {
-            skipped++;
-            break;
-          }
-          await reconcileAfterPrimarySave({
-            client: gateway,
-            shop,
-            resourceId: group.ownerId,
+          if (!prompt) return null;
+          return {
             resourceType: "Product",
             // A product carries several independent repairs; claiming the
             // product itself would make its own webhook reconciliation bail.
             lockId: subResourceLockId(group.ownerId),
             contentKind: "product",
-            resourceTitle,
-            changed: group.entries,
-            foreignLocales,
-            policy,
             mirror: contentTranslationMirror(shop),
             translateAs: prompt,
-          });
-          started++;
-          break;
+          };
         }
         case "productImageAlt": {
           const prompt = valuePrompt("product image alt texts");
-          if (!prompt || !group.imageIdByMedia || group.imageIdByMedia.size === 0) {
-            skipped++;
-            break;
-          }
-          await reconcileAfterPrimarySave({
-            client: gateway,
-            shop,
-            resourceId: group.ownerId,
+          if (!prompt || !group.imageIdByMedia || group.imageIdByMedia.size === 0) return null;
+          return {
             resourceType: "Product",
             lockId: altTextLockId(group.ownerId),
             contentKind: "product",
-            resourceTitle,
-            changed: group.entries,
-            foreignLocales,
-            policy,
             mirror: productImageAltMirror(group.imageIdByMedia),
             translateAs: prompt,
-          });
-          started++;
-          break;
+          };
         }
         case "libraryImageAlt": {
           // An image that is not product media has no ProductImage row: its
@@ -391,57 +403,90 @@ export async function flushBulkRepairs(params: {
           // "MediaImage", the same split the write path makes. It has no owning
           // product either, so the media GID is its own lock.
           const prompt = valuePrompt("image alt texts");
-          if (!prompt) {
-            skipped++;
-            break;
-          }
-          await reconcileAfterPrimarySave({
-            client: gateway,
-            shop,
-            resourceId: group.ownerId,
+          if (!prompt) return null;
+          return {
             resourceType: "MediaImage",
             contentKind: "product",
-            resourceTitle,
-            changed: group.entries,
-            foreignLocales,
-            policy,
             mirror: contentTranslationMirror(shop),
             translateAs: prompt,
-          });
-          started++;
-          break;
+          };
         }
         case "featuredAlt": {
           const prompt = valuePrompt("image alt texts");
-          if (!prompt) {
-            skipped++;
-            break;
-          }
-          await reconcileAfterPrimarySave({
-            client: gateway,
-            shop,
-            resourceId: group.ownerId,
-            resourceType: CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType],
+          if (!prompt) return null;
+          return {
+            resourceType: rowResourceType,
             // The featured alt is its own surface: the parent's lock belongs to
             // that resource's CONTENT repair, which an article save runs on the
             // same id.
             lockId: featuredAltLockId(group.ownerId),
-            contentKind,
-            resourceTitle,
-            changed: group.entries,
-            foreignLocales,
-            policy,
-            mirror: featuredImageAltMirror(
-              shop,
-              group.ownerId,
-              CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[group.rowType],
-            ),
+            mirror: featuredImageAltMirror(shop, group.ownerId, rowResourceType),
             translateAs: prompt,
-          });
-          started++;
-          break;
+          };
         }
       }
+    })();
+
+    if (!shape) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      let mirror = shape.mirror;
+      if (group.surface === "metaobject") {
+        const typeById = new Map<string, string>();
+        for (const entry of group.entries) typeById.set(entry.resourceId, "");
+        for (const row of await db.metaobject.findMany({
+          where: { shop, id: { in: [...typeById.keys()] } },
+          select: { id: true, type: true },
+        })) {
+          typeById.set(row.id, row.type);
+        }
+        mirror = metaobjectTranslationMirror(shop, typeById);
+      }
+
+      // Does this surface hold ANY foreign translation to repair? One DB query
+      // against the same mirror the repair would use, and a `no` skips the
+      // group before a single Shopify call — the repair's own detection asks
+      // Shopify once PER LOCALE, which on a shop that never translated this
+      // surface is a round trip per locale per row for a certain nothing.
+      //
+      // It also keeps this path's REACH exactly where the deletion it replaces
+      // had it: that one short-circuited on an empty mirror too. A translation
+      // written in the Shopify admin with no row here is therefore not repaired
+      // by a bulk save — as it was not deleted by one before.
+      const refs = [
+        ...new Map(
+          group.entries.map((entry) => [
+            entry.resourceId,
+            { resourceId: entry.resourceId, resourceType: entry.resourceType },
+          ]),
+        ).values(),
+      ];
+      const keys = [...new Set(group.entries.map((entry) => entry.key))];
+      const existing = await (
+        mirror as { existing: (r: typeof refs, l: readonly string[], k: string[]) => Promise<unknown[]> }
+      ).existing(refs, foreignLocales, keys);
+      if (existing.length === 0) continue;
+
+      await reconcileAfterPrimarySave({
+        client: gateway,
+        shop,
+        resourceId: group.ownerId,
+        resourceType: shape.resourceType,
+        contentKind: shape.contentKind ?? contentKind,
+        resourceTitle,
+        changed: group.entries,
+        foreignLocales,
+        alreadyWritten,
+        policy,
+        mirror: mirror as never,
+        ...(shape.lockId ? { lockId: shape.lockId } : {}),
+        ...(shape.taskResourceType ? { taskResourceType: shape.taskResourceType } : {}),
+        ...(shape.translateAs ? { translateAs: shape.translateAs } : {}),
+      });
+      started++;
     } catch (error: unknown) {
       skipped++;
       logger.warn("[BULK] Auto-translation repair could not start — stale rows kept", {
@@ -453,13 +498,13 @@ export async function flushBulkRepairs(params: {
     }
   }
 
-  if (started > 0 || skipped > 0 || plan.overflow > 0) {
+  if (started > 0 || skipped > 0 || plan.overflow.size > 0) {
     logger.info("[BULK] Auto-translation repairs", {
       context: "Bulk",
       shop,
       started,
       skipped,
-      overflow: plan.overflow,
+      overflow: plan.overflow.size,
     });
   }
   return { started, skipped };
