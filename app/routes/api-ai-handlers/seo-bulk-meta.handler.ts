@@ -175,10 +175,13 @@ async function runSeoBulkMeta(taskId: string, args: RunArgs): Promise<void> {
     // Phase 4b: published foreign locales — target set for the primary-save
     // stale-translation invalidation inside applyBulkDiff (cached read).
     const { getCachedShopLocales } = await import("~/utils/shop-locales-cache.server");
-    const foreignLocales = (await getCachedShopLocales(admin, shop).catch(() => []))
+    const shopLocalesForSave = await getCachedShopLocales(admin, shop).catch(() => []);
+    const foreignLocales = shopLocalesForSave
       .filter((l) => l.published && !l.primary)
       .map((l) => l.locale);
-    const result = await applyBulkDiff({ db, shop, admin, columnsByType, foreignLocales }, diff, async (processed, total) => {
+    // Source language of the auto-translation's value prompts; see app.bulk.tsx.
+    const primaryLocale = shopLocalesForSave.find((l) => l.primary)?.locale;
+    const result = await applyBulkDiff({ db, shop, admin, columnsByType, foreignLocales, primaryLocale }, diff, async (processed, total) => {
       const progressPercent = Math.round((processed / total) * 100);
       await db.task
         .update({ where: { id: taskId }, data: { progress: progressPercent, processed } })

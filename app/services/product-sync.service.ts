@@ -25,7 +25,7 @@ import {
   type ShopifyProductAttributes,
   type ShopifyProductCollections,
 } from './attribute-sync.shared';
-import { subResourceLockId, altTextLockId } from "./translations/translation-locks.shared";
+import { subResourceLockId, altTextLockId, marketLayerLockId } from "./translations/translation-locks.shared";
 
 /** GraphQL error shape */
 interface GraphQLError {
@@ -1886,6 +1886,11 @@ export class ProductSyncService {
         !forceSync &&
         (isTranslationRecentlySaved(productData.id) ||
           isTranslationRecentlySaved(subResourceLockId(productData.id)) ||
+          // A MARKET-layer sub-resource write carries its own key: the repair
+          // must not see it (it would abort a global run it cannot collide
+          // with), while the rewrite below deletes every fetched layer and has
+          // to. See translation-locks.shared.ts.
+          isTranslationRecentlySaved(marketLayerLockId(subResourceLockId(productData.id))) ||
           isTranslationRecentlySaved(altTextLockId(productData.id)));
 
       if (skipTranslationSync) {

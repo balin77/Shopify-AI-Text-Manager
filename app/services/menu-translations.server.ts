@@ -28,6 +28,7 @@ import { registerAndVerify, removeAndVerify } from "./bulk-editor/translations.s
 import { flattenMenuItems } from "./menu-translations.shared";
 import { logger } from "../utils/logger.server";
 import type { PrismaClient } from "@prisma/client";
+import { markTranslationSaved } from "~/utils/translation-save-lock.server";
 
 /**
  * The ContentTranslation.resourceType for a menu item, matching the Shopify
@@ -235,6 +236,9 @@ export async function saveMenuLinkTranslations(
           });
           continue;
         }
+        // Clearing is a merchant write like any other, and Shopify has just
+        // CONFIRMED it — claimed for the same reason as the register below.
+        if (!marketId) markTranslationSaved(entry.linkId);
         await db.contentTranslation.deleteMany({
           where: { shop, resourceId: entry.linkId, key: MENU_LINK_KEY, locale, marketId },
         });
@@ -268,6 +272,14 @@ export async function saveMenuLinkTranslations(
         });
         continue;
       }
+
+      // Claim the LINK the merchant just translated, on the GLOBAL layer only.
+      // A detached rename re-translation watches every link it is about to
+      // write (translation-locks.shared.ts), and without this it would overwrite
+      // this value minutes later; a MARKET override cannot collide with it, and
+      // aborting the run over one would leave its remaining links in neither
+      // list, on a surface nothing else revisits.
+      if (!marketId) markTranslationSaved(entry.linkId);
 
       // Mirror what Shopify STORED, not what was sent (the theme path's rule).
       const stored = result.confirmedValues.get(MENU_LINK_KEY) ?? entry.value;

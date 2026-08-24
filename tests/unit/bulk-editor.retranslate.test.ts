@@ -1,0 +1,653 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  collectBulkRepair,
+  promoteClaimedGroups,
+  newBulkRepairPlan,
+  MAX_REPAIR_GROUPS,
+} from "~/services/bulk-editor/retranslate.server";
+import {
+  altTextLockId,
+  subResourceLockId,
+} from "~/services/translations/translation-locks.shared";
+
+/**
+ * Auto-translation in the bulk editor (retranslate.server.ts).
+ *
+ * The question every test here asks is the same one the merchant asks: with
+ * "translate again when the primary text changes" on, does a bulk save REFRESH
+ * the foreign values or DELETE them — and does it start one background run per
+ * merchant action or one per cell.
+ */
+
+const SHOP = "test-shop.myshopify.com";
+const PRODUCT_ID = "gid://shopify/Product/1";
+const LOCALE = "fr";
+
+// ─── The plan itself (pure) ────────────────────────────────────────────────
+
+describe("collectBulkRepair", () => {
+  it("folds every entry of one (row, surface) into ONE group and dedupes", () => {
+    const plan = newBulkRepairPlan();
+    const ok1 = collectBulkRepair(plan, {
+      surface: "subResource",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [{ resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" }],
+    });
+    const ok2 = collectBulkRepair(plan, {
+      surface: "subResource",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [
+        // the same one again (a cell written twice in one diff)…
+        { resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" },
+        // …and a second resource under the same product
+        { resourceId: "gid://shopify/ProductOption/1", resourceType: "ProductOption", key: "name" },
+      ],
+    });
+
+    expect(ok1 && ok2).toBe(true);
+    expect(plan.groups.size).toBe(1);
+    expect([...plan.groups.values()][0].entries).toHaveLength(2);
+  });
+
+  it("keeps the surfaces of one row apart — they have different locks and mirrors", () => {
+    const plan = newBulkRepairPlan();
+    collectBulkRepair(plan, {
+      surface: "content",
+      ownerId: "gid://shopify/Page/9",
+      rowType: "page",
+      entries: [{ resourceId: "gid://shopify/Page/9", resourceType: "Page", key: "title" }],
+    });
+    collectBulkRepair(plan, {
+      surface: "subResource",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [{ resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" }],
+    });
+    expect(plan.groups.size).toBe(2);
+  });
+
+  it("a product's own CONTENT waits in the uncapped pool, not in the one that runs", () => {
+    const plan = newBulkRepairPlan();
+    collectBulkRepair(plan, {
+      surface: "content",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [{ resourceId: PRODUCT_ID, resourceType: "Product", key: "title" }],
+    });
+    expect(plan.groups.size).toBe(0);
+    expect(plan.webhookOwned.size).toBe(1);
+  });
+
+  it("refuses a NEW group past the cap and counts the overflow — an existing one still grows", () => {
+    const plan = newBulkRepairPlan();
+    for (let i = 0; i < MAX_REPAIR_GROUPS; i++) {
+      const accepted = collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: `gid://shopify/Page/${i}`,
+        rowType: "page",
+        entries: [{ resourceId: `gid://shopify/Page/${i}`, resourceType: "Page", key: "title" }],
+      });
+      expect(accepted).toBe(true);
+    }
+    // One more ROW is refused: the caller falls back to its own purge, which
+    // is exactly what this surface did before auto-translate reached it.
+    expect(
+      collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: "gid://shopify/Page/over",
+        rowType: "page",
+        entries: [{ resourceId: "gid://shopify/Page/over", resourceType: "Page", key: "title" }],
+      }),
+    ).toBe(false);
+    expect(plan.overflow.size).toBe(1);
+    // …but a second key on a row already in the plan costs no extra run.
+    expect(
+      collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: "gid://shopify/Page/0",
+        rowType: "page",
+        entries: [{ resourceId: "gid://shopify/Page/0", resourceType: "Page", key: "body_html" }],
+      }),
+    ).toBe(true);
+    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
+    expect(plan.overflow.size).toBe(1);
+  });
+
+  it("records nothing for an empty entry list", () => {
+    const plan = newBulkRepairPlan();
+    expect(
+      collectBulkRepair(plan, { surface: "content", ownerId: PRODUCT_ID, rowType: "product", entries: [] }),
+    ).toBe(false);
+    expect(plan.groups.size).toBe(0);
+    expect(plan.overflow.size).toBe(0);
+  });
+});
+
+describe("promoteClaimedGroups", () => {
+  it("forgets an UNCLAIMED product/collection content group — its webhook repairs it", () => {
+    const plan = newBulkRepairPlan();
+    collectBulkRepair(plan, {
+      surface: "content",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [{ resourceId: PRODUCT_ID, resourceType: "Product", key: "title" }],
+    });
+    // It never entered the capped pool in the first place.
+    expect(plan.groups.size).toBe(0);
+    expect(plan.webhookOwned.size).toBe(1);
+    expect(promoteClaimedGroups(plan)).toBe(0);
+    expect(plan.groups.size).toBe(0);
+  });
+
+  it("PROMOTES it when this save claimed the row — the claim is what makes the webhook bail", () => {
+    const plan = newBulkRepairPlan();
+    collectBulkRepair(plan, {
+      surface: "content",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [{ resourceId: PRODUCT_ID, resourceType: "Product", key: "title" }],
+    });
+    plan.claimedRows.add(PRODUCT_ID);
+    expect(promoteClaimedGroups(plan)).toBe(1);
+    expect(plan.groups.size).toBe(1);
+  });
+
+  it("does not spend the other pool's budget: webhook-owned rows never fill it", () => {
+    // The bug this replaces: thirteen product rows that each changed a base
+    // field AND a metafield filled all 25 slots with content groups that were
+    // then thrown away, and the SUB-RESOURCE candidates from row 13 on were
+    // refused — their translations deleted for a budget nothing had used.
+    const plan = newBulkRepairPlan();
+    for (let i = 0; i < 40; i++) {
+      const id = `gid://shopify/Product/${i}`;
+      collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: id,
+        rowType: "product",
+        entries: [{ resourceId: id, resourceType: "Product", key: "title" }],
+      });
+      expect(
+        collectBulkRepair(plan, {
+          surface: "subResource",
+          ownerId: id,
+          rowType: "product",
+          entries: [{ resourceId: `gid://shopify/Metafield/${i}`, resourceType: "Metafield", key: "value" }],
+        }),
+      ).toBe(i < MAX_REPAIR_GROUPS);
+    }
+    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
+    expect(plan.overflow.size).toBe(40 - MAX_REPAIR_GROUPS);
+  });
+
+  it("bounds the promoted pool too, and counts what it refused", () => {
+    const plan = newBulkRepairPlan();
+    for (let i = 0; i < MAX_REPAIR_GROUPS + 3; i++) {
+      const id = `gid://shopify/Collection/${i}`;
+      collectBulkRepair(plan, {
+        surface: "content",
+        ownerId: id,
+        rowType: "collection",
+        entries: [{ resourceId: id, resourceType: "Collection", key: "title" }],
+      });
+      plan.claimedRows.add(id);
+    }
+    expect(promoteClaimedGroups(plan)).toBe(MAX_REPAIR_GROUPS);
+    expect(plan.groups.size).toBe(MAX_REPAIR_GROUPS);
+    // The three that did not fit keep their stale translations — nothing
+    // deleted them and their webhook was made to bail — so they are reported.
+    expect(plan.overflow.size).toBe(3);
+  });
+
+  it("never touches a surface the webhook cannot reach", () => {
+    const plan = newBulkRepairPlan();
+    collectBulkRepair(plan, {
+      surface: "subResource",
+      ownerId: PRODUCT_ID,
+      rowType: "product",
+      entries: [{ resourceId: "gid://shopify/Metafield/1", resourceType: "Metafield", key: "value" }],
+    });
+    collectBulkRepair(plan, {
+      surface: "content",
+      ownerId: "gid://shopify/Page/1",
+      rowType: "page",
+      entries: [{ resourceId: "gid://shopify/Page/1", resourceType: "Page", key: "title" }],
+    });
+    expect(promoteClaimedGroups(plan)).toBe(0);
+    expect(plan.groups.size).toBe(2);
+  });
+});
+
+// ─── Through applyBulkDiff ────────────────────────────────────────────────
+
+const reconcileAfterPrimarySave = vi.fn(async (_params: Record<string, unknown>) => ({}));
+
+/** What the flush's mirror pre-check finds. `[]` = this surface holds no
+ *  foreign translation, so the group is skipped before any Shopify call. */
+let mirrorRows: unknown[] = [{ resourceId: "x", locale: LOCALE, key: "value" }];
+const fakeMirror = (kind: string) => ({ kind, existing: async () => mirrorRows });
+
+vi.mock("~/services/translations/stale-translation-sync.server", () => ({
+  reconcileAfterPrimarySave: (params: Record<string, unknown>) => reconcileAfterPrimarySave(params),
+  contentTranslationMirror: () => fakeMirror("content"),
+  metaobjectTranslationMirror: () => fakeMirror("metaobject"),
+  productImageAltMirror: () => fakeMirror("productImageAlt"),
+  featuredImageAltMirror: () => fakeMirror("featuredAlt"),
+}));
+
+const policy: {
+  purgeOnPrimaryChange: boolean;
+  purgeUnreconciledSurfaces: boolean;
+  autoTranslateExternalChanges: boolean;
+  plan: "max";
+} = {
+  purgeOnPrimaryChange: false,
+  purgeUnreconciledSurfaces: true,
+  autoTranslateExternalChanges: true,
+  plan: "max",
+};
+
+vi.mock("~/services/translations/translation-change-policy.server", () => ({
+  loadTranslationChangePolicy: async () => policy,
+}));
+
+const { applyBulkDiff } = await import("~/services/bulk-editor/apply.server");
+const { buildColumnsForType, BULK_COLUMNS_BY_TYPE, metafieldColumnId, IMAGE_ROW_ALT_COLUMN_ID } = await import(
+  "~/services/bulk-editor/columns.shared"
+);
+type BulkRowType = import("~/services/bulk-editor/columns.shared").BulkRowType;
+type ColumnDescriptor = import("~/services/bulk-editor/columns.shared").ColumnDescriptor;
+type BulkDiffEntry = import("~/services/bulk-editor/columns.shared").BulkDiffEntry;
+
+function columnsFor(metafields: { namespace: string; key: string; type: string }[]) {
+  return {
+    ...BULK_COLUMNS_BY_TYPE,
+    product: buildColumnsForType("product", metafields, {
+      metafields: true,
+      options: true,
+      imageAlt: true,
+    }),
+  } as Record<BulkRowType, ColumnDescriptor[]>;
+}
+
+function mockAdmin(respond: (query: string, variables: Record<string, unknown> | undefined) => unknown) {
+  const calls: { query: string; variables: Record<string, unknown> | undefined }[] = [];
+  const admin = {
+    graphql: async (query: string, opts?: { variables?: Record<string, unknown> }) => {
+      calls.push({ query, variables: opts?.variables });
+      return { json: async () => respond(query, opts?.variables) } as unknown as Response;
+    },
+  };
+  return { admin, calls };
+}
+
+function mockDb() {
+  return {
+    product: {
+      findUnique: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({})),
+      // The Task row is named after the row, not after its GID.
+      findMany: vi.fn(async () => [{ id: PRODUCT_ID, title: "Kumiko-Box" }]),
+    },
+    productMetafield: { upsert: vi.fn(async () => ({})), deleteMany: vi.fn(async () => ({ count: 0 })), findMany: vi.fn(async () => []) },
+    productOption: { findMany: vi.fn(async () => []) },
+    contentTranslation: {
+      findMany: vi.fn(async () => [{ key: "value", locale: LOCALE }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+      upsert: vi.fn(async () => ({})),
+    },
+  };
+}
+
+beforeEach(() => {
+  reconcileAfterPrimarySave.mockClear();
+  mirrorRows = [{ resourceId: "x", locale: LOCALE, key: "value" }];
+  policy.purgeUnreconciledSurfaces = true;
+});
+
+describe("applyBulkDiff with auto-translate on", () => {
+  it("a changed metafield is REPAIRED under the product's sub-resource lock, not deleted", async () => {
+    const { admin, calls } = mockAdmin((query, variables) => {
+      if (query.includes("metafieldsSet(")) {
+        const inputs = (variables?.metafields ?? []) as { namespace: string; key: string; value: string; type: string }[];
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: inputs.map((m) => ({
+                id: "gid://shopify/Metafield/1",
+                namespace: m.namespace,
+                key: m.key,
+                value: m.value,
+                type: m.type,
+              })),
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+
+    const result = await applyBulkDiff(
+      {
+        db: mockDb() as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([{ namespace: "custom", key: "care", type: "single_line_text_field" }]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Seide",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    // NOT deleted: no removal ever reached Shopify.
+    expect(calls.some((c) => c.query.includes("translationsRemove"))).toBe(false);
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    const call = reconcileAfterPrimarySave.mock.calls[0][0];
+    expect(call).toMatchObject({
+      shop: SHOP,
+      resourceId: PRODUCT_ID,
+      lockId: subResourceLockId(PRODUCT_ID),
+      contentKind: "product",
+      resourceTitle: "Kumiko-Box",
+      translateAs: { kind: "values", sourceLocale: "de" },
+    });
+    expect(call.changed).toEqual([
+      {
+        resourceId: "gid://shopify/Metafield/1",
+        resourceType: "Metafield",
+        key: "value",
+        // single-line text survives the generic value prompt
+        retranslatable: true,
+      },
+    ]);
+  });
+
+  it("a rich-text metafield is marked NOT retranslatable — the prompt would corrupt it", async () => {
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("metafieldsSet(")) {
+        const inputs = (variables?.metafields ?? []) as { namespace: string; key: string; value: string; type: string }[];
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: inputs.map((m) => ({
+                id: "gid://shopify/Metafield/2",
+                namespace: m.namespace,
+                key: m.key,
+                value: m.value,
+                type: m.type,
+              })),
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+
+    await applyBulkDiff(
+      {
+        db: mockDb() as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([{ namespace: "custom", key: "story", type: "multi_line_text_field" }]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: metafieldColumnId("custom", "story"),
+          value: "Zeile 1",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    const call = reconcileAfterPrimarySave.mock.calls[0][0] as unknown as {
+      changed: { retranslatable: boolean }[];
+    };
+    expect(call.changed[0].retranslatable).toBe(false);
+  });
+
+  it("skips a surface the mirror says holds no translation — before any Shopify call", async () => {
+    mirrorRows = [];
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("metafieldsSet(")) {
+        const inputs = (variables?.metafields ?? []) as { namespace: string; key: string; value: string; type: string }[];
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: inputs.map((m) => ({
+                id: "gid://shopify/Metafield/1",
+                namespace: m.namespace,
+                key: m.key,
+                value: m.value,
+                type: m.type,
+              })),
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+
+    await applyBulkDiff(
+      {
+        db: mockDb() as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([{ namespace: "custom", key: "care", type: "single_line_text_field" }]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Seide",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    expect(reconcileAfterPrimarySave).not.toHaveBeenCalled();
+  });
+
+  it("hands the repair what THIS save wrote, so it cannot overwrite it", async () => {
+    // The regression this exists for: the merchant changes a metafield's
+    // primary value AND types its French translation in one save. The claim
+    // makes the repair ours; without `alreadyWritten` that repair would then
+    // machine-translate over the value they just typed.
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("metafieldsSet(")) {
+        const inputs = (variables?.metafields ?? []) as { namespace: string; key: string; value: string; type: string }[];
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: inputs.map((m) => ({
+                id: "gid://shopify/Metafield/1",
+                namespace: m.namespace,
+                key: m.key,
+                value: m.value,
+                type: m.type,
+              })),
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("bulkEditorBatchDigests")) {
+        const data: Record<string, unknown> = {};
+        for (const name of Object.keys(variables ?? {})) {
+          data[`a${name.slice(1)}`] = { translatableContent: [{ key: "value", digest: "d" }] };
+        }
+        return { data };
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "value", locale: LOCALE, value: "Soie", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+    const db = mockDb();
+    (db as Record<string, unknown>).productMetafield = {
+      upsert: vi.fn(async () => ({})),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      findMany: vi.fn(async () => [
+        { id: "gid://shopify/Metafield/1", productId: PRODUCT_ID, namespace: "custom", key: "care" },
+      ]),
+    };
+
+    await applyBulkDiff(
+      {
+        db: db as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([{ namespace: "custom", key: "care", type: "single_line_text_field" }]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Seide",
+        } as BulkDiffEntry,
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: LOCALE,
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Soie",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    const call = reconcileAfterPrimarySave.mock.calls[0][0] as unknown as {
+      alreadyWritten: { resourceId: string; locale: string; key: string }[];
+    };
+    expect(call.alreadyWritten).toContainEqual({
+      resourceId: "gid://shopify/Metafield/1",
+      locale: LOCALE,
+      key: "value",
+    });
+  });
+
+  it("reaches the alt-text surface even with the merchant's deletion switched OFF", async () => {
+    // The image dispatch used to sit BEHIND the purge gate, so on a shop with
+    // auto-translate on and the deletion off, alt texts got neither — the one
+    // surface where the switch did nothing at all.
+    policy.purgeUnreconciledSurfaces = false;
+    const MEDIA = "gid://shopify/MediaImage/7";
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("productUpdateMedia(")) {
+        const media = (variables?.media ?? []) as { id: string; alt?: string }[];
+        return {
+          data: {
+            productUpdateMedia: {
+              media: media.map((m) => ({ id: m.id, alt: m.alt ?? "" })),
+              mediaUserErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+    const db = mockDb();
+    (db as Record<string, unknown>).productImage = {
+      findFirst: vi.fn(async () => ({ id: "img-row-1", productId: PRODUCT_ID, mediaId: MEDIA, position: 1 })),
+      update: vi.fn(async () => ({})),
+    };
+
+    await applyBulkDiff(
+      {
+        db: db as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: MEDIA,
+          rowType: "image",
+          locale: "",
+          marketId: "",
+          columnId: IMAGE_ROW_ALT_COLUMN_ID,
+          value: "Blaue Vase",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    const call = reconcileAfterPrimarySave.mock.calls[0][0] as Record<string, unknown>;
+    expect(call).toMatchObject({ resourceId: PRODUCT_ID, lockId: altTextLockId(PRODUCT_ID) });
+  });
+
+  it("a product's OWN fields start nothing — its update webhook runs that repair", async () => {
+    const { admin } = mockAdmin((query) => {
+      if (query.includes("productUpdate(")) {
+        return { data: { productUpdate: { product: { id: PRODUCT_ID }, userErrors: [] } } };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+
+    await applyBulkDiff(
+      {
+        db: mockDb() as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: "field.title",
+          value: "Neuer Titel",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    expect(reconcileAfterPrimarySave).not.toHaveBeenCalled();
+  });
+});

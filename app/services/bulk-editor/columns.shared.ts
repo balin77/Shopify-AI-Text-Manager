@@ -1404,6 +1404,20 @@ export interface BulkFailure {
 export interface BulkApplyResult {
   saved: number;
   failures: BulkFailure[];
+  /**
+   * What the save handed to the auto-translation (retranslate.server.ts).
+   * Present only when auto-translate is on AND something was collected —
+   * absent is "nothing to say", never "nothing happened".
+   *
+   * `capped` is the number of rows that were NOT re-translated because the
+   * save had already opened MAX_REPAIR_GROUPS background runs. Not "deleted":
+   * what happens to them depends on the surface — most follow the merchant's
+   * stored deletion answer, while a webhook-backed row this save claimed keeps
+   * its stale translations (its webhook was made to bail). Reported rather than
+   * logged either way: a merchant told "everything gets re-translated" who then
+   * finds row 30 untouched has no way to learn that a limit exists.
+   */
+  retranslation?: { started: number; skipped: number; capped: number };
 }
 
 /**

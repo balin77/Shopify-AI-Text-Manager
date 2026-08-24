@@ -909,10 +909,14 @@ describe("applyBulkDiff — top-level GraphQL errors on productUpdate", () => {
     expect(db.contentTranslation.deleteMany).not.toHaveBeenCalled();
   });
 
-  it("…while a METAFIELD's translation is still purged — nothing re-translates it", async () => {
+  it("…while a METAFIELD with no known primary locale is still purged", async () => {
     // Sub-resources ride on their own Shopify resource, which the sync's
-    // reconciliation never looks at. Suppressing the deletion here would leave
-    // a translation of text that no longer exists live for good.
+    // reconciliation never looks at. The bulk editor repairs them itself now
+    // (retranslate.server.ts, covered in bulk-editor.retranslate.test.ts) —
+    // but the generic value prompt has to be told the SOURCE language, and
+    // this context passes no `primaryLocale`. Without one there is nothing to
+    // translate from, so the deletion has to stand: suppressing it as well
+    // would leave a translation of text that no longer exists live for good.
     const { admin, calls } = mockAdmin();
     const db = mockDb();
     db.aISettings.findUnique.mockResolvedValue({

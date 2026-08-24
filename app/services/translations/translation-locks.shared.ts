@@ -31,3 +31,24 @@ export function subResourceLockId(productId: string): string {
 export function featuredAltLockId(parentId: string): string {
   return `${parentId}#featuredAlt`;
 }
+
+/**
+ * The same surface written on a MARKET layer — a key only the SYNCS ask for.
+ *
+ * The mark answers two different questions and they disagree about layers. A
+ * REPAIR writes global rows only, so a market override can never collide with
+ * it, and a mark it can see would abort a run it does not conflict with,
+ * leaving that run's remaining entries in neither list — neither refreshed nor
+ * removed. The SYNCS have the opposite need: their translation-cache rewrite
+ * deletes every layer it fetched and re-inserts from a read Shopify may not be
+ * consistent on yet, so a market translation saved a second ago has to shield
+ * itself just as a global one does.
+ *
+ * So a market write marks THIS key instead, and every sync shield asks for it
+ * beside the plain one. Answering the conflict by marking nothing (the first
+ * cut) silently gave the market layer back the bug the whole module exists to
+ * prevent.
+ */
+export function marketLayerLockId(lockId: string): string {
+  return `${lockId}#market`;
+}

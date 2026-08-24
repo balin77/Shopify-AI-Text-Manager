@@ -405,6 +405,9 @@ export async function action({ request }: ActionFunctionArgs) {
       // every node against Shopify's own fresh read before anything is sent.
       tree: treePayload.tree as never,
       foreignLocales,
+      // Empty when the lookup failed, which the repair reads as "no source
+      // language" and answers with the deletion — the harmless direction.
+      primaryLocale: shopLocales.find((l) => l.primary)?.locale ?? "",
       marketIds: markets.map((m) => m.id),
     });
   }

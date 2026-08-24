@@ -55,14 +55,18 @@ export interface TranslationChangePolicy {
    */
   purgeOnPrimaryChange: boolean;
   /**
-   * The same question for a surface NOTHING repairs: menu titles, and any new
-   * one whose save does not perform the repair itself. Auto-translate does NOT suppress the deletion
+   * The same question for a surface NOTHING repairs — and after the auto-
+   * translate rollout that is no longer a LIST of surfaces but a set of
+   * CIRCUMSTANCES: the bulk editor, and every case where a save's own repair
+   * cannot run (no primary locale, an unresolvable image, a lookup that failed,
+   * a value the AI prompt would corrupt). Auto-translate does NOT suppress the deletion
    * there, because nothing would refresh those translations and a translation
    * of text that no longer exists would stay on the storefront for good. This
    * is the merchant's stored choice, unmodified.
    *
-   * Metaobject fields, the product sub-resources, alt-texts and theme content
-   * USED to be on this side and no longer are: their own save performs the repair
+   * Metaobject fields, the product sub-resources, alt-texts, theme content and
+   * menu-item renames USED to be on this side and no longer are: their own save
+   * performs the repair
    * (`reconcileAfterPrimarySave`), so they ask `purgeOnPrimaryChange` whenever
    * that repair can actually run. A new purge site must ask which of the two it
    * is rather than copying a neighbour.
@@ -141,8 +145,9 @@ export async function loadTranslationChangePolicy(
  *   own translatable fields on **Product and Collection** (the types with an
  *   update webhook), and for the surfaces whose SAVE performs the repair while
  *   auto-translate is on: the webhook-less content types, the product
- *   sub-resources, metaobject fields, alt-texts and theme content. What is left
- *   — menu titles — leaves it unset,
+ *   sub-resources, metaobject fields, alt-texts, theme content and menu-item
+ *   renames. What is left — the bulk editor, and any save whose repair could
+ *   not run — leaves it unset,
  *   and then auto-translate does NOT switch the deletion off: nothing would
  *   refresh those translations afterwards, so the stale text would simply stay
  *   live. Defaults to the safe answer, so a new purge site that forgets the
