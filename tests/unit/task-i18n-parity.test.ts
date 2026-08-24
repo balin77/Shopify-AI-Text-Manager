@@ -70,7 +70,11 @@ const MAXIMAL: [string, unknown][] = [
   ],
   [
     "seoBulkMeta",
-    { saved: 1, failures: [], retranslation: { started: 1, skipped: 0, capped: 1 } },
+    {
+      saved: 1,
+      failures: [],
+      retranslation: { started: 1, translations: 2, skipped: 1, capped: 1 },
+    },
   ],
   ["bulkEditorTranslate", { saved: 1, failed: 1, skippedHandles: 1, failures: [] }],
   ["seoBulkFix", { succeeded: [], failed: [] }],

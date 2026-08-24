@@ -2284,8 +2284,11 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       );
       // The repair addresses the IMAGE resource, so that is the id this write
       // has to be recorded under. The write above resolved (and cached) it.
+      // GLOBAL layer only, for the reason the row path spells out: a market
+      // override is not a value the repair could ever overwrite, and recording
+      // one hides the GLOBAL alt translation from the repair AND the purge.
       const writtenImageId = deps.featuredImageIds.get(group.rowId);
-      if (writtenImageId) {
+      if (group.marketId === "" && writtenImageId) {
         recordBulkForeignWrite(deps.repairPlan, writtenImageId, group.locale, "alt");
       }
     }
@@ -2395,7 +2398,16 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // …and WHAT was written. The claim above makes this row's repair ours;
         // this is what keeps that repair off the very value the merchant just
         // typed — see `alreadyWritten` in stale-translation-sync.server.ts.
-        recordBulkForeignWrite(deps.repairPlan, resourceId, locale, write.key);
+        //
+        // GLOBAL layer only, and for the opposite reason to the claim above:
+        // the repair writes global rows, so a MARKET override is not the value
+        // it would overwrite. Recording one silenced the repair for a GLOBAL
+        // translation nobody had touched — neither refreshed nor removed, since
+        // the purge stood down when the candidate was collected. That is the
+        // worst outcome this module has, reached through a second channel.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, resourceId, locale, write.key);
+        }
         // What Shopify ECHOED, not what was sent. The same rule the theme path
         // already follows for autofix-normalised richtext: mirroring the raw
         // value diverges the DB from the storefront, and for `handle` it would
@@ -2530,7 +2542,10 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         deps.repairPlan.claimedRows.add(resourceId);
         // A CLEARED value is just as deliberate: the merchant emptied this
         // translation in this save, so the repair must not write it back.
-        recordBulkForeignWrite(deps.repairPlan, resourceId, locale, clear.key);
+        // Global layer only, exactly as above.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, resourceId, locale, clear.key);
+        }
         // A cleared handle: the locale is served under the PRIMARY handle
         // again, so the dead translated URL gets a redirect there.
         if (clear.key === "handle") confirmedHandle = "";
@@ -2803,7 +2818,12 @@ async function persistSubResourceTranslations(
       if (error && !cellFailed) cellFailed = error;
       if (!error) {
         claimed.push(pair.target.resourceId);
-        recordBulkForeignWrite(deps.repairPlan, pair.target.resourceId, group.locale, pair.target.key);
+        // Global layer only — see the row path's note: a market override is not
+        // a value the repair would ever overwrite, and recording one hides a
+        // global translation from BOTH the repair and the purge.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, pair.target.resourceId, group.locale, pair.target.key);
+        }
       }
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
@@ -3443,9 +3463,9 @@ export async function applyBulkDiff(
   // two are persisted in whatever order the client sent them.
   // Never throws — every row above is already saved.
   promoteClaimedGroups(repairPlan);
-  let retranslation: BulkApplyResult["retranslation"];
+  let flushed = { started: 0, translations: 0, skipped: 0 };
   try {
-    const flushed = await flushBulkRepairs({
+    flushed = await flushBulkRepairs({
       db,
       shop,
       gateway,
@@ -3454,15 +3474,18 @@ export async function applyBulkDiff(
       policy: changePolicy,
       plan: repairPlan,
     });
-    if (flushed.started > 0 || flushed.skipped > 0 || repairPlan.overflow.size > 0) {
-      retranslation = { ...flushed, capped: repairPlan.overflow.size };
-    }
   } catch (err: unknown) {
     logger.warn("[BULK] Auto-translation flush failed — stale rows kept", {
       context: "Bulk",
       error: err instanceof Error ? err.message : String(err),
     });
   }
+  // Assembled OUTSIDE the try: a flush that threw before its first group still
+  // has to report the rows the cap refused, which were decided long before it
+  // ran. Absent means "nothing to say", never "nothing happened".
+  const capped = repairPlan.overflowRows.size;
+  const retranslation: BulkApplyResult["retranslation"] =
+    flushed.started > 0 || flushed.skipped > 0 || capped > 0 ? { ...flushed, capped } : undefined;
 
   // §10.5: summaries only — never cell values.
   debugLog.bulkSave("diff applied", {

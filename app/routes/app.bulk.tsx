@@ -423,8 +423,8 @@ type ActionResult =
       saved: number;
       failures: BulkFailure[];
       /** Background re-translations this save started, and how many rows were
-       *  DELETED instead because the per-save cap was reached. */
-      retranslation?: { started: number; skipped: number; capped: number };
+       *  NOT re-translated because the per-save cap was reached. */
+      retranslation?: { started: number; translations: number; skipped: number; capped: number };
     }
   | { ok: false; error: string };
 
@@ -645,7 +645,7 @@ export default function BulkEditor() {
   const [lastFailures, setLastFailures] = useState<BulkFailure[]>([]);
   const [lastSavedCount, setLastSavedCount] = useState<number | null>(null);
   const [lastRetranslation, setLastRetranslation] = useState<
-    { started: number; skipped: number; capped: number } | null
+    { started: number; translations: number; skipped: number; capped: number } | null
   >(null);
   const [queuedBanner, setQueuedBanner] = useState(false);
   const [onlyChanged, setOnlyChanged] = useState(false);
@@ -2160,18 +2160,29 @@ export default function BulkEditor() {
                       {/* Auto-translate is a Max feature that spends the
                           merchant's own AI credit unattended, so a save that
                           started runs says so — and a save that hit the cap
-                          says which rows lost their translations instead,
+                          says which rows it did NOT re-translate,
                           because "everything is re-translated" plus silently
                           empty fields on row 30 is not a state anyone can
                           diagnose from the grid. */}
-                      {lastRetranslation && lastRetranslation.started > 0 && (
+                      {lastRetranslation && lastRetranslation.translations > 0 && (
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {b.retranslationStarted.replace("{count}", String(lastRetranslation.started))}
+                          {b.retranslationStarted.replace(
+                            "{count}",
+                            String(lastRetranslation.translations),
+                          )}
                         </Text>
                       )}
                       {lastRetranslation && lastRetranslation.capped > 0 && (
                         <Text as="p" variant="bodySm" tone="subdued">
                           {b.retranslationCapped.replace("{count}", String(lastRetranslation.capped))}
+                        </Text>
+                      )}
+                      {/* A repair that could not start at all. Its stale
+                          translations are kept, and without this line nothing
+                          on screen would say so. */}
+                      {lastRetranslation && lastRetranslation.skipped > 0 && (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {b.retranslationSkipped.replace("{count}", String(lastRetranslation.skipped))}
                         </Text>
                       )}
                     </BlockStack>

@@ -221,7 +221,11 @@ describe("promoteClaimedGroups", () => {
 
 // ─── Through applyBulkDiff ────────────────────────────────────────────────
 
-const reconcileAfterPrimarySave = vi.fn(async (_params: Record<string, unknown>) => ({}));
+/** What the (mocked) repair reports back — `retranslating: 0` is the real
+ *  answer whenever nothing was left to translate, and the save must then NOT
+ *  tell the merchant to look in the Tasks tab. */
+let reconcileResult = { removed: 0, retranslating: 2 };
+const reconcileAfterPrimarySave = vi.fn(async (_params: Record<string, unknown>) => reconcileResult);
 
 /** What the flush's mirror pre-check finds. `[]` = this surface holds no
  *  foreign translation, so the group is skipped before any Shopify call. */
@@ -304,6 +308,7 @@ beforeEach(() => {
   reconcileAfterPrimarySave.mockClear();
   mirrorRows = [{ resourceId: "x", locale: LOCALE, key: "value" }];
   policy.purgeUnreconciledSurfaces = true;
+  reconcileResult = { removed: 0, retranslating: 2 };
 });
 
 describe("applyBulkDiff with auto-translate on", () => {
@@ -616,6 +621,147 @@ describe("applyBulkDiff with auto-translate on", () => {
     expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
     const call = reconcileAfterPrimarySave.mock.calls[0][0] as Record<string, unknown>;
     expect(call).toMatchObject({ resourceId: PRODUCT_ID, lockId: altTextLockId(PRODUCT_ID) });
+  });
+
+  it("does NOT record a MARKET write — that would silence the repair for the global row", async () => {
+    // The global translation is still a translation of the old primary text.
+    // Recording the market override put it in neither list: not re-translated
+    // (skipped as "already written") and not removed (the purge stood down).
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("metafieldsSet(")) {
+        const inputs = (variables?.metafields ?? []) as { namespace: string; key: string; value: string; type: string }[];
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: inputs.map((m) => ({
+                id: "gid://shopify/Metafield/1",
+                namespace: m.namespace,
+                key: m.key,
+                value: m.value,
+                type: m.type,
+              })),
+              userErrors: [],
+            },
+          },
+        };
+      }
+      if (query.includes("bulkEditorBatchDigests")) {
+        const data: Record<string, unknown> = {};
+        for (const name of Object.keys(variables ?? {})) {
+          data[`a${name.slice(1)}`] = { translatableContent: [{ key: "value", digest: "d" }] };
+        }
+        return { data };
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [
+                { key: "value", locale: LOCALE, value: "Soie", market: { id: "gid://shopify/Market/3" } },
+              ],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+    const db = mockDb();
+    (db as Record<string, unknown>).productMetafield = {
+      upsert: vi.fn(async () => ({})),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      findMany: vi.fn(async () => [
+        { id: "gid://shopify/Metafield/1", productId: PRODUCT_ID, namespace: "custom", key: "care" },
+      ]),
+    };
+
+    await applyBulkDiff(
+      {
+        db: db as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsFor([{ namespace: "custom", key: "care", type: "single_line_text_field" }]),
+        foreignLocales: [LOCALE],
+        primaryLocale: "de",
+        autoHandleRedirect: false,
+      },
+      [
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: "",
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Seide",
+        } as BulkDiffEntry,
+        {
+          rowId: PRODUCT_ID,
+          rowType: "product",
+          locale: LOCALE,
+          marketId: "gid://shopify/Market/3",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Soie",
+        } as BulkDiffEntry,
+      ],
+    );
+
+    const call = reconcileAfterPrimarySave.mock.calls[0][0] as unknown as {
+      alreadyWritten: unknown[];
+    };
+    expect(call.alreadyWritten).toEqual([]);
+  });
+
+  it("reports TRANSLATIONS, and reports nothing when the repair took nothing on", async () => {
+    reconcileResult = { removed: 1, retranslating: 0 };
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("metafieldsSet(")) {
+        const inputs = (variables?.metafields ?? []) as { namespace: string; key: string; value: string; type: string }[];
+        return {
+          data: {
+            metafieldsSet: {
+              metafields: inputs.map((m) => ({
+                id: "gid://shopify/Metafield/1",
+                namespace: m.namespace,
+                key: m.key,
+                value: m.value,
+                type: m.type,
+              })),
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 60)}`);
+    });
+    const ctx = {
+      db: mockDb() as never,
+      shop: SHOP,
+      admin: admin as never,
+      columnsByType: columnsFor([{ namespace: "custom", key: "care", type: "single_line_text_field" }]),
+      foreignLocales: [LOCALE],
+      primaryLocale: "de",
+      autoHandleRedirect: false,
+    };
+    const diff = [
+      {
+        rowId: PRODUCT_ID,
+        rowType: "product",
+        locale: "",
+        marketId: "",
+        columnId: metafieldColumnId("custom", "care"),
+        value: "Seide",
+      } as BulkDiffEntry,
+    ];
+
+    // The repair was CALLED but started no run: nothing to tell the merchant,
+    // and above all no "follow the progress under Tasks" pointing at nothing.
+    const quiet = await applyBulkDiff(ctx, diff);
+    expect(reconcileAfterPrimarySave).toHaveBeenCalledTimes(1);
+    expect(quiet.retranslation).toBeUndefined();
+
+    reconcileResult = { removed: 0, retranslating: 4 };
+    const loud = await applyBulkDiff(ctx, diff);
+    expect(loud.retranslation).toMatchObject({ started: 1, translations: 4, capped: 0 });
   });
 
   it("a product's OWN fields start nothing — its update webhook runs that repair", async () => {

@@ -1417,7 +1417,20 @@ export interface BulkApplyResult {
    * logged either way: a merchant told "everything gets re-translated" who then
    * finds row 30 untouched has no way to learn that a limit exists.
    */
-  retranslation?: { started: number; skipped: number; capped: number };
+  retranslation?: {
+    /** Background RUNS this save started — a run per (row, surface), and only
+     *  where the repair really had something left to translate. */
+    started: number;
+    /** The (locale, key) pairs those runs are rewriting. This is the number a
+     *  merchant recognises; `started` is the number of Task rows it produced. */
+    translations: number;
+    /** Groups whose repair could not start (a failed lookup, a surface with no
+     *  source language). Their stale translations are kept, so this is not a
+     *  silent zero — it is the count nobody would otherwise see. */
+    skipped: number;
+    /** Rows the cap refused, counted as ROWS. */
+    capped: number;
+  };
 }
 
 /**
