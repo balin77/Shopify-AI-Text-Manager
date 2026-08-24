@@ -540,7 +540,7 @@ export async function saveMenuTree(
             await purgeMarketOverrides({
               gateway,
               mirror: contentTranslationMirror(shop),
-              refs: [{ resourceId: linkId, resourceType: "Link" }],
+              refs: [{ resourceId: linkId, resourceType: MENU_LINK_RESOURCE_TYPE }],
               locales: foreignLocales,
               keys: [MENU_LINK_KEY],
               context: "menu",

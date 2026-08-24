@@ -461,6 +461,33 @@ export async function handleMetaobjectUpdate(
         if (!list.includes(item.key)) list.push(item.key);
         keysByEntry.set(item.metaobjectId, list);
       }
+      // The MARKET overrides FIRST, and for every entry in ONE call: they do
+      // not depend on the global lookup below and must not be skipped by its
+      // early exit — an override can sit on a (locale, key) with no global
+      // translation at all, and nothing ever re-translates one, so once the
+      // field's text moves it is stale with nobody left to notice.
+      try {
+        const { purgeMarketOverrides } = await import(
+          "~/services/translations/market-layer-purge.server"
+        );
+        const { metaobjectTranslationMirror } = await import(
+          "~/services/translations/stale-translation-sync.server"
+        );
+        await purgeMarketOverrides({
+          gateway,
+          mirror: metaobjectTranslationMirror(session.shop, new Map()),
+          refs: [...keysByEntry.keys()].map((metaobjectId) => ({
+            resourceId: metaobjectId,
+            resourceType: "Metaobject",
+          })),
+          locales: foreignLocales,
+          keys: [...new Set(stale.map((item) => item.key))],
+          context: "metaobject",
+        });
+      } catch {
+        // Logged inside; a stale override never fails a save that succeeded.
+      }
+
       const existing = await db.metaobjectTranslation.findMany({
         where: {
           shop: session.shop,
@@ -477,30 +504,6 @@ export async function handleMetaobjectUpdate(
         // Only the rows that belong to THIS entry and to a key this save moved:
         // two entries of one type share key names, so an unfiltered list would
         // remove a translation nobody flagged.
-        // The MARKET overrides of these fields go regardless of what the
-        // GLOBAL lookup found: an override can sit on a (locale, key) with no
-        // global translation at all, and nothing ever re-translates one — the
-        // repair writes global rows only — so once the field's text moves it is
-        // stale with nobody left to notice.
-        try {
-          const { purgeMarketOverrides } = await import(
-            "~/services/translations/market-layer-purge.server"
-          );
-          const { metaobjectTranslationMirror } = await import(
-            "~/services/translations/stale-translation-sync.server"
-          );
-          await purgeMarketOverrides({
-            gateway,
-            mirror: metaobjectTranslationMirror(session.shop, new Map()),
-            refs: [{ resourceId: metaobjectId, resourceType: "Metaobject" }],
-            locales: foreignLocales,
-            keys,
-            context: "metaobject",
-          });
-        } catch {
-          // Logged inside; a stale override never fails a save that succeeded.
-        }
-
         const rows = existing.filter(
           (row) => row.metaobjectId === metaobjectId && keys.includes(row.key),
         );

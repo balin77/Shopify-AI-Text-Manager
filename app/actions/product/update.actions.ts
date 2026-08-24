@@ -1410,6 +1410,34 @@ async function updatePrimaryProduct(
             locales: foreignLocales,
           });
 
+          // The MARKET overrides of the same keys, first and on their own
+          // layer. Nothing re-translates one (the repair writes global rows
+          // only), so once the primary text moves the override is as stale as
+          // the global row below it — and this save marks the product
+          // (`markTranslationSaved`), so the `products/update` webhook's
+          // reconciliation bails and by the time its shield lifts the global
+          // rows and their digest baselines are gone. Nothing else would ever
+          // look again. Without this the bulk editor purged a product's
+          // overrides on a title edit and the single editor did not.
+          try {
+            const { purgeMarketOverrides } = await import(
+              "~/services/translations/market-layer-purge.server"
+            );
+            const { contentTranslationMirror } = await import(
+              "~/services/translations/stale-translation-sync.server"
+            );
+            await purgeMarketOverrides({
+              gateway,
+              mirror: contentTranslationMirror(shop),
+              refs: [{ resourceId: productId, resourceType: "Product" }],
+              locales: foreignLocales,
+              keys: translationKeysToDelete,
+              context: "Product",
+            });
+          } catch {
+            // Logged inside; never fails a primary write that already succeeded.
+          }
+
           // Delete translations from Shopify
           const response = await gateway.graphql(
             `#graphql
@@ -1457,8 +1485,9 @@ async function updatePrimaryProduct(
                 where: {
                   resourceId: productId,
                   resourceType: "Product",
-                  // Global only — mirrors the global-only Shopify removal so market
-                  // overrides are preserved on both sides (no DB/Shopify divergence).
+                  // Global only because that is what the removal above sent;
+                  // the MARKET layer was handled separately, before it, and
+                  // needs its own echo per market to be deleted safely.
                   marketId: "",
                   key: key,
                   locale: { in: foreignLocales },

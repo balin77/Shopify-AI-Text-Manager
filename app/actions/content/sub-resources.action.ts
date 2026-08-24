@@ -1075,23 +1075,37 @@ export async function handleSavePrimarySubResources(
           "~/services/translations/stale-translation-sync.server"
         );
         const mirror = contentTranslationMirror(session.shop);
-        const refs = [
-          ...changedOptionIds
-            .filter((id) => isValidShopifyGID(id))
-            .map((id) => ({ resourceId: id, resourceType: "ProductOption" })),
-          ...changedMetafieldIds
-            .filter((id) => isValidShopifyGID(id))
-            .map((id) => ({ resourceId: id, resourceType: "Metafield" })),
-        ];
-        if (refs.length > 0) {
+        // Exactly what the global removals below address, and no more. An
+        // option whose VALUES changed did not necessarily get a new NAME — the
+        // global loop guards on `changes?.name !== undefined` and the
+        // auto-translate branch repeats it, so a market purge without that
+        // guard would delete a hand-written market name whose primary text
+        // never moved. Option VALUES are their OWN resource and need their own
+        // refs; a `ProductOptionValue` row can never match a `ProductOption`
+        // one, so leaving them out simply missed them.
+        const nameRefs = changedOptionIds
+          .filter((id) => isValidShopifyGID(id) && optionsChanges[id]?.name !== undefined)
+          .map((id) => ({ resourceId: id, resourceType: "ProductOption" }));
+        const valueRefs = changedOptionIds
+          .filter((id) => isValidShopifyGID(id))
+          .flatMap((id) =>
+            (optionsChanges[id]?.valueUpdates ?? [])
+              .filter((update) => isValidShopifyGID(update.id))
+              .map((update) => ({ resourceId: update.id, resourceType: "ProductOptionValue" })),
+          );
+        const metafieldRefs = changedMetafieldIds
+          .filter((id) => isValidShopifyGID(id))
+          .map((id) => ({ resourceId: id, resourceType: "Metafield" }));
+
+        // `name` and `value` are asked for together because the lookup is ONE
+        // query over the whole set and a row only matches its own resource
+        // type's key — a ProductOption has no `value` row to find.
+        if (nameRefs.length + valueRefs.length + metafieldRefs.length > 0) {
           await purgeMarketOverrides({
             gateway,
             mirror,
-            refs,
+            refs: [...nameRefs, ...valueRefs, ...metafieldRefs],
             locales: foreignLocales,
-            // `name` for an option, `value` for a metafield — the mirror row
-            // carries whichever its own resource type uses, and asking for both
-            // costs nothing because the lookup is one query over the set.
             keys: ["name", "value"],
             context: "subResource",
           });

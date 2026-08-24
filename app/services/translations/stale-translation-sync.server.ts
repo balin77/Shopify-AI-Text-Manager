@@ -50,6 +50,8 @@ import {
   isTranslationRecentlySaved,
   translationSavedAt,
 } from "../../utils/translation-save-lock.server";
+// One shape for "walk past this override", shared with every save path.
+import { marketOverrideKey } from "./market-layer-purge.server";
 import { ShopifyApiGateway } from "../shopify-api-gateway.service";
 import type { ShopifyGraphQLClient } from "../sync-types";
 import {
@@ -172,7 +174,7 @@ export interface RepairTarget {
  * there, drop what Shopify confirmed removed, and write back what Shopify
  * confirmed stored.
  *
- * Every implementation is GLOBAL-layer only (`marketId ""` where the table has
+ * `existing` / `remove` / `write` are GLOBAL-layer only (`marketId ""` where the table has
  * the column): a market override is a deliberate separate value and survives a
  * primary change, the same rule both editors follow.
  */
@@ -882,6 +884,15 @@ export async function reconcileStaleTranslations(params: ReconcileParams): Promi
     return await repairStaleTranslations(params, stale, policy, {
       keys: [...new Set(stale.map((entry) => entry.key))],
       locales: [...new Set(translations.map((row) => row.locale))],
+      // A market override Shopify reports as NOT outdated was re-translated
+      // against the new source after the change: it is current, and the purge
+      // must walk past it. This is the only path that HAS that evidence — the
+      // sync fetches every market layer with its own `outdated` flag.
+      currentOverrides: new Set(
+        translations
+          .filter((row) => (row.marketId ?? "") !== "" && row.outdated === false)
+          .map((row) => marketOverrideKey(resourceId, row.marketId ?? "", row.locale, row.key)),
+      ),
     });
   } catch (error: unknown) {
     logger.warn("[StaleTranslations] Reconciliation failed — stale rows kept", {
@@ -1419,7 +1430,13 @@ async function repairStaleTranslations(
    * absent from `stale` by construction, so a purge driven by `stale` would
    * walk straight past the override it exists to remove.
    */
-  scope: { keys: readonly string[]; locales: readonly string[] },
+  scope: {
+    keys: readonly string[];
+    locales: readonly string[];
+    /** Overrides the purge must walk past (`marketOverrideKey`) — see
+     *  `purgeMarketOverrides`. */
+    currentOverrides?: ReadonlySet<string>;
+  },
 ): Promise<ReconcileResult> {
   const { client, shop, resourceId, resourceType } = target;
   const lockId = target.lockId ?? resourceId;
@@ -1466,11 +1483,20 @@ async function repairStaleTranslations(
   //
   // Best-effort and mirror-driven: on a shop with no overrides it is one DB
   // query and no Shopify call at all (market-layer-purge.server.ts).
-  // `declined` is excluded from the SET but not from the scope: what we refused
-  // to try keeps the merchant's stored answer on both layers. That is why the
-  // gate is `mayPurge` (something is being done about this change) while the
-  // keys and locales come from the caller's full change.
-  if (mayPurge && (retranslate.length > 0 || toPurge.length > 0)) {
+  // A key we DECLINED to translate and are not purging keeps the merchant's
+  // stored answer — on BOTH layers. Driving the market purge off the caller's
+  // full key list deleted the override of exactly those keys while their global
+  // row was deliberately kept, which is the richtext-theme bug CLAUDE.md already
+  // records, one layer down. So the scope is the change MINUS what stood down.
+  const keptDeclinedKeys = new Set(
+    declined
+      .filter((entry) => !toPurge.includes(entry))
+      .map((entry) => entry.key),
+  );
+  for (const entry of [...retranslate, ...toPurge]) keptDeclinedKeys.delete(entry.key);
+  const marketKeys = scope.keys.filter((key) => !keptDeclinedKeys.has(key));
+
+  if (mayPurge && marketKeys.length > 0 && (retranslate.length > 0 || toPurge.length > 0)) {
     try {
       const { purgeMarketOverrides } = await import("./market-layer-purge.server");
       const refsById = new Map<string, TranslationRef>();
@@ -1483,7 +1509,8 @@ async function repairStaleTranslations(
         mirror,
         refs: [...refsById.values()],
         locales: scope.locales,
-        keys: scope.keys,
+        keys: marketKeys,
+        ...(scope.currentOverrides ? { currentOverrides: scope.currentOverrides } : {}),
         context: resourceType,
       });
     } catch (error: unknown) {

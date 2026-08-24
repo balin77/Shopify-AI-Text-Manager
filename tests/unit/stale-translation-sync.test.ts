@@ -710,21 +710,70 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
   });
 
   it("leaves the market overrides alone when the merchant switched BOTH answers off", async () => {
+    // Reached through the PURGE path, not the auto-translate one: with
+    // auto-translate off `reconcileAfterPrimarySave` returns before anything
+    // market-related, so asserting there would prove nothing at all.
     policy.autoTranslateExternalChanges = false;
     policy.purgeOnPrimaryChange = false;
     policy.purgeUnreconciledSurfaces = false;
     const MARKET = "gid://shopify/Market/5";
-    db.contentTranslation.findMany.mockImplementation(async (args: any) => {
-      if (args?.where?.marketId === "") return [{ resourceId: PAGE, key: "title", locale: "de" }];
-      return [{ resourceId: PAGE, key: "title", locale: "de", marketId: MARKET }];
-    });
 
-    await reconcileAfterPrimarySave(saveParams());
+    const RESOURCE = freshProduct();
+    db.contentTranslation.findMany.mockImplementation(async (args: any) => {
+      if (args?.where?.marketId === "") return [{ resourceId: RESOURCE, key: "title", locale: "de" }];
+      return [{ resourceId: RESOURCE, key: "title", locale: "de", marketId: MARKET }];
+    });
+    await reconcileStaleTranslations(
+      baseParams({
+        resourceId: RESOURCE,
+        translations: [{ key: "title", value: "Titre", locale: "de", marketId: "", outdated: true }],
+        previousDigests: { [digestBaselineKey("de", "title")]: OLD },
+      }),
+    );
     await awaitDetachedRetranslations();
 
     // "don't delete" means don't delete — on both layers.
     expect(shopify.removeCalls).toEqual([]);
     expect(shopify.removeMarkets).toEqual([]);
+  });
+
+  it("keeps the market override of a key we DECLINED to translate and kept globally", async () => {
+    // `declined` is what WE refused to try, so the merchant's stored "don't
+    // delete" still stands — and it has to stand on BOTH layers. Driving the
+    // market purge off the caller's full key list deleted exactly those
+    // overrides while their global row was deliberately kept: the richtext
+    // theme bug, one layer down.
+    policy.autoTranslateExternalChanges = true;
+    policy.purgeUnreconciledSurfaces = false;
+    const MARKET = "gid://shopify/Market/5";
+    shopifyHas = { de: ["title", "body_html"] };
+    db.contentTranslation.findMany.mockImplementation(async (args: any) => {
+      if (args?.where?.marketId === "") {
+        return [
+          { resourceId: PAGE, key: "title", locale: "de" },
+          { resourceId: PAGE, key: "body_html", locale: "de" },
+        ];
+      }
+      // The real query filters `key: { in: keys }` — a fake that ignores it
+      // would answer rows the purge never asked for and this test would pass
+      // against the very bug it exists for.
+      const asked: string[] = args?.where?.key?.in ?? ["title", "body_html"];
+      return [
+        { resourceId: PAGE, key: "title", locale: "de", marketId: MARKET },
+        { resourceId: PAGE, key: "body_html", locale: "de", marketId: MARKET },
+      ].filter((row) => asked.includes(row.key));
+    });
+
+    await reconcileAfterPrimarySave(
+      saveParams({
+        changed: [{ key: "title" }, { key: "body_html", retranslatable: false }],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    // The re-translated key's override goes; the declined key's stays.
+    expect(shopify.removeMarkets).toEqual([MARKET]);
+    expect(shopify.removeCalls).toEqual([{ keys: ["title"], locale: "de" }]);
   });
 
   it("removes a translation whose primary value was CLEARED", async () => {

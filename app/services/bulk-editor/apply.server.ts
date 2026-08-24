@@ -46,6 +46,7 @@ import {
   collectBulkRepair,
   promoteClaimedGroups,
   recordBulkForeignWrite,
+  recordBulkMarketWrite,
   flushBulkRepairs,
   newBulkRepairPlan,
   type BulkRepairPlan,
@@ -344,6 +345,10 @@ async function purgeBulkMarketOverrides(
       refs,
       locales: deps.foreignLocales,
       keys,
+      // What THIS save wrote on a market layer stays: which of the two row
+      // groups persisted first is the client's ordering, not a decision about
+      // the merchant's value.
+      currentOverrides: deps.repairPlan.marketWrites,
       context,
     });
   } catch (err: unknown) {
@@ -2386,8 +2391,12 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
       // override is not a value the repair could ever overwrite, and recording
       // one hides the GLOBAL alt translation from the repair AND the purge.
       const writtenImageId = deps.featuredImageIds.get(group.rowId);
-      if (group.marketId === "" && writtenImageId) {
-        recordBulkForeignWrite(deps.repairPlan, writtenImageId, group.locale, "alt");
+      if (writtenImageId) {
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, writtenImageId, group.locale, "alt");
+        } else {
+          recordBulkMarketWrite(deps.repairPlan, writtenImageId, group.marketId, group.locale, "alt");
+        }
       }
     }
   }
@@ -2505,6 +2514,11 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // worst outcome this module has, reached through a second channel.
         if (group.marketId === "") {
           recordBulkForeignWrite(deps.repairPlan, resourceId, locale, write.key);
+        } else {
+          // A MARKET write of this save. Nothing re-translates that layer, so
+          // this is not about the repair — it is about the market PURGE, which
+          // another row group of the same save may run a moment later.
+          recordBulkMarketWrite(deps.repairPlan, resourceId, group.marketId, locale, write.key);
         }
         // What Shopify ECHOED, not what was sent. The same rule the theme path
         // already follows for autofix-normalised richtext: mirroring the raw
@@ -2921,6 +2935,14 @@ async function persistSubResourceTranslations(
         // global translation from BOTH the repair and the purge.
         if (group.marketId === "") {
           recordBulkForeignWrite(deps.repairPlan, pair.target.resourceId, group.locale, pair.target.key);
+        } else {
+          recordBulkMarketWrite(
+            deps.repairPlan,
+            pair.target.resourceId,
+            group.marketId,
+            group.locale,
+            pair.target.key,
+          );
         }
       }
     }

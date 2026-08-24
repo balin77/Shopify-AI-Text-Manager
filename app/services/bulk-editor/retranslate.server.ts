@@ -75,6 +75,7 @@ import {
   featuredAltLockId,
   subResourceLockId,
 } from "../translations/translation-locks.shared";
+import { marketOverrideKey } from "../translations/market-layer-purge.server";
 import { logger } from "../../utils/logger.server";
 
 /**
@@ -151,6 +152,16 @@ export interface BulkRepairPlan {
    * is the one thing rule 3's exception must not do.
    */
   claimedWrites: Array<{ resourceId: string; locale: string; key: string }>;
+  /**
+   * Every MARKET-layer translation this save wrote, as `marketOverrideKey`.
+   *
+   * The market purge and the market write are two halves of one save and the
+   * client decides which row group persists first. Without this, a merchant who
+   * edits a row's primary text AND one market's translation of it in the same
+   * save loses the second whenever the market group happened to go first — and
+   * on that layer nothing ever recreates it.
+   */
+  marketWrites: Set<string>;
 }
 
 export function newBulkRepairPlan(): BulkRepairPlan {
@@ -161,6 +172,7 @@ export function newBulkRepairPlan(): BulkRepairPlan {
     overflowRows: new Set(),
     claimedRows: new Set(),
     claimedWrites: [],
+    marketWrites: new Set(),
   };
 }
 
@@ -173,6 +185,20 @@ export function recordBulkForeignWrite(
 ): void {
   if (!locale || !key) return;
   plan.claimedWrites.push({ resourceId, locale, key });
+}
+
+/** The MARKET-layer counterpart — see `marketWrites`. Deliberately separate:
+ *  `claimedWrites` silences the REPAIR (which writes global rows) and this one
+ *  silences the market PURGE, and the two must not be confused. */
+export function recordBulkMarketWrite(
+  plan: BulkRepairPlan,
+  resourceId: string,
+  marketId: string,
+  locale: string,
+  key: string,
+): void {
+  if (!marketId || !locale || !key) return;
+  plan.marketWrites.add(marketOverrideKey(resourceId, marketId, locale, key));
 }
 
 const KEY_SEP = "|";

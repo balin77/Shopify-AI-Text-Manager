@@ -48,9 +48,13 @@
  *     manages, so an exotic key of some other app is never touched on a
  *     signal this weak.
  *
- * All of it applies to the GLOBAL layer only (`marketId ""`). A market-specific
- * override is a deliberate, separate value and survives a primary change —
- * the same rule the single and the bulk editor already follow.
+ * The DETECTION here is GLOBAL-layer only (`marketId ""`): a market override is
+ * a deliberately different wording and nothing in this app ever re-translates
+ * one, so it is never a reason to start a repair. It no longer SURVIVES a
+ * primary change, though — `purgeMarketOverrides`
+ * (market-layer-purge.server.ts) removes it wherever something happens to the
+ * global row beside it, because otherwise it would describe text that no longer
+ * exists with nobody left to notice.
  *
  * An EMPTY `primaryContent` map is not evidence of anything (a failed or
  * partial fetch looks identical to "every field cleared"), so rule 2 is
