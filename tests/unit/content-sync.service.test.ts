@@ -1,14 +1,18 @@
 /**
- * Unit Tests for ContentSyncService.syncMenu()
+ * ContentSyncService.syncAllMenus() — that it is no longer a WRITER.
  *
- * Focus:
- *   1. menuData null (menu not found in Shopify) → early return, saveMenuToDatabase NOT called
- *   2. menuData present → db.menu.upsert called with correct shape
- *   3. GraphQL error in fetchMenuData → error propagated
+ * It used to be the second one. `Menu.items` had two upserts replacing the
+ * whole column: this path read `id/title/url/type` per menu, `refreshMenuCache`
+ * reads those plus `resourceId`. Whichever ran last decided what was in the
+ * row — and this one runs on the 60s scheduler while the cache writer only
+ * runs when someone opens /app/menus, so this one usually won. A tree served
+ * from such a row fails `validateMenuTree` with `missingTarget` on every
+ * resource-bound item: every field red on a menu nobody touched.
  *
- * ✅ No real Shopify API needed (admin.graphql is mocked)
- * ✅ No real database needed (db.server is mocked)
- * ✅ Fast (<50ms per test)
+ * So the assertions here are about DELEGATION, not about menu data:
+ * `resourceId` survives, one query replaces 1 + N, and the count still comes
+ * back. What the cache writer itself refuses to delete is covered next door in
+ * menu-translations.server.test.ts and deliberately not duplicated.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -29,16 +33,22 @@ vi.mock('~/utils/translation-save-lock.server', () => ({
   isTranslationRecentlySaved: vi.fn().mockResolvedValue(false),
 }));
 
-// db.server is dynamically imported inside saveMenuToDatabase:
-//   const { db } = await import("../db.server")
+// db.server is dynamically imported inside syncAllMenus and, one level down,
+// inside refreshMenuCache — both resolve to this same module.
 const mockMenuUpsert = vi.fn().mockResolvedValue({});
+const mockMenuDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
+const mockMenuCount = vi.fn().mockResolvedValue(0);
+const mockTranslationDeleteMany = vi.fn().mockResolvedValue({ count: 0 });
 
 vi.mock('~/db.server', () => ({
   db: {
     menu: {
       upsert: mockMenuUpsert,
+      deleteMany: mockMenuDeleteMany,
+      count: mockMenuCount,
       delete: vi.fn().mockResolvedValue({}),
     },
+    contentTranslation: { deleteMany: mockTranslationDeleteMany },
   },
 }));
 
@@ -46,90 +56,106 @@ vi.mock('~/db.server', () => ({
 
 const shop = 'test.myshopify.com';
 
-const menuPayload = {
+/**
+ * A menu item of the shape the CACHE writer reads. `resourceId` is the field
+ * the removed writer did not read, and the reason this file exists.
+ */
+const menuNode = {
   id: 'gid://shopify/Menu/1',
   title: 'Main Navigation',
   handle: 'main-menu',
   items: [
-    { id: 'gid://shopify/MenuItem/1', title: 'Home', url: '/', type: 'FRONTEND', items: [] },
-    { id: 'gid://shopify/MenuItem/2', title: 'About', url: '/about', type: 'FRONTEND', items: [] },
+    {
+      id: 'gid://shopify/MenuItem/10',
+      title: 'Katalog',
+      type: 'COLLECTION',
+      url: '/collections/all',
+      resourceId: 'gid://shopify/Collection/77',
+      items: [],
+    },
   ],
 };
 
-/** Build a mock admin that returns the given menu (or null) from fetchMenuData */
-function makeAdmin(menu: typeof menuPayload | null, error?: string) {
-  if (error) {
-    return {
-      graphql: vi.fn().mockResolvedValue({
-        json: async () => ({ errors: [{ message: error }] }),
-      }),
-    };
-  }
+const secondMenuNode = { ...menuNode, id: 'gid://shopify/Menu/2', handle: 'footer' };
+
+function makeAdmin(nodes: unknown[] | null, error?: string) {
   return {
     graphql: vi.fn().mockResolvedValue({
-      json: async () => ({
-        data: { menu },
-        errors: undefined,
-      }),
+      json: async () =>
+        error ? { errors: [{ message: error }] } : { data: { menus: { nodes } } },
     }),
   };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
-describe('ContentSyncService.syncMenu()', () => {
+describe('ContentSyncService.syncAllMenus()', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockMenuUpsert.mockResolvedValue({});
+    mockMenuDeleteMany.mockResolvedValue({ count: 0 });
+    mockMenuCount.mockResolvedValue(0);
+    mockTranslationDeleteMany.mockResolvedValue({ count: 0 });
   });
 
-  it('returns early without calling db.menu.upsert when menu is not found', async () => {
-    const admin = makeAdmin(null);
-    const service = new ContentSyncService(admin, shop);
+  it('persists resourceId — the field the second writer dropped', async () => {
+    const admin = makeAdmin([menuNode]);
 
-    // Should resolve without throwing
-    await expect(service.syncMenu('gid://shopify/Menu/999')).resolves.toBeUndefined();
+    await new ContentSyncService(admin as never, shop).syncAllMenus();
 
-    // fetchMenuData was called once (graphql call)
-    expect(admin.graphql).toHaveBeenCalledTimes(1);
-    // saveMenuToDatabase was NOT called
-    expect(mockMenuUpsert).not.toHaveBeenCalled();
-  });
-
-  it('calls db.menu.upsert with correct data when menu is found', async () => {
-    const admin = makeAdmin(menuPayload);
-    const service = new ContentSyncService(admin, shop);
-
-    await service.syncMenu(menuPayload.id);
-
-    expect(admin.graphql).toHaveBeenCalledTimes(1);
     expect(mockMenuUpsert).toHaveBeenCalledOnce();
-    expect(mockMenuUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          shop_id: { shop, id: menuPayload.id },
-        },
-        create: expect.objectContaining({
-          id: menuPayload.id,
-          shop,
-          title: menuPayload.title,
-          handle: menuPayload.handle,
-        }),
-        update: expect.objectContaining({
-          title: menuPayload.title,
-          handle: menuPayload.handle,
-        }),
-      })
-    );
+    const written = mockMenuUpsert.mock.calls[0][0].update.items;
+    expect(written[0].resourceId).toBe('gid://shopify/Collection/77');
+    // and the tree is stored whole, not field-by-field, so a future field
+    // needs no change here.
+    expect(written[0]).toEqual(menuNode.items[0]);
   });
 
-  it('propagates GraphQL errors from fetchMenuData', async () => {
-    const admin = makeAdmin(null, 'Menu not accessible');
-    const service = new ContentSyncService(admin, shop);
+  it('reads the whole shop in ONE query instead of one per menu', async () => {
+    const admin = makeAdmin([menuNode, secondMenuNode]);
 
-    await expect(service.syncMenu('gid://shopify/Menu/1')).rejects.toThrow(
-      'GraphQL error in fetchMenuData: Menu not accessible'
-    );
+    await new ContentSyncService(admin as never, shop).syncAllMenus();
+
+    // The removed path cost 1 (list) + N (per menu). Two menus, one call.
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+    expect(mockMenuUpsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns how many menus Shopify returned', async () => {
+    const admin = makeAdmin([menuNode, secondMenuNode]);
+
+    const count = await new ContentSyncService(admin as never, shop).syncAllMenus();
+
+    expect(count).toBe(2);
+  });
+
+  it('accepts an admin that is ALREADY a gateway without wrapping it again', async () => {
+    // BackgroundSyncService constructs us with its own gateway
+    // (`new ContentSyncService(this.gateway, …)`). A gateway around a gateway
+    // is not a no-op — each keeps its own queue and its own 3 retries — so
+    // syncAllMenus reuses the one it was given. This pins that the instanceof
+    // branch is actually reachable and still works end to end; the retry
+    // amplification it prevents is only observable under a simulated throttle
+    // and is not asserted here.
+    const { ShopifyApiGateway } = await import('~/services/shopify-api-gateway.service');
+    const rawAdmin = makeAdmin([menuNode]);
+    const gateway = new ShopifyApiGateway(rawAdmin as never, shop);
+
+    const count = await new ContentSyncService(gateway as never, shop).syncAllMenus();
+
+    expect(count).toBe(1);
+    expect(rawAdmin.graphql).toHaveBeenCalledTimes(1);
+    expect(mockMenuUpsert).toHaveBeenCalledOnce();
+  });
+
+  it('propagates GraphQL errors instead of reporting an empty shop', async () => {
+    const admin = makeAdmin(null, 'Menu not accessible');
+
+    await expect(
+      new ContentSyncService(admin as never, shop).syncAllMenus(),
+    ).rejects.toThrow('Menu not accessible');
 
     expect(mockMenuUpsert).not.toHaveBeenCalled();
+    expect(mockMenuDeleteMany).not.toHaveBeenCalled();
   });
 });

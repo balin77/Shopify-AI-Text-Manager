@@ -68,6 +68,9 @@ describe("refreshMenuCache", () => {
         resourceType: "Link",
         // Derived from the MenuItem GIDs, every level.
         resourceId: { notIn: ["gid://shopify/Link/10", "gid://shopify/Link/20"] },
+        // The snapshot cutoff has its own test below; here it only has to be
+        // present, so this assertion stays about the SCOPE of the delete.
+        updatedAt: { lt: expect.any(Date) },
       },
     });
   });
@@ -78,11 +81,26 @@ describe("refreshMenuCache", () => {
     expect(translationDeleteMany).not.toHaveBeenCalled();
   });
 
-  it("deletes nothing at all when Shopify returns zero menus over a non-empty cache", async () => {
+  it("throws, and deletes nothing, when Shopify returns zero menus over a non-empty cache", async () => {
+    // Throwing is half the assertion. The callers are a page loader and three
+    // sync phases: the loader catches and serves the cache either way, but a
+    // return value of 0 would let initial-sync mark its menu phase successful
+    // and /api/sync-content report "0 menus" with no failure — a broken read
+    // shown to the merchant as an empty shop.
     menuCount.mockResolvedValue(3);
-    await refreshMenuCache(makeGateway([]), db, "s.myshopify.com");
+    await expect(
+      refreshMenuCache(makeGateway([]), db, "s.myshopify.com"),
+    ).rejects.toThrow(/aborting to prevent data loss/);
     expect(menuDeleteMany).not.toHaveBeenCalled();
     expect(translationDeleteMany).not.toHaveBeenCalled();
+  });
+
+  it("returns 0 without throwing when the shop genuinely has no menus", async () => {
+    // The counterpart to the case above: an empty read over an EMPTY cache is
+    // just an empty shop, and must not be reported as a failure.
+    menuCount.mockResolvedValue(0);
+    await expect(refreshMenuCache(makeGateway([]), db, "s.myshopify.com")).resolves.toBe(0);
+    expect(menuDeleteMany).not.toHaveBeenCalled();
   });
 
   it("skips both deletes when the menu list may be truncated", async () => {
@@ -103,6 +121,20 @@ describe("refreshMenuCache", () => {
     expect(menuDeleteMany).toHaveBeenCalledWith({
       where: { shop: "s.myshopify.com", id: { notIn: ["gid://shopify/Menu/1"] } },
     });
+  });
+
+  it("spares translations written after the live snapshot was taken", async () => {
+    // The orphan cleanup may only judge rows that existed when it read the
+    // live tree. Between that read and this delete, a merchant can create a
+    // menu item and translate it — and a translation of an item the snapshot
+    // never saw is not an orphan of it. On the 60s scheduler this window comes
+    // around often enough to matter.
+    const before = new Date();
+    await refreshMenuCache(makeGateway([menuWithItems]), db, "s.myshopify.com");
+
+    const where = translationDeleteMany.mock.calls[0][0].where;
+    expect(where.updatedAt.lt).toBeInstanceOf(Date);
+    expect(where.updatedAt.lt.getTime()).toBeGreaterThanOrEqual(before.getTime());
   });
 
   it("throws on a GraphQL error instead of treating it as an empty shop", async () => {

@@ -983,6 +983,23 @@ html {
     flex: 0 0 auto !important;
     max-width: none !important;
   }
+
+  /* The navigation row spends 2rem between its items, which is right on
+     desktop and ruinous here. Below 900px the row holds the hamburger, the
+     item-selector dropdown, the message bell and the SEO-score toggle — three
+     gaps at 32px each, i.e. ~96px of a ~360px row, spent on air. Everything
+     but the dropdown is a fixed-width control, so the whole overrun comes out
+     of the ONE element that has something to show: the selector is the row's
+     only `flex: 1` item and was squeezed to roughly half of what fits.
+
+     `!important` because the row declares its gap inline (MainNavigation's
+     `.main-navigation` style), and an inline declaration outranks any
+     selector here. 0.75rem keeps the controls visibly apart — they are 44px+
+     touch targets, so the separation is comfort, not hit accuracy — and hands
+     the dropdown back about 60px. */
+  .main-navigation {
+    gap: 0.75rem !important;
+  }
 }
 
 /* Polaris Modal must render above the fixed MainNavigation (z-index 1000).
