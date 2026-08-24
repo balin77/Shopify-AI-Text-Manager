@@ -75,6 +75,10 @@ export interface TranslationDriftTickStats {
   /** Resources handed to the reconciliation across every shop in this tick. */
   handed: number;
   errored: number;
+  /** Sweeps that could not establish silence for at least one type — a failed
+   *  query, a truncated baseline or a paging ceiling. Carried out of the scan
+   *  so "0 handed" is never read as "0 changed". */
+  incomplete: number;
 }
 
 export class TranslationDriftAutoRunService {
@@ -139,7 +143,7 @@ export class TranslationDriftAutoRunService {
 
   /** One sweep over the due shops. Public so tests can drive it directly. */
   async tick(now: Date = new Date()): Promise<TranslationDriftTickStats> {
-    const stats: TranslationDriftTickStats = { candidates: 0, handed: 0, errored: 0 };
+    const stats: TranslationDriftTickStats = { candidates: 0, handed: 0, errored: 0, incomplete: 0 };
 
     const shops = await this.findDueShops(now);
     stats.candidates = shops.length;
@@ -150,12 +154,35 @@ export class TranslationDriftAutoRunService {
     const { ShopifyApiGateway } = await import("../shopify-api-gateway.service");
 
     for (const settings of shops) {
+      // The stamp is a BACKOFF, and skipping it is how a shop gets retried on
+      // the next tick instead of in 24 hours. Only ONE case earns that: a
+      // locale lookup that failed, where the sweep never ran at all. Every
+      // other path stamps, including a failure — an unstamped shop wins the due
+      // query forever and would be swept on every tick.
+      let stampThisShop = true;
       try {
         const admin = await createAdminClientFromShop(settings.shop);
-        // An EMPTY list means the lookup failed, never "one locale" (CLAUDE.md)
-        // — and with nothing to compare the sweep is a no-op either way, so it
-        // degrades to "try again next tick" without a special case.
-        const locales = await getCachedShopLocales(admin as never, settings.shop).catch(() => []);
+        // CLAUDE.md's rule is "never gate on a failed lookup, and do not catch
+        // around it — it re-throws 401 so the request can re-authenticate".
+        // Here there is no request to re-authenticate: this is a background
+        // tick, and an uncaught throw would only cost the whole shop's sweep.
+        // So it is caught AND the shop is left unstamped, which is the only
+        // thing that actually makes it "try again next tick": an empty locale
+        // list would otherwise be indistinguishable from a single-language shop
+        // and the sweep would report a clean no-op for a whole day.
+        let localeLookupFailed = false;
+        const locales = await getCachedShopLocales(admin as never, settings.shop).catch(() => {
+          localeLookupFailed = true;
+          return [];
+        });
+        if (localeLookupFailed) {
+          stats.errored++;
+          stampThisShop = false;
+          logger.warn(`[TranslationDrift] Locale lookup failed for ${settings.shop} - not stamping`, {
+            context: "TranslationDrift",
+          });
+          continue;
+        }
         const foreignLocales = locales
           .filter((l: { published: boolean; primary: boolean }) => l.published && !l.primary)
           .map((l: { locale: string }) => l.locale);
@@ -166,21 +193,27 @@ export class TranslationDriftAutoRunService {
           foreignLocales,
         });
         stats.handed += result.handed;
+        if (result.failedTypes.length > 0 || result.truncatedTypes.length > 0) {
+          stats.incomplete++;
+          logger.warn(`[TranslationDrift] Sweep incomplete for ${settings.shop}`, {
+            context: "TranslationDrift",
+            failedTypes: result.failedTypes,
+            truncatedTypes: result.truncatedTypes,
+          });
+        }
       } catch (err) {
         stats.errored++;
         logger.warn(`[TranslationDrift] Sweep failed for ${settings.shop}`, {
           error: err instanceof Error ? err.message : String(err),
         });
       } finally {
-        // Stamped on EVERY path — an unstamped shop wins the due query forever
-        // and would be swept on every tick.
-        await this.stamp(settings.shop, now);
+        if (stampThisShop) await this.stamp(settings.shop, now);
       }
     }
 
     logger.info(
       `[TranslationDrift] Tick done: ${stats.candidates} shop(s), ${stats.handed} resource(s) ` +
-        `reconciled, ${stats.errored} errored`,
+        `reconciled, ${stats.incomplete} incomplete, ${stats.errored} errored`,
     );
     return stats;
   }

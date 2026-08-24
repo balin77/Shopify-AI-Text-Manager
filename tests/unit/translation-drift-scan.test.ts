@@ -41,6 +41,10 @@ interface NodeSpec {
   digest: string;
   /** locale → the keys that locale holds a translation for. */
   translated: Record<string, string[]>;
+  /** Shopify's own staleness verdict on those rows. Default true. */
+  outdated?: boolean;
+  /** Keys with no `translatableContent` entry — how a CLEARED field looks. */
+  clearedKeys?: string[];
 }
 
 /** A gateway answering the sweep with one page of the given nodes per type. */
@@ -57,10 +61,11 @@ function fakeGateway(nodesByType: Record<string, NodeSpec[]>) {
       const nodes = (nodesByType[type] ?? []).map((spec) => {
         const node: Record<string, unknown> = {
           resourceId: spec.resourceId,
+          // A CLEARED field produces NO entry at all — never an empty one.
           translatableContent: [
             { key: "title", value: "About us", digest: spec.digest },
             { key: "body_html", value: "<p>Text</p>", digest: spec.digest },
-          ],
+          ].filter((entry) => !(spec.clearedKeys ?? []).includes(entry.key)),
         };
         locales.forEach((locale, index) => {
           // Shopify answers with a row per translatable KEY and `value: null`
@@ -69,7 +74,7 @@ function fakeGateway(nodesByType: Record<string, NodeSpec[]>) {
           node[`l${index}`] = ["title", "body_html"].map((key) => ({
             key,
             value: (spec.translated[locale] ?? []).includes(key) ? `t-${key}` : null,
-            outdated: true,
+            outdated: spec.outdated ?? true,
           }));
         });
         return { node };
@@ -106,7 +111,7 @@ describe("scanTranslationDrift", () => {
 
     const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: [], reconcile });
 
-    expect(result).toEqual({ changed: 0, handed: 0, failedTypes: [] });
+    expect(result).toEqual({ changed: 0, handed: 0, failedTypes: [], truncatedTypes: [] });
     expect(queries).toEqual([]);
     expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
   });
@@ -187,12 +192,13 @@ describe("scanTranslationDrift", () => {
   });
 
   it("ignores a locale that holds no translation, however its digest looks", async () => {
+    // The baseline is for the SWEPT locale, so the digest half of the gate
+    // passes: only the `value: null` filter can keep this out. With the
+    // baseline written for another locale the test would pass with that filter
+    // deleted, which is what it looked like at first.
     db.contentTranslation.findMany.mockImplementation(async (args: any) =>
-      args?.where?.resourceType === "Page" ? baselineRows(PAGE, "de", ["title"], OLD) : [],
+      args?.where?.resourceType === "Page" ? baselineRows(PAGE, "fr", ["title"], OLD) : [],
     );
-    // `fr` is published but the resource has no French translation at all, so
-    // Shopify answers `value: null` for it. Reading those as translations would
-    // report drift on every untranslated locale of every shop.
     const { gateway } = fakeGateway({
       PAGE: [{ resourceId: PAGE, digest: NEW, translated: { fr: [] } }],
     });
@@ -203,7 +209,47 @@ describe("scanTranslationDrift", () => {
     expect(reconcile).not.toHaveBeenCalled();
   });
 
-  it("stops at the handover cap — the rest is the NEXT sweep's work, not a loss", async () => {
+  it("does NOT hand over a resource Shopify reports as already re-translated", async () => {
+    // The digest moved, but `outdated: false` says somebody translated it
+    // against the NEW source — an admin edit followed by an admin translation,
+    // which is the population this sweep watches. The real gate refuses it, so
+    // handing it over repairs nothing, advances no baseline, and hands the same
+    // resource over again on every sweep until it starves everything behind it.
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? baselineRows(PAGE, "de", ["title"], OLD) : [],
+    );
+    const { gateway } = fakeGateway({
+      PAGE: [{ resourceId: PAGE, digest: NEW, translated: { de: ["title"] }, outdated: false }],
+    });
+    const reconcile = vi.fn(async () => ({ removed: 0, retranslating: 0 }));
+
+    const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    expect(result.changed).toBe(0);
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("DOES hand over a resource whose primary value was cleared", async () => {
+    // A cleared field has no `translatableContent` entry at all, so no current
+    // digest — the half of the gate an earlier pre-check made unreachable by
+    // demanding one.
+    db.contentTranslation.findMany.mockImplementation(async (args: any) =>
+      args?.where?.resourceType === "Page" ? baselineRows(PAGE, "de", ["title"], OLD) : [],
+    );
+    const { gateway } = fakeGateway({
+      PAGE: [
+        { resourceId: PAGE, digest: NEW, translated: { de: ["title"] }, outdated: false, clearedKeys: ["title"] },
+      ],
+    });
+    const reconcile = vi.fn(async () => ({ removed: 1, retranslating: 0 }));
+
+    const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
+
+    expect(result.changed).toBe(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops at the PER-TYPE budget, so one type cannot starve the others", async () => {
     const ids = Array.from({ length: MAX_DRIFT_HANDOVERS + 5 }, (_, i) => `gid://shopify/Page/${i}`);
     db.contentTranslation.findMany.mockImplementation(async (args: any) =>
       args?.where?.resourceType === "Page"
@@ -217,8 +263,12 @@ describe("scanTranslationDrift", () => {
 
     const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
 
-    expect(result.handed).toBe(MAX_DRIFT_HANDOVERS);
-    expect(reconcile).toHaveBeenCalledTimes(MAX_DRIFT_HANDOVERS);
+    // A quarter of the budget, because there are four scanned types and each
+    // gets its own share — with one shared pool these pages would take every
+    // slot and the shop's articles, blogs and policies would never be swept.
+    const perType = Math.ceil(MAX_DRIFT_HANDOVERS / 4);
+    expect(result.handed).toBe(perType);
+    expect(reconcile).toHaveBeenCalledTimes(perType);
   });
 
   it("reports a failed type instead of counting it as 'nothing changed'", async () => {
@@ -235,6 +285,7 @@ describe("scanTranslationDrift", () => {
     const result = await scanTranslationDrift({ gateway, shop: SHOP, foreignLocales: ["de"], reconcile });
 
     expect(result.failedTypes).toEqual(["PAGE"]);
+    expect(result.changed).toBe(0);
     expect(reconcile).not.toHaveBeenCalled();
   });
 });

@@ -31,14 +31,18 @@
  *    that makes a first sweep harmless — and it is also what keeps the cost
  *    proportional to what a shop has actually translated.
  *
- * 3. A CAP on how many resources one sweep hands over. Every handover can start
- *    an unattended AI run on the merchant's own key; a shop that bulk-imported
- *    500 pages overnight must not turn that into 500 runs at 3am. What is left
- *    over is not lost — it is simply the next sweep's work, because the digests
- *    it would have compared are still unchanged.
+ * 3. A CAP on how many resources one sweep hands over, PER TYPE rather than as
+ *    one shared pool: every handover can start an unattended AI run on the
+ *    merchant's own key, and with a single pool a shop whose pages always fill
+ *    it would never have its articles, blogs or policies swept at all. What is
+ *    left over is the next sweep's work rather than a loss — but only because
+ *    the budget is spent on resources the gate really finds stale, which is why
+ *    the pre-check below is the FULL gate and not just its digest half.
  *
- * 4. IT NEVER THROWS. A sweep runs unattended; a failure logs and the shop is
- *    tried again on its next tick.
+ * 4. IT NEVER THROWS, and it never reports silence it did not establish. A
+ *    failed type, a truncated baseline and a paging ceiling are all named in the
+ *    result; a sweep whose every node was unknown to the mirror says so rather
+ *    than looking like a shop with nothing to do.
  */
 
 import type { ShopifyApiGateway } from "../shopify-api-gateway.service";
@@ -59,8 +63,22 @@ const SCANNED_TYPES = [
   { shopify: "SHOP_POLICY", mirror: "ShopPolicy", contentKind: "page" as const },
 ] as const;
 
-/** Resources per page of the sweep. Shopify's own maximum for this connection. */
-const PAGE_SIZE = 100;
+/**
+ * Nodes per page, DIVIDED BY THE LOCALE COUNT — the half of the menu sweep's
+ * shape that is easy to copy without and impossible to survive without.
+ *
+ * Each node carries `translatableContent` plus one `translations(locale:)`
+ * alias per published locale, so the query's cost scales with the language
+ * count. `menu-translations.server.ts` measured this: at a fixed page size a
+ * five-language shop blows the 1000-point single-query ceiling and the whole
+ * document is refused with `MAX_COST_EXCEEDED` — which arrives as a top-level
+ * `errors` entry, i.e. a THROW that takes the entire type with it, every 24
+ * hours, on exactly the multilingual shops this feature exists for.
+ *
+ * The floor keeps a ten-language shop from paging one node at a time.
+ */
+const SWEEP_MAX_NODES = 100;
+const SWEEP_MIN_NODES = 10;
 
 /** Pages per type, so one enormous catalogue cannot hold a tick open. */
 const MAX_PAGES_PER_TYPE = 20;
@@ -71,13 +89,26 @@ const MAX_PAGES_PER_TYPE = 20;
  */
 export const MAX_DRIFT_HANDOVERS = 25;
 
+/**
+ * Rows the baseline query may materialise per type. The one query here with no
+ * natural ceiling: a shop with thousands of articles times keys times locales
+ * would otherwise pull the lot into a Map for a sweep that hands over at most
+ * MAX_DRIFT_HANDOVERS resources. Truncation is SAFE in the only direction that
+ * matters — a resource whose baseline was cut looks like "no evidence" and is
+ * skipped — and it is reported rather than silent.
+ */
+const MAX_BASELINE_ROWS = 50_000;
+
 export interface DriftScanResult {
-  /** Resources whose primary text moved since the mirror's baseline. */
+  /** Resources the gate found stale — including any past the cap. */
   changed: number;
-  /** Of those, how many were handed to the reconciliation (the cap). */
+  /** Of those, how many were handed to the reconciliation. */
   handed: number;
   /** Types whose query failed — reported, never counted as "nothing changed". */
   failedTypes: string[];
+  /** Types whose baseline was truncated or whose paging hit its ceiling, so
+   *  "nothing else changed" is NOT what this sweep established for them. */
+  truncatedTypes: string[];
 }
 
 interface ScanNode {
@@ -99,9 +130,17 @@ export async function scanTranslationDrift(params: {
   foreignLocales: readonly string[];
   /** Test seam — the reconciliation is otherwise resolved at call time. */
   reconcile?: typeof import("./stale-translation-sync.server").reconcileStaleTranslations;
+  /**
+   * The MARKET layer is deliberately not read here. `collectTranslations`
+   * reports global rows only, so a locale that holds an override and no global
+   * translation is absent from the market purge's scope downstream — the
+   * webhook path covers it (its sync fetches every layer), this entrance does
+   * not. Reading market layers would mean knowing the shop's markets and
+   * carrying an alias per (locale, market) into an already cost-bound query.
+   */
 }): Promise<DriftScanResult> {
   const { gateway, shop, foreignLocales } = params;
-  const result: DriftScanResult = { changed: 0, handed: 0, failedTypes: [] };
+  const result: DriftScanResult = { changed: 0, handed: 0, failedTypes: [], truncatedTypes: [] };
   if (foreignLocales.length === 0) return result;
 
   const { db } = await import("../../db.server");
@@ -109,8 +148,12 @@ export async function scanTranslationDrift(params: {
   const reconcile = params.reconcile ?? sync.reconcileStaleTranslations;
   const { digestBaselineKey } = await import("./stale-translations.shared");
 
+  // A budget PER TYPE, not one shared pool walked in a fixed order: with one
+  // pool a shop whose pages always fill it means its articles, blogs and
+  // policies are never swept at all, on any night.
+  const perType = Math.max(1, Math.ceil(MAX_DRIFT_HANDOVERS / SCANNED_TYPES.length));
+
   for (const type of SCANNED_TYPES) {
-    if (result.handed >= MAX_DRIFT_HANDOVERS) break;
 
     // The mirror's whole baseline for this type, in ONE query. Keyed by
     // resource, then by `digestBaselineKey(locale, key)` — the exact shape
@@ -120,7 +163,9 @@ export async function scanTranslationDrift(params: {
       const rows = await db.contentTranslation.findMany({
         where: { shop, resourceType: type.mirror, marketId: "" },
         select: { resourceId: true, key: true, locale: true, digest: true },
+        take: MAX_BASELINE_ROWS,
       });
+      if (rows.length === MAX_BASELINE_ROWS) result.truncatedTypes.push(type.shopify);
       baseline = new Map();
       for (const row of rows) {
         const entry = baseline.get(row.resourceId) ?? {};
@@ -170,13 +215,20 @@ export async function scanTranslationDrift(params: {
     baseline: Map<string, Record<string, string | null>>,
   ): Promise<void> {
     let cursor: string | null = null;
+    let handedHere = 0;
+    /** A node Shopify returned whose id the baseline does not know — see the
+     *  mismatch warning below. */
+    let unmatched = 0;
+    let seen = 0;
     for (let page = 0; page < MAX_PAGES_PER_TYPE; page++) {
-      if (result.handed >= MAX_DRIFT_HANDOVERS) return;
+      if (handedHere >= perType) return;
 
       const { nodes, next } = await fetchPage(type.shopify, cursor);
       for (const node of nodes) {
-        if (result.handed >= MAX_DRIFT_HANDOVERS) return;
+        if (handedHere >= perType) return;
+        seen++;
         const previousDigests = baseline.get(node.resourceId);
+        if (!previousDigests) unmatched++;
         // No mirror row ⇒ no baseline ⇒ no evidence that anything moved. This
         // is the rule that makes a first sweep harmless, and it is also why the
         // sweep is cheap: most resources never get past this line.
@@ -197,28 +249,78 @@ export async function scanTranslationDrift(params: {
         // Cheap pre-check, so the shop is not charged a reconciliation call for
         // a resource whose digests all still match. The reconciliation runs the
         // real gate itself — this only avoids calling it for the common case.
-        const moved = translations.some((row) => {
+        // Deliberately the SAME comparison the real gate makes
+        // (`findStaleTranslations`): a key whose entry is ABSENT has no current
+        // digest, `null` differs from the stored one, and that is what makes
+        // the "the merchant cleared this field" rule reachable at all. An
+        // earlier cut required a current digest and thereby made half the
+        // gate's evidence invisible through this entrance — a body emptied in
+        // the Shopify admin, the orphan-translation case the reconciliation was
+        // originally built for.
+        // The FULL gate, not just the digest half. `findStaleTranslations`
+        // needs a second signal — Shopify's own `outdated`, or a primary value
+        // that is gone — and this sweep has both in hand. Checking only the
+        // digest handed over resources the gate then refused: a page
+        // re-translated in the Shopify admin (digest moved, `outdated: false`)
+        // is never repaired, so nothing advances its baseline, so it is handed
+        // over again on every sweep forever, burning a budget slot each time
+        // and eventually starving everything behind it.
+        //
+        // `reconcileStaleTranslations` remains the authority and runs the real
+        // gate again; this only decides what is worth asking it about.
+        const stale = translations.some((row) => {
           const previous = previousDigests[digestBaselineKey(row.locale, row.key)];
-          const current = primaryContent[row.key]?.digest;
-          return !!previous && !!current && previous !== current;
+          if (!previous) return false;
+          const entry = primaryContent[row.key];
+          if ((entry?.digest ?? null) === previous) return false;
+          return row.outdated === true || !(entry?.value ?? "").trim();
         });
-        if (!moved) continue;
+        if (!stale) continue;
 
         result.changed++;
         result.handed++;
+        handedHere++;
         await reconcile({
           client: gateway,
           shop,
           resourceId: node.resourceId,
           resourceType: type.mirror,
           contentKind: type.contentKind,
+          // Without this every sweep-started run shows a raw GID in the Tasks
+          // tab; the title is right there in the node we already fetched.
+          ...(primaryContent.title?.value ? { resourceTitle: primaryContent.title.value } : {}),
           translations,
           primaryContent,
           previousDigests,
         });
       }
-      if (!next) return;
+      if (!next) {
+        warnOnTotalMismatch();
+        return;
+      }
       cursor = next;
+      if (page === MAX_PAGES_PER_TYPE - 1) result.truncatedTypes.push(type.shopify);
+    }
+    warnOnTotalMismatch();
+
+    /**
+     * Every node Shopify returned was unknown to the baseline, while the
+     * baseline is not empty. The likely cause is that the two sides spell the
+     * same resource's GID differently — pages have historically been
+     * `gid://shopify/OnlineStorePage/...` as well as `gid://shopify/Page/...`.
+     * Nothing here can repair that, but a permanent silent no-op is the one
+     * outcome a sweep must never have, so it says so with one id from each side.
+     */
+    function warnOnTotalMismatch(): void {
+      if (seen === 0 || unmatched < seen || baseline.size === 0) return;
+      logger.warn("[DriftScan] No swept resource matched the mirror — check the id spelling", {
+        context: "DriftScan",
+        shop,
+        type: type.shopify,
+        seen,
+        mirrorRows: baseline.size,
+        mirrorExample: [...baseline.keys()][0],
+      });
     }
   }
 
@@ -260,7 +362,11 @@ export async function scanTranslationDrift(params: {
     const localeSelections = foreignLocales
       .map((_, i) => `l${i}: translations(locale: $loc${i}) { key value outdated }`)
       .join("\n            ");
-    const variables: Record<string, unknown> = { first: PAGE_SIZE, after };
+    const pageSize = Math.min(
+      SWEEP_MAX_NODES,
+      Math.max(SWEEP_MIN_NODES, Math.floor(SWEEP_MAX_NODES / Math.max(1, foreignLocales.length))),
+    );
+    const variables: Record<string, unknown> = { first: pageSize, after };
     foreignLocales.forEach((locale, i) => {
       variables[`loc${i}`] = locale;
     });
