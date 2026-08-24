@@ -37,7 +37,7 @@ import {
 } from "../../graphql/content.mutations";
 import { debugLog } from "../../utils/debug";
 import { markTranslationSaved } from "../../utils/translation-save-lock.server";
-import { featuredAltLockId } from "../translations/translation-locks.shared";
+import { featuredAltLockId, subResourceLockId } from "../translations/translation-locks.shared";
 import {
   loadDigestsForRows,
   fetchDigestsForResource,
@@ -2050,13 +2050,28 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
   for (const cell of featuredAltCells) {
     const error = await writeFeaturedImageAltTranslation(group, cell.value, deps);
     if (error) failures.push(failureOf(group, error, cell.columnId));
-    else {
-      markTranslationSaved(group.rowId);
-      // The single editor's featured-alt repair runs under its OWN key — the
-      // parent's lock belongs to that resource's CONTENT repair — so a claim on
-      // the row alone would never reach it. Global layer only, for the same
-      // reason as the sub-resource claim below.
-      if (group.marketId === "") markTranslationSaved(featuredAltLockId(group.rowId));
+    else if (group.marketId === "") {
+      // The featured alt is its OWN surface and is claimed under its OWN key
+      // (translation-locks.shared.ts) — never under the row's.
+      //
+      // The row's own repairs cannot reach an `image_alt_text` row: the
+      // `products/update` / `collections/update` webhook and
+      // reconcileAfterPrimarySave both work from the keys of the row's own
+      // `translatableResource`, and this key is not one of them (it lives on
+      // the IMAGE resource as `alt`). So claiming the row protected nothing
+      // here and made that webhook's field reconciliation bail for 30 seconds
+      // instead: with auto-translate on the purge is off, so the row's own
+      // field translations were then neither refreshed nor removed —
+      // permanently, since the sync has advanced their digest baseline by the
+      // time anything looks again.
+      //
+      // GLOBAL layer only: that repair writes global rows, so a MARKET
+      // override can never collide with it, and aborting a run over one would
+      // leave its remaining entries in neither list. A market write therefore
+      // does not shield the content sync's cache rewrite either — which costs
+      // nothing, because the value above is echo-confirmed on Shopify and that
+      // rewrite re-reads it from there.
+      markTranslationSaved(featuredAltLockId(group.rowId));
     }
   }
 
@@ -2558,16 +2573,23 @@ async function persistSubResourceTranslations(
       if (!error) claimed.push(pair.target.resourceId);
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
-    else markTranslationSaved(group.rowId);
-    // …and the SUB-RESOURCE itself. The single editor's sub-resource repair
-    // runs under a private lock (translation-locks.shared.ts) and watches the
-    // resources it is about to write, not the product — so a claim on the row
-    // alone is invisible to it and the AI would overwrite this value.
+    // The SUB-RESOURCES themselves, and the private lock their repair runs
+    // under (translation-locks.shared.ts) — never the row. That repair watches
+    // the resources it is about to write plus its own lock, not the product,
+    // so a claim on the row alone is invisible to it and the AI would
+    // overwrite this value. And the row's own repair never sees a
+    // sub-resource, so claiming the row protected nothing while making the
+    // `products/update` webhook's field reconciliation bail for 30 seconds:
+    // with auto-translate on the purge is off, so the row's field translations
+    // were then neither refreshed nor removed — permanently, since the sync
+    // has advanced their digest baseline by then. The product sync's own
+    // shield asks for this private key BY NAME, so it is unaffected.
     //
     // GLOBAL layer only: that repair writes global rows, so a MARKET override
     // can never collide with it, and aborting it over one would leave its
     // remaining entries in neither list.
-    if (group.marketId === "") {
+    if (group.marketId === "" && claimed.length > 0) {
+      markTranslationSaved(subResourceLockId(group.rowId));
       for (const resourceId of claimed) markTranslationSaved(resourceId);
     }
   }

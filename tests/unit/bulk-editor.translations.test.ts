@@ -11,8 +11,14 @@ import {
   translationKeysByColumnId,
 } from "~/services/bulk-editor/translations.server";
 import { applyBulkDiff } from "~/services/bulk-editor/apply.server";
+import { translationSavedAt } from "~/utils/translation-save-lock.server";
+import {
+  featuredAltLockId,
+  subResourceLockId,
+} from "~/services/translations/translation-locks.shared";
 import {
   estimateCalls,
+  FEATURED_IMAGE_ALT_COLUMN_ID,
   metafieldColumnId,
   optionColumnId,
   buildColumnsForType,
@@ -1001,5 +1007,160 @@ describe("applyBulkDiff — redirect on a TRANSLATED handle change", () => {
     expect(created).toEqual([]);
     // Not even the lookup: the market case is refused before the reads.
     expect(db.contentTranslation.findMany).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Which lock a foreign write CLAIMS (translation-locks.shared.ts) ───────
+
+/**
+ * A claim says "the merchant just wrote this surface, do not overwrite it".
+ * Claiming the ROW for a write that did not touch the row's own translations
+ * protects nothing and BLOCKS: `reconcileStaleTranslations` bails wholesale on
+ * `isTranslationRecentlySaved(resourceId)`, so a products/update webhook
+ * arriving from the same save skipped the row's field reconciliation for 30
+ * seconds — and with auto-translate on the purge is off, so those translations
+ * were then neither refreshed nor removed, permanently.
+ *
+ * Ids are unique per test: the lock store is module state shared across the
+ * file, and there is no reset export.
+ */
+describe("applyBulkDiff — foreign writes claim their OWN lock, never the row", () => {
+  it("a sub-resource cell claims the metafield GID and the private product key, not the product", async () => {
+    const PRODUCT = "gid://shopify/Product/lock-sub";
+    const METAFIELD = "gid://shopify/Metafield/lock-sub-1";
+    const { admin } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { value: "d-value" });
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "value", locale: LOCALE, value: "Soie", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = {
+      ...mockDb(),
+      productMetafield: {
+        findMany: vi.fn(async () => [
+          { id: METAFIELD, productId: PRODUCT, namespace: "custom", key: "care" },
+        ]),
+      },
+      productOption: { findMany: vi.fn(async () => []) },
+    };
+    const columns = columnsByType();
+    columns.product = buildColumnsForType(
+      "product",
+      [{ namespace: "custom", key: "care", type: "single_line_text_field" }],
+      fullCaps,
+    );
+
+    await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columns },
+      [
+        {
+          rowId: PRODUCT,
+          rowType: "product",
+          locale: LOCALE,
+          marketId: "",
+          columnId: metafieldColumnId("custom", "care"),
+          value: "Soie",
+        },
+      ],
+    );
+
+    expect(translationSavedAt(METAFIELD)).not.toBeNull();
+    expect(translationSavedAt(subResourceLockId(PRODUCT))).not.toBeNull();
+    expect(translationSavedAt(PRODUCT)).toBeNull();
+  });
+
+  it("a featured-alt cell claims the featured-alt key, not the collection", async () => {
+    const COLLECTION = "gid://shopify/Collection/lock-alt";
+    const IMAGE = "gid://shopify/CollectionImage/lock-alt-1";
+    const { admin } = mockAdmin((query) => {
+      if (query.includes("bulkFeaturedImageId")) {
+        return { data: { collection: { image: { id: IMAGE } } } };
+      }
+      if (query.includes("translatableContent")) {
+        return { data: { translatableResource: { translatableContent: [{ key: "alt", digest: "d-alt" }] } } };
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "alt", locale: LOCALE, value: "Vase bleu", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+    const db = mockDb();
+
+    const result = await applyBulkDiff(
+      { db: db as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [
+        {
+          rowId: COLLECTION,
+          rowType: "collection",
+          locale: LOCALE,
+          marketId: "",
+          columnId: FEATURED_IMAGE_ALT_COLUMN_ID,
+          value: "Vase bleu",
+        },
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(translationSavedAt(featuredAltLockId(COLLECTION))).not.toBeNull();
+    expect(translationSavedAt(COLLECTION)).toBeNull();
+  });
+
+  it("a MARKET-layer write claims nothing — a mark would abort the global repair it can never collide with", async () => {
+    const COLLECTION = "gid://shopify/Collection/lock-alt-market";
+    const IMAGE = "gid://shopify/CollectionImage/lock-alt-market-1";
+    const MARKET = "gid://shopify/Market/9";
+    const { admin } = mockAdmin((query) => {
+      if (query.includes("bulkFeaturedImageId")) {
+        return { data: { collection: { image: { id: IMAGE } } } };
+      }
+      if (query.includes("translatableContent")) {
+        return { data: { translatableResource: { translatableContent: [{ key: "alt", digest: "d-alt" }] } } };
+      }
+      if (query.includes("translationsRegister")) {
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "alt", locale: LOCALE, value: "Vase bleu", market: { id: MARKET } }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+
+    await applyBulkDiff(
+      { db: mockDb() as never, shop: SHOP, admin: admin as never, columnsByType: columnsByType() },
+      [
+        {
+          rowId: COLLECTION,
+          rowType: "collection",
+          locale: LOCALE,
+          marketId: MARKET,
+          columnId: FEATURED_IMAGE_ALT_COLUMN_ID,
+          value: "Vase bleu",
+        },
+      ],
+    );
+
+    expect(translationSavedAt(featuredAltLockId(COLLECTION))).toBeNull();
+    expect(translationSavedAt(COLLECTION)).toBeNull();
   });
 });

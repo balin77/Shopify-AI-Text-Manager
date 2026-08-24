@@ -10,6 +10,7 @@
 import type { Prisma } from '@prisma/client';
 import { logger } from '~/utils/logger.server';
 import { isTranslationRecentlySaved } from '~/utils/translation-save-lock.server';
+import { featuredAltLockId } from '~/services/translations/translation-locks.shared';
 import type { ShopifyGraphQLClient, ShopLocale, GraphQLEdge, ResolvedTranslation, ProgressCallback, PrimaryContentMap } from './sync-types';
 import type { MarketInfo } from '~/types/content-editor.types';
 import { fetchShopLocales, fetchAllTranslations, fetchShopMarkets, fetchedMarketLayers } from './sync-utils';
@@ -679,7 +680,19 @@ export class ContentSyncService {
 
       // Check if user recently saved translations for this collection
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
-      if (!forceSync && isTranslationRecentlySaved(collectionData.id)) {
+      //
+      // The FEATURED-ALT key is asked for BY NAME, exactly like the product
+      // sync asks for its two private product keys: an `image_alt_text` row
+      // lives on the collection but is written under its own lock (a claim on
+      // the collection itself would make the collections/update webhook's
+      // field reconciliation bail), so without this the rewrite below would
+      // delete a row the merchant saved a second ago and restore it only if
+      // Shopify's read has already caught up.
+      if (
+        !forceSync &&
+        (isTranslationRecentlySaved(collectionData.id) ||
+          isTranslationRecentlySaved(featuredAltLockId(collectionData.id)))
+      ) {
         logger.info(`[ContentSync] Skipping translation sync for collection - recently saved by user`, { collectionId: collectionData.id });
       } else {
         // Delete old translations — SCOPED to the layers this run actually
@@ -782,7 +795,12 @@ export class ContentSyncService {
 
       // Check if user recently saved translations for this article
       // Skip this check on manual reload (forceSync) - user explicitly wants fresh data
-      if (!forceSync && isTranslationRecentlySaved(articleData.id)) {
+      // The featured-alt key is asked for BY NAME; see saveCollectionToDatabase.
+      if (
+        !forceSync &&
+        (isTranslationRecentlySaved(articleData.id) ||
+          isTranslationRecentlySaved(featuredAltLockId(articleData.id)))
+      ) {
         logger.info(`[ContentSync] Skipping translation sync for article - recently saved by user`, { articleId: articleData.id });
       } else {
         // Delete old translations — SCOPED to the layers this run actually
