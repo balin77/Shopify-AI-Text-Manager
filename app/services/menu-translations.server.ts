@@ -388,15 +388,24 @@ const MENU_FETCH_LIMIT = 250;
  * whole shop is cheaper than the per-menu round trips it replaces, so there is
  * no reason to be incremental here.
  *
- * Both destructive steps inherit syncAllMenus' paranoia: a possibly truncated
- * result deletes nothing, and "Shopify returned zero menus" is treated as a
- * failed read rather than as an empty shop.
+ * Both destructive steps inherit the paranoia the old bulk sync had: a
+ * possibly truncated result deletes nothing, and "Shopify returned zero menus"
+ * is treated as a failed read rather than as an empty shop.
+ *
+ * This is THE writer of `Menu.items` — `syncAllMenus` delegates here rather
+ * than keeping a second one. It used to have its own, reading four fields
+ * where this reads five, so whichever ran last decided whether `resourceId`
+ * was in the row; the scheduler runs every 60s and the page loader only on a
+ * visit, so the four-field version usually won and the tree editor's
+ * validation flagged every resource-bound item as `missingTarget`.
+ *
+ * @returns how many menus Shopify returned — the number the sync phases report.
  */
 export async function refreshMenuCache(
   gateway: ShopifyApiGateway,
   db: PrismaClient,
   shop: string,
-): Promise<void> {
+): Promise<number> {
   const response = await gateway.graphql(MENUS_WITH_ITEMS_QUERY, {
     variables: { first: MENU_FETCH_LIMIT },
   });
@@ -434,7 +443,7 @@ export async function refreshMenuCache(
       shop,
       menus: menus.length,
     });
-    return;
+    return menus.length;
   }
 
   if (menus.length === 0) {
@@ -448,7 +457,7 @@ export async function refreshMenuCache(
         shop,
         localCount,
       });
-      return;
+      return menus.length;
     }
   }
 
@@ -474,7 +483,7 @@ export async function refreshMenuCache(
     // indistinguishable from a read that came back thin, so the safe answer
     // is the same either way: keep the rows. Orphans cost storage; this
     // mistake costs the merchant their translations.
-    return;
+    return menus.length;
   }
   const orphaned = await db.contentTranslation.deleteMany({
     where: { shop, resourceType: MENU_LINK_RESOURCE_TYPE, resourceId: { notIn: liveLinkIds } },
@@ -486,4 +495,5 @@ export async function refreshMenuCache(
       removed: orphaned.count,
     });
   }
+  return menus.length;
 }
