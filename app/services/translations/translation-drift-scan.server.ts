@@ -152,6 +152,8 @@ export async function scanTranslationDrift(params: {
   // pool a shop whose pages always fill it means its articles, blogs and
   // policies are never swept at all, on any night.
   const perType = Math.max(1, Math.ceil(MAX_DRIFT_HANDOVERS / SCANNED_TYPES.length));
+  /** Types this sweep really asked Shopify about — see the log at the end. */
+  const queriedTypes: string[] = [];
 
   for (const type of SCANNED_TYPES) {
 
@@ -187,6 +189,7 @@ export async function scanTranslationDrift(params: {
     if (baseline.size === 0) continue;
 
     try {
+      queriedTypes.push(type.shopify);
       await scanType(type, baseline);
     } catch (error: unknown) {
       result.failedTypes.push(type.shopify);
@@ -199,13 +202,27 @@ export async function scanTranslationDrift(params: {
     }
   }
 
-  if (result.changed > 0 || result.failedTypes.length > 0) {
+  // Logged whenever a type was actually QUERIED, not only when something was
+  // found. A sweep that found nothing used to log nothing at all, so "ran and
+  // found nothing" was indistinguishable from "never ran" — and that is the
+  // first question anyone asks of an unattended feature.
+  if (queriedTypes.length > 0 || result.failedTypes.length > 0) {
     logger.info("[DriftScan] Swept the webhook-less types", {
       context: "DriftScan",
       shop,
+      queriedTypes,
       changed: result.changed,
       handed: result.handed,
       failedTypes: result.failedTypes,
+      truncatedTypes: result.truncatedTypes,
+    });
+  } else {
+    // Nothing was queried at all: this shop has translated none of the four
+    // types, so there is no baseline against which anything could be stale.
+    logger.info("[DriftScan] Nothing to sweep — no mirrored translations", {
+      context: "DriftScan",
+      shop,
+      locales: foreignLocales.length,
     });
   }
   return result;

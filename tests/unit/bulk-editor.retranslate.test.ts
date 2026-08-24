@@ -508,6 +508,13 @@ describe("applyBulkDiff with auto-translate on", () => {
         }
         return { data };
       }
+      // The PRIMARY write of this same save drops the prefetched digest, so the
+      // foreign half re-fetches it — that is the point of the ordering: the
+      // translation is registered against the text that was just saved, not
+      // against the one it replaced.
+      if (query.includes("bulkEditorTranslatableContent")) {
+        return { data: { translatableResource: { translatableContent: [{ key: "value", digest: "d2" }] } } };
+      }
       if (query.includes("translationsRegister")) {
         return {
           data: {
@@ -651,6 +658,13 @@ describe("applyBulkDiff with auto-translate on", () => {
           data[`a${name.slice(1)}`] = { translatableContent: [{ key: "value", digest: "d" }] };
         }
         return { data };
+      }
+      // The PRIMARY write of this same save drops the prefetched digest, so the
+      // foreign half re-fetches it — that is the point of the ordering: the
+      // translation is registered against the text that was just saved, not
+      // against the one it replaced.
+      if (query.includes("bulkEditorTranslatableContent")) {
+        return { data: { translatableResource: { translatableContent: [{ key: "value", digest: "d2" }] } } };
       }
       if (query.includes("translationsRegister")) {
         return {

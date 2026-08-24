@@ -1011,6 +1011,71 @@ describe("applyBulkDiff — redirect on a TRANSLATED handle change", () => {
   });
 });
 
+describe("applyBulkDiff — the primary half of a save invalidates its own digests", () => {
+  it("registers a foreign value against the RE-FETCHED digest, not the prefetched one", async () => {
+    // The failure this pins: the digests are prefetched in one batched pass
+    // BEFORE the first write, so a save that changes a row's title AND writes a
+    // translation of it held a hash describing the text as it was. Shopify
+    // refuses that — "Translatable content hash is invalid" — and the merchant
+    // loses the whole foreign cell while the primary half saved fine.
+    const registerInputs: Array<{ key: string; translatableContentDigest: string }> = [];
+    const { admin, calls } = mockAdmin((query, variables) => {
+      if (query.includes("bulkEditorBatchDigests")) {
+        return batchDigestResponse(variables, { title: "stale-digest" });
+      }
+      if (query.includes("productUpdate(")) {
+        return { data: { productUpdate: { product: { id: PRODUCT_ID }, userErrors: [] } } };
+      }
+      if (query.includes("bulkEditorTranslatableContent")) {
+        return {
+          data: { translatableResource: { translatableContent: [{ key: "title", digest: "fresh-digest" }] } },
+        };
+      }
+      if (query.includes("translationsRegister")) {
+        for (const input of (variables?.translations ?? []) as typeof registerInputs) {
+          registerInputs.push(input);
+        }
+        return {
+          data: {
+            translationsRegister: {
+              translations: [{ key: "title", locale: LOCALE, value: "Titre", market: null }],
+              userErrors: [],
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected query: ${query.slice(0, 80)}`);
+    });
+
+    const result = await applyBulkDiff(
+      {
+        db: {
+          ...mockDb(),
+          product: { update: vi.fn(async () => ({})), findUnique: vi.fn(async () => null) },
+          aISettings: { findUnique: vi.fn(async () => null) },
+        } as never,
+        shop: SHOP,
+        admin: admin as never,
+        columnsByType: columnsByType(),
+        foreignLocales: [LOCALE],
+        autoHandleRedirect: false,
+      },
+      [
+        // Deliberately FOREIGN first, the order that used to break it.
+        foreignEntry("field.title", "Titre"),
+        { rowId: PRODUCT_ID, rowType: "product", locale: "", marketId: "", columnId: "field.title", value: "New title" },
+      ],
+    );
+
+    expect(result.failures).toEqual([]);
+    expect(registerInputs).toHaveLength(1);
+    expect(registerInputs[0].translatableContentDigest).toBe("fresh-digest");
+    // …and the primary write really did go first.
+    const order = calls.map((c) => c.query).filter((q) => q.includes("productUpdate(") || q.includes("translationsRegister"));
+    expect(order[0]).toContain("productUpdate(");
+  });
+});
+
 // ─── Which lock a foreign write CLAIMS (translation-locks.shared.ts) ───────
 
 /**

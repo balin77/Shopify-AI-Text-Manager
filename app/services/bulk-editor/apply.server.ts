@@ -316,6 +316,26 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
  * the Shopify admin) rather than failing the cell.
  */
 /**
+ * A resource whose PRIMARY text this save just rewrote: its digests are stale.
+ *
+ * `applyBulkDiff` prefetches every digest in one batched pass BEFORE the first
+ * write, because that is the only way a 250-row save is affordable. But a save
+ * that changes a row's primary text AND writes a translation of it holds a
+ * digest that describes the text as it was — and `translationsRegister` refuses
+ * one that no longer matches: "Translatable content hash is invalid", the whole
+ * foreign cell lost while the primary half saved fine.
+ *
+ * Dropping the entry (and its one-re-fetch marker) makes the foreign path treat
+ * the digest as MISSING, which it already knows how to repair: one re-fetch of
+ * that resource, then the write. The unit order below puts primary groups first
+ * so the re-fetch reads the text the merchant actually just saved.
+ */
+function markDigestsStale(deps: PersistDeps, resourceId: string): void {
+  deps.digests.delete(resourceId);
+  deps.digestRefetched.delete(resourceId);
+}
+
+/**
  * The MARKET overrides of a changed primary value.
  *
  * Nothing re-translates an override — every repair in this app writes global
@@ -443,6 +463,10 @@ async function invalidateStaleForeignTranslations(
   const { db, shop, gateway, foreignLocales } = deps;
   const { resourceTypeOverride } = opts;
   const keys = [...new Set(translationKeys.filter(Boolean))];
+  // FIRST, and before every gate: the prefetched digest describes the text as
+  // it was a moment ago, and a foreign cell of this same save would register
+  // against it and be refused.
+  if (keys.length > 0) markDigestsStale(deps, resourceId);
   // An ALLOWLIST, never a denylist: a row type that is not named here — a new
   // one, or `variant`, whose ContentTranslation resourceType the reconciliation
   // never sees — must fall on the side that keeps deleting, not the one that
@@ -567,6 +591,7 @@ async function invalidateStaleForeignTranslations(
  */
 async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: string): Promise<void> {
   const { db, gateway, foreignLocales } = deps;
+  markDigestsStale(deps, mediaId);
   const autoTranslate = deps.policy.autoTranslateExternalChanges;
   if ((!autoTranslate && !deps.purgeStaleSubResourceTranslations) || foreignLocales.length === 0) {
     return;
@@ -1763,6 +1788,11 @@ async function invalidateStaleFeaturedImageAltTranslations(
   parentId: string,
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
+  // The featured alt's digest lives on the IMAGE resource, which this save has
+  // just rewritten — drop it before any gate, or a foreign alt cell in the same
+  // save registers against the old hash and is refused.
+  const staleImageId = deps.featuredImageIds.get(parentId);
+  if (staleImageId) markDigestsStale(deps, staleImageId);
   const autoTranslate = deps.policy.autoTranslateExternalChanges;
   if ((!autoTranslate && !deps.purgeStaleSubResourceTranslations) || foreignLocales.length === 0) {
     return;
@@ -3542,6 +3572,17 @@ export async function applyBulkDiff(
       units.push({ kind: "variantProduct", productId, groups: productGroups });
     }
   }
+
+  // PRIMARY groups first. A save that changes a row's text AND writes a
+  // translation of it is one merchant action, and the translation belongs to
+  // the NEW text: writing it first would register a value against text that is
+  // about to change, and the §6.6 pass would then treat what the merchant just
+  // typed as stale. Doing the primary half first also means the digest re-fetch
+  // that `markDigestsStale` triggers reads the text they actually saved.
+  //
+  // A stable sort, so the client's order is preserved within each half — the
+  // fixed target-group order inside a row (§4.4) is unaffected either way.
+  units.sort((a, b) => (a.groups[0].locale === "" ? 0 : 1) - (b.groups[0].locale === "" ? 0 : 1));
 
   let processedGroups = 0;
   for (const unit of units) {
