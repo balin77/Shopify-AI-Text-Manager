@@ -1,9 +1,17 @@
 /**
  * Unit Tests for app/services/content-sync.service.ts — R3
  *
- * Articles and Menus have no Shopify create/update/delete webhook, so the sync
- * is the only thing that can prune locally-cached rows that were deleted in
- * Shopify. R3 hardened that path:
+ * Articles have no Shopify create/update/delete webhook, so the sync is the
+ * only thing that can prune locally-cached rows that were deleted in Shopify.
+ * R3 hardened that path:
+ *
+ * Menus used to be tested here too, under the same three guards. They moved
+ * with their code: `syncAllMenus` is no longer a writer, it delegates to
+ * `refreshMenuCache`, and the identical three cases now live in
+ * menu-translations.server.test.ts ("removes menus Shopify no longer returns",
+ * "skips both deletes when the menu list may be truncated", "deletes nothing
+ * at all when Shopify returns zero menus over a non-empty cache"). Re-asserting
+ * them through the delegating wrapper would test the mock, not the rule.
  *
  *  - stale-delete: rows whose id is `notIn` the live Shopify id set are removed
  *    (articles also cascade their ContentTranslation rows).
@@ -15,7 +23,7 @@
  *    deletes — over-cap pruning is planCacheCleanup's job).
  *
  * DB is mocked (dynamic `import("../db.server")`); the per-item sync
- * (syncArticle/syncMenu) is stubbed so no network is touched.
+ * (syncArticle) is stubbed so no network is touched.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -25,8 +33,6 @@ const dbm = vi.hoisted(() => ({
   articleFindMany: vi.fn().mockResolvedValue([]),
   articleDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   ctDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
-  menuCount: vi.fn().mockResolvedValue(0),
-  menuDeleteMany: vi.fn().mockResolvedValue({ count: 0 }),
   transaction: vi.fn(),
 }));
 
@@ -34,7 +40,6 @@ vi.mock('~/db.server', () => {
   const db = {
     article: { count: dbm.articleCount, findMany: dbm.articleFindMany, deleteMany: dbm.articleDeleteMany },
     contentTranslation: { deleteMany: dbm.ctDeleteMany },
-    menu: { count: dbm.menuCount, deleteMany: dbm.menuDeleteMany },
     $transaction: dbm.transaction,
   };
   (dbm.transaction as any).mockImplementation((cb: (tx: unknown) => unknown) => cb(db));
@@ -66,14 +71,9 @@ function blogsPayload(articleIdsPerBlog: string[][]) {
     },
   };
 }
-const menusPayload = (ids: string[]) => ({
-  data: { menus: { edges: ids.map((id) => ({ node: { id } })) } },
-});
-
 function makeService(graphqlImpl: ReturnType<typeof vi.fn>) {
   const svc = new ContentSyncService({ graphql: graphqlImpl } as never, shop);
   vi.spyOn(svc as any, 'syncArticle').mockResolvedValue(undefined);
-  vi.spyOn(svc as any, 'syncMenu').mockResolvedValue(undefined);
   return svc;
 }
 
@@ -83,8 +83,6 @@ beforeEach(() => {
   dbm.articleFindMany.mockResolvedValue([]);
   dbm.articleDeleteMany.mockResolvedValue({ count: 0 });
   dbm.ctDeleteMany.mockResolvedValue({ count: 0 });
-  dbm.menuCount.mockResolvedValue(0);
-  dbm.menuDeleteMany.mockResolvedValue({ count: 0 });
 });
 
 describe('syncAllArticles — R3 stale-delete', () => {
@@ -193,38 +191,3 @@ describe('a bulk sync reports what it ACHIEVED', () => {
   });
 });
 
-describe('syncAllMenus — R3 stale-delete', () => {
-  it('deletes menus whose id is notIn the live Shopify set', async () => {
-    const live = ['gid://shopify/Menu/1', 'gid://shopify/Menu/2'];
-    dbm.menuDeleteMany.mockResolvedValue({ count: 1 });
-    const graphql = vi.fn().mockResolvedValue(gql(menusPayload(live)));
-    const svc = makeService(graphql);
-
-    const n = await svc.syncAllMenus();
-
-    expect(dbm.menuDeleteMany).toHaveBeenCalledWith({
-      where: { shop, id: { notIn: live } },
-    });
-    expect(n).toBe(2);
-  });
-
-  it('truncation guard: >=250 menus → no stale-delete', async () => {
-    const live = Array.from({ length: 250 }, (_, i) => `gid://shopify/Menu/${i}`);
-    const graphql = vi.fn().mockResolvedValue(gql(menusPayload(live)));
-    const svc = makeService(graphql);
-
-    await svc.syncAllMenus();
-
-    expect(dbm.menuCount).not.toHaveBeenCalled();
-    expect(dbm.menuDeleteMany).not.toHaveBeenCalled();
-  });
-
-  it('0 menus + local rows present → throws "aborting to prevent data loss"', async () => {
-    dbm.menuCount.mockResolvedValue(3);
-    const graphql = vi.fn().mockResolvedValue(gql(menusPayload([])));
-    const svc = makeService(graphql);
-
-    await expect(svc.syncAllMenus()).rejects.toThrow(/aborting to prevent data loss/);
-    expect(dbm.menuDeleteMany).not.toHaveBeenCalled();
-  });
-});

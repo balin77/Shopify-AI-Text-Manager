@@ -68,14 +68,6 @@ interface ShopifyArticleData extends ShopifyArticleAttributes {
   };
 }
 
-/** Menu data from Shopify GraphQL */
-interface ShopifyMenuData {
-  id: string;
-  title: string;
-  handle: string;
-  items: unknown[];
-}
-
 /**
  * What a bulk sync ACHIEVED — never what it attempted.
  *
@@ -413,56 +405,6 @@ export class ContentSyncService {
   }
 
   // ============================================
-  // MENU SYNC
-  // ============================================
-
-  /**
-   * Sync a single menu with its items structure
-   */
-  async syncMenu(menuId: string): Promise<void> {
-    logger.debug(`[ContentSync] Starting sync for menu: ${menuId}`);
-
-    try {
-      // 1. Fetch menu data
-      const menuData = await this.fetchMenuData(menuId);
-
-      if (!menuData) {
-        logger.warn(`[ContentSync] Menu not found: ${menuId}`);
-        return;
-      }
-
-      // 2. Save to database (menus don't have translations via API)
-      await this.saveMenuToDatabase(menuData);
-
-      logger.debug(`[ContentSync] Successfully synced menu: ${menuId}`);
-    } catch (error) {
-      logger.error(`[ContentSync] Error syncing menu ${menuId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete a menu from the database
-   */
-  async deleteMenu(menuId: string): Promise<void> {
-    logger.debug(`[ContentSync] Deleting menu: ${menuId}`);
-
-    const { db } = await import("../db.server");
-
-    await db.menu.delete({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: menuId,
-        },
-      },
-    });
-
-    logger.debug(`[ContentSync] Successfully deleted menu: ${menuId}`);
-  }
-
-
-  // ============================================
   // FETCH DATA FROM SHOPIFY
   // ============================================
 
@@ -564,51 +506,6 @@ export class ContentSyncService {
 
     return article;
   }
-
-  private async fetchMenuData(menuId: string): Promise<ShopifyMenuData | null> {
-    const response = await this.admin.graphql(
-      `#graphql
-        query getMenu($id: ID!) {
-          menu(id: $id) {
-            id
-            title
-            handle
-            items {
-              id
-              title
-              url
-              type
-              items {
-                id
-                title
-                url
-                type
-                items {
-                  id
-                  title
-                  url
-                  type
-                  items {
-                    id
-                    title
-                    url
-                    type
-                  }
-                }
-              }
-            }
-          }
-        }`,
-      { variables: { id: menuId } }
-    );
-
-    const data = await response.json();
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in fetchMenuData: ${data.errors[0].message}`);
-    }
-    return data.data?.menu || null;
-  }
-
 
   private graphqlFn() {
     return this.admin.graphql.bind(this.admin);
@@ -841,39 +738,6 @@ export class ContentSyncService {
     logger.debug(`[ContentSync] ✓ Transaction completed successfully for article ${articleData.id}`);
   }
 
-  private async saveMenuToDatabase(menuData: ShopifyMenuData) {
-    const { db } = await import("../db.server");
-
-    logger.debug(`[ContentSync] Saving menu to database: ${menuData.id}`);
-
-    // Upsert menu
-    await db.menu.upsert({
-      where: {
-        shop_id: {
-          shop: this.shop,
-          id: menuData.id,
-        },
-      },
-      create: {
-        id: menuData.id,
-        shop: this.shop,
-        title: menuData.title,
-        handle: menuData.handle,
-        items: (menuData.items || []) as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      },
-      update: {
-        title: menuData.title,
-        handle: menuData.handle,
-        items: (menuData.items || []) as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      },
-    });
-
-    logger.debug(`[ContentSync] ✓ Menu saved successfully`);
-  }
-
-
   // ============================================
   // BULK SYNC
   // ============================================
@@ -1062,62 +926,43 @@ export class ContentSyncService {
   }
 
   /**
-   * Sync all menus
+   * Sync all menus.
+   *
+   * Delegates to `refreshMenuCache`, which is THE writer of `Menu.items`.
+   * This used to be a second one: it read `id/title/url/type` per menu where
+   * the cache writer reads those plus `resourceId`, and both replaced the
+   * whole `items` column — so whichever ran last decided whether `resourceId`
+   * was in the row. This path runs on the 60s scheduler and the cache writer
+   * only when someone opens /app/menus, so this one usually won, and a tree
+   * served from that row failed `validateMenuTree` with `missingTarget` on
+   * every COLLECTION/PRODUCT/PAGE/BLOG/ARTICLE/SHOP_POLICY/METAOBJECT item.
+   *
+   * Delegating also brings two things this path never had: the whole shop in
+   * ONE query instead of 1 + N, and the orphan cleanup of `Link` translations
+   * whose menu item is gone — which until now only ever ran on a page visit.
    */
   async syncAllMenus(): Promise<number> {
     logger.debug(`[ContentSync] Syncing all menus...`);
 
-    const response = await this.admin.graphql(
-      `#graphql
-        query getMenus {
-          menus(first: 250) {
-            edges {
-              node {
-                id
-              }
-            }
-          }
-        }`
-    );
-
-    const data = await response.json();
-    if (data.errors?.length > 0) {
-      throw new Error(`GraphQL error in syncAllMenus: ${data.errors[0].message}`);
-    }
-    const menuEdges = data.data?.menus?.edges || [];
-    const menus: Array<{ id: string }> = menuEdges.map((e: GraphQLEdge<{ id: string }>) => e.node);
-
-    logger.debug(`[ContentSync] Found ${menus.length} menus to sync`);
-
-    // Stale-delete: menus deleted in Shopify have no webhook. Skip when the
-    // query may be truncated (>=250) to avoid deleting unseen menus.
     const { db } = await import("../db.server");
-    if (menuEdges.length >= 250) {
-      logger.warn(`[ContentSync] Skipping menu stale-delete: Shopify result possibly truncated (>=250)`);
-    } else if (menus.length === 0) {
-      const localCount = await db.menu.count({ where: { shop: this.shop } });
-      if (localCount > 0) {
-        throw new Error(`Shopify returned 0 menus but ${localCount} exist locally - aborting to prevent data loss`);
-      }
-    } else {
-      const shopifyMenuIds = menus.map((m) => m.id);
-      const del = await db.menu.deleteMany({
-        where: { shop: this.shop, id: { notIn: shopifyMenuIds } },
-      });
-      if (del.count > 0) {
-        logger.debug(`[ContentSync] 🗑️ Deleted ${del.count} menus that no longer exist in Shopify`);
-      }
-    }
+    const { ShopifyApiGateway } = await import("./shopify-api-gateway.service");
+    const { refreshMenuCache } = await import("./menu-translations.server");
 
-    for (const menu of menus) {
-      try {
-        await this.syncMenu(menu.id);
-      } catch (error) {
-        logger.error(`[ContentSync] Failed to sync menu ${menu.id}, continuing with next`, { error });
-      }
-    }
+    // Wrap only if the caller did not already hand us a gateway.
+    // BackgroundSyncService constructs us with ITS gateway
+    // (`new ContentSyncService(this.gateway, …)`), and a gateway around a
+    // gateway is not a no-op: each keeps its own queue and its own 3 retries,
+    // so one throttled query becomes up to 16 admin calls with a second of
+    // sleep between them, all of it blocking the sync phase behind it.
+    const gateway =
+      this.admin instanceof ShopifyApiGateway
+        ? this.admin
+        : new ShopifyApiGateway(this.admin, this.shop);
 
-    return menus.length;
+    const count = await refreshMenuCache(gateway, db, this.shop);
+
+    logger.debug(`[ContentSync] Synced ${count} menus`);
+    return count;
   }
 
   // ============================================
