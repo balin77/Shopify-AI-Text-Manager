@@ -616,6 +616,28 @@ describe("in-app primary save (reconcileAfterPrimarySave)", () => {
     expect(shopify.registerCalls.every((c) => c.locale === "de")).toBe(true);
   });
 
+  it("leaves a (resource, locale, key) the SAVE itself wrote in neither list", async () => {
+    // A bulk save that changes a page's primary title AND types its German
+    // one has said something about German and nothing about French. Acting on
+    // German would overwrite what the merchant just typed; aborting the whole
+    // run would leave French stale on a surface with no webhook to notice.
+    shopifyHas = { de: ["title", "body_html"], fr: ["title", "body_html"] };
+    const result = await reconcileAfterPrimarySave(
+      saveParams({
+        foreignLocales: ["de", "fr"],
+        alreadyWritten: [{ locale: "de", key: "title" }],
+      }),
+    );
+    await awaitDetachedRetranslations();
+
+    // 4 candidates minus the one the merchant wrote.
+    expect(result.retranslating).toBe(3);
+    expect(shopify.registerCalls.some((c) => c.locale === "de" && c.key === "title")).toBe(false);
+    expect(shopify.registerCalls.some((c) => c.locale === "fr" && c.key === "title")).toBe(true);
+    // And it is not removed either — neither list.
+    expect(shopify.removeCalls).toEqual([]);
+  });
+
   it("needs NO digest baseline — the save IS the change event", async () => {
     // The sync-side gate exists to prove the primary text moved. Here the
     // caller performed the write, so running that gate would only ADD a way to

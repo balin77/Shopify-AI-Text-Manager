@@ -37,7 +37,21 @@ import {
 } from "../../graphql/content.mutations";
 import { debugLog } from "../../utils/debug";
 import { markTranslationSaved } from "../../utils/translation-save-lock.server";
-import { featuredAltLockId } from "../translations/translation-locks.shared";
+import {
+  featuredAltLockId,
+  marketLayerLockId,
+  subResourceLockId,
+} from "../translations/translation-locks.shared";
+import {
+  collectBulkRepair,
+  promoteClaimedGroups,
+  recordBulkForeignWrite,
+  flushBulkRepairs,
+  newBulkRepairPlan,
+  type BulkRepairPlan,
+} from "./retranslate.server";
+import { isBatchTranslatableValueType } from "../metaobject-fields.shared";
+import type { TranslationChangePolicy } from "../translations/translation-change-policy.server";
 import {
   loadDigestsForRows,
   fetchDigestsForResource,
@@ -102,6 +116,12 @@ interface ApplyContext {
    *  Omitted ⇒ read from `AISettings` once per run. Tests pass `false` to keep
    *  the write paths free of redirect traffic. */
   autoHandleRedirect?: boolean;
+  /** The shop's PRIMARY locale. Only the auto-translation repair needs it: it
+   *  is the source language of every value prompt (option names, metafield
+   *  values, alt texts, metaobject fields). Omitted ⇒ those surfaces fall back
+   *  to the merchant's stored deletion answer rather than translating FROM an
+   *  unknown language — the same rule the metaobject editor's repair follows. */
+  primaryLocale?: string;
 }
 
 /** Settable `ProductStatus` values for `productUpdate`'s `ProductInput`.
@@ -184,6 +204,15 @@ interface PersistDeps {
    *  write path too; the single editor's per-save override has no equivalent
    *  here (a grid has no per-row checkbox). */
   autoHandleRedirect: boolean;
+  /** The full policy behind the two booleans above. The §6.6 sites read
+   *  `autoTranslateExternalChanges` off it to decide between REPAIRING a
+   *  surface and deleting it, and the repair itself needs the whole record. */
+  policy: TranslationChangePolicy;
+  /** What this save will hand to `reconcileAfterPrimarySave` once every write
+   *  is through (retranslate.server.ts). Empty unless auto-translate is on. */
+  repairPlan: BulkRepairPlan;
+  /** The shop's primary locale, for the value prompts — see ApplyContext. */
+  primaryLocale?: string;
 }
 
 function failureOf(group: BulkDiffRowGroup, message: string, columnId?: string): BulkFailure {
@@ -283,17 +312,88 @@ function classifyProductCells(group: BulkDiffRowGroup, columns: ColumnDescriptor
  * leaves the stale rows (the pre-4b behaviour, identical to a direct edit in
  * the Shopify admin) rather than failing the cell.
  */
+/**
+ * Which repair a §6.6 candidate belongs to, and record it. Returns FALSE when
+ * the caller must fall back to its own purge: the group cap was reached, or the
+ * row type has no repair at all.
+ */
+function collectRepairForKeys(
+  deps: PersistDeps,
+  rowType: BulkRowType,
+  resourceId: string,
+  keys: string[],
+  opts: InvalidateOptions,
+): boolean {
+  // A value-shaped surface (an option name, a metafield value, an alt text, a
+  // metaobject field) is translated by the GENERIC value prompt, which has to
+  // be told the source language. Without a known primary locale there is
+  // nothing to translate FROM, so it must fall through to the deletion here —
+  // decided at COLLECTION time and not at the flush, because by then the purge
+  // has already stood down and the stale text would simply survive with
+  // nothing left to refresh it. The same rule the metaobject editor follows.
+  if (!deps.primaryLocale && (opts.resourceTypeOverride || rowType === "metaobject")) return false;
+  const retranslatable = opts.retranslatable ?? (() => true);
+  const entries = keys.map((key) => ({
+    resourceId,
+    resourceType: opts.resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType],
+    key,
+    retranslatable: retranslatable(key),
+  }));
+  if (opts.resourceTypeOverride) {
+    // A metafield, option or option value: its translations live on its OWN
+    // gid, but the RUN belongs to the product — one Task row for everything
+    // this save moved under it, exactly like the single editor's.
+    return collectBulkRepair(deps.repairPlan, {
+      surface: "subResource",
+      ownerId: opts.ownerId ?? resourceId,
+      rowType,
+      entries,
+    });
+  }
+  if (rowType === "metaobject") {
+    return collectBulkRepair(deps.repairPlan, {
+      surface: "metaobject",
+      ownerId: resourceId,
+      rowType,
+      entries,
+    });
+  }
+  // `variant` carries no translatable column at all, and `image` never reaches
+  // here — invalidateStaleImageAltTranslations owns that surface.
+  if (rowType === "variant" || rowType === "image") return false;
+  return collectBulkRepair(deps.repairPlan, {
+    surface: "content",
+    ownerId: resourceId,
+    rowType,
+    entries,
+  });
+}
+
+interface InvalidateOptions {
+  /** ContentTranslation.resourceType to match — set for SUB-RESOURCES
+   * (Metafield / ProductOption / ProductOptionValue), whose rows are keyed by
+   * their own gid, not by the product's. */
+  resourceTypeOverride?: string;
+  /** The ROW this resource belongs to, when `resourceId` is not it: a
+   * metafield's or an option's owning product. It is what the repair groups
+   * and locks by, so the product's sub-resources share ONE run instead of one
+   * per cell. */
+  ownerId?: string;
+  /** May the automation re-translate this key's value, or must it be removed?
+   * A multi-line, list or rich-text value comes back from the generic value
+   * prompt corrupted (CLAUDE.md), so its type decides. Default: yes. */
+  retranslatable?: (key: string) => boolean;
+}
+
 async function invalidateStaleForeignTranslations(
   deps: PersistDeps,
   rowType: BulkRowType,
   resourceId: string,
   translationKeys: string[],
-  /** ContentTranslation.resourceType to match — set for SUB-RESOURCES
-   * (Metafield / ProductOption / ProductOptionValue), whose rows are keyed by
-   * their own gid, not by the product's. */
-  resourceTypeOverride?: string,
+  opts: InvalidateOptions = {},
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
+  const { resourceTypeOverride } = opts;
   const keys = [...new Set(translationKeys.filter(Boolean))];
   // An ALLOWLIST, never a denylist: a row type that is not named here — a new
   // one, or `variant`, whose ContentTranslation resourceType the reconciliation
@@ -306,18 +406,31 @@ async function invalidateStaleForeignTranslations(
   const mayPurge = reconciledSurface
     ? deps.purgeStaleTranslations
     : deps.purgeStaleSubResourceTranslations;
-  if (!mayPurge || keys.length === 0 || foreignLocales.length === 0) return;
+  if (keys.length === 0 || foreignLocales.length === 0) return;
 
-  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
-  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
-
+  // With auto-translate on, this save is the REPAIR rather than the deletion —
+  // the same answer the single editor gives for the same edit. Collected here
+  // and handed over once at the end of the run (retranslate.server.ts), so a
+  // product whose title and three metafields moved starts two runs, not four.
+  // A refusal (the group cap) falls through to the purge below, which is
+  // exactly what this surface did before.
+  if (deps.policy.autoTranslateExternalChanges) {
+    if (collectRepairForKeys(deps, rowType, resourceId, keys, opts)) return;
+  }
   // Image rows keep their translations in ProductImageAltTranslation — one key
   // ("alt") on one resource, so the generic key/locale bookkeeping below would
-  // be pure overhead.
+  // be pure overhead. It dispatches BEFORE the purge gate: that function owns
+  // both answers for its surface, and behind the gate its whole auto-translate
+  // branch was unreachable on a shop with the deletion switched off — the one
+  // surface where the switch would have done nothing at all.
   if (rowType === "image" && !resourceTypeOverride) {
     await invalidateStaleImageAltTranslations(deps, resourceId);
     return;
   }
+  if (!mayPurge) return;
+
+  const isMetaobject = rowType === "metaobject" && !resourceTypeOverride;
+  const contentResourceType = resourceTypeOverride ?? CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
   try {
     // Which (locale, key) GLOBAL foreign rows actually exist — skip Shopify
     // entirely when there is nothing to invalidate (the common case on shops
@@ -390,12 +503,44 @@ async function invalidateStaleForeignTranslations(
  */
 async function invalidateStaleImageAltTranslations(deps: PersistDeps, mediaId: string): Promise<void> {
   const { db, gateway, foreignLocales } = deps;
-  if (!deps.purgeStaleSubResourceTranslations || foreignLocales.length === 0) return;
+  const autoTranslate = deps.policy.autoTranslateExternalChanges;
+  if ((!autoTranslate && !deps.purgeStaleSubResourceTranslations) || foreignLocales.length === 0) {
+    return;
+  }
   try {
     // Two stores, one rule: product media mirror into
     // ProductImageAltTranslation, every other image into
     // ContentTranslation("MediaImage") — the same split the write path applies.
-    const cacheId = await imageCacheIdFor(deps, mediaId);
+    const cacheRow = await imageCacheRowFor(deps, mediaId);
+    const cacheId = cacheRow?.id ?? null;
+
+    // With auto-translate on the alt is REWRITTEN rather than deleted. The two
+    // stores split the group as well: product media hang their run off the
+    // owning PRODUCT (one Task row however many of its images moved, under the
+    // private alt-text lock), while a library image has no owning product and
+    // is its own group.
+    // No primary locale ⇒ no source language for the value prompt ⇒ the
+    // deletion stands (see collectRepairForKeys).
+    if (autoTranslate && deps.primaryLocale) {
+      const entries = [{ resourceId: mediaId, resourceType: "MediaImage", key: "alt" }];
+      const collected = cacheRow
+        ? collectBulkRepair(deps.repairPlan, {
+            surface: "productImageAlt",
+            ownerId: cacheRow.productId,
+            rowType: "product",
+            entries,
+            imageIdByMedia: new Map([[mediaId, cacheRow.id]]),
+          })
+        : collectBulkRepair(deps.repairPlan, {
+            surface: "libraryImageAlt",
+            ownerId: mediaId,
+            rowType: "image",
+            entries,
+          });
+      if (collected) return;
+    }
+    if (!deps.purgeStaleSubResourceTranslations) return;
+
     const existing = cacheId
       ? await db.productImageAltTranslation.findMany({
           where: { imageId: cacheId, marketId: "", locale: { in: foreignLocales } },
@@ -753,7 +898,16 @@ async function persistProductMetafields(
         });
         // The metafield's own foreign translations are now stale (§6.6) — they
         // live on the METAFIELD gid, so they need their own invalidation.
-        await invalidateStaleForeignTranslations(deps, "product", echo.id, ["value"], "Metafield");
+        await invalidateStaleForeignTranslations(deps, "product", echo.id, ["value"], {
+          resourceTypeOverride: "Metafield",
+          // The RUN belongs to the product, not to this metafield.
+          ownerId: group.rowId,
+          // Only a single-line text survives the generic value prompt — a
+          // multi-line value comes back flattened and a list comes back as
+          // rewritten JSON, both echo-confirmed, i.e. corruption recorded as
+          // a success (CLAUDE.md). Anything else is REMOVED, not translated.
+          retranslatable: () => isBatchTranslatableValueType(echo.type),
+        });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -980,10 +1134,16 @@ async function persistProductOptions(
       // translations stale — they live on the ProductOption /
       // ProductOptionValue gid, so each one is invalidated separately.
       if (optionInput.name !== undefined) {
-        await invalidateStaleForeignTranslations(deps, "product", option.id, ["name"], "ProductOption");
+        await invalidateStaleForeignTranslations(deps, "product", option.id, ["name"], {
+          resourceTypeOverride: "ProductOption",
+          ownerId: group.rowId,
+        });
       }
       for (const update of valueUpdates ?? []) {
-        await invalidateStaleForeignTranslations(deps, "product", update.id, ["name"], "ProductOptionValue");
+        await invalidateStaleForeignTranslations(deps, "product", update.id, ["name"], {
+          resourceTypeOverride: "ProductOptionValue",
+          ownerId: group.rowId,
+        });
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1522,8 +1682,36 @@ async function invalidateStaleFeaturedImageAltTranslations(
   parentId: string,
 ): Promise<void> {
   const { db, shop, gateway, foreignLocales } = deps;
-  if (!deps.purgeStaleSubResourceTranslations || foreignLocales.length === 0) return;
+  const autoTranslate = deps.policy.autoTranslateExternalChanges;
+  if ((!autoTranslate && !deps.purgeStaleSubResourceTranslations) || foreignLocales.length === 0) {
+    return;
+  }
   const resourceType = CONTENT_RESOURCE_TYPE_BY_ROW_TYPE[rowType];
+
+  // With auto-translate on the alt is rewritten instead of deleted. Its run is
+  // its OWN surface: the parent's lock belongs to that resource's CONTENT
+  // repair, which an article save runs on the same id. A lookup that fails, or
+  // an object with no image, falls through to the deletion below rather than
+  // leaving a translation of an alt text that no longer exists.
+  if (autoTranslate && deps.primaryLocale) {
+    try {
+      const imageResourceId = await fetchFeaturedImageId(deps, rowType, parentId);
+      if (
+        imageResourceId &&
+        collectBulkRepair(deps.repairPlan, {
+          surface: "featuredAlt",
+          ownerId: parentId,
+          rowType,
+          entries: [{ resourceId: imageResourceId, resourceType: "MediaImage", key: "alt" }],
+        })
+      ) {
+        return;
+      }
+    } catch {
+      // fall through to the removal
+    }
+  }
+  if (!deps.purgeStaleSubResourceTranslations) return;
   try {
     // Only touch Shopify when there is actually something to invalidate — the
     // common case is a shop that never translated this alt text.
@@ -1596,6 +1784,9 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
   }
 
   const writes: MetaobjectFieldWrite[] = [];
+  /** field key -> its definition type, for the repair's "may this value go
+   *  through the generic value prompt at all" question below. */
+  const fieldTypeByKey = new Map<string, string>();
   for (const [columnId, value] of Object.entries(group.cells)) {
     const column = columns.find((c) => c.id === columnId);
     if (!column || !column.editable || column.kind !== "mofield" || !column.moFieldKey) {
@@ -1626,6 +1817,7 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
     // String) — if a definition-level validation rejects the empty value,
     // Shopify answers with a userError and the cell fails visibly below.
     writes.push({ ref: columnId, key: column.moFieldKey, value: outgoing });
+    fieldTypeByKey.set(column.moFieldKey, column.moFieldType ?? "");
   }
   if (writes.length === 0) return failures;
 
@@ -1639,7 +1831,12 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
   if (result.confirmedKeys.length > 0) {
     // Phase 4b: the confirmed primary field changes make their foreign
     // MetaobjectTranslation rows stale — invalidate by field key.
-    await invalidateStaleForeignTranslations(deps, "metaobject", id, result.confirmedKeys);
+    await invalidateStaleForeignTranslations(deps, "metaobject", id, result.confirmedKeys, {
+      // A rich-text or list field cannot go through the generic value prompt
+      // without coming back corrupted, and an UNKNOWN type counts as unsafe —
+      // guessing "single line" is the direction that destroys data (CLAUDE.md).
+      retranslatable: (key) => isBatchTranslatableValueType(fieldTypeByKey.get(key) ?? ""),
+    });
   }
   return failures;
 }
@@ -1649,11 +1846,21 @@ async function persistMetaobjectRow(group: BulkDiffRowGroup, deps: PersistDeps):
 /** ProductImage cache-row id for a MediaImage GID, shop-scoped (which doubles
  * as the tenancy check). Null when the image is not cached. */
 async function imageCacheIdFor(deps: PersistDeps, mediaId: string): Promise<string | null> {
+  return (await imageCacheRowFor(deps, mediaId))?.id ?? null;
+}
+
+/** The same lookup with the OWNING product, which the alt-text repair groups
+ *  and locks by. Null when the image is not product media — then it is a
+ *  library image, mirrored in ContentTranslation("MediaImage") instead. */
+async function imageCacheRowFor(
+  deps: PersistDeps,
+  mediaId: string,
+): Promise<{ id: string; productId: string } | null> {
   const row = await deps.db.productImage.findFirst({
     where: { mediaId, product: { shop: deps.shop } },
-    select: { id: true },
+    select: { id: true, productId: true },
   });
-  return row?.id ?? null;
+  return row ?? null;
 }
 
 /** Primary-locale handle of a row — for the duplicate-slug guard below. */
@@ -2051,12 +2258,39 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
     const error = await writeFeaturedImageAltTranslation(group, cell.value, deps);
     if (error) failures.push(failureOf(group, error, cell.columnId));
     else {
-      markTranslationSaved(group.rowId);
-      // The single editor's featured-alt repair runs under its OWN key — the
-      // parent's lock belongs to that resource's CONTENT repair — so a claim on
-      // the row alone would never reach it. Global layer only, for the same
-      // reason as the sub-resource claim below.
-      if (group.marketId === "") markTranslationSaved(featuredAltLockId(group.rowId));
+      // The featured alt is its OWN surface and is claimed under its OWN key
+      // (translation-locks.shared.ts) — never under the row's.
+      //
+      // The row's own repairs cannot reach an `image_alt_text` row: the
+      // `collections/update` webhook's reconciliation and
+      // reconcileAfterPrimarySave both work from the keys of the row's own
+      // `translatableResource`, and this key is not one of them (it lives on
+      // the IMAGE resource as `alt`). This column exists on collection and
+      // ARTICLE rows, and an article has no update webhook at all. So claiming
+      // the row protected nothing here and made a collection's field
+      // reconciliation bail for 30 seconds instead: with auto-translate on the
+      // purge is off, so the row's own field translations were then neither
+      // refreshed nor removed — permanently, since the sync has advanced their
+      // digest baseline by the time anything looks again.
+      //
+      // A MARKET write marks the market key instead of nothing: the repair must
+      // not see it (it would abort a global run it cannot collide with), while
+      // the content sync's cache rewrite deletes every fetched layer and does
+      // have to see it.
+      markTranslationSaved(
+        group.marketId === ""
+          ? featuredAltLockId(group.rowId)
+          : marketLayerLockId(featuredAltLockId(group.rowId)),
+      );
+      // The repair addresses the IMAGE resource, so that is the id this write
+      // has to be recorded under. The write above resolved (and cached) it.
+      // GLOBAL layer only, for the reason the row path spells out: a market
+      // override is not a value the repair could ever overwrite, and recording
+      // one hides the GLOBAL alt translation from the repair AND the purge.
+      const writtenImageId = deps.featuredImageIds.get(group.rowId);
+      if (group.marketId === "" && writtenImageId) {
+        recordBulkForeignWrite(deps.repairPlan, writtenImageId, group.locale, "alt");
+      }
     }
   }
 
@@ -2154,6 +2388,26 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
         // value, so the rebound protection must be active even if the mirror
         // fails (same ordering as updateContent).
         markTranslationSaved(resourceId);
+        // …and that shield is exactly what makes the incoming
+        // `products/update` webhook skip this row's field reconciliation for
+        // 30 seconds. Where we block the webhook, the repair is OURS: see
+        // rule 3 in retranslate.server.ts. Recorded for EVERY layer, because
+        // `isTranslationRecentlySaved` knows nothing about markets and a
+        // market write blocks the webhook just as well.
+        deps.repairPlan.claimedRows.add(resourceId);
+        // …and WHAT was written. The claim above makes this row's repair ours;
+        // this is what keeps that repair off the very value the merchant just
+        // typed — see `alreadyWritten` in stale-translation-sync.server.ts.
+        //
+        // GLOBAL layer only, and for the opposite reason to the claim above:
+        // the repair writes global rows, so a MARKET override is not the value
+        // it would overwrite. Recording one silenced the repair for a GLOBAL
+        // translation nobody had touched — neither refreshed nor removed, since
+        // the purge stood down when the candidate was collected. That is the
+        // worst outcome this module has, reached through a second channel.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, resourceId, locale, write.key);
+        }
         // What Shopify ECHOED, not what was sent. The same rule the theme path
         // already follows for autofix-normalised richtext: mirroring the raw
         // value diverges the DB from the storefront, and for `handle` it would
@@ -2285,6 +2539,13 @@ async function persistTranslationRow(group: BulkDiffRowGroup, deps: PersistDeps)
           continue;
         }
         markTranslationSaved(resourceId);
+        deps.repairPlan.claimedRows.add(resourceId);
+        // A CLEARED value is just as deliberate: the merchant emptied this
+        // translation in this save, so the repair must not write it back.
+        // Global layer only, exactly as above.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, resourceId, locale, clear.key);
+        }
         // A cleared handle: the locale is served under the PRIMARY handle
         // again, so the dead translated URL gets a redirect there.
         if (clear.key === "handle") confirmedHandle = "";
@@ -2555,20 +2816,40 @@ async function persistSubResourceTranslations(
     for (const pair of pairs) {
       const error = await writeSubResourceTranslation(pair.target, pair.value, deps);
       if (error && !cellFailed) cellFailed = error;
-      if (!error) claimed.push(pair.target.resourceId);
+      if (!error) {
+        claimed.push(pair.target.resourceId);
+        // Global layer only — see the row path's note: a market override is not
+        // a value the repair would ever overwrite, and recording one hides a
+        // global translation from BOTH the repair and the purge.
+        if (group.marketId === "") {
+          recordBulkForeignWrite(deps.repairPlan, pair.target.resourceId, group.locale, pair.target.key);
+        }
+      }
     }
     if (cellFailed) failures.push(failureOf(group, cellFailed, cell.columnId));
-    else markTranslationSaved(group.rowId);
-    // …and the SUB-RESOURCE itself. The single editor's sub-resource repair
-    // runs under a private lock (translation-locks.shared.ts) and watches the
-    // resources it is about to write, not the product — so a claim on the row
-    // alone is invisible to it and the AI would overwrite this value.
+    // The SUB-RESOURCES themselves, and the private lock their repair runs
+    // under (translation-locks.shared.ts) — never the row. That repair watches
+    // the resources it is about to write plus its own lock, not the product,
+    // so a claim on the row alone is invisible to it and the AI would
+    // overwrite this value. And the row's own repair never sees a
+    // sub-resource, so claiming the row protected nothing while making the
+    // `products/update` webhook's field reconciliation bail for 30 seconds:
+    // with auto-translate on the purge is off, so the row's field translations
+    // were then neither refreshed nor removed — permanently, since the sync
+    // has advanced their digest baseline by then. The product sync's own
+    // shield asks for this private key BY NAME, so it is unaffected.
     //
     // GLOBAL layer only: that repair writes global rows, so a MARKET override
     // can never collide with it, and aborting it over one would leave its
     // remaining entries in neither list.
+    if (claimed.length === 0) continue;
     if (group.marketId === "") {
+      markTranslationSaved(subResourceLockId(group.rowId));
       for (const resourceId of claimed) markTranslationSaved(resourceId);
+    } else {
+      // A market write shields the product sync's cache rewrite — which
+      // deletes every fetched layer — without being visible to the repair.
+      markTranslationSaved(marketLayerLockId(subResourceLockId(group.rowId)));
     }
   }
 
@@ -2987,12 +3268,18 @@ export async function applyBulkDiff(
   const { loadTranslationChangePolicy } = await import(
     "../translations/translation-change-policy.server"
   );
-  const changePolicy =
+  const changePolicy: TranslationChangePolicy =
     foreignLocales.length > 0
       ? await loadTranslationChangePolicy(shop, db)
-      : { purgeOnPrimaryChange: false, purgeUnreconciledSurfaces: false };
+      : {
+          purgeOnPrimaryChange: false,
+          purgeUnreconciledSurfaces: false,
+          autoTranslateExternalChanges: false,
+          plan: "free",
+        };
   const purgeStaleTranslations = changePolicy.purgeOnPrimaryChange;
   const purgeStaleSubResourceTranslations = changePolicy.purgeUnreconciledSurfaces;
+  const repairPlan = newBulkRepairPlan();
 
   // Digest prefetch for every foreign group in ONE batched pass (Plan §6.1:
   // only digests are bündelbar — the register itself is per resource).
@@ -3090,6 +3377,9 @@ export async function applyBulkDiff(
     purgeStaleTranslations,
     purgeStaleSubResourceTranslations,
     autoHandleRedirect,
+    policy: changePolicy,
+    repairPlan,
+    primaryLocale: ctx.primaryLocale,
   };
   const failures: BulkFailure[] = [];
   let saved = 0;
@@ -3165,6 +3455,38 @@ export async function applyBulkDiff(
     if (onProgress) await onProgress(processedGroups, groups.length);
   }
 
+  // Auto-translation LAST, when every primary write of the save is through:
+  // the repair reads the new text back from Shopify, and a group flushed
+  // mid-run would translate half a row. The two webhook-backed row types are
+  // sorted out here rather than at collection time, because a row is CLAIMED by
+  // its foreign group while the candidate comes from its primary one, and the
+  // two are persisted in whatever order the client sent them.
+  // Never throws — every row above is already saved.
+  promoteClaimedGroups(repairPlan);
+  let flushed = { started: 0, translations: 0, skipped: 0 };
+  try {
+    flushed = await flushBulkRepairs({
+      db,
+      shop,
+      gateway,
+      foreignLocales,
+      primaryLocale: ctx.primaryLocale,
+      policy: changePolicy,
+      plan: repairPlan,
+    });
+  } catch (err: unknown) {
+    logger.warn("[BULK] Auto-translation flush failed — stale rows kept", {
+      context: "Bulk",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  // Assembled OUTSIDE the try: a flush that threw before its first group still
+  // has to report the rows the cap refused, which were decided long before it
+  // ran. Absent means "nothing to say", never "nothing happened".
+  const capped = repairPlan.overflowRows.size;
+  const retranslation: BulkApplyResult["retranslation"] =
+    flushed.started > 0 || flushed.skipped > 0 || capped > 0 ? { ...flushed, capped } : undefined;
+
   // §10.5: summaries only — never cell values.
   debugLog.bulkSave("diff applied", {
     rows: groups.length,
@@ -3174,5 +3496,5 @@ export async function applyBulkDiff(
     failedRows: new Set(failures.map((f) => f.rowId)).size,
   });
 
-  return { saved, failures };
+  return { saved, failures, ...(retranslation ? { retranslation } : {}) };
 }

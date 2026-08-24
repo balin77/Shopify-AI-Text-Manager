@@ -68,7 +68,14 @@ const MAXIMAL: [string, unknown][] = [
       galleryVideos: { totalProducts: 1, missingDate: 1, mediaMissingDate: 1, withVimeo: 1 },
     },
   ],
-  ["seoBulkMeta", { saved: 1, failures: [] }],
+  [
+    "seoBulkMeta",
+    {
+      saved: 1,
+      failures: [],
+      retranslation: { started: 1, translations: 2, skipped: 1, capped: 1 },
+    },
+  ],
   ["bulkEditorTranslate", { saved: 1, failed: 1, skippedHandles: 1, failures: [] }],
   ["seoBulkFix", { succeeded: [], failed: [] }],
   ["blogArticleRedirects", { created: 1, failed: 1, skippedDrafts: 1, skippedOverCap: 1 }],

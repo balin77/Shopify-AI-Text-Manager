@@ -699,6 +699,181 @@ export function MainNavigation() {
           </InlineStack>
           </div>
 
+          {/* Message bell — ALWAYS rendered, and the popover's only activator.
+
+              It used to be hidden on desktop whenever a banner was up, and
+              removed outright while `syncProgress` ran or the history was
+              empty. Each of those was a state in which it was needed most: a
+              standing message queues everything behind it, and the initial
+              sync runs for minutes while messages pile up unreachable. Its
+              absence also let `popoverActive` outlive its own activator, so
+              the panel sprang open by itself the next time the slot returned.
+
+              It sits directly after the last navigation tab, where merchants
+              look for it — and, just as importantly, BEFORE the message strip
+              and the sync banner in this row. Anything that mounts after it
+              cannot move it, so a message arriving while the panel is open no
+              longer slides the bell out from under it: Polaris re-measures an
+              open popover only on scroll, resize, or a mutation INSIDE the
+              activator. Parked at the far right it was stable for the same
+              reason but nobody could find it. */}
+          <div style={{ flex: "0 0 auto" }}>
+            <Popover
+              active={popoverActive}
+              onClose={closePopover}
+              preferredPosition="below"
+              // Left-aligned, not centred: the panel opens from the bell's
+              // left edge and runs into the free space to its right. Centring
+              // a 380px panel on a 32px button puts half of it over the
+              // navigation tabs, and right-aligning it — correct while the
+              // bell sat at the far right — now drags the whole panel across
+              // them.
+              preferredAlignment="left"
+              zIndexOverride={1100}
+              activator={
+                <div style={{ position: "relative", display: "flex" }}>
+                  <Button
+                    onClick={togglePopover}
+                    pressed={popoverActive}
+                    icon={NotificationIcon}
+                    accessibilityLabel={bellLabel}
+                  />
+                  {unreadCount > 0 && (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        top: "-4px",
+                        right: "-4px",
+                        // Polaris' critical fill. The old #f44336 gave white
+                        // 10px bold text a contrast of 3.7:1 — below WCAG AA,
+                        // on the one number that says how much was missed.
+                        backgroundColor: "var(--p-color-bg-fill-critical)",
+                        color: "var(--p-color-text-critical-on-bg-fill)",
+                        borderRadius: "10px",
+                        padding: "0 5px",
+                        fontSize: "10px",
+                        fontWeight: "700",
+                        minWidth: "16px",
+                        height: "16px",
+                        lineHeight: "16px",
+                        textAlign: "center",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {unreadCount}
+                    </span>
+                  )}
+                </div>
+              }
+            >
+              <div style={{ width: "min(380px, calc(100vw - 32px))" }}>
+                <div style={{
+                  padding: "12px 16px",
+                  borderBottom: "1px solid var(--app-surface-border-color)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                }}>
+                  <Text as="h2" variant="headingSm">
+                    {t.tasks?.notificationsTitle || "Messages"}
+                  </Text>
+                  {messageHistory.length > 0 && (
+                    <Button
+                      variant="plain"
+                      size="slim"
+                      onClick={() => { clearHistory(); closePopover(); }}
+                    >
+                      {t.tasks?.notificationsClearAll || "Clear all"}
+                    </Button>
+                  )}
+                </div>
+                <Scrollable
+                  id={MESSAGE_LIST_ID}
+                  // No horizontal scrolling: Polaris defaults it to on, and
+                  // the rows wrap rather than run wide.
+                  horizontal={false}
+                  style={{
+                    maxHeight: "min(300px, 60vh)",
+                    // Reaching the end of the list must not chain the scroll
+                    // through to the page behind the panel — the other half of
+                    // the freeze `useScrollLock` provides.
+                    overscrollBehavior: "contain",
+                  }}
+                >
+                  {messageHistory.length === 0 ? (
+                    <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {t.tasks?.notificationsEmpty || "No messages"}
+                      </Text>
+                    </div>
+                  ) : (
+                    messageHistory.map((entry) => (
+                      <div
+                        key={entry.id}
+                        style={{
+                          padding: "10px 16px",
+                          borderBottom: "1px solid var(--app-surface-border-color)",
+                          display: "flex",
+                          gap: "10px",
+                          alignItems: "flex-start",
+                        }}
+                      >
+                        {/* The dot is the only carrier of "error" vs "success"
+                            in this list. At 8px that fails for colour-blind
+                            readers and says nothing at all to a screen reader,
+                            so the tone is spelled out beside it — using the
+                            same four strings the announcement region uses. */}
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: "8px",
+                            height: "8px",
+                            borderRadius: "50%",
+                            backgroundColor: toneColor(entry.tone),
+                            flexShrink: 0,
+                            marginTop: "6px",
+                          }}
+                        />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <Text as="span" visuallyHidden>{toneLabel(entry.tone)}</Text>
+                          <Text as="p" variant="bodySm" breakWord>
+                            {entry.message}
+                          </Text>
+                          {entry.link && (
+                            <Button
+                              variant="plain"
+                              size="slim"
+                              onClick={() => {
+                                closePopover();
+                                handleInfoBoxLink(entry.link!.url);
+                              }}
+                            >
+                              {entry.link.label}
+                            </Button>
+                          )}
+                        </div>
+                        {/* Only the time is shown — the full stamp is in the
+                            title and the machine-readable value in `dateTime`,
+                            so an entry from yesterday is not just "08:15". */}
+                        <time
+                          dateTime={entry.timestamp.toISOString()}
+                          title={fullTimestampFormat.format(entry.timestamp)}
+                          style={{ flexShrink: 0 }}
+                        >
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {timeFormat.format(entry.timestamp)}
+                          </Text>
+                        </time>
+                      </div>
+                    ))
+                  )}
+                </Scrollable>
+              </div>
+            </Popover>
+          </div>
+
           {/* Loading Indicator - shows for navigation or global loading state */}
           {(showLoadingIndicator || isGlobalLoading) && (
             <div
@@ -925,181 +1100,7 @@ export function MainNavigation() {
               übernimmt ihr Umschalter diesen Platz (der Plan bleibt über
               Einstellungen → Plan erreichbar). Rein per CSS-Media-Query, damit
               beim Drehen/Resizen kein Re-Render nötig ist. */}
-          {/* Right-hand group. A flex ROW, and the bell is its first item:
-              parked between the message strip and this group, the bell moved
-              by up to 600px whenever a message appeared or auto-hid, and
-              Polaris re-measures an open popover only on scroll, resize or a
-              mutation INSIDE the activator — so an open panel came loose from
-              its own button. Pinned right, its position no longer depends on
-              whether a message is showing. */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              {/* Message bell — ALWAYS rendered, and the popover's only activator.
-
-                  It used to be hidden on desktop whenever a banner was up, and
-                  removed outright while `syncProgress` ran or the history was
-                  empty. Each of those was a state in which it was needed most: a
-                  standing message queues everything behind it, and the initial
-                  sync runs for minutes while messages pile up unreachable. Its
-                  absence also let `popoverActive` outlive its own activator, so
-                  the panel sprang open by itself the next time the slot returned.
-
-                  A permanent bell additionally removes the layout jump the first
-                  message used to cause, and gives the strip beside it a fixed
-                  anchor to be positioned against. */}
-              <div style={{ flex: "0 0 auto" }}>
-                <Popover
-                  active={popoverActive}
-                  onClose={closePopover}
-                  preferredPosition="below"
-                  // Right-aligned, not centred: the bell sits at the end of the
-                  // row, and a 380px panel centred on a 32px button would run off
-                  // the viewport and be clamped back by Polaris at an arbitrary
-                  // offset.
-                  preferredAlignment="right"
-                  zIndexOverride={1100}
-                  activator={
-                    <div style={{ position: "relative", display: "flex" }}>
-                      <Button
-                        onClick={togglePopover}
-                        pressed={popoverActive}
-                        icon={NotificationIcon}
-                        accessibilityLabel={bellLabel}
-                      />
-                      {unreadCount > 0 && (
-                        <span
-                          aria-hidden="true"
-                          style={{
-                            position: "absolute",
-                            top: "-4px",
-                            right: "-4px",
-                            // Polaris' critical fill. The old #f44336 gave white
-                            // 10px bold text a contrast of 3.7:1 — below WCAG AA,
-                            // on the one number that says how much was missed.
-                            backgroundColor: "var(--p-color-bg-fill-critical)",
-                            color: "var(--p-color-text-critical-on-bg-fill)",
-                            borderRadius: "10px",
-                            padding: "0 5px",
-                            fontSize: "10px",
-                            fontWeight: "700",
-                            minWidth: "16px",
-                            height: "16px",
-                            lineHeight: "16px",
-                            textAlign: "center",
-                            pointerEvents: "none",
-                          }}
-                        >
-                          {unreadCount}
-                        </span>
-                      )}
-                    </div>
-                  }
-                >
-                  <div style={{ width: "min(380px, calc(100vw - 32px))" }}>
-                    <div style={{
-                      padding: "12px 16px",
-                      borderBottom: "1px solid var(--app-surface-border-color)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: "8px",
-                    }}>
-                      <Text as="h2" variant="headingSm">
-                        {t.tasks?.notificationsTitle || "Messages"}
-                      </Text>
-                      {messageHistory.length > 0 && (
-                        <Button
-                          variant="plain"
-                          size="slim"
-                          onClick={() => { clearHistory(); closePopover(); }}
-                        >
-                          {t.tasks?.notificationsClearAll || "Clear all"}
-                        </Button>
-                      )}
-                    </div>
-                    <Scrollable
-                      id={MESSAGE_LIST_ID}
-                      // No horizontal scrolling: Polaris defaults it to on, and
-                      // the rows wrap rather than run wide.
-                      horizontal={false}
-                      style={{
-                        maxHeight: "min(300px, 60vh)",
-                        // Reaching the end of the list must not chain the scroll
-                        // through to the page behind the panel — the other half of
-                        // the freeze `useScrollLock` provides.
-                        overscrollBehavior: "contain",
-                      }}
-                    >
-                      {messageHistory.length === 0 ? (
-                        <div style={{ padding: "24px 16px", textAlign: "center" }}>
-                          <Text as="p" variant="bodySm" tone="subdued">
-                            {t.tasks?.notificationsEmpty || "No messages"}
-                          </Text>
-                        </div>
-                      ) : (
-                        messageHistory.map((entry) => (
-                          <div
-                            key={entry.id}
-                            style={{
-                              padding: "10px 16px",
-                              borderBottom: "1px solid var(--app-surface-border-color)",
-                              display: "flex",
-                              gap: "10px",
-                              alignItems: "flex-start",
-                            }}
-                          >
-                            {/* The dot is the only carrier of "error" vs "success"
-                                in this list. At 8px that fails for colour-blind
-                                readers and says nothing at all to a screen reader,
-                                so the tone is spelled out beside it — using the
-                                same four strings the announcement region uses. */}
-                            <span
-                              aria-hidden="true"
-                              style={{
-                                width: "8px",
-                                height: "8px",
-                                borderRadius: "50%",
-                                backgroundColor: toneColor(entry.tone),
-                                flexShrink: 0,
-                                marginTop: "6px",
-                              }}
-                            />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <Text as="span" visuallyHidden>{toneLabel(entry.tone)}</Text>
-                              <Text as="p" variant="bodySm" breakWord>
-                                {entry.message}
-                              </Text>
-                              {entry.link && (
-                                <Button
-                                  variant="plain"
-                                  size="slim"
-                                  onClick={() => {
-                                    closePopover();
-                                    handleInfoBoxLink(entry.link!.url);
-                                  }}
-                                >
-                                  {entry.link.label}
-                                </Button>
-                              )}
-                            </div>
-                            {/* Only the time is shown — the full stamp is in the
-                                title and the machine-readable value in `dateTime`,
-                                so an entry from yesterday is not just "08:15". */}
-                            <time
-                              dateTime={entry.timestamp.toISOString()}
-                              title={fullTimestampFormat.format(entry.timestamp)}
-                              style={{ flexShrink: 0 }}
-                            >
-                              <Text as="span" variant="bodySm" tone="subdued">
-                                {timeFormat.format(entry.timestamp)}
-                              </Text>
-                            </time>
-                          </div>
-                        ))
-                      )}
-                    </Scrollable>
-                  </div>
-                </Popover>
-              </div>
+          <div style={{ marginLeft: "auto" }}>
             {sidebarPanel.available && (
               <div className="sidebar-panel-toggle-slot">
                 <Button
