@@ -479,15 +479,6 @@ function safeReload() {
   return true;
 }
 
-// Helper function to get translations based on browser language
-function getBrowserLocale(): Locale {
-  if (typeof window === 'undefined') return 'en';
-  const browserLang = navigator.language.split('-')[0];
-  if (browserLang === 'de') return 'de';
-  if (browserLang === 'es') return 'es';
-  return 'en';
-}
-
 // Shopify app boundary error handler
 export function ErrorBoundary() {
   // Always use 'en' as default to avoid hydration mismatch

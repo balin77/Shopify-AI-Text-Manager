@@ -36,6 +36,8 @@ import {
 import { EditIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { compareStrings, formatDateTime } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone, progressTone, seoTitleEffectiveLimit } from "../utils/seo-score";
@@ -249,6 +251,8 @@ export default function SeoDashboard() {
   const { t, locale: appLocale } = useI18n();
   const { handleNavigate } = useAppNavigation();
   const d = t.seo.dashboard;
+  // The "last scanned" caption is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
 
   // URL search-params ownership: switching locale updates ?locale=xx, which
   // re-runs the loader against the per-locale snapshot. `activeLocale` is the
@@ -266,10 +270,10 @@ export default function SeoDashboard() {
     list.sort((a, b) => {
       if (a.primary) return -1;
       if (b.primary) return 1;
-      return (a.name || a.locale).localeCompare(b.name || b.locale);
+      return compareStrings(a.name || a.locale, b.name || b.locale, appLocale);
     });
     return list;
-  }, [shopLocales]);
+  }, [shopLocales, appLocale]);
 
   const switchLocale = (locale: string) => {
     // Empty string / primary code => primary tab, drop the URL param entirely.
@@ -555,7 +559,7 @@ export default function SeoDashboard() {
         {/* Last-scanned caption + Rescan trigger */}
         <InlineStack gap="200" align="space-between" blockAlign="center">
           <Text as="p" variant="bodySm" tone="subdued">
-            {d.lastScanned.replace("{time}", new Date(lastScannedAt).toLocaleString())}
+            {d.lastScanned.replace("{time}", formatDateTime(lastScannedAt, hydrated))}
           </Text>
           <Button
             size="slim"

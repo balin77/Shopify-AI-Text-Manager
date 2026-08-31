@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { BlockStack, InlineStack, Text, Button, Spinner, Card } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { compareStrings } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -1726,7 +1727,7 @@ export default function SeoKeywords() {
             .sort((a, b) => {
               if (a.id === PRIMARY_LOCALE_ID) return -1;
               if (b.id === PRIMARY_LOCALE_ID) return 1;
-              return a.label.localeCompare(b.label);
+              return compareStrings(a.label, b.label, appLocale);
             })
             .map((item) => (
               <Button

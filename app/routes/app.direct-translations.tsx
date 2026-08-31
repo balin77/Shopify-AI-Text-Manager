@@ -42,6 +42,7 @@ import { UnifiedItemList } from "../components/unified/UnifiedItemList";
 import { UnifiedLanguageBar, shouldRenderLanguageBar } from "../components/unified/UnifiedLanguageBar";
 import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../types/content-editor.types";
 import { useI18n } from "../contexts/I18nContext";
+import { compareStrings } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useInfoBox } from "../contexts/InfoBoxContext";
 import { useConfirm } from "../contexts/ConfirmContext";
@@ -357,8 +358,10 @@ export default function DirectTranslationsPage() {
   // Target locales sorted by their localized name (matches UnifiedLanguageBar).
   const sortedTargets = useMemo(
     () => [...targetLocales].sort((a, b) =>
-      getLocalizedLanguageName(a.locale, appLocale, a.name).localeCompare(
+      compareStrings(
+        getLocalizedLanguageName(a.locale, appLocale, a.name),
         getLocalizedLanguageName(b.locale, appLocale, b.name),
+        appLocale,
       ),
     ),
     [targetLocales, appLocale],

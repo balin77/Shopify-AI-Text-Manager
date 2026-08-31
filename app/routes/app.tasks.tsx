@@ -16,6 +16,8 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime, formatTime } from "../utils/format";
 import { getTaskDateRange } from "~/config/constants";
 import { extractReadableName } from "~/utils/templates-field-factory";
 import { taskErrorText } from "~/utils/task-error-text";
@@ -151,12 +153,10 @@ export default function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(new Set());
-  const [isClient, setIsClient] = useState(false);
-
-  // Mark when we're on the client to avoid hydration mismatches with date formatting
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  // Timestamps are rendered in the merchant's time zone, which the server does
+  // not know. This used to be a local isClient state + effect; the shared hook
+  // is the same thing, so every surface in the app follows one rule.
+  const hydrated = useHydrated();
 
   // Auto-refresh every 3 seconds if there are running tasks
   useEffect(() => {
@@ -467,10 +467,10 @@ export default function TasksPage() {
                     )}
 
                     {/* Time Info - Always Visible (only render after client mount to avoid hydration issues) */}
-                    {isClient && (
+                    {hydrated && (
                       <InlineStack gap="400">
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
+                          {t.tasks.startedAt}: {formatDateTime(task.startedAt, hydrated)}
                         </Text>
                         {task.completedAt && (
                           <Text as="p" variant="bodySm" tone="subdued">
@@ -536,7 +536,7 @@ export default function TasksPage() {
                                             return (
                                             <div key={index} style={{ padding: "0.75rem", background: "white", borderRadius: "4px", border: "1px solid #e5e5e5" }}>
                                               <Text as="p" variant="bodySm" tone="subdued">
-                                                #{index + 1} - {isClient ? new Date(entry.timestamp).toLocaleTimeString() : entry.timestamp}
+                                                #{index + 1} - {formatTime(entry.timestamp, hydrated, entry.timestamp)}
                                               </Text>
                                               <div style={{ fontFamily: "monospace", fontSize: "11px", whiteSpace: "pre-wrap", marginTop: "0.5rem", maxHeight: "400px", overflowY: "auto" }}>
                                                 {truncateText(entry.prompt, promptId)}

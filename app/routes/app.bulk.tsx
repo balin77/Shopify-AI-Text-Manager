@@ -712,9 +712,15 @@ export default function BulkEditor() {
   // Metaobject views skip localStorage: prefs stored under one moType would
   // degrade every other type to its two context columns — the per-type
   // default recomputes on each switch instead (documented Phase-5 decision).
-  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() =>
-    type === "metaobject" ? defaultColumnsFor() : loadColumnPrefs(type, allColumns),
-  );
+  //
+  // The INITIAL state must not read localStorage. This route is server
+  // rendered, so the server can only produce the default set while a merchant
+  // with a saved layout would render a different one on the first client
+  // render — a different NUMBER of grid cells, i.e. a structural hydration
+  // mismatch (React production error #418, which throws the whole root away
+  // and re-renders it on the client). The effect below already runs on mount,
+  // so the saved layout is applied one frame later instead.
+  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() => defaultColumnsFor());
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
