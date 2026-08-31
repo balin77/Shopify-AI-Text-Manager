@@ -14,7 +14,7 @@
     "migrate:fix": "node scripts/fix-failed-migrations.js",
     "migrate:product-translations": "tsx scripts/migrate-product-translations.ts",
     "typecheck": "react-router typegen && tsc",
-    "lint:hooks": "eslint --quiet",
+    "lint:hooks": "eslint app --quiet",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",

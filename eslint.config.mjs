@@ -18,6 +18,22 @@ import reactHooks from "eslint-plugin-react-hooks";
 
 export default [
   {
+    // Without this ESLint also picks up its DEFAULT JS pattern, which matches
+    // the built bundles in build/ once anyone has run `npm run build`. Those
+    // carry the source's eslint-disable comments for rules this config does
+    // not define, and each one is then reported as "rule not found" — a lint
+    // gate that passes or fails depending on whether a build ran.
+    ignores: [
+      "build/**",
+      "dist/**",
+      "coverage/**",
+      "public/**",
+      "extensions/**",
+      "node_modules/**",
+      ".react-router/**",
+    ],
+  },
+  {
     files: ["app/**/*.{ts,tsx}"],
     languageOptions: {
       parser: tseslint.parser,
