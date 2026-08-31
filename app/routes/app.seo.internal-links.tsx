@@ -71,6 +71,8 @@ import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { meetsPlan } from "../utils/planUtils";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime } from "../utils/format";
 import type { Plan } from "../config/plans";
 import { getCachedShopLocales } from "../utils/shop-locales-cache.server";
 import { RESOURCE_ROUTE, INTERNAL_LINKS_API, BULK_ACCEPT_LIMIT } from "../services/seo/internal-links-routes";
@@ -297,15 +299,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
-function formatDate(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
-
 /**
  * Fixed column grid for a suggestion's three lines. Every line uses the SAME
  * template, so the arrow, the type badges and the titles line up vertically
@@ -329,6 +322,8 @@ export default function SeoInternalLinks() {
   const { handleNavigate } = useAppNavigation();
   const c = (t.seo as any).internalLinksPage as Record<string, string>;
   const resourceTypeLabel = (t.tasks as any).resourceType as Record<string, string>;
+  // "last generated" is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
 
   const typeLabel = (type: FilterType): string => {
     if (type === "Article") return resourceTypeLabel.blog;
@@ -733,7 +728,7 @@ export default function SeoInternalLinks() {
             </ButtonGroup>
             <InlineStack gap="300" blockAlign="center" wrap>
               <Text as="p" variant="bodySm" tone="subdued">
-                {data.lastRun ? c.lastGenerated.replace("{time}", formatDate(data.lastRun)) : c.neverGenerated}
+                {data.lastRun ? c.lastGenerated.replace("{time}", formatDateTime(data.lastRun, hydrated)) : c.neverGenerated}
               </Text>
               <Button
                 variant="primary"

@@ -83,6 +83,8 @@ import {
   MAX_EXTERNAL_TARGETS,
 } from "../services/seo/external-links.shared";
 import { BLOCK_SOURCE_TEXT_KEY } from "../utils/task-error-text";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime } from "../utils/format";
 
 const TYPE_PATH: Record<DeepLinkType, string> = {
   product: "/app/products",
@@ -667,6 +669,8 @@ export default function SeoCrawl() {
   const { handleNavigate } = useAppNavigation();
   const c = (t.seo as any).crawlPage as Record<string, string>;
   const o = (t.seo as any).onpagePage as Record<string, string>;
+  // The diff timestamp is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
 
   const openInEditor = (type: DeepLinkType, id: string) => {
     // Rows carry a persisted string, so an unmapped type is possible in
@@ -858,7 +862,7 @@ export default function SeoCrawl() {
                   <span aria-hidden="true">{diffOpen ? "▼" : "▶"}</span>
                 </Text>
                 <Text as="span" variant="headingMd">
-                  {c.diffTitle.replace("{date}", formatDiffDate(data.diff.previousAt))}
+                  {c.diffTitle.replace("{date}", formatDateTime(data.diff.previousAt, hydrated))}
                 </Text>
                 <Badge tone={diffDelta(data.diff.counts.pages) > 0 ? "success" : undefined}>
                   {c.diffPages.replace("{delta}", signed(diffDelta(data.diff.counts.pages)))}
@@ -1433,14 +1437,6 @@ function diffDelta([before, after]: [number, number]): number {
 /** "+3" / "-2" / "0" — the sign is the information. */
 function signed(delta: number): string {
   return delta > 0 ? `+${delta}` : String(delta);
-}
-
-function formatDiffDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
 }
 
 function DiffList({ title, rows }: { title: string; rows: string[] }) {

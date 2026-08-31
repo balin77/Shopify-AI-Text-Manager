@@ -19,17 +19,10 @@ import { useFetcher, useRevalidator } from "react-router";
 import { Card, BlockStack, InlineStack, Text, Button, Banner } from "@shopify/polaris";
 import { useI18n } from "../../contexts/I18nContext";
 import { DisabledActionTooltip } from "../DisabledActionTooltip";
+import { useHydrated } from "../../hooks/useHydrated";
+import { formatDateTime } from "../../utils/format";
 import { BLOCK_SOURCE_TEXT_KEY } from "../../utils/task-error-text";
 import type { SnapshotHeaderView } from "../../services/seo/crawl.shared";
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "";
-  try {
-    return new Date(iso).toLocaleString();
-  } catch {
-    return iso;
-  }
-}
 
 export function CrawlSnapshotHeader({
   snapshot,
@@ -65,6 +58,9 @@ export function CrawlSnapshotHeader({
 }) {
   const { t } = useI18n();
   const c = (t.seo as any).crawlPage as Record<string, string>;
+  // The snapshot timestamp is rendered in the merchant's time zone, which the
+  // server does not know — only render it localized after hydration.
+  const hydrated = useHydrated();
 
   const scanFetcher = useFetcher<{ success: boolean; error?: string; taskId?: string }>();
   const [scanStarted, setScanStarted] = useState(false);
@@ -128,7 +124,7 @@ export function CrawlSnapshotHeader({
         <InlineStack align="space-between" blockAlign="center">
           <Text as="p" variant="bodySm" tone="subdued">
             {snapshot
-              ? c.lastScanned.replace("{time}", formatDate(snapshot.finishedAt || snapshot.startedAt))
+              ? c.lastScanned.replace("{time}", formatDateTime(snapshot.finishedAt || snapshot.startedAt, hydrated))
               : c.neverScanned}
           </Text>
           <DisabledActionTooltip hint={pendingSettings ? pendingSettingsReason : undefined}>

@@ -8,6 +8,7 @@ import {
 } from "../../services/tasks/task-details.shared";
 import { resourceTypeLabel } from "../../services/tasks/task-labels.shared";
 import { getLocalizedLanguageName } from "../../utils/contentEditor.utils";
+import { formatTime } from "../../utils/format";
 
 /**
  * The expanded half of a card on /app/tasks (PLAN_TASK_LIST_CLARITY §3.3/§3.4).
@@ -48,8 +49,9 @@ interface TaskDetailsPanelProps {
   status: string;
   /** Loader value. A change re-fetches while the card stays open (throttled). */
   updatedAt: string;
-  /** Timestamps are only formatted after mount, to avoid a hydration mismatch. */
-  isClient: boolean;
+  /** From useHydrated(). Timestamps are only rendered in the merchant's local
+   *  time after hydration — see app/utils/format.ts. */
+  hydrated: boolean;
 }
 
 interface FetchedDetail {
@@ -197,7 +199,7 @@ export function TaskDetailsPanel({
   type,
   status,
   updatedAt,
-  isClient,
+  hydrated,
 }: TaskDetailsPanelProps) {
   const { t, locale: appLocale } = useI18n();
   const [detail, setDetail] = useState<FetchedDetail | null>(null);
@@ -519,9 +521,7 @@ export function TaskDetailsPanel({
                               >
                                 <Text as="p" variant="bodySm" tone="subdued">
                                   #{index + 1} -{" "}
-                                  {isClient
-                                    ? new Date(entry.timestamp).toLocaleTimeString()
-                                    : entry.timestamp}
+                                  {formatTime(entry.timestamp, hydrated, entry.timestamp)}
                                 </Text>
                                 <div
                                   style={{

@@ -20,6 +20,7 @@ import { ReloadButton } from "../ReloadButton";
 import { HelpTooltip } from "../HelpTooltip";
 import { MarketSelector } from "./MarketSelector";
 import { useI18n } from "../../contexts/I18nContext";
+import { compareStrings } from "../../utils/format";
 import type { ShopLocale, TranslatableItem, ContentType, MarketInfo } from "../../types/content-editor.types";
 
 interface UnifiedLanguageBarProps {
@@ -156,7 +157,7 @@ export function UnifiedLanguageBar({
       {!isSingleLocale && [...shopLocales].sort((a, b) => {
         if (a.primary) return -1;
         if (b.primary) return 1;
-        return (a.name || a.locale).localeCompare(b.name || b.locale);
+        return compareStrings(a.name || a.locale, b.name || b.locale, appLocale);
       }).map((locale) => (
         <LocaleButton
           key={locale.locale}

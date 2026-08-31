@@ -29,6 +29,8 @@ import { FieldLabel } from "./FieldChrome";
 import { BlockStack, Banner, Box, Button, Checkbox, Spinner, Text, TextField } from "@shopify/polaris";
 import { resolveMembershipAutomated } from "../../services/content-attributes.shared";
 import type { CollectionOption } from "../../routes/api.product-taxonomy";
+import { useI18n } from "../../contexts/I18nContext";
+import { compareStrings } from "../../utils/format";
 
 export interface ProductMembership {
   collectionId: string;
@@ -81,6 +83,10 @@ export function CollectionsField({
   disabled,
   t,
 }: CollectionsFieldProps) {
+  // Collection titles are merchant content and this sort decides the ORDER of
+  // server-rendered rows (`memberships` is loader data, so rows exist before
+  // the client fetch fills `options`) — see compareStrings().
+  const { locale: appLocale } = useI18n();
   const [options, setOptions] = useState<CollectionOption[] | null>(null);
   const [failed, setFailed] = useState(false);
   /** The cache holds more collections than one page — see the route's cap. */
@@ -137,8 +143,8 @@ export function CollectionsField({
         automated: resolveMembershipAutomated(existing?.automated, membership.automated),
       });
     }
-    return [...byId.values()].sort((a, b) => a.title.localeCompare(b.title));
-  }, [options, memberships]);
+    return [...byId.values()].sort((a, b) => compareStrings(a.title, b.title, appLocale));
+  }, [options, memberships, appLocale]);
 
   if (!known) {
     return (

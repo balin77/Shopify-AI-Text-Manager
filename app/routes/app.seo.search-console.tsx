@@ -27,6 +27,8 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDate } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
@@ -814,6 +816,8 @@ export default function SeoSearchConsole() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const g = t.seo.searchConsolePage;
+  // The last-synced date is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
   const fetcher = useFetcher<ActionResult>();
   const [, setSearchParams] = useSearchParams();
 
@@ -1295,7 +1299,7 @@ export default function SeoSearchConsole() {
                     <Text as="p" variant="bodySm" tone="subdued">
                       {g.autoSyncNote}
                       {data.lastKeywordSyncAt
-                        ? ` · ${g.lastSyncedLabel}: ${new Date(data.lastKeywordSyncAt).toLocaleDateString()}`
+                        ? ` · ${g.lastSyncedLabel}: ${formatDate(data.lastKeywordSyncAt, hydrated)}`
                         : ""}
                     </Text>
                   </BlockStack>

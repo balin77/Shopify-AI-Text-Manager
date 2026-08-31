@@ -54,6 +54,8 @@ import { ToggleSwitch } from "../ToggleSwitch";
 import { useCommerceData } from "../../contexts/CommerceDataContext";
 import { groupPublications, type PublicationGroupId } from "../../services/commerce-sync.shared";
 import type { CommerceChannelView } from "../../routes/api.product-commerce";
+import { useHydrated } from "../../hooks/useHydrated";
+import { formatDate } from "../../utils/format";
 
 /** Every column title, so the row reads as one line of headings. */
 function GroupHeading({ text, helpKey, children }: { text: string; helpKey?: string; children?: React.ReactNode }) {
@@ -68,6 +70,11 @@ function GroupHeading({ text, helpKey, children }: { text: string; helpKey?: str
 
 export function CommerceField({ label }: { label: string }) {
   const commerce = useCommerceData();
+  // Above the early return, because a hook has to be. The publish date is the
+  // merchant's local time — see useHydrated(). The panel's data starts null and
+  // arrives by fetcher, so this never reaches the server render today; the
+  // guard is here so it stays true if that ever changes.
+  const hydrated = useHydrated();
   // No provider ⇒ not a product. Nothing to say.
   if (!commerce) return null;
 
@@ -171,7 +178,7 @@ export function CommerceField({ label }: { label: string }) {
       channel.publishDate && !channel.isPublished
         ? ((t.scheduled as string) || "Scheduled for {date}").replace(
             "{date}",
-            new Date(channel.publishDate).toLocaleDateString(),
+            formatDate(channel.publishDate, hydrated),
           )
         : null;
     const switchId = `channel-${channel.publicationId}`;

@@ -28,6 +28,8 @@ import {
 } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime } from "../utils/format";
 
 type MetafieldOwnerCategory = "shop" | "third-party" | "contentpilot";
 
@@ -93,6 +95,8 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
 
   const ms = (t.settings ?? {}) as unknown as Record<string, string>;
   const tr = (key: string, fallback: string) => ms[key] ?? fallback;
+  // The scan timestamp is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
 
   // Scan whenever we have no list yet. `definitions` lives only in component
   // state and the tab unmounts on tab switch, so a merchant returning to the
@@ -261,7 +265,7 @@ export function SettingsMetafieldsTab({ enabledMetafieldDefinitions, metafieldsL
                 {lastScanAt
                   ? tr("metafieldsLastScan", "Last scan: {date}").replace(
                       "{date}",
-                      new Date(lastScanAt).toLocaleString(),
+                      formatDateTime(lastScanAt, hydrated),
                     )
                   : tr("metafieldsNeverScanned", "Not scanned yet")}
               </Text>

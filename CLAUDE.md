@@ -608,6 +608,22 @@ panel ends up over the tenth.
   `FilterBar`, `PriceActionsPopover`, `LibraryTab`, `MobileToolbar`,
   `UnifiedItemList`, `VariantOptionsEditor` — predate the rule and have NOT been
   swept. Check the list before assuming a surface is covered.
+## Hydration — the app is server rendered, so both sides must produce the same tree
+
+Every `/app/*` route is server rendered (`renderToPipeableStream`) and the whole document is hydrated (`hydrateRoot(document, …)`). React 18 compares the server's HTML against the **first client render**; anything that differs is a hydration mismatch, and in production that is the minified error **#418** — React does not patch it, it throws the root away and re-renders everything on the client. It is silent to the merchant and shows up only as Sentry volume, which is exactly how it went unnoticed until August 2026.
+
+The rule for **every new component**: a value that the server cannot compute the same way as the browser must not reach the first render.
+
+- **Timestamps go through the helpers, never `toLocaleString()` directly.** The server runs UTC with its own default locale; the merchant's browser does not. `formatDateTime` / `formatDate` / `formatTime` in [format.ts](app/utils/format.ts) take a `hydrated` flag from [useHydrated()](app/hooks/useHydrated.ts) and render a deterministic UTC stamp until it flips. Do not pass a date-ONLY string (`"2026-08-28"`, parsed as UTC midnight) or a non-ISO string — both reintroduce the divergence the helpers exist to remove.
+- **Numbers bind the app locale**, not the host default: `formatNumber(value, locale)`. The app locale comes from the `app.tsx` loader, so both sides agree; `(n).toLocaleString()` resolves to `en-US` on the server and to whatever the browser is.
+- **So does collation, and this one is STRUCTURAL.** `a.localeCompare(b)` with no locale decides the ORDER of rendered children, and a Swedish/Turkish/Estonian browser orders differently than an `en-US` server — one umlaut in a title is enough. Use `compareStrings(a, b, locale)`. A wrong text node is one node; a wrong order is the whole subtree.
+- **`useHydrated()` is `useSyncExternalStore`, not `useState` + effect** — so it is `false` for the hydration render but already `true` for a component mounted by a client-side navigation, which does not need the guard and would otherwise flash its UTC form for a frame. The guarantee covers the MOUNT render only: React 18's `updateSyncExternalStore` has no hydration check, so never add a render-phase `setState` next to a `useHydrated` call.
+- **`typeof window` is NOT the guard.** `window` already exists during the first client render, so the check flips too early and mismatches anyway. Same for seeding `useState` from `localStorage` — the server can only produce the default, so a merchant with stored state renders a different tree (this is what `app.bulk.tsx` did with its column selection). Read storage in an effect and let the state settle one frame later.
+- **A hook must never sit in a `try`/`catch`.** When a render throws, React builds a component stack by CALLING each component function again, outside a render — every hook in it throws "Invalid hook call" (#321) **by design** and React swallows it. `app/root.tsx`'s ErrorBoundary caught that and reported it to Sentry as an app failure while hiding the real error. `npm run lint:hooks` (CI step, `react-hooks/rules-of-hooks`) is the gate; typecheck, build and vitest were all green on that code.
+
+What this does NOT cover: server and browser can ship different ICU/CLDR versions, so identical locales can still differ in principle. Small and stable for Latin-script en/de/es — but the two sorts keyed on `Intl.DisplayNames` output (`getLocalizedLanguageName`) carry a larger residual, because display-name data moves between CLDR releases more than collation data does. Pinning those means owning the language names in the app's own i18n.
+
+**Branch state (2026-08-31):** the whole fix — `app/hooks/useHydrated.ts`, the `format.ts` helpers, the ~18 timestamp call sites, the collation binding, the `app.bulk.tsx` initial state, the `root.tsx` boundary and the `lint:hooks` CI gate — is on **`develop` and on `master` as the SAME commits** (branch `claude/react-hook-error-sentry-k3mnqk`, merged into both). `master` carries no hotfix that `develop` lacks, so `develop` → `master` can be merged without checking whether it would regress this.
 
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 

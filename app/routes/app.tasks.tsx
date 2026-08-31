@@ -16,6 +16,8 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime, formatTime } from "../utils/format";
 import { getTaskDateRange } from "~/config/constants";
 import { taskErrorText } from "~/utils/task-error-text";
 import { logger } from "~/utils/logger.server";
@@ -270,12 +272,10 @@ export default function TasksPage() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
-  const [isClient, setIsClient] = useState(false);
-
-  // Mark when we're on the client to avoid hydration mismatches with date formatting
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  // Timestamps are rendered in the merchant's time zone, which the server does
+  // not know. This used to be a local isClient state + effect; the shared hook
+  // is the same thing, so every surface in the app follows one rule.
+  const hydrated = useHydrated();
 
   // Auto-refresh every 3 seconds if there are running tasks
   useEffect(() => {
@@ -635,10 +635,10 @@ export default function TasksPage() {
                     )}
 
                     {/* Time Info - Always Visible (only render after client mount to avoid hydration issues) */}
-                    {isClient && (
+                    {hydrated && (
                       <InlineStack gap="400">
                         <Text as="p" variant="bodySm" tone="subdued">
-                          {t.tasks.startedAt}: {new Date(task.startedAt).toLocaleString()}
+                          {t.tasks.startedAt}: {formatDateTime(task.startedAt, hydrated)}
                         </Text>
                         {task.completedAt && (
                           <Text as="p" variant="bodySm" tone="subdued">
@@ -681,7 +681,7 @@ export default function TasksPage() {
                         type={task.type}
                         status={task.status}
                         updatedAt={task.updatedAt}
-                        isClient={isClient}
+                        hydrated={hydrated}
                       />
                     )}
                   </BlockStack>

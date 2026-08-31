@@ -35,6 +35,8 @@ import {
 import { SearchIcon, ChevronLeftIcon, ChevronRightIcon, RefreshIcon, SortIcon, FilterIcon, PlusIcon, DeleteIcon, DuplicateIcon } from "@shopify/polaris-icons";
 import { Thumbnail } from "@shopify/polaris";
 import { useNavigationHeight } from "../../contexts/NavigationHeightContext";
+import { useI18n } from "../../contexts/I18nContext";
+import { compareStrings } from "../../utils/format";
 
 export interface UnifiedItem {
   id: string;
@@ -222,6 +224,9 @@ export function UnifiedItemList({
   deleteButtonLabel,
   t = {},
 }: UnifiedItemListProps) {
+  // Collation decides the ORDER of the rendered children, so it must not come
+  // from the host default locale — see compareStrings().
+  const { locale: appLocale } = useI18n();
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
@@ -304,7 +309,7 @@ export function UnifiedItemList({
     // String comparison
     const strA = String(valA).toLowerCase();
     const strB = String(valB).toLowerCase();
-    const cmp = strA.localeCompare(strB);
+    const cmp = compareStrings(strA, strB, appLocale);
     return sortDirection === "asc" ? cmp : -cmp;
   });
 

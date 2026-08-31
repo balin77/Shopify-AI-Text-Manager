@@ -71,6 +71,7 @@ import {
   type MetaobjectEntryLike,
 } from "../services/metaobject-fields.shared";
 import { useI18n } from "../contexts/I18nContext";
+import { compareStrings } from "../utils/format";
 import { CommerceDataProvider } from "../contexts/CommerceDataContext";
 import { CommerceVariantsSection } from "./unified/CommerceVariantsSection";
 import { LocaleAvailabilityProvider } from "../contexts/LocaleAvailabilityContext";
@@ -439,7 +440,7 @@ export function UnifiedContentEditor(props: UnifiedContentEditorProps) {
       }
     }
     return [...counts.values()]
-      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+      .sort((a, b) => b.count - a.count || compareStrings(a.label, b.label, locale))
       .slice(0, 50)
       .map((entry) => entry.label);
   }, [items]);
