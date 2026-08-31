@@ -37,7 +37,7 @@ import { EditIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
 import { useHydrated } from "../hooks/useHydrated";
-import { formatDateTime } from "../utils/format";
+import { compareStrings, formatDateTime } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { scoreTone, progressTone, seoTitleEffectiveLimit } from "../utils/seo-score";
@@ -270,7 +270,7 @@ export default function SeoDashboard() {
     list.sort((a, b) => {
       if (a.primary) return -1;
       if (b.primary) return 1;
-      return (a.name || a.locale).localeCompare(b.name || b.locale);
+      return compareStrings(a.name || a.locale, b.name || b.locale, appLocale);
     });
     return list;
   }, [shopLocales]);

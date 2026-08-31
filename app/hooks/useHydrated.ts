@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 /**
- * `false` on the server AND during the first client render, `true` from the
- * first effect onwards.
+ * `false` while the component is being hydrated, `true` otherwise.
  *
  * The one purpose: render values that can only agree between server and client
  * AFTER hydration. Anything derived from the browser's time zone, its default
@@ -11,21 +10,30 @@ import { useEffect, useState } from "react";
  * minified error #418, which throws the whole root away and re-renders it on
  * the client. Sentry saw exactly that on `master`.
  *
- * Why it must stay `false` for the first client render and not just check
- * `typeof window`: hydration compares the server's HTML against the FIRST
- * client render, so a `typeof window` check flips too early and mismatches
- * anyway. The state only turns true in an effect, i.e. after that comparison.
+ * Why not `typeof window !== "undefined"`: hydration compares the server's
+ * HTML against the FIRST client render, and `window` already exists by then.
+ * The check would flip too early and mismatch anyway.
+ *
+ * Why `useSyncExternalStore` and not `useState(false)` + an effect: React uses
+ * `getServerSnapshot` on the server AND throughout hydration, then
+ * `getSnapshot` for anything mounted later. So this is `false` exactly for the
+ * render React compares — and already `true` on the first render of a
+ * component mounted by a client-side navigation, which is most of them. The
+ * effect-based version returns `false` there too and makes every timestamp
+ * paint its UTC form for one frame before flipping.
+ *
+ * The store never changes, so `subscribe` returns a no-op unsubscribe. All
+ * three arguments are module constants: React re-subscribes when `subscribe`
+ * changes identity, which a arrow re-created per render would do every time.
  *
  * Callers pair it with the `formatDateTime`/`formatDate`/`formatTime` helpers
  * in [format.ts](../utils/format.ts), which take the flag and fall back to a
  * deterministic UTC rendering while it is false.
  */
+const subscribe = () => () => {};
+const getSnapshot = () => true;
+const getServerSnapshot = () => false;
+
 export function useHydrated(): boolean {
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
-  return hydrated;
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

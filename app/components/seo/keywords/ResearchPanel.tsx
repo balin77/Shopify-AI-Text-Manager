@@ -15,8 +15,9 @@ import type { FetcherWithComponents } from "react-router";
 import type { Translation } from "../../../i18n/de";
 import type { loader } from "../../../routes/app.seo.keywords";
 import type { Route } from "../../../routes/+types/app.seo.keywords";
+import { useI18n } from "../../../contexts/I18nContext";
 import { useHydrated } from "../../../hooks/useHydrated";
-import { formatDateTime } from "../../../utils/format";
+import { compareStrings, formatDateTime } from "../../../utils/format";
 
 type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
@@ -65,6 +66,9 @@ export function ResearchPanel({
   const [open, setOpen] = useState(false);
   // The availability timestamp is the merchant's local time — see useHydrated().
   const hydrated = useHydrated();
+  // Group names are merchant-authored, and this sort decides the option order
+  // of a server-rendered <Select> — see compareStrings().
+  const { locale: appLocale } = useI18n();
 
   // The target group decides the imported keywords' language, so on a
   // multi-language shop the picker lists every language's groups and names the
@@ -76,7 +80,11 @@ export function ResearchPanel({
     localeOptions.find((l) => l.locale === locale)?.name || locale || k.localePrimary;
   const importOptions = multiLingual
     ? [...allGroups]
-        .sort((a, b) => localeName(a.locale).localeCompare(localeName(b.locale)) || a.name.localeCompare(b.name))
+        .sort(
+          (a, b) =>
+            compareStrings(localeName(a.locale), localeName(b.locale), appLocale) ||
+            compareStrings(a.name, b.name, appLocale),
+        )
         .map((g) => ({ label: `${g.name} · ${localeName(g.locale)}`, value: g.id }))
     : groups.map((g) => ({ label: g.name, value: g.id }));
 

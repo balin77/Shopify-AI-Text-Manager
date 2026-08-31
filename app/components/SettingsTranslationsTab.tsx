@@ -12,6 +12,8 @@ import {
   EmptyState,
 } from "@shopify/polaris";
 import type { Translation as I18nTranslation } from "~/i18n/de";
+import { useI18n } from "../contexts/I18nContext";
+import { compareStrings } from "../utils/format";
 
 interface GroupedFieldTranslationEntry {
   id: string;
@@ -38,7 +40,7 @@ interface GroupedRow {
   byLocale: Record<string, GroupedFieldTranslationEntry>;
 }
 
-function buildRows(entries: GroupedFieldTranslationEntry[]): GroupedRow[] {
+function buildRows(entries: GroupedFieldTranslationEntry[], locale: string): GroupedRow[] {
   const rowMap = new Map<string, GroupedRow>();
   for (const entry of entries) {
     if (entry.fieldKey !== "productType") continue;
@@ -55,8 +57,10 @@ function buildRows(entries: GroupedFieldTranslationEntry[]): GroupedRow[] {
     }
     row.byLocale[entry.targetLocale] = entry;
   }
+  // sourceValue is merchant content and this decides the ORDER of the
+  // server-rendered rows — see compareStrings().
   return Array.from(rowMap.values()).sort((a, b) =>
-    a.sourceValue.localeCompare(b.sourceValue),
+    compareStrings(a.sourceValue, b.sourceValue, locale),
   );
 }
 
@@ -69,7 +73,11 @@ export function SettingsTranslationsTab({
   const [filter, setFilter] = useState("");
   const [editValues, setEditValues] = useState<Record<string, string>>({});
 
-  const rows = useMemo(() => buildRows(groupedFieldTranslations), [groupedFieldTranslations]);
+  const { locale: appLocale } = useI18n();
+  const rows = useMemo(
+    () => buildRows(groupedFieldTranslations, appLocale),
+    [groupedFieldTranslations, appLocale],
+  );
 
   const targetLocales = useMemo(() => {
     const set = new Set<string>();

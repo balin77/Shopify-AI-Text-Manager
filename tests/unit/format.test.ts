@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { formatNumber, formatDateTime, formatDate, formatTime } from "~/utils/format";
+import {
+  formatNumber,
+  formatDateTime,
+  formatDate,
+  formatTime,
+  compareStrings,
+  collatorFor,
+} from "~/utils/format";
 
 describe("formatNumber (R4-UX6)", () => {
   it("groups with comma for English", () => {
@@ -35,6 +42,17 @@ describe("formatNumber options", () => {
   });
 });
 
+function withTimeZone<T>(tz: string, fn: () => T): T {
+  const previous = process.env.TZ;
+  process.env.TZ = tz;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+}
+
 describe("timestamp helpers (hydration safety)", () => {
   const ISO = "2026-08-28T16:00:21.070Z";
 
@@ -66,13 +84,25 @@ describe("timestamp helpers (hydration safety)", () => {
     expect(formatDateTime("2026-01-02T03:04:05.000Z", false)).toBe("2026-01-02 03:04 UTC");
   });
 
-  it("switches to the local rendering once hydrated", () => {
-    // Not asserting the exact string (it is locale/zone dependent by design),
-    // only that it stopped being the deterministic UTC form.
-    expect(formatDateTime(ISO, true)).not.toBe(formatDateTime(ISO, false));
-    expect(formatDateTime(ISO, true)).toBe(new Date(ISO).toLocaleString());
-    expect(formatDate(ISO, true)).toBe(new Date(ISO).toLocaleDateString());
-    expect(formatTime(ISO, true)).toBe(new Date(ISO).toLocaleTimeString());
+  it("switches to the merchant's local rendering once hydrated", () => {
+    // Auckland is +12, so this instant falls on the NEXT calendar day locally.
+    // That is precisely what the server cannot know — so the pre-hydration
+    // value must stay on the 28th while the hydrated one moves to the 29th.
+    // Asserting the shift rather than restating the implementation: a helper
+    // that simply returned the UTC form in both branches would pass a
+    // `toBe(new Date(ISO).toLocaleString())` check and fail this one.
+    withTimeZone("Pacific/Auckland", () => {
+      // Self-check: if runtime TZ mutation ever stops working, fail loudly
+      // here instead of letting the assertions below go vacuous.
+      expect(new Date(ISO).getDate()).toBe(29);
+
+      expect(formatDate(ISO, false)).toBe("2026-08-28");
+      expect(formatDateTime(ISO, false)).toBe("2026-08-28 16:00 UTC");
+
+      expect(formatDate(ISO, true)).toContain("29");
+      expect(formatDateTime(ISO, true)).toContain("29");
+      expect(formatTime(ISO, true)).not.toBe(formatTime(ISO, false));
+    });
   });
 
   it("accepts Date and epoch inputs", () => {
@@ -81,16 +111,57 @@ describe("timestamp helpers (hydration safety)", () => {
   });
 
   it("returns the fallback for missing or unparseable values", () => {
+    // Every helper against every branch — a bad value must not depend on
+    // whether the client has mounted yet.
     for (const bad of [null, undefined, "", "not-a-date"]) {
-      expect(formatDateTime(bad, false)).toBe("");
-      expect(formatDateTime(bad, true)).toBe("");
-      expect(formatDate(bad, false)).toBe("");
-      expect(formatTime(bad, true)).toBe("");
+      for (const fn of [formatDateTime, formatDate, formatTime]) {
+        expect(fn(bad, false)).toBe("");
+        expect(fn(bad, true)).toBe("");
+        expect(fn(bad, false, "—")).toBe("—");
+        expect(fn(bad, true, "—")).toBe("—");
+      }
     }
-    expect(formatDateTime("not-a-date", true, "—")).toBe("—");
   });
 
   it("never renders 'Invalid Date'", () => {
     expect(formatDateTime("nonsense", true)).not.toContain("Invalid");
+  });
+});
+
+describe("compareStrings (collation binding)", () => {
+  // The bug this exists for: `localeCompare()` with no locale uses the HOST
+  // default, so a Swedish browser and an en-US server order the SAME list
+  // differently — and when that list is server-rendered, the mismatch is
+  // structural (React production error #418), not a text node.
+  it("orders by the locale it is given, not by the host default", () => {
+    const words = ["Zebra", "Äpfel", "Apfel"];
+
+    const german = [...words].sort((a, b) => compareStrings(a, b, "de"));
+    const swedish = [...words].sort((a, b) => compareStrings(a, b, "sv"));
+
+    // German sorts Ä next to A; Swedish sorts it after Z. If the helper
+    // ignored its locale argument these two would be identical.
+    expect(german).toEqual(["Apfel", "Äpfel", "Zebra"]);
+    expect(swedish).toEqual(["Apfel", "Zebra", "Äpfel"]);
+  });
+
+  it("is stable for one locale regardless of the ambient default", () => {
+    // What the server and the client each do: same locale in, same order out.
+    const words = ["Öl", "Ost", "Zug", "Ähre"];
+    const first = [...words].sort((a, b) => compareStrings(a, b, "de"));
+    const second = [...words].sort((a, b) => compareStrings(a, b, "de"));
+    expect(first).toEqual(second);
+  });
+
+  it("falls back to a FIXED locale on a bad tag, never to the host default", () => {
+    // "" would make Intl.Collator throw; falling back to the host default
+    // would put the divergence straight back.
+    expect(() => compareStrings("a", "b", "")).not.toThrow();
+    expect(compareStrings("Äpfel", "Zebra", "")).toBe(compareStrings("Äpfel", "Zebra", "en"));
+  });
+
+  it("caches collators per locale", () => {
+    expect(collatorFor("de")).toBe(collatorFor("de"));
+    expect(collatorFor("de")).not.toBe(collatorFor("sv"));
   });
 });

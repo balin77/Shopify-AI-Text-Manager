@@ -45,6 +45,16 @@ export function formatNumber(
  * showed before. Binding them to the app locale the way `formatNumber` does
  * would be a visible behaviour change and belongs in its own change, not in a
  * hydration fix.
+ *
+ * Two input shapes to keep out (no current caller passes either, both would
+ * reintroduce the divergence these helpers exist to remove):
+ * - A NON-ISO date string ("28.08.2026"): `new Date()` then falls into
+ *   implementation-defined parsing, which the server's V8 and a non-V8
+ *   browser may not agree on. Pass an ISO string or a Date.
+ * - A DATE-ONLY string ("2026-08-28"): parsed as UTC midnight, so in a
+ *   negative-offset zone the hydrated rendering lands on the PREVIOUS day
+ *   while the pre-hydration one does not — the value visibly changes day on
+ *   hydration. Pass a full timestamp.
  */
 type TimestampInput = string | number | Date | null | undefined;
 
@@ -89,4 +99,42 @@ export function formatTime(value: TimestampInput, hydrated: boolean, fallback = 
   const date = toDate(value);
   if (!date) return fallback;
   return hydrated ? date.toLocaleTimeString() : utcTime(date);
+}
+
+/**
+ * `a.localeCompare(b)` with no locale argument uses the HOST default locale —
+ * Node's ICU default on the server, the merchant's browser locale in the
+ * client. Where the result decides the ORDER of server-rendered list children
+ * that is a STRUCTURAL hydration mismatch, which is worse than a differing text
+ * node: React does not patch it, it throws the whole root away and re-renders
+ * (production error #418). A Swedish browser sorts "Ä" after "Z" where an
+ * en-US server sorts it next to "A", so one umlaut in a collection title is
+ * enough.
+ *
+ * Collation is therefore bound to the app locale, which comes from the route
+ * loader and is the same value on both sides — the same rule as formatNumber.
+ * The collators are cached because building one is the expensive part and a
+ * sort comparator calls this O(n log n) times.
+ */
+const collators = new Map<string, Intl.Collator>();
+
+export function collatorFor(locale: string): Intl.Collator {
+  const cached = collators.get(locale);
+  if (cached) return cached;
+  let collator: Intl.Collator;
+  try {
+    collator = new Intl.Collator(locale);
+  } catch {
+    // An unexpected tag (or "") would throw a RangeError. Falling back to a
+    // FIXED locale keeps both sides in agreement, which is the whole point;
+    // the host default would not.
+    collator = new Intl.Collator("en");
+  }
+  collators.set(locale, collator);
+  return collator;
+}
+
+/** Drop-in for `a.localeCompare(b)` in anything that renders. */
+export function compareStrings(a: string, b: string, locale: string): number {
+  return collatorFor(locale).compare(a, b);
 }
