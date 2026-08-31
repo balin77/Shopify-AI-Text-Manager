@@ -38,6 +38,8 @@ import {
 import { DeleteIcon } from "@shopify/polaris-icons";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatNumber, formatDate, formatDateTime } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { useTaskCount } from "../contexts/TaskCountContext";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
@@ -1047,9 +1049,14 @@ const CODE_TEXT_STYLE: CSSProperties = {
   wordBreak: "break-word",
 };
 
-/** Sub-second durations read better as ms — PSI shows "480 ms", not "0,5 s". */
-function formatDuration(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms).toLocaleString()} ms` : formatMs(ms);
+/** Sub-second durations read better as ms — PSI shows "480 ms", not "0,5 s".
+ *
+ * The locale is passed in rather than left to `toLocaleString()`'s default:
+ * the server's default locale is not the browser's, so "1,234" vs "1.234"
+ * would be a hydration mismatch wherever these render server-side (the RUM
+ * table does). Same reasoning as formatNumber in utils/format.ts. */
+function formatDuration(ms: number, locale: string): string {
+  return ms < 1000 ? `${formatNumber(Math.round(ms), locale)} ms` : formatMs(ms, locale);
 }
 
 /** Path + query of a URL, tail-truncated, with the host returned separately. */
@@ -1107,9 +1114,11 @@ function ElementThumb({
 function FindingCellValue({
   cell,
   screenshot,
+  locale,
 }: {
   cell: PageSpeedCell | null;
   screenshot: PageSpeedScreenshot | null;
+  locale: string;
 }) {
   if (!cell) return null;
   switch (cell.type) {
@@ -1137,11 +1146,11 @@ function FindingCellValue({
     case "code":
       return <span style={CODE_TEXT_STYLE}>{cell.text}</span>;
     case "bytes":
-      return <>{formatBytes(cell.value ?? 0)}</>;
+      return <>{formatBytes(cell.value ?? 0, locale)}</>;
     case "ms":
-      return <>{formatDuration(cell.value ?? 0)}</>;
+      return <>{formatDuration(cell.value ?? 0, locale)}</>;
     case "numeric":
-      return <>{(cell.value ?? 0).toLocaleString()}</>;
+      return <>{formatNumber(cell.value ?? 0, locale)}</>;
     default:
       return <span style={{ wordBreak: "break-word" }}>{cell.text}</span>;
   }
@@ -1159,6 +1168,7 @@ function FindingTable({
   screenshot: PageSpeedScreenshot | null;
   truncatedLabel: string;
 }) {
+  const { locale } = useI18n();
   const hiddenRows = Math.max(0, table.rowTotal - table.rows.length);
   const cellStyle = (type: string): CSSProperties => ({
     padding: "6px 8px",
@@ -1194,7 +1204,7 @@ function FindingTable({
                 <tr>
                   {row.cells.map((cell, ci) => (
                     <td key={ci} style={cellStyle(table.columns[ci]?.type ?? "text")}>
-                      <FindingCellValue cell={cell} screenshot={screenshot} />
+                      <FindingCellValue cell={cell} screenshot={screenshot} locale={locale} />
                     </td>
                   ))}
                 </tr>
@@ -1209,7 +1219,7 @@ function FindingTable({
                           color: "var(--p-color-text-secondary, #6d7175)",
                         }}
                       >
-                        <FindingCellValue cell={cell} screenshot={screenshot} />
+                        <FindingCellValue cell={cell} screenshot={screenshot} locale={locale} />
                       </td>
                     ))}
                   </tr>
@@ -1918,12 +1928,12 @@ function QualityFindings({
   );
 }
 
-function formatMs(ms: number): string {
-  return `${(ms / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} s`;
+function formatMs(ms: number, locale: string): string {
+  return `${formatNumber(ms / 1000, locale, { maximumFractionDigits: 1 })} s`;
 }
 
-function formatBytes(bytes: number): string {
-  return `${(bytes / 1024).toLocaleString(undefined, { maximumFractionDigits: 0 })} KB`;
+function formatBytes(bytes: number, locale: string): string {
+  return `${formatNumber(bytes / 1024, locale, { maximumFractionDigits: 0 })} KB`;
 }
 
 function pathOnly(url: string): string {
@@ -1948,8 +1958,10 @@ function cwvTone(value: number | null, goodMax: number, poorMin: number): "succe
 export default function SeoPerformance() {
   const { domain, products, collections, pages, history, rum, runsToday, dailyLimit, activeAudit, altTextAudit } =
     useLoaderData<typeof loader>();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { handleNavigate } = useAppNavigation();
+  // Audit timestamps are the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
   const p = t.seo.performancePage;
 
   const fetcher = useFetcher<ActionResult>();
@@ -2214,10 +2226,13 @@ export default function SeoPerformance() {
   const fieldRows = useMemo(() => {
     const fd = result?.fieldData;
     if (!fd) return [];
+    // `format` is handed on as a (value) => string, so the locale is bound here
+    // rather than threaded through FieldMetricBar.
+    const duration = (v: number) => formatDuration(v, locale);
     return (
       [
-        { key: "lcp", group: "core", label: p.fieldMetricNames.lcp, metric: fd.lcp, format: formatDuration },
-        { key: "inp", group: "core", label: p.fieldMetricNames.inp, metric: fd.inp, format: formatDuration },
+        { key: "lcp", group: "core", label: p.fieldMetricNames.lcp, metric: fd.lcp, format: duration },
+        { key: "inp", group: "core", label: p.fieldMetricNames.inp, metric: fd.inp, format: duration },
         {
           key: "cls",
           group: "core",
@@ -2225,11 +2240,11 @@ export default function SeoPerformance() {
           metric: fd.cls,
           format: (v: number) => (v / 100).toFixed(2),
         },
-        { key: "fcp", group: "other", label: p.fieldMetricNames.fcp, metric: fd.fcp, format: formatDuration },
-        { key: "ttfb", group: "other", label: p.fieldMetricNames.ttfb, metric: fd.ttfb, format: formatDuration },
+        { key: "fcp", group: "other", label: p.fieldMetricNames.fcp, metric: fd.fcp, format: duration },
+        { key: "ttfb", group: "other", label: p.fieldMetricNames.ttfb, metric: fd.ttfb, format: duration },
       ] as const
     ).filter((row) => !!row.metric);
-  }, [result, p.fieldMetricNames]);
+  }, [result, p.fieldMetricNames, locale]);
 
   const coreFieldRows = fieldRows.filter((row) => row.group === "core");
   const otherFieldRows = fieldRows.filter((row) => row.group === "other");
@@ -2558,7 +2573,7 @@ export default function SeoPerformance() {
                 <InlineStack gap="200" blockAlign="center" wrap>
                   <Text as="span" variant="bodySm" tone="subdued">
                     {p.viewingHistoryHint
-                      .replace("{date}", new Date(result.fetchedAt).toLocaleString())
+                      .replace("{date}", formatDateTime(result.fetchedAt, hydrated))
                       .replace("{url}", displayPath(result.url))
                       .replace("{strategy}", strategyLabel(result.strategy))}
                   </Text>
@@ -2620,7 +2635,7 @@ export default function SeoPerformance() {
                   <InlineStack gap="200" blockAlign="center">
                     <Badge>{strategyLabel(result.strategy)}</Badge>
                     <Text as="span" variant="bodySm" tone="subdued">
-                      {new Date(result.fetchedAt).toLocaleString()}
+                      {formatDateTime(result.fetchedAt, hydrated)}
                     </Text>
                   </InlineStack>
                 </InlineStack>
@@ -2712,7 +2727,7 @@ export default function SeoPerformance() {
                           {p.testedLabel
                             .replace("{url}", displayPath(result.url))
                             .replace("{strategy}", strategyLabel(result.strategy))
-                            .replace("{date}", new Date(result.fetchedAt).toLocaleString())}
+                            .replace("{date}", formatDateTime(result.fetchedAt, hydrated))}
                           {/* PROBE (accessibility plan §5.1): scan duration to the
                               right of the timestamp. Absent on runs stored before
                               this probe. Temporary — remove with §5.1. */}
@@ -2845,8 +2860,8 @@ export default function SeoPerformance() {
                     {result.opportunities.map((o) => {
                       const open = openFindings.has(o.id);
                       const savings = [
-                        o.savingsMs != null ? formatDuration(o.savingsMs) : null,
-                        o.savingsBytes != null ? formatBytes(o.savingsBytes) : null,
+                        o.savingsMs != null ? formatDuration(o.savingsMs, locale) : null,
+                        o.savingsBytes != null ? formatBytes(o.savingsBytes, locale) : null,
                       ]
                         .filter(Boolean)
                         .join(" / ");
@@ -3192,7 +3207,7 @@ export default function SeoPerformance() {
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         {row.lcpP75Ms != null ? (
-                          <Badge tone={cwvTone(row.lcpP75Ms, 2500, 4000)}>{formatMs(row.lcpP75Ms)}</Badge>
+                          <Badge tone={cwvTone(row.lcpP75Ms, 2500, 4000)}>{formatMs(row.lcpP75Ms, locale)}</Badge>
                         ) : (
                           <Text as="span" tone="subdued">–</Text>
                         )}
@@ -3206,7 +3221,7 @@ export default function SeoPerformance() {
                       </IndexTable.Cell>
                       <IndexTable.Cell>
                         {row.inpP75Ms != null ? (
-                          <Badge tone={cwvTone(row.inpP75Ms, 200, 500)}>{formatMs(row.inpP75Ms)}</Badge>
+                          <Badge tone={cwvTone(row.inpP75Ms, 200, 500)}>{formatMs(row.inpP75Ms, locale)}</Badge>
                         ) : (
                           <Text as="span" tone="subdued">–</Text>
                         )}
@@ -3225,7 +3240,7 @@ export default function SeoPerformance() {
                           <Text as="span" variant="bodySm" tone="subdued">
                             {p.rum.slowPathSamples.replace("{count}", String(sp.samples))}
                           </Text>
-                          <Badge tone={cwvTone(sp.lcpP75Ms, 2500, 4000)}>{formatMs(sp.lcpP75Ms)}</Badge>
+                          <Badge tone={cwvTone(sp.lcpP75Ms, 2500, 4000)}>{formatMs(sp.lcpP75Ms, locale)}</Badge>
                         </InlineStack>
                       </InlineStack>
                     ))}
@@ -3324,7 +3339,7 @@ export default function SeoPerformance() {
                         </IndexTable.Cell>
                         <IndexTable.Cell>
                           <Text as="span" variant="bodyMd">
-                            {new Date(entry.createdAt).toLocaleDateString(undefined)}
+                            {formatDate(entry.createdAt, hydrated)}
                           </Text>
                         </IndexTable.Cell>
                         <IndexTable.Cell>

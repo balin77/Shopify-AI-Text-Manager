@@ -24,6 +24,8 @@ import { useLoaderData, useFetcher } from "react-router";
 import { Card, BlockStack, InlineStack, Text, Badge, Button, Banner } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime } from "../utils/format";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
 import { getFormString } from "../utils/form-data.utils";
@@ -340,6 +342,8 @@ export default function SeoIndexNow() {
   const data = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const n = t.seo.indexNowPage;
+  // The submission timestamp is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
   const fetcher = useFetcher<ActionResult>();
   const busy = fetcher.state !== "idle";
   const pendingAction = (fetcher.formData?.get("actionType") as string | null) ?? null;
@@ -475,7 +479,7 @@ export default function SeoIndexNow() {
                   </Text>
                   {data.lastSubmittedAt && (
                     <Text as="p" variant="bodySm" tone="subdued">
-                      {n.lastSubmitted}: {new Date(data.lastSubmittedAt).toLocaleString()}
+                      {n.lastSubmitted}: {formatDateTime(data.lastSubmittedAt, hydrated)}
                     </Text>
                   )}
 

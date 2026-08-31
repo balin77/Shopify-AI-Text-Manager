@@ -27,6 +27,8 @@ import { useEffect, useRef, useState } from "react";
 import { Card, BlockStack, InlineStack, InlineGrid, Text, Badge, Button, Banner, DataTable } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { useI18n } from "../contexts/I18nContext";
+import { useHydrated } from "../hooks/useHydrated";
+import { formatDateTime } from "../utils/format";
 import { useAppNavigation } from "../hooks/useAppNavigation";
 import { SeoSectionLayout } from "../components/seo/SeoSectionLayout";
 import { SeoHelpBanner } from "../components/seo/SeoHelpBanner";
@@ -437,6 +439,9 @@ export default function SeoStructuredData() {
   } = useLoaderData<typeof loader>();
   const { t } = useI18n();
   const { handleNavigate } = useAppNavigation();
+  // Both the crawl basis and the audit timestamp are the merchant's local
+  // time — see useHydrated().
+  const hydrated = useHydrated();
   const s = t.seo.structuredDataPage;
   const b = (s as any).batch as Record<string, string>;
   const warningCopy = (s as any).warnings as Record<string, string>;
@@ -657,7 +662,7 @@ export default function SeoStructuredData() {
                 <BlockStack gap="300">
                   <Text as="p" variant="bodySm" tone="subdued">
                     {live.basis
-                      .replace("{time}", new Date(liveJsonLd.crawledAt).toLocaleString())
+                      .replace("{time}", formatDateTime(liveJsonLd.crawledAt, hydrated))
                       .replace("{pages}", String(liveJsonLd.pagesChecked))}
                   </Text>
                   {liveJsonLd.crawlStatus === "capped" && (
@@ -900,7 +905,7 @@ export default function SeoStructuredData() {
 
               <Text as="p" variant="bodySm" tone="subdued">
                 {jsonLdAudit
-                  ? b.lastChecked.replace("{time}", new Date(jsonLdAudit.generatedAt).toLocaleString())
+                  ? b.lastChecked.replace("{time}", formatDateTime(jsonLdAudit.generatedAt, hydrated))
                   : b.neverChecked}
               </Text>
 

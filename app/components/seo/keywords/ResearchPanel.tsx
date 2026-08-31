@@ -15,6 +15,8 @@ import type { FetcherWithComponents } from "react-router";
 import type { Translation } from "../../../i18n/de";
 import type { loader } from "../../../routes/app.seo.keywords";
 import type { Route } from "../../../routes/+types/app.seo.keywords";
+import { useHydrated } from "../../../hooks/useHydrated";
+import { formatDateTime } from "../../../utils/format";
 
 type LoaderData = Route.ComponentProps["loaderData"];
 type KeywordsPageStrings = Translation["seo"]["keywordsPage"];
@@ -61,6 +63,8 @@ export function ResearchPanel({
   groupFetcher,
 }: ResearchPanelProps) {
   const [open, setOpen] = useState(false);
+  // The availability timestamp is the merchant's local time — see useHydrated().
+  const hydrated = useHydrated();
 
   // The target group decides the imported keywords' language, so on a
   // multi-language shop the picker lists every language's groups and names the
@@ -125,7 +129,7 @@ export function ResearchPanel({
                 {researchAvailability.checkedAt
                   ? ` ${(k.researchCheckedAt || "Last checked: {time}").replace(
                       "{time}",
-                      new Date(researchAvailability.checkedAt).toLocaleString(),
+                      formatDateTime(researchAvailability.checkedAt, hydrated),
                     )}`
                   : ""}
               </Banner>

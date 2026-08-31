@@ -45,6 +45,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # One rule: react-hooks/rules-of-hooks. A violation of it shipped to
+      # production (useRouteError() inside a try/catch in app/root.tsx) and
+      # turned React internals into a stream of Sentry errors — typecheck,
+      # build and vitest were all green on it. See eslint.config.mjs.
+      - name: Hook rules
+        run: npm run lint:hooks
+
       # Mirrors the Railway production build (prisma generate + remix vite:build
       # + strip-client-sourcemaps). Catches client-bundle esbuild errors that
       # tsc/vitest miss — e.g. the bad merge that left `sentryActive`/`ENV`

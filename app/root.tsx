@@ -101,54 +101,22 @@ export default function App() {
 }
 
 export function ErrorBoundary() {
-  let error: unknown;
-
-  try {
-    error = useRouteError();
-  } catch (e) {
-    // If useRouteError fails (e.g., called outside router context),
-    // render a generic error page
-    Sentry.captureException(e);
-    return (
-      <Document title="Error">
-        <div style={{
-          fontFamily: 'system-ui, sans-serif',
-          padding: '2rem',
-          maxWidth: '600px',
-          margin: '4rem auto',
-          textAlign: 'center'
-        }}>
-          <h1 style={{ fontSize: '4rem', margin: '0', color: '#e74c3c' }}>
-            Error
-          </h1>
-          <h2 style={{ fontSize: '1.5rem', marginTop: '1rem', color: '#333' }}>
-            App Unavailable
-          </h2>
-          <p style={{ fontSize: '1.1rem', color: '#666', marginTop: '1rem', lineHeight: '1.6' }}>
-            This app is currently unavailable. Please try again later.
-          </p>
-          <p style={{ fontSize: '1rem', color: '#888', marginTop: '1rem' }}>
-            If this problem persists, please contact the app administrator.
-          </p>
-          <a
-            href="/"
-            style={{
-              display: 'inline-block',
-              marginTop: '2rem',
-              padding: '0.75rem 1.5rem',
-              backgroundColor: '#008060',
-              color: 'white',
-              textDecoration: 'none',
-              borderRadius: '4px',
-              fontWeight: '500'
-            }}
-          >
-            Go to Home
-          </a>
-        </div>
-      </Document>
-    );
-  }
+  // useRouteError() MUST be called unconditionally. It used to sit in a
+  // try/catch that reported the caught error to Sentry, and that turned
+  // React internals into a phantom production error:
+  //
+  // When a render throws, React attaches a component stack to it, and to get
+  // real frames it CALLS each component function again (`describeNativeComponentFrame`)
+  // — outside a render, with the context-only dispatcher installed. Every hook
+  // in the probed component therefore throws "Invalid hook call" (minified
+  // error #321) BY DESIGN, and React swallows it. The try/catch caught it
+  // first and shipped it to Sentry as if the app had broken, while the real
+  // error (a hydration mismatch, #418) went unreported. It also violated the
+  // rules of hooks, which is why eslint-plugin-react-hooks flagged this line.
+  //
+  // The catch branch rendered the same generic "App Unavailable" page that
+  // this function already returns at the bottom, so dropping it loses nothing.
+  const error = useRouteError();
 
   // Report real errors only. Expected route responses (404 etc.) are normal
   // navigation, not bugs, and must not consume the Sentry quota — only 5xx
