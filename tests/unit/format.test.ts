@@ -154,10 +154,14 @@ describe("compareStrings (collation binding)", () => {
   });
 
   it("falls back to a FIXED locale on a bad tag, never to the host default", () => {
-    // "" would make Intl.Collator throw; falling back to the host default
-    // would put the divergence straight back.
+    // "" makes Intl.Collator throw. Comparing the fallback's ORDERING against
+    // "en" proves nothing here: this stack's host default already resolves to
+    // "en-US", so such an assertion passes for both the correct fallback and
+    // the broken one. Assert the resolved locale instead — "en" for the fixed
+    // fallback, "en-US" for the host default.
     expect(() => compareStrings("a", "b", "")).not.toThrow();
-    expect(compareStrings("Äpfel", "Zebra", "")).toBe(compareStrings("Äpfel", "Zebra", "en"));
+    expect(collatorFor("").resolvedOptions().locale).toBe("en");
+    expect(new Intl.Collator().resolvedOptions().locale).not.toBe("en");
   });
 
   it("caches collators per locale", () => {

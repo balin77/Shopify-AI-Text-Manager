@@ -273,7 +273,7 @@ export default function SeoDashboard() {
       return compareStrings(a.name || a.locale, b.name || b.locale, appLocale);
     });
     return list;
-  }, [shopLocales]);
+  }, [shopLocales, appLocale]);
 
   const switchLocale = (locale: string) => {
     // Empty string / primary code => primary tab, drop the URL param entirely.

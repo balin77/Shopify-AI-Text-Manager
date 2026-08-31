@@ -14,17 +14,25 @@ import { useSyncExternalStore } from "react";
  * HTML against the FIRST client render, and `window` already exists by then.
  * The check would flip too early and mismatch anyway.
  *
- * Why `useSyncExternalStore` and not `useState(false)` + an effect: React uses
- * `getServerSnapshot` on the server AND throughout hydration, then
- * `getSnapshot` for anything mounted later. So this is `false` exactly for the
- * render React compares — and already `true` on the first render of a
- * component mounted by a client-side navigation, which is most of them. The
- * effect-based version returns `false` there too and makes every timestamp
- * paint its UTC form for one frame before flipping.
+ * Why `useSyncExternalStore` and not `useState(false)` + an effect: React reads
+ * `getServerSnapshot` on the server and on the MOUNT render while hydrating,
+ * then `getSnapshot` for anything mounted later. So this is `false` exactly for
+ * the render React compares against the server HTML — and already `true` on
+ * the first render of a component mounted by a client-side navigation, which
+ * is most of them. The effect-based version returns `false` there too and
+ * makes every timestamp paint its UTC form for one frame before flipping.
+ *
+ * The narrow spot, since the guarantee is about the MOUNT render: React 18's
+ * `updateSyncExternalStore` calls `getSnapshot` unconditionally, with no
+ * hydration check. A component that does a render-phase `setState` (the
+ * re-render dispatcher) while hydration is still in flight would therefore see
+ * `true` on that re-render and mismatch anyway. No call site does that today —
+ * but do not add one next to a `useHydrated`, and do not read the paragraph
+ * above as "true throughout hydration", because it is not.
  *
  * The store never changes, so `subscribe` returns a no-op unsubscribe. All
  * three arguments are module constants: React re-subscribes when `subscribe`
- * changes identity, which a arrow re-created per render would do every time.
+ * changes identity, which an arrow re-created per render would do every time.
  *
  * Callers pair it with the `formatDateTime`/`formatDate`/`formatTime` helpers
  * in [format.ts](../utils/format.ts), which take the flag and fall back to a

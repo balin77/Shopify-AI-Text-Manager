@@ -115,8 +115,23 @@ export function formatTime(value: TimestampInput, hydrated: boolean, fallback = 
  * loader and is the same value on both sides — the same rule as formatNumber.
  * The collators are cached because building one is the expensive part and a
  * sort comparator calls this O(n log n) times.
+ *
+ * What this does NOT remove: server and browser can ship different ICU/CLDR
+ * versions, so identical locales can still collate differently in principle.
+ * That residual is small and stable for Latin-script content in en/de/es,
+ * whereas the locale mismatch this replaces was systematic — a Swedish or
+ * Turkish browser against an en-US server, every request. Two call sites carry
+ * a LARGER residual than the collation itself because they sort by
+ * `Intl.DisplayNames` output (getLocalizedLanguageName): display-name data
+ * moves between CLDR releases far more than collation data does. Pinning that
+ * would mean owning the language names in the app's own i18n — a separate
+ * change, not a hydration fix.
  */
 const collators = new Map<string, Intl.Collator>();
+/** Callers pass the app locale, so 3 in practice. The cap only stops an
+ *  unforeseen caller from growing this without bound in a long-lived server
+ *  process — a collator is pure, so dropping the cache costs nothing but time. */
+const MAX_CACHED_COLLATORS = 16;
 
 export function collatorFor(locale: string): Intl.Collator {
   const cached = collators.get(locale);
@@ -127,9 +142,11 @@ export function collatorFor(locale: string): Intl.Collator {
   } catch {
     // An unexpected tag (or "") would throw a RangeError. Falling back to a
     // FIXED locale keeps both sides in agreement, which is the whole point;
-    // the host default would not.
+    // the host default would not — and on this stack the host default happens
+    // to BE en-US, so a test comparing the two is worthless (see format.test).
     collator = new Intl.Collator("en");
   }
+  if (collators.size >= MAX_CACHED_COLLATORS) collators.clear();
   collators.set(locale, collator);
   return collator;
 }
