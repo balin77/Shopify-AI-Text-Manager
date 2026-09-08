@@ -56,6 +56,52 @@ function buildAiSettingsFlags(settings: AiSettingsRow, decryptApiKey: (v?: strin
 }
 
 
+/**
+ * The degraded payload both failure paths return: enough for the shell to
+ * render rather than showing the merchant a blank page. Extracted so the two
+ * catches cannot drift apart — `loaderError: true` is what the client reads.
+ */
+function loaderFallback(request: Request) {
+  return {
+    appLanguage: resolveMerchantLocale(request),
+    subscriptionPlan: "free" as Plan,
+    aiSettings: null,
+    seoTitleSuffix: "",
+    seoLimits: null as Record<string, number> | null,
+    // 0 = unknown → the nav's language gate stays off (see the success path).
+    localeCount: 0,
+    newFeaturesEnabled: !isProductionLocked(),
+    initialSync: null,
+    extensionSetupHint: false,
+    conditionalContent: { themeAppEmbeds: true },
+    loaderError: true,
+  };
+}
+
+/**
+ * `String(aResponse)` is "[object Response]", and an Error's message/stack are
+ * non-enumerable so winston's `JSON.stringify(meta)` prints `{}`. Seven days of
+ * production logs carried "[object Response]" and nothing else — an error
+ * reported at error level with its content removed.
+ */
+function describeLoaderError(error: unknown): Record<string, unknown> {
+  // Guarded like its twin in entry.server.tsx: `String(x)` raises for a
+  // null-prototype object or one with a throwing `toString`, and this runs
+  // inside a catch — a throw here would replace the degraded shell the catch
+  // exists to return with a 500.
+  try {
+    if (error instanceof Response) {
+      return { error: `Response ${error.status} ${error.statusText}`.trim() };
+    }
+    if (error instanceof Error) {
+      return { error: error.message || error.name, stack: error.stack };
+    }
+    return { error: String(error) };
+  } catch {
+    return { error: "<unserialisable error>" };
+  }
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
@@ -65,9 +111,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     logger.warn("[APP.TSX LOADER] Browser reload detected without shop params", { context: "App" });
   }
 
+  // `authenticate.admin` drives the App Bridge auth handshake by THROWING a
+  // `Response`, and the status does not narrow which throws are control flow:
+  // besides the 3xx OAuth redirect it throws 401/410 carrying
+  // `X-Shopify-Retry-Invalid-Session-Request` / the reauthorize-URL header,
+  // which is how App Bridge is told to fetch a fresh session token and retry.
+  // Those MUST reach the framework with their headers intact — the same rule
+  // handlePolledAuthError() spells out and app.settings.tsx / auth.$.tsx follow.
+  //
+  // It therefore sits OUTSIDE the try. The catch below only ever narrowed 3xx,
+  // so a 410 handshake was swallowed into the `loaderError` fallback and served
+  // as a 200 rendered shell: production logged `GET /app?... 200` for the very
+  // boot that answered 410 on other paths, the difference being only whether a
+  // sibling loader happened to re-throw its own copy first. Keeping the call
+  // out here makes that structurally impossible instead of relying on the catch
+  // to classify a Response correctly.
+  //
+  // A NON-Response failure here is a different matter and keeps the old
+  // treatment: `authenticate.admin` loads the session out of Prisma before it
+  // reaches any of its Response-throwing branches, so a DB hiccup used to
+  // render the degraded shell and would otherwise now 500 the whole app — the
+  // exact "prevent blank page" case the fallback below was written for.
+  let admin: Awaited<ReturnType<typeof authenticate.admin>>["admin"];
+  let session: Awaited<ReturnType<typeof authenticate.admin>>["session"];
   try {
-    const { admin, session } = await authenticate.admin(request);
+    ({ admin, session } = await authenticate.admin(request));
+  } catch (error) {
+    if (error instanceof Response) throw error;
+    logger.error("[APP.TSX LOADER] Authentication failed", {
+      context: "App",
+      ...describeLoaderError(error),
+    });
+    return json(loaderFallback(request));
+  }
 
+  try {
     // Sync subscription BEFORE reading plan so the DB value is always up-to-date
     // when returning from Shopify billing (app.tsx and child loaders run in parallel,
     // causing a race if we let the child route do the sync instead)
@@ -208,35 +286,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shopifyApiVersion: resolveApiVersionString(),
     });
   } catch (error) {
-    // Check if this is a redirect response (e.g., to /auth/login)
-    // Redirects should be re-thrown, not caught as errors
+    // The auth handshake can no longer land here (see the hoist above), so a
+    // `Response` at this point comes from a DOWNSTREAM Admin API call — in
+    // practice the 401 `getCachedShopLocales` re-throws when the stored offline
+    // token has been revoked. That one is deliberately NOT re-thrown: a raw 401
+    // out of the root route renders the error boundary inside the Shopify
+    // iframe, whose OAuth redirect the frame policy blocks, and the app boot
+    // loops (the same reasoning loader-factory.server.ts records for its own
+    // 401 branch). The fallback payload below keeps the shell renderable and
+    // the next navigation re-authenticates. A 3xx is still re-thrown, since a
+    // redirect cannot be expressed as fallback data.
     if (error instanceof Response) {
-      const status = error.status;
-
-      // Redirects are normal auth flow, not errors
-      if (status >= 300 && status < 400) {
-        throw error; // Re-throw the redirect to let Remix handle it
+      if (error.status >= 300 && error.status < 400) {
+        throw error;
       }
     }
 
-    logger.error("[APP.TSX LOADER] Error", { context: "App", error: error instanceof Error ? error.message : String(error) });
+    logger.error("[APP.TSX LOADER] Error", { context: "App", ...describeLoaderError(error) });
 
     // Return default values instead of throwing to prevent blank page
     // This can happen during plan changes when auth session is temporarily invalid
-    return json({
-      appLanguage: resolveMerchantLocale(request),
-      subscriptionPlan: "free" as Plan,
-      aiSettings: null,
-      seoTitleSuffix: "",
-      seoLimits: null as Record<string, number> | null,
-      // 0 = unknown → the nav's language gate stays off (see the success path).
-      localeCount: 0,
-      newFeaturesEnabled: !isProductionLocked(),
-      initialSync: null,
-      extensionSetupHint: false,
-      conditionalContent: { themeAppEmbeds: true },
-      loaderError: true,
-    });
+    return json(loaderFallback(request));
   }
 };
 
@@ -609,4 +679,11 @@ export function ErrorBoundary() {
   return boundary.error(error);
 }
 
+// LOAD-BEARING, not boilerplate. react-router forwards a thrown Response's
+// headers as `errorHeaders` ONLY to a route that exports `headers`; without
+// this it propagates `Set-Cookie` and nothing else. The auth handshake the
+// loader above deliberately re-throws is carried by
+// `X-Shopify-Retry-Invalid-Session-Request` / the reauthorize-URL header, so
+// deleting this export would silently drop exactly what that re-throw exists
+// to deliver — App Bridge would never be told to fetch a fresh session token.
 export const headers = boundary.headers;

@@ -625,6 +625,89 @@ What this does NOT cover: server and browser can ship different ICU/CLDR version
 
 **Branch state (2026-08-31):** the whole fix — `app/hooks/useHydrated.ts`, the `format.ts` helpers, the ~18 timestamp call sites, the collation binding, the `app.bulk.tsx` initial state, the `root.tsx` boundary and the `lint:hooks` CI gate — is on **`develop` and on `master` as the SAME commits** (branch `claude/react-hook-error-sentry-k3mnqk`, merged into both). `master` carries no hotfix that `develop` lacks, so `develop` → `master` can be merged without checking whether it would regress this.
 
+## Server error logging — a 404 from a scanner is traffic, not a fault
+
+A public app's logs are mostly other people's port scans. Before this was
+handled, seven days of production carried hundreds of `Error: No route matches
+URL` with a seven-frame react-router stack (WordPress probes: `/blog/wp-json/…`,
+`POST /login`), 62 lines reading `{"error":{}}`, and 22 reading
+`"[object Response]"` — i.e. errors reported at error level with their content
+removed, burying the one real bug among them.
+
+Four rules, each of which was a live defect:
+
+- **A `Response` thrown by `authenticate.admin` is CONTROL FLOW at every status,
+  and the root route must not classify it.** Shopify's adapter throws a 302 for
+  OAuth, a **200** carrying the App Bridge bounce page (`renderAppBridge`, when
+  `shop`/`host` are missing), a **410** for a bot User-Agent, and 401/410
+  carrying `X-Shopify-Retry-Invalid-Session-Request` — the header that tells App
+  Bridge to fetch a fresh session token and retry. [app.tsx](app/routes/app.tsx)'s
+  loader re-threw only 3xx and swallowed the rest into its `loaderError`
+  fallback, so the handshake was served as a 200 rendered shell: production
+  logged `GET /app?… 200` for the very boot that answered 410 on another path,
+  the difference being only whether a sibling loader happened to re-throw its own
+  copy first. `authenticate.admin` therefore sits OUTSIDE the try, which makes
+  the mistake structurally impossible rather than a classification the catch has
+  to get right. A NON-Response failure there still degrades (it loads the session
+  from Prisma before any throwing branch, and a DB hiccup must not 500 the app).
+  Everything the second catch sees is downstream, where a raw 401 is deliberately
+  NOT re-thrown — the iframe boot loop [loader-factory.server.ts](app/utils/loader-factory.server.ts)
+  documents. `export const headers = boundary.headers` at the bottom of that
+  route is LOAD-BEARING for this: react-router forwards a thrown Response's
+  headers only to a route that exports `headers`, so deleting it silently drops
+  the retry header the re-throw exists to deliver.
+- **`handleError` is exported from [entry.server.tsx](app/entry.server.tsx), or
+  the framework prints a stack per scan.** `ServerEntryModule.handleError`
+  replaces react-router's default `console.error(error)`. A 4xx `ErrorResponse`
+  is one warn line, no stack, never Sentry — but only a plain 404 is silent about
+  its cause: a 405 ("route does not have an action") and a 400 ("serverAction()
+  on a route without one") are bugs in THIS app and the route id is the whole
+  diagnosis, so they carry their message through.
+- **Never log a caught value raw.** winston's console transport ends in
+  `JSON.stringify(meta)`, and an `Error`'s `message`/`stack` are non-enumerable —
+  `logger.error(msg, { error })` prints `{"error":{}}`, and `String(aResponse)`
+  is `"[object Response]"`. `describeError` flattens both, and it is itself
+  guarded: react-router calls the error hooks with no try of their own, so a
+  throw inside the logger (a BigInt or circular value in `JSON.stringify`, a
+  null-prototype object in `String`) turns a handled 500 into an unhandled
+  rejection.
+- **One report per error per request.** React calls `onError` for every error and
+  then `onShellError` for the one that sank the shell; react-router reports a
+  loader throw through `handleError` BEFORE rendering, `boundary.error` re-throws
+  anything that is not an `ErrorResponse` so the same object comes back through
+  React, and a failed shell is re-rendered once more — five passes over one
+  error, i.e. up to four Sentry events for one broken page. A
+  `WeakMap<error, WeakSet<Request>>` mark makes the first reporter the owner;
+  keyed by request as well as error, so a shared module-scope error is not
+  suppressed for the process's lifetime.
+
+Two neighbouring facts, both measured rather than assumed:
+
+- **A client hang-up is not an error.** React registers its own `'close'` handler
+  on the destination inside `pipe()` and aborts with `The destination stream
+  closed early.` (byte-identical in react-dom 18.3.1's minified build). That —
+  not the abort timer — is what produced the `Post-shell render error {}` pairs.
+  It is logged at warn with no Sentry. `The render was aborted by the server
+  without a reason.` is deliberately NOT in that set: that one is our own 5s
+  deadline firing and is worth reporting. The `ABORT_DELAY` timer is now cleared
+  on the body's `'close'`; left dangling it kept a timer and a closure alive for
+  five seconds past every request.
+- **`react-router/dist/development` in a production stack trace is NOT a
+  misconfiguration.** Verified against the published 7.18.2 tarball: the
+  `exports` map for `"."` resolves every condition — `node`, `module`, `import`,
+  `default` — to `./dist/development/…`, and never to the `dist/production/`
+  directory it also ships. There is no flag or env var that changes it.
+  `NODE_ENV=production` is set on the Railway service. Do not "fix" this.
+
+**Branch state (2026-09-08):** the whole fix — the `app.tsx` loader hoist and its
+`headers` comment, and all of `entry.server.tsx` (`handleError`, `describeError`,
+the report-once mark, the hang-up classification, the abort timer) — is on
+**`develop` and on `master` as the SAME commits** (branch
+`claude/production-log-noise-hotfix`, merged into both), together with this
+section. `master` carries no hotfix that `develop` lacks, so `develop` →
+`master` can be merged without checking whether it would regress this — the same
+situation the 2026-08-31 hydration note above describes, and for the same reason.
+
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 
 A shop with only its primary locale must never be offered translation UI it cannot use. These rules are not optional polish; apply them to **every new button, bar or section** that touches locales. Reference implementation: [LocaleAvailabilityContext.tsx](app/contexts/LocaleAvailabilityContext.tsx) + [DisabledActionTooltip.tsx](app/components/DisabledActionTooltip.tsx).
