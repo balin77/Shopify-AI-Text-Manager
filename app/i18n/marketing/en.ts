@@ -230,6 +230,11 @@ export const en = {
     dismiss: "Dismiss",
   },
 
+  error: {
+    title: "Something went wrong",
+    body: "This page could not be shown. Try again in a moment.",
+  },
+
   notFound: {
     title: "Page not found",
     body: "That address does not exist on this site.",

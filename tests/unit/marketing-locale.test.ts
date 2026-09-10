@@ -6,27 +6,38 @@ import {
   isMarketingPath,
   localizedPath,
   preferredLocaleFromHeader,
-  resolveMarketingLocale,
+  classifyMarketingLocaleParam,
   stripMarketingLocalePrefix,
 } from "../../app/services/marketing-locale.shared";
 
-describe("resolveMarketingLocale", () => {
+describe("classifyMarketingLocaleParam", () => {
   it("treats a missing segment as the default locale", () => {
-    expect(resolveMarketingLocale(undefined)).toBe(MARKETING_DEFAULT_LOCALE);
+    expect(classifyMarketingLocaleParam(undefined)).toEqual({
+      kind: "locale",
+      locale: MARKETING_DEFAULT_LOCALE,
+    });
   });
 
-  it("accepts a known locale", () => {
-    expect(resolveMarketingLocale("de")).toBe("de");
-    expect(resolveMarketingLocale("es")).toBe("es");
+  it("accepts a prefixed locale", () => {
+    expect(classifyMarketingLocaleParam("de")).toEqual({ kind: "locale", locale: "de" });
+    expect(classifyMarketingLocaleParam("es")).toEqual({ kind: "locale", locale: "es" });
+  });
+
+  it("sends the DEFAULT locale spelled out to a redirect, not to a 200", () => {
+    // `/en/features` is the same page as `/features`. Serving it would be a
+    // duplicate — and `isMarketingPath` reads the prefix rule, so it answers
+    // false for `/en/...`, which would put App Bridge on a public page.
+    expect(classifyMarketingLocaleParam(MARKETING_DEFAULT_LOCALE)).toEqual({ kind: "default" });
+    expect(isMarketingPath(`/${MARKETING_DEFAULT_LOCALE}/features`)).toBe(false);
   });
 
   it("REFUSES an unknown segment", () => {
     // The `($lang)` route segment matches any single path segment, so `/foobar`
-    // reaches the index route. Answering `null` here is what turns that into a
+    // reaches the index route. Answering "unknown" is what turns that into a
     // 404 instead of the landing page served at an unbounded set of URLs.
-    expect(resolveMarketingLocale("foobar")).toBeNull();
-    expect(resolveMarketingLocale("EN")).toBeNull();
-    expect(resolveMarketingLocale("")).toBeNull();
+    expect(classifyMarketingLocaleParam("foobar")).toEqual({ kind: "unknown" });
+    expect(classifyMarketingLocaleParam("EN")).toEqual({ kind: "unknown" });
+    expect(classifyMarketingLocaleParam("")).toEqual({ kind: "unknown" });
   });
 });
 
@@ -111,5 +122,38 @@ describe("isMarketingLocale", () => {
     expect(isMarketingLocale("en")).toBe(true);
     expect(isMarketingLocale("fr")).toBe(false);
     expect(isMarketingLocale(undefined)).toBe(false);
+  });
+});
+
+describe("requireMarketingLocale", () => {
+  it("redirects the default locale's spelled-out URL to the bare one, keeping the query", async () => {
+    const { requireMarketingLocale } = await import("../../app/utils/marketing-route.server");
+    let thrown: unknown;
+    try {
+      requireMarketingLocale(MARKETING_DEFAULT_LOCALE, "/features", "?ref=x");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Response);
+    const response = thrown as Response;
+    expect(response.status).toBe(301);
+    expect(response.headers.get("Location")).toBe("/features?ref=x");
+  });
+
+  it("404s an unknown segment", async () => {
+    const { requireMarketingLocale } = await import("../../app/utils/marketing-route.server");
+    let thrown: unknown;
+    try {
+      requireMarketingLocale("foobar", "/");
+    } catch (error) {
+      thrown = error;
+    }
+    expect((thrown as Response).status).toBe(404);
+  });
+
+  it("hands back a prefixed locale unchanged", async () => {
+    const { requireMarketingLocale } = await import("../../app/utils/marketing-route.server");
+    expect(requireMarketingLocale("de", "/videos")).toBe("de");
+    expect(requireMarketingLocale(undefined, "/videos")).toBe(MARKETING_DEFAULT_LOCALE);
   });
 });

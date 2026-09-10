@@ -10,10 +10,8 @@ import { Link, redirect, useLoaderData } from "react-router";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import {
-  localizedPath,
-  resolveMarketingLocale,
-} from "../services/marketing-locale.shared";
+import { localizedPath } from "../services/marketing-locale.shared";
+import { requireMarketingLocale } from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
 /**
@@ -32,12 +30,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     throw redirect(`${MARKETING_SITE.appPath}${url.search}`);
   }
 
-  const locale = resolveMarketingLocale(params.lang);
-  if (!locale) {
-    // The `($lang)` segment matches ANY single segment, so `/foobar` lands
-    // here. Refusing it keeps the site from answering 200 at unbounded URLs.
-    throw new Response("Not Found", { status: 404 });
-  }
+  const locale = requireMarketingLocale(params.lang, "/", url.search);
 
   return { locale, origin: url.origin };
 };

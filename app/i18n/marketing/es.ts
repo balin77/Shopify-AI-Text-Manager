@@ -222,6 +222,11 @@ export const es: MarketingTranslation = {
     dismiss: "Cerrar",
   },
 
+  error: {
+    title: "Algo ha salido mal",
+    body: "Esta página no se ha podido mostrar. Inténtelo de nuevo en un momento.",
+  },
+
   notFound: {
     title: "Página no encontrada",
     body: "Esa dirección no existe en este sitio.",

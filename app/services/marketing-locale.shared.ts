@@ -34,17 +34,31 @@ export function isMarketingLocale(value: string | undefined): value is Marketing
 }
 
 /**
- * Resolve the `($lang)` route param.
+ * What a `($lang)` route param means.
  *
- * Returns `null` for a segment that is not a locale, and the caller MUST turn
- * that into a 404. The optional segment matches ANY single path segment, so
- * `/foobar` reaches the index route with `lang: "foobar"` — without the refusal
- * every typo on the domain would render the landing page under its own URL and
- * hand search engines an unbounded set of duplicates.
+ * Three answers, and the middle one is the one that is easy to miss:
+ *
+ *   "locale"   a prefixed locale this site serves under that prefix
+ *   "default"  the DEFAULT locale spelled out — `/en/features`. It is a real
+ *              page under another URL (`/features`), so it is a REDIRECT, not
+ *              a 404 and certainly not a second 200: `isMarketingPath` reads
+ *              the prefix rule and answers false for it, which would put App
+ *              Bridge and the shopify-api-key meta on a public page, and the
+ *              language switcher would build `/de/en/features`.
+ *   "unknown"  anything else — a 404. The optional segment matches ANY single
+ *              path segment, so `/foobar` reaches the index route; without the
+ *              refusal every typo on the domain would render the landing page
+ *              under its own URL.
  */
-export function resolveMarketingLocale(param: string | undefined): MarketingLocale | null {
-  if (param === undefined) return MARKETING_DEFAULT_LOCALE;
-  return isMarketingLocale(param) ? param : null;
+export type MarketingLocaleVerdict =
+  | { kind: "locale"; locale: MarketingLocale }
+  | { kind: "default" }
+  | { kind: "unknown" };
+
+export function classifyMarketingLocaleParam(param: string | undefined): MarketingLocaleVerdict {
+  if (param === undefined) return { kind: "locale", locale: MARKETING_DEFAULT_LOCALE };
+  if (param === MARKETING_DEFAULT_LOCALE) return { kind: "default" };
+  return isMarketingLocale(param) ? { kind: "locale", locale: param } : { kind: "unknown" };
 }
 
 /** `/features` in the default locale, `/de/features` in every other. */

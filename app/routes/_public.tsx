@@ -9,7 +9,7 @@
  * navigation — the same reason `/admin` has always been excluded from it.
  */
 
-import { Link, Outlet, useLocation } from "react-router";
+import { Link, Outlet, isRouteErrorResponse, useLocation, useRouteError } from "react-router";
 import "../styles/marketing.css";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
@@ -20,7 +20,15 @@ import {
   stripMarketingLocalePrefix,
 } from "../services/marketing-locale.shared";
 
-export default function PublicLayout() {
+/**
+ * Header, footer and the marketing theme around whatever the route renders.
+ *
+ * Shared with the ErrorBoundary below, and that sharing is the point: a route
+ * boundary REPLACES the element of the route it is declared on, so a boundary
+ * that rendered only a message would drop the header and the footer and hand
+ * a lost visitor a page with no way back.
+ */
+function PublicChrome({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   // Derived from the URL rather than from a loader: the layout is pathless, so
   // it never matches the `($lang)` segment itself, and the pathname is the one
@@ -74,9 +82,7 @@ export default function PublicLayout() {
         </div>
       </header>
 
-      <main className="mk-main">
-        <Outlet />
-      </main>
+      <main className="mk-main">{children}</main>
 
       <footer className="mk-footer">
         <div className="mk-shell">
@@ -116,5 +122,44 @@ export default function PublicLayout() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function PublicLayout() {
+  return (
+    <PublicChrome>
+      <Outlet />
+    </PublicChrome>
+  );
+}
+
+/**
+ * Every public error lands here: the 404 the `($lang)` gate throws for an
+ * unknown segment, and anything a child loader fails on. Without it they
+ * rendered root.tsx's admin-styled error page — a Polaris-green "App
+ * Unavailable" screen with no way back to the website.
+ */
+export function ErrorBoundary() {
+  // Unconditional, and NOT inside a try/catch — see the note on root.tsx's
+  // boundary: React re-invokes component functions to build a stack, and a
+  // hook caught there is reported as an app failure that never happened.
+  const error = useRouteError();
+  const location = useLocation();
+  const { locale } = stripMarketingLocalePrefix(location.pathname);
+  const t = getMarketingTranslation(locale);
+
+  const isNotFound = isRouteErrorResponse(error) && error.status === 404;
+  const copy = isNotFound ? t.notFound : t.error;
+
+  return (
+    <PublicChrome>
+      <section className="mk-shell mk-empty">
+        <h1>{copy.title}</h1>
+        <p>{copy.body}</p>
+        <Link className="mk-btn mk-btn--primary" to={localizedPath(locale, "/")}>
+          {t.notFound.action}
+        </Link>
+      </section>
+    </PublicChrome>
   );
 }

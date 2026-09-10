@@ -37,7 +37,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Use the SHARED sentryEnabled() (review H2 — no inline duplication left;
   // single source of truth in sentry-scrub.cjs). In dev/staging window.ENV
   // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
-  const sentryActive = sentryEnabled();
+  // The public website reports nothing. This PR's videos deliberately load no
+  // third party until the visitor presses play, and shipping a Sentry DSN to
+  // the same page would contradict that for every visitor who never presses
+  // anything. Errors there are still reported SERVER-side by entry.server.tsx;
+  // it is only the browser SDK that stays out. Flip the second condition to
+  // re-enable it for the public pages.
+  const sentryActive = sentryEnabled() && !isMarketingPath(pathname);
   // Review H4: emit the Sentry block ONLY when active. When inactive, ENV is
   // empty so not even the environment name / commit SHA is exposed to the
   // browser, and window.ENV is omitted entirely (see Document).

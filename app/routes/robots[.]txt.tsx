@@ -13,11 +13,19 @@ import type { LoaderFunctionArgs } from "react-router";
 
 const DISALLOWED = ["/app", "/admin", "/api", "/auth", "/webhooks", "/proxy"];
 
+/**
+ * `Disallow` is a PREFIX match, so `/app` also covers `/app-icon.png` — the
+ * logo in the site header and the favicon. An `Allow` line wins over a
+ * `Disallow` by longest match, which is what puts the one public file back.
+ */
+const ALLOWED = ["/app-icon.png"];
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { origin } = new URL(request.url);
 
   const body = [
     "User-agent: *",
+    ...ALLOWED.map((path) => `Allow: ${path}`),
     ...DISALLOWED.map((path) => `Disallow: ${path}`),
     "",
     `Sitemap: ${origin}/sitemap.xml`,

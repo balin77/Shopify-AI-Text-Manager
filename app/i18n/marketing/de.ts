@@ -222,6 +222,11 @@ export const de: MarketingTranslation = {
     dismiss: "Schließen",
   },
 
+  error: {
+    title: "Da ist etwas schiefgelaufen",
+    body: "Diese Seite konnte nicht angezeigt werden. Versuchen Sie es gleich noch einmal.",
+  },
+
   notFound: {
     title: "Seite nicht gefunden",
     body: "Diese Adresse gibt es auf dieser Seite nicht.",

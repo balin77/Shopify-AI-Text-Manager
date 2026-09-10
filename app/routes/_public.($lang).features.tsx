@@ -3,13 +3,13 @@ import { useLoaderData } from "react-router";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { buildMarketingMeta } from "../utils/marketing-meta";
-import { resolveMarketingLocale } from "../services/marketing-locale.shared";
+import { requireMarketingLocale } from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const locale = resolveMarketingLocale(params.lang);
-  if (!locale) throw new Response("Not Found", { status: 404 });
-  return { locale, origin: new URL(request.url).origin };
+  const url = new URL(request.url);
+  const locale = requireMarketingLocale(params.lang, "/features", url.search);
+  return { locale, origin: url.origin };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
