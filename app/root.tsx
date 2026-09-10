@@ -1,21 +1,37 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRouteError, isRouteErrorResponse } from "react-router";
-import "@shopify/polaris/build/esm/styles.css";
-import type { LinksFunction, LoaderFunctionArgs } from "react-router";
+// Polaris' stylesheet is deliberately NOT imported here. It is admin chrome,
+// and app/routes/app.tsx — the layout every embedded page hangs off — already
+// imports it. Importing it in the ROOT route puts a ~400 KB stylesheet in front
+// of every public page (the website, /privacy, /terms, /admin), none of which
+// renders a single Polaris component.
+import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
 import { data as json } from "react-router";
 import { Sentry } from "~/utils/sentry.client";
 import { sentryEnabled } from "~/utils/sentry-scrub.cjs";
+import {
+  documentLanguageForPath,
+  isMarketingPath,
+} from "~/services/marketing-locale.shared";
 
 export const links: LinksFunction = () => [
   { rel: "icon", href: "/app-icon.png", type: "image/png" },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  // The standalone /admin tool is NOT embedded in the Shopify Admin iframe.
-  // Loading App Bridge there makes it hijack navigation (auth redirect),
-  // which silently breaks form submits. Omit the api key for /admin so the
-  // shopify-api-key meta + App Bridge script are not rendered.
-  const isEmbedded = !new URL(request.url).pathname.startsWith("/admin");
+  // Neither the standalone /admin tool nor the public website is embedded in
+  // the Shopify Admin iframe. Loading App Bridge there makes it hijack
+  // navigation (auth redirect), which silently breaks form submits. Omit the
+  // api key for both so the shopify-api-key meta + App Bridge script are not
+  // rendered.
+  const pathname = new URL(request.url).pathname;
+  const isEmbedded = !pathname.startsWith("/admin") && !isMarketingPath(pathname);
   const apiKey = isEmbedded ? process.env.SHOPIFY_API_KEY || "" : "";
+
+  // The public pages are served in three languages under their own URL
+  // prefixes, and <html lang> is what a search engine and a screen reader read
+  // to know which. Everything else keeps "en" — that is what it rendered as
+  // before this existed.
+  const documentLang = isMarketingPath(pathname) ? documentLanguageForPath(pathname) : "en";
 
   // Hard gate: the Sentry DSN reaches the browser ONLY in real production.
   // Use the SHARED sentryEnabled() (review H2 — no inline duplication left;
@@ -40,22 +56,33 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     apiKey,
     ENV,
+    documentLang,
   });
 };
 
+// The document's fallback title. It used to be a hardcoded <title> inside
+// Document, which sat BEFORE <Meta/> and therefore beat any title a route
+// exported — the first <title> in a document is the one browsers and crawlers
+// use. As a root `meta` export it is what react-router shows for a route with
+// no meta of its own, and a route that HAS one replaces it.
+export const meta: MetaFunction = () => [{ title: "App" }];
+
 function Document({
   children,
-  title = "App",
+  title,
   apiKey,
   env,
+  lang = "en",
 }: {
   children: React.ReactNode;
+  /** Only the error pages set this; every other title comes from `meta`. */
   title?: string;
   apiKey?: string;
   env?: Record<string, string | undefined>;
+  lang?: string;
 }) {
   return (
-    <html lang="en">
+    <html lang={lang}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -70,7 +97,7 @@ function Document({
         {apiKey ? (
           <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js" />
         ) : null}
-        <title>{title}</title>
+        {title ? <title>{title}</title> : null}
         <Meta />
         <Links />
       </head>
@@ -91,10 +118,10 @@ function Document({
 }
 
 export default function App() {
-  const { apiKey, ENV } = useLoaderData<typeof loader>();
+  const { apiKey, ENV, documentLang } = useLoaderData<typeof loader>();
 
   return (
-    <Document apiKey={apiKey} env={ENV}>
+    <Document apiKey={apiKey} env={ENV} lang={documentLang}>
       <Outlet />
     </Document>
   );

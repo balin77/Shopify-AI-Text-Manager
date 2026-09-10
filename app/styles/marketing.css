@@ -1,0 +1,634 @@
+/*
+ * The PUBLIC website (`/`, `/features`, `/videos`).
+ *
+ * Self-contained on purpose: these routes render outside the /app tree, do not
+ * load Polaris, and must stay readable if the admin's design system ever moves.
+ * Every number lives in the :root block below — the same single-source rule the
+ * app's own responsive.css follows.
+ */
+
+.mk {
+  --mk-max-width: 1120px;
+  --mk-prose-width: 68ch;
+  --mk-gutter: 24px;
+  --mk-radius: 14px;
+  --mk-radius-sm: 8px;
+
+  --mk-bg: #ffffff;
+  --mk-bg-soft: #f6f7f9;
+  --mk-bg-invert: #10231d;
+  --mk-text: #16191c;
+  --mk-text-muted: #5c6469;
+  --mk-text-invert: #eef4f1;
+  --mk-border: #e1e4e8;
+  --mk-accent: #00806a;
+  --mk-accent-strong: #00614f;
+  --mk-accent-soft: #e6f2ef;
+
+  --mk-shadow: 0 1px 2px rgba(16, 24, 32, 0.04), 0 8px 24px rgba(16, 24, 32, 0.06);
+
+  color: var(--mk-text);
+  background: var(--mk-bg);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* The viewer's theme, in all three states — an explicit choice on the root
+   element wins in both directions, and the default "system" setting is
+   answered by prefers-color-scheme alone. */
+@media (prefers-color-scheme: dark) {
+  .mk:not([data-mk-theme="light"]) {
+    --mk-bg: #101315;
+    --mk-bg-soft: #171b1e;
+    --mk-bg-invert: #0b1a16;
+    --mk-text: #edf0f2;
+    --mk-text-muted: #a3adb3;
+    --mk-border: #272c31;
+    --mk-accent: #3fbf9f;
+    --mk-accent-strong: #63d3b6;
+    --mk-accent-soft: #142a24;
+    --mk-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+  }
+}
+
+.mk *,
+.mk *::before,
+.mk *::after {
+  box-sizing: border-box;
+}
+
+.mk h1,
+.mk h2,
+.mk h3 {
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+  margin: 0;
+  font-weight: 650;
+}
+
+.mk p {
+  margin: 0;
+}
+
+.mk a {
+  color: inherit;
+}
+
+.mk-shell {
+  width: 100%;
+  max-width: var(--mk-max-width);
+  margin: 0 auto;
+  padding-inline: var(--mk-gutter);
+}
+
+.mk-main {
+  flex: 1;
+}
+
+/* ── Header ─────────────────────────────────────────────────────── */
+
+.mk-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--mk-bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--mk-border);
+}
+
+.mk-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 64px;
+  flex-wrap: wrap;
+  padding-block: 10px;
+}
+
+.mk-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 650;
+  font-size: 1.0625rem;
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+
+.mk-brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.mk-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: auto;
+  flex-wrap: wrap;
+}
+
+.mk-nav a {
+  text-decoration: none;
+  color: var(--mk-text-muted);
+  padding: 8px 12px;
+  border-radius: var(--mk-radius-sm);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.mk-nav a:hover {
+  color: var(--mk-text);
+  background: var(--mk-bg-soft);
+}
+
+.mk-nav a[aria-current="page"] {
+  color: var(--mk-text);
+  background: var(--mk-bg-soft);
+}
+
+/* ── Buttons ────────────────────────────────────────────────────── */
+
+.mk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: var(--mk-radius-sm);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.mk-btn--primary {
+  background: var(--mk-accent);
+  color: #ffffff;
+}
+
+.mk-btn--primary:hover {
+  background: var(--mk-accent-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  .mk:not([data-mk-theme="light"]) .mk-btn--primary {
+    color: #06231c;
+  }
+}
+
+.mk-btn--ghost {
+  border-color: var(--mk-border);
+  color: var(--mk-text);
+  background: transparent;
+}
+
+.mk-btn--ghost:hover {
+  background: var(--mk-bg-soft);
+}
+
+/* ── Sections ───────────────────────────────────────────────────── */
+
+.mk-section {
+  padding-block: clamp(48px, 7vw, 88px);
+}
+
+.mk-section--soft {
+  background: var(--mk-bg-soft);
+  border-block: 1px solid var(--mk-border);
+}
+
+.mk-section__head {
+  max-width: var(--mk-prose-width);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 40px;
+}
+
+.mk-section__head h2 {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.mk-lead {
+  color: var(--mk-text-muted);
+  font-size: 1.0625rem;
+}
+
+/* ── Hero ───────────────────────────────────────────────────────── */
+
+.mk-hero {
+  padding-block: clamp(56px, 9vw, 112px);
+}
+
+.mk-hero__inner {
+  max-width: 780px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mk-eyebrow {
+  align-self: flex-start;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mk-accent);
+  background: var(--mk-accent-soft);
+  padding: 5px 10px;
+  border-radius: 999px;
+}
+
+.mk-hero h1 {
+  font-size: clamp(2rem, 5.5vw, 3.25rem);
+  font-weight: 680;
+}
+
+.mk-hero__sub {
+  font-size: clamp(1.0625rem, 2vw, 1.1875rem);
+  color: var(--mk-text-muted);
+  max-width: var(--mk-prose-width);
+}
+
+.mk-hero__actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.mk-hero__note {
+  font-size: 0.9375rem;
+  color: var(--mk-text-muted);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────── */
+
+.mk-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+.mk-card {
+  background: var(--mk-bg);
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--mk-shadow);
+}
+
+.mk-card h3 {
+  font-size: 1.125rem;
+}
+
+.mk-card p {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+}
+
+/* ── Feature blocks ─────────────────────────────────────────────── */
+
+.mk-feature {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+  padding-block: 32px;
+  border-top: 1px solid var(--mk-border);
+}
+
+.mk-feature:first-of-type {
+  border-top: none;
+}
+
+@media (min-width: 800px) {
+  .mk-feature {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 48px;
+  }
+}
+
+.mk-feature__intro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-feature__intro h3 {
+  font-size: 1.375rem;
+}
+
+.mk-feature__intro p {
+  color: var(--mk-text-muted);
+}
+
+.mk-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-points li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  font-size: 0.9375rem;
+}
+
+.mk-points li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-top: 8px;
+  margin-inline-start: 6px;
+  border-radius: 999px;
+  background: var(--mk-accent);
+}
+
+/* ── Videos ─────────────────────────────────────────────────────── */
+
+.mk-video {
+  padding: 0;
+  overflow: hidden;
+}
+
+.mk-video__frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  max-width: 100%;
+  background: var(--mk-bg-invert);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mk-video__frame video,
+.mk-video__frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  object-fit: cover;
+}
+
+.mk-video__poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mk-video__play {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--mk-text-invert);
+  gap: 10px;
+  font: inherit;
+  font-weight: 600;
+}
+
+.mk-video__play span {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  padding: 12px 20px;
+  border-radius: 999px;
+}
+
+.mk-video__pending {
+  color: var(--mk-text-invert);
+  opacity: 0.7;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  padding: 16px;
+  text-align: center;
+}
+
+.mk-video__body {
+  padding: 20px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mk-video__body h3 {
+  font-size: 1.0625rem;
+}
+
+.mk-video__body p {
+  color: var(--mk-text-muted);
+  font-size: 0.9375rem;
+}
+
+.mk-note {
+  font-size: 0.8125rem;
+  color: var(--mk-text-muted);
+}
+
+/* ── FAQ ────────────────────────────────────────────────────────── */
+
+.mk-faq {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 860px;
+}
+
+.mk-faq details {
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  background: var(--mk-bg);
+  padding: 4px 20px;
+}
+
+.mk-faq summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding-block: 16px;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+}
+
+.mk-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.mk-faq summary::after {
+  content: "+";
+  font-weight: 400;
+  font-size: 1.25rem;
+  color: var(--mk-text-muted);
+  flex: none;
+}
+
+.mk-faq details[open] summary::after {
+  content: "\2212";
+}
+
+.mk-faq details p {
+  padding-bottom: 18px;
+  color: var(--mk-text-muted);
+  max-width: var(--mk-prose-width);
+}
+
+/* ── Closing CTA ────────────────────────────────────────────────── */
+
+.mk-cta {
+  background: var(--mk-bg-invert);
+  color: var(--mk-text-invert);
+  border-radius: var(--mk-radius);
+  padding: clamp(32px, 5vw, 56px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.mk-cta h2 {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+}
+
+.mk-cta p {
+  color: color-mix(in srgb, var(--mk-text-invert) 78%, transparent);
+  max-width: var(--mk-prose-width);
+}
+
+.mk-cta .mk-btn--primary {
+  margin-top: 8px;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────── */
+
+.mk-footer {
+  border-top: 1px solid var(--mk-border);
+  padding-block: 40px;
+  margin-top: auto;
+  font-size: 0.9375rem;
+}
+
+.mk-footer__cols {
+  display: grid;
+  gap: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.mk-footer__col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-footer__col h3 {
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mk-text-muted);
+  font-weight: 600;
+}
+
+.mk-footer__col a {
+  color: var(--mk-text-muted);
+  text-decoration: none;
+}
+
+.mk-footer__col a:hover {
+  color: var(--mk-text);
+  text-decoration: underline;
+}
+
+.mk-footer__bottom {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--mk-border);
+  color: var(--mk-text-muted);
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  font-size: 0.875rem;
+}
+
+/* ── Language switcher ──────────────────────────────────────────── */
+
+.mk-lang {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  padding: 2px;
+}
+
+.mk-lang a {
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--mk-text-muted);
+}
+
+.mk-lang a[aria-current="true"] {
+  background: var(--mk-accent-soft);
+  color: var(--mk-accent);
+}
+
+/* ── Not found ──────────────────────────────────────────────────── */
+
+.mk-empty {
+  padding-block: clamp(64px, 12vw, 140px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: flex-start;
+  max-width: var(--mk-prose-width);
+}
+
+.mk-empty h1 {
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.mk-empty p {
+  color: var(--mk-text-muted);
+}
+
+/* Text that exists only for a screen reader — the language switcher shows
+   "DE" and has to say "Deutsch" to someone who cannot see the flag of it. */
+.mk-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
