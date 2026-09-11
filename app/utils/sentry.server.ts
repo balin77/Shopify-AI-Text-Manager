@@ -13,7 +13,7 @@
  *  - noisy Console/Http breadcrumbs dropped (also shrinks every payload)
  *
  * Scrubbing (review B1/B2/H3/H6) and the gate (review H2) live in the shared
- * CommonJS module sentry-scrub.cjs so server.js (pre-build, require) and this
+ * zero-dep module sentry-scrub.js so server.js (which runs raw, pre-build) and this
  * module use byte-identical redaction — no drift, no unscrubbed startup window.
  */
 
@@ -23,7 +23,7 @@ import {
   scrubEvent,
   scrubBreadcrumb,
   scrubValue,
-} from '~/utils/sentry-scrub.cjs';
+} from '~/utils/sentry-scrub';
 
 let initialized = false;
 

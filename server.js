@@ -64,14 +64,17 @@ const {
 // load failure can never prevent the server from starting (mirrors the
 // server-logger fallback pattern above).
 // Shared gate + scrubbing — the SAME module the TS app uses, so events sent
-// from this early window are redacted identically (review R2/H2). Plain .cjs
-// so it loads via require() before the React Router build exists.
+// from this early window are redacted identically (review R2/H2). Zero-dep ESM
+// that Node loads directly, before the React Router build exists; this file is
+// already a module (it top-level-awaits @sentry/node below), so the older
+// createRequire() detour bought nothing and cost `npm run dev`, which cannot
+// evaluate a CommonJS project file at all.
 let sentryScrub;
 try {
-  sentryScrub = require("./app/utils/sentry-scrub.cjs");
+  sentryScrub = await import("./app/utils/sentry-scrub.js");
 } catch (e) {
   sentryScrub = null;
-  serverLogger.error("[server.js] Failed to load sentry-scrub.cjs: " + e.message);
+  serverLogger.error("[server.js] Failed to load sentry-scrub.js: " + e.message);
 }
 
 let sentryNode = null;

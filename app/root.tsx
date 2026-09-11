@@ -7,7 +7,7 @@ import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRout
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
 import { data as json } from "react-router";
 import { Sentry } from "~/utils/sentry.client";
-import { sentryEnabled } from "~/utils/sentry-scrub.cjs";
+import { sentryEnabled } from "~/utils/sentry-scrub";
 import {
   documentLanguageForPath,
   isMarketingPath,
@@ -35,7 +35,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Hard gate: the Sentry DSN reaches the browser ONLY in real production.
   // Use the SHARED sentryEnabled() (review H2 — no inline duplication left;
-  // single source of truth in sentry-scrub.cjs). In dev/staging window.ENV
+  // single source of truth in sentry-scrub.js). In dev/staging window.ENV
   // has no DSN, so the client SDK stays a no-op. Never expose secrets here.
   // The public website reports nothing. This PR's videos deliberately load no
   // third party until the visitor presses play, and shipping a Sentry DSN to
