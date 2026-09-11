@@ -14,6 +14,25 @@
  * colour competes with the mark, a button that is black frames it.
  */
 
+/* `--mk-bg` sits on :root (this file is linked on the public routes only, so
+   it reaches nothing else) so that the CANVAS can be painted with it: the
+   body's own margin is reset in base.css, but overscroll and the area behind
+   a not-yet-full-height page still show the html background, and that was
+   browser white around an off-white site. */
+:root {
+  --mk-bg: #fbfaf8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-mk-theme="light"]) {
+    --mk-bg: #131211;
+  }
+}
+
+html {
+  background: var(--mk-bg);
+}
+
 .mk {
   --mk-max-width: 1160px;
   --mk-prose-width: 62ch;
@@ -22,7 +41,6 @@
   --mk-radius-sm: 10px;
   --mk-header-height: 72px;
 
-  --mk-bg: #fbfaf8;
   --mk-surface: #ffffff;
   --mk-surface-2: #f3f0eb;
   --mk-text: #1a1714;
@@ -55,7 +73,6 @@
    answered by prefers-color-scheme alone. */
 @media (prefers-color-scheme: dark) {
   .mk:not([data-mk-theme="light"]) {
-    --mk-bg: #131211;
     --mk-surface: #1b1917;
     --mk-surface-2: #22201d;
     --mk-text: #efebe6;
@@ -1049,23 +1066,82 @@ a.mk-badge:hover {
 
 /* ── Language switcher ──────────────────────────────────────────── */
 
+/* A <details>: closed it is one pill with the current language, open it
+   drops a pill with all three underneath. Positioned, so opening it never
+   pushes the header's other items around. */
 .mk-lang {
-  display: inline-flex;
-  gap: 2px;
-  border: 1px solid var(--mk-border);
-  border-radius: 999px;
-  padding: 3px;
-  background: var(--mk-surface);
+  position: relative;
+  display: inline-block;
 }
 
+.mk-lang summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 7px 12px;
+  border: 1px solid var(--mk-border);
+  border-radius: 999px;
+  background: var(--mk-surface);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--mk-text);
+  user-select: none;
+}
+
+.mk-lang summary::-webkit-details-marker {
+  display: none;
+}
+
+.mk-lang summary:hover {
+  border-color: var(--mk-border-strong);
+}
+
+.mk-lang__chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s ease;
+}
+
+.mk-lang[open] .mk-lang__chevron {
+  transform: translateY(1px) rotate(-135deg);
+}
+
+.mk-lang__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--mk-border);
+  border-radius: 999px;
+  background: var(--mk-surface);
+  box-shadow: var(--mk-shadow);
+}
+
+/* `.mk-nav .mk-lang a` outranks the nav's link rule, which would otherwise
+   restyle these three. */
 .mk-nav .mk-lang a,
 .mk-lang a {
-  padding: 5px 10px;
+  padding: 6px 11px;
   border-radius: 999px;
   font-size: 0.8125rem;
   font-weight: 600;
   text-decoration: none;
   color: var(--mk-text-muted);
+  white-space: nowrap;
+}
+
+.mk-nav .mk-lang a:hover,
+.mk-lang a:hover {
+  color: var(--mk-text);
+  background: var(--mk-surface-2);
 }
 
 .mk-nav .mk-lang a[aria-current="true"],

@@ -3,7 +3,9 @@ import { Links, Meta, Outlet, Scripts, ScrollRestoration, useLoaderData, useRout
 // and app/routes/app.tsx — the layout every embedded page hangs off — already
 // imports it. Importing it in the ROOT route puts a ~400 KB stylesheet in front
 // of every public page (the website, /privacy, /terms, /admin), none of which
-// renders a single Polaris component.
+// renders a single Polaris component. What IS imported is the one thing
+// Polaris used to do for those pages by accident: reset the body margin.
+import "./styles/base.css";
 import type { LinksFunction, LoaderFunctionArgs, MetaFunction } from "react-router";
 import { data as json } from "react-router";
 import { Sentry } from "~/utils/sentry.client";

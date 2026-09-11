@@ -14,12 +14,10 @@ import "../styles/marketing.css";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
 import { InstallLink } from "../components/marketing/InstallLink";
+import { LanguageSwitcher } from "../components/marketing/LanguageSwitcher";
 import {
-  MARKETING_LOCALES,
-  MARKETING_LOCALE_LABELS,
   localizedPath,
   stripMarketingLocalePrefix,
-  type MarketingLocale,
 } from "../services/marketing-locale.shared";
 
 /**
@@ -63,19 +61,7 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
               </Link>
             ))}
 
-            <div className="mk-lang" role="group" aria-label={t.nav.language}>
-              {MARKETING_LOCALES.map((alt) => (
-                <Link
-                  key={alt}
-                  to={localizedPath(alt, rest)}
-                  hrefLang={alt}
-                  aria-current={alt === locale ? "true" : undefined}
-                >
-                  {alt.toUpperCase()}
-                  <span className="mk-visually-hidden"> {MARKETING_LOCALE_LABELS[alt]}</span>
-                </Link>
-              ))}
-            </div>
+            <LanguageSwitcher locale={locale} rest={rest} label={t.nav.language} />
           </nav>
 
           {/* The site's ONE call to action, and a SIBLING of the nav rather

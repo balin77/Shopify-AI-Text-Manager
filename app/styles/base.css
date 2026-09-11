@@ -1,0 +1,17 @@
+/*
+ * The document reset every route gets, Polaris or not.
+ *
+ * The root route used to import Polaris' stylesheet, and that reset the
+ * <body>'s 8px default margin as a side effect. When the import moved to the
+ * /app layout (where it belongs — the public pages render no Polaris), every
+ * page OUTSIDE /app got the browser default back: an 8px white frame around
+ * the website, the privacy page and the admin tool. Nothing else lives here —
+ * the routes bring their own styles — and nothing else should: this file is
+ * linked on every page of the app.
+ */
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
