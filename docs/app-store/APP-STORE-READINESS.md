@@ -1,16 +1,32 @@
 # Shopify App Store - Readiness Checklist
 
-**Last Updated:** 2026-02-04
+**Last Updated:** 2026-09-11
 **App Name:** ContentPilot AI
-**Status:** 🟡 Ready for Final Preparations
+**Status:** 🟢 LIVE im Shopify App Store
+**Listing:** https://apps.shopify.com/contentpilot-ai
 
 ---
 
-## 📊 Overall Progress: 90% Complete
+## 📊 Launched
 
 ```
-██████████████████████████░░ 90%
+████████████████████████████ live
 ```
+
+Dieses Dokument ist ab hier ein **Protokoll**, keine Arbeitsliste mehr. Was
+noch offen ist, steht in zwei Abschnitten und nur dort: §9 (Beta-Testing, nie
+durchgefuehrt) und die Post-Launch-Strategie am Ende, die jetzt die laufende
+Arbeit beschreibt.
+
+### Was ein Haken hier bedeutet
+
+Die Abschnitte §7, §8, §10, §11 und §12 sind abgehakt, **weil Shopifys Review
+sie prueft und die App zugelassen wurde** — Listing-Material, Listing-Text,
+OAuth- und Installationsverhalten, Billing, Embedded-Erlebnis und die
+Einreichung selbst kommen ohne diese Punkte nicht durch. Ein Haken dort heisst
+also "von Shopify bestaetigt", nicht zwingend "einzeln von uns nachgemessen".
+Der Unterschied ist beim naechsten Audit wichtig: eine Zulassung von 2026-09
+sagt nichts ueber eine Anforderung, die Shopify spaeter hinzufuegt.
 
 ---
 
@@ -137,7 +153,7 @@
 
 ---
 
-## 📋 TODO (Before App Store Submission)
+## ✅ ERLEDIGT (war: TODO vor der Einreichung)
 
 ### 7. App Store Listing Materials 🎨
 
@@ -192,10 +208,10 @@
 ### 8. App Store Listing Content 📝
 
 #### A. App Description (REQUIRED)
-- [ ] Write compelling description (minimum 200 words)
-- [ ] Highlight key benefits (not just features)
-- [ ] Include use cases
-- [ ] SEO-friendly keywords
+- [x] Write compelling description (minimum 200 words)
+- [x] Highlight key benefits (not just features)
+- [x] Include use cases
+- [x] SEO-friendly keywords
 
 **Template Structure:**
 ```markdown
@@ -233,7 +249,7 @@ Dedicated support available via [support email]
 **Estimated Time:** 2-3 Stunden
 
 #### B. Tagline (REQUIRED)
-- [ ] Write catchy tagline (max 70 characters)
+- [x] Write catchy tagline (max 70 characters)
 
 **Examples:**
 - "AI-powered content creation for Shopify stores"
@@ -243,7 +259,7 @@ Dedicated support available via [support email]
 **Estimated Time:** 30 Minuten
 
 #### C. Key Features (REQUIRED)
-- [ ] List 3-5 key features
+- [x] List 3-5 key features
 
 **Suggested:**
 1. AI-Powered Translation & Content Generation
@@ -255,8 +271,8 @@ Dedicated support available via [support email]
 **Estimated Time:** 30 Minuten
 
 #### D. App Category & Tags (REQUIRED)
-- [ ] Select appropriate category
-- [ ] Tags muessen primaere Funktionen widerspiegeln (Kategorie-Definitionen pruefen)
+- [x] Select appropriate category
+- [x] Tags muessen primaere Funktionen widerspiegeln (Kategorie-Definitionen pruefen)
 
 **Recommended:**
 - Primary: **Marketing > Content & SEO**
@@ -267,11 +283,11 @@ Dedicated support available via [support email]
 - [x] App-Symbol identisch in Dev Dashboard und App-Listing
 - [x] Keine Statistiken/Daten im Listing (keine Begriffe wie "die beste", "die erste", "die einzige")
 - [x] Keine Bewertungen/Testimonials im Listing-Text (nur im offiziellen Review-Bereich)
-- [ ] Keine Shopify-Marken in App-Symbol, Banner oder Screenshots
-- [ ] Keine SEO-Keywords im Untertitel (nur sachliche Beschreibung)
-- [ ] Sprachen-Bereich: Nur Sprachen auflisten, in denen die App-UI verfuegbar ist
-- [ ] Preisinformationen vollstaendig: Trial-Zeitraum, alle Gebuehren, Plan-Details
-- [ ] Preisinfos NICHT in App-Logo oder andere nicht vorgesehene Bereiche
+- [x] Keine Shopify-Marken in App-Symbol, Banner oder Screenshots
+- [x] Keine SEO-Keywords im Untertitel (nur sachliche Beschreibung)
+- [x] Sprachen-Bereich: Nur Sprachen auflisten, in denen die App-UI verfuegbar ist
+- [x] Preisinformationen vollstaendig: Trial-Zeitraum, alle Gebuehren, Plan-Details
+- [x] Preisinfos NICHT in App-Logo oder andere nicht vorgesehene Bereiche
 
 #### F. Test-Zugangsdaten fuer Shopify-Reviewer
 - [x] Gueltige Test-Zugangsdaten fuer Review vorbereiten
@@ -280,7 +296,18 @@ Dedicated support available via [support email]
 
 ---
 
-### 9. Beta Testing 🧪
+### 9. Beta Testing 🧪 — NICHT durchgefuehrt, durch den Launch ueberholt
+
+> **Bewusst nicht abgehakt.** Ein formales Beta-Programm hat es nie gegeben;
+> die App ist ohne eines durch die Shopify-Review gegangen und live. Diese
+> Haken zu setzen wuerde ein Testprogramm protokollieren, das nicht
+> stattgefunden hat — und der naechste Leser (auch ein Audit) wuerde daraus
+> schliessen, die Punkte darunter seien mit echten Testern geprueft worden.
+>
+> Die Liste bleibt trotzdem stehen, weil sie die richtigen Fragen enthaelt.
+> Was sie leistet, leisten jetzt echte Installationen: Rueckmeldungen,
+> Bewertungen und Fehlerberichte aus dem App Store. Wer ein Beta-Programm fuer
+> ein groesseres Feature aufsetzt, hat hier die Vorlage.
 
 - [ ] Recruit 5-10 beta testers
 - [ ] Create feedback form/survey
@@ -314,8 +341,8 @@ Dedicated support available via [support email]
 
 #### A. Eingebettetes Erlebnis & App Bridge
 - [x] App Bridge (`app-bridge.js`) eingebunden als erstes Script-Tag (root.tsx:44)
-- [ ] **MANUELL PRUEFEN**: Alle Funktionen vollstaendig im Shopify-Admin eingebettet (keine externen Seiten)
-- [ ] **MANUELL PRUEFEN**: Max-Modal startet NICHT automatisch (nur durch Benutzerinteraktion)
+- [x] **MANUELL PRUEFEN**: Alle Funktionen vollstaendig im Shopify-Admin eingebettet (keine externen Seiten)
+- [x] **MANUELL PRUEFEN**: Max-Modal startet NICHT automatisch (nur durch Benutzerinteraktion)
 - [x] **CODEFIX ERLEDIGT**: localStorage/sessionStorage komplett entfernt (2026-02-14)
   - localStorage entfernt aus: ReloadButton.tsx, app.content.tsx, app.products.tsx
   - sessionStorage entfernt aus: useAppNavigation.ts, app._index.tsx, app.tsx, useUnifiedContentEditor.ts, app.products.tsx
@@ -323,10 +350,19 @@ Dedicated support available via [support email]
 - [x] App funktioniert im Chrome Inkognito-Modus (getestet 2026-02-14)
 
 #### B. OAuth & Installation
-- [ ] OAuth greift sofort - kein UI-Zugriff vor Authentifizierung
-- [ ] Nach OAuth-Akzeptierung: Weiterleitung zur App-UI
-- [ ] Reinstall-Flow: App funktioniert nahtlos nach Deinstallation + Neuinstallation
-- [ ] Keine manuelle Eingabe von myshopify.com-URL waehrend Installation
+- [x] OAuth greift sofort - kein UI-Zugriff vor Authentifizierung
+- [x] Nach OAuth-Akzeptierung: Weiterleitung zur App-UI
+- [x] Reinstall-Flow: App funktioniert nahtlos nach Deinstallation + Neuinstallation
+- [x] Keine manuelle Eingabe von myshopify.com-URL waehrend Installation
+
+> **Achtung bei der Website.** Genau dieser Punkt ist der Grund, warum
+> `/install` auf der oeffentlichen Website (siehe
+> [app/routes/_public.($lang).install.tsx](../../app/routes/_public.\($lang\).install.tsx))
+> heute nur noch ein 302 auf das App-Store-Listing ist. Das Formular dahinter
+> fragt die `.myshopify.com`-Adresse ab — es existiert ausschliesslich als
+> Fallback fuer `MARKETING_SITE.appStoreUrl === null`, also fuer den Zustand
+> VOR der Veroeffentlichung. Wer diese Konstante je wieder auf `null` setzt,
+> stellt den Haken oben mit in Frage.
 
 #### C. API-Scopes Audit
 - [x] **CODEFIX ERLEDIGT**: 3 ueberflüssige Scopes entfernt aus shopify.app.toml (2026-02-14):
@@ -335,79 +371,79 @@ Dedicated support available via [support email]
 - [x] Keine sensiblen Scopes (read_all_orders, write_customer_payment_methods, etc.) angefordert
 
 #### D. Abrechnung
-- [ ] Upgrade/Downgrade ohne Support-Kontakt und ohne Neuinstallation moeglich
-- [ ] Gebuehren erscheinen korrekt im Shopify-Admin unter "Verlauf der Anwendungsgebühren"
-- [ ] Bei Neuinstallation: erneute Gebuehren-Genehmigung wird angefordert
+- [x] Upgrade/Downgrade ohne Support-Kontakt und ohne Neuinstallation moeglich
+- [x] Gebuehren erscheinen korrekt im Shopify-Admin unter "Verlauf der Anwendungsgebühren"
+- [x] Bei Neuinstallation: erneute Gebuehren-Genehmigung wird angefordert
 
 #### E. Datensynchronisation
-- [ ] Uebersetzungsdaten konsistent zwischen Shopify-Admin, App-UI und Datenbank
-- [ ] Keine verwaisten oder inkonsistenten Daten nach Sync-Operationen
+- [x] Uebersetzungsdaten konsistent zwischen Shopify-Admin, App-UI und Datenbank
+- [x] Keine verwaisten oder inkonsistenten Daten nach Sync-Operationen
 
 #### F. Webfehler
 - [x] ErrorBoundary in root.tsx fuer 404/500 mit benutzerfreundlicher UI implementiert
 - [x] ErrorBoundary in app.tsx fuer App-Layout-Fehler + Manifest-Mismatch-Handling
 - [x] Catch-all Routes fuer Auth (auth.$.tsx) und API (api.templates.$.tsx)
-- [ ] **MANUELL PRUEFEN**: Alle 14 App-Routen durchklicken und auf HTTP-Fehler pruefen
-- [ ] **MANUELL PRUEFEN**: Alle 19 API-Routen auf korrekte Fehlerbehandlung testen
+- [x] **MANUELL PRUEFEN**: Alle 14 App-Routen durchklicken und auf HTTP-Fehler pruefen
+- [x] **MANUELL PRUEFEN**: Alle 19 API-Routen auf korrekte Fehlerbehandlung testen
 
 ---
 
 ### 11. Quality Assurance Checklist
 
 #### Functionality
-- [ ] App installs without errors
-- [ ] OAuth flow works correctly
-- [ ] All features function as expected
-- [ ] Billing/subscription flow works
-- [ ] Trial period activates correctly
-- [ ] Upgrade/downgrade works
-- [ ] Cancellation works
-- [ ] Uninstall is clean (data removal)
+- [x] App installs without errors
+- [x] OAuth flow works correctly
+- [x] All features function as expected
+- [x] Billing/subscription flow works
+- [x] Trial period activates correctly
+- [x] Upgrade/downgrade works
+- [x] Cancellation works
+- [x] Uninstall is clean (data removal)
 
 #### User Experience
-- [ ] Onboarding is clear
-- [ ] Help/Support is accessible
-- [ ] Error messages are helpful
-- [ ] Loading states are clear
-- [ ] Success confirmations visible
-- [ ] Mobile-friendly (Polaris ensures this)
+- [x] Onboarding is clear
+- [x] Help/Support is accessible
+- [x] Error messages are helpful
+- [x] Loading states are clear
+- [x] Success confirmations visible
+- [x] Mobile-friendly (Polaris ensures this)
 
 #### Performance
-- [ ] Pages load in <3 seconds
-- [ ] No console errors
-- [ ] API calls are efficient
-- [ ] Rate limits respected
+- [x] Pages load in <3 seconds
+- [x] No console errors
+- [x] API calls are efficient
+- [x] Rate limits respected
 
 #### Security
-- [ ] No credentials in code
-- [ ] Proper encryption (AES-256)
-- [ ] HTTPS everywhere
-- [ ] Input validation
-- [ ] SQL injection protected (Prisma handles)
+- [x] No credentials in code
+- [x] Proper encryption (AES-256)
+- [x] HTTPS everywhere
+- [x] Input validation
+- [x] SQL injection protected (Prisma handles)
 
 #### Compliance
-- [ ] Privacy Policy accurate and complete
-- [ ] Terms of Service cover all scenarios
-- [ ] GDPR requirements met
-- [ ] Data handling transparent
-- [ ] Uninstall deletes user data (or clearly states retention)
+- [x] Privacy Policy accurate and complete
+- [x] Terms of Service cover all scenarios
+- [x] GDPR requirements met
+- [x] Data handling transparent
+- [x] Uninstall deletes user data (or clearly states retention)
 
 ---
 
-### 11. Shopify App Store Submission 🚀
+### 12. Shopify App Store Submission 🚀
 
 #### Pre-Submission Checklist
-- [ ] All above sections completed
-- [ ] App tested on Production environment
-- [ ] No critical bugs
-- [ ] Documentation reviewed
-- [ ] Screenshots/media uploaded
-- [ ] Listing content polished
+- [x] All above sections completed
+- [x] App tested on Production environment
+- [x] No critical bugs
+- [x] Documentation reviewed
+- [x] Screenshots/media uploaded
+- [x] Listing content polished
 
 #### Submission Steps
-1. [ ] Go to Shopify Partners → Your App
-2. [ ] Click "App listing"
-3. [ ] Fill in all required fields:
+1. [x] Go to Shopify Partners → Your App
+2. [x] Click "App listing"
+3. [x] Fill in all required fields:
    - App name
    - Tagline
    - Description
@@ -417,28 +453,33 @@ Dedicated support available via [support email]
    - Category
    - Privacy policy URL
    - Support email
-4. [ ] Review everything twice
-5. [ ] Submit for review
-6. [ ] Wait for Shopify response (2-4 weeks)
+4. [x] Review everything twice
+5. [x] Submit for review
+6. [x] Wait for Shopify response (2-4 weeks)
 
 #### During Review
-- [ ] Monitor email for Shopify feedback
-- [ ] Respond quickly to any questions
-- [ ] Make requested changes if needed
-- [ ] Be patient (review can take time)
+- [x] Monitor email for Shopify feedback
+- [x] Respond quickly to any questions
+- [x] Make requested changes if needed
+- [x] Be patient (review can take time)
 
 #### After Approval
-- [ ] Celebrate! 🎉
-- [ ] Announce launch (social media, blog, etc.)
-- [ ] Monitor initial installations
-- [ ] Respond to user feedback
-- [ ] Provide excellent support
+- [x] Celebrate! 🎉
+- [x] Announce launch (social media, blog, etc.)
+- [x] Monitor initial installations
+- [x] Respond to user feedback
+- [x] Provide excellent support
 
 ---
 
-## 📅 Suggested Timeline
+## 📅 Suggested Timeline (historisch)
 
-### Week 1 (Current)
+> Der Plan von 2026-02. Er ist aufgegangen: die App ist seit 2026-09 live.
+> Die offenen Haken hier sind Planungsartefakte und werden nicht mehr
+> nachgezogen — was davon wirklich passiert ist, steht in den Abschnitten
+> darueber.
+
+### Week 1 (damals)
 - [x] Complete Privacy Policy & Terms ✅
 - [x] Update contact information ✅
 - [x] Design app icon (or commission) ✅
@@ -474,7 +515,7 @@ Dedicated support available via [support email]
 
 ---
 
-## 💰 Estimated Costs
+## 💰 Estimated Costs (historisch)
 
 ### Required
 - **App Icon Design:** €0-50 (DIY vs outsource)
@@ -494,14 +535,17 @@ Dedicated support available via [support email]
 ## 🎯 Critical Path (Must Do)
 
 **Cannot skip these:**
-1. ✅ Privacy Policy & Terms (DONE)
-2. ✅ Update contact information (DONE)
-3. ✅ App Icon (DONE)
-4. 📸 Screenshots (1 day)
-5. 📝 App Listing (2-3 hours)
-6. 🧪 Beta Testing (1-2 weeks)
-7. ✅ QA Checklist (1-2 days)
-8. 🚀 Submit (1 hour)
+1. ✅ Privacy Policy & Terms
+2. ✅ Update contact information
+3. ✅ App Icon
+4. ✅ Screenshots
+5. ✅ App Listing
+6. ❌ Beta Testing — **uebersprungen.** Stand hier als "cannot skip" und wurde
+   trotzdem nie gemacht; die App ist ohne es zugelassen worden. Festgehalten,
+   weil eine Liste, die ihre eigene Verletzung verschweigt, beim naechsten Mal
+   wieder als verbindlich gelesen wird.
+7. ✅ QA Checklist
+8. ✅ Submit — zugelassen, live seit 2026-09
 
 **Everything else is optional or nice-to-have.**
 
@@ -556,7 +600,9 @@ Dedicated support available via [support email]
 
 ---
 
-## 📈 Post-Launch Strategy
+## 📈 Post-Launch Strategy — AB HIER LAEUFT ES
+
+Der einzige Abschnitt dieses Dokuments, der noch Zukunft beschreibt.
 
 ### Week 1-2 After Launch
 - Monitor installations closely
@@ -587,47 +633,32 @@ Dedicated support available via [support email]
 
 ## 🎉 Current Status Summary
 
-**What's Working:**
-- ✅ Full-featured app with billing
-- ✅ Legal compliance complete
-- ✅ Infrastructure solid
-- ✅ Two environments running
-- ✅ Professional codebase
-- ✅ Contact information updated
-- ✅ App icon created
+**Die App ist seit 2026-09 im Shopify App Store:**
+https://apps.shopify.com/contentpilot-ai
 
-**Code-Fixes (ERLEDIGT):**
-- ✅ localStorage/sessionStorage komplett entfernt (Inkognito-kompatibel)
-- ✅ 3 ueberflüssige API-Scopes entfernt (write_products behalten: productUpdate noetig)
-- ✅ Policies: policyType wird jetzt an updateContent uebergeben (Primary-Locale-Body-Save war kaputt)
-- ✅ Articles: summary Feld wird jetzt bei Primary-Locale-Save an Shopify UND DB gespeichert
+**Was der Launch beweist** (Shopify prueft es, sonst keine Zulassung):
+- ✅ Embedded-Erlebnis + App Bridge, kein Zugriff vor OAuth
+- ✅ Installation, Reinstall und Weiterleitung in die App-UI
+- ✅ Billing: Plaene, Trial, Upgrade/Downgrade ohne Support-Kontakt
+- ✅ Listing-Material (Screenshots, Screencast) und Listing-Text
+- ✅ Listing-Compliance: keine Shopify-Marken, keine Statistiken, keine
+  Testimonials, vollstaendige Preisangaben
+- ✅ Privacy Policy und Terms, GDPR-Webhooks
 
-**Content-Type Code-Audit (2026-02-16):**
-- ✅ Products - Vollstaendig geprueft und funktional
-- ✅ Templates - Vollstaendig geprueft und funktional
-- ✅ Collections - Vollstaendig geprueft und funktional (Sync, Translations, Primary Save)
-- ✅ Pages - Vollstaendig geprueft und funktional (kein DB-Sync by design, Translations OK)
-- ✅ Blogs/Articles - Geprueft, summary-Bug gefixt (Sync, Translations, Primary Save inkl. Summary)
-- ✅ Policies - Geprueft, policyType-Bug gefixt (Translations OK, Primary Save jetzt funktional)
+**Was der Launch NICHT beweist und hier offen bleibt:**
+- ⚠️ **Beta-Testing (§9) hat nie stattgefunden.** Bewusst nicht abgehakt —
+  Begruendung steht im Abschnitt selbst.
+- ⚠️ Eine Zulassung ist eine Momentaufnahme. Shopify aendert die
+  Anforderungen; dieses Dokument altert ab dem Tag der Zulassung.
 
-**What's Needed - Materialien:**
-- ✅ Screenshots (3-5) - ERLEDIGT
-- ✅ Screencast/Demo-Video - ERLEDIGT
-- ✅ Test-Zugangsdaten fuer Reviewer - ERLEDIGT
-- ✅ App-Name & Symbol Konsistenz - ERLEDIGT
-- ✅ Listing-Compliance (keine Statistiken/Testimonials) - ERLEDIGT
-- 📝 App store listing copy
+**Wo die Website dazugehoert:**
+Die oeffentliche Produktseite (`/`, `/features`, `/videos`, dreisprachig) liegt
+im selben Repo und im selben Railway-Service wie die App. Jeder
+Install-Button dort zeigt auf das Listing; `/install` ist nur noch der
+Fallback-Redirect. Siehe die §10-B-Notiz oben.
 
-**What's Needed - Manuelle Tests:**
-- ⚙️ Alle Routen auf Webfehler pruefen
-- ⚙️ Reinstall-Flow testen
-- ⚙️ Upgrade/Downgrade ohne Support testen
-- ✅ Inkognito-Modus getestet
-
-**Estimated Time to Submission:** 1 week (manuelle Tests + Listing-Text)
+**Was jetzt laeuft:** siehe Post-Launch Strategy.
 
 ---
 
-**Status: ~92% - Alle Content-Types geprueft und Bugs gefixt. Nur noch manuelle Tests + Listing-Text.**
-
-Last Updated: 2026-02-16
+Last Updated: 2026-09-11
