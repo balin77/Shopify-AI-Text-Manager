@@ -176,8 +176,6 @@ export const es: MarketingTranslation = {
     placeholder: "mi-tienda.myshopify.com",
     help: "La dirección .myshopify.com, solo el nombre de la tienda, o la URL del panel que tenga abierta — las tres funcionan.",
     submit: "Continuar a Shopify",
-    appStoreHint: "También puede instalarla desde la Shopify App Store.",
-    appStoreLink: "Ver la ficha en la App Store",
     errors: {
       empty: "Introduzca la dirección de su tienda.",
       invalid: "Eso no parece una dirección de tienda Shopify. Use mi-tienda.myshopify.com, o simplemente el nombre de la tienda.",

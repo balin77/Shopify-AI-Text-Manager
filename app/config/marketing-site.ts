@@ -19,10 +19,18 @@ export const MARKETING_SITE = {
    */
   appPath: "/app",
   /**
-   * The App Store listing, once it exists. While it is `null` every install
-   * button points at this app's own `/install` form instead, which starts the
-   * same OAuth flow — so the button is never a dead link to a listing that has
-   * not been published yet. Setting it here switches every one of them over.
+   * The App Store listing — the canonical way to install a public app, and
+   * therefore where every install button on this site goes. `/install` (the
+   * app's own OAuth form) redirects here too; it stays in the tree as the
+   * fallback for `null`, which is why the annotation is kept rather than let
+   * TypeScript narrow this to a string literal.
+   *
+   * Deliberately BARE. The URL this was taken from carried `locale=de` plus a
+   * `search_id` and three `surface_*` parameters — Shopify's attribution for
+   * ONE merchant's search session, wrong for every other visitor. And the
+   * locale is not ours to force: the App Store already renders in the
+   * merchant's own account language, which is a better answer than the
+   * language someone happened to pick on this site.
    */
-  appStoreUrl: null as string | null,
+  appStoreUrl: "https://apps.shopify.com/contentpilot-ai" as string | null,
 } as const;

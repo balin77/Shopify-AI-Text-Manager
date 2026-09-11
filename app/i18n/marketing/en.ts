@@ -184,8 +184,6 @@ export const en = {
     placeholder: "my-shop.myshopify.com",
     help: "The .myshopify.com address, the store handle on its own, or the admin URL you have open — all three work.",
     submit: "Continue to Shopify",
-    appStoreHint: "You can also install it from the Shopify App Store.",
-    appStoreLink: "Open the App Store listing",
     errors: {
       empty: "Please enter your store address.",
       invalid: "That does not look like a Shopify store address. Use my-shop.myshopify.com, or just the store name.",

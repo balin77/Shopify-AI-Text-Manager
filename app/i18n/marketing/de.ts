@@ -176,8 +176,6 @@ export const de: MarketingTranslation = {
     placeholder: "mein-shop.myshopify.com",
     help: "Die .myshopify.com-Adresse, nur der Shop-Name oder die Admin-URL, die Sie gerade offen haben — alle drei funktionieren.",
     submit: "Weiter zu Shopify",
-    appStoreHint: "Sie können die App auch im Shopify App Store installieren.",
-    appStoreLink: "Zum App-Store-Eintrag",
     errors: {
       empty: "Bitte geben Sie Ihre Shop-Adresse ein.",
       invalid: "Das sieht nicht nach einer Shopify-Shop-Adresse aus. Nehmen Sie mein-shop.myshopify.com oder einfach den Shop-Namen.",

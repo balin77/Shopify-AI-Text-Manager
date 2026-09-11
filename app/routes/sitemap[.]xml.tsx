@@ -9,14 +9,23 @@
  */
 
 import type { LoaderFunctionArgs } from "react-router";
+import { MARKETING_SITE } from "../config/marketing-site";
 import {
   MARKETING_DEFAULT_LOCALE,
   MARKETING_LOCALES,
   localizedPath,
 } from "../services/marketing-locale.shared";
 
-/** Localized pages, in the order they should be discovered. */
-const LOCALIZED_PATHS = ["/", "/features", "/videos", "/install"];
+/**
+ * Localized pages, in the order they should be discovered.
+ *
+ * `/install` is in the list only while there is no App Store listing. With one
+ * it redirects there, and a sitemap that lists a redirect reports a soft error
+ * for every locale it names.
+ */
+const LOCALIZED_PATHS = MARKETING_SITE.appStoreUrl
+  ? ["/", "/features", "/videos"]
+  : ["/", "/features", "/videos", "/install"];
 
 /** Public but not localized — the URLs the App Store listing points at. */
 const PLAIN_PATHS = ["/privacy", "/terms"];
