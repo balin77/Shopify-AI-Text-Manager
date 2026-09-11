@@ -24,6 +24,7 @@
   --mk-accent: #00806a;
   --mk-accent-strong: #00614f;
   --mk-accent-soft: #e6f2ef;
+  --mk-danger: #b42318;
 
   --mk-shadow: 0 1px 2px rgba(16, 24, 32, 0.04), 0 8px 24px rgba(16, 24, 32, 0.06);
 
@@ -52,6 +53,9 @@
     --mk-accent: #3fbf9f;
     --mk-accent-strong: #63d3b6;
     --mk-accent-soft: #142a24;
+    /* The light red measures ~2.9:1 on the dark ground — below WCAG AA for
+       the one message that explains a refused install. */
+    --mk-danger: #ff9d93;
     --mk-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
   }
 }
@@ -493,9 +497,12 @@
   border-radius: var(--mk-radius-sm);
   background: var(--mk-bg);
   color: var(--mk-text);
-  /* 16px minimum, or iOS Safari zooms the page on focus and the merchant
-     lands on a layout they then have to pinch back out of. */
-  font-size: max(1rem, 0.9375rem);
+  /* A real 16px FLOOR: iOS Safari zooms the page on focus below it, and the
+     merchant lands on a layout they then have to pinch back out of. `1rem`
+     alone is not the guard — it follows the root size, which a merchant may
+     have set smaller. The first cut wrote max(1rem, 0.9375rem), which always
+     picks 1rem and enforces nothing. */
+  font-size: max(16px, 1rem);
 }
 
 .mk-field input:focus-visible {
@@ -505,11 +512,11 @@
 }
 
 .mk-field input[aria-invalid="true"] {
-  border-color: #b42318;
+  border-color: var(--mk-danger);
 }
 
 .mk-field__error {
-  color: #b42318;
+  color: var(--mk-danger);
   font-size: 0.9375rem;
 }
 

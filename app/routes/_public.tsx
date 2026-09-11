@@ -13,6 +13,7 @@ import { Link, Outlet, isRouteErrorResponse, useLocation, useRouteError } from "
 import "../styles/marketing.css";
 import { getMarketingTranslation } from "../i18n/marketing";
 import { MARKETING_SITE } from "../config/marketing-site";
+import { InstallLink } from "../components/marketing/InstallLink";
 import {
   MARKETING_LOCALES,
   MARKETING_LOCALE_LABELS,
@@ -20,37 +21,6 @@ import {
   stripMarketingLocalePrefix,
   type MarketingLocale,
 } from "../services/marketing-locale.shared";
-
-/**
- * Where "install" goes, in one place.
- *
- * The App Store listing once it exists, and the app's own install form until
- * then — every caller asks this rather than carrying its own `?? fallback`,
- * because a button that silently points at a listing which is not published
- * yet is a dead end the merchant reports as a broken site.
- */
-function InstallLink({
-  locale,
-  className,
-  children,
-}: {
-  locale: MarketingLocale;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  if (MARKETING_SITE.appStoreUrl) {
-    return (
-      <a className={className} href={MARKETING_SITE.appStoreUrl}>
-        {children}
-      </a>
-    );
-  }
-  return (
-    <Link className={className} to={localizedPath(locale, "/install")}>
-      {children}
-    </Link>
-  );
-}
 
 /**
  * Header, footer and the marketing theme around whatever the route renders.

@@ -31,7 +31,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const result = normalizeShopDomain(String(form.get("shop") ?? ""));
 
   if (!result.ok) {
-    return { reason: result.reason };
+    // The typed value travels back: WITHOUT JavaScript a refused submit is a
+    // full page render, so a field with no defaultValue comes back empty and
+    // the merchant retypes their address to read the message about it.
+    return { reason: result.reason, value: String(form.get("shop") ?? "") };
   }
 
   // Leaves the marketing site for this app's OAuth entrance, which sends the
@@ -86,6 +89,7 @@ export default function MarketingInstall() {
               autoCorrect="off"
               spellCheck={false}
               inputMode="url"
+              defaultValue={actionData?.value ?? ""}
               placeholder={t.install.placeholder}
               aria-describedby={errorMessage ? "shop-error" : "shop-help"}
               aria-invalid={errorMessage ? true : undefined}
@@ -105,7 +109,11 @@ export default function MarketingInstall() {
           <button
             type="submit"
             className="mk-btn mk-btn--primary"
-            disabled={navigation.state === "submitting"}
+            /* `!== "idle"` and not `=== "submitting"`: react-router moves to
+               "loading" while it follows the redirect, so the narrower test
+               re-enabled the button mid-handoff and a second click would begin
+               a SECOND OAuth whose state cookie clobbers the first. */
+            disabled={navigation.state !== "idle"}
           >
             {t.install.submit}
           </button>

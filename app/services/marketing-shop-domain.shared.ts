@@ -43,7 +43,10 @@ export function normalizeShopDomain(input: string): ShopDomainResult {
   if (adminMatch) return { ok: true, shop: `${adminMatch[1]}.myshopify.com` };
 
   value = value.split(/[/?#]/)[0];
-  if (!value) return { ok: false, reason: "empty" };
+  // "empty" is reserved for a field the merchant actually left blank. Text
+  // that merely carries no host ("/store/foo") is INVALID — telling someone to
+  // enter an address over a field they can see text in explains nothing.
+  if (!value) return { ok: false, reason: "invalid" };
 
   if (MYSHOPIFY_HOST.test(value)) return { ok: true, shop: value };
 

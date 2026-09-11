@@ -48,7 +48,6 @@ describe("normalizeShopDomain", () => {
   it("refuses empty and malformed input", () => {
     expect(normalizeShopDomain("")).toEqual({ ok: false, reason: "empty" });
     expect(normalizeShopDomain("   ")).toEqual({ ok: false, reason: "empty" });
-    expect(normalizeShopDomain("https://")).toEqual({ ok: false, reason: "empty" });
     expect(normalizeShopDomain("my shop")).toEqual({ ok: false, reason: "invalid" });
     expect(normalizeShopDomain("-bad")).toEqual({ ok: false, reason: "invalid" });
   });
@@ -60,5 +59,20 @@ describe("normalizeShopDomain", () => {
       expect(result.ok).toBe(true);
       if (result.ok) expect(pattern.test(result.shop)).toBe(true);
     }
+  });
+});
+
+describe("normalizeShopDomain — the refusal REASON has to fit the field", () => {
+  it('calls text with no host "invalid", never "empty"', () => {
+    // "Please enter your store address" over a field that visibly contains
+    // text tells the merchant nothing about what to change.
+    for (const input of ["/store/foo", "?shop=x", "#top", "https://"]) {
+      expect(normalizeShopDomain(input)).toEqual({ ok: false, reason: "invalid" });
+    }
+  });
+
+  it('keeps "empty" for a genuinely blank field', () => {
+    expect(normalizeShopDomain("")).toEqual({ ok: false, reason: "empty" });
+    expect(normalizeShopDomain("   \t ")).toEqual({ ok: false, reason: "empty" });
   });
 });
