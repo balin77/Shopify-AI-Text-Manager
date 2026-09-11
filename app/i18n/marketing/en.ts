@@ -21,11 +21,13 @@ export const en = {
     videos: "Videos",
     faq: "FAQ",
     install: "Install on Shopify",
+    installShort: "Install",
     menu: "Menu",
     language: "Language",
   },
 
   hero: {
+    storeBadge: "Live in the Shopify App Store",
     eyebrow: "Shopify app",
     title: "Every text in your shop. Written, found and translated.",
     subtitle:
@@ -36,6 +38,7 @@ export const en = {
   },
 
   pillars: {
+    more: "See every feature",
     title: "Three things it does well",
     items: [
       {
@@ -59,7 +62,7 @@ export const en = {
       "The app is a set of tools that share one thing: they all work on the text your shop is made of. Here is what is in it.",
     groups: [
       {
-        id: "ai",
+        id: "ai" as const,
         title: "AI writing",
         body: "Generate or improve any field, one at a time or for a whole shop. The prompt carries your own instructions, your glossary and — if you allow it — the product image itself.",
         points: [
@@ -70,7 +73,7 @@ export const en = {
         ],
       },
       {
-        id: "translations",
+        id: "translations" as const,
         title: "Translations and markets",
         body: "The part most apps get wrong. Shopify stores a translation per language and, on top of that, per market — German for Switzerland worded differently from German for Germany. Both layers are handled.",
         points: [
@@ -82,7 +85,7 @@ export const en = {
         ],
       },
       {
-        id: "bulk",
+        id: "bulk" as const,
         title: "Bulk editor",
         body: "A spreadsheet over your entire shop — products, variants, collections, articles, pages, blogs, policies, metaobjects and images — with only the cells you touched being written.",
         points: [
@@ -93,7 +96,7 @@ export const en = {
         ],
       },
       {
-        id: "seo",
+        id: "seo" as const,
         title: "SEO",
         body: "A crawl of your own storefront rather than a guess from the database, and a report that filters out its own false positives.",
         points: [
@@ -106,7 +109,7 @@ export const en = {
         ],
       },
       {
-        id: "aeo",
+        id: "aeo" as const,
         title: "Answer engine optimisation",
         body: "Search is no longer only search. This part is about what an AI assistant reads when a customer asks it about your products.",
         points: [
@@ -118,7 +121,7 @@ export const en = {
         ],
       },
       {
-        id: "media",
+        id: "media" as const,
         title: "Images and media",
         body: "Alt texts are content too, and they are the text nobody writes.",
         points: [
@@ -129,7 +132,7 @@ export const en = {
         ],
       },
       {
-        id: "structure",
+        id: "structure" as const,
         title: "Navigation, metaobjects, theme text",
         body: "The content that is not a product and that most tools stop at.",
         points: [
@@ -140,6 +143,24 @@ export const en = {
         ],
       },
     ],
+  },
+
+  media: {
+    placeholder: "Image to come",
+    /** What each screenshot should SHOW — the brief for whoever captures it, and the alt text once it exists. */
+    alt: {
+      hero: "The bulk editor: a few hundred products in one spreadsheet, several languages side by side",
+      "pillar-writes": "The content editor with an AI suggestion waiting in the description field",
+      "pillar-translates": "The language bar of a product with every published locale and a market override",
+      "pillar-found": "The on-page report after a crawl of the storefront, findings grouped by category",
+      "feature-ai": "A field with a generated text and the accept button next to it",
+      "feature-translations": "The 'add missing translations' page with the per-language checkboxes",
+      "feature-bulk": "The bulk editor grid with a filter set and a few edited cells highlighted",
+      "feature-seo": "The crawl report: broken links, redirect chains and indexability in one view",
+      "feature-aeo": "The AI-discovery section showing agents.md, llms.txt and the structured-data status",
+      "feature-media": "The image manager with alt texts in several languages",
+      "feature-structure": "The menu editor with a nested navigation tree",
+    },
   },
 
   videos: {

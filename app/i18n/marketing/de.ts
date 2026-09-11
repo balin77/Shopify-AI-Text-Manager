@@ -13,11 +13,13 @@ export const de: MarketingTranslation = {
     videos: "Videos",
     faq: "Fragen",
     install: "Bei Shopify installieren",
+    installShort: "Installieren",
     menu: "Menü",
     language: "Sprache",
   },
 
   hero: {
+    storeBadge: "Live im Shopify App Store",
     eyebrow: "Shopify-App",
     title: "Jeder Text Ihres Shops. Geschrieben, gefunden und übersetzt.",
     subtitle:
@@ -28,6 +30,7 @@ export const de: MarketingTranslation = {
   },
 
   pillars: {
+    more: "Alle Funktionen ansehen",
     title: "Drei Dinge, die die App gut kann",
     items: [
       {
@@ -132,6 +135,23 @@ export const de: MarketingTranslation = {
         ],
       },
     ],
+  },
+
+  media: {
+    placeholder: "Bild folgt",
+    alt: {
+      hero: "Der Bulk-Editor: ein paar hundert Produkte in einer Tabelle, mehrere Sprachen nebeneinander",
+      "pillar-writes": "Der Content-Editor mit einem KI-Vorschlag im Beschreibungsfeld",
+      "pillar-translates": "Die Sprachleiste eines Produkts mit allen veröffentlichten Sprachen und einer Markt-Variante",
+      "pillar-found": "Der On-Page-Bericht nach einem Crawl der Storefront, Befunde nach Kategorie gruppiert",
+      "feature-ai": "Ein Feld mit einem generierten Text und dem Übernehmen-Button daneben",
+      "feature-translations": "Die Seite 'Fehlende Übersetzungen ergänzen' mit den Checkboxen pro Sprache",
+      "feature-bulk": "Das Raster des Bulk-Editors mit einem gesetzten Filter und ein paar hervorgehobenen Zellen",
+      "feature-seo": "Der Crawl-Bericht: defekte Links, Weiterleitungsketten und Indexierbarkeit in einer Ansicht",
+      "feature-aeo": "Der KI-Discovery-Bereich mit agents.md, llms.txt und dem Status der strukturierten Daten",
+      "feature-media": "Die Bildverwaltung mit Alt-Texten in mehreren Sprachen",
+      "feature-structure": "Der Menü-Editor mit einem verschachtelten Navigationsbaum",
+    },
   },
 
   videos: {

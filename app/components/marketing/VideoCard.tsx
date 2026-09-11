@@ -33,7 +33,9 @@ export function VideoCard({
     <article className="mk-card mk-video">
       <div className="mk-video__frame">
         {source === null ? (
-          <p className="mk-video__pending">{t.videos.comingSoon}</p>
+          <div className="mk-media__empty mk-video__empty" role="img" aria-label={t.videos.comingSoon}>
+            <span className="mk-media__label">{t.videos.comingSoon}</span>
+          </div>
         ) : source.kind === "file" ? (
           <video controls preload="none" poster={source.poster} playsInline>
             {source.sources.map((entry) => (

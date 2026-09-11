@@ -5,6 +5,7 @@ import { MARKETING_SITE } from "../config/marketing-site";
 import { buildMarketingMeta } from "../utils/marketing-meta";
 import { requireMarketingLocale } from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
+import { MediaSlot } from "../components/marketing/MediaSlot";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
@@ -31,19 +32,30 @@ export default function MarketingFeatures() {
 
   return (
     <>
-      <section className="mk-section">
+      <section className="mk-section mk-section--first">
         <div className="mk-shell">
           <div className="mk-section__head">
             <h1>{t.features.title}</h1>
             <p className="mk-lead">{t.features.intro}</p>
           </div>
 
-          {t.features.groups.map((group) => (
-            <section className="mk-feature" key={group.id} id={group.id}>
-              <div className="mk-feature__intro">
-                <h3>{group.title}</h3>
-                <p>{group.body}</p>
-              </div>
+          {/* Anchor row: seven blocks are a lot to scroll blind through. */}
+          <nav className="mk-chips" aria-label={t.features.title}>
+            {t.features.groups.map((group) => (
+              <a key={group.id} href={`#${group.id}`}>
+                {group.title}
+              </a>
+            ))}
+          </nav>
+        </div>
+      </section>
+
+      <div className="mk-shell">
+        {t.features.groups.map((group) => (
+          <section className="mk-feature" key={group.id} id={group.id}>
+            <div className="mk-feature__copy">
+              <h2>{group.title}</h2>
+              <p className="mk-feature__lead">{group.body}</p>
               <ul className="mk-points">
                 {group.points.map((point) => (
                   // ONE child only. The dot is `::before`, which IS a grid
@@ -53,10 +65,16 @@ export default function MarketingFeatures() {
                   <li key={point}>{point}</li>
                 ))}
               </ul>
-            </section>
-          ))}
-        </div>
-      </section>
+            </div>
+            <div className="mk-feature__media">
+              {/* No cast: the group ids are literal in en.ts, so a feature
+                  without an image slot fails typecheck instead of rendering
+                  an <img> with no alt text. */}
+              <MediaSlot slot={`feature-${group.id}`} t={t} />
+            </div>
+          </section>
+        ))}
+      </div>
 
       <MarketingCta t={t} locale={locale} />
     </>

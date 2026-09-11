@@ -76,15 +76,23 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
                 </Link>
               ))}
             </div>
-
-            {/* The site's ONE call to action. `/app` is deliberately not
-                offered: it only works from inside the Shopify admin, so a
-                visitor who could use it is already there, and everyone else
-                gets a blank App Bridge bounce page. */}
-            <InstallLink locale={locale} className="mk-btn mk-btn--primary">
-              {t.nav.install}
-            </InstallLink>
           </nav>
+
+          {/* The site's ONE call to action, and a SIBLING of the nav rather
+              than a child: on a phone the header is two rows — brand and
+              button on the first, links on the second — and that is only a
+              matter of flex order when the button is its own item. Nested
+              inside the nav it could only ever go where the nav goes. `/app`
+              is deliberately not offered: it only works from inside the
+              Shopify admin, so a visitor who could use it is already there. */}
+          <InstallLink locale={locale} className="mk-btn mk-btn--primary mk-header__cta">
+            {/* Both labels are rendered and CSS shows one: "Bei Shopify
+                installieren" beside the brand name does not fit a 390px row,
+                and a header that wraps to three rows is the thing this
+                avoids. Same pattern as the clear button in the editor. */}
+            <span className="mk-header__cta-long">{t.nav.install}</span>
+            <span className="mk-header__cta-short">{t.nav.installShort}</span>
+          </InstallLink>
         </div>
       </header>
 

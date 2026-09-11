@@ -13,11 +13,13 @@ export const es: MarketingTranslation = {
     videos: "Vídeos",
     faq: "Preguntas",
     install: "Instalar en Shopify",
+    installShort: "Instalar",
     menu: "Menú",
     language: "Idioma",
   },
 
   hero: {
+    storeBadge: "Disponible en la Shopify App Store",
     eyebrow: "Aplicación de Shopify",
     title: "Cada texto de su tienda. Escrito, encontrado y traducido.",
     subtitle:
@@ -28,6 +30,7 @@ export const es: MarketingTranslation = {
   },
 
   pillars: {
+    more: "Ver todas las funciones",
     title: "Tres cosas que hace bien",
     items: [
       {
@@ -132,6 +135,23 @@ export const es: MarketingTranslation = {
         ],
       },
     ],
+  },
+
+  media: {
+    placeholder: "Imagen pendiente",
+    alt: {
+      hero: "El editor masivo: unos cientos de productos en una hoja, varios idiomas uno junto a otro",
+      "pillar-writes": "El editor de contenido con una sugerencia de la IA en el campo de descripción",
+      "pillar-translates": "La barra de idiomas de un producto con todos los idiomas publicados y una variante de mercado",
+      "pillar-found": "El informe on-page tras un rastreo de la tienda, con los hallazgos agrupados por categoría",
+      "feature-ai": "Un campo con un texto generado y el botón de aceptar al lado",
+      "feature-translations": "La página 'añadir traducciones que faltan' con las casillas por idioma",
+      "feature-bulk": "La cuadrícula del editor masivo con un filtro aplicado y unas celdas editadas resaltadas",
+      "feature-seo": "El informe de rastreo: enlaces rotos, cadenas de redirección e indexabilidad en una vista",
+      "feature-aeo": "La sección de descubrimiento para IA con agents.md, llms.txt y el estado de los datos estructurados",
+      "feature-media": "El gestor de imágenes con textos alternativos en varios idiomas",
+      "feature-structure": "El editor de menús con un árbol de navegación anidado",
+    },
   },
 
   videos: {

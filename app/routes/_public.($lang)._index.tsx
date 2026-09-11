@@ -13,6 +13,9 @@ import { buildMarketingMeta } from "../utils/marketing-meta";
 import { localizedPath } from "../services/marketing-locale.shared";
 import { requireMarketingLocale } from "../utils/marketing-route.server";
 import { MarketingCta } from "../components/marketing/MarketingCta";
+import { MediaSlot } from "../components/marketing/MediaSlot";
+import { ScrollStory } from "../components/marketing/ScrollStory";
+import { InstallLink } from "../components/marketing/InstallLink";
 
 /**
  * Query parameters that mean "Shopify is opening the app", not "a person is
@@ -23,6 +26,9 @@ import { MarketingCta } from "../components/marketing/MarketingCta";
  */
 const SHOPIFY_ENTRY_PARAMS = ["shop", "host", "embedded", "id_token", "session", "hmac"];
 
+/** The three pillars, in order, and the image slot each one tells its story with. */
+const PILLAR_SLOTS = ["pillar-writes", "pillar-translates", "pillar-found"] as const;
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
@@ -32,7 +38,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const locale = requireMarketingLocale(params.lang, "/", url.search);
 
-  return { locale, origin: url.origin };
+  return { locale, origin: url.origin, appStoreUrl: MARKETING_SITE.appStoreUrl };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
@@ -49,67 +55,64 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 };
 
 export default function MarketingIndex() {
-  const { locale } = useLoaderData<typeof loader>();
+  const { locale, appStoreUrl } = useLoaderData<typeof loader>();
   const t = getMarketingTranslation(locale);
+
+  const steps = t.pillars.items.map((item, index) => ({
+    slot: PILLAR_SLOTS[index] ?? PILLAR_SLOTS[PILLAR_SLOTS.length - 1],
+    title: item.title,
+    body: item.body,
+  }));
 
   return (
     <>
       <section className="mk-hero">
-        <div className="mk-shell mk-hero__inner">
-          <span className="mk-eyebrow">{t.hero.eyebrow}</span>
-          <h1>{t.hero.title}</h1>
-          <p className="mk-hero__sub">{t.hero.subtitle}</p>
-          <div className="mk-hero__actions">
-            <Link className="mk-btn mk-btn--primary" to={localizedPath(locale, "/features")}>
-              {t.hero.ctaPrimary}
-            </Link>
-            <Link className="mk-btn mk-btn--ghost" to={localizedPath(locale, "/videos")}>
-              {t.hero.ctaSecondary}
-            </Link>
+        <div className="mk-shell mk-hero__grid">
+          <div className="mk-hero__copy">
+            {/* The one proof this site has that no brochure does: the app IS
+                in the store. A badge that links to the listing says it
+                without a number that could be wrong. */}
+            {appStoreUrl ? (
+              <a className="mk-badge" href={appStoreUrl}>
+                <span className="mk-badge__dot" aria-hidden="true" />
+                {t.hero.storeBadge}
+              </a>
+            ) : (
+              <span className="mk-badge">{t.hero.eyebrow}</span>
+            )}
+            <h1>{t.hero.title}</h1>
+            <p className="mk-hero__sub">{t.hero.subtitle}</p>
+            <div className="mk-hero__actions">
+              <InstallLink locale={locale} className="mk-btn mk-btn--primary">
+                {t.nav.install}
+              </InstallLink>
+              <Link className="mk-btn mk-btn--ghost" to={localizedPath(locale, "/features")}>
+                {t.hero.ctaPrimary}
+              </Link>
+            </div>
+            <p className="mk-hero__note">{t.hero.note}</p>
           </div>
-          <p className="mk-hero__note">{t.hero.note}</p>
+          <div className="mk-hero__media">
+            <MediaSlot slot="hero" t={t} aspect="4 / 3" />
+          </div>
         </div>
       </section>
 
-      <section className="mk-section mk-section--soft">
+      <section className="mk-section" id="pillars">
         <div className="mk-shell">
           <div className="mk-section__head">
             <h2>{t.pillars.title}</h2>
           </div>
-          <div className="mk-grid">
-            {t.pillars.items.map((item) => (
-              <article className="mk-card" key={item.title}>
-                <h3>{item.title}</h3>
-                <p>{item.body}</p>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="mk-section">
-        <div className="mk-shell">
-          <div className="mk-section__head">
-            <h2>{t.features.title}</h2>
-            <p className="mk-lead">{t.features.intro}</p>
-          </div>
-          <div className="mk-grid">
-            {t.features.groups.map((group) => (
-              <article className="mk-card" key={group.id}>
-                <h3>{group.title}</h3>
-                <p>{group.body}</p>
-              </article>
-            ))}
-          </div>
-          <p style={{ marginTop: 28 }}>
-            <Link className="mk-btn mk-btn--ghost" to={localizedPath(locale, "/features")}>
-              {t.hero.ctaPrimary}
+          <ScrollStory steps={steps} t={t} />
+          <p className="mk-section__more">
+            <Link to={localizedPath(locale, "/features")} className="mk-arrow">
+              {t.pillars.more}
             </Link>
           </p>
         </div>
       </section>
 
-      <section className="mk-section mk-section--soft">
+      <section className="mk-section" id="faq">
         <div className="mk-shell">
           <div className="mk-section__head">
             <h2>{t.faq.title}</h2>

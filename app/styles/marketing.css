@@ -1,37 +1,48 @@
 /*
- * The PUBLIC website (`/`, `/features`, `/videos`).
+ * The PUBLIC website (`/`, `/features`, `/videos`, `/install`).
  *
  * Self-contained on purpose: these routes render outside the /app tree, do not
  * load Polaris, and must stay readable if the admin's design system ever moves.
  * Every number lives in the :root block below — the same single-source rule the
  * app's own responsive.css follows.
+ *
+ * The palette is DERIVED FROM THE LOGO. The mark is an oxblood red
+ * (rgb 160 32 16, measured off public/app-icon.png), and the first version of
+ * this site painted every button teal next to it — red beside green reads as a
+ * second brand. So the red is the ONE accent, used sparingly (a badge, a
+ * bullet, a hover), and the calls to action are ink: a button that is a
+ * colour competes with the mark, a button that is black frames it.
  */
 
 .mk {
-  --mk-max-width: 1120px;
-  --mk-prose-width: 68ch;
+  --mk-max-width: 1160px;
+  --mk-prose-width: 62ch;
   --mk-gutter: 24px;
-  --mk-radius: 14px;
-  --mk-radius-sm: 8px;
+  --mk-radius: 16px;
+  --mk-radius-sm: 10px;
+  --mk-header-height: 72px;
 
-  --mk-bg: #ffffff;
-  --mk-bg-soft: #f6f7f9;
-  --mk-bg-invert: #10231d;
-  --mk-text: #16191c;
-  --mk-text-muted: #5c6469;
-  --mk-text-invert: #eef4f1;
-  --mk-border: #e1e4e8;
-  --mk-accent: #00806a;
-  --mk-accent-strong: #00614f;
-  --mk-accent-soft: #e6f2ef;
+  --mk-bg: #fbfaf8;
+  --mk-surface: #ffffff;
+  --mk-surface-2: #f3f0eb;
+  --mk-text: #1a1714;
+  --mk-text-muted: #5f5952;
+  --mk-text-invert: #f5f2ee;
+  --mk-border: #e6e1da;
+  --mk-border-strong: #d4cec5;
+
+  --mk-brand: #a02010;
+  --mk-brand-soft: #f7e9e5;
+  --mk-ink: #1a1714;
+  --mk-ink-hover: #000000;
   --mk-danger: #b42318;
 
-  --mk-shadow: 0 1px 2px rgba(16, 24, 32, 0.04), 0 8px 24px rgba(16, 24, 32, 0.06);
+  --mk-shadow: 0 1px 2px rgba(26, 23, 20, 0.05), 0 12px 32px rgba(26, 23, 20, 0.06);
 
   color: var(--mk-text);
   background: var(--mk-bg);
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   display: flex;
@@ -44,19 +55,22 @@
    answered by prefers-color-scheme alone. */
 @media (prefers-color-scheme: dark) {
   .mk:not([data-mk-theme="light"]) {
-    --mk-bg: #101315;
-    --mk-bg-soft: #171b1e;
-    --mk-bg-invert: #0b1a16;
-    --mk-text: #edf0f2;
-    --mk-text-muted: #a3adb3;
-    --mk-border: #272c31;
-    --mk-accent: #3fbf9f;
-    --mk-accent-strong: #63d3b6;
-    --mk-accent-soft: #142a24;
+    --mk-bg: #131211;
+    --mk-surface: #1b1917;
+    --mk-surface-2: #22201d;
+    --mk-text: #efebe6;
+    --mk-text-muted: #a49d94;
+    --mk-text-invert: #1a1714;
+    --mk-border: #2c2925;
+    --mk-border-strong: #3a3631;
+    --mk-brand: #e2705b;
+    --mk-brand-soft: #3a1f19;
+    --mk-ink: #efebe6;
+    --mk-ink-hover: #ffffff;
     /* The light red measures ~2.9:1 on the dark ground — below WCAG AA for
        the one message that explains a refused install. */
     --mk-danger: #ff9d93;
-    --mk-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+    --mk-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
   }
 }
 
@@ -69,10 +83,11 @@
 .mk h1,
 .mk h2,
 .mk h3 {
-  line-height: 1.2;
-  letter-spacing: -0.015em;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
   margin: 0;
   font-weight: 650;
+  text-wrap: balance;
 }
 
 .mk p {
@@ -100,8 +115,8 @@
   position: sticky;
   top: 0;
   z-index: 10;
-  background: color-mix(in srgb, var(--mk-bg) 88%, transparent);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--mk-bg) 86%, transparent);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--mk-border);
 }
 
@@ -109,7 +124,7 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 64px;
+  min-height: var(--mk-header-height);
   flex-wrap: wrap;
   padding-block: 10px;
 }
@@ -127,7 +142,7 @@
 .mk-brand img {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: 7px;
 }
 
 .mk-nav {
@@ -140,9 +155,9 @@
 
 /* `:not(.mk-btn)` is load-bearing, not tidiness: `.mk-nav a` is one class
    plus one type and therefore OUTRANKS `.mk-btn--primary`, so the install
-   button inside the nav took the muted link colour on green, and the hover
-   rule repainted it light grey — which on a phone STICKS after a tap, because
-   mobile browsers keep :hover until the next touch elsewhere. */
+   button inside the nav took the muted link colour, and the hover rule
+   repainted it — which on a phone STICKS after a tap, because mobile
+   browsers keep :hover until the next touch elsewhere. */
 .mk-nav a:not(.mk-btn) {
   text-decoration: none;
   color: var(--mk-text-muted);
@@ -154,12 +169,65 @@
 
 .mk-nav a:not(.mk-btn):hover {
   color: var(--mk-text);
-  background: var(--mk-bg-soft);
+  background: var(--mk-surface-2);
 }
 
 .mk-nav a:not(.mk-btn)[aria-current="page"] {
   color: var(--mk-text);
-  background: var(--mk-bg-soft);
+  background: var(--mk-surface-2);
+}
+
+.mk-header__cta {
+  flex: none;
+}
+
+.mk-header__cta-short {
+  display: none;
+}
+
+/* On a phone the header is two clean rows: brand and the install button on
+   the first, the links and the language switcher on the second. The button
+   is a sibling of the nav (see _public.tsx), so this is flex order and a
+   full-width nav — the first cut positioned it absolutely and it sat on top
+   of the brand name the moment the label was longer than the English one. */
+@media (max-width: 720px) {
+  .mk-header__inner {
+    gap: 6px 12px;
+    padding-block: 8px;
+    min-height: 0;
+  }
+
+  .mk-brand {
+    order: 0;
+    min-width: 0;
+  }
+
+  .mk-header__cta {
+    order: 1;
+    margin-inline-start: auto;
+    padding: 9px 14px;
+    font-size: 0.875rem;
+  }
+
+  .mk-header__cta-long {
+    display: none;
+  }
+
+  .mk-header__cta-short {
+    display: inline;
+  }
+
+  .mk-nav {
+    order: 2;
+    flex-basis: 100%;
+    margin-inline-start: 0;
+    justify-content: space-between;
+    gap: 0;
+  }
+
+  .mk-nav a:not(.mk-btn) {
+    padding: 8px 10px;
+  }
 }
 
 /* ── Buttons ────────────────────────────────────────────────────── */
@@ -169,106 +237,156 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 11px 20px;
-  border-radius: var(--mk-radius-sm);
+  padding: 12px 20px;
+  border-radius: 999px;
   font-weight: 600;
   font-size: 0.9375rem;
   text-decoration: none;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 /* Scoped as `.mk .mk-btn--…` because `.mk a { color: inherit }` above is one
-   class plus one type and would otherwise WIN over a bare `.mk-btn--primary`:
-   the button rendered body-dark text on the green, which measures ~3.6:1 and
-   fails WCAG AA. Measured in Chromium, not assumed — a bare class here
-   computed to rgb(22,25,28) instead of white. */
+   class plus one type and would otherwise WIN over a bare `.mk-btn--primary`.
+   Measured in Chromium, not assumed. */
 .mk .mk-btn--primary {
-  background: var(--mk-accent);
-  color: #ffffff;
+  background: var(--mk-ink);
+  color: var(--mk-text-invert);
 }
 
 .mk .mk-btn--primary:hover {
-  background: var(--mk-accent-strong);
-}
-
-@media (prefers-color-scheme: dark) {
-  .mk:not([data-mk-theme="light"]) .mk-btn--primary {
-    color: #06231c;
-  }
+  background: var(--mk-ink-hover);
 }
 
 .mk .mk-btn--ghost {
-  border-color: var(--mk-border);
+  border-color: var(--mk-border-strong);
   color: var(--mk-text);
   background: transparent;
 }
 
-.mk-btn--ghost:hover {
-  background: var(--mk-bg-soft);
+.mk .mk-btn--ghost:hover {
+  background: var(--mk-surface-2);
+}
+
+.mk-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mk-arrow {
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--mk-text);
+  border-bottom: 1px solid var(--mk-border-strong);
+  padding-bottom: 2px;
+}
+
+.mk-arrow::after {
+  content: " \2192";
+}
+
+.mk-arrow:hover {
+  border-color: var(--mk-brand);
+  color: var(--mk-brand);
 }
 
 /* ── Sections ───────────────────────────────────────────────────── */
 
 .mk-section {
-  padding-block: clamp(48px, 7vw, 88px);
+  padding-block: clamp(56px, 8vw, 104px);
 }
 
-.mk-section--soft {
-  background: var(--mk-bg-soft);
-  border-block: 1px solid var(--mk-border);
+.mk-section--first {
+  padding-bottom: clamp(24px, 4vw, 40px);
 }
 
 .mk-section__head {
   max-width: var(--mk-prose-width);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 40px;
+  gap: 14px;
+  margin-bottom: clamp(32px, 5vw, 56px);
+}
+
+.mk-section__head h1 {
+  font-size: clamp(2.125rem, 5vw, 3rem);
 }
 
 .mk-section__head h2 {
-  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-size: clamp(1.75rem, 3.6vw, 2.375rem);
+}
+
+.mk-section__more {
+  margin-top: clamp(24px, 4vw, 40px);
 }
 
 .mk-lead {
   color: var(--mk-text-muted);
-  font-size: 1.0625rem;
+  font-size: 1.125rem;
+}
+
+/* ── Badge ──────────────────────────────────────────────────────── */
+
+.mk-badge {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--mk-brand);
+  background: var(--mk-brand-soft);
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  text-decoration: none;
+}
+
+.mk-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--mk-brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mk-brand) 22%, transparent);
+}
+
+a.mk-badge:hover {
+  text-decoration: underline;
 }
 
 /* ── Hero ───────────────────────────────────────────────────────── */
 
 .mk-hero {
-  padding-block: clamp(56px, 9vw, 112px);
+  padding-block: clamp(48px, 7vw, 96px) clamp(24px, 4vw, 48px);
 }
 
-.mk-hero__inner {
-  max-width: 780px;
+.mk-hero__grid {
+  display: grid;
+  gap: clamp(32px, 5vw, 64px);
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
+@media (min-width: 900px) {
+  .mk-hero__grid {
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  }
+}
+
+.mk-hero__copy {
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.mk-eyebrow {
-  align-self: flex-start;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--mk-accent);
-  background: var(--mk-accent-soft);
-  padding: 5px 10px;
-  border-radius: 999px;
-}
-
 .mk-hero h1 {
-  font-size: clamp(2rem, 5.5vw, 3.25rem);
-  font-weight: 680;
+  font-size: clamp(2.25rem, 5.4vw, 3.5rem);
+  font-weight: 700;
 }
 
 .mk-hero__sub {
-  font-size: clamp(1.0625rem, 2vw, 1.1875rem);
+  font-size: clamp(1.0625rem, 1.8vw, 1.25rem);
   color: var(--mk-text-muted);
   max-width: var(--mk-prose-width);
 }
@@ -277,7 +395,7 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .mk-hero__note {
@@ -285,72 +403,279 @@
   color: var(--mk-text-muted);
 }
 
-/* ── Cards ──────────────────────────────────────────────────────── */
-
-.mk-grid {
-  display: grid;
-  gap: 20px;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+/* The one scroll-linked touch that needs no JavaScript: the hero screenshot
+   drifts up a little and grows a hair as the page starts to move. Pure CSS
+   scroll-driven animation, so a browser without it simply shows the still
+   image — and a reader who asked for less motion gets exactly that. */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .mk-hero__media {
+      animation: mk-hero-drift linear both;
+      animation-timeline: scroll(root);
+      animation-range: 0 600px;
+    }
+  }
 }
 
-.mk-card {
-  background: var(--mk-bg);
+@keyframes mk-hero-drift {
+  from {
+    transform: translateY(0) scale(1);
+  }
+  to {
+    transform: translateY(-28px) scale(1.025);
+  }
+}
+
+/* ── Media (screenshot frame, or its placeholder) ───────────────── */
+
+.mk-media {
+  margin: 0;
   border: 1px solid var(--mk-border);
   border-radius: var(--mk-radius);
-  padding: 24px;
+  background: var(--mk-surface);
+  overflow: hidden;
+  box-shadow: var(--mk-shadow);
+  max-width: 100%;
+}
+
+.mk-media__bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--mk-border);
+  background: var(--mk-surface-2);
+}
+
+.mk-media__bar span {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--mk-border-strong);
+}
+
+.mk-media__img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The empty state is a page with nothing on it, not a grey box with a
+   warning: it has the proportions of the screenshot that will replace it,
+   and a faint label so the layout can be reviewed while every slot is still
+   empty. The diagonal hatching is what keeps it from reading as a broken
+   image. */
+.mk-media__empty {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      transparent 0 14px,
+      color-mix(in srgb, var(--mk-border) 55%, transparent) 14px 15px
+    ),
+    var(--mk-surface);
+}
+
+.mk-media__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mk-text-muted);
+  background: var(--mk-surface);
+  border: 1px solid var(--mk-border);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+/* ── Scroll story (the three pillars) ───────────────────────────── */
+
+.mk-story {
+  display: grid;
+  gap: clamp(32px, 5vw, 72px);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.mk-story__step {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  box-shadow: var(--mk-shadow);
+  gap: 12px;
+  padding-block: clamp(24px, 4vw, 40px);
+  border-top: 1px solid var(--mk-border);
 }
 
-.mk-card h3 {
-  font-size: 1.125rem;
+.mk-story__step:first-child {
+  border-top: none;
+  padding-top: 0;
 }
 
-.mk-card p {
+.mk-story__index {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--mk-brand);
+}
+
+.mk-story__step h3 {
+  font-size: clamp(1.375rem, 2.4vw, 1.75rem);
+}
+
+.mk-story__step p {
   color: var(--mk-text-muted);
-  font-size: 0.9375rem;
+  max-width: var(--mk-prose-width);
 }
 
-/* ── Feature blocks ─────────────────────────────────────────────── */
+.mk-story__inline {
+  margin-top: 12px;
+}
+
+.mk-story__visual {
+  display: none;
+}
+
+/* Desktop: the frame column is sticky and cross-fades between the steps;
+   the inline per-step images disappear so the picture is shown once. The
+   steps get room to scroll through so the change is felt, not skipped. */
+@media (min-width: 900px) {
+  .mk-story {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: start;
+  }
+
+  .mk-story__step {
+    min-height: 56vh;
+    justify-content: center;
+    border-top: none;
+    padding-block: 0;
+    opacity: 0.38;
+    transition: opacity 0.35s ease;
+  }
+
+  /* The first step starts where the heading ends and where the sticky frame
+     starts. Centred like the others it sat a quarter of a screen below both,
+     which read as a hole in the page rather than as a scroll story. */
+  .mk-story__step:first-child {
+    justify-content: flex-start;
+    min-height: 44vh;
+  }
+
+  .mk-story__step[data-active="true"] {
+    opacity: 1;
+  }
+
+  .mk-story__inline {
+    display: none;
+  }
+
+  /* The frame sticks at the top of the reading area and STAYS there — not
+     centred in a viewport-tall box, which put it a quarter-screen below the
+     first step on a tall window and made the section open with a hole. */
+  .mk-story__visual {
+    display: block;
+    position: sticky;
+    top: calc(var(--mk-header-height) + 32px);
+  }
+
+  .mk-story__stack {
+    position: relative;
+    width: 100%;
+  }
+
+  .mk-story__frame {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.45s ease;
+  }
+
+  /* The first frame stays in flow so the stack has a height. */
+  .mk-story__frame:first-child {
+    position: relative;
+  }
+
+  .mk-story__frame[data-active="true"] {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-story__step,
+  .mk-story__frame {
+    transition: none;
+  }
+}
+
+/* ── Feature blocks (/features) ─────────────────────────────────── */
+
+.mk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mk-chips a {
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--mk-text-muted);
+  border: 1px solid var(--mk-border);
+  background: var(--mk-surface);
+  padding: 7px 12px;
+  border-radius: 999px;
+}
+
+.mk-chips a:hover {
+  color: var(--mk-text);
+  border-color: var(--mk-border-strong);
+}
 
 .mk-feature {
   display: grid;
-  gap: 24px;
+  gap: clamp(24px, 4vw, 56px);
   grid-template-columns: minmax(0, 1fr);
-  padding-block: 32px;
+  align-items: center;
+  padding-block: clamp(40px, 6vw, 80px);
   border-top: 1px solid var(--mk-border);
+  scroll-margin-top: calc(var(--mk-header-height) + 16px);
 }
 
 .mk-feature:first-of-type {
   border-top: none;
 }
 
-@media (min-width: 800px) {
+@media (min-width: 900px) {
   .mk-feature {
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-    gap: 48px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  /* Every second block swaps sides, so seven of them read as a rhythm and
+     not as a list. Done in CSS so the markup stays text-then-image, which is
+     also the reading order a screen reader gets. */
+  .mk-feature:nth-of-type(even) .mk-feature__media {
+    order: -1;
   }
 }
 
-.mk-feature__intro {
+.mk-feature__copy {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 
-.mk-feature__intro h3 {
-  font-size: 1.375rem;
+.mk-feature__copy h2 {
+  font-size: clamp(1.5rem, 2.8vw, 2rem);
 }
 
-.mk-feature__intro p {
+.mk-feature__lead {
   color: var(--mk-text-muted);
+  max-width: var(--mk-prose-width);
 }
 
 .mk-points {
   list-style: none;
-  margin: 0;
+  margin: 8px 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
@@ -359,20 +684,47 @@
 
 .mk-points li {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
-  font-size: 0.9375rem;
+  font-size: 1rem;
 }
 
 .mk-points li::before {
   content: "";
-  width: 8px;
-  height: 8px;
-  margin-top: 8px;
-  margin-inline-start: 6px;
+  width: 7px;
+  height: 7px;
+  margin-top: 10px;
+  margin-inline-start: 5px;
   border-radius: 999px;
-  background: var(--mk-accent);
+  background: var(--mk-brand);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────── */
+
+.mk-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
+.mk-card {
+  background: var(--mk-surface);
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mk-card h3 {
+  font-size: 1.125rem;
+}
+
+.mk-card p {
+  color: var(--mk-text-muted);
+  font-size: 1rem;
 }
 
 /* ── Videos ─────────────────────────────────────────────────────── */
@@ -386,7 +738,7 @@
   position: relative;
   aspect-ratio: 16 / 9;
   max-width: 100%;
-  background: var(--mk-bg-invert);
+  background: var(--mk-surface-2);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -399,6 +751,10 @@
   border: 0;
   display: block;
   object-fit: cover;
+}
+
+.mk-video__empty {
+  height: 100%;
 }
 
 .mk-video__poster {
@@ -419,7 +775,7 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: var(--mk-text-invert);
+  color: #ffffff;
   gap: 10px;
   font: inherit;
   font-weight: 600;
@@ -429,18 +785,9 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.6);
   padding: 12px 20px;
   border-radius: 999px;
-}
-
-.mk-video__pending {
-  color: var(--mk-text-invert);
-  opacity: 0.7;
-  font-size: 0.9375rem;
-  font-weight: 500;
-  padding: 16px;
-  text-align: center;
 }
 
 .mk-video__body {
@@ -456,11 +803,11 @@
 
 .mk-video__body p {
   color: var(--mk-text-muted);
-  font-size: 0.9375rem;
+  font-size: 1rem;
 }
 
 .mk-note {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--mk-text-muted);
 }
 
@@ -492,23 +839,20 @@
 .mk-field input {
   width: 100%;
   font: inherit;
-  padding: 11px 14px;
-  border: 1px solid var(--mk-border);
+  padding: 12px 14px;
+  border: 1px solid var(--mk-border-strong);
   border-radius: var(--mk-radius-sm);
-  background: var(--mk-bg);
+  background: var(--mk-surface);
   color: var(--mk-text);
-  /* A real 16px FLOOR: iOS Safari zooms the page on focus below it, and the
-     merchant lands on a layout they then have to pinch back out of. `1rem`
-     alone is not the guard — it follows the root size, which a merchant may
-     have set smaller. The first cut wrote max(1rem, 0.9375rem), which always
-     picks 1rem and enforces nothing. */
+  /* A real 16px FLOOR: iOS Safari zooms the page on focus below it. `1rem`
+     alone follows the root size, which a merchant may have set smaller. */
   font-size: max(16px, 1rem);
 }
 
 .mk-field input:focus-visible {
-  outline: 2px solid var(--mk-accent);
+  outline: 2px solid var(--mk-brand);
   outline-offset: 1px;
-  border-color: var(--mk-accent);
+  border-color: var(--mk-brand);
 }
 
 .mk-field input[aria-invalid="true"] {
@@ -520,25 +864,20 @@
   font-size: 0.9375rem;
 }
 
-.mk-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
 /* ── FAQ ────────────────────────────────────────────────────────── */
 
 .mk-faq {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   max-width: 860px;
 }
 
 .mk-faq details {
   border: 1px solid var(--mk-border);
   border-radius: var(--mk-radius);
-  background: var(--mk-bg);
-  padding: 4px 20px;
+  background: var(--mk-surface);
+  padding: 4px 22px;
 }
 
 .mk-faq summary {
@@ -559,7 +898,7 @@
 .mk-faq summary::after {
   content: "+";
   font-weight: 400;
-  font-size: 1.25rem;
+  font-size: 1.375rem;
   color: var(--mk-text-muted);
   flex: none;
 }
@@ -577,10 +916,10 @@
 /* ── Closing CTA ────────────────────────────────────────────────── */
 
 .mk-cta {
-  background: var(--mk-bg-invert);
+  background: var(--mk-ink);
   color: var(--mk-text-invert);
   border-radius: var(--mk-radius);
-  padding: clamp(32px, 5vw, 56px);
+  padding: clamp(36px, 6vw, 64px);
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -588,23 +927,49 @@
 }
 
 .mk-cta h2 {
-  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-size: clamp(1.75rem, 3.6vw, 2.375rem);
 }
 
 .mk-cta p {
   color: color-mix(in srgb, var(--mk-text-invert) 78%, transparent);
   max-width: var(--mk-prose-width);
+  font-size: 1.0625rem;
 }
 
-.mk-cta .mk-btn--primary {
+/* Inside the ink block the primary button inverts: ink on ink is a button
+   nobody can see. */
+.mk .mk-cta .mk-btn--primary {
+  background: var(--mk-text-invert);
+  color: var(--mk-ink);
   margin-top: 8px;
+}
+
+.mk .mk-cta .mk-btn--primary:hover {
+  background: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .mk:not([data-mk-theme="light"]) .mk-cta {
+    background: var(--mk-surface-2);
+    color: var(--mk-text);
+    border: 1px solid var(--mk-border);
+  }
+
+  .mk:not([data-mk-theme="light"]) .mk-cta p {
+    color: var(--mk-text-muted);
+  }
+
+  .mk:not([data-mk-theme="light"]) .mk-cta .mk-btn--primary {
+    background: var(--mk-ink);
+    color: var(--mk-text-invert);
+  }
 }
 
 /* ── Footer ─────────────────────────────────────────────────────── */
 
 .mk-footer {
   border-top: 1px solid var(--mk-border);
-  padding-block: 40px;
+  padding-block: 48px;
   margin-top: auto;
   font-size: 0.9375rem;
 }
@@ -622,9 +987,9 @@
 }
 
 .mk-footer__col h3 {
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--mk-text-muted);
   font-weight: 600;
 }
@@ -640,7 +1005,7 @@
 }
 
 .mk-footer__bottom {
-  margin-top: 32px;
+  margin-top: 36px;
   padding-top: 20px;
   border-top: 1px solid var(--mk-border);
   color: var(--mk-text-muted);
@@ -657,14 +1022,15 @@
   display: inline-flex;
   gap: 2px;
   border: 1px solid var(--mk-border);
-  border-radius: var(--mk-radius-sm);
-  padding: 2px;
+  border-radius: 999px;
+  padding: 3px;
+  background: var(--mk-surface);
 }
 
 .mk-nav .mk-lang a,
 .mk-lang a {
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: 999px;
   font-size: 0.8125rem;
   font-weight: 600;
   text-decoration: none;
@@ -673,8 +1039,8 @@
 
 .mk-nav .mk-lang a[aria-current="true"],
 .mk-lang a[aria-current="true"] {
-  background: var(--mk-accent-soft);
-  color: var(--mk-accent);
+  background: var(--mk-brand-soft);
+  color: var(--mk-brand);
 }
 
 /* ── Not found ──────────────────────────────────────────────────── */
