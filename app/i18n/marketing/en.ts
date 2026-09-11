@@ -8,6 +8,9 @@
  * here fails typecheck until every language has it.
  */
 
+/** One pillar of the landing page's scroll story. */
+type Pillar = { title: string; body: string };
+
 export const en = {
   site: {
     name: "ContentPilot AI",
@@ -33,7 +36,6 @@ export const en = {
     subtitle:
       "ContentPilot AI generates product texts, fixes your SEO and keeps every translation in sync with the text it was made from — across all your languages and markets.",
     ctaPrimary: "See what it does",
-    ctaSecondary: "Watch the videos",
     note: "Works with your existing theme. It never edits your theme code.",
   },
 
@@ -53,7 +55,9 @@ export const en = {
         title: "Gets found",
         body: "A crawl of your own storefront, an on-page report, structured data, redirect chains, sitemap control, IndexNow — plus the newer half nobody has covered yet: what AI assistants read when they answer a question about your shop.",
       },
-    ],
+      // Exactly three: the scroll story has three image slots, and a fourth
+      // pillar here must fail typecheck instead of silently sharing a picture.
+    ] as [Pillar, Pillar, Pillar],
   },
 
   features: {

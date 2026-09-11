@@ -328,7 +328,10 @@
 
 /* ── Badge ──────────────────────────────────────────────────────── */
 
-.mk-badge {
+/* `.mk .mk-badge`, not `.mk-badge`: the badge is an <a>, and `.mk a { color:
+   inherit }` outranks a bare class — the same trap the primary button
+   documents. Measured: the first cut rendered it in body ink on the pink. */
+.mk .mk-badge {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
@@ -535,44 +538,57 @@ a.mk-badge:hover {
   display: none;
 }
 
-/* Desktop: the frame column is sticky and cross-fades between the steps;
-   the inline per-step images disappear so the picture is shown once. The
-   steps get room to scroll through so the change is felt, not skipped. */
+/* Desktop, AND ONLY ONCE THE SCRIPT HAS STAMPED `data-enhanced`: the frame
+   column is sticky and cross-fades between the steps, the inline per-step
+   images leave the visible page, and inactive steps dim. Without the stamp
+   (no JavaScript, a failed hydration, a reader-mode fetch) none of this
+   applies and the page keeps the stacked layout at every width — dimming in
+   CSS alone left steps 2 and 3 at ~1.7:1 for exactly those visitors. */
 @media (min-width: 900px) {
-  .mk-story {
+  .mk-story[data-enhanced] {
     grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
     align-items: start;
   }
 
-  .mk-story__step {
+  .mk-story[data-enhanced] .mk-story__step {
     min-height: 56vh;
     justify-content: center;
     border-top: none;
     padding-block: 0;
-    opacity: 0.38;
+    opacity: 0.5;
     transition: opacity 0.35s ease;
   }
 
   /* The first step starts where the heading ends and where the sticky frame
      starts. Centred like the others it sat a quarter of a screen below both,
      which read as a hole in the page rather than as a scroll story. */
-  .mk-story__step:first-child {
+  .mk-story[data-enhanced] .mk-story__step:first-child {
     justify-content: flex-start;
     min-height: 44vh;
   }
 
-  .mk-story__step[data-active="true"] {
+  .mk-story[data-enhanced] .mk-story__step[data-active="true"] {
     opacity: 1;
   }
 
-  .mk-story__inline {
-    display: none;
+  /* Visually hidden, NOT display: none — these carry the only alt text a
+     screen reader can reach, since the sticky column is aria-hidden. */
+  .mk-story[data-enhanced] .mk-story__inline {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   /* The frame sticks at the top of the reading area and STAYS there — not
      centred in a viewport-tall box, which put it a quarter-screen below the
      first step on a tall window and made the section open with a hole. */
-  .mk-story__visual {
+  .mk-story[data-enhanced] .mk-story__visual {
     display: block;
     position: sticky;
     top: calc(var(--mk-header-height) + 32px);
@@ -590,7 +606,10 @@ a.mk-badge:hover {
     transition: opacity 0.45s ease;
   }
 
-  /* The first frame stays in flow so the stack has a height. */
+  /* The first frame stays in flow so the stack has a height — which is why
+     every frame in the stack is pinned to ONE aspect ratio below: the stack
+     is as tall as frame one, and a taller screenshot in frame three would
+     paint past the bottom of the sticky column. */
   .mk-story__frame:first-child {
     position: relative;
   }
@@ -598,6 +617,12 @@ a.mk-badge:hover {
   .mk-story__frame[data-active="true"] {
     opacity: 1;
   }
+}
+
+.mk-story__frame .mk-media__img,
+.mk-story__frame .mk-media__empty {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -962,6 +987,12 @@ a.mk-badge:hover {
   .mk:not([data-mk-theme="light"]) .mk-cta .mk-btn--primary {
     background: var(--mk-ink);
     color: var(--mk-text-invert);
+  }
+
+  /* Same specificity as the rule above and later in the file, or the dark
+     CTA button has no hover at all. */
+  .mk:not([data-mk-theme="light"]) .mk-cta .mk-btn--primary:hover {
+    background: var(--mk-ink-hover);
   }
 }
 

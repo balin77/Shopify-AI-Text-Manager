@@ -25,7 +25,6 @@ export const de: MarketingTranslation = {
     subtitle:
       "ContentPilot AI schreibt Produkttexte, bringt Ihr SEO in Ordnung und hält jede Übersetzung mit dem Text zusammen, aus dem sie entstanden ist — über alle Sprachen und Märkte hinweg.",
     ctaPrimary: "Ansehen, was die App kann",
-    ctaSecondary: "Videos ansehen",
     note: "Funktioniert mit Ihrem bestehenden Theme. Ihr Theme-Code wird nie verändert.",
   },
 

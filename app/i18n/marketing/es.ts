@@ -25,7 +25,6 @@ export const es: MarketingTranslation = {
     subtitle:
       "ContentPilot AI redacta textos de producto, pone en orden su SEO y mantiene cada traducción unida al texto del que nació — en todos sus idiomas y mercados.",
     ctaPrimary: "Ver lo que hace",
-    ctaSecondary: "Ver los vídeos",
     note: "Funciona con su tema actual. Nunca modifica el código de su tema.",
   },
 

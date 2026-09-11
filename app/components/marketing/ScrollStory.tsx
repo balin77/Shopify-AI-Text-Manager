@@ -23,19 +23,33 @@ export interface StoryStep {
  * - The server renders step 0 active and the client starts from the same
  *   state; the observer only ever runs after hydration (useEffect). No
  *   `typeof window` guard — that flips too early and mismatches anyway.
- * - Below the desktop breakpoint the sticky column is `display: none` and
- *   each step shows its own image inline: sticky on a phone means a picture
- *   that covers the words it belongs to. Both sets are in the DOM; the hidden
- *   one costs no requests because its images are lazy and never laid out.
+ * - Below the desktop breakpoint — and everywhere until the effect has
+ *   stamped `data-enhanced` — the sticky column is `display: none` and each
+ *   step shows its own image inline: sticky on a phone means a picture that
+ *   covers the words it belongs to. On desktop the inline copies stay in the
+ *   accessibility tree (visually hidden, not `display: none`), because the
+ *   sticky column is a visual duplicate and is `aria-hidden`; without that a
+ *   screen reader at desktop width would never hear the alt texts.
  * - The fade is opacity only and is switched off under prefers-reduced-motion
  *   (see marketing.css). Nothing here moves the layout.
  */
 export function ScrollStory({ steps, t }: { steps: StoryStep[]; t: MarketingTranslation }) {
   const [active, setActive] = useState(0);
   const stepRefs = useRef<Array<HTMLElement | null>>([]);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;
+
+    // Progressive enhancement, made explicit: the sticky layout and the
+    // dimming of inactive steps exist only once this effect runs. Without
+    // it — no JavaScript, a failed hydration, a reader-mode fetch — the CSS
+    // keeps every step at full opacity with its own image inline, which is
+    // the mobile layout and reads fine at any width. The first cut dimmed in
+    // CSS unconditionally, so steps 2 and 3 were ~1.7:1 forever for exactly
+    // those visitors.
+    const root = rootRef.current;
+    if (root) root.dataset.enhanced = "true";
 
     // A step is "current" while it crosses the middle band of the viewport.
     // The 45% margins shrink the root to that band, so at most one or two
@@ -52,11 +66,14 @@ export function ScrollStory({ steps, t }: { steps: StoryStep[]; t: MarketingTran
     );
 
     for (const el of stepRefs.current) if (el) observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (root) delete root.dataset.enhanced;
+    };
   }, []);
 
   return (
-    <div className="mk-story">
+    <div className="mk-story" ref={rootRef}>
       <div className="mk-story__steps">
         {steps.map((step, index) => (
           <article

@@ -38,7 +38,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   const locale = requireMarketingLocale(params.lang, "/", url.search);
 
-  return { locale, origin: url.origin, appStoreUrl: MARKETING_SITE.appStoreUrl };
+  return { locale, origin: url.origin };
 };
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => {
@@ -55,13 +55,17 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 };
 
 export default function MarketingIndex() {
-  const { locale, appStoreUrl } = useLoaderData<typeof loader>();
+  const { locale } = useLoaderData<typeof loader>();
   const t = getMarketingTranslation(locale);
+  const appStoreUrl = MARKETING_SITE.appStoreUrl;
 
-  const steps = t.pillars.items.map((item, index) => ({
-    slot: PILLAR_SLOTS[index] ?? PILLAR_SLOTS[PILLAR_SLOTS.length - 1],
-    title: item.title,
-    body: item.body,
+  // `pillars.items` is typed as a 3-tuple (en.ts), so this zip cannot run
+  // past the slots: a fourth pillar fails typecheck rather than silently
+  // reusing the last image and producing two React keys of the same name.
+  const steps = PILLAR_SLOTS.map((slot, index) => ({
+    slot,
+    title: t.pillars.items[index].title,
+    body: t.pillars.items[index].body,
   }));
 
   return (
