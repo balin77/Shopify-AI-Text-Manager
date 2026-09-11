@@ -11,12 +11,18 @@ export const MARKETING_SITE = {
   companyName: "Gubler - Multimedia und Print",
   appName: "ContentPilot AI",
   supportEmail: "gublerra@gmail.com",
-  /** Where "Open the app" goes. Inside the Shopify admin this is the app itself. */
+  /**
+   * The embedded app's own path. The site does NOT link to it — `/app` only
+   * works from inside the Shopify admin — but the landing route still
+   * redirects a Shopify-initiated request there, which is what keeps the
+   * install flow working.
+   */
   appPath: "/app",
   /**
-   * The App Store listing, once it exists. `null` renders the install button as
-   * the plain "open the app" link instead of a dead one — a button that goes
-   * nowhere is worse than a button that is not there.
+   * The App Store listing, once it exists. While it is `null` every install
+   * button points at this app's own `/install` form instead, which starts the
+   * same OAuth flow — so the button is never a dead link to a listing that has
+   * not been published yet. Setting it here switches every one of them over.
    */
   appStoreUrl: null as string | null,
 } as const;

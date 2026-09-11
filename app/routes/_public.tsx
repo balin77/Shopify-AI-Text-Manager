@@ -18,7 +18,39 @@ import {
   MARKETING_LOCALE_LABELS,
   localizedPath,
   stripMarketingLocalePrefix,
+  type MarketingLocale,
 } from "../services/marketing-locale.shared";
+
+/**
+ * Where "install" goes, in one place.
+ *
+ * The App Store listing once it exists, and the app's own install form until
+ * then — every caller asks this rather than carrying its own `?? fallback`,
+ * because a button that silently points at a listing which is not published
+ * yet is a dead end the merchant reports as a broken site.
+ */
+function InstallLink({
+  locale,
+  className,
+  children,
+}: {
+  locale: MarketingLocale;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  if (MARKETING_SITE.appStoreUrl) {
+    return (
+      <a className={className} href={MARKETING_SITE.appStoreUrl}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <Link className={className} to={localizedPath(locale, "/install")}>
+      {children}
+    </Link>
+  );
+}
 
 /**
  * Header, footer and the marketing theme around whatever the route renders.
@@ -75,9 +107,13 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
               ))}
             </div>
 
-            <a className="mk-btn mk-btn--primary" href={MARKETING_SITE.appPath}>
-              {t.nav.openApp}
-            </a>
+            {/* The site's ONE call to action. `/app` is deliberately not
+                offered: it only works from inside the Shopify admin, so a
+                visitor who could use it is already there, and everyone else
+                gets a blank App Bridge bounce page. */}
+            <InstallLink locale={locale} className="mk-btn mk-btn--primary">
+              {t.nav.install}
+            </InstallLink>
           </nav>
         </div>
       </header>
@@ -96,7 +132,7 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
               <h3>{t.footer.product}</h3>
               <Link to={localizedPath(locale, "/features")}>{t.nav.features}</Link>
               <Link to={localizedPath(locale, "/videos")}>{t.nav.videos}</Link>
-              <a href={MARKETING_SITE.appPath}>{t.nav.openApp}</a>
+              <InstallLink locale={locale}>{t.nav.install}</InstallLink>
             </div>
 
             <div className="mk-footer__col">

@@ -48,7 +48,7 @@ export default function MarketingVideos() {
         </div>
       </section>
 
-      <MarketingCta t={t} />
+      <MarketingCta t={t} locale={locale} />
     </>
   );
 }

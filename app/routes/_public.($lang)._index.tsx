@@ -125,7 +125,7 @@ export default function MarketingIndex() {
         </div>
       </section>
 
-      <MarketingCta t={t} />
+      <MarketingCta t={t} locale={locale} />
     </>
   );
 }

@@ -46,10 +46,11 @@ export default function MarketingFeatures() {
               </div>
               <ul className="mk-points">
                 {group.points.map((point) => (
-                  <li key={point}>
-                    <span />
-                    <span>{point}</span>
-                  </li>
+                  // ONE child only. The dot is `::before`, which IS a grid
+                  // item — an extra empty <span> made three items in a
+                  // two-column grid, so the text wrapped into row 2 column 1
+                  // and rendered one word per line on a phone.
+                  <li key={point}>{point}</li>
                 ))}
               </ul>
             </section>
@@ -57,7 +58,7 @@ export default function MarketingFeatures() {
         </div>
       </section>
 
-      <MarketingCta t={t} />
+      <MarketingCta t={t} locale={locale} />
     </>
   );
 }

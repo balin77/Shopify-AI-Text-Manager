@@ -134,7 +134,12 @@
   flex-wrap: wrap;
 }
 
-.mk-nav a {
+/* `:not(.mk-btn)` is load-bearing, not tidiness: `.mk-nav a` is one class
+   plus one type and therefore OUTRANKS `.mk-btn--primary`, so the install
+   button inside the nav took the muted link colour on green, and the hover
+   rule repainted it light grey — which on a phone STICKS after a tap, because
+   mobile browsers keep :hover until the next touch elsewhere. */
+.mk-nav a:not(.mk-btn) {
   text-decoration: none;
   color: var(--mk-text-muted);
   padding: 8px 12px;
@@ -143,12 +148,12 @@
   font-weight: 500;
 }
 
-.mk-nav a:hover {
+.mk-nav a:not(.mk-btn):hover {
   color: var(--mk-text);
   background: var(--mk-bg-soft);
 }
 
-.mk-nav a[aria-current="page"] {
+.mk-nav a:not(.mk-btn)[aria-current="page"] {
   color: var(--mk-text);
   background: var(--mk-bg-soft);
 }
@@ -170,12 +175,17 @@
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.mk-btn--primary {
+/* Scoped as `.mk .mk-btn--…` because `.mk a { color: inherit }` above is one
+   class plus one type and would otherwise WIN over a bare `.mk-btn--primary`:
+   the button rendered body-dark text on the green, which measures ~3.6:1 and
+   fails WCAG AA. Measured in Chromium, not assumed — a bare class here
+   computed to rgb(22,25,28) instead of white. */
+.mk .mk-btn--primary {
   background: var(--mk-accent);
   color: #ffffff;
 }
 
-.mk-btn--primary:hover {
+.mk .mk-btn--primary:hover {
   background: var(--mk-accent-strong);
 }
 
@@ -185,7 +195,7 @@
   }
 }
 
-.mk-btn--ghost {
+.mk .mk-btn--ghost {
   border-color: var(--mk-border);
   color: var(--mk-text);
   background: transparent;
@@ -450,6 +460,64 @@
   color: var(--mk-text-muted);
 }
 
+/* ── Install form ───────────────────────────────────────────────── */
+
+.mk-install {
+  max-width: 620px;
+}
+
+.mk-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.mk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.mk-field__label {
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.mk-field input {
+  width: 100%;
+  font: inherit;
+  padding: 11px 14px;
+  border: 1px solid var(--mk-border);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-bg);
+  color: var(--mk-text);
+  /* 16px minimum, or iOS Safari zooms the page on focus and the merchant
+     lands on a layout they then have to pinch back out of. */
+  font-size: max(1rem, 0.9375rem);
+}
+
+.mk-field input:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 1px;
+  border-color: var(--mk-accent);
+}
+
+.mk-field input[aria-invalid="true"] {
+  border-color: #b42318;
+}
+
+.mk-field__error {
+  color: #b42318;
+  font-size: 0.9375rem;
+}
+
+.mk-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ── FAQ ────────────────────────────────────────────────────────── */
 
 .mk-faq {
@@ -586,6 +654,7 @@
   padding: 2px;
 }
 
+.mk-nav .mk-lang a,
 .mk-lang a {
   padding: 5px 10px;
   border-radius: 6px;
@@ -595,6 +664,7 @@
   color: var(--mk-text-muted);
 }
 
+.mk-nav .mk-lang a[aria-current="true"],
 .mk-lang a[aria-current="true"] {
   background: var(--mk-accent-soft);
   color: var(--mk-accent);

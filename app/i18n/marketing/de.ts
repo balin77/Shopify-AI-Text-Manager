@@ -12,7 +12,6 @@ export const de: MarketingTranslation = {
     features: "Funktionen",
     videos: "Videos",
     faq: "Fragen",
-    openApp: "App öffnen",
     install: "Bei Shopify installieren",
     menu: "Menü",
     language: "Sprache",
@@ -169,6 +168,24 @@ export const de: MarketingTranslation = {
     },
   },
 
+  install: {
+    title: "Bei Shopify installieren",
+    intro:
+      "Geben Sie die Shopify-Adresse Ihres Shops ein. Sie landen in Shopifys eigener Berechtigungsseite, wo Sie entscheiden, was die App lesen und schreiben darf — installiert wird nichts, bevor Sie dort zustimmen.",
+    label: "Ihr Shopify-Shop",
+    placeholder: "mein-shop.myshopify.com",
+    help: "Die .myshopify.com-Adresse, nur der Shop-Name oder die Admin-URL, die Sie gerade offen haben — alle drei funktionieren.",
+    submit: "Weiter zu Shopify",
+    appStoreHint: "Sie können die App auch im Shopify App Store installieren.",
+    appStoreLink: "Zum App-Store-Eintrag",
+    errors: {
+      empty: "Bitte geben Sie Ihre Shop-Adresse ein.",
+      invalid: "Das sieht nicht nach einer Shopify-Shop-Adresse aus. Nehmen Sie mein-shop.myshopify.com oder einfach den Shop-Namen.",
+      customDomain:
+        "Das ist Ihre Storefront-Domain. Installiert wird über die .myshopify.com-Adresse des Shops — Sie finden sie im Shopify-Admin unter Einstellungen oder in der URL als admin.shopify.com/store/<name>.",
+    },
+  },
+
   faq: {
     title: "Fragen",
     items: [
@@ -202,7 +219,7 @@ export const de: MarketingTranslation = {
   cta: {
     title: "Im eigenen Shop ansehen",
     body: "Die App installiert sich in Ihren Shopify-Admin und liest Ihren Katalog. Geschrieben wird nichts, bis Sie speichern.",
-    button: "App öffnen",
+    button: "Bei Shopify installieren",
   },
 
   footer: {

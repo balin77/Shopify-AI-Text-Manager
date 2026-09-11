@@ -20,7 +20,6 @@ export const en = {
     features: "Features",
     videos: "Videos",
     faq: "FAQ",
-    openApp: "Open the app",
     install: "Install on Shopify",
     menu: "Menu",
     language: "Language",
@@ -177,6 +176,24 @@ export const en = {
     },
   },
 
+  install: {
+    title: "Install on Shopify",
+    intro:
+      "Enter your store's Shopify address. You will land in Shopify's own permission screen, where you decide what the app may read and write — nothing is installed before you approve it there.",
+    label: "Your Shopify store",
+    placeholder: "my-shop.myshopify.com",
+    help: "The .myshopify.com address, the store handle on its own, or the admin URL you have open — all three work.",
+    submit: "Continue to Shopify",
+    appStoreHint: "You can also install it from the Shopify App Store.",
+    appStoreLink: "Open the App Store listing",
+    errors: {
+      empty: "Please enter your store address.",
+      invalid: "That does not look like a Shopify store address. Use my-shop.myshopify.com, or just the store name.",
+      customDomain:
+        "That is your storefront domain. The app is installed from the store's own .myshopify.com address — you will find it in your Shopify admin under Settings, or in the URL as admin.shopify.com/store/<name>.",
+    },
+  },
+
   faq: {
     title: "Questions",
     items: [
@@ -210,7 +227,7 @@ export const en = {
   cta: {
     title: "See it on your own shop",
     body: "The app installs into your Shopify admin and reads your catalogue. Nothing is written until you press save.",
-    button: "Open the app",
+    button: "Install on Shopify",
   },
 
   footer: {

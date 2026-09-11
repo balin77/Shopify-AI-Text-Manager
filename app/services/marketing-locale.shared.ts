@@ -102,7 +102,7 @@ export function preferredLocaleFromHeader(header: string | null): MarketingLocal
  * public", and the two callers of it — the `<html lang>` and the App Bridge
  * gate in root.tsx — need the same answer for all five.
  */
-const MARKETING_PATHS = new Set(["/", "/features", "/videos", "/privacy", "/terms"]);
+const MARKETING_PATHS = new Set(["/", "/features", "/videos", "/install", "/privacy", "/terms"]);
 
 /** Strip a leading `/de` or `/es`; the default locale carries no prefix. */
 export function stripMarketingLocalePrefix(pathname: string): {

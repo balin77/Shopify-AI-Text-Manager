@@ -16,7 +16,7 @@ import {
 } from "../services/marketing-locale.shared";
 
 /** Localized pages, in the order they should be discovered. */
-const LOCALIZED_PATHS = ["/", "/features", "/videos"];
+const LOCALIZED_PATHS = ["/", "/features", "/videos", "/install"];
 
 /** Public but not localized — the URLs the App Store listing points at. */
 const PLAIN_PATHS = ["/privacy", "/terms"];

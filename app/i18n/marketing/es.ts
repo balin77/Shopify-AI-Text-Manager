@@ -12,7 +12,6 @@ export const es: MarketingTranslation = {
     features: "Funciones",
     videos: "Vídeos",
     faq: "Preguntas",
-    openApp: "Abrir la aplicación",
     install: "Instalar en Shopify",
     menu: "Menú",
     language: "Idioma",
@@ -169,6 +168,24 @@ export const es: MarketingTranslation = {
     },
   },
 
+  install: {
+    title: "Instalar en Shopify",
+    intro:
+      "Introduzca la dirección de Shopify de su tienda. Llegará a la pantalla de permisos de Shopify, donde usted decide qué puede leer y escribir la aplicación — no se instala nada antes de que lo apruebe allí.",
+    label: "Su tienda Shopify",
+    placeholder: "mi-tienda.myshopify.com",
+    help: "La dirección .myshopify.com, solo el nombre de la tienda, o la URL del panel que tenga abierta — las tres funcionan.",
+    submit: "Continuar a Shopify",
+    appStoreHint: "También puede instalarla desde la Shopify App Store.",
+    appStoreLink: "Ver la ficha en la App Store",
+    errors: {
+      empty: "Introduzca la dirección de su tienda.",
+      invalid: "Eso no parece una dirección de tienda Shopify. Use mi-tienda.myshopify.com, o simplemente el nombre de la tienda.",
+      customDomain:
+        "Esa es su dominio de tienda. La instalación se hace desde la dirección .myshopify.com de la tienda — la encontrará en el panel de Shopify en Configuración, o en la URL como admin.shopify.com/store/<nombre>.",
+    },
+  },
+
   faq: {
     title: "Preguntas",
     items: [
@@ -202,7 +219,7 @@ export const es: MarketingTranslation = {
   cta: {
     title: "Véalo en su propia tienda",
     body: "La aplicación se instala en su panel de Shopify y lee su catálogo. No se escribe nada hasta que usted guarda.",
-    button: "Abrir la aplicación",
+    button: "Instalar en Shopify",
   },
 
   footer: {
