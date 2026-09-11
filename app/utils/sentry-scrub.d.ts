@@ -1,4 +1,4 @@
-// Types for the shared CommonJS scrub module (app/utils/sentry-scrub.cjs).
+// Types for the shared scrub module (app/utils/sentry-scrub.js).
 // Kept deliberately loose: the Sentry Event/Breadcrumb shapes differ slightly
 // between @sentry/node and @sentry/react, and the scrubber is structural.
 

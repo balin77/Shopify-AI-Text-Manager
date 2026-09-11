@@ -12,7 +12,7 @@
  */
 
 import * as Sentry from '@sentry/react';
-import { scrubEvent, scrubBreadcrumb } from '~/utils/sentry-scrub.cjs';
+import { scrubEvent, scrubBreadcrumb } from '~/utils/sentry-scrub';
 
 let initialized = false;
 

@@ -1,11 +1,20 @@
 /**
  * Shared Sentry scrubbing + gate logic.
  *
- * Plain CommonJS (zero deps) ON PURPOSE: server.js (pre-build, require()) and
- * the TypeScript app code (sentry.server.ts / sentry.client.ts, import) must
- * use the EXACT SAME redaction. Duplicating it caused the review findings
- * B1/B2/R2/H2 — one module removes the drift and closes the startup window
- * where server.js sent unscrubbed events.
+ * Plain ESM with ZERO dependencies ON PURPOSE: server.js (which runs raw,
+ * before the React Router build exists) and the TypeScript app code
+ * (sentry.server.ts / sentry.client.ts) must use the EXACT SAME redaction.
+ * Duplicating it caused the review findings B1/B2/R2/H2 — one module removes
+ * the drift and closes the startup window where server.js sent unscrubbed
+ * events.
+ *
+ * It was CommonJS (.cjs) until it was not loadable by `npm run dev` at all:
+ * Vite's dev SSR module runner inlines a project file and evaluates it as
+ * ESM, where `module` is undefined — so every route threw "module is not
+ * defined" and the dev server answered 500 for the whole app. The production
+ * build never showed it, because Rollup's commonjs interop runs there.
+ * server.js is itself ESM (it already top-level-awaits an import), so nothing
+ * needed CommonJS in the first place.
  *
  * Mirrors the "NIEMALS loggen" list from docs/architecture/LOGGING_GUIDE.md and additionally
  * strips Shopify embedded-app session material (id_token JWT, hmac, session,
@@ -158,7 +167,7 @@ function sentryEnabled() {
   return process.env.APP_ENV === 'production' && !!process.env.SENTRY_DSN;
 }
 
-module.exports = {
+export {
   redactString,
   stripUrl,
   scrubValue,
