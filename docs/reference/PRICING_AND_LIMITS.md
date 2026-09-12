@@ -1,7 +1,7 @@
 # Pricing & Limits — Entscheidungsprotokoll
 
 > Verschoben aus `docs/ROADMAP.md` (2026-09-12), inhaltlich unverändert.
-> Die Roadmap selbst ist seither [app/config/roadmap.ts](../../app/config/roadmap.ts);
+> Die Roadmap selbst ist seither [app/config/roadmap.server.ts](../../app/config/roadmap.server.ts);
 > dieses Dokument haelt die BEGRUENDUNGEN hinter den Plan-Limits und der
 > Preisstrategie fest, auf die `app/config/plans.ts`, `app/utils/planUtils.ts`
 > und `app/utils/imageOperations.server.ts` verweisen.

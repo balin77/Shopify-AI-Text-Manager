@@ -1,7 +1,7 @@
 /**
  * Layout of the PUBLIC website — everything a visitor sees without a Shopify
  * session. Pathless (`_public`), so its children keep the bare URLs `/`,
- * `/features`, `/videos` and their `/de` + `/es` prefixes.
+ * `/features`, `/videos`, `/roadmap`, `/install` and their `/de` + `/es` prefixes.
  *
  * It deliberately loads NO Polaris and NO App Bridge: Polaris is admin chrome
  * (root.tsx no longer imports its stylesheet, app/routes/app.tsx does), and

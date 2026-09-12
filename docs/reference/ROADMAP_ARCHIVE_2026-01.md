@@ -3,7 +3,7 @@
 > Historischer Snapshot, unveraendert uebernommen (2026-09-12). Die App ist
 > seit 2026-09 im App Store; die Phasen 1 und 2 sind damit Geschichte, die
 > geplanten Features aus Phase 3/4 wurden kuratiert in
-> [app/config/roadmap.ts](../../app/config/roadmap.ts) uebernommen — mit
+> [app/config/roadmap.server.ts](../../app/config/roadmap.server.ts) uebernommen — mit
 > Status, ohne die Quartalsangaben, von denen keine gehalten hat. Was hier
 > steht, wird nicht mehr gepflegt.
 

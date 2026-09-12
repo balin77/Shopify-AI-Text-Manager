@@ -2,7 +2,7 @@
 
 > Verschoben aus `docs/ROADMAP.md` (2026-09-12), inhaltlich unverändert. Die
 > beiden Punkte sind als interne Eintraege in
-> [app/config/roadmap.ts](../../app/config/roadmap.ts) gefuehrt
+> [app/config/roadmap.server.ts](../../app/config/roadmap.server.ts) gefuehrt
 > (`jsonld-product-group`, `jsonld-merchant-listing`); die Begruendung steht hier.
 
 ### JSON-LD: Entscheidung vor dem Ausbau des Theme-Schemas — `Product` vs. `ProductGroup`

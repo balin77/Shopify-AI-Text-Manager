@@ -1,5 +1,5 @@
 /**
- * Copy for the PUBLIC website (`/`, `/features`, `/videos`).
+ * Copy for the PUBLIC website (`/`, `/features`, `/videos`, `/roadmap`, `/install`).
  *
  * Deliberately its own bundle rather than more keys in `app/i18n/en.ts`: that
  * file is ~5000 lines of admin UI strings shipped into the embedded app, and

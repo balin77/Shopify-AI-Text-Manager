@@ -24,7 +24,7 @@ nach Zweck sortiert.
 
 | Dokument | Beschreibung |
 |----------|--------------|
-| [ROADMAP.md](ROADMAP.md) | **⭐ Roadmap** — Wegweiser: die Roadmap selbst ist `app/config/roadmap.ts` (eine Datei fuer Entwicklung UND Website) |
+| [ROADMAP.md](ROADMAP.md) | **⭐ Roadmap** — Wegweiser: die Roadmap selbst ist `app/config/roadmap.server.ts` (eine Datei fuer Entwicklung UND Website) |
 
 ## 🏛️ Architektur — [architecture/](architecture/)
 

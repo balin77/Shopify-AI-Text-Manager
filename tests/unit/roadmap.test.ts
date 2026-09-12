@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ROADMAP, publicRoadmap } from "../../app/config/roadmap";
+import { ROADMAP, publicRoadmap } from "../../app/config/roadmap.server";
 
 /**
  * The one roadmap file feeds the public website, so a defect here is a
@@ -10,6 +10,14 @@ describe("roadmap", () => {
   it("has unique ids (they are anchors on the website)", () => {
     const ids = ROADMAP.map((e) => e.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("never names an entry after a status — the page prefixes section anchors, but the test pins it too", () => {
+    const statuses = ["shipped", "in-progress", "planned", "considering", "dropped"];
+    for (const entry of ROADMAP) {
+      expect(statuses, entry.id).not.toContain(entry.id);
+      expect(entry.id, entry.id).not.toMatch(/^status-/);
+    }
   });
 
   it("gives every public entry real copy in all three languages", () => {

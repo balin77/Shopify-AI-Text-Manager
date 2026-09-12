@@ -1,6 +1,13 @@
 /**
  * THE ROADMAP. One file, two readers.
  *
+ * `.server.ts` is load-bearing: the internal entries carry pricing plans and
+ * strategy notes, and the first cut imported this file from the route
+ * COMPONENT, which put every one of them into the public JavaScript bundle —
+ * "never rendered" was true of the DOM and false of the wire. With this
+ * suffix a client-side import fails the build; the /roadmap loader reads the
+ * file and returns only the public fields, in only the page's language.
+ *
  * Development plans here — what is being built, what is next, what was
  * considered and dropped — and the public website renders the entries marked
  * `visibility: "public"` at /roadmap in three languages. There is no second

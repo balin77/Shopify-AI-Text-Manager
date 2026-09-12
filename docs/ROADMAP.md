@@ -1,7 +1,7 @@
 # Roadmap
 
 **Die Roadmap ist eine Datei, und sie ist nicht diese:**
-[app/config/roadmap.ts](../app/config/roadmap.ts)
+[app/config/roadmap.server.ts](../app/config/roadmap.server.ts)
 
 Dort steht jeder Eintrag mit `status` (`in-progress`, `planned`, `considering`,
 `shipped`, `dropped`) und `visibility`. `public` erscheint auf der Website unter

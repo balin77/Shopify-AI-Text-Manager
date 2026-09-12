@@ -751,7 +751,8 @@ a.mk-badge:hover {
   padding-bottom: clamp(24px, 4vw, 40px);
 }
 
-.mk-roadmap__section {
+.mk-roadmap__section,
+.mk-roadmap__card {
   scroll-margin-top: calc(var(--mk-header-height) + 16px);
 }
 

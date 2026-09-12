@@ -95,14 +95,21 @@ export function preferredLocaleFromHeader(header: string | null): MarketingLocal
 }
 
 /**
- * The public website's own paths, WITHOUT a locale prefix.
- *
- * `/privacy` and `/terms` are in the list although they are not part of the
- * localized route tree: what this answers is "is this page served to the
- * public", and the two callers of it — the `<html lang>` and the App Bridge
- * gate in root.tsx — need the same answer for all five.
+ * The localized pages of the public website, WITHOUT a locale prefix — the
+ * ONE list. The sitemap derives its URL set from it and `isMarketingPath`
+ * below derives its answer from it, so a page added here is in both; a page
+ * added to the nav alone is the failure this exists to remove (it rendered
+ * with App Bridge, Sentry and `lang="en"` on its German URL).
  */
-const MARKETING_PATHS = new Set(["/", "/features", "/videos", "/roadmap", "/install", "/privacy", "/terms"]);
+export const MARKETING_LOCALIZED_PATHS = ["/", "/features", "/videos", "/roadmap", "/install"] as const;
+
+/**
+ * Every public path, localized or not. `/privacy` and `/terms` are not part
+ * of the localized route tree, but what this answers is "is this page served
+ * to the public", and the two callers — the `<html lang>` and the App Bridge
+ * gate in root.tsx — need the same answer for every path in the set.
+ */
+const MARKETING_PATHS = new Set<string>([...MARKETING_LOCALIZED_PATHS, "/privacy", "/terms"]);
 
 /** Strip a leading `/de` or `/es`; the default locale carries no prefix. */
 export function stripMarketingLocalePrefix(pathname: string): {
