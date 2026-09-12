@@ -1,4 +1,4 @@
-// Initialize the Shopify Node platform adapter BEFORE the React Router build is
+// Initialize the Shopify platform adapter BEFORE the React Router build is
 // loaded. The build's module body calls shopifyApp({...}) at top level, which
 // reads abstractRuntimeString — if no adapter has registered a runtime string
 // yet, the call throws "Missing adapter implementation for 'abstractRuntimeString'"
@@ -11,10 +11,38 @@
 // explicit setAbstractRuntimeString call at module top-level was observed to
 // be ineffective in the production bundle (Rollup reordering / dual module
 // instance suspected). server.js is NOT bundled — Node executes it raw, so
-// the side effects always run. The nodeAdapterInitialized binding is used
+// the side effects always run. The webApiAdapterInitialized binding is used
 // below to force-keep this import even if anything ever does bundle this file.
-import { nodeAdapterInitialized } from "@shopify/shopify-api/adapters/node";
-void nodeAdapterInitialized;
+//
+// It MUST be the WEB-API adapter, never `@shopify/shopify-api/adapters/node`.
+// The library hands every adapter call a Fetch `Request` (react-router speaks
+// Web API), and the Node adapter reads headers with `{ ...req.headers }` — on a
+// `Headers` instance that is `{}`. MEASURED (2026-09-12): with the Node adapter
+// in force, EVERY webhook failed validation as "missing HMAC" and answered 400
+// — app/uninstalled, products/*, collections/* and the mandatory compliance
+// topic shop/redact included.
+//
+// Why whatever is set HERE is final in production: `Sentry.init` (below, only
+// when APP_ENV=production) registers the import-in-the-middle ESM loader hook,
+// and every module imported after that — the whole build, and the shopify-api
+// runtime modules it pulls in — goes through a wrapper that COPIES each export
+// once, when the wrapper is evaluated (`let $x = namespace[x]`), and never sees
+// a later reassignment. The adapter setters work by reassigning module-level
+// variables, so the bundle's own `import '@shopify/shopify-api/adapters/web-api'`
+// and the `setAbstractRuntimeString` in app/shopify.server.ts are no-ops there:
+// the value frozen is the one this import set. That is also why the June crash
+// happened (nothing had been set before the hook, so the throwing defaults were
+// frozen), and why production and development disagreed for months.
+//
+// Two rules follow. This import must stay STATIC and ABOVE `Sentry.init` —
+// moving it below, making it dynamic, or preloading Sentry with
+// `node --import ./instrument.mjs` (Sentry's own ESM recommendation) freezes
+// the throwing defaults again, in production only. And the startup line
+// `[shopify-api/INFO] version …, environment …` is the tell: it reads
+// "Web API" in production (this import) and "React Router (Node)" with Sentry
+// off; "Node v22…" means the Node adapter is back.
+import { webApiAdapterInitialized } from "@shopify/shopify-api/adapters/web-api";
+void webApiAdapterInitialized;
 
 import { createRequestHandler } from "@react-router/express";
 import compression from "compression";
