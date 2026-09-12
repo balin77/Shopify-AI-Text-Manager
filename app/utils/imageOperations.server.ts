@@ -8,7 +8,7 @@
  * Enforced lazily at the upload/convert routes — there is no downgrade cleanup
  * because the counter is usage data, not entitlement data (mirrors how the
  * product cap is enforced lazily; cleanup only ever prunes entitled content).
- * See docs/ROADMAP.md §Limit-Review Befund 3.
+ * See docs/reference/PRICING_AND_LIMITS.md §Limit-Review Befund 3.
  */
 
 import { db } from "../db.server";

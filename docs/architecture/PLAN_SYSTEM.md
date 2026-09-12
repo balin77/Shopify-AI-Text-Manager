@@ -19,7 +19,7 @@ Die App implementiert ein vier-stufiges Subscription-Plan-System:
 > nichts. Sprach-Großzügigkeit ist ein bewusster USP — Segmentierung erfolgt
 > über Produktanzahl & Content-Breite, nicht über Locale-Anzahl. Produkt-Caps
 > auf geometrische Staffelung umgestellt (25 → 100 → 500 → 2500). Hintergrund:
-> `ROADMAP.md` §Limit-Review.
+> [`reference/PRICING_AND_LIMITS.md`](../reference/PRICING_AND_LIMITS.md) §Limit-Review.
 
 ## Dateien-Struktur
 

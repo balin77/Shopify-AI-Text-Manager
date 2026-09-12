@@ -11,6 +11,7 @@ export const de: MarketingTranslation = {
   nav: {
     features: "Funktionen",
     videos: "Videos",
+    roadmap: "Roadmap",
     faq: "Fragen",
     install: "Bei Shopify installieren",
     installShort: "Installieren",
@@ -200,6 +201,31 @@ export const de: MarketingTranslation = {
       invalid: "Das sieht nicht nach einer Shopify-Shop-Adresse aus. Nehmen Sie mein-shop.myshopify.com oder einfach den Shop-Namen.",
       customDomain:
         "Das ist Ihre Storefront-Domain. Installiert wird über die .myshopify.com-Adresse des Shops — Sie finden sie im Shopify-Admin unter Einstellungen oder in der URL als admin.shopify.com/store/<name>.",
+    },
+  },
+
+  roadmap: {
+    title: "Roadmap",
+    intro:
+      "Was gerade gebaut wird, was als Nächstes kommt und was abgewogen wird. Die Reihenfolge innerhalb eines Abschnitts ist die Priorität; Termine gibt es keine, weil ein öffentlicher Termin, der rutscht, wie ein gebrochenes Versprechen wirkt.",
+    note: "Diese Seite wird aus derselben Datei erzeugt, in der der Entwicklungsplan steht — ändert sich dort ein Status, ändert er sich hier.",
+    sections: {
+      inProgress: "In Arbeit",
+      planned: "Als Nächstes",
+      considering: "In Überlegung",
+      shipped: "Kürzlich ausgeliefert",
+    },
+    shippedOn: "Ausgeliefert",
+    areas: {
+      ai: "KI-Texte",
+      translations: "Übersetzungen",
+      bulk: "Bulk-Editor",
+      seo: "SEO",
+      aeo: "KI-Discovery",
+      media: "Bilder und Medien",
+      structure: "Struktur",
+      platform: "Plattform",
+      website: "Diese Website",
     },
   },
 

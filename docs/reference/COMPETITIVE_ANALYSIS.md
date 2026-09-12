@@ -121,7 +121,7 @@
 > Eigener Konverter ist nur in Edge-Cases relevant (Händler ohne Shopify
 > Payments, reiner Display-Switcher für nicht konfigurierte Märkte,
 > Custom-Rundung wie 9,99). Details + Entscheidung →
-> [ROADMAP.md](../ROADMAP.md) §4.3 Localization.
+> [ROADMAP_ARCHIVE_2026-01.md](ROADMAP_ARCHIVE_2026-01.md) §4.3 Localization.
 >
 > ² **Third-Party-App-Übersetzung — vollständig ausgeliefert** (Direct
 > Translations, Stand 2026-06): Ein Theme-App-Embed liest jeden Textknoten
@@ -251,7 +251,7 @@ Direct Translations ist das die breiteste Abdeckung am Markt.
 > bzw. **Wörtern** (Weglot); wir nach **Produkten**. Da unser AI-Token-Kosten
 > beim Merchant liegen (BYO-Key), ist unsere Locale-Großzügigkeit (**unbegrenzt
 > Sprachen ab €0/€9.90** vs. LangShop $40 / Weglot $32 für nur 3) ein echter,
-> bislang unkommunizierter USP. Detaillierte Limit-Kritik → `ROADMAP.md`
+> bislang unkommunizierter USP. Detaillierte Limit-Kritik → `PRICING_AND_LIMITS.md`
 > §Limit-Review.
 
 ### 2.2 SEO-Apps
@@ -704,7 +704,7 @@ Warum wichtig:
 > 10000), erzwungen an `api.staged-upload`/`api.convert-webp`. Befund 4 =
 > Pro/Max kosten-aligned differenziert über Bild-Quota **+ WebP-Parallelität
 > gespreizt (Pro 2 / Max 6)**, zentralisiert in `config/webp-concurrency.js`
-> (Drift-Bug behoben). Details → `ROADMAP.md` §Limit-Review.
+> (Drift-Bug behoben). Details → `PRICING_AND_LIMITS.md` §Limit-Review.
 
 ### 🔴 Kritisch
 
@@ -752,7 +752,7 @@ Details → §3.1 Punkt 5 / §2.3 Fußnote ⁵.
   Display-Switcher für Märkte ohne Markets-Konfig, Custom-Rundung
   (9,99 statt 9,87). Empfehlung: **nicht als Vollfeature bauen**, ggf.
   schmaler Display-Switcher + Rundungsregeln als Pro-Add-on. Details →
-  [ROADMAP.md](../ROADMAP.md) §4.3.
+  [ROADMAP_ARCHIVE_2026-01.md](ROADMAP_ARCHIVE_2026-01.md) §4.3.
 - **AI Blog-Post-Generator** — ganze Artikel statt nur Beschreibungen. Niedriger
   Aufwand (AI-Infra steht), guter Marketing-Hebel.
 - **Google Search Console Integration** — Indexierung/Klicks/Impressionen in der

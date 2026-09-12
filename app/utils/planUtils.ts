@@ -224,7 +224,7 @@ export function canAccessVariantImageManager(plan: Plan): boolean {
 // month and enforced LAZILY at the upload/convert routes (mirrors how
 // maxProducts is enforced lazily, not via cleanup). It is usage data, not
 // entitlement data, so it is deliberately NOT a sync phase — getSyncScope and
-// planCacheCleanup stay untouched. See docs/ROADMAP.md §Limit-Review Befund 3.
+// planCacheCleanup stay untouched. See docs/reference/PRICING_AND_LIMITS.md §Limit-Review Befund 3.
 
 /**
  * Monthly billable-image-operation cap for a plan. 0 = feature unavailable

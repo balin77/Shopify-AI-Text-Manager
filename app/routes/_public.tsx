@@ -39,6 +39,7 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
   const navItems = [
     { to: localizedPath(locale, "/features"), label: t.nav.features },
     { to: localizedPath(locale, "/videos"), label: t.nav.videos },
+    { to: localizedPath(locale, "/roadmap"), label: t.nav.roadmap },
   ];
 
   return (
@@ -96,6 +97,7 @@ function PublicChrome({ children }: { children: React.ReactNode }) {
               <h3>{t.footer.product}</h3>
               <Link to={localizedPath(locale, "/features")}>{t.nav.features}</Link>
               <Link to={localizedPath(locale, "/videos")}>{t.nav.videos}</Link>
+              <Link to={localizedPath(locale, "/roadmap")}>{t.nav.roadmap}</Link>
               <InstallLink locale={locale}>{t.nav.install}</InstallLink>
             </div>
 

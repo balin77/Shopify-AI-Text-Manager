@@ -22,6 +22,7 @@ export const en = {
   nav: {
     features: "Features",
     videos: "Videos",
+    roadmap: "Roadmap",
     faq: "FAQ",
     install: "Install on Shopify",
     installShort: "Install",
@@ -214,6 +215,31 @@ export const en = {
       invalid: "That does not look like a Shopify store address. Use my-shop.myshopify.com, or just the store name.",
       customDomain:
         "That is your storefront domain. The app is installed from the store's own .myshopify.com address — you will find it in your Shopify admin under Settings, or in the URL as admin.shopify.com/store/<name>.",
+    },
+  },
+
+  roadmap: {
+    title: "Roadmap",
+    intro:
+      "What is being built, what comes next, and what is being weighed. The order inside a section is the priority; there are no dates, because a public date that slips reads as a broken promise.",
+    note: "This page is rendered from the same file the development plan lives in — when a status changes there, it changes here.",
+    sections: {
+      inProgress: "In progress",
+      planned: "Next",
+      considering: "Being considered",
+      shipped: "Recently shipped",
+    },
+    shippedOn: "Shipped",
+    areas: {
+      ai: "AI writing",
+      translations: "Translations",
+      bulk: "Bulk editor",
+      seo: "SEO",
+      aeo: "AI discovery",
+      media: "Images and media",
+      structure: "Structure",
+      platform: "Platform",
+      website: "This website",
     },
   },
 

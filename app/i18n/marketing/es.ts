@@ -11,6 +11,7 @@ export const es: MarketingTranslation = {
   nav: {
     features: "Funciones",
     videos: "Vídeos",
+    roadmap: "Hoja de ruta",
     faq: "Preguntas",
     install: "Instalar en Shopify",
     installShort: "Instalar",
@@ -200,6 +201,31 @@ export const es: MarketingTranslation = {
       invalid: "Eso no parece una dirección de tienda Shopify. Use mi-tienda.myshopify.com, o simplemente el nombre de la tienda.",
       customDomain:
         "Esa es su dominio de tienda. La instalación se hace desde la dirección .myshopify.com de la tienda — la encontrará en el panel de Shopify en Configuración, o en la URL como admin.shopify.com/store/<nombre>.",
+    },
+  },
+
+  roadmap: {
+    title: "Hoja de ruta",
+    intro:
+      "Qué se está construyendo, qué viene después y qué se está sopesando. El orden dentro de cada sección es la prioridad; no hay fechas, porque una fecha pública que se retrasa se lee como una promesa rota.",
+    note: "Esta página se genera desde el mismo archivo en el que vive el plan de desarrollo — cuando allí cambia un estado, cambia aquí.",
+    sections: {
+      inProgress: "En curso",
+      planned: "A continuación",
+      considering: "En estudio",
+      shipped: "Entregado recientemente",
+    },
+    shippedOn: "Entregado",
+    areas: {
+      ai: "Redacción con IA",
+      translations: "Traducciones",
+      bulk: "Editor masivo",
+      seo: "SEO",
+      aeo: "Descubrimiento por IA",
+      media: "Imágenes y medios",
+      structure: "Estructura",
+      platform: "Plataforma",
+      website: "Esta web",
     },
   },
 

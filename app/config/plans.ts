@@ -107,7 +107,7 @@ export interface PlanLimits {
    * (Free/Basic have no image manager anyway). Enforced lazily at the upload/
    * convert routes via app/utils/imageOperations.server.ts — it is usage data,
    * NOT entitlement data, so it deliberately stays out of getSyncScope /
-   * planCacheCleanup. See docs/ROADMAP.md §Limit-Review Befund 3.
+   * planCacheCleanup. See docs/reference/PRICING_AND_LIMITS.md §Limit-Review Befund 3.
    */
   monthlyImageOperations: number;
   /**
@@ -149,7 +149,7 @@ export const PLAN_CONFIG: Record<Plan, PlanLimits> = {
     // Locales are intentionally uncapped on every tier: AI tokens are
     // merchant-funded (BYO key), so extra languages cost us nothing. Language
     // generosity is a deliberate USP — segmentation happens via product count
-    // and content breadth, not locale count. (Decision: 2026-05, ROADMAP §Limit-Review.)
+    // and content breadth, not locale count. (Decision: 2026-05, docs/reference/PRICING_AND_LIMITS.md §Limit-Review.)
     maxLocales: Infinity,
     maxCollections: 5,
     maxArticles: 0,

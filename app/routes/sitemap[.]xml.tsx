@@ -24,8 +24,8 @@ import {
  * for every locale it names.
  */
 const LOCALIZED_PATHS = MARKETING_SITE.appStoreUrl
-  ? ["/", "/features", "/videos"]
-  : ["/", "/features", "/videos", "/install"];
+  ? ["/", "/features", "/videos", "/roadmap"]
+  : ["/", "/features", "/videos", "/roadmap", "/install"];
 
 /** Public but not localized — the URLs the App Store listing points at. */
 const PLAIN_PATHS = ["/privacy", "/terms"];

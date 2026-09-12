@@ -79,7 +79,7 @@ describe("stripMarketingLocalePrefix", () => {
 
 describe("isMarketingPath", () => {
   it("recognises every public page in every locale", () => {
-    for (const path of ["/", "/features", "/videos", "/privacy", "/terms"]) {
+    for (const path of ["/", "/features", "/videos", "/roadmap", "/privacy", "/terms"]) {
       expect(isMarketingPath(path)).toBe(true);
     }
     expect(isMarketingPath("/de")).toBe(true);
