@@ -27,12 +27,19 @@ const SERVER_TZ = "Pacific/Auckland";
 
 function withTimeZone<T>(tz: string, fn: () => T): T {
   const previous = process.env.TZ;
+  // The zone actually in force — also when TZ was never set.
+  const effective = Intl.DateTimeFormat().resolvedOptions().timeZone;
   process.env.TZ = tz;
   try {
     return fn();
   } finally {
-    if (previous === undefined) delete process.env.TZ;
-    else process.env.TZ = previous;
+    // Restore by SETTING the zone that was in force, never by deleting the
+    // variable. MEASURED 2026-09-13: on Windows, `delete process.env.TZ` does
+    // not reset Node's default zone, so the "browser" kept rendering in
+    // SERVER_TZ — the control below could never mismatch, and the two tests
+    // above it passed without comparing two zones at all. Linux CI resets on
+    // delete, which is why this only ever showed up locally.
+    process.env.TZ = previous ?? effective;
   }
 }
 
@@ -65,6 +72,21 @@ function hydrate(node: React.ReactElement, serverHtml: string) {
 }
 
 describe("useHydrated", () => {
+  it("precondition: SERVER_TZ renders differently and the runner's zone comes back", () => {
+    // Every hydration assertion below compares a server zone with a browser
+    // zone. If the switch does not take effect, or does not undo itself, they
+    // all pass without testing anything — which is exactly what happened on
+    // Windows until withTimeZone stopped deleting TZ. It also fails on a
+    // runner whose own zone is UTC+12 on INSTANT's date (Auckland, Fiji,
+    // Kamchatka): there the comparisons below are meaningless too, and saying
+    // so is the point.
+    const client = new Date(INSTANT).toLocaleString();
+    const server = withTimeZone(SERVER_TZ, () => new Date(INSTANT).toLocaleString());
+
+    expect(server).not.toBe(client);
+    expect(new Date(INSTANT).toLocaleString()).toBe(client);
+  });
+
   it("renders a value the server can actually produce", () => {
     expect(renderToString(<Probe />)).toContain("2026-08-28 16:00 UTC");
   });

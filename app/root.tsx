@@ -129,7 +129,12 @@ export function ErrorBoundary() {
   // boundary for every server-side error, so the error page itself crashed
   // and Sentry received a second "Cannot read properties of undefined (reading
   // 'captureException')" on top of the real error (App Review, 2026-09-13).
-  // The server side is already reported by `handleError` in entry.server.tsx.
+  // A thrown ERROR is reported on the server by `handleError` in
+  // entry.server.tsx. A thrown RESPONSE never reaches `handleError` —
+  // react-router skips route error responses there — so a 5xx Response is
+  // reported by this client-side call only (and, under /app, by
+  // route-error-response-boundary.tsx, which now handles those before they
+  // could fall through to here).
   if (!isRouteErrorResponse(error) || error.status >= 500) {
     Sentry?.captureException(error);
   }

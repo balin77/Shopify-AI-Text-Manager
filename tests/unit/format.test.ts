@@ -44,12 +44,16 @@ describe("formatNumber options", () => {
 
 function withTimeZone<T>(tz: string, fn: () => T): T {
   const previous = process.env.TZ;
+  // The zone actually in force — also when TZ was never set.
+  const effective = Intl.DateTimeFormat().resolvedOptions().timeZone;
   process.env.TZ = tz;
   try {
     return fn();
   } finally {
-    if (previous === undefined) delete process.env.TZ;
-    else process.env.TZ = previous;
+    // Restore by SETTING, never by `delete process.env.TZ`: on Windows the
+    // delete does not reset Node's default zone, so the rest of this file would
+    // silently keep running in `tz` (see use-hydrated.test.tsx, CLAUDE.md).
+    process.env.TZ = previous ?? effective;
   }
 }
 
@@ -66,18 +70,10 @@ describe("timestamp helpers (hydration safety)", () => {
   });
 
   it("uses the same UTC stamp whatever the process time zone is", () => {
-    const original = process.env.TZ;
-    try {
-      process.env.TZ = "Europe/Berlin";
-      const berlin = formatDateTime(ISO, false);
-      process.env.TZ = "Pacific/Auckland";
-      const auckland = formatDateTime(ISO, false);
-      expect(berlin).toBe(auckland);
-      expect(berlin).toBe("2026-08-28 16:00 UTC");
-    } finally {
-      if (original === undefined) delete process.env.TZ;
-      else process.env.TZ = original;
-    }
+    const berlin = withTimeZone("Europe/Berlin", () => formatDateTime(ISO, false));
+    const auckland = withTimeZone("Pacific/Auckland", () => formatDateTime(ISO, false));
+    expect(berlin).toBe(auckland);
+    expect(berlin).toBe("2026-08-28 16:00 UTC");
   });
 
   it("pads single-digit date parts", () => {

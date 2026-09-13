@@ -1,6 +1,10 @@
 import { data as json, type LoaderFunctionArgs } from "react-router";
 import { Outlet, useLoaderData, useRouteError, useFetcher } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import {
+  routeErrorResponseBoundary,
+  useReportRouteErrorResponse,
+} from "~/utils/route-error-response-boundary";
 import { AppProvider, Page, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import "@shopify/polaris/build/esm/styles.css";
 import "../styles/responsive.css";
@@ -560,6 +564,11 @@ export function ErrorBoundary() {
   // Get the error - useRouteError is safe to call in ErrorBoundary
   const error = useRouteError();
 
+  // Reports a 5xx route response to Sentry, once per error, from an effect
+  // (client only). Unconditional and above every early return below — it is a
+  // hook. See route-error-response-boundary.tsx.
+  useReportRouteErrorResponse(error);
+
   // Log the error for debugging
   if (typeof window !== 'undefined') {
     console.error('[APP.TSX ErrorBoundary] Caught error:', error);
@@ -665,8 +674,12 @@ export function ErrorBoundary() {
     );
   }
 
-  // Try Shopify's boundary first
-  return boundary.error(error);
+  // A thrown route response is recognised by SHAPE before `boundary.error`
+  // gets it: the library recognises it by class name, a name the client bundle
+  // minifies, so in the browser it re-threw and the page fell through to
+  // root's boundary — a different tree from the server's. Everything else
+  // still goes to `boundary.error`. See route-error-response-boundary.tsx.
+  return routeErrorResponseBoundary(error);
 }
 
 // LOAD-BEARING, not boilerplate. react-router forwards a thrown Response's
