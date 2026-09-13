@@ -699,6 +699,35 @@ Two neighbouring facts, both measured rather than assumed:
   `default` — to `./dist/development/…`, and never to the `dist/production/`
   directory it also ships. There is no flag or env var that changes it.
   `NODE_ENV=production` is set on the Railway service. Do not "fix" this.
+- **A tampered `host` parameter crashes the Shopify library, and the crash is
+  turned into a 400 AFTER it happens, never predicted before.** MEASURED
+  2026-09-13 on production, from Shopify's App Review
+  (`host=9993237716999999999`): `sanitizeHost` in `@shopify/shopify-api`
+  accepts an all-digit value as base64 and then runs
+  `new URL(`https://${atob(host)}`)` with no guard, so `authenticate.admin`
+  throws a `TypeError` instead of rejecting the host — and every loader that
+  authenticates outside a try (the `loader-factory` pages) answered 500.
+  `hostParamRejection` ([shopify-host-param.server.ts](app/utils/shopify-host-param.server.ts)),
+  called from the `catch` around the library in `enhancedAuthenticate.admin`,
+  converts exactly that into a 400: only a NON-`Response` throw, and only when
+  the host really is one the library cannot parse. It sits behind the library
+  and not in front of it because the library answers bots, OPTIONS, the bounce
+  and exit-iframe paths and every session-token request without reading `host`
+  at all — a check in front would refuse those. The refusal logs its own warn
+  line: React Router never hands a thrown `Response` to `handleError`, so
+  nothing else would. Its test compares against the library's REAL
+  `sanitizeHost`, so an upgrade that changes the pattern or the decoder fails
+  there instead of drifting.
+- **A `*.client.ts` module is `undefined` on the server, and an error boundary
+  renders on the server.** React Router stubs a client module's exports in the
+  server build (the bundle reads `const Sentry = undefined;`), so root.tsx's
+  `Sentry.captureException` threw INSIDE the ErrorBoundary for every
+  server-side error: the error page crashed and Sentry got "Cannot read
+  properties of undefined (reading 'captureException')" on top of the real
+  error. Call anything imported from a `*.client` module as `X?.method()` in
+  code that can run during SSR; server errors are reported by `handleError`
+  already. [root-error-boundary.test.tsx](tests/unit/root-error-boundary.test.tsx)
+  fails with the exact production TypeError when the guard is removed.
 
 **Branch state (2026-09-08):** the whole fix — the `app.tsx` loader hoist and its
 `headers` comment, and all of `entry.server.tsx` (`handleError`, `describeError`,

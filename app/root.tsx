@@ -156,8 +156,17 @@ export function ErrorBoundary() {
   // Report real errors only. Expected route responses (404 etc.) are normal
   // navigation, not bugs, and must not consume the Sentry quota — only 5xx
   // route responses and genuine thrown errors are captured.
+  //
+  // `Sentry` is UNDEFINED during the server render: it comes from a
+  // `*.client.ts` module, and React Router replaces a client module's exports
+  // with `undefined` in the server build (the bundle reads
+  // `const Sentry = undefined;`). Unguarded, this line threw inside the
+  // boundary for every server-side error, so the error page itself crashed
+  // and Sentry received a second "Cannot read properties of undefined (reading
+  // 'captureException')" on top of the real error (App Review, 2026-09-13).
+  // The server side is already reported by `handleError` in entry.server.tsx.
   if (!isRouteErrorResponse(error) || error.status >= 500) {
-    Sentry.captureException(error);
+    Sentry?.captureException(error);
   }
 
   if (isRouteErrorResponse(error)) {
