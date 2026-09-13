@@ -621,6 +621,8 @@ The rule for **every new component**: a value that the server cannot compute the
 - **`useHydrated()` is `useSyncExternalStore`, not `useState` + effect** — so it is `false` for the hydration render but already `true` for a component mounted by a client-side navigation, which does not need the guard and would otherwise flash its UTC form for a frame. The guarantee covers the MOUNT render only: React 18's `updateSyncExternalStore` has no hydration check, so never add a render-phase `setState` next to a `useHydrated` call.
 - **`typeof window` is NOT the guard.** `window` already exists during the first client render, so the check flips too early and mismatches anyway. Same for seeding `useState` from `localStorage` — the server can only produce the default, so a merchant with stored state renders a different tree (this is what `app.bulk.tsx` did with its column selection). Read storage in an effect and let the state settle one frame later.
 - **A hook must never sit in a `try`/`catch`.** When a render throws, React builds a component stack by CALLING each component function again, outside a render — every hook in it throws "Invalid hook call" (#321) **by design** and React swallows it. `app/root.tsx`'s ErrorBoundary caught that and reported it to Sentry as an app failure while hiding the real error. `npm run lint:hooks` (CI step, `react-hooks/rules-of-hooks`) is the gate; typecheck, build and vitest were all green on that code.
+- **A check by CLASS NAME answers differently on the two sides.** The server loads react-router unbundled, the browser gets a minified bundle, so `error.constructor.name` is `ErrorResponseImpl` on one side and `Ge` on the other — and Shopify's `boundary.error` is exactly such a check. For every Response an `/app` loader threw (a 4xx like the tampered-host 400, a 5xx, the 200 App Bridge bounce), the server rendered app.tsx's boundary while the client re-threw into root.tsx's, a different tree (#418) and a page that swapped itself out after load. `routeErrorResponseBoundary` ([route-error-response-boundary.tsx](app/utils/route-error-response-boundary.tsx)) is now the whole tail of that boundary: react-router's structural `isRouteErrorResponse` first, rendering the library's markup byte for byte, `boundary.error` only for the rest. A 5xx is REPORTED on the client by `useReportRouteErrorResponse`, called unconditionally at the top of that boundary, because nothing else does: react-router never passes a thrown Response to `handleError`, and root.tsx's boundary only ever saw these through the broken re-throw. It reports from an EFFECT, once per error object (the boundary re-renders on every router state change, so a report in the render body repeated for every link clicked on a 5xx page), and as an `Error` naming the status (a plain response object is titled "Object captured as exception" and every 5xx groups into one issue). Never recognise anything by `constructor.name` in code that renders on both sides.
+- **A test that switches time zones must RESTORE by setting, never by `delete process.env.TZ`.** MEASURED 2026-09-13: on Windows the delete does not reset Node's default zone, so a "browser" render after it still ran in the server zone — [use-hydrated.test.tsx](tests/unit/use-hydrated.test.tsx)'s control failed locally while its two load-bearing hydration tests passed without comparing two zones at all, and Linux CI never showed it (Node resets the zone on delete there — standard behaviour, not re-measured here). Its precondition test pins both halves: the switch must change the output, and the runner's zone must come back.
 
 What this does NOT cover: server and browser can ship different ICU/CLDR versions, so identical locales can still differ in principle. Small and stable for Latin-script en/de/es — but the two sorts keyed on `Intl.DisplayNames` output (`getLocalizedLanguageName`) carry a larger residual, because display-name data moves between CLDR releases more than collation data does. Pinning those means owning the language names in the app's own i18n.
 
@@ -682,7 +684,7 @@ Four rules, each of which was a live defect:
   keyed by request as well as error, so a shared module-scope error is not
   suppressed for the process's lifetime.
 
-Two neighbouring facts, both measured rather than assumed:
+Neighbouring facts and rules, each measured rather than assumed:
 
 - **A client hang-up is not an error.** React registers its own `'close'` handler
   on the destination inside `pipe()` and aborts with `The destination stream
@@ -737,6 +739,18 @@ the report-once mark, the hang-up classification, the abort timer) — is on
 section. `master` carries no hotfix that `develop` lacks, so `develop` →
 `master` can be merged without checking whether it would regress this — the same
 situation the 2026-08-31 hydration note above describes, and for the same reason.
+
+**Branch state (2026-09-13):** three hotfixes, each ONE commit on a branch cut
+from `master`, each merged into **`master` and `develop` as the SAME commits**:
+(1) `a43effeb` — the web-api platform adapter in `server.js` (every webhook had
+answered 400; "Deploy-critical gotchas"); (2) `016e5dfc` — the tampered `host`
+400 in `enhancedAuthenticate.admin` and `Sentry?.captureException` in the error
+boundaries (Shopify App Review, Sentry CONTENTPILOT-3/4/5; the two bullets above
+this note); (3) branch `fix/client-boundary-and-hydration-test` —
+`routeErrorResponseBoundary` in app.tsx's ErrorBoundary and the time-zone restore
+in `use-hydrated.test.tsx` / `format.test.ts` (Hydration section), together with
+this note. `master` carries no hotfix that `develop` lacks, so `develop` →
+`master` can be merged without checking whether it would regress any of them.
 
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 
