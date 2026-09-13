@@ -25,7 +25,9 @@ export class AppErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[AppErrorBoundary]", error, info.componentStack);
     // No-op unless the client SDK was initialized (real production only).
-    Sentry.captureException(error, {
+    // `Sentry` comes from a `*.client.ts` module, which the SERVER build stubs
+    // as `undefined` — see the note in root.tsx's ErrorBoundary.
+    Sentry?.captureException(error, {
       extra: { componentStack: info.componentStack },
     });
   }
