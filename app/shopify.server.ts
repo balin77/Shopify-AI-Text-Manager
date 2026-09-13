@@ -182,14 +182,26 @@ import { LlmsAutoRefreshService } from "./services/seo/llms-auto-refresh.service
 import { IndexNowAutoSubmitService } from "./services/seo/index-now-auto-submit.service";
 import { SeoAuditAutoRunService } from "./services/seo/audit-auto-run.service";
 
+import { hostParamRejection } from "./utils/shopify-host-param.server";
+
 // Wrap authenticate.admin to add activity tracking and scheduler management
 const originalAuthenticateAdmin = shopify.authenticate.admin;
 
 const enhancedAuthenticate = {
   ...shopify.authenticate,
   admin: async (request: Request) => {
-    // Call original authentication
-    const { admin, session } = await originalAuthenticateAdmin(request);
+    // Call original authentication. A `host` query parameter the library
+    // cannot parse makes it throw a TypeError (not a Response), and most
+    // loaders call this outside a try, so that was a 500 — exactly that case
+    // becomes a 400, for every route at once; every other throw passes through
+    // unchanged. See shopify-host-param.server.ts.
+    let authenticated: Awaited<ReturnType<typeof originalAuthenticateAdmin>>;
+    try {
+      authenticated = await originalAuthenticateAdmin(request);
+    } catch (error) {
+      throw hostParamRejection(error, request) ?? error;
+    }
+    const { admin, session } = authenticated;
 
     // Track activity for this shop (fire-and-forget — must not block the response)
     trackActivity(session.shop).catch(err => {
