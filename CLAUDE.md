@@ -238,6 +238,18 @@ section. `master` carries no hotfix that `develop` lacks, so `develop` →
 `master` can be merged without checking whether it would regress this — the same
 situation the 2026-08-31 hydration note above describes, and for the same reason.
 
+**Branch state (2026-09-13):** three hotfixes, each ONE commit on a branch cut
+from `master`, each merged into **`master` and `develop` as the SAME commits**:
+(1) `a43effeb` — the web-api platform adapter in `server.js` (every webhook had
+answered 400; "Deploy-critical gotchas"); (2) `016e5dfc` — the tampered `host`
+400 in `enhancedAuthenticate.admin` and `Sentry?.captureException` in the error
+boundaries (Shopify App Review, Sentry CONTENTPILOT-3/4/5; the two bullets above
+this note); (3) branch `fix/client-boundary-and-hydration-test` —
+`routeErrorResponseBoundary` in app.tsx's ErrorBoundary and the time-zone restore
+in `use-hydrated.test.tsx` / `format.test.ts` (Hydration section), together with
+this note. `master` carries no hotfix that `develop` lacks, so `develop` →
+`master` can be merged without checking whether it would regress any of them.
+
 ## Single-language shops (one shop locale) — mandatory rules for every new UI
 
 A shop with only its primary locale must never be offered translation UI it cannot use. These rules are not optional polish; apply them to **every new button, bar or section** that touches locales. Reference implementation: [LocaleAvailabilityContext.tsx](app/contexts/LocaleAvailabilityContext.tsx) + [DisabledActionTooltip.tsx](app/components/DisabledActionTooltip.tsx).
