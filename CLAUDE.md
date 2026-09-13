@@ -182,7 +182,7 @@ Four rules, each of which was a live defect:
   keyed by request as well as error, so a shared module-scope error is not
   suppressed for the process's lifetime.
 
-Two neighbouring facts, both measured rather than assumed:
+Neighbouring facts and rules, each measured rather than assumed:
 
 - **A client hang-up is not an error.** React registers its own `'close'` handler
   on the destination inside `pipe()` and aborts with `The destination stream
