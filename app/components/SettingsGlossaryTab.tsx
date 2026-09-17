@@ -32,6 +32,7 @@ import {
 import { DeleteIcon } from "@shopify/polaris-icons";
 import type { Translation as I18nTranslation } from "~/i18n/de";
 import { getLocalizedLanguageName } from "../utils/contentEditor.utils";
+import { inheritedGlossaryValue } from "../services/glossary-locale.shared";
 import { SaveDiscardButtons } from "./SaveDiscardButtons";
 import { useI18n } from "../contexts/I18nContext";
 
@@ -107,6 +108,59 @@ function fingerprint(drafts: Draft[]): string {
         ),
       }))
       .sort((a, b) => (a.sourceTerm < b.sourceTerm ? -1 : 1)),
+  );
+}
+
+/**
+ * One foreign-locale rendering field.
+ *
+ * Its own component so the inherited rule is resolved ONCE per row: a `de`
+ * entry applies to a `de-CH` translation, and before the base-language
+ * fallback existed an empty field here truthfully meant "no rule, the AI
+ * translates freely". After it, the same empty field means the opposite for an
+ * inheriting row - so the field has to say which. The grey placeholder IS the
+ * rendering in force; the help line names the language it is stored under and
+ * that typing here departs from it.
+ *
+ * Resolution goes through the SAME `glossary-locale.shared` the prompt
+ * builders use, never a second copy: the two disagreeing about what applies is
+ * exactly the state this removes.
+ */
+function GlossaryTranslationField({
+  draft,
+  activeLocale,
+  appLocale,
+  t,
+  error,
+  onChange,
+}: {
+  draft: Draft;
+  activeLocale: string;
+  appLocale: string;
+  t: I18nTranslation;
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  const inherited = inheritedGlossaryValue(draft.translations, activeLocale);
+  return (
+    <TextField
+      label={t.settings.glossaryTranslationHeader}
+      labelHidden
+      value={draft.translations[activeLocale] || ""}
+      onChange={onChange}
+      placeholder={inherited ? inherited.value : t.settings.glossaryTranslationPlaceholder}
+      helpText={
+        inherited
+          ? t.settings.glossaryInheritedFrom.replace(
+              "{language}",
+              getLocalizedLanguageName(inherited.locale, appLocale),
+            )
+          : undefined
+      }
+      autoComplete="off"
+      error={error}
+      maxLength={200}
+    />
   );
 }
 
@@ -439,15 +493,13 @@ export function SettingsGlossaryTab({ entries, shopLocales, primaryShopLocale, t
                       />
                     </InlineStack>
                   ) : draft.doNotTranslate ? null : (
-                    <TextField
-                      label={t.settings.glossaryTranslationHeader}
-                      labelHidden
-                      value={draft.translations[activeLocale] || ""}
-                      onChange={(v) => updateTranslation(draft.key, activeLocale, v)}
-                      placeholder={t.settings.glossaryTranslationPlaceholder}
-                      autoComplete="off"
+                    <GlossaryTranslationField
+                      draft={draft}
+                      activeLocale={activeLocale}
+                      appLocale={appLocale}
+                      t={t}
                       error={translationError(draft)}
-                      maxLength={200}
+                      onChange={(v) => updateTranslation(draft.key, activeLocale, v)}
                     />
                   )}
                 </div>
@@ -463,7 +515,15 @@ export function SettingsGlossaryTab({ entries, shopLocales, primaryShopLocale, t
         ) : (
           drafts.length > 0 && (
             <Text as="p" variant="bodySm" tone="subdued">
-              {t.settings.glossaryTranslationPlaceholder}
+              {/* Same filter the ROWS use: a doNotTranslate entry renders no
+                  field here and buildGlossaryDirective ignores its stored
+                  renderings, so a leftover value on one must not make the
+                  footer claim an inherited rule nothing on screen shows. */}
+              {drafts.some(
+                (d) => !d.doNotTranslate && inheritedGlossaryValue(d.translations, activeLocale),
+              )
+                ? t.settings.glossaryInheritedListHint
+                : t.settings.glossaryTranslationPlaceholder}
             </Text>
           )
         )}

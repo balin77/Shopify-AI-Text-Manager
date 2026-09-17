@@ -1130,6 +1130,8 @@ export const es: Translation = {
     glossaryDeleteEntry: "Eliminar entrada",
     glossaryTranslationHeader: "Traducción deseada ({language})",
     glossaryTranslationPlaceholder: "Vacío = la IA traduce libremente",
+    glossaryInheritedFrom: "Se aplica desde {language}. Escribe aquí para que difiera en este idioma.",
+    glossaryInheritedListHint: "Vacío = se aplica la regla del idioma base; si no, la IA traduce libremente",
     glossaryDoNotTranslateBadge: "nunca se traduce",
     glossaryEmptyHeading: "Aún no hay entradas en el glosario",
     glossaryEmptyBody: "Añade términos en el idioma principal y luego define la traducción deseada por idioma extranjero.",

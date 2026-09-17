@@ -1145,6 +1145,8 @@ export const de = {
     glossaryDeleteEntry: "Eintrag löschen",
     glossaryTranslationHeader: "Gewünschte Übersetzung ({language})",
     glossaryTranslationPlaceholder: "Leer = KI übersetzt frei",
+    glossaryInheritedFrom: "Gilt aus {language}. Hier etwas eintragen, um für diese Sprache abzuweichen.",
+    glossaryInheritedListHint: "Leer = es gilt die Regel der Basissprache, sonst übersetzt die KI frei",
     glossaryDoNotTranslateBadge: "wird nie übersetzt",
     glossaryEmptyHeading: "Noch keine Glossar-Einträge",
     glossaryEmptyBody: "Füge in der Hauptsprache Begriffe hinzu und hinterlege dann pro Fremdsprache die gewünschte Übersetzung.",

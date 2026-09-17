@@ -27,6 +27,7 @@
 
 import { db } from "../../app/db.server";
 import { sanitizePromptInput } from "../../app/utils/prompt-sanitizer";
+import { glossaryValueForLocale } from "../../app/services/glossary-locale.shared";
 import type { GlossaryEntry, GlossaryEntryTranslation } from "@prisma/client";
 
 export const MAX_TERM_LEN = 200;
@@ -295,61 +296,19 @@ function termAppearsIn(
 }
 
 /**
- * The fixed rendering a rule offers for ONE locale, with a base-language
- * fallback.
+ * Which rule applies to ONE locale.
  *
- * Glossary rules are stored under the locale the merchant typed, and the
- * lookup used to be an exact match — so a rule recorded under `de` never fired
- * for a `de-CH` translation, on a shop where `de-CH` is the only German there
- * is. That is the common case, not the edge one: a merchant records their
- * house terminology once, per language.
+ * The lookup used to be an EXACT match, so a rule recorded under `de` never
+ * fired for a `de-CH` translation - on a shop where `de-CH` is the only German
+ * there is, the glossary was silently inert. The resolution itself now lives
+ * in a client-safe module because the glossary EDITOR has to give the same
+ * answer: this module imports `db.server`, so a component importing it would
+ * pull Prisma into the client bundle. Re-exported here so every existing
+ * caller and its tests keep one import site.
  *
- * The two are NOT merged, and the order is the whole point: an exact entry
- * wins outright, and the base language applies only where the rule has none.
- * A `de-CH` rule overriding the `de` rule is how a merchant says "in
- * Switzerland we call it something else"; folding both into the prompt would
- * hand the model two contradictory instructions for one term and make that
- * entry unexpressible.
- *
- * It only ever widens DOWNWARDS (`de` reaches `de-CH`), never up: a
- * Swiss-specific wording must not leak into generic German.
- *
- * Subtags are dropped ONE at a time from the right, so `zh-Hant-TW` asks
- * `zh-Hant` before `zh`. Jumping straight to the root would invert the rule
- * this function exists to state - the more specific `zh-Hant` entry, which
- * `isValidLocale` accepts as a locale in its own right, would lose to the
- * generic one.
- *
- * An empty or whitespace-only value is "no rule" (that is what normalize
- * stores), so an exact entry holding one does NOT shadow the base entry. The
- * flip side, stated rather than hidden: there is therefore no way to say
- * "translate FREELY in de-CH" once a `de` rule exists - clearing the de-CH
- * field re-inherits it. Expressing that needs a sentinel and a glossary-editor
- * affordance to go with it; recording an opt-out the editor renders as blank
- * would be worse than not having one.
- *
- * Own-property lookups only, because the key comes off the wire and
- * `translations["constructor"]` is not a translation.
+ * @see app/services/glossary-locale.shared.ts for the rule and its reasoning.
  */
-export function glossaryValueForLocale(
-  translations: Record<string, string>,
-  locale: string,
-): string | undefined {
-  const at = (key: string): string | undefined => {
-    if (!key || !Object.prototype.hasOwnProperty.call(translations, key)) return undefined;
-    const v = translations[key];
-    return typeof v === "string" && v.trim() ? v : undefined;
-  };
-
-  let key = locale;
-  for (;;) {
-    const hit = at(key);
-    if (hit !== undefined) return hit;
-    const cut = key.lastIndexOf("-");
-    if (cut <= 0) return undefined;
-    key = key.slice(0, cut);
-  }
-}
+export { glossaryValueForLocale } from "../../app/services/glossary-locale.shared";
 
 /**
  * Builds the sanitized glossary directive block for the given source texts and

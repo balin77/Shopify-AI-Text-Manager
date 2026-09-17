@@ -1147,6 +1147,8 @@ export const en: Translation = {
     glossaryDeleteEntry: "Delete entry",
     glossaryTranslationHeader: "Desired translation ({language})",
     glossaryTranslationPlaceholder: "Empty = AI translates freely",
+    glossaryInheritedFrom: "Applies from {language}. Enter something here to differ for this language.",
+    glossaryInheritedListHint: "Empty = the base language’s rule applies, otherwise the AI translates freely",
     glossaryDoNotTranslateBadge: "never translated",
     glossaryEmptyHeading: "No glossary entries yet",
     glossaryEmptyBody: "Add terms in the primary language, then set the desired translation per foreign language.",
