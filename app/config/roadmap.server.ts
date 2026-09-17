@@ -150,19 +150,20 @@ export const ROADMAP: RoadmapEntry[] = [
   {
     id: "translation-dashboard",
     visibility: "public",
-    status: "planned",
+    status: "shipped",
     area: "translations",
+    shippedOn: "2026-09",
     title: {
       en: "What exactly is still missing per language",
       de: "Was pro Sprache genau noch fehlt",
       es: "Qué falta exactamente en cada idioma",
     },
     body: {
-      en: "The language coverage already gives you a percentage per language. It will say what is behind it — per content type and per field — and mark the translations whose source text has moved on.",
-      de: "Die Sprachabdeckung nennt heute einen Prozentwert je Sprache. Künftig sagt sie, was dahintersteckt — pro Inhaltstyp und Feld — und markiert die Übersetzungen, deren Ausgangstext weitergezogen ist.",
-      es: "La cobertura por idioma ya da un porcentaje. Dirá qué hay detrás — por tipo de contenido y por campo — y marcará las traducciones cuyo texto original ha cambiado.",
+      en: "The language coverage now says what is behind the percentage — per content type and per field — and a field is only counted as missing where the original actually has text.",
+      de: "Die Sprachabdeckung sagt jetzt, was hinter dem Prozentwert steckt — pro Inhaltstyp und Feld — und ein Feld gilt nur dort als fehlend, wo das Original wirklich Text hat.",
+      es: "La cobertura por idioma ahora dice qué hay detrás del porcentaje — por tipo de contenido y por campo — y un campo solo cuenta como ausente cuando el original tiene texto.",
     },
-    notes: "NOT a second page: this DEEPENS the hreflang audit's existing LocaleCoverage (hreflang.service.ts), which is where the number already is. Three gaps to close there — it counts one percentage over the UNION of products/collections/articles/pages rather than per type; 'translated' means at least ONE of four keys exists, so a product with only a translated title counts as done; and it has no stale dimension (the digest comparison the sync already does knows it). Metafields, option values, theme texts, metaobjects, policies and menus are outside its scan entirely. A second coverage view would repeat the catalog-readiness/analyzeStore mistake: two numbers for one product in two tabs help nobody.",
+    notes: "Shipped 2026-09-17 as a DEEPENING of the hreflang audit, not a second page (two numbers for one product in two tabs is the catalog-readiness/analyzeStore mistake). hreflang-coverage.shared.ts holds the arithmetic; one grouped read per locale still answers both dimensions, scoped to the scanned ids. Two things changed meaning: 'translated' is now EVERY key that has primary text rather than ANY of four, so a shop's percentage can read lower than before, and a never-synced type reads as unknown instead of complete. Still outside the scan, deliberately: metafields, option values, theme texts, metaobjects, policies and menus. The stale dimension went to its own entry (translation-stale-view) — it needs a column that does not exist.",
   },
   {
     id: "version-history",
@@ -217,6 +218,23 @@ export const ROADMAP: RoadmapEntry[] = [
     },
     notes:
       "MEASURED before writing this (api.update-variant-galleries.tsx:700-715): position 0 of a variant gallery already becomes the NATIVE variant.image, so the FIRST image per variant reaches every sales channel today — the card must not claim otherwise. The gap is the REST of the gallery: positions 1..n live in the custom.variant_gallery_order / custom.variant_external_videos metafields, which no channel feed reads, and Google's additional_image_link (up to 10) is exactly the field they belong in. So the smallest honest version of this is an ADDITIONAL feed beside Shopify's own channel, never a replacement — two full feeds for one shop means duplicate products at the network. Worth checking first whether Shopify's channel apps can be fed the metafield directly, which would make this a mapping rather than a feed. Smaller and far more certain than ad-suite; the two are listed together only because they share an audience.",
+  },
+  {
+    id: "translation-stale-view",
+    visibility: "public",
+    status: "considering",
+    area: "translations",
+    title: {
+      en: "See which translations describe older text",
+      de: "Sehen, welche Übersetzungen älteren Text beschreiben",
+      es: "Ver qué traducciones describen un texto anterior",
+    },
+    body: {
+      en: "The app already refreshes a translation when its source changes. This would list the ones that are waiting for it, beside what is missing entirely.",
+      de: "Die App frischt eine Übersetzung bereits auf, wenn sich ihr Ausgangstext ändert. Dies würde die auflisten, die noch darauf warten — neben dem, was ganz fehlt.",
+      es: "La aplicación ya renueva una traducción cuando cambia su original. Esto mostraría las que aún esperan, junto a lo que falta por completo.",
+    },
+    notes: "Split out of translation-dashboard when that shipped 2026-09-17, so the deferral stays visible instead of being forgotten. The reason it was deferred is a schema fact: ContentTranslation has a `digest` column but NO `outdated` one (ThemeTranslation and MetaobjectTranslation do), so staleness is not derivable from the cache — findStaleTranslations needs Shopify data. The coverage read is DB-cache-first by contract, and a live sweep per page view would break it. The only sound route is persisting a marker where the digest comparison already proves staleness (stale-translation-sync.server.ts), i.e. a migration plus a write-path change. Worth it only if merchants ask what is outdated rather than what is missing.",
   },
   {
     id: "brand-voice",
@@ -321,22 +339,6 @@ export const ROADMAP: RoadmapEntry[] = [
     notes: "Shopify Markets already carries a per-market layer; the question is whether a variant is a locale or a market override. See docs/reference/COMPETITIVE_ANALYSIS.md §4.3. Today market overrides are editable by hand (MarketSelector) but every AI translation writes the GLOBAL layer only (marketId: \"\").",
   },
   {
-    id: "rtl",
-    visibility: "public",
-    status: "considering",
-    area: "translations",
-    title: {
-      en: "Right-to-left languages",
-      de: "Rechts-nach-links-Sprachen",
-      es: "Idiomas de derecha a izquierda",
-    },
-    body: {
-      en: "Arabic and Hebrew in the editor and the bulk grid.",
-      de: "Arabisch und Hebräisch im Editor und im Bulk-Raster.",
-      es: "Árabe y hebreo en el editor y en la cuadrícula masiva.",
-    },
-  },
-  {
     id: "image-generation",
     visibility: "public",
     status: "considering",
@@ -373,6 +375,24 @@ export const ROADMAP: RoadmapEntry[] = [
   },
 
   // ── On request (built when a merchant asks, not speculatively) ────────
+  {
+    id: "rtl",
+    visibility: "public",
+    status: "on-request",
+    area: "translations",
+    title: {
+      en: "Right-to-left languages",
+      de: "Rechts-nach-links-Sprachen",
+      es: "Idiomas de derecha a izquierda",
+    },
+    body: {
+      en: "Arabic and Hebrew read right to left, and the editor would have to turn around with them. If you sell in one of those languages, tell us — that is what decides it.",
+      de: "Arabisch und Hebräisch werden von rechts nach links gelesen, und der Editor müsste sich mitdrehen. Wenn Sie in einer dieser Sprachen verkaufen, sagen Sie es uns — davon hängt es ab.",
+      es: "El árabe y el hebreo se leen de derecha a izquierda, y el editor tendría que girarse con ellos. Si vende en uno de esos idiomas, díganoslo — de eso depende.",
+    },
+    notes:
+      "Moved to on-request 2026-09-17 on a MEASURED assessment, not a guess. The blocker is not our code: @shopify/polaris 13.9.5 ships 229 physical left/right declarations and ZERO [dir=rtl] selectors, so every card, icon slot, popover arrow and select chevron stays mirrored whatever we set. Unblocking that is either a major Polaris upgrade or an override sheet against a vendor stylesheet. Our own share is a few days: root.tsx emits no `dir` at all (documentLang is hardcoded 'en' for admin routes), ~26 physical declarations in app/styles/*.css and ~190 inline-style occurrences over 44 components, of which only BulkGrid's sticky-column `left:` pinning is structurally hard — the two content editors and the formatting toolbar are already direction-neutral and need `dir=\"auto\"`. Three NON-visual findings worth keeping even if the UI never turns around: sanitizer.ts and richtext-normalize.server.ts strip `dir` and `lang` from pasted HTML (a merchant's own RTL markup is silently removed before it reaches Shopify), and readability.ts:155 splits sentences on Latin terminators only, so an Arabic text is one sentence and fires a false 'long sentences' finding on every item. Those are cheap and independent of the Polaris question.",
+  },
   {
     id: "api-access",
     visibility: "public",
